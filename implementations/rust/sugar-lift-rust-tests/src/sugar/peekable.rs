@@ -8,22 +8,20 @@
 // the same identity treatment when `.peekable()` sits inside a longer adaptor chain
 // (e.g. the `while let next_if` rewrite's `<seq>.iter().peekable().take_while(..)`).
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, num, Term};
 use syn::{Expr, ExprCall, ExprMacro, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
     callsite_assertion_name, parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups,
     AssertionFactKind, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
-    Warrant, STRUCTURAL_BACKSTOP_REASON,
+    Warrant,
 };
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
@@ -92,11 +90,13 @@ fn build_assertion_surface(
     if matches!(expected_kind, ExpectedOptionKind::SomeOther) {
         return None;
     }
-    if peekable_receiver_resolves_literal(&op.receiver, fcx, 0) {
+    if let Some(source) = peekable_source_expr(&op.receiver, fcx, 0)
+        .filter(|source| literal_peekable_source(source, fcx, 0))
+    {
         return Some(Box::new(PeekableLiteralAssertionSugar {
-            op,
-            expected: expected.clone(),
-            let_inits: capture_let_inits(fcx),
+            kind: op.kind,
+            source: literal_sequence_body(&source, fcx),
+            expected: SugarBody::term(expected, fcx),
         }));
     }
     None
@@ -326,9 +326,9 @@ enum PeekableOpKind {
 }
 
 struct PeekableLiteralAssertionSugar {
-    op: PeekableOp,
-    expected: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    kind: PeekableOpKind,
+    source: SugarBody<CompositeFloor>,
+    expected: SugarBody<TermFloor>,
 }
 
 struct PeekableRuntimeRefusalSugar {
@@ -358,24 +358,9 @@ impl PeekableLiteralAssertionSugar {
         &self,
         ctx: &SugarCtx,
     ) -> Result<(Rc<sugar_ir_symbolic::Formula>, Option<Rc<Term>>), Effect> {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some(name) = simple_path_name(&self.op.receiver) {
-            if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
-                return Err(Effect::Unsupported { reason });
-            }
-            if ctx.scope.is_consumed_iterator_local(&name)
-                && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
-            {
-                return Err(structural_effect());
-            }
-        }
-        let source =
-            peekable_source_expr(&self.op.receiver, &fcx, 0).ok_or_else(structural_effect)?;
-        let seq = literal_sequence(&source, &fcx, ctx)?;
-        let actual = option_term_for_op(&self.op.kind, &seq)?;
-        let expected = term_for(&self.expected, &fcx, ctx)?;
+        let seq = literal_sequence_from_body(&self.source, ctx)?;
+        let actual = option_term_for_op(&self.kind, &seq);
+        let expected = term_from_body(&self.expected, ctx)?;
         let atom = and_(vec![eq(Rc::clone(&actual), expected)]);
         Ok((atom, Some(actual)))
     }
@@ -383,13 +368,15 @@ impl PeekableLiteralAssertionSugar {
 
 impl Sugar for PeekableRuntimeRefusalSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: format!("runtime slice source, not literal `{}`", self.receiver),
+        let reason = format!("runtime slice source, not literal `{}`", self.receiver);
+        Outcome::Incomplete(Effect::RuntimeArgument {
+            boundary: reason.clone(),
+            reason,
         })
     }
 }
 
-fn option_term_for_op(kind: &PeekableOpKind, seq: &[DesugaredElem]) -> Result<Rc<Term>, Effect> {
+fn option_term_for_op(kind: &PeekableOpKind, seq: &[DesugaredElem]) -> Rc<Term> {
     let idx = match kind {
         PeekableOpKind::Peek | PeekableOpKind::Next => Some(0usize),
         PeekableOpKind::NextBack | PeekableOpKind::Last => seq.len().checked_sub(1),
@@ -401,61 +388,44 @@ fn option_term_for_op(kind: &PeekableOpKind, seq: &[DesugaredElem]) -> Result<Rc
                 .value
                 .as_ref()
                 .and_then(ConstVal::as_int)
-                .ok_or_else(structural_effect)?;
-            Ok(monadic::some_term(num(n)))
+                .unwrap_or_else(|| panic!("peekable literal sequence element is not an int floor"));
+            monadic::some_term(num(n))
         }
-        None => Ok(monadic::none_term()),
+        None => monadic::none_term(),
     }
 }
 
-fn literal_sequence(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
+fn literal_sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+    if let Some(arg) = non_fused_new_arg(expr) {
+        return literal_sequence_body(arg, fcx);
+    }
+    SugarBody::from_node(
+        method_family::build_literal_sequence_composite(expr, fcx).unwrap_or_else(|| {
+            panic!(
+                "peekable literal source did not construct as a sequence floor: `{}`",
+                crate::token_key(expr)
+            )
+        }),
+    )
+}
+
+fn literal_sequence_from_body(
+    body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
 ) -> Result<Vec<DesugaredElem>, Effect> {
-    if let Some(arg) = non_fused_new_arg(expr) {
-        return literal_sequence(arg, fcx, ctx);
-    }
-    if method_family::literal_sequence_static_len_in_scope(expr, fcx.let_inits(), fcx.scope())
-        == Some(0)
-    {
-        return Ok(Vec::new());
-    }
-    let node =
-        method_family::build_literal_sequence_composite(expr, fcx).ok_or_else(structural_effect)?;
-    match node.desugar(ctx) {
-        Outcome::Complete(d) => d.into_seq().ok_or_else(structural_effect),
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_seq()
+            .unwrap_or_else(|| panic!("peekable source body completed as non-sequence floor"))),
         Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
-fn term_for(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
-    match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term().ok_or_else(structural_effect),
+fn term_from_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("peekable expected body completed as non-term floor"))),
         Outcome::Incomplete(effect) => Err(effect),
     }
-}
-
-fn structural_effect() -> Effect {
-    Effect::Unsupported {
-        reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-    }
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
 }
