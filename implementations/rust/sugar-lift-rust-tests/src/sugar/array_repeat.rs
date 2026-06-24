@@ -18,11 +18,8 @@
 // term). `desugar` is where the verdict is made, and the single LEAF owns it:
 //   * the LENGTH leaf: a recognized non-literal length is a symbolic universe size -- no
 //     finite construction from the written literal -> `ArrayRepeat`.
-// The composite makes NO check of its own: a recognized node always returns Incomplete its length leaf
-// (recognition -- a non-literal length -- IS the verdict's precondition). The verdict is purely
-// SYNTACTIC, so it is delegated by `desugar` to `desugar_ctx_free`. The STRUCTURAL backstop
-// (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-unreachable tail
-// kept to mirror the node shape -- never reached for a built node, never a fake-refuse.
+// The composite makes NO check of its own: a recognized node always returns Incomplete from its
+// length leaf (recognition -- a non-literal length -- IS the verdict's precondition).
 
 use std::collections::BTreeMap;
 
@@ -32,7 +29,7 @@ use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_eval, repeat_count_in_scope, repeat_count_literal, token_key, Desugared, DesugaredElem,
-    Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -116,26 +113,20 @@ impl ArrayRepeatSugar {
     /// is not a finite construction from the written literal, so no aggregate term can be
     /// pinned -> `ArrayRepeat`. Recognition (a non-literal length) is this leaf's precondition,
     /// so it always fires for a built node; it never completes.
-    fn array_repeat_effect(&self) -> Option<Effect> {
-        Some(Effect::ArrayRepeat {
+    fn array_repeat_effect(&self) -> Effect {
+        Effect::ArrayRepeat {
             boundary: self.boundary.clone(),
-        })
+        }
     }
 
     /// The total reduction, made WITHOUT a `SugarCtx` -- the verdict is purely SYNTACTIC (it
     /// reads only the recognized non-literal-length shape), so it does not need scope/options.
     /// The `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
     /// while the ctx-less thin caller-router (the `Expr::Repeat` else-branch) reads the SAME
-    /// verdict here. The composite makes NO verdict of its own: it returns Incomplete its single LENGTH leaf.
-    /// A built node always names `ArrayRepeat` (recognition is the verdict's precondition); the
-    /// STRUCTURAL backstop is the total-but-unreachable tail.
+    /// verdict here. A built node always names `ArrayRepeat` because recognition is the verdict's
+    /// precondition.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
-        if let Some(effect) = self.array_repeat_effect() {
-            return Outcome::Incomplete(effect);
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        Outcome::Incomplete(self.array_repeat_effect())
     }
 }
 
