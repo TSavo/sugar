@@ -21,10 +21,11 @@ use syn::{
 use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{
-    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared,
-    Outcome, Sugar, SugarCtx,
+    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, token_key,
+    Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -41,32 +42,28 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         direct_compute_float_width(call, fcx).or_else(|| wrapper_compute_float_width(call, fcx))?;
     Some(Box::new(ComputeFloatSugar {
         width,
-        q: build_term(call.args.first()?, fcx),
-        w: build_term(call.args.iter().nth(1)?, fcx),
+        q: SugarBody::term(call.args.first()?, fcx),
+        w: SugarBody::term(call.args.iter().nth(1)?, fcx),
+        site: token_key(expr),
     }))
 }
 
 struct ComputeFloatSugar {
     width: ComputeFloatWidth,
-    q: Box<dyn Sugar>,
-    w: Box<dyn Sugar>,
+    q: SugarBody<TermFloor>,
+    w: SugarBody<TermFloor>,
+    site: String,
 }
 
 impl Sugar for ComputeFloatSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let q = match self.q.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+        let q = match term_body(&self.q, ctx, "compute_float q argument") {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
-        let w = match self.w.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+        let w = match term_body(&self.w, ctx, "compute_float w argument") {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
         let Some(q) = const_fold_int_term(&q).and_then(|value| i64::try_from(value).ok()) else {
             debug!(
@@ -74,7 +71,7 @@ impl Sugar for ComputeFloatSugar {
                 width = self.width.type_name(),
                 "compute_float q argument did not bottom out to an i64 literal"
             );
-            return Outcome::from_opt(None);
+            return self.runtime_operand("i64");
         };
         let Some(w) = const_fold_u128_term(&w)
             .or_else(|| const_fold_int_term(&w).and_then(|value| u128::try_from(value).ok()))
@@ -85,10 +82,13 @@ impl Sugar for ComputeFloatSugar {
                 width = self.width.type_name(),
                 "compute_float w argument did not bottom out to a u64 literal"
             );
-            return Outcome::from_opt(None);
+            return self.runtime_operand("u64");
         };
         let Some(fp) = rustc_compute_float(self.width, q, w) else {
-            return Outcome::from_opt(None);
+            panic!(
+                "compute_float::<{}> literal harness failed for q={q}, w={w}",
+                self.width.type_name()
+            );
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::compute_float",
@@ -100,6 +100,29 @@ impl Sugar for ComputeFloatSugar {
             "resolved compute_float stdlib axiom to literal tuple"
         );
         Outcome::Complete(Desugared::Term(biased_fp_tuple_term(fp)))
+    }
+}
+
+impl ComputeFloatSugar {
+    fn runtime_operand(&self, kind: &str) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: self.site.clone(),
+            operation: format!("compute_float::<{}>", self.width.type_name()),
+            kind: kind.to_string(),
+        })
+    }
+}
+
+fn term_body(
+    body: &SugarBody<TermFloor>,
+    ctx: &SugarCtx,
+    owner: &'static str,
+) -> Result<std::rc::Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => {
+            Ok(desugared.accept_desugared_floor(RequiredTermVisitor { owner }))
+        }
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
