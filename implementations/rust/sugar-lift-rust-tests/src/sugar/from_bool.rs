@@ -1,34 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `from_bool`: `<IntT>::from(<bool literal>)` / `IntT::from(<bool literal>)` for a
-// primitive INTEGER target type folds to the std `From<bool>` value -- `true -> 1`,
-// `false -> 0`.
+// Primitive `<IntT>::from(..)` / `IntT::from(..)` sugar.
 //
-// The same sugar also owns literal numeric `From` into primitive integer targets.
-// `From` is infallible but not universal: we require a spelled primitive source
-// integer kind (`u64::MAX`, `255u8`, `<i64>::MIN`) and only fold conversions the
-// standard library actually implements. The desugar arm resolves the argument lazily
-// so the complete sort-correct value can be emitted as a concrete int/u128 floor.
+// The call head owns only the destination type. The argument is constructed as a
+// typed term body and dispatches as the source floor: bool -> 0/1, char -> codepoint
+// for destinations Rust implements, numeric -> checked std `From` conversion.
 
-use std::collections::BTreeMap;
-use std::net::Ipv6Addr;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{num, Term};
-use syn::{Expr, ExprCall, Lit, PathArguments, Type};
+use sugar_ir_symbolic::Term;
+use syn::{Expr, PathArguments, Type};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
-    exact_int_source, from_impl_exists, primitive_int_kind, ExactInt, IntKind,
+    from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
 };
-use crate::{
-    expr_head_key, strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
-};
+use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
+use crate::{strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("from_bool", recognize);
 
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -37,175 +30,104 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
     }
     let dst = primitive_int_from_kind(&call.func)?;
     Some(Box::new(FromPrimitiveSugar {
-        call: call.clone(),
+        arg: SugarBody::term(&call.args[0], fcx),
         dst,
+        site: token_key(expr),
     }))
 }
 
 struct FromPrimitiveSugar {
-    call: ExprCall,
+    arg: SugarBody<TermFloor>,
     dst: IntKind,
+    site: String,
 }
 
 impl Sugar for FromPrimitiveSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Some(term) = from_bool_term(&self.call) {
-            return Outcome::Complete(Desugared::Term(term));
-        }
+        let arg = match self.arg.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .unwrap_or_else(|| panic!("primitive From argument completed as non-term")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        arg.accept_scalar_floor(PrimitiveFromVisitor {
+            dst: self.dst,
+            site: &self.site,
+        })
+    }
+}
 
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some(term) = from_char_term(&self.call.args[0], self.dst, &fcx) {
-            return Outcome::Complete(Desugared::Term(term));
-        }
-        if self.dst.name == "u128" {
-            if let Some(value) = ipv6_u128_source(&self.call.args[0], &fcx) {
-                return Outcome::Complete(Desugared::Term(u128_term(value)));
-            }
-        }
-        if let Some(source) = exact_int_source(&self.call.args[0], Some(&fcx)) {
-            if let Some(src_kind) = source.kind {
-                if from_impl_exists(src_kind, self.dst) {
-                    if let Some(term) = source.value.term_for_kind(self.dst) {
-                        return Outcome::Complete(Desugared::Term(term));
-                    }
-                }
-            }
-            return self.fallback_call(ctx, &fcx);
-        }
+struct PrimitiveFromVisitor<'a> {
+    dst: IntKind,
+    site: &'a str,
+}
 
-        if self.dst.bits == 128 {
-            return Outcome::Incomplete(Effect::Unsupported {
-                reason: format!("runtime {} operand, not literal-determined", self.dst.name),
+impl ScalarFloorVisitor for PrimitiveFromVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_numeric(self, floor: NumericFloor) -> Self::Output {
+        let NumericFloor::Typed { value, kind } = floor else {
+            panic!(
+                "primitive From `{}` received an untyped numeric floor for `{}`",
+                self.dst.name, self.site
+            );
+        };
+        if !from_impl_exists(kind, self.dst) {
+            panic!(
+                "primitive From `{}` received source type `{}` the compiler would reject for `{}`",
+                self.dst.name, kind.name, self.site
+            );
+        }
+        let term = value.term_for_kind(self.dst).unwrap_or_else(|| {
+            panic!(
+                "primitive From `{}` value did not fit destination for `{}`",
+                self.dst.name, self.site
+            )
+        });
+        Outcome::Complete(Desugared::Term(term))
+    }
+
+    fn visit_bool(self, value: bool) -> Self::Output {
+        let term = ExactInt::Unsigned(u128::from(value))
+            .term_for_kind(self.dst)
+            .unwrap_or_else(|| {
+                panic!(
+                    "primitive From `{}` could not lower bool for `{}`",
+                    self.dst.name, self.site
+                )
             });
+        Outcome::Complete(Desugared::Term(term))
+    }
+
+    fn visit_char(self, value: char) -> Self::Output {
+        if !char_from_impl_exists(self.dst) {
+            panic!(
+                "primitive From `{}` does not implement From<char> for `{}`",
+                self.dst.name, self.site
+            );
         }
-        self.fallback_call(ctx, &fcx)
+        let term = ExactInt::Unsigned(u128::from(u32::from(value)))
+            .term_for_kind(self.dst)
+            .unwrap_or_else(|| {
+                panic!(
+                    "primitive From `{}` could not lower char for `{}`",
+                    self.dst.name, self.site
+                )
+            });
+        Outcome::Complete(Desugared::Term(term))
     }
-}
 
-impl FromPrimitiveSugar {
-    fn fallback_call(&self, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Outcome {
-        let mut args: Vec<Rc<Term>> = Vec::new();
-        for arg in &self.call.args {
-            let term = match build_term(arg, fcx).desugar(ctx) {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => return Outcome::from_opt(None),
-                },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-            };
-            args.push(term);
-        }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
-            name: format!("call:{}", expr_head_key(&self.call.func)),
-            args,
-        })))
+    fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: self.site.to_string(),
+            operation: "From".to_string(),
+            kind: self.dst.name.to_string(),
+        })
     }
-}
-
-fn from_bool_term(call: &ExprCall) -> Option<Rc<Term>> {
-    let Expr::Lit(lit) = &call.args[0] else {
-        return None;
-    };
-    let Lit::Bool(b) = &lit.lit else {
-        return None;
-    };
-    Some(num(if b.value { 1 } else { 0 }))
-}
-
-fn from_char_term(expr: &Expr, dst: IntKind, fcx: &SugarBuildCtx) -> Option<Rc<Term>> {
-    if !char_from_impl_exists(dst) {
-        return None;
-    }
-    let ch = char_source(expr, fcx)?;
-    ExactInt::Unsigned(u128::from(u32::from(ch))).term_for_kind(dst)
 }
 
 fn char_from_impl_exists(dst: IntKind) -> bool {
     !dst.signed && dst.bits >= 32
-}
-
-fn char_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<char> {
-    match strip_refs_groups(expr) {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Char(ch) => Some(ch.value()),
-            _ => None,
-        },
-        Expr::Path(path) if path.qself.is_none() => {
-            let name = path.path.get_ident()?.to_string();
-            if fcx.resolving_bound_path(&name) {
-                return None;
-            }
-            let init = fcx.scope().stable_let_binding_for_term(&name)?;
-            char_source(init, &fcx.with_bound_path(&name))
-        }
-        _ => None,
-    }
-}
-
-fn ipv6_u128_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<u128> {
-    let addr = ipv6_source(expr, fcx)?;
-    Some(u128::from_be_bytes(addr.octets()))
-}
-
-fn ipv6_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Ipv6Addr> {
-    match strip_refs_groups(expr) {
-        Expr::Call(call) => ipv6_call_source(call, fcx),
-        Expr::Path(path) if path.qself.is_none() => {
-            let name = path.path.get_ident()?.to_string();
-            if fcx.resolving_bound_path(&name) {
-                return None;
-            }
-            let init = fcx.scope().stable_let_binding_for_term(&name)?;
-            ipv6_source(init, &fcx.with_bound_path(&name))
-        }
-        _ => None,
-    }
-}
-
-fn ipv6_call_source(call: &ExprCall, fcx: &SugarBuildCtx) -> Option<Ipv6Addr> {
-    let Expr::Path(path) = strip_refs_groups(&call.func) else {
-        return None;
-    };
-    let (ty, method) = ip_path_type_and_method(&path.path)?;
-    if ty != "Ipv6Addr" || method != "new" || call.args.len() != 8 {
-        return None;
-    }
-    let mut segments = [0u16; 8];
-    for (slot, arg) in segments.iter_mut().zip(call.args.iter()) {
-        *slot = u16_from_literal_source(arg, fcx)?;
-    }
-    Some(Ipv6Addr::new(
-        segments[0],
-        segments[1],
-        segments[2],
-        segments[3],
-        segments[4],
-        segments[5],
-        segments[6],
-        segments[7],
-    ))
-}
-
-fn ip_path_type_and_method(path: &syn::Path) -> Option<(String, String)> {
-    let method = path.segments.last()?.ident.to_string();
-    let ty = path
-        .segments
-        .iter()
-        .rev()
-        .skip(1)
-        .find(|segment| segment.ident == "Ipv6Addr")?
-        .ident
-        .to_string();
-    Some((ty, method))
-}
-
-fn u16_from_literal_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<u16> {
-    let source = exact_int_source(expr, Some(fcx))?;
-    match source.value {
-        ExactInt::Signed(value) => u16::try_from(value).ok(),
-        ExactInt::Unsigned(value) => u16::try_from(value).ok(),
-    }
 }
 
 /// `<IntT>::from` (qself) or `IntT::from` (two-segment path) where `IntT` is a known

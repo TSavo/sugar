@@ -11,28 +11,28 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    aggregate_decomp, array_repeat, array_term, assign_op, await_term, binop, block_term,
-    bool_bitwise, bool_method, bound_path, call, cast_term, cell_refcell, cfg_select, chain,
-    char_method, char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
-    closure_mutating_body, closure_opaque_accessor, closure_runtime_receiver, closure_term,
-    closure_tls_accessor, collect, collection_literal, compute_float, concat_macro, conditional,
-    const_block, const_if, const_item, const_path, constraint, control_flow_term, cstr,
-    dormant_mut_ref, duration_accessor, dyn_any, enumerate, field_term, filter, filter_map,
-    flat_map, flatten, float_literal_method, float_refinement, fold, for_each, for_replay,
-    forall_loop, format_args, format_macro, from_bool, function_map, identity_map, impl_method,
-    index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt, integer_decode, intersperse,
-    intersperse_collect_string, intersperse_concat, into, ip_addr, is_empty, is_sorted, iter_next,
-    iter_terminal, iterator, kmerge, len, literal, literal_iterator_quantifier, literal_slice,
-    macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
-    maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
-    option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
-    range_accessor, range_construct, range_contains, range_term, raw_addr_term, reference_sequence,
-    reference_term, regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
-    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
-    slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, step_by, str_method,
-    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
+    addr_of_mut, aggregate_decomp, array_repeat, array_term, assign_op, await_term, binop,
+    block_term, bool_bitwise, bool_method, bound_path, call, cast_term, cell_refcell, cfg_select,
+    chain, char_method, char_range_collect_string, char_range_filter_map,
+    closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
+    closure_runtime_receiver, closure_term, closure_tls_accessor, collect, collection_literal,
+    compute_float, concat_macro, conditional, const_block, const_if, const_item, const_path,
+    constraint, control_flow_term, cstr, dormant_mut_ref, duration_accessor, dyn_any, enumerate,
+    field_term, filter, filter_map, flat_map, flatten, float_literal_method, float_refinement,
+    fold, for_each, for_replay, forall_loop, format_args, format_macro, from_bool, function_map,
+    identity_map, impl_method, index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt,
+    integer_decode, intersperse, intersperse_collect_string, intersperse_concat, into, ip_addr,
+    is_empty, is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
+    literal_iterator_quantifier, literal_slice, macro_term, map, match_node, match_scrutinee,
+    matches_macro, maybe_uninit_new, maybe_uninit_zeroed, memchr, method, monadic, nonzero,
+    offset_of, option_adaptor, option_predicate, option_unwrap, partition_point, path, peekable,
+    primitive_int, ptr_metadata, range_accessor, range_construct, range_contains, range_term,
+    raw_addr_term, reference_sequence, reference_term, regex_match, repeat_term, result_predicate,
+    result_transpose_collect, rev, size_hint, sizeof, skip, skip_while, slice_accessor,
+    slice_chunk_window, slice_index, slice_search, statement_async_future, statement_control_flow,
+    statement_future_handoff, statement_loop_advance, statement_reflection, statement_runtime_expr,
+    step_by, str_method, string_add, string_predicate, struct_term, take, take_while, term_literal,
+    to_string, transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
     unsafe_memory, vec_literal, vec_macro, wrapping_neg, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
@@ -159,6 +159,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &concat_macro::EXPR_SUGAR,
     &vec_macro::EXPR_SUGAR,
     &offset_of::EXPR_SUGAR,
+    &addr_of_mut::EXPR_SUGAR,
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
@@ -901,6 +902,29 @@ mod tests {
     }
 
     #[test]
+    fn addr_of_mut_prioritizes_capability_sugar_before_macro_fallback() {
+        let expr: Expr = syn::parse_str("addr_of_mut!(x)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        let addr = names
+            .iter()
+            .position(|name| *name == "addr_of_mut")
+            .expect("addr_of_mut! should be claimed by AddrOfMutSugar");
+        let macro_term = names
+            .iter()
+            .position(|name| *name == "macro_term")
+            .expect("addr_of_mut! should still have the generic macro fallback candidate");
+
+        assert!(
+            addr < macro_term,
+            "AddrOfMutSugar should outrank generic MacroTermSugar: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("addr_of_mut")
+        );
+    }
+
+    #[test]
     fn concat_macro_prioritizes_concat_before_generic_macro_sugar() {
         let expr: Expr = syn::parse_str("concat!(\"a\", \"b\")").unwrap();
         let names = candidate_names(&expr);
@@ -1544,7 +1568,7 @@ mod tests {
     }
 
     #[test]
-    fn factory_audit_marks_named_effect_refused() {
+    fn factory_audit_marks_mut_reference_construction_warranted() {
         let expr: Expr = syn::parse_str("&mut x").unwrap();
         let audits = run_expr_with_audit(&expr, SugarRole::Term);
         let audit = audits
@@ -1553,13 +1577,7 @@ mod tests {
             .expect("mutable-reference term site is audited");
 
         assert_eq!(audit.selected, Some("reference_term"));
-        assert_eq!(audit.disposition, FactoryDisposition::Refused);
-        assert!(
-            audit
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("effectful / raw-pointer")),
-            "{audit:?}"
-        );
+        assert_eq!(audit.disposition, FactoryDisposition::Warranted);
+        assert!(audit.reason.is_none(), "{audit:?}");
     }
 }

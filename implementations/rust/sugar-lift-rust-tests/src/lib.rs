@@ -29,6 +29,7 @@ mod try_fold_eval;
 // `decompose_seq`). One engine: each decorator's `desugar` is `inner.desugar(ctx)?`
 // then that adaptor's exact transform.
 pub mod sugar {
+    pub mod addr_of_mut;
     pub mod aggregate_decomp;
     pub mod array_repeat;
     pub mod array_term;
@@ -4801,6 +4802,10 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
+    pub(crate) fn temporal_rewrite_term_for(&self, name: &str) -> Option<Rc<Term>> {
+        self.temporal_rewrite.borrow().term_for(name)
+    }
+
     pub(crate) fn temporal_rewrite_index_expr_for(&self, name: &str, index: usize) -> Option<Expr> {
         self.temporal_rewrite.borrow().expr_for_index(name, index)
     }
@@ -4835,8 +4840,32 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().can_apply(expr)
     }
 
+    pub(crate) fn temporal_rewrite_can_apply_action(
+        &self,
+        action: &sugar::assign_op::TemporalRewriteAction,
+    ) -> bool {
+        self.temporal_rewrite.borrow().can_apply_action(action)
+    }
+
     pub(crate) fn apply_temporal_rewrite(&self, expr: &Expr) -> bool {
         self.temporal_rewrite.borrow_mut().apply(expr)
+    }
+
+    pub(crate) fn apply_temporal_rewrite_assign_term(&self, lhs: &Expr, term: Rc<Term>) -> bool {
+        self.temporal_rewrite
+            .borrow_mut()
+            .apply_assign_term(lhs, term)
+    }
+
+    pub(crate) fn apply_temporal_rewrite_compound_term(
+        &self,
+        lhs: &Expr,
+        op: sugar::assign_op::BinOpKind,
+        rhs: Rc<Term>,
+    ) -> bool {
+        self.temporal_rewrite
+            .borrow_mut()
+            .apply_compound_assign_term(lhs, op, rhs)
     }
 
     pub(crate) fn mark_temporal_loop_replayed(&self, name: &str) {
@@ -7853,6 +7882,10 @@ enum Effect {
     /// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
     /// container is a mutable local -- so this can only refuse a genuinely-mutable read.
     TemporalRead { boundary: String },
+    /// AMBIGUOUS-TEMPORAL-IDENTITY: a versioned local path is read after the collector
+    /// proved more than one temporal identity could own that name. The path leaf owns the
+    /// refusal because a `Term::Var` key would otherwise pick one state arbitrarily.
+    AmbiguousTemporalIdentity { boundary: String, reason: String },
     /// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
     /// position. None of these is a single timeless point-wise VALUE: a `try` block
     /// short-circuits on `Err` (control flow), an `async` block is a deferred future, and
@@ -7923,6 +7956,11 @@ enum Effect {
     /// the `None` arm of `repeat_count_literal`; a literal length lifts the unrolled array and
     /// never reaches here (the inverse-sin guardrail).
     ArrayRepeat { boundary: String },
+    /// LITERAL-DOMAIN: a sequence-floor literal domain cannot produce useful teeth:
+    /// empty, unbounded, over-cap, char-range-versioned, or non-text-determined
+    /// array/range domains are genuine source boundaries owned by LiteralSugar. A
+    /// nonempty finite literal domain completes before this effect can fire.
+    LiteralDomain { boundary: String, reason: String },
     /// LITERAL-PANIC: a fully-literal stdlib/compiler operation has no returned value because
     /// Rust panics on that exact source path (`(-1).isqrt()`, `None.unwrap()`, ...). This is a
     /// source/runtime boundary, not a missing deconstruction and not an opaque support term:
@@ -7989,6 +8027,7 @@ impl Effect {
             Effect::TemporalRead { boundary } => format!(
                 "unsupported term `{boundary}`: mutable container is not temporally stable"
             ),
+            Effect::AmbiguousTemporalIdentity { reason, .. } => reason.clone(),
             Effect::ControlFlow { boundary } => format!(
                 "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
                  timeless point-wise value; refused"
@@ -8040,6 +8079,7 @@ impl Effect {
                 "array-repeat length runtime, not const -- array-repeat `[_; N]` has a non-literal length -- not a finite \
                  construction from the literal; refused by name: `{boundary}`"
             ),
+            Effect::LiteralDomain { reason, .. } => reason.clone(),
             Effect::LiteralPanic { reason, .. } => reason.clone(),
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
@@ -8066,6 +8106,7 @@ impl Effect {
             | Effect::Tls { boundary }
             | Effect::Io { boundary }
             | Effect::TemporalRead { boundary }
+            | Effect::AmbiguousTemporalIdentity { boundary, .. }
             | Effect::ControlFlow { boundary }
             | Effect::Reflection { boundary }
             | Effect::TypeLayout { boundary }
@@ -8077,6 +8118,7 @@ impl Effect {
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
             | Effect::ArrayRepeat { boundary }
+            | Effect::LiteralDomain { boundary, .. }
             | Effect::LiteralPanic { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
@@ -13277,8 +13319,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     }
     iterators.retain(|name| !interior_mut.contains(name));
     let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
-    let mut alias_deref_mutated = BTreeSet::<String>::new();
-    collect_alias_deref_mutated(stmts, &mut_locals, &mut alias_deref_mutated);
+    let alias_deref_mutated = BTreeSet::<String>::new();
     let mut temporally_unstable = BTreeSet::<String>::new();
     collect_loop_counter_stale_reads(stmts, &mut_locals, &mut temporally_unstable);
     // Broader temporal-instability scan (loop/closure-body mutation), feeding the SAME
@@ -14963,13 +15004,7 @@ fn deterministic_assignment_name(expr: &Expr) -> Option<String> {
 fn ambiguous_boundary_names_in_stmt(stmt: &Stmt) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     match stmt {
-        Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                collect_reference_alias_names_in_expr(&init.expr, &mut out);
-            }
-        }
         Stmt::Expr(expr, _) => {
-            collect_reference_alias_names_in_expr(expr, &mut out);
             collect_ambiguous_control_flow_names_in_expr(expr, &mut out);
         }
         _ => {}
@@ -15051,11 +15086,7 @@ fn collect_ambiguous_names_in_expr(expr: &Expr, out: &mut BTreeSet<String>) {
 fn collect_reference_alias_names_in_expr(expr: &Expr, out: &mut BTreeSet<String>) {
     match expr {
         Expr::Reference(reference) => {
-            if let Some(name) = simple_path_name(&reference.expr) {
-                out.insert(name);
-            } else {
-                collect_reference_alias_names_in_expr(&reference.expr, out);
-            }
+            collect_reference_alias_names_in_expr(&reference.expr, out);
         }
         Expr::MethodCall(call) => {
             collect_reference_alias_names_in_expr(&call.receiver, out);
@@ -15100,27 +15131,7 @@ fn collect_reference_alias_names_in_expr(expr: &Expr, out: &mut BTreeSet<String>
         }
         Expr::Paren(paren) => collect_reference_alias_names_in_expr(&paren.expr, out),
         Expr::Group(group) => collect_reference_alias_names_in_expr(&group.expr, out),
-        // `addr_of_mut!(x)` and `addr_of!(x)` take a raw pointer to `x`
-        // without going through an `Expr::Reference` node. A raw pointer
-        // alias means `x` may be mutated via the pointer later (e.g. by
-        // `ptr::swap`) without any syntactic assignment to `x`. Treat the
-        // argument as an alias-introduced name so the temporal tracker marks
-        // it ambiguous after this statement, preventing pre/post observations
-        // from being coalesced into a false contradiction.
-        Expr::Macro(m) => {
-            let macro_name = m.mac.path.segments.last().map(|s| s.ident.to_string());
-            if matches!(macro_name.as_deref(), Some("addr_of_mut") | Some("addr_of")) {
-                // The token stream of `addr_of_mut!(x)` is just the identifier `x`.
-                // Parse it as a simple path/ident to extract the name.
-                if let Ok(ident) = syn::parse2::<syn::Ident>(m.mac.tokens.clone()) {
-                    out.insert(ident.to_string());
-                } else if let Ok(path) = syn::parse2::<syn::Path>(m.mac.tokens.clone()) {
-                    if let Some(name) = path.get_ident() {
-                        out.insert(name.to_string());
-                    }
-                }
-            }
-        }
+        Expr::Macro(_) => {}
         _ => {}
     }
 }
@@ -23204,47 +23215,68 @@ mod lifter_key_tests {
         );
     }
 
-    // ── Fix C: addr_of_mut! marks variable ambiguous ──────────────────────────
+    // ── Fix C: raw pointer capability dirties only when used ──────────────────
     //
-    // `addr_of_mut!(x)` creates a raw pointer alias to `x`. Any subsequent
-    // mutation through that pointer (e.g. `ptr::swap`) changes `x` without a
-    // visible assignment. The variable must be marked ambiguous so pre/post
-    // assertions don't coalesce.
+    // `addr_of_mut!(x)` creates a write-capable handle to `x`; the handle's
+    // construction is not itself a mutation. The later deref assignment is what
+    // delegates through the handle and dirties `x`, so dead/vendor-noise handles
+    // must not erase literal facts.
 
     #[test]
-    fn addr_of_mut_marks_local_ambiguous() {
-        // After `addr_of_mut!(y)`, `y` must be ambiguous — assertions about
-        // `y` before and after must NOT coalesce under the same contract.
+    fn dead_addr_of_mut_does_not_dirty_literal_mut_local() {
         let src = r#"
             #[test]
-            fn swap_test() {
-                let mut x = 5u8;
+            fn dead_alias() {
                 let mut y = 6u8;
                 let _p = addr_of_mut!(y);
-                assert_eq!(x, 5);
                 assert_eq!(y, 6);
-                assert_eq!(y, 5);
             }
         "#;
         let out = lift_src(src);
-        // y's ambiguity should cause its assertions to be dropped (skip) or
-        // separated, not conjoined into a single obligation with contradictory values.
-        // Key check: no assertion `y == 6 && y == 5` in any single contract inv.
-        // We verify by checking that the lifter does not produce a contract
-        // whose name resolves to the plain Var `y` (it would be ambiguous/dropped).
-        let names = contract_names(&out);
-        // The presence of a skip reason about y's ambiguity is the expected outcome.
-        let y_ambiguous = out
-            .skip_reasons
-            .iter()
-            .any(|r| r.contains("ambiguous") && r.contains("y"))
-            || !names
-                .iter()
-                .any(|n| n.ends_with("::assertion") && n.contains("y"));
         assert!(
-            y_ambiguous || out.skip_reasons.iter().any(|r| r.contains("y")),
-            "expected y to be ambiguous/dropped after addr_of_mut!, contracts: {names:?}, skips: {:?}",
-            out.skip_reasons
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity") && r.contains("y")),
+            "dead addr_of_mut! must not dirty y; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+        assert!(
+            out.assertions_lifted >= 1,
+            "`let mut y = 6; addr_of_mut!(y); assert_eq!(y, 6)` remains literal; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+    }
+
+    #[test]
+    fn dead_references_do_not_dirty_literal_mut_local() {
+        let src = r#"
+            #[test]
+            fn dead_refs() {
+                let mut y = 6u8;
+                let _shared = &y;
+                {
+                    let _mutable = &mut y;
+                }
+                let _raw = &raw mut y;
+                assert_eq!(y, 6);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity") && r.contains("y")),
+            "dead reference/raw-address construction must not dirty y; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+        assert!(
+            out.assertions_lifted >= 1,
+            "dead reference/raw-address construction preserves the literal y fact; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
         );
     }
 
@@ -23287,6 +23319,118 @@ mod lifter_key_tests {
         assert!(
             !s_asserts_conjoined,
             "s must not appear as a bare EUF key after closure mutation"
+        );
+    }
+
+    #[test]
+    fn raw_pointer_deref_assignment_dirties_referent() {
+        let src = r#"
+            #[test]
+            fn raw_write() {
+                let mut r = 0;
+                let p = addr_of_mut!(r);
+                unsafe {
+                    *p = 1;
+                }
+                assert_eq!(r, 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity") && r.contains("r")),
+            "literal delegated `*p = 1` assignment should replay r, not refuse; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+        assert!(
+            out.assertions_lifted >= 1,
+            "literal delegated `*p = 1` assignment should lift the post-write r fact; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+    }
+
+    #[test]
+    fn mutable_reference_assignment_replays_referent() {
+        let src = r#"
+            #[test]
+            fn ref_write() {
+                let mut r = 0;
+                {
+                    let p = &mut r;
+                    *p = 1;
+                }
+                assert_eq!(r, 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity") && r.contains("r")),
+            "literal delegated `*p = 1` through &mut should replay r, not refuse; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+        assert!(
+            out.assertions_lifted >= 1,
+            "literal delegated &mut assignment should lift the post-write r fact; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+    }
+
+    #[test]
+    fn nonliteral_assignment_through_mut_capability_refuses_referent() {
+        let src = r#"
+            #[test]
+            fn runtime_raw_write() {
+                let mut r = 0;
+                let p = addr_of_mut!(r);
+                unsafe {
+                    *p = std::env::args().count();
+                }
+                assert_eq!(r, 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity") && r.contains("r")),
+            "nonliteral delegated assignment through raw capability should refuse r by name; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+    }
+
+    #[test]
+    fn contradictory_reads_without_raw_write_still_coalesce() {
+        let src = r#"
+            #[test]
+            fn dead_alias_contradiction() {
+                let mut y = 6u8;
+                let _p = addr_of_mut!(y);
+                assert_eq!(y, 6);
+                assert_eq!(y, 5);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous") && r.contains("y")),
+            "dead addr_of_mut! must not mask contradictory literal facts; skips: {:?}; decls: {:?}",
+            out.skip_reasons,
+            out.decls
+        );
+        let names = contract_names(&out);
+        assert!(
+            names.iter().any(|n| n.contains("assertion")) || out.assertions_lifted > 0,
+            "expected y assertions to remain in the literal/equality floor, not disappear; contracts: {names:?}; skips: {:?}",
+            out.skip_reasons
         );
     }
 

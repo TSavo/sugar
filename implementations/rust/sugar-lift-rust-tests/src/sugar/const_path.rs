@@ -7,14 +7,13 @@
 use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{
-    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
-    TermFloor,
-};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 
 use sugar_ir_symbolic::Term;
 
-use crate::{const_path_key, num, str_const, u128_term, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_path_key, num, str_const, token_key, u128_term, Desugared, Outcome, Sugar, SugarCtx,
+};
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
@@ -25,8 +24,8 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite("const_composite", recognize_composite);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if primitive_assoc_const_expr(expr).is_some() {
-        return Some(ConstSugar::new_primitive(expr.clone()));
+    if let Some(term) = primitive_assoc_const_term(expr) {
+        return Some(ConstSugar::new_primitive(token_key(expr), term));
     }
     let (name, path) = simple_const_path(expr)?;
     if fcx.resolving_const_path(&name) {
@@ -180,7 +179,8 @@ struct PrimitiveAssocConst {
 
 pub(crate) enum ConstSugar {
     Primitive {
-        expr: Expr,
+        path: String,
+        term: Rc<Term>,
     },
     Path {
         name: String,
@@ -194,8 +194,8 @@ pub(crate) struct ConstCompositeSugar {
 }
 
 impl ConstSugar {
-    fn new_primitive(expr: Expr) -> Box<dyn Sugar> {
-        Box::new(Self::Primitive { expr })
+    fn new_primitive(path: String, term: Rc<Term>) -> Box<dyn Sugar> {
+        Box::new(Self::Primitive { path, term })
     }
 
     fn new_path(name: String, body: SugarBody<TermFloor>) -> Box<dyn Sugar> {
@@ -237,22 +237,16 @@ enum ConstBody {
 }
 
 impl Sugar for ConstSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
-            ConstSugar::Primitive { expr } => {
-                let Some(value) = primitive_assoc_const_term(expr) else {
-                    return Err(FactoryGap::new(format!(
-                        "primitive associated const `{}` recognized but did not reduce",
-                        crate::token_key(expr)
-                    )));
-                };
+            ConstSugar::Primitive { path, term } => {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::const_path",
-                    path = %crate::token_key(expr),
-                    term = ?value,
+                    path = path.as_str(),
+                    term = ?term,
                     "resolved primitive associated const compiler axiom"
                 );
-                Ok(Outcome::Complete(Desugared::Term(value)))
+                Outcome::Complete(Desugared::Term(Rc::clone(term)))
             }
             ConstSugar::Path { name, body } => {
                 debug!(
@@ -264,23 +258,15 @@ impl Sugar for ConstSugar {
             }
         }
     }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
 }
 
 impl Sugar for ConstCompositeSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         debug!(
             target: "sugar_lift_rust_tests::sugar::const_path",
             path = self.name.as_str(),
             "reducing factory-constructed const composite body"
         );
         self.body.reduce(ctx)
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }

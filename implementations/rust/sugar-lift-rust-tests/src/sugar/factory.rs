@@ -202,6 +202,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     expected_type: Option<String>,
     bound_path_stack: Vec<String>,
     const_path_stack: Vec<String>,
+    macro_depth: usize,
 }
 
 impl<'a, 'e> SugarBuildCtx<'a, 'e> {
@@ -217,6 +218,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             expected_type: None,
             bound_path_stack: Vec::new(),
             const_path_stack: Vec::new(),
+            macro_depth: 0,
         }
     }
 
@@ -244,6 +246,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             expected_type,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
+            macro_depth: self.macro_depth,
         }
     }
 
@@ -261,6 +264,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             expected_type: self.expected_type.clone(),
             bound_path_stack,
             const_path_stack: self.const_path_stack.clone(),
+            macro_depth: self.macro_depth,
         }
     }
 
@@ -278,6 +282,23 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             expected_type: self.expected_type.clone(),
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack,
+            macro_depth: self.macro_depth,
+        }
+    }
+
+    pub(crate) fn macro_depth(&self) -> usize {
+        self.macro_depth
+    }
+
+    pub(crate) fn with_macro_depth(&self, macro_depth: usize) -> Self {
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack: self.const_path_stack.clone(),
+            macro_depth,
         }
     }
 }

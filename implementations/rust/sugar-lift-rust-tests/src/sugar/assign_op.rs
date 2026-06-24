@@ -15,29 +15,43 @@ use syn::{BinOp, Expr, Lit, Pat, RangeLimits, Stmt, UnOp};
 use tracing::{debug, trace};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
-    const_int, parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups, token_key,
-    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    const_fold_int_term, const_int, num, parse_int_lit, parse_macro_args, simple_path_name,
+    strip_refs_groups, token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("temporal_assign_op", SugarRole::Constraint, recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let action = TemporalRewriteAction::from_expr(expr, fcx)?;
     fcx.scope()
-        .temporal_rewrite_can_apply(expr)
-        .then(|| Box::new(AssignOpSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+        .temporal_rewrite_can_apply_action(&action)
+        .then(|| {
+            Box::new(AssignOpSugar {
+                action,
+                site: token_key(expr),
+            }) as Box<dyn Sugar>
+        })
 }
 
 struct AssignOpSugar {
-    expr: Expr,
+    action: TemporalRewriteAction,
+    site: String,
 }
 
 impl Sugar for AssignOpSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if !ctx.scope.apply_temporal_rewrite(&self.expr) {
-            return Outcome::from_opt(None);
+        let applied = match self.action.apply(ctx) {
+            Ok(applied) => applied,
+            Err(effect) => return Outcome::Incomplete(effect),
+        };
+        if !applied {
+            panic!(
+                "temporal assignment action `{}` was accepted at construction but did not apply",
+                self.site
+            );
         }
         Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_term(true), bool_term(true)),
@@ -47,16 +61,107 @@ impl Sugar for AssignOpSugar {
                 name: Some(format!(
                     "{}::temporal-rewrite::{}",
                     ctx.scope.local_scope(),
-                    token_key(&self.expr)
+                    self.site
                 )),
             },
         })
     }
 }
 
+pub(crate) enum TemporalRewriteAction {
+    Assign {
+        lhs: Expr,
+        rhs: SugarBody<TermFloor>,
+    },
+    CompoundAssign {
+        lhs: Expr,
+        rhs: SugarBody<TermFloor>,
+        op: BinOpKind,
+    },
+}
+
+impl TemporalRewriteAction {
+    pub(crate) fn from_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+        match strip_refs_groups(expr) {
+            Expr::Assign(assign) => Some(Self::Assign {
+                lhs: assign.left.as_ref().clone(),
+                rhs: SugarBody::term(&assign.right, fcx),
+            }),
+            Expr::Binary(binary) => Some(Self::CompoundAssign {
+                lhs: binary.left.as_ref().clone(),
+                rhs: SugarBody::term(&binary.right, fcx),
+                op: assignment_op(&binary.op)?,
+            }),
+            _ => None,
+        }
+    }
+
+    fn target_lhs(&self) -> &Expr {
+        match self {
+            Self::Assign { lhs, .. } | Self::CompoundAssign { lhs, .. } => lhs,
+        }
+    }
+
+    fn apply(&self, ctx: &SugarCtx) -> Result<bool, crate::Effect> {
+        let term = match self {
+            Self::Assign { rhs, .. } | Self::CompoundAssign { rhs, .. } => {
+                reduce_rhs_term(rhs, ctx)?
+            }
+        };
+        let applied = match self {
+            Self::Assign { lhs, .. } => ctx.scope.apply_temporal_rewrite_assign_term(lhs, term),
+            Self::CompoundAssign { lhs, op, .. } => ctx
+                .scope
+                .apply_temporal_rewrite_compound_term(lhs, *op, term),
+        };
+        Ok(applied)
+    }
+}
+
+fn reduce_rhs_term(rhs: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, crate::Effect> {
+    match rhs.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("temporal assignment RHS completed as non-term"))),
+        Outcome::Incomplete(effect) => Err(effect),
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ExprTemporalRewriteAction {
+    Assign { lhs: Expr, rhs: Expr },
+    CompoundAssign(syn::ExprBinary),
+}
+
+impl ExprTemporalRewriteAction {
+    fn from_expr(expr: &Expr) -> Option<Self> {
+        match strip_refs_groups(expr) {
+            Expr::Assign(assign) => Some(Self::Assign {
+                lhs: assign.left.as_ref().clone(),
+                rhs: assign.right.as_ref().clone(),
+            }),
+            Expr::Binary(binary) if assignment_op(&binary.op).is_some() => {
+                Some(Self::CompoundAssign(binary.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    fn apply(&self, state: &mut TemporalRewriteState, emit_trace: bool) -> bool {
+        match self {
+            Self::Assign { lhs, rhs } => {
+                state.apply_refcell_borrow_mut_assign(lhs, rhs, emit_trace)
+                    || state.apply_assign(lhs, rhs, emit_trace)
+            }
+            Self::CompoundAssign(binary) => state.apply_compound_assign(binary, emit_trace),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TemporalRewriteState {
     values: BTreeMap<String, Expr>,
+    term_values: BTreeMap<String, Rc<Term>>,
     aliases: BTreeMap<String, RewritePlace>,
     cell_values: BTreeMap<String, CellState>,
     unknown_consumed_iterators: BTreeMap<String, String>,
@@ -158,6 +263,19 @@ impl TemporalRewriteState {
         }
     }
 
+    pub(crate) fn term_for(&self, name: &str) -> Option<Rc<Term>> {
+        if self.unknown_consumed_iterators.contains_key(name)
+            || self.unknown_mutations.contains_key(name)
+        {
+            return None;
+        }
+        if let Some(term) = self.term_values.get(name) {
+            return Some(Rc::clone(term));
+        }
+        let expr = self.expr_for(name)?;
+        expr_term_floor(&expr, self)
+    }
+
     pub(crate) fn expr_for_index(&self, name: &str, index: usize) -> Option<Expr> {
         if self.unknown_consumed_iterators.contains_key(name)
             || self.unknown_mutations.contains_key(name)
@@ -228,11 +346,11 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn exact_loop_replayed(&self, name: &str) -> bool {
-        self.loop_replayed.contains(name) && self.expr_for(name).is_some()
+        self.loop_replayed.contains(name) && self.term_for(name).is_some()
     }
 
     pub(crate) fn mark_loop_replayed(&mut self, name: &str) {
-        if self.expr_for(name).is_some() {
+        if self.term_for(name).is_some() {
             self.loop_replayed.insert(name.to_string());
         }
     }
@@ -241,13 +359,24 @@ impl TemporalRewriteState {
         self.loop_replayed.remove(name);
     }
 
+    fn clear_value(&mut self, name: &str) {
+        self.values.remove(name);
+        self.term_values.remove(name);
+    }
+
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
-        let mut scratch = self.clone();
-        scratch.apply_with_trace(expr, false)
+        ExprTemporalRewriteAction::from_expr(expr).is_some_and(|action| {
+            let mut scratch = self.clone();
+            action.apply(&mut scratch, false)
+        })
     }
 
     pub(crate) fn apply(&mut self, expr: &Expr) -> bool {
-        self.apply_with_trace(expr, true)
+        ExprTemporalRewriteAction::from_expr(expr).is_some_and(|action| action.apply(self, true))
+    }
+
+    pub(crate) fn can_apply_action(&self, action: &TemporalRewriteAction) -> bool {
+        self.target_for_lhs(action.target_lhs()).is_some()
     }
 
     pub(crate) fn expr_bindings(&self) -> BTreeMap<String, Expr> {
@@ -266,6 +395,17 @@ impl TemporalRewriteState {
             }
         }
         out
+    }
+
+    pub(crate) fn term_bindings(&self) -> BTreeMap<String, Rc<Term>> {
+        self.term_values
+            .iter()
+            .filter(|(name, _)| {
+                !self.unknown_consumed_iterators.contains_key(*name)
+                    && !self.unknown_mutations.contains_key(*name)
+            })
+            .map(|(name, term)| (name.clone(), Rc::clone(term)))
+            .collect()
     }
 
     pub(crate) fn apply_statement(&mut self, stmt: &Stmt) -> bool {
@@ -373,6 +513,9 @@ impl TemporalRewriteState {
                     applied |= self.apply_consumption_expr(arg);
                     let site = token_key(&call.func);
                     for name in mut_reference_targets(arg) {
+                        applied |= self.invalidate_opaque_mut_borrow_call(&name, &site);
+                    }
+                    if let Some(name) = self.alias_capability_base(arg) {
                         applied |= self.invalidate_opaque_mut_borrow_call(&name, &site);
                     }
                 }
@@ -571,7 +714,7 @@ impl TemporalRewriteState {
                  the loop was not exactly replayable from source literals, so there \
                  is no single timeless value to read at the assertion; refused"
             );
-            self.values.remove(name);
+            self.clear_value(name);
             self.aliases.remove(name);
             self.unknown_consumed_iterators.remove(name);
             self.rewritten_bases.remove(name);
@@ -608,13 +751,14 @@ impl TemporalRewriteState {
             from_back = matches!(direction, IteratorConsumptionDirection::Back),
             "temporal rewrite advanced iterator receiver"
         );
+        self.term_values.remove(name);
         self.values.insert(name.to_string(), updated);
         self.unknown_consumed_iterators.remove(name);
         true
     }
 
     fn invalidate_iterator_binding(&mut self, name: &str, method: &str) -> bool {
-        self.values.remove(name);
+        self.clear_value(name);
         self.aliases.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
@@ -638,6 +782,7 @@ impl TemporalRewriteState {
             return false;
         }
         let exhausted: Expr = syn::parse_quote!([].iter());
+        self.term_values.remove(name);
         self.values.insert(name.to_string(), exhausted);
         self.exhausted_iterators.insert(name.to_string());
         self.aliases.remove(name);
@@ -660,7 +805,7 @@ impl TemporalRewriteState {
              `{site}`: the call may write through `&mut`, so there is no single \
              timeless value to read at the assertion; refused"
         );
-        self.values.remove(name);
+        self.clear_value(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
@@ -684,7 +829,7 @@ impl TemporalRewriteState {
              literal temporal rewrite, so there is no single timeless value to read \
              at the assertion; refused"
         );
-        self.values.remove(name);
+        self.clear_value(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
@@ -707,7 +852,7 @@ impl TemporalRewriteState {
              the method may write receiver state outside the literal temporal rewrite, \
              so there is no single timeless value to read at the assertion; refused"
         );
-        self.values.remove(name);
+        self.clear_value(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
@@ -750,7 +895,7 @@ impl TemporalRewriteState {
         if let Some(base) =
             mut_reference_target(&init.expr).filter(|base| self.values.contains_key(base))
         {
-            self.values.remove(&name);
+            self.clear_value(&name);
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
                 binding = name.as_str(),
@@ -765,6 +910,7 @@ impl TemporalRewriteState {
         {
             self.invalidate_cell(&base);
             self.cell_values.remove(&name);
+            self.term_values.remove(&name);
             return;
         }
 
@@ -781,6 +927,7 @@ impl TemporalRewriteState {
                 value = value_label.as_str(),
                 "temporal rewrite captured interior-mutable literal cell"
             );
+            self.term_values.remove(&name);
             self.cell_values.insert(
                 name,
                 CellState {
@@ -811,6 +958,7 @@ impl TemporalRewriteState {
                     value = %token_key(&v),
                     "temporal rewrite captured literal-backed local"
                 );
+                self.term_values.remove(&name);
                 self.values.insert(name, v);
             } else {
                 trace!(
@@ -819,7 +967,7 @@ impl TemporalRewriteState {
                     init = %token_key(&init.expr),
                     "temporal rewrite declined self-referential local"
                 );
-                self.values.remove(&name);
+                self.clear_value(&name);
             }
         } else {
             trace!(
@@ -828,7 +976,7 @@ impl TemporalRewriteState {
                 init = %token_key(&init.expr),
                 "temporal rewrite declined local"
             );
-            self.values.remove(&name);
+            self.clear_value(&name);
         }
     }
 
@@ -840,6 +988,7 @@ impl TemporalRewriteState {
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
         self.exhausted_iterators.remove(name);
+        self.term_values.remove(name);
         self.values.insert(name.to_string(), value);
     }
 
@@ -945,7 +1094,7 @@ impl TemporalRewriteState {
                     len,
                 },
             };
-            self.values.remove(&binding);
+            self.clear_value(&binding);
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
                 binding = binding.as_str(),
@@ -963,7 +1112,7 @@ impl TemporalRewriteState {
             return false;
         };
         let Some(value) = self.trackable_value(rhs) else {
-            return false;
+            return self.invalidate_unknown_assignment(&target, lhs, rhs);
         };
         let target_label = target_label(&target);
         let value_label = token_key(&value);
@@ -981,6 +1130,29 @@ impl TemporalRewriteState {
         applied
     }
 
+    pub(crate) fn apply_assign_term(&mut self, lhs: &Expr, term: Rc<Term>) -> bool {
+        let Some(target) = self.target_for_lhs(lhs) else {
+            return false;
+        };
+        self.set_target_term(target, term)
+    }
+
+    pub(crate) fn apply_compound_assign_term(
+        &mut self,
+        lhs: &Expr,
+        op: BinOpKind,
+        rhs: Rc<Term>,
+    ) -> bool {
+        let Some(target) = self.target_for_lhs(lhs) else {
+            return false;
+        };
+        let Some(old) = self.target_term(&target) else {
+            return false;
+        };
+        let updated = compose_assignment_term(op, old, rhs);
+        self.set_target_term(target, updated)
+    }
+
     fn apply_compound_assign(&mut self, binary: &syn::ExprBinary, emit_trace: bool) -> bool {
         let Some(op) = assignment_op(&binary.op) else {
             return false;
@@ -989,16 +1161,16 @@ impl TemporalRewriteState {
             return false;
         };
         let Some(old) = self.target_expr(&target) else {
-            return false;
+            return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let Some(old_value) = self.int_value(&old) else {
-            return false;
+            return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let Some(rhs_value) = self.int_value(&binary.right) else {
-            return false;
+            return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let Some(updated) = apply_int_op(op, old_value, rhs_value).and_then(int_expr) else {
-            return false;
+            return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let target_label = target_label(&target);
         let updated_label = token_key(&updated);
@@ -1023,7 +1195,7 @@ impl TemporalRewriteState {
         match strip_refs_groups(lhs) {
             Expr::Path(_) => {
                 let name = simple_path_name(lhs)?;
-                if self.values.contains_key(&name) {
+                if self.has_current_value(&name) {
                     return Some(Target::Scalar(name));
                 }
                 match self.aliases.get(&name)? {
@@ -1079,10 +1251,44 @@ impl TemporalRewriteState {
         }
     }
 
+    fn has_current_value(&self, name: &str) -> bool {
+        self.values.contains_key(name) || self.term_values.contains_key(name)
+    }
+
+    fn alias_capability_base(&self, expr: &Expr) -> Option<String> {
+        let name = simple_path_name(expr)?;
+        match self.aliases.get(&name)? {
+            RewritePlace::Scalar(base)
+            | RewritePlace::Element { base, .. }
+            | RewritePlace::Slice { base, .. } => Some(base.clone()),
+        }
+    }
+
+    fn invalidate_unknown_assignment(&mut self, target: &Target, lhs: &Expr, rhs: &Expr) -> bool {
+        let base = target_base(target);
+        let reason = format!(
+            "ambiguous temporal identity for `{base}` after assignment through mutable \
+             capability `{}`: RHS `{}` is not literal-determined, so there is no single \
+             timeless value to read at the assertion; refused",
+            token_key(lhs),
+            token_key(rhs)
+        );
+        self.clear_value(&base);
+        self.aliases.remove(&base);
+        self.unknown_consumed_iterators.remove(&base);
+        self.rewritten_bases.remove(&base);
+        self.loop_replayed.remove(&base);
+        self.exhausted_iterators.remove(&base);
+        self.poison_cell(&base, reason.clone());
+        self.unknown_mutations.insert(base, reason);
+        true
+    }
+
     fn set_target(&mut self, target: Target, value: Expr) -> bool {
         match target {
             Target::Scalar(name) => {
                 if self.trackable_value(&value).is_some() {
+                    self.term_values.remove(&name);
                     self.values.insert(name, value);
                     true
                 } else {
@@ -1094,6 +1300,27 @@ impl TemporalRewriteState {
                 index,
                 replayable_alias,
             } => self.set_aggregate_element(&base, index, value, replayable_alias),
+        }
+    }
+
+    fn set_target_term(&mut self, target: Target, term: Rc<Term>) -> bool {
+        match target {
+            Target::Scalar(name) => {
+                self.values.remove(&name);
+                self.term_values.insert(name, term);
+                true
+            }
+            Target::Element { .. } => false,
+        }
+    }
+
+    fn target_term(&self, target: &Target) -> Option<Rc<Term>> {
+        match target {
+            Target::Scalar(name) => self.term_for(name),
+            Target::Element { base, index, .. } => {
+                let expr = self.aggregate_element(base, *index)?;
+                expr_term_floor(&expr, self)
+            }
         }
     }
 
@@ -1876,8 +2103,15 @@ fn target_label(target: &Target) -> String {
     }
 }
 
+fn target_base(target: &Target) -> String {
+    match target {
+        Target::Scalar(name) => name.clone(),
+        Target::Element { base, .. } => base.clone(),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-enum BinOpKind {
+pub(crate) enum BinOpKind {
     Add,
     Sub,
     Mul,
@@ -1924,6 +2158,33 @@ fn apply_int_op(kind: BinOpKind, left: i128, right: i128) -> Option<i128> {
             .ok()
             .and_then(|rhs| left.checked_shr(rhs)),
         BinOpKind::Div | BinOpKind::Rem => None,
+    }
+}
+
+fn compose_assignment_term(kind: BinOpKind, left: Rc<Term>, right: Rc<Term>) -> Rc<Term> {
+    let term = Rc::new(Term::Ctor {
+        name: binop_kind_term_name(kind).to_string(),
+        args: vec![left, right],
+    });
+    const_fold_int_term(&term).map(num).unwrap_or(term)
+}
+
+fn expr_term_floor(expr: &Expr, state: &TemporalRewriteState) -> Option<Rc<Term>> {
+    state.int_value(expr).map(num)
+}
+
+fn binop_kind_term_name(kind: BinOpKind) -> &'static str {
+    match kind {
+        BinOpKind::Add => "+",
+        BinOpKind::Sub => "-",
+        BinOpKind::Mul => "*",
+        BinOpKind::Div => "int-div",
+        BinOpKind::Rem => "int-rem",
+        BinOpKind::BitAnd => "bit-and",
+        BinOpKind::BitOr => "bit-or",
+        BinOpKind::BitXor => "bit-xor",
+        BinOpKind::Shl => "shift-left",
+        BinOpKind::Shr => "shift-right",
     }
 }
 
@@ -2010,6 +2271,11 @@ fn mut_reference_target(expr: &Expr) -> Option<String> {
     match strip_refs_groups(expr) {
         Expr::Reference(reference) if reference.mutability.is_some() => {
             simple_path_name(&reference.expr)
+        }
+        Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "addr_of_mut") => {
+            syn::parse2::<syn::Path>(expr_macro.mac.tokens.clone())
+                .ok()
+                .and_then(|path| path.get_ident().map(ToString::to_string))
         }
         _ => None,
     }

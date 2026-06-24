@@ -155,6 +155,15 @@ fn construct_term_body(
     fcx: &SugarBuildCtx,
     child_fcx: &SugarBuildCtx,
 ) -> Option<SugarBody<TermFloor>> {
+    if let Some(term) = fcx.scope().temporal_rewrite_term_for(name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            role = "Term",
+            "factory constructed bound path temporal term body"
+        );
+        return Some(SugarBody::from_node(resolved_term(term)));
+    }
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Term) {
         return Some(SugarBody::term(&current, child_fcx));
     }
