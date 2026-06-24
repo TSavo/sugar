@@ -97,7 +97,11 @@ fn build_macro_assertion_surface(
     ))
 }
 
-fn collect_assertion_surfaces_from_stmts(stmts: &[Stmt], fcx: &SugarBuildCtx, out: &mut Vec<Expr>) {
+pub(crate) fn collect_assertion_surfaces_from_stmts(
+    stmts: &[Stmt],
+    fcx: &SugarBuildCtx,
+    out: &mut Vec<Expr>,
+) {
     for stmt in stmts {
         match stmt {
             Stmt::Macro(stmt_macro) => {

@@ -8005,6 +8005,11 @@ enum Effect {
     /// non-ASCII string depends on Unicode case mapping tables. ASCII receivers complete
     /// through the literal string floor; the version-sensitive frontier is the named stop.
     UnicodeStringCase { boundary: String },
+    /// CONFIGURATION: a cfg predicate selected source by target configuration, but this
+    /// lift does not have enough pinned target facts to decide which branch exists. Active
+    /// and inactive cfg arms complete; only genuinely ambiguous target configuration reaches
+    /// this boundary.
+    Configuration { boundary: String, reason: String },
 }
 
 impl Effect {
@@ -8115,6 +8120,7 @@ impl Effect {
                 "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
                     .to_string()
             }
+            Effect::Configuration { reason, .. } => reason.clone(),
         }
     }
 
@@ -8148,7 +8154,8 @@ impl Effect {
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }
-            | Effect::UnicodeStringCase { boundary } => boundary.clone(),
+            | Effect::UnicodeStringCase { boundary }
+            | Effect::Configuration { boundary, .. } => boundary.clone(),
         };
         SourceMemento { boundary }
     }
