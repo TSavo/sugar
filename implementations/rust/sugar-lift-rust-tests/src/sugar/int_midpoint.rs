@@ -16,7 +16,7 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind, IntKind, MidpointVisitor,
 };
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::{canonical_term_sig, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("int_midpoint", &["call"], recognize);
@@ -69,15 +69,13 @@ impl Sugar for IntMidpointSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let Some(lhs_floor) = numeric_floor_from_term(&lhs) else {
-            panic!(
-                "int midpoint lhs completed without a numeric floor; write the owning Sugar before Outcome"
-            );
+        let lhs_floor = match numeric_floor_from_term(&lhs) {
+            Some(floor) => floor,
+            None => return runtime_midpoint_operand(&lhs, self.kind),
         };
-        let Some(rhs_floor) = numeric_floor_from_term(&rhs) else {
-            panic!(
-                "int midpoint rhs completed without a numeric floor; write the owning Sugar before Outcome"
-            );
+        let rhs_floor = match numeric_floor_from_term(&rhs) {
+            Some(floor) => floor,
+            None => return runtime_midpoint_operand(&rhs, self.kind),
         };
         let Some(result) = lhs_floor.accept(MidpointVisitor {
             rhs: rhs_floor,
@@ -100,6 +98,14 @@ impl Sugar for IntMidpointSugar {
         );
         Outcome::Complete(Desugared::Term(term))
     }
+}
+
+fn runtime_midpoint_operand(term: &Rc<Term>, kind: IntKind) -> Outcome {
+    Outcome::Incomplete(Effect::RuntimeNumericOperand {
+        boundary: canonical_term_sig(term),
+        operation: "midpoint".to_string(),
+        kind: kind.name.to_string(),
+    })
 }
 
 fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {

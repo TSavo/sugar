@@ -8411,7 +8411,18 @@ impl Effect {
             Effect::UndefinedBehavior { reason, .. } => reason.clone(),
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
-            } => format!("runtime {kind} {operation} operand, not literal-determined"),
+            } => {
+                let descriptor = [kind.as_str(), operation.as_str()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if descriptor.is_empty() {
+                    "runtime operand, not literal-determined".to_string()
+                } else {
+                    format!("runtime {descriptor} operand, not literal-determined")
+                }
+            }
             Effect::RuntimeFloatOperand { boundary, .. } => {
                 format!("runtime float operand, not literal `{boundary}`")
             }
