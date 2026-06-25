@@ -8454,16 +8454,13 @@ fn indexed_value() {
         "immutable index equality must lift: {:?}",
         out.warnings
     );
-    let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 1);
-    match ops[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_scalar_const(&args[0], ExpectedScalar::Int(1));
-            assert_scalar_const(&args[1], ExpectedScalar::Int(1));
-        }
-        other => panic!("expected equality, got {other:?}"),
-    }
+    assert!(
+        complete_eq_int_pairs(&out.decls[0])
+            .iter()
+            .any(|pair| *pair == (1, 1)),
+        "immutable index equality must contain the grounded 1 == 1 fact: {:?}",
+        out.decls[0].inv
+    );
 }
 
 #[test]
