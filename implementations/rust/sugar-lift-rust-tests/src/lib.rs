@@ -9142,70 +9142,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// ctor here, while its receiver/arguments are still completed lazily through the
     /// factory so stable bindings and literal children remain canonical.
     pub(crate) fn opaque_callsite_term(&self, expr: &Expr) -> Option<Rc<Term>> {
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
-            if sugar::method_family::literal_sequence_static_len_in_scope(
-                expr, &let_inits, self.scope,
-            ) == Some(0)
-            {
-                return callsite_child_fallback_term(expr, self.scope);
-            }
-            let opaque_or_fallback = || {
-                self.opaque_callsite_term(expr)
-                    .or_else(|| callsite_child_fallback_term(expr, self.scope))
-            };
-            let reduction = {
-                let mut fw = self.float_widths.borrow_mut();
-                let child = SugarCtx {
-                    scope: self.scope,
-                    options: self.options,
-                    reducer: self.reducer,
-                    float_widths: std::cell::RefCell::new(&mut *fw),
-                    factory_audits: self.factory_audits,
-                    macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
-                };
-                sugar::factory::build_term(expr, &fcx).reduce(&child)
-            };
-            match reduction {
-                Outcome::Complete(d) => d.into_term().or_else(opaque_or_fallback),
-                Outcome::Incomplete(_) => opaque_or_fallback(),
-            }
-        };
-        match expr {
-            Expr::Call(call) => {
-                let mut args = Vec::new();
-                for arg in &call.args {
-                    args.push(dig_child(arg)?);
-                }
-                Some(Rc::new(Term::Ctor {
-                    name: format!("call:{}#panic_callsite", expr_head_key(&call.func)),
-                    args,
-                }))
-            }
-            Expr::MethodCall(call) => {
-                let mut receiver = dig_child(&call.receiver)?;
-                if is_consuming_iterator_method(&call.method.to_string()) {
-                    if let Term::Var { name } = receiver.as_ref() {
-                        if receiver_is_versioned_iterator(name, self.scope) {
-                            let occ = self.scope.bump_consuming_occurrence(name);
-                            if occ > 0 {
-                                receiver = make_var(format!("{name}@adv{occ}"));
-                            }
-                        }
-                    }
-                }
-                let mut args = vec![receiver];
-                for arg in &call.args {
-                    args.push(dig_child(arg)?);
-                }
-                Some(Rc::new(Term::Ctor {
-                    name: format!("method:{}#panic_callsite", sugar::method::method_key(call)),
-                    args,
-                }))
-            }
-            _ => None,
-        }
+        sugar::callsite::opaque_callsite_term(self, expr)
     }
 
     /// Instantiate the normal-return universe for a callsite subject.
