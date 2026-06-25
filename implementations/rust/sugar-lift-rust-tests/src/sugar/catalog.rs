@@ -27,11 +27,11 @@ use crate::sugar::{
     macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
     maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
     option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
-    range_accessor, range_construct, range_contains, range_term, raw_addr_term,
-    raw_pointer_arithmetic, reference_sequence, reference_term, regex_match, repeat_term,
-    result_predicate, result_transpose_collect, rev, runtime_iterator_source, size_hint, sizeof,
-    skip, skip_while, slice_accessor, slice_chunk_window, slice_index, slice_search,
-    statement_async_future, statement_control_flow, statement_future_handoff,
+    range_accessor, range_bounds_contains, range_construct, range_contains, range_term,
+    raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term, regex_match,
+    repeat_term, result_predicate, result_transpose_collect, rev, runtime_iterator_source,
+    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
+    slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
     statement_loop_advance, statement_nested_assertion, statement_reflection,
     statement_runtime_expr, step_by, str_method, string_add, string_predicate, struct_term, take,
     take_while, term_literal, to_string, transparent_term, try_from, try_from_fn, try_map,
@@ -150,6 +150,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &map::TERM_EXPR_SUGAR,
     &format_args::ESTIMATED_CAPACITY_EXPR_SUGAR,
     &range_accessor::EXPR_SUGAR,
+    &range_bounds_contains::EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &match_node::TERM_EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
@@ -1164,6 +1165,33 @@ mod tests {
             selected,
             Some("char_literal_method"),
             "SSA-resolved char literals keep the char-floor owner"
+        );
+    }
+
+    #[test]
+    fn range_bounds_contains_prioritizes_range_bounds_owner_before_generic_method() {
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert(
+            "r".to_string(),
+            syn::parse_str::<Expr>("(Bound::Included(1u32), Bound::Excluded(5u32))").unwrap(),
+        );
+        let expr: Expr = syn::parse_str("r.contains(&3)").unwrap();
+        let names = candidate_names_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+        assert!(
+            names.contains(&"range_bounds_contains"),
+            "RangeBounds tuple receiver should claim contains before generic method: {names:?}"
+        );
+        assert!(
+            names.contains(&"method"),
+            "generic MethodSugar still recognizes the bridge shape: {names:?}"
+        );
+
+        let selected =
+            selected_candidate_name_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+        assert_eq!(
+            selected,
+            Some("range_bounds_contains"),
+            "RangeBounds trait boundary is the verdict owner; MethodSugar is only the fallback bridge"
         );
     }
 

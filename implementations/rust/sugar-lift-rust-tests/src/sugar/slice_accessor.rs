@@ -232,6 +232,7 @@ fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool 
             bound.is_some_and(|init| {
                 !matches!(strip_refs_groups(init), Expr::Range(_))
                     && !text_receiver_shape(init, fcx, depth + 1)
+                    && slice_receiver_shape(init, fcx, depth + 1)
             }) || fcx.scope().is_temporally_unstable_read(&name)
                 || fcx.scope().unknown_mutation_reason(&name).is_some()
         }
