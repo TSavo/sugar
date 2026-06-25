@@ -275,6 +275,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     bound_path_stack: Vec<String>,
     const_path_stack: Vec<String>,
     macro_depth: usize,
+    panic_freedom_effect: Option<Effect>,
 }
 
 impl<'a, 'e> SugarBuildCtx<'a, 'e> {
@@ -291,6 +292,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             bound_path_stack: Vec::new(),
             const_path_stack: Vec::new(),
             macro_depth: 0,
+            panic_freedom_effect: None,
         }
     }
 
@@ -319,6 +321,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
         }
     }
 
@@ -337,6 +340,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             bound_path_stack,
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
         }
     }
 
@@ -355,6 +359,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack,
             macro_depth: self.macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
         }
     }
 
@@ -371,6 +376,24 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
+        }
+    }
+
+    pub(crate) fn panic_freedom_effect(&self) -> Option<&Effect> {
+        self.panic_freedom_effect.as_ref()
+    }
+
+    pub(crate) fn with_panic_freedom_effect(&self, effect: Option<Effect>) -> Self {
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack: self.const_path_stack.clone(),
+            macro_depth: self.macro_depth,
+            panic_freedom_effect: effect,
         }
     }
 }

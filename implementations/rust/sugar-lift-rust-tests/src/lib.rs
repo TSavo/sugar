@@ -8038,7 +8038,7 @@ enum Outcome {
 /// site). The reason strings are kept BYTE-IDENTICAL to the proto strings the collector
 /// emitted before this enum existed, so `refusal_disposition` classifies them terminal and
 /// the CID is conserved.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Effect {
     /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
     /// `.push`, an assignment). The asserted value varies per iteration independently of
@@ -9541,7 +9541,8 @@ fn emit_panic_freedom_callsites_in_stmt(
     if !options.panic_freedom_enabled() {
         return;
     }
-    for expr in callsite_exprs_in_stmt(stmt, scope, options) {
+    for callsite in callsite_exprs_in_stmt(stmt, scope, options) {
+        let expr = callsite.expr;
         let key = panic_freedom_site_key(&expr);
         if !seen.insert(key) {
             continue;
@@ -9554,7 +9555,8 @@ fn emit_panic_freedom_callsites_in_stmt(
             macro_depth,
             factory_audits,
         );
-        let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+        let base_fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+        let fcx = base_fcx.with_panic_freedom_effect(callsite.effect);
         let outcome =
             sugar::factory::build_expr(&expr, &fcx, sugar::claim::SugarRole::SupportConstraint)
                 .desugar(&ctx);
@@ -9798,11 +9800,22 @@ fn panic_freedom_site_key(expr: &Expr) -> String {
     format!("{}:{}:{}", start.line, start.column, token_key(expr))
 }
 
-fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOptions) -> Vec<Expr> {
+#[derive(Clone)]
+struct PanicFreedomCallsite {
+    expr: Expr,
+    effect: Option<Effect>,
+}
+
+fn callsite_exprs_in_stmt(
+    stmt: &Stmt,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Vec<PanicFreedomCallsite> {
     let mut visitor = PanicFreedomCallsiteVisitor {
         out: Vec::new(),
         scope,
         options,
+        ambient_effect: None,
     };
     match stmt {
         Stmt::Local(local) => {
@@ -9835,12 +9848,24 @@ fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOpti
 }
 
 struct PanicFreedomCallsiteVisitor<'a> {
-    out: Vec<Expr>,
+    out: Vec<PanicFreedomCallsite>,
     scope: &'a TemporalScope,
     options: &'a LiftOptions,
+    ambient_effect: Option<Effect>,
 }
 
 impl PanicFreedomCallsiteVisitor<'_> {
+    fn push_callsite(&mut self, expr: Expr) {
+        self.out.push(PanicFreedomCallsite {
+            expr,
+            effect: self.ambient_effect.clone(),
+        });
+    }
+
+    fn push_callsite_with_effect(&mut self, expr: Expr, effect: Option<Effect>) {
+        self.out.push(PanicFreedomCallsite { expr, effect });
+    }
+
     fn visit_executed_closure_body(&mut self, body: &Expr) {
         match body {
             Expr::Block(block) => self.visit_block(&block.block),
@@ -9848,9 +9873,15 @@ impl PanicFreedomCallsiteVisitor<'_> {
         }
     }
 
+    fn visit_executed_closure_body_with_effect(&mut self, body: &Expr, effect: Effect) {
+        let previous = self.ambient_effect.replace(effect);
+        self.visit_executed_closure_body(body);
+        self.ambient_effect = previous;
+    }
+
     fn visit_macro_site(&mut self, mac: &syn::Macro, attrs: &[syn::Attribute]) {
         if is_unconditional_panic_macro(mac) {
-            self.out.push(Expr::Macro(syn::ExprMacro {
+            self.push_callsite(Expr::Macro(syn::ExprMacro {
                 attrs: attrs.to_vec(),
                 mac: mac.clone(),
             }));
@@ -9887,15 +9918,17 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         let expr = Expr::Call(call.clone());
         if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
-            self.out.push(expr);
+            self.push_callsite(expr);
         }
         syn::visit::visit_expr_call(self, call);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let expr = Expr::MethodCall(call.clone());
+        let expr_effect = panic_freedom_expr_callsite_effect(&expr);
+        let closure_effect = panic_freedom_closure_callsite_effect(call);
         if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
-            self.out.push(expr);
+            self.push_callsite_with_effect(expr, self.ambient_effect.clone().or(expr_effect));
         }
         let finite_for_each = call.method == "for_each"
             && call.args.len() == 1
@@ -9907,8 +9940,12 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
             .is_some();
         self.visit_expr(&call.receiver);
         for arg in &call.args {
-            if finite_for_each {
-                if let Expr::Closure(closure) = arg {
+            if let Expr::Closure(closure) = arg {
+                if let Some(effect) = closure_effect.clone() {
+                    self.visit_executed_closure_body_with_effect(&closure.body, effect);
+                    continue;
+                }
+                if finite_for_each {
                     self.visit_executed_closure_body(&closure.body);
                     continue;
                 }
@@ -9951,6 +9988,212 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
 
     fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
+}
+
+fn panic_freedom_expr_callsite_effect(expr: &Expr) -> Option<Effect> {
+    match expr {
+        Expr::MethodCall(call) => panic_freedom_direct_method_callsite_effect(call)
+            .or_else(|| panic_freedom_closure_callsite_effect(call))
+            .or_else(|| panic_freedom_expr_callsite_effect(&call.receiver))
+            .or_else(|| {
+                call.args
+                    .iter()
+                    .find_map(panic_freedom_expr_callsite_effect)
+            }),
+        Expr::Call(call) => panic_freedom_expr_callsite_effect(&call.func).or_else(|| {
+            call.args
+                .iter()
+                .find_map(panic_freedom_expr_callsite_effect)
+        }),
+        Expr::Paren(paren) => panic_freedom_expr_callsite_effect(&paren.expr),
+        Expr::Group(group) => panic_freedom_expr_callsite_effect(&group.expr),
+        Expr::Reference(reference) => panic_freedom_expr_callsite_effect(&reference.expr),
+        Expr::Cast(cast) => panic_freedom_expr_callsite_effect(&cast.expr),
+        Expr::Block(block) => block
+            .block
+            .stmts
+            .iter()
+            .find_map(panic_freedom_stmt_callsite_effect),
+        _ => None,
+    }
+}
+
+fn panic_freedom_direct_method_callsite_effect(call: &syn::ExprMethodCall) -> Option<Effect> {
+    let method = call.method.to_string();
+    if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
+        return Some(Effect::AmbiguousTemporalIdentity {
+            boundary: receiver.clone(),
+            reason: format!(
+                "unknown iterator consumption for `{receiver}` via `{method}`: a prior iterator \
+                 operation advanced this mutable iterator by an unknown or by_ref-adaptor \
+                 count, so there is no single timeless source value to read at the assertion; \
+                 refused"
+            ),
+        });
+    }
+    if panic_freedom_mutating_receiver_method(&method) {
+        let receiver =
+            simple_path_name(&call.receiver).unwrap_or_else(|| token_key(&call.receiver));
+        return Some(Effect::AmbiguousTemporalIdentity {
+            boundary: receiver.clone(),
+            reason: format!(
+                "temporally unstable mutating method read of `{receiver}` after `.{method}()`: \
+                 the method may write receiver state outside the literal temporal rewrite, \
+                 so there is no single timeless value to read at the assertion; refused"
+            ),
+        });
+    }
+    None
+}
+
+fn panic_freedom_iterator_consumption_receiver(call: &syn::ExprMethodCall) -> Option<String> {
+    match (call.method.to_string().as_str(), call.args.len()) {
+        ("next", 0) | ("next_back", 0) | ("nth", 1) | ("nth_back", 1) => {
+            simple_path_name(&call.receiver)
+        }
+        _ => None,
+    }
+}
+
+fn panic_freedom_mutating_receiver_method(method: &str) -> bool {
+    matches!(
+        method,
+        "set"
+            | "replace"
+            | "swap"
+            | "take"
+            | "push"
+            | "push_back"
+            | "push_front"
+            | "pop"
+            | "pop_back"
+            | "pop_front"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "retain"
+            | "resize"
+            | "reserve"
+            | "truncate"
+            | "extend"
+            | "append"
+            | "drain"
+            | "store"
+            | "fetch_add"
+            | "fetch_sub"
+            | "fetch_and"
+            | "fetch_or"
+            | "fetch_xor"
+            | "fetch_nand"
+            | "fetch_max"
+            | "fetch_min"
+            | "fetch_update"
+            | "compare_exchange"
+            | "compare_exchange_weak"
+            | "compare_and_swap"
+            | "write"
+            | "write_all"
+            | "write_str"
+            | "write_fmt"
+            | "send"
+    )
+}
+
+fn panic_freedom_stmt_callsite_effect(stmt: &Stmt) -> Option<Effect> {
+    match stmt {
+        Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .and_then(|init| panic_freedom_expr_callsite_effect(&init.expr)),
+        Stmt::Expr(expr, _) => panic_freedom_expr_callsite_effect(expr),
+        Stmt::Macro(_) | Stmt::Item(_) => None,
+    }
+}
+
+fn panic_freedom_closure_callsite_effect(call: &syn::ExprMethodCall) -> Option<Effect> {
+    let closure = call.args.iter().find_map(|arg| match arg {
+        Expr::Closure(closure) => Some(closure),
+        _ => None,
+    })?;
+    let closure_expr = Expr::Closure(closure.clone());
+    if closure_body_is_side_effecting(&closure.body)
+        || closure_constructs_drop_side_effect_value(closure)
+    {
+        return Some(Effect::Mutation {
+            boundary: token_key(&closure_expr),
+        });
+    }
+    if closure_body_calls_through_param(&closure_expr) {
+        let method = call.method.to_string();
+        let domain = for_iter_domain(iter_adaptor_base(&call.receiver));
+        return Some(Effect::RuntimeCallableElement {
+            boundary: token_key(&closure_expr),
+            reason: format!(
+                "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
+                 performs a runtime call through closure body parameter (bin-2: dynamic \
+                 callable element, not constructed from source literals); refused"
+            ),
+        });
+    }
+    None
+}
+
+fn closure_constructs_drop_side_effect_value(closure: &syn::ExprClosure) -> bool {
+    let mut param_vec = Vec::new();
+    for pat in &closure.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    let locals = closure_local_bindings(closure);
+
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        locals: &'a BTreeSet<String>,
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if side_effecting_drop_constructor_call(call)
+                && call
+                    .args
+                    .iter()
+                    .any(|arg| expr_refs_captured_name(arg, self.params, self.locals))
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures are not executed by constructing this adaptor body.
+        }
+    }
+
+    let mut scan = Scan {
+        params: &params,
+        locals: &locals,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut scan, &closure.body);
+    scan.found
+}
+
+fn side_effecting_drop_constructor_call(call: &syn::ExprCall) -> bool {
+    let Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    let segments = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    let [.., ty, ctor] = segments.as_slice() else {
+        return false;
+    };
+    matches!(ctor.as_str(), "new" | "from" | "new_in") && ty.contains("Drop")
 }
 
 fn assert_eq_const_safe_macro_operands(mac: &syn::Macro) -> Option<(Expr, Expr)> {
@@ -19415,7 +19658,7 @@ fn t() {
 
         let sites = callsite_exprs_in_stmt(&stmt, &scope, &options)
             .into_iter()
-            .map(token_key)
+            .map(|callsite| token_key(callsite.expr))
             .collect::<Vec<_>>();
 
         assert!(

@@ -804,6 +804,7 @@ struct NoPanicCallSugar {
     site: String,
     kind: NoPanicKind,
     term_expr: Option<Expr>,
+    ambient_effect: Option<Effect>,
 }
 
 fn recognize_no_panic_call(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -823,6 +824,7 @@ fn recognize_no_panic_call(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn S
         site: token_key(expr),
         kind,
         term_expr,
+        ambient_effect: fcx.panic_freedom_effect().cloned(),
     }))
 }
 
@@ -830,10 +832,16 @@ impl Sugar for NoPanicCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let (normal_universe, name) = match &self.term_expr {
             Some(expr) => {
+                if let Some(effect) = &self.ambient_effect {
+                    return Outcome::Incomplete(effect.clone());
+                }
                 if is_no_panic_literal_empty_into_iter(expr)
                     || is_no_panic_empty_literal_sequence_callsite(expr, ctx)
                 {
                     return no_panic_tautology_for_site(ctx, &self.site);
+                }
+                if let Some(effect) = no_panic_callsite_effect(expr, ctx) {
+                    return Outcome::Incomplete(effect);
                 }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     constraint_gap(format!(
@@ -886,6 +894,13 @@ impl Sugar for NoPanicCallSugar {
             kind,
             warrant: Warrant { name },
         })
+    }
+}
+
+fn no_panic_callsite_effect(expr: &Expr, ctx: &SugarCtx) -> Option<Effect> {
+    match SugarBody::<TermFloor>::synthesized_term(expr, ctx).reduce(ctx) {
+        Outcome::Complete(_) => None,
+        Outcome::Incomplete(effect) => Some(effect),
     }
 }
 
