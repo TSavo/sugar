@@ -35,6 +35,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
+use sugar_ir_symbolic::{make_var, Term};
 use syn::{Expr, ImplItemFn, ItemFn, Stmt};
 
 // Child of crate root: sees crate-root-private items (the Sugar hierarchy, the
@@ -42,12 +43,93 @@ use syn::{Expr, ImplItemFn, ItemFn, Stmt};
 use std::collections::BTreeMap;
 
 use crate::{
-    child_block_scope, collect_assertion_entries, count_asserts_in_stmts,
-    helper_body_runtime_terminal_reason, refusal_disposition, resolve_inlinable_helper_call_scoped,
-    resolve_inlinable_method_call_scoped, stmts_have_runtime_terminal_body_shape, substitute_stmts,
-    AssertionEntry, Disposition, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions,
-    ReductionCtx, TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
+    callsite_child_fallback_term, child_block_scope, collect_assertion_entries,
+    count_asserts_in_stmts, expr_head_key, helper_body_runtime_terminal_reason,
+    is_consuming_iterator_method, receiver_is_versioned_iterator, refusal_disposition,
+    resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped,
+    stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition,
+    ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, SugarCtx,
+    TemporalScope, MAX_MACRO_EXPANSION_DEPTH, MAX_VALUE_CALL_INLINE_DEPTH,
 };
+
+/// Build the opaque panic-freedom subject for a call/method expression.
+///
+/// Panic-freedom is about the callsite reaching normal return, not the value the
+/// call returns. This callsite sugar therefore owns the `call:*#panic_callsite` /
+/// `method:*#panic_callsite` subject and only asks child term floors to reduce
+/// receiver/argument structure. If a child hits a named effect, the subject falls
+/// back to an opaque child identity rather than laundering that value effect into
+/// the panic predicate.
+pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = crate::sugar::factory::SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
+        if crate::sugar::method_family::literal_sequence_static_len_in_scope(
+            expr, &let_inits, ctx.scope,
+        ) == Some(0)
+        {
+            return callsite_child_fallback_term(expr, ctx.scope);
+        }
+        let opaque_or_fallback = || {
+            opaque_callsite_term(ctx, expr)
+                .or_else(|| callsite_child_fallback_term(expr, ctx.scope))
+        };
+        let reduction = {
+            let mut fw = ctx.float_widths.borrow_mut();
+            let child = SugarCtx {
+                scope: ctx.scope,
+                options: ctx.options,
+                reducer: ctx.reducer,
+                float_widths: std::cell::RefCell::new(&mut *fw),
+                factory_audits: ctx.factory_audits,
+                macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
+            };
+            crate::sugar::factory::build_term(expr, &fcx).reduce(&child)
+        };
+        match reduction {
+            Outcome::Complete(d) => d.into_term().or_else(opaque_or_fallback),
+            Outcome::Incomplete(_) => opaque_or_fallback(),
+        }
+    };
+
+    match expr {
+        Expr::Call(call) => {
+            let mut args = Vec::new();
+            for arg in &call.args {
+                args.push(dig_child(arg)?);
+            }
+            Some(Rc::new(Term::Ctor {
+                name: format!("call:{}#panic_callsite", expr_head_key(&call.func)),
+                args,
+            }))
+        }
+        Expr::MethodCall(call) => {
+            let mut receiver = dig_child(&call.receiver)?;
+            if is_consuming_iterator_method(&call.method.to_string()) {
+                if let Term::Var { name } = receiver.as_ref() {
+                    if receiver_is_versioned_iterator(name, ctx.scope) {
+                        let occ = ctx.scope.bump_consuming_occurrence(name);
+                        if occ > 0 {
+                            receiver = make_var(format!("{name}@adv{occ}"));
+                        }
+                    }
+                }
+            }
+            let mut args = vec![receiver];
+            for arg in &call.args {
+                args.push(dig_child(arg)?);
+            }
+            Some(Rc::new(Term::Ctor {
+                name: format!(
+                    "method:{}#panic_callsite",
+                    crate::sugar::method::method_key(call)
+                ),
+                args,
+            }))
+        }
+        _ => None,
+    }
+}
 
 /// A call-site inlining opportunity, decomposed from a bare call statement. The
 /// payload mirrors `resolve_inlinable_helper_call`'s tuple: the resolved helper, its
