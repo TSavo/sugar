@@ -2102,7 +2102,8 @@ fn collect_source_assertion_contract_expr(
                 });
                 return;
             }
-            Outcome::Complete(_) | Outcome::Incomplete(_) => {}
+            Outcome::Complete(_) => {}
+            Outcome::Incomplete(_) => return,
         }
     }
 
@@ -4840,14 +4841,23 @@ impl TemporalScope {
     }
 
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
+        if self.plan.alias_deref_mutated.contains(name) {
+            return None;
+        }
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
     pub(crate) fn temporal_rewrite_term_for(&self, name: &str) -> Option<Rc<Term>> {
+        if self.plan.alias_deref_mutated.contains(name) {
+            return None;
+        }
         self.temporal_rewrite.borrow().term_for(name)
     }
 
     pub(crate) fn temporal_rewrite_index_expr_for(&self, name: &str, index: usize) -> Option<Expr> {
+        if self.plan.alias_deref_mutated.contains(name) {
+            return None;
+        }
         self.temporal_rewrite.borrow().expr_for_index(name, index)
     }
 
@@ -5113,7 +5123,17 @@ impl TemporalScope {
 
     fn path_name(&self, path: &syn::Path) -> Result<String, String> {
         let name = path_to_name(path);
-        if !is_unqualified_local_name(&name) || !self.plan.versioned.contains(&name) {
+        if !is_unqualified_local_name(&name) {
+            return Ok(name);
+        }
+        if self.plan.alias_deref_mutated.contains(&name) {
+            return Err(format!(
+                "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
+                 between borrow and read, so there is no single timeless value to read at the \
+                 assertion; refused"
+            ));
+        }
+        if !self.plan.versioned.contains(&name) {
             return Ok(name);
         }
         if self.ambiguous.contains(&name) {
@@ -13324,7 +13344,8 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     }
     iterators.retain(|name| !interior_mut.contains(name));
     let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
-    let alias_deref_mutated = BTreeSet::<String>::new();
+    let mut alias_deref_mutated = BTreeSet::<String>::new();
+    collect_alias_deref_mutated(stmts, &mut_locals, &mut alias_deref_mutated);
     let mut temporally_unstable = BTreeSet::<String>::new();
     collect_loop_counter_stale_reads(stmts, &mut_locals, &mut temporally_unstable);
     // Broader temporal-instability scan (loop/closure-body mutation), feeding the SAME
@@ -18802,6 +18823,125 @@ mod lifter_key_tests {
             .iter()
             .filter_map(|decl| decl.inv.as_deref())
             .any(|formula| formula_contains_grounded_int_eq(formula, lhs, rhs))
+    }
+
+    #[test]
+    fn temporal_plan_marks_alias_deref_mutated_base() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+            fn t_alias_mut() {
+                let mut x = 5;
+                let r = &mut x;
+                *r += 1;
+                assert_eq!(x, 6);
+            }
+            "#,
+        )
+        .expect("test function parses");
+        let plan = temporal_plan_for_stmts(&f.block.stmts, &BTreeSet::new());
+        assert!(
+            plan.alias_deref_mutated.contains("x"),
+            "alias-deref mutation must poison the base local, got {:?}",
+            plan.alias_deref_mutated
+        );
+
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+            fn t_inline_mut() {
+                let mut x = 5;
+                *(&mut x) += 1;
+                assert_eq!(x, 6);
+            }
+            "#,
+        )
+        .expect("test function parses");
+        let plan = temporal_plan_for_stmts(&f.block.stmts, &BTreeSet::new());
+        assert!(
+            plan.alias_deref_mutated.contains("x"),
+            "inline deref mutation must poison the base local, got {:?}",
+            plan.alias_deref_mutated
+        );
+    }
+
+    #[test]
+    fn alias_deref_mutated_read_is_not_path_fallback() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+            fn t_alias_mut() {
+                let mut x = 5;
+                let r = &mut x;
+                *r += 1;
+                assert_eq!(x, 6);
+            }
+            "#,
+        )
+        .expect("test function parses");
+        let mut scope = TemporalScope::new(
+            "alias-deref-candidate",
+            temporal_plan_for_stmts(&f.block.stmts, &BTreeSet::new()),
+        );
+        for stmt in f.block.stmts.iter().take(3) {
+            if let Stmt::Local(local) = stmt {
+                record_simple_value_binding(&mut scope, local);
+                scope.record_temporal_rewrite_local(local);
+            }
+            advance_temporal_scope_for_stmt(stmt, &mut scope);
+        }
+        let expr: Expr = syn::parse_str("x").unwrap();
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
+        let candidates = sugar::catalog::matching_expr_claims_for_role(
+            &expr,
+            &fcx,
+            sugar::claim::SugarRole::Term,
+        );
+        let names = candidates
+            .iter()
+            .map(|candidate| candidate.name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names.first().copied(),
+            Some("bound_path"),
+            "alias-mutated path reads must be owned by bound_path refusal before fallback path: {names:?}"
+        );
+
+        let items = Vec::<syn::Item>::new();
+        let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+        match sugar::factory::build_term(&expr, &fcx).desugar(&ctx) {
+            Outcome::Incomplete(effect) => assert!(
+                effect.reason().contains("mutated through a `&mut` alias"),
+                "expected alias-deref refusal, got {}",
+                effect.reason()
+            ),
+            Outcome::Complete(_) => panic!("alias-deref-mutated read reduced to a stale term"),
+        }
+
+        let assertion: Expr = syn::parse_str("assert_eq!(x, 6)").unwrap();
+        match sugar::factory::build_constraint(&assertion, &fcx).desugar(&ctx) {
+            Outcome::Incomplete(effect) => assert!(
+                effect.reason().contains("mutated through a `&mut` alias"),
+                "expected alias-deref assertion refusal, got {}",
+                effect.reason()
+            ),
+            Outcome::Complete(_) => {
+                panic!("alias-deref-mutated assertion reduced to stale constraints")
+            }
+        }
+
+        match sugar::factory::build_assertion_surface(&assertion, &fcx).desugar(&ctx) {
+            Outcome::Incomplete(effect) => assert!(
+                effect.reason().contains("mutated through a `&mut` alias"),
+                "expected alias-deref assertion-surface refusal, got {}",
+                effect.reason()
+            ),
+            Outcome::Complete(_) => {
+                panic!("alias-deref-mutated assertion surface reduced to stale constraints")
+            }
+        }
     }
 
     fn formula_contains_grounded_int_eq(formula: &Formula, lhs: i128, rhs: i128) -> bool {
