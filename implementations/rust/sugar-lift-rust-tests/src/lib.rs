@@ -6073,6 +6073,9 @@ fn peel_fold_adaptors_inner<'a>(
                 if name == "zip" && m.args.len() == 1 {
                     break;
                 }
+                if matches!(name.as_str(), "chars" | "bytes") && m.args.is_empty() {
+                    break;
+                }
                 let ad: AdaptorWrap = match (name.as_str(), m.args.len()) {
                     // Value-identity adaptors over the element sequence: `.iter()`/`.cloned()`
                     // and the finite-collection conversions `.to_vec()`/`.as_slice()`/

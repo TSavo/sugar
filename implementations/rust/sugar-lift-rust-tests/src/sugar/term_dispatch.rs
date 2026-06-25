@@ -393,8 +393,8 @@ fn curry_term(
                 }
                 return curried;
             }
-            if let Some(value) = literal_predicate_bool(&curried) {
-                bool_const(value)
+            if literal_predicate_bool(&curried).is_some() {
+                curried
             } else {
                 Rc::new(Term::Ctor {
                     name: format!("{}{}", name, occurrence.suffix()),
