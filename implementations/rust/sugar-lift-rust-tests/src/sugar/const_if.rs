@@ -22,7 +22,7 @@ use crate::{const_eval, const_val_term, Sugar};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("const_if", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before("const_if", &["value_if"], recognize);
 
 /// TERM recognizer for a const `Expr::If`. Folds the whole conditional to its taken
 /// branch's ground value via `const_eval`; declines (`None`) for any non-`If` expr or

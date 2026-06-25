@@ -208,6 +208,7 @@ pub mod sugar {
     pub mod unsafe_memory;
     pub mod use_item;
     pub mod utf8_chunks;
+    pub mod value_if;
     pub mod vec_literal;
     pub mod vec_macro;
     pub mod wrapping_neg;

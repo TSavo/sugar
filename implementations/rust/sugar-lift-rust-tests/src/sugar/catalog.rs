@@ -34,7 +34,8 @@ use crate::sugar::{
     statement_loop_advance, statement_nested_assertion, statement_reflection,
     statement_runtime_expr, step_by, str_method, string_add, string_predicate, struct_term, take,
     take_while, term_literal, to_string, transparent_term, try_from, try_from_fn, try_map,
-    tuple_decomp, tuple_term, unary, unsafe_memory, vec_literal, vec_macro, wrapping_neg, zip,
+    tuple_decomp, tuple_term, unary, unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg,
+    zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -159,6 +160,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &string_add::EXPR_SUGAR,
     &binop::EXPR_SUGAR,
     &const_if::EXPR_SUGAR,
+    &value_if::EXPR_SUGAR,
     &transparent_term::TERM_EXPR_SUGAR,
     &format_macro::EXPR_SUGAR,
     &concat_macro::EXPR_SUGAR,
@@ -234,14 +236,12 @@ pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole)
         .position(|candidate| candidate.role() == role);
     let candidate_audits = candidate_audits(&candidates, selected_index);
     let selected = selected_index.map(|index| candidates[index].name());
+    let seed = FactoryAuditSeed::expr(expr, role, selected, candidate_audits);
     let node = match selected_index {
         Some(index) => candidates.swap_remove(index).into_node(),
-        None => unsupported(),
+        None => unsupported(seed.unresolved_reason()),
     };
-    AccountedSugar::new(
-        FactoryAuditSeed::expr(expr, role, selected, candidate_audits),
-        node,
-    )
+    AccountedSugar::new(seed, node)
 }
 
 pub(crate) fn matching_expr_claims_for_role(
@@ -265,14 +265,12 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
         .position(|candidate| candidate.role() == role);
     let candidate_audits = candidate_audits(&candidates, selected_index);
     let selected = selected_index.map(|index| candidates[index].name());
+    let seed = FactoryAuditSeed::item(item, role, selected, candidate_audits);
     let node = match selected_index {
         Some(index) => candidates.swap_remove(index).into_node(),
-        None => unsupported(),
+        None => unsupported(seed.unresolved_reason()),
     };
-    AccountedSugar::new(
-        FactoryAuditSeed::item(item, role, selected, candidate_audits),
-        node,
-    )
+    AccountedSugar::new(seed, node)
 }
 
 pub(crate) fn matching_item_claims_for_role(
@@ -539,6 +537,15 @@ mod tests {
         assert!(
             names.contains(&"literal_tuple_producer"),
             "literal tuple must expose its component floor through TupleProducer: {names:?}"
+        );
+    }
+
+    #[test]
+    fn monadic_value_if_has_term_candidate() {
+        let expr: Expr = syn::parse_str("if x > 1 { Err(x) } else { Ok(x) }").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("value_if")
         );
     }
 
@@ -1708,7 +1715,7 @@ mod tests {
             "unexpected panic message: {message}"
         );
         assert!(
-            message.contains("no sugar candidate reached this source shape"),
+            message.contains("no Sugar candidate for role Composite at `| | 1`"),
             "unexpected panic message: {message}"
         );
     }
