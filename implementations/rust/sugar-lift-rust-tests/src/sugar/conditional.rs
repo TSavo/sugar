@@ -17,7 +17,8 @@ use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
     const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
-    token_key, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
+    token_key, AssertionFactKind, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions,
+    Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -31,6 +32,29 @@ pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<B
         Expr::If(i) => decompose_if(i).map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_statement_conditional(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Outcome {
+    crate::sugar::statement_position::desugar_composite_expr(
+        expr,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        let_inits,
+        macro_depth,
+        factory_audits,
+    )
 }
 
 /// EXACT-OR-BAIL: the guard must translate to a Formula via the SAME path an

@@ -3,12 +3,65 @@
 // Shared detectors for statement-position effect sugars. This module owns no catalog claim:
 // each semantic leaf lives in its own `statement_*` Sugar file.
 
+use std::collections::BTreeMap;
+
 use syn::{BinOp, Expr};
 
+use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::{
     closure_body_advances_iterator, count_asserts_in_expr, count_asserts_in_stmts,
-    expr_contains_await, reflection_scrutinee, strip_const_block, token_key,
+    expr_contains_await, reflection_scrutinee, strip_const_block, sugar_ctx_with_factory_audits,
+    token_key, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalScope,
 };
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_composite_expr(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Outcome {
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
+    let fcx = SugarBuildCtx::new(scope, options, let_inits);
+    build_composite(expr, &fcx).desugar(&ctx)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_statement_composite(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Option<Outcome> {
+    let fcx = SugarBuildCtx::new(scope, options, let_inits);
+    has_composite(expr, &fcx).then(|| {
+        desugar_composite_expr(
+            expr,
+            scope,
+            options,
+            reducer,
+            float_widths,
+            let_inits,
+            macro_depth,
+            factory_audits,
+        )
+    })
+}
 
 pub(crate) fn carries_assert(expr: &Expr) -> bool {
     count_asserts_in_expr(expr) > 0
