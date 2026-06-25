@@ -2,9 +2,12 @@
 */.sugar/witnesses/
 */.sugar/lying-discharge.sh
 */.sugar/lift/rust-cargo-test-witness/manifest.toml
+*/.sugar/lift/rust-fn-contracts/manifest.toml
+*/.sugar/lift/rust-implications/manifest.toml
 */.sugar/lift/rust-test-assertions/manifest.toml
 */target/
 */Cargo.lock
 */blake3-512_*.proof
 */.prove*.json
 */.verify*.json
+*/vendor/

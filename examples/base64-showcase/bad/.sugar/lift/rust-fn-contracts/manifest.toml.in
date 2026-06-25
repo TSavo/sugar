@@ -1,0 +1,3 @@
+name = "rust-fn-contracts-lift"
+command = ["@BIN_DIR@/sugar-walk-rpc", "--rpc"]
+working_dir = "."

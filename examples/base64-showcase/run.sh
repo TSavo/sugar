@@ -13,20 +13,45 @@ echo "SCOPE: base64 0.22.1 exact vendor rows from tests/encode.rs::encoded_len_u
 echo "SCOPE: GOOD claims are point-wise exact integer-scalar rows over the public encoded_len/decoded_len_estimate fns; BAD is a contradiction twin."
 echo "SCOPE: residuals = exact encode/decode byte-vector rows (STANDARD.encode(b\"foo\")==\"Zm9v\", decode(...)==b\"...\"): NOT liftable, the rust assertion lifter has no Lit::ByteStr term case (translate_lit covers Int/Float/Str/Char/Bool only), so every byte-string-literal vector is released to layer 0; plus roundtrip-random tests and the 256-byte encode_all_bytes vector."
 
-echo "== build the CLI + Rust assertion and cargo-test witness lifters =="
+echo "== build the CLI + Rust assertion, body, implication, and cargo-test witness lifters =="
 cargo build --manifest-path "$RUST/Cargo.toml" \
   -p sugar-cli --bin sugar \
+  -p sugar-walk --bin sugar-walk-rpc \
   -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
   -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
   -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
+[ -x "$BIN_DIR/sugar-walk-rpc" ] || { echo "FAIL: sugar-walk-rpc not built"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
 [ -x "$BIN_DIR/witness_rpc" ] || { echo "FAIL: witness_rpc not built"; exit 1; }
 [ -x "$BIN_DIR/discharge_cli" ] || { echo "FAIL: discharge_cli not built"; exit 1; }
 
+prepare_base64_vendor_source() {
+  local suite_dir="$1"
+  local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+  local src_root=""
+  local candidate
+
+  cargo fetch --manifest-path "$suite_dir/Cargo.toml" >/dev/null
+  for candidate in "$cargo_home"/registry/src/*/base64-0.22.1; do
+    [ -d "$candidate" ] || continue
+    src_root="$candidate"
+    break
+  done
+  [ -n "$src_root" ] || { echo "FAIL: could not find downloaded base64-0.22.1 source under $cargo_home/registry/src"; exit 1; }
+
+  mkdir -p "$suite_dir/vendor"
+  if [ -L "$suite_dir/vendor/base64-0.22.1" ] || [ -e "$suite_dir/vendor/base64-0.22.1" ]; then
+    rm -f "$suite_dir/vendor/base64-0.22.1"
+  fi
+  [ ! -e "$suite_dir/vendor/base64-0.22.1" ] || { echo "FAIL: $suite_dir/vendor/base64-0.22.1 exists and is not a symlink"; exit 1; }
+  ln -s "$src_root" "$suite_dir/vendor/base64-0.22.1"
+}
+
 for suite in good bad; do
-  for surface in rust-cargo-test-witness rust-test-assertions; do
+  prepare_base64_vendor_source "$HERE/$suite"
+  for surface in rust-cargo-test-witness rust-fn-contracts rust-implications rust-test-assertions; do
     mfin="$HERE/$suite/.sugar/lift/$surface/manifest.toml.in"
     mf="$HERE/$suite/.sugar/lift/$surface/manifest.toml"
     sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"

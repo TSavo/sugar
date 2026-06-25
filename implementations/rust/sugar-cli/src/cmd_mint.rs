@@ -276,7 +276,21 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     let mut merged_authorities: Vec<Value> = Vec::new();
     let mut merged_witnesses: Vec<Value> = Vec::new();
     let mut merged_source_mementos: Vec<Value> = Vec::new();
+    let mut saw_source_mementos = false;
     let mut merged_plan_mementos: Vec<Value> = Vec::new();
+    let mut saw_source_ledger = false;
+    let mut merged_source_ledger: BTreeMap<String, i64> = BTreeMap::new();
+    let mut saw_source_audits = false;
+    let mut merged_source_audits: Vec<Value> = Vec::new();
+    let mut saw_factory_audits = false;
+    let mut merged_factory_audits: Vec<Value> = Vec::new();
+    let mut saw_assertion_surface_audits = false;
+    let mut merged_assertion_surface_audits: Vec<Value> = Vec::new();
+    let mut saw_call_edges = false;
+    let mut merged_call_edges: Vec<Value> = Vec::new();
+    let mut saw_vendor_conjoins = false;
+    let mut merged_vendor_conjoins: Vec<Value> = Vec::new();
+    let mut merged_factory_summary = MergedFactoryAuditSummary::default();
     let mut oracle_observation = OracleObservation::default();
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -357,12 +371,69 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
         if let Some(arr) = entry.response.get("witnesses").and_then(|v| v.as_array()) {
             merged_witnesses.extend(arr.iter().cloned());
         }
+        if let Some(ledger) = entry
+            .response
+            .get("sourceLedger")
+            .and_then(Value::as_object)
+        {
+            saw_source_ledger = true;
+            merge_source_ledger(&mut merged_source_ledger, ledger);
+        }
+        if let Some(arr) = entry
+            .response
+            .get("sourceAudits")
+            .or_else(|| entry.response.get("source_audits"))
+            .and_then(Value::as_array)
+        {
+            saw_source_audits = true;
+            merged_source_audits.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = entry
+            .response
+            .get("factoryAudits")
+            .or_else(|| entry.response.get("factory_audits"))
+            .and_then(Value::as_array)
+        {
+            saw_factory_audits = true;
+            merged_factory_audits.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = entry
+            .response
+            .get("assertionSurfaceAudits")
+            .or_else(|| entry.response.get("assertion_surface_audits"))
+            .and_then(Value::as_array)
+        {
+            saw_assertion_surface_audits = true;
+            merged_assertion_surface_audits.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = entry
+            .response
+            .get("callEdges")
+            .or_else(|| entry.response.get("call_edges"))
+            .and_then(Value::as_array)
+        {
+            saw_call_edges = true;
+            merged_call_edges.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = entry
+            .response
+            .get("vendorConjoins")
+            .or_else(|| entry.response.get("vendor_conjoins"))
+            .or_else(|| entry.response.get("linkerConjoins"))
+            .or_else(|| entry.response.get("linker_conjoins"))
+            .and_then(Value::as_array)
+        {
+            saw_vendor_conjoins = true;
+            merged_vendor_conjoins.extend(arr.iter().cloned());
+        }
+        merged_factory_summary.merge(entry.response.get("factoryAuditSummary"));
         if let Some(arr) = entry
             .response
             .get("sourceMementos")
             .or_else(|| entry.response.get("source_mementos"))
             .and_then(|v| v.as_array())
         {
+            saw_source_mementos = true;
             merged_source_mementos.extend(arr.iter().cloned());
         }
         if let Some(arr) = entry
@@ -403,13 +474,135 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     if !merged_witnesses.is_empty() {
         merged["witnesses"] = Value::Array(merged_witnesses);
     }
-    if !merged_source_mementos.is_empty() {
+    if saw_source_ledger {
+        merged["sourceLedger"] = Value::Object(source_ledger_object(merged_source_ledger));
+    }
+    if saw_source_audits {
+        merged["sourceAudits"] = Value::Array(merged_source_audits);
+    }
+    if saw_factory_audits {
+        merged["factoryAudits"] = Value::Array(merged_factory_audits);
+    }
+    if let Some(summary) = merged_factory_summary.into_value() {
+        merged["factoryAuditSummary"] = summary;
+    }
+    if saw_assertion_surface_audits {
+        merged["assertionSurfaceAudits"] = Value::Array(merged_assertion_surface_audits);
+    }
+    if saw_call_edges {
+        merged["callEdges"] = Value::Array(merged_call_edges);
+    }
+    if saw_vendor_conjoins {
+        merged["vendorConjoins"] = Value::Array(merged_vendor_conjoins);
+    }
+    if saw_source_mementos {
         merged["sourceMementos"] = Value::Array(merged_source_mementos);
     }
     if !merged_plan_mementos.is_empty() {
         merged["planMementos"] = Value::Array(merged_plan_mementos);
     }
     Ok(merged)
+}
+
+#[derive(Debug, Default)]
+struct MergedFactoryAuditSummary {
+    saw: bool,
+    emitted_rows: i64,
+    warranted: i64,
+    refused: i64,
+    support: i64,
+    unresolved: i64,
+    unresolved_sites: Vec<Value>,
+    factory_walk: Vec<Value>,
+}
+
+impl MergedFactoryAuditSummary {
+    fn merge(&mut self, summary: Option<&Value>) {
+        let Some(summary) = summary else {
+            return;
+        };
+        self.saw = true;
+        self.emitted_rows += json_i64(summary.get("emittedRows"));
+        if let Some(status_counts) = summary.get("statusCounts") {
+            self.warranted += json_i64(status_counts.get("warranted"));
+            self.refused += json_i64(status_counts.get("refused"));
+            self.support += json_i64(status_counts.get("support"));
+            self.unresolved += json_i64(status_counts.get("unresolved"));
+        }
+        if let Some(rows) = summary.get("unresolvedSites").and_then(Value::as_array) {
+            self.unresolved_sites.extend(rows.iter().cloned());
+        }
+        if let Some(rows) = summary.get("factoryWalk").and_then(Value::as_array) {
+            self.factory_walk.extend(rows.iter().cloned());
+        }
+    }
+
+    fn into_value(self) -> Option<Value> {
+        self.saw.then(|| {
+            json!({
+                "emittedRows": self.emitted_rows,
+                "statusCounts": {
+                    "warranted": self.warranted,
+                    "refused": self.refused,
+                    "support": self.support,
+                    "unresolved": self.unresolved,
+                },
+                "unresolvedSites": self.unresolved_sites,
+                "factoryWalk": self.factory_walk,
+            })
+        })
+    }
+}
+
+fn json_i64(value: Option<&Value>) -> i64 {
+    value
+        .and_then(Value::as_i64)
+        .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
+        .unwrap_or(0)
+}
+
+fn merge_source_ledger(
+    merged: &mut BTreeMap<String, i64>,
+    ledger: &serde_json::Map<String, Value>,
+) {
+    for key in [
+        "source_loci",
+        "source_warranted",
+        "source_support",
+        "source_refused",
+        "source_inactive",
+        "source_refuted",
+        "unclassified_source",
+    ] {
+        *merged.entry(key.to_string()).or_default() += json_i64(ledger.get(key));
+    }
+    let unresolved = ledger
+        .get("source_unresolved")
+        .map(|value| json_i64(Some(value)))
+        .unwrap_or_else(|| json_i64(ledger.get("unclassified_source")));
+    *merged.entry("source_unresolved".to_string()).or_default() += unresolved;
+}
+
+fn source_ledger_object(merged: BTreeMap<String, i64>) -> serde_json::Map<String, Value> {
+    let mut object = serde_json::Map::new();
+    for key in [
+        "source_loci",
+        "source_warranted",
+        "source_support",
+        "source_refused",
+        "source_inactive",
+        "source_refuted",
+        "source_unresolved",
+        "unclassified_source",
+    ] {
+        object.insert(
+            key.to_string(),
+            Value::Number(serde_json::Number::from(
+                merged.get(key).copied().unwrap_or(0),
+            )),
+        );
+    }
+    object
 }
 
 fn oracle_observation_from_lift(lift: &Value) -> OracleObservation {
@@ -1280,6 +1473,199 @@ pub(crate) fn mint_lift_plugins_for_report(
 ) -> Result<Option<PathBuf>, String> {
     let session = dispatch_multi(project_root, plugins, out_dir, true, library_bindings)?;
     Ok(session.result.proof_file)
+}
+
+pub(crate) fn lift_plugins_response_for_report(
+    project_root: &Path,
+    plugins: &[PluginEntry],
+    out_dir: &Path,
+    library_bindings: bool,
+    report_summary: bool,
+) -> Result<Value, String> {
+    let mut producer_plugins = Vec::new();
+    let mut consumer_plugins = Vec::new();
+    for plugin in plugins {
+        if lift_plugin::surface_phase(project_root, &plugin.surface) == "consumer" {
+            consumer_plugins.push(plugin);
+        } else {
+            producer_plugins.push(plugin);
+        }
+    }
+    let report_summary_for_lift = report_summary && consumer_plugins.is_empty();
+
+    let mut per_plugin: Vec<PerPluginDispatch> = Vec::with_capacity(plugins.len());
+    let mut producer_responses: Vec<PerPluginDispatch> = Vec::with_capacity(producer_plugins.len());
+    for plugin in producer_plugins {
+        let response = dispatch_report_lift_plugin(
+            project_root,
+            plugin,
+            Vec::new(),
+            library_bindings,
+            report_summary_for_lift,
+        )?;
+        let dispatched = PerPluginDispatch {
+            surface: plugin.surface.clone(),
+            response,
+        };
+        producer_responses.push(dispatched.clone());
+        per_plugin.push(dispatched);
+    }
+
+    let contract_bindings = if consumer_plugins.is_empty() {
+        Vec::new()
+    } else {
+        consumer_contract_bindings_from_producers(&producer_responses, project_root, out_dir, true)?
+    };
+    for plugin in consumer_plugins {
+        let response = dispatch_report_lift_plugin(
+            project_root,
+            plugin,
+            contract_bindings.clone(),
+            library_bindings,
+            false,
+        )?;
+        per_plugin.push(PerPluginDispatch {
+            surface: plugin.surface.clone(),
+            response,
+        });
+    }
+
+    match per_plugin.len() {
+        0 => Err("lift report graph has no lift plugins".to_string()),
+        1 => Ok(per_plugin.into_iter().next().unwrap().response),
+        _ => merge_ir_document_responses(per_plugin),
+    }
+}
+
+fn dispatch_report_lift_plugin(
+    project_root: &Path,
+    plugin: &PluginEntry,
+    contract_bindings: Vec<Value>,
+    library_bindings: bool,
+    report_summary: bool,
+) -> Result<Value, String> {
+    let lift_options = LiftPluginOptions {
+        workspace_override: plugin.workspace_override.clone(),
+        emit: plugin.emit.clone(),
+        layer: plugin.layer.clone(),
+        library_bindings,
+        report_summary,
+        contract_bindings,
+        ..Default::default()
+    };
+    lift_plugin::dispatch_lift(project_root, &plugin.surface, lift_options, true)
+        .map(|session| {
+            let mut response = session.response().clone();
+            prefix_workspace_override_source_files(
+                &mut response,
+                plugin.workspace_override.as_deref(),
+            );
+            response
+        })
+        .map_err(|error| match error {
+            LiftPluginError::MissingBinary { binary } => {
+                format!("lifter binary `{binary}` not found")
+            }
+            LiftPluginError::Refused(refusal) => format!(
+                "{}: {}",
+                refusal.header.failure_kind, refusal.header.failure_detail
+            ),
+            LiftPluginError::Failed(error) => error,
+        })
+}
+
+fn prefix_workspace_override_source_files(response: &mut Value, workspace_override: Option<&str>) {
+    let Some(prefix) = report_source_prefix(workspace_override) else {
+        return;
+    };
+    prefix_relative_file_fields(response, &prefix);
+}
+
+fn report_source_prefix(workspace_override: Option<&str>) -> Option<String> {
+    let raw = workspace_override?.trim();
+    if raw.is_empty() || raw == "." {
+        return None;
+    }
+    let normalized = raw.replace('\\', "/").trim_end_matches('/').to_string();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn prefix_relative_file_fields(value: &mut Value, prefix: &str) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::String(file)) = object.get_mut("file") {
+                *file = prefixed_report_source_file(file, prefix);
+            }
+            for child in object.values_mut() {
+                prefix_relative_file_fields(child, prefix);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                prefix_relative_file_fields(child, prefix);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn prefixed_report_source_file(file: &str, prefix: &str) -> String {
+    let normalized = file.replace('\\', "/");
+    if normalized.trim().is_empty() || Path::new(&normalized).is_absolute() {
+        return normalized;
+    }
+    let relative = normalized.trim_start_matches("./");
+    if relative == prefix || relative.starts_with(&format!("{prefix}/")) {
+        return relative.to_string();
+    }
+    format!("{prefix}/{relative}")
+}
+
+fn consumer_contract_bindings_from_producers(
+    producer_responses: &[PerPluginDispatch],
+    project_root: &Path,
+    out_dir: &Path,
+    quiet: bool,
+) -> Result<Vec<Value>, String> {
+    let mut bindings = contract_bindings_from_producer_responses(
+        producer_responses,
+        project_root,
+        out_dir,
+        quiet,
+    )?;
+    let intra_keys: std::collections::HashSet<(String, String)> = bindings
+        .iter()
+        .filter_map(|binding| {
+            let name = binding.get("name").and_then(Value::as_str)?.to_string();
+            let library = binding
+                .get("library")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Some((library, name))
+        })
+        .collect();
+    let dep_bindings = contract_bindings_from_dependency_proofs(project_root);
+    let dep_kept = dep_bindings
+        .into_iter()
+        .filter(|binding| {
+            let Some(name) = binding
+                .get("name")
+                .and_then(Value::as_str)
+                .map(String::from)
+            else {
+                return false;
+            };
+            let library = binding
+                .get("library")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            !intra_keys.contains(&(library, name))
+        })
+        .collect::<Vec<_>>();
+    bindings.extend(dep_kept);
+    Ok(bindings)
 }
 
 fn dispatch_path(project_root: &Path, path_file: &Path) -> Result<MintSession, String> {

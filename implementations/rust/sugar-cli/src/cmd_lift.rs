@@ -21,7 +21,7 @@ use crate::{cmd_mint, cmd_prove};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 pub fn run(args: LiftArgs) -> u8 {
-    let project_root = args.project.unwrap_or_else(|| PathBuf::from("."));
+    let project_root = args.project.clone().unwrap_or_else(|| PathBuf::from("."));
     if !project_root.exists() {
         eprintln!(
             "{}: project not found: {}",
@@ -33,6 +33,12 @@ pub fn run(args: LiftArgs) -> u8 {
 
     let project_cfg = read_project_config(&project_root);
     let user_cfg = read_user_config();
+    if args.report {
+        let project_lift_plugins = lift_report_graph_plugins(&project_root, &project_cfg);
+        if project_lift_plugins.len() > 1 {
+            return run_configured_lift_report_graph(&args, &project_root, &project_lift_plugins);
+        }
+    }
     let resolved_surface = match configured_or_planned_lift_surface(
         &project_root,
         &project_cfg,
@@ -262,6 +268,19 @@ pub fn run(args: LiftArgs) -> u8 {
     }
 }
 
+fn lift_report_graph_plugins(project_root: &Path, project_cfg: &ProjectConfig) -> Vec<PluginEntry> {
+    project_cfg
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .filter(|plugin| {
+            plugin.emit.as_deref() == Some("ir-document")
+                || lift_plugin::surface_phase(project_root, &plugin.surface) == "consumer"
+        })
+        .cloned()
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedLiftSurface {
     surface: String,
@@ -272,7 +291,7 @@ fn configured_or_planned_lift_surface(
     project_root: &Path,
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
-    _prefer_report: bool,
+    prefer_report: bool,
 ) -> Result<ResolvedLiftSurface, String> {
     if let Some(surface) = project_cfg.surface_for("lift") {
         return Ok(ResolvedLiftSurface {
@@ -286,6 +305,19 @@ fn configured_or_planned_lift_surface(
         .iter()
         .filter(|plugin| plugin.is_lift_plugin())
         .collect::<Vec<_>>();
+    if prefer_report {
+        let report_plugins = lift_plugins
+            .iter()
+            .copied()
+            .filter(|plugin| plugin.emit.as_deref() == Some("ir-document"))
+            .collect::<Vec<_>>();
+        if report_plugins.len() == 1 {
+            return Ok(ResolvedLiftSurface {
+                surface: report_plugins[0].surface.clone(),
+                plugin: None,
+            });
+        }
+    }
     if lift_plugins.len() == 1 {
         return Ok(ResolvedLiftSurface {
             surface: lift_plugins[0].surface.clone(),
@@ -393,6 +425,172 @@ fn prepare_lift_report_prove_inputs(
     );
     let proof_file =
         cmd_mint::mint_lift_plugins_for_report(project_root, &plugins, &out_dir, library_bindings)?;
+    tracing::info!(
+        project = %project_root.display(),
+        out_dir = %out_dir.display(),
+        proof_file = proof_file.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
+        "lift-report-prove: auto-mint complete"
+    );
+    with.push(absolute_path(&out_dir).display().to_string());
+    Ok(with)
+}
+
+fn run_configured_lift_report_graph(
+    args: &LiftArgs,
+    project_root: &Path,
+    plugins: &[PluginEntry],
+) -> u8 {
+    let out_dir = lift_report_auto_mint_dir(project_root);
+    let response = match cmd_mint::lift_plugins_response_for_report(
+        project_root,
+        plugins,
+        &out_dir,
+        args.library_bindings,
+        args.report_summary,
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+    };
+    trace_lift_report_response("after_configured_lift_report_graph", &response);
+    if args.report_summary {
+        trace_lift_report_checkpoint("before_source_report_summary_from_lift_response");
+        let summary = match source_report_summary_from_lift_response(&response, project_root) {
+            Ok(summary) => summary,
+            Err(error) => {
+                eprintln!("{}: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        };
+        trace_lift_report_checkpoint("after_source_report_summary_from_lift_response");
+        let hard_failure = source_report_summary_has_hard_failures(&summary);
+        let rendered = if args.out.json {
+            match render_report_summary_json(&summary) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    eprintln!(
+                        "{}: render lift summary report: {error}",
+                        "error".red().bold()
+                    );
+                    return EXIT_USER_ERROR;
+                }
+            }
+        } else {
+            render_report_summary_human(&summary)
+        };
+        trace_lift_render_checkpoint("after_render_summary_report", rendered.len());
+        if let Err(error) = write_output(None, rendered.as_bytes()) {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+        trace_lift_render_checkpoint("after_write_summary_report", rendered.len());
+        return if hard_failure {
+            EXIT_VERIFY_FAIL
+        } else {
+            EXIT_OK
+        };
+    }
+
+    trace_lift_report_checkpoint("before_source_report_from_lift_response");
+    let mut report = match source_report_from_lift_response(&response, args.contract.as_deref()) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+    };
+    report.project_root = Some(project_root.to_path_buf());
+    trace_lift_source_report("after_source_report_from_lift_response", &report);
+
+    let prove_with = if args.prove {
+        match prepare_lift_report_prove_inputs_for_plugins(
+            project_root,
+            plugins,
+            args.library_bindings,
+            &args.with,
+        ) {
+            Ok(with) => with,
+            Err(error) => {
+                eprintln!("{}: prepare prove report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let prove_report = if args.prove {
+        trace_lift_report_checkpoint("before_build_prove_report");
+        match cmd_prove::build_prove_report(project_root, &args.z3, &prove_with) {
+            Ok(prove_report) => {
+                trace_lift_report_checkpoint("after_build_prove_report");
+                Some(prove_report)
+            }
+            Err(error) => {
+                eprintln!("{}: prove report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else {
+        None
+    };
+    let mut hard_failure = source_report_has_hard_failures(&report);
+    if let Some(prove_report) = &prove_report {
+        hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
+    }
+    trace_lift_source_report("before_render_report", &report);
+    let rendered = if args.out.json {
+        match render_report_json(&report, prove_report.as_ref()) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                eprintln!("{}: render lift report: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        }
+    } else if args.visual {
+        render_report_visual(&report, prove_report.as_ref())
+    } else {
+        render_report_human(&report, prove_report.as_ref())
+    };
+    trace_lift_render_checkpoint("after_render_report", rendered.len());
+    if let Err(error) = write_output(None, rendered.as_bytes()) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
+    trace_lift_render_checkpoint("after_write_report", rendered.len());
+    if hard_failure {
+        EXIT_VERIFY_FAIL
+    } else {
+        EXIT_OK
+    }
+}
+
+fn prepare_lift_report_prove_inputs_for_plugins(
+    project_root: &Path,
+    plugins: &[PluginEntry],
+    library_bindings: bool,
+    configured_with: &[String],
+) -> Result<Vec<String>, String> {
+    let mut with = configured_with.to_vec();
+    if !needs_lift_report_auto_mint(project_root, true) {
+        tracing::info!(
+            project = %project_root.display(),
+            "lift-report-prove: existing .proof input found; skipping auto-mint"
+        );
+        return Ok(with);
+    }
+
+    let out_dir = lift_report_auto_mint_dir(project_root);
+    tracing::info!(
+        project = %project_root.display(),
+        out_dir = %out_dir.display(),
+        plugins = plugins.len(),
+        surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
+        "lift-report-prove: auto-minting configured graph proof input"
+    );
+    let proof_file =
+        cmd_mint::mint_lift_plugins_for_report(project_root, plugins, &out_dir, library_bindings)?;
     tracing::info!(
         project = %project_root.display(),
         out_dir = %out_dir.display(),

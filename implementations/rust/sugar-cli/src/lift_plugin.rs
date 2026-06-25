@@ -420,12 +420,17 @@ fn resolved_working_dir(project_root: &Path, manifest: &LiftPluginManifest) -> O
 pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPluginOptions) -> Value {
     // Per-plugin override takes precedence over the project root.
     // Substrate-honest: the plugin receives the workspace_root the
-    // config declared, not the directory cmd_mint was invoked from.
+    // project config declared. Relative overrides are anchored at the
+    // project root, not the shell cwd, so manifest/config wiring is stable.
     let workspace_root: PathBuf = if let Some(override_path) = options.workspace_override.as_deref()
     {
-        PathBuf::from(override_path)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(override_path))
+        let configured = PathBuf::from(override_path);
+        let candidate = if configured.is_absolute() {
+            configured
+        } else {
+            project_root.join(configured)
+        };
+        candidate.canonicalize().unwrap_or(candidate)
     } else {
         project_root
             .canonicalize()
@@ -595,6 +600,39 @@ mod tests {
         );
 
         assert_eq!(request["options"]["reportSummary"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn relative_workspace_override_resolves_from_project_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        let vendor = project.join("vendor/base64-0.22.1");
+        std::fs::create_dir_all(&vendor).expect("create vendor dir");
+
+        let request = build_lift_params(
+            &project,
+            "rust-fn-contracts",
+            LiftPluginOptions {
+                workspace_override: Some("vendor/base64-0.22.1".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            request["workspace_root"].as_str(),
+            Some(
+                vendor
+                    .canonicalize()
+                    .expect("canonical vendor")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(
+            request["options"]["workspaceOverride"].as_str(),
+            Some("vendor/base64-0.22.1"),
+            "the raw config value is preserved so report visuals can rebase source mementos"
+        );
     }
 
     #[test]
