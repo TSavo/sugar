@@ -375,6 +375,14 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
     }
 }
 
+pub(crate) fn desugar_build_ctx<'a, 'e>(
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    let_inits: &'a BTreeMap<String, &'e Expr>,
+) -> SugarBuildCtx<'a, 'e> {
+    SugarBuildCtx::new(scope, options, let_inits)
+}
+
 pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     catalog::build_expr_role(expr, fcx, role)
 }
