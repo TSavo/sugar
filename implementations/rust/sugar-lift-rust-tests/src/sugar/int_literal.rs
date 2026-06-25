@@ -457,7 +457,7 @@ fn unsigned_midpoint(lhs: u128, rhs: u128, kind: IntKind) -> Option<u128> {
     Some((lhs & rhs) + ((lhs ^ rhs) >> 1))
 }
 
-fn typed_int_term(value: ExactInt, kind: IntKind) -> Option<Rc<Term>> {
+pub(crate) fn typed_int_term(value: ExactInt, kind: IntKind) -> Option<Rc<Term>> {
     if !value.fits_kind(kind) {
         return None;
     }

@@ -8,12 +8,11 @@ use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::int_literal::{primitive_int_kind, typed_int_term, ExactInt, IntKind};
 
 use sugar_ir_symbolic::Term;
 
-use crate::{
-    const_path_key, num, str_const, token_key, u128_term, Desugared, Outcome, Sugar, SugarCtx,
-};
+use crate::{const_path_key, str_const, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
@@ -122,47 +121,58 @@ fn primitive_assoc_const_term(expr: &Expr) -> Option<Rc<Term>> {
 }
 
 fn primitive_assoc_const_parts_term(ty: &str, konst: &str) -> Option<Rc<Term>> {
-    let value = match (ty, konst) {
-        ("i8", "MIN") => num(i128::from(i8::MIN)),
-        ("i8", "MAX") => num(i128::from(i8::MAX)),
-        ("i8", "BITS") => num(i128::from(i8::BITS)),
-        ("i16", "MIN") => num(i128::from(i16::MIN)),
-        ("i16", "MAX") => num(i128::from(i16::MAX)),
-        ("i16", "BITS") => num(i128::from(i16::BITS)),
-        ("i32", "MIN") => num(i128::from(i32::MIN)),
-        ("i32", "MAX") => num(i128::from(i32::MAX)),
-        ("i32", "BITS") => num(i128::from(i32::BITS)),
-        ("i64", "MIN") => num(i128::from(i64::MIN)),
-        ("i64", "MAX") => num(i128::from(i64::MAX)),
-        ("i64", "BITS") => num(i128::from(i64::BITS)),
-        ("i128", "MIN") => num(i128::MIN),
-        ("i128", "MAX") => num(i128::MAX),
-        ("i128", "BITS") => num(i128::from(i128::BITS)),
-        ("isize", "MIN") => num(isize::MIN as i128),
-        ("isize", "MAX") => num(isize::MAX as i128),
-        ("isize", "BITS") => num(i128::from(isize::BITS)),
-        ("u8", "MIN") => num(i128::from(u8::MIN)),
-        ("u8", "MAX") => num(i128::from(u8::MAX)),
-        ("u8", "BITS") => num(i128::from(u8::BITS)),
-        ("u16", "MIN") => num(i128::from(u16::MIN)),
-        ("u16", "MAX") => num(i128::from(u16::MAX)),
-        ("u16", "BITS") => num(i128::from(u16::BITS)),
-        ("u32", "MIN") => num(i128::from(u32::MIN)),
-        ("u32", "MAX") => num(i128::from(u32::MAX)),
-        ("u32", "BITS") => num(i128::from(u32::BITS)),
-        ("u64", "MIN") => num(i128::from(u64::MIN)),
-        ("u64", "MAX") => num(i128::from(u64::MAX)),
-        ("u64", "BITS") => num(i128::from(u64::BITS)),
-        ("u128", "MIN") => u128_term(u128::MIN),
-        ("u128", "MAX") => u128_term(u128::MAX),
-        ("u128", "BITS") => num(i128::from(u128::BITS)),
-        ("usize", "MIN") => num(usize::MIN as i128),
-        ("usize", "MAX") => num(usize::MAX as i128),
-        ("usize", "BITS") => num(i128::from(usize::BITS)),
-        ("char", "MAX") => str_const(char::MAX.to_string()),
-        _ => return None,
-    };
-    Some(value)
+    match (ty, konst) {
+        ("char", "MAX") => Some(str_const(char::MAX.to_string())),
+        (_, "BITS") => primitive_assoc_bits_term(ty),
+        (_, "MIN" | "MAX") => primitive_assoc_int_limit_term(ty, konst),
+        _ => None,
+    }
+}
+
+fn primitive_assoc_bits_term(ty: &str) -> Option<Rc<Term>> {
+    let source_kind = primitive_int_kind(ty)?;
+    let u32_kind = primitive_int_kind("u32")?;
+    typed_int_term(ExactInt::Unsigned(u128::from(source_kind.bits)), u32_kind)
+}
+
+fn primitive_assoc_int_limit_term(ty: &str, konst: &str) -> Option<Rc<Term>> {
+    let kind = primitive_int_kind(ty)?;
+    let value = primitive_assoc_limit_value(kind, konst)?;
+    typed_int_term(value, kind)
+}
+
+fn primitive_assoc_limit_value(kind: IntKind, konst: &str) -> Option<ExactInt> {
+    match (kind.signed, konst) {
+        (true, "MIN") => Some(ExactInt::Signed(signed_min_for_kind(kind)?)),
+        (true, "MAX") => Some(ExactInt::Signed(signed_max_for_kind(kind)?)),
+        (false, "MIN") => Some(ExactInt::Unsigned(0)),
+        (false, "MAX") => Some(ExactInt::Unsigned(unsigned_max_for_kind(kind)?)),
+        _ => None,
+    }
+}
+
+fn signed_min_for_kind(kind: IntKind) -> Option<i128> {
+    if kind.bits >= 128 {
+        Some(i128::MIN)
+    } else {
+        Some(-(1i128.checked_shl(kind.bits - 1)?))
+    }
+}
+
+fn signed_max_for_kind(kind: IntKind) -> Option<i128> {
+    if kind.bits >= 128 {
+        Some(i128::MAX)
+    } else {
+        (1i128.checked_shl(kind.bits - 1)?).checked_sub(1)
+    }
+}
+
+fn unsigned_max_for_kind(kind: IntKind) -> Option<u128> {
+    if kind.bits >= 128 {
+        Some(u128::MAX)
+    } else {
+        (1u128.checked_shl(kind.bits)?).checked_sub(1)
+    }
 }
 
 fn primitive_type_name(ty: &Type) -> Option<String> {
@@ -268,5 +278,47 @@ impl Sugar for ConstCompositeSugar {
             "reducing factory-constructed const composite body"
         );
         self.body.reduce(ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sugar_ir_symbolic::ConstValue;
+
+    fn assert_int_const(term: Rc<Term>, value: i128, sort_name: &str) {
+        match term.as_ref() {
+            Term::Const {
+                value: ConstValue::Int(actual),
+                sort,
+            } => {
+                assert_eq!(*actual, value);
+                assert_eq!(sort.name, sort_name);
+            }
+            other => panic!("expected primitive integer const, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn primitive_assoc_int_limits_preserve_declared_floor_type() {
+        assert_int_const(
+            primitive_assoc_const_parts_term("u64", "MAX").expect("u64::MAX lowers"),
+            i128::from(u64::MAX),
+            "u64",
+        );
+        assert_int_const(
+            primitive_assoc_const_parts_term("i64", "MIN").expect("i64::MIN lowers"),
+            i128::from(i64::MIN),
+            "i64",
+        );
+    }
+
+    #[test]
+    fn primitive_assoc_bits_lowers_to_rust_u32_floor() {
+        assert_int_const(
+            primitive_assoc_const_parts_term("u64", "BITS").expect("u64::BITS lowers"),
+            i128::from(u64::BITS),
+            "u32",
+        );
     }
 }
