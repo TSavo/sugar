@@ -31,6 +31,7 @@ mod try_fold_eval;
 pub mod sugar {
     pub mod addr_of_mut;
     pub mod aggregate_decomp;
+    pub mod aggregate_term;
     pub mod array_repeat;
     pub mod array_term;
     pub mod assign_op;
@@ -20698,7 +20699,7 @@ fn call_result_head(callee: &str, arity: usize) -> String {
     format!("callresult_{safe}_a{arity}")
 }
 
-fn canonical_term_sig(term: &Term) -> String {
+pub(crate) fn canonical_term_sig(term: &Term) -> String {
     match term {
         Term::Var { name } => format!("v:{name}"),
         Term::Const { value, sort } => match value {
@@ -21150,7 +21151,7 @@ fn literal_aggregate_term_in_scope<'a>(
     Ok(make_var(format!("{prefix}:{kind}({inner})")))
 }
 
-fn is_literal_identity_term(term: &Term) -> bool {
+pub(crate) fn is_literal_identity_term(term: &Term) -> bool {
     match term {
         Term::Const { .. } => true,
         Term::Var { name } => name.starts_with("literal:"),

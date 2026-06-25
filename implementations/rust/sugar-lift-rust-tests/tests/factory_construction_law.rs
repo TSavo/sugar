@@ -80,6 +80,16 @@ const FORBIDDEN_OPTIONAL_BACKSTOP_SYMBOLS: &[&str] = &["backstop::boxed"];
 const FORBIDDEN_SUGAR_RUNTIME_ARGUMENT_SYMBOLS: &[&str] =
     &["Effect::RuntimeArgument", "RuntimeArgument {"];
 
+const AGGREGATE_TERM_RECOGNIZERS: &[&str] = &[
+    "src/sugar/array_term.rs",
+    "src/sugar/repeat_term.rs",
+    "src/sugar/tuple_term.rs",
+    "src/sugar/vec_macro.rs",
+];
+
+const FORBIDDEN_EAGER_AGGREGATE_SYMBOLS: &[&str] =
+    &["literal_aggregate_term_in_scope", "reasoned_incomplete"];
+
 #[test]
 fn names_and_blames_raw_child_fields_on_sugar_types() {
     let violations = raw_child_field_violations();
@@ -134,6 +144,29 @@ fn names_and_blames_sugar_owned_runtime_argument() {
     assert!(
         violations.is_empty(),
         "construction-law RuntimeArgument violation: ordinary sugar must propagate child effects or panic/gap; it must not invent RuntimeArgument.\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn names_and_blames_eager_aggregate_term_fallthroughs() {
+    let manifest = manifest_dir();
+    let mut violations = Vec::new();
+    for rel in AGGREGATE_TERM_RECOGNIZERS {
+        let path = manifest.join(rel);
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        for symbol in FORBIDDEN_EAGER_AGGREGATE_SYMBOLS {
+            if src.contains(symbol) {
+                violations.push(format!(
+                    "{rel}: eager aggregate recognizer symbol `{symbol}`; construct SugarBody children and compose in desugar"
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "construction-law eager aggregate violation: array/tuple/vec/repeat term sugar must reduce children lazily and propagate child effects.\n{}",
         violations.join("\n")
     );
 }

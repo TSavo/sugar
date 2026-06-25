@@ -8,10 +8,10 @@
 // `decompose_array_repeat` directly as the refuse-shape). Byte-identical to the
 // `Expr::Repeat` arm of the old fat factory.
 
+use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
 use crate::sugar::array_repeat;
-use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
-use crate::{literal_aggregate_term_in_scope, repeat_count_in_scope, Sugar};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx};
+use crate::{repeat_count_in_scope, Sugar};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -30,11 +30,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if count > MAX_REPEAT {
         return Some(array_repeat::refusal_node(expr));
     }
-    let elem_refs = std::iter::repeat(&*repeat.expr).take(count);
-    Some(
-        match literal_aggregate_term_in_scope("Array", elem_refs, expr, scope) {
-            Ok(term) => resolved_term(term),
-            Err(reason) => reasoned_incomplete(reason),
-        },
-    )
+    Some(Box::new(LiteralAggregateTermSugar::new(
+        "Array",
+        std::iter::repeat_with(|| SugarBody::term(&repeat.expr, fcx))
+            .take(count)
+            .collect(),
+    )))
 }
