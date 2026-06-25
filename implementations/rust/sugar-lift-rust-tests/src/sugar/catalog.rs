@@ -1628,28 +1628,24 @@ mod tests {
     }
 
     #[test]
-    fn factory_audit_marks_no_candidate_site_unresolved() {
+    fn factory_no_candidate_site_is_a_structural_gap_panic() {
         let expr: Expr = syn::parse_str("|| 1").unwrap();
-        let expected_site = crate::token_key(&expr);
-        let audits = run_expr_with_audit(&expr, SugarRole::Composite);
-        let audit = audits
-            .iter()
-            .find(|audit| audit.site == expected_site && audit.requested_role == "Composite")
-            .expect("closure composite site is audited");
-
-        assert_eq!(audit.selected, None);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_expr_with_audit(&expr, SugarRole::Composite);
+        }))
+        .expect_err("factory gaps must panic instead of becoming an auditable outcome");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("factory gap panic should carry a string message");
         assert!(
-            audit.candidates.is_empty(),
-            "role-filtered unresolved sites should not leak candidates from other roles: {audit:?}"
+            message.contains("factory structural gap"),
+            "unexpected panic message: {message}"
         );
-        assert_eq!(audit.line, 1);
-        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
         assert!(
-            audit
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("write more Sugar for this AST")),
-            "{audit:?}"
+            message.contains("no sugar candidate reached this source shape"),
+            "unexpected panic message: {message}"
         );
     }
 
