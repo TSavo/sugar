@@ -152,20 +152,6 @@ impl Sugar for RegexMatchSugar {
     }
 }
 
-impl RegexMatch {
-    /// Resolve the pattern operand by lazily building and DESUGARING the pattern `Sugar`
-    /// (mirroring `MapSugar`'s `self.inner.desugar(ctx)`). The caller reads the
-    /// resolved string off the typed literal-string floor. A `Complete` carries the
-    /// resolved literal; an `Incomplete` is a genuinely runtime / unsupported pattern.
-    /// A gap has no terminal outcome and must propagate to audit/panic.
-    pub(crate) fn resolve_pattern_floor(&self, ctx: &SugarCtx) -> FloorRead<String> {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = stable_let_refs(&stable);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        SugarBody::literal_string(&self.pattern, &fcx).reduce_literal_string(ctx)
-    }
-}
-
 /// Build arm: recognize a rust regex-match SHAPE and `build` the pattern operand
 /// into an inner `Sugar` (recursively, by the same walk). Returns `None` (declines
 /// to recognize) on a non-regex shape or an unrecognized API. The pattern is NOT
@@ -232,7 +218,8 @@ pub(crate) fn assertion_entry(
     let mut float_widths = FloatWidthScope::new();
     let reducer = ReductionCtx::from_items(&[]);
     let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
-    let pattern_str = match matched.resolve_pattern_floor(&ctx) {
+    let pattern = SugarBody::literal_string(&matched.pattern, &fcx);
+    let pattern_str = match pattern.reduce_literal_string(&ctx) {
         FloorRead::Complete(pattern) => pattern,
         FloorRead::Incomplete(effect) => return Err(effect),
     };
