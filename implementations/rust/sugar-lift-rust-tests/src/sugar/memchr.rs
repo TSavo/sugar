@@ -55,8 +55,8 @@ impl Sugar for MemchrSugar {
             stable.iter().map(|(k, v)| (k.clone(), v)).collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let needle = match const_byte_term(&self.needle, &fcx, ctx) {
-            Some(byte) => byte,
-            None => {
+            Ok(Some(byte)) => byte,
+            Ok(None) => {
                 return Outcome::Incomplete(Effect::MemchrRuntime {
                     boundary: token_key(&self.needle),
                     reason: format!(
@@ -64,8 +64,9 @@ impl Sugar for MemchrSugar {
                          from source literals); refused: `{}`",
                         token_key(&self.needle)
                     ),
-                })
+                });
             }
+            Err(effect) => return Outcome::Incomplete(effect),
         };
         let haystack = match byte_sequence(&self.haystack, ctx, &let_inits, 0) {
             Ok(bytes) => bytes,
@@ -135,7 +136,7 @@ fn byte_sequence<'a>(
         }
         Expr::Index(index) => {
             let bytes = byte_sequence(&index.expr, ctx, let_inits, depth + 1)?;
-            let (start, end) = slice_bounds(&index.index, bytes.len(), ctx, let_inits)
+            let (start, end) = slice_bounds(&index.index, bytes.len(), ctx, let_inits)?
                 .ok_or_else(|| runtime_slice_effect(expr))?;
             Ok(bytes[start..end].to_vec())
         }
@@ -157,43 +158,68 @@ fn slice_bounds<'a>(
     len: usize,
     ctx: &SugarCtx,
     let_inits: &BTreeMap<String, &'a Expr>,
-) -> Option<(usize, usize)> {
+) -> Result<Option<(usize, usize)>, Effect> {
     let Expr::Range(range) = peel_refs_groups(expr) else {
-        return None;
+        return Ok(None);
     };
     let start = match &range.start {
-        Some(start) => usize::try_from(const_int_term(start, ctx, let_inits)?).ok()?,
+        Some(start) => {
+            let Some(start) = const_int_term(start, ctx, let_inits)? else {
+                return Ok(None);
+            };
+            let Ok(start) = usize::try_from(start) else {
+                return Ok(None);
+            };
+            start
+        }
         None => 0,
     };
     let mut end = match &range.end {
-        Some(end) => usize::try_from(const_int_term(end, ctx, let_inits)?).ok()?,
+        Some(end) => {
+            let Some(end) = const_int_term(end, ctx, let_inits)? else {
+                return Ok(None);
+            };
+            let Ok(end) = usize::try_from(end) else {
+                return Ok(None);
+            };
+            end
+        }
         None => len,
     };
     if matches!(range.limits, RangeLimits::Closed(_)) {
-        end = end.checked_add(1)?;
+        let Some(inclusive_end) = end.checked_add(1) else {
+            return Ok(None);
+        };
+        end = inclusive_end;
     }
-    (start <= end && end <= len).then_some((start, end))
+    Ok((start <= end && end <= len).then_some((start, end)))
 }
 
-fn const_byte_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Option<u8> {
+fn const_byte_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Option<u8>, Effect> {
     let term = match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term()?,
-        Outcome::Incomplete(_) => return None,
+        Outcome::Complete(d) => d.into_term(),
+        Outcome::Incomplete(effect) => return Err(effect),
     };
-    u8::try_from(const_fold_int_term(&term)?).ok()
+    let Some(term) = term else {
+        return Ok(None);
+    };
+    Ok(const_fold_int_term(&term).and_then(|value| u8::try_from(value).ok()))
 }
 
 fn const_int_term<'a>(
     expr: &Expr,
     ctx: &SugarCtx,
     let_inits: &BTreeMap<String, &'a Expr>,
-) -> Option<i128> {
+) -> Result<Option<i128>, Effect> {
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, let_inits);
     let term = match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term()?,
-        Outcome::Incomplete(_) => return None,
+        Outcome::Complete(d) => d.into_term(),
+        Outcome::Incomplete(effect) => return Err(effect),
     };
-    const_fold_int_term(&term)
+    let Some(term) = term else {
+        return Ok(None);
+    };
+    Ok(const_fold_int_term(&term))
 }
 
 fn const_byte_value(expr: &Expr) -> Option<u8> {
