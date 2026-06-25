@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
+use syn::visit::Visit;
 use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
@@ -20,7 +21,7 @@ use crate::sugar::monadic;
 use crate::sugar::term_literal::translate_lit;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
-    expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path,
+    expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path, token_key,
     translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, Effect, LiftOptions,
     Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
 };
@@ -242,6 +243,9 @@ impl Sugar for MatchValueTermSugar {
             },
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
+        if let Some(effect) = panic_payload_downcast_effect(pat, body, &scrutinee) {
+            return Outcome::Incomplete(effect);
+        }
         let Some(bindings) = value_arm_term_bindings(pat, &scrutinee) else {
             unreachable!("MatchValueTermSugar constructed with an unbindable value pattern");
         };
@@ -260,6 +264,101 @@ impl Sugar for MatchValueTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.reduce(ctx)
     }
+}
+
+fn panic_payload_downcast_effect(pat: &Pat, body: &Expr, scrutinee: &Rc<Term>) -> Option<Effect> {
+    let binding = catch_unwind_err_binding(pat, scrutinee)?;
+    body_downcasts_binding(body, &binding).then(|| Effect::PanicPayload {
+        boundary: token_key(body),
+    })
+}
+
+fn catch_unwind_err_binding(pat: &Pat, scrutinee: &Rc<Term>) -> Option<String> {
+    if !scrutinee_is_catch_unwind(scrutinee) {
+        return None;
+    }
+    match pat {
+        Pat::TupleStruct(ts)
+            if ts
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "Err")
+                && ts.elems.len() == 1 =>
+        {
+            match &ts.elems[0] {
+                Pat::Ident(id)
+                    if id.subpat.is_none() && id.mutability.is_none() && id.by_ref.is_none() =>
+                {
+                    Some(id.ident.to_string())
+                }
+                _ => None,
+            }
+        }
+        Pat::Reference(reference) => catch_unwind_err_binding(&reference.pat, scrutinee),
+        Pat::Paren(paren) => catch_unwind_err_binding(&paren.pat, scrutinee),
+        _ => None,
+    }
+}
+
+fn scrutinee_is_catch_unwind(term: &Rc<Term>) -> bool {
+    match term.as_ref() {
+        Term::Ctor { name, .. } if name.starts_with("call:") => name.contains("catch_unwind"),
+        Term::Ctor { args, .. } => args.iter().any(scrutinee_is_catch_unwind),
+        _ => false,
+    }
+}
+
+fn body_downcasts_binding(body: &Expr, binding: &str) -> bool {
+    struct Scan<'a> {
+        binding: &'a str,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan<'_> {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if matches!(
+                call.method.to_string().as_str(),
+                "downcast" | "downcast_ref" | "downcast_mut"
+            ) && expr_refs_binding(&call.receiver, self.binding)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let mut scan = Scan {
+        binding,
+        found: false,
+    };
+    Visit::visit_expr(&mut scan, body);
+    scan.found
+}
+
+fn expr_refs_binding(expr: &Expr, binding: &str) -> bool {
+    struct Refs<'a> {
+        binding: &'a str,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Refs<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if path
+                .path
+                .get_ident()
+                .is_some_and(|ident| ident == self.binding)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+    }
+    let mut refs = Refs {
+        binding,
+        found: false,
+    };
+    Visit::visit_expr(&mut refs, expr);
+    refs.found
 }
 
 fn single_surviving_value_arm(m: &syn::ExprMatch) -> Option<(&Pat, &Expr)> {

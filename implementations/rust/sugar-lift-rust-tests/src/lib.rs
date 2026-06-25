@@ -807,6 +807,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // atomic counter reads during unwinding. That state is produced by runtime drop
         // side effects, not by source literals.
         || reason.contains("drop-on-panic side effect, runtime, not literal")
+        || reason.contains("panic payload downcast reads runtime exception state")
         // TERMINAL: exact float-bit literal sugar only computes when the float operand
         // or bit operand is text-determined. A runtime float/bit source has no literal
         // IEEE pattern to read from the source text.
@@ -8157,6 +8158,10 @@ enum Effect {
     /// `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal scrutinee stays
     /// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail).
     RuntimeMatchScrutinee { boundary: String },
+    /// PANIC-PAYLOAD: `catch_unwind` proves a branch can capture panic state, but
+    /// downcasting/dereferencing that captured payload reads runtime exception state. The
+    /// branch tag may be a fact; the payload bytes are not a source literal floor.
+    PanicPayload { boundary: String },
     /// RUNTIME-DESTRUCTURED-SOURCE: a local introduced by a tuple/slice/array pattern is
     /// later read, but the source being destructured is runtime data rather than a
     /// literal tuple/array. Literal destructures complete by tracing the component floor;
@@ -8352,6 +8357,9 @@ impl Effect {
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
                  literals); refused"
             ),
+            Effect::PanicPayload { boundary } => format!(
+                "panic payload downcast reads runtime exception state `{boundary}`; refused"
+            ),
             Effect::RuntimeDestructuredSource { reason, .. } => reason.clone(),
             // Carries the existing "array-repeat ... non-literal length ... refused by name"
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
@@ -8419,6 +8427,7 @@ impl Effect {
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
+            | Effect::PanicPayload { boundary }
             | Effect::RuntimeDestructuredSource { boundary, .. }
             | Effect::ArrayRepeat { boundary }
             | Effect::LiteralDomain { boundary, .. }
