@@ -18,7 +18,7 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::monadic::RES_OK;
 use crate::{
     callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
-    repeat_count_in_scope, strip_refs_groups, token_key, AssertionFactKind, Desugared, Outcome,
+    repeat_count_in_scope, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,
     RelationOp, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
@@ -403,9 +403,10 @@ fn append_body_components(
                     out.extend(parts);
                     Ok(())
                 }
-                None => aggregate_decomp_construction_gap(
-                    "aggregate child completed without a grounded component",
-                ),
+                None => Err(Outcome::Incomplete(Effect::LiteralDomain {
+                    boundary: "aggregate element".to_string(),
+                    reason: "literal array element is not text-determined".to_string(),
+                })),
             }
         }
     }
