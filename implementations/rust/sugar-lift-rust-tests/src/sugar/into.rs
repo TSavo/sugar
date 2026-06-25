@@ -11,7 +11,11 @@ use sugar_ir_symbolic::Term;
 use syn::Expr;
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::float_floor::{
+    runtime_float, stable_width_from_type_key, IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor,
+    IeeeFloatWidth,
+};
 use crate::sugar::int_literal::{
     from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
 };
@@ -28,48 +32,95 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if call.method != "into" || !call.args.is_empty() {
         return None;
     }
-    let Some(target) = fcx.expected_type().map(str::to_string) else {
+    let Some(target_type) = fcx.expected_type().map(str::to_string) else {
         panic!(
             "into sugar cannot be constructed without compiler-provided target type for `{}`",
             token_key(expr)
         )
     };
+    let target = into_target(&target_type).unwrap_or_else(|| {
+        panic!(
+            "into target `{}` has no primitive-floor dispatch owner yet for `{}`",
+            target_type,
+            token_key(expr)
+        )
+    });
+    let receiver = match target {
+        IntoTarget::Integer(_) => IntoReceiver::Integer(SugarBody::term(&call.receiver, fcx)),
+        IntoTarget::Float(width) => IntoReceiver::Float(SugarBody::ieee_float(
+            &call.receiver,
+            fcx,
+            Some(width),
+            "into",
+        )),
+    };
     Some(Box::new(IntoSugar {
-        receiver: SugarBody::term(&call.receiver, fcx),
+        receiver,
         target,
         site: token_key(expr),
     }))
 }
 
 struct IntoSugar {
-    receiver: SugarBody<TermFloor>,
-    target: String,
+    receiver: IntoReceiver,
+    target: IntoTarget,
     site: String,
 }
 
 impl Sugar for IntoSugar {
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
-        let target = primitive_int_kind(&self.target).unwrap_or_else(|| {
-            panic!(
-                "into target `{}` has no primitive-floor dispatch owner yet for `{}`",
-                self.target, self.site
-            )
-        });
-        let receiver = match self.receiver.reduce(ctx) {
-            Outcome::Complete(d) => d.into_term().unwrap_or_else(|| {
-                panic!("into receiver completed as non-term for `{}`", self.site)
-            }),
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-        };
-        receiver.accept_scalar_floor(IntoPrimitiveVisitor {
-            target,
-            site: &self.site,
-        })
+        match (&self.receiver, self.target) {
+            (IntoReceiver::Integer(receiver), IntoTarget::Integer(target)) => {
+                let receiver = match receiver.reduce(ctx) {
+                    Outcome::Complete(d) => d.into_term().unwrap_or_else(|| {
+                        panic!("into receiver completed as non-term for `{}`", self.site)
+                    }),
+                    Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+                };
+                receiver.accept_scalar_floor(IntoPrimitiveVisitor {
+                    target,
+                    site: &self.site,
+                })
+            }
+            (IntoReceiver::Float(receiver), IntoTarget::Float(target)) => {
+                let receiver = match receiver.reduce(ctx) {
+                    Outcome::Complete(d) => d.into_term().unwrap_or_else(|| {
+                        panic!("into receiver completed as non-term for `{}`", self.site)
+                    }),
+                    Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+                };
+                receiver.accept_ieee_float(IntoFloatVisitor {
+                    target,
+                    site: &self.site,
+                })
+            }
+            _ => panic!(
+                "into receiver floor diverged from target for `{}`",
+                self.site
+            ),
+        }
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.reduce(ctx)
     }
+}
+
+enum IntoReceiver {
+    Integer(SugarBody<TermFloor>),
+    Float(SugarBody<IeeeFloatFloor>),
+}
+
+#[derive(Clone, Copy)]
+enum IntoTarget {
+    Integer(IntKind),
+    Float(IeeeFloatWidth),
+}
+
+fn into_target(ty: &str) -> Option<IntoTarget> {
+    primitive_int_kind(ty)
+        .map(IntoTarget::Integer)
+        .or_else(|| stable_width_from_type_key(ty).map(IntoTarget::Float))
 }
 
 struct IntoPrimitiveVisitor<'a> {
@@ -138,5 +189,24 @@ impl ScalarFloorVisitor for IntoPrimitiveVisitor<'_> {
             operation: "into".to_string(),
             kind: self.target.name.to_string(),
         })
+    }
+}
+
+struct IntoFloatVisitor<'a> {
+    target: IeeeFloatWidth,
+    site: &'a str,
+}
+
+impl IeeeFloatVisitor for IntoFloatVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_float(self, value: IeeeFloatValue) -> Self::Output {
+        Outcome::Complete(Desugared::Term(
+            value.into_width_term(self.target, self.site),
+        ))
+    }
+
+    fn visit_non_float(self, _term: &Rc<Term>) -> Self::Output {
+        runtime_float(self.site, "into")
     }
 }
