@@ -1281,7 +1281,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn eval_expr(&self, expr: &Expr) -> Option<Expr> {
+    fn eval_expr(&mut self, expr: &Expr) -> Option<Expr> {
         let substituted = substitute_expr(expr, &self.bindings);
         if let Some(value) = self.ground_expr_from_factory(&substituted) {
             return Some(value);
@@ -1295,7 +1295,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn ground_expr_from_factory(&self, expr: &Expr) -> Option<Expr> {
+    fn ground_expr_from_factory(&mut self, expr: &Expr) -> Option<Expr> {
         let term = self.term_from_factory(expr)?;
         let value = term_ground_expr(&term)?;
         debug!(
@@ -1307,16 +1307,24 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         Some(value)
     }
 
-    fn term_from_factory(&self, expr: &Expr) -> Option<Rc<Term>> {
+    fn term_from_factory(&mut self, expr: &Expr) -> Option<Rc<Term>> {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
-        build_term(expr, &fcx)
-            .desugar(self.ctx)
-            .complete()?
-            .into_term()
+        match build_term(expr, &fcx).desugar(self.ctx) {
+            Outcome::Complete(desugared) => desugared.into_term().or_else(|| {
+                for_replay_construction_gap(format!(
+                    "term factory completed `{}` without a Term floor",
+                    crate::token_key(expr)
+                ))
+            }),
+            Outcome::Incomplete(effect) => {
+                self.terminal_effect = Some(effect);
+                None
+            }
+        }
     }
 
-    fn eval_if_value(&self, expr_if: &syn::ExprIf) -> Option<Expr> {
+    fn eval_if_value(&mut self, expr_if: &syn::ExprIf) -> Option<Expr> {
         let cond = self.expr_const_bool(&expr_if.cond)?;
         debug!(
             sugar = "for_replay",
@@ -1332,14 +1340,14 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn eval_single_expr_block(&self, block: &syn::Block) -> Option<Expr> {
+    fn eval_single_expr_block(&mut self, block: &syn::Block) -> Option<Expr> {
         match block.stmts.as_slice() {
             [Stmt::Expr(expr, None)] => self.eval_expr(expr),
             _ => None,
         }
     }
 
-    fn eval_call(&self, call: &syn::ExprCall) -> Option<Expr> {
+    fn eval_call(&mut self, call: &syn::ExprCall) -> Option<Expr> {
         let name = simple_call_name(call)?;
         let helper = self.ctx.scope.fn_registry().lookup(&name)?;
         if helper.sig.asyncness.is_some() {
@@ -1359,7 +1367,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         for (param, arg) in params.into_iter().zip(call.args.iter()) {
             child.bindings.insert(param, self.eval_expr(arg)?);
         }
-        child.eval_value_body(&helper.block)
+        let result = child.eval_value_body(&helper.block);
+        if result.is_none() {
+            if let Some(effect) = child.terminal_effect.take() {
+                self.terminal_effect = Some(effect);
+            }
+        }
+        result
     }
 
     fn eval_value_body(&mut self, block: &syn::Block) -> Option<Expr> {
@@ -1391,7 +1405,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn eval_match_value(&self, expr_match: &syn::ExprMatch) -> Option<Expr> {
+    fn eval_match_value(&mut self, expr_match: &syn::ExprMatch) -> Option<Expr> {
         let scrutinee = self.eval_expr(&expr_match.expr)?;
         for arm in &expr_match.arms {
             if arm.guard.is_some() {
@@ -1413,18 +1427,24 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                         extract_if: self.extract_if.clone(),
                         insert: self.insert.clone(),
                     };
-                    return match arm.body.as_ref() {
+                    let result = match arm.body.as_ref() {
                         Expr::Block(block) => child.eval_value_body(&block.block),
                         Expr::Unsafe(block) => child.eval_value_body(&block.block),
                         other => child.eval_expr(other),
                     };
+                    if result.is_none() {
+                        if let Some(effect) = child.terminal_effect.take() {
+                            self.terminal_effect = Some(effect);
+                        }
+                    }
+                    return result;
                 }
             }
         }
         None
     }
 
-    fn assert_macro_const_true(&self, mac: &syn::Macro) -> Option<bool> {
+    fn assert_macro_const_true(&mut self, mac: &syn::Macro) -> Option<bool> {
         let name = mac.path.segments.last()?.ident.to_string();
         if !matches!(name.as_str(), "assert" | "debug_assert") {
             return None;
@@ -1434,7 +1454,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         self.expr_const_bool(condition).filter(|value| *value)
     }
 
-    fn expr_const_bool(&self, expr: &Expr) -> Option<bool> {
+    fn expr_const_bool(&mut self, expr: &Expr) -> Option<bool> {
         let substituted = substitute_expr(expr, &self.bindings);
         match strip_refs_groups(&substituted) {
             Expr::Lit(lit) => match &lit.lit {
@@ -1522,34 +1542,33 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn expr_const_int(&self, expr: &Expr) -> Option<i128> {
+    fn expr_const_int(&mut self, expr: &Expr) -> Option<i128> {
         let substituted = substitute_expr(expr, &self.bindings);
         let term = self.term_from_factory(&substituted)?;
         term_as_int(&term).or_else(|| const_fold_int_term(&term))
     }
 
-    fn expr_const_u128(&self, expr: &Expr) -> Option<u128> {
+    fn expr_const_u128(&mut self, expr: &Expr) -> Option<u128> {
         let substituted = substitute_expr(expr, &self.bindings);
         let term = self.term_from_factory(&substituted)?;
         const_fold_u128_term(&term)
     }
 
-    fn expr_const_u128_pair(&self, lhs: &Expr, rhs: &Expr) -> Option<(u128, u128)> {
+    fn expr_const_u128_pair(&mut self, lhs: &Expr, rhs: &Expr) -> Option<(u128, u128)> {
         let left = self.expr_const_u128(lhs);
         let right = self.expr_const_u128(rhs);
         if left.is_none() && right.is_none() {
             return None;
         }
-        Some((
-            left.or_else(|| {
-                self.expr_const_int(lhs)
-                    .and_then(|n| u128::try_from(n).ok())
-            })?,
-            right.or_else(|| {
-                self.expr_const_int(rhs)
-                    .and_then(|n| u128::try_from(n).ok())
-            })?,
-        ))
+        let left = match left {
+            Some(value) => value,
+            None => u128::try_from(self.expr_const_int(lhs)?).ok()?,
+        };
+        let right = match right {
+            Some(value) => value,
+            None => u128::try_from(self.expr_const_int(rhs)?).ok()?,
+        };
+        Some((left, right))
     }
 }
 

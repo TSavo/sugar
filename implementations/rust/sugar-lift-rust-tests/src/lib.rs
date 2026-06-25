@@ -8020,17 +8020,6 @@ enum Outcome {
     Incomplete(Effect),
 }
 
-impl Outcome {
-    /// The completed payload, or `None` if this struck a named boundary
-    /// (`Incomplete`).
-    fn complete(self) -> Option<Desugared> {
-        match self {
-            Outcome::Complete(d) => Some(d),
-            Outcome::Incomplete(_) => None,
-        }
-    }
-}
-
 /// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
 /// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
 /// mutable read, ...), plus named unsupported terms. `reason()` returns the terminal refusal string
