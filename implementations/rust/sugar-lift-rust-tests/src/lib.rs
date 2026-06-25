@@ -9118,9 +9118,6 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
         let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
-            if matches!(strip_refs_groups(expr), Expr::Path(_)) {
-                return callsite_child_fallback_term(expr, self.scope);
-            }
             if sugar::method_family::literal_sequence_static_len_in_scope(
                 expr, &let_inits, self.scope,
             ) == Some(0)
