@@ -14,7 +14,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{
     and_, atomic_, forall, implies, lt, lte, not_, num, str_const, Formula, Sort, Term,
 };
-use syn::{Expr, Pat, Stmt};
+use syn::{Expr, Lit, Pat, Stmt};
 use tracing::debug;
 
 use crate::sugar::factory::{
@@ -23,11 +23,11 @@ use crate::sugar::factory::{
 use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, closure_body_advances_iterator,
-    closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term, const_val_term,
-    count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula, subst_var_in_formula,
-    term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Effect,
-    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
-    SUGAR_SEQ_CAP,
+    closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
+    const_fold_u128_term, const_val_term, count_asserts_in_stmts, loop_body_mutates,
+    resolve_index_in_formula, strip_refs_groups, subst_var_in_formula, term_as_int,
+    translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Effect, FloatWidthScope,
+    LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -287,6 +287,9 @@ pub(crate) struct ForAllSugar {
     body_stmts: Vec<Stmt>,
     /// The warrant-name flavor: `"for_each"` (adaptor) or `"loop"` (for-loop).
     kind: &'static str,
+    /// Source provenance for domain boundary discrimination; child reduction still uses
+    /// the typed `domain` body above.
+    domain_expr: Expr,
     /// In-scope LITERAL arrays (`ys -> [13, 15, ..]`), captured from `let_inits` at
     /// decompose time -- the same capture `FoldSugar` does. Used ONLY to resolve a
     /// body `index(ys, <const>)` read to its concrete literal element AFTER the loop
@@ -367,8 +370,9 @@ impl ForAllSugar {
             }
         }
 
-        if count_asserts_in_stmts(&self.body_stmts) == 0 {
-            forall_gap("body has no assertion macros");
+        let body_asserts = count_asserts_in_stmts(&self.body_stmts);
+        if body_asserts == 0 {
+            return Ok(Desugared::Seq(Vec::new()));
         }
 
         // `lift_bounded_forall` is the shared verified core: it const-checks the
@@ -432,6 +436,9 @@ impl ForAllSugar {
             ctx.factory_audits,
             &array_terms,
         ) else {
+            if let Some(effect) = self.runtime_domain_effect(ctx) {
+                return Err(Outcome::Incomplete(effect));
+            }
             forall_gap("bounded forall core declined");
         };
         let warrant = Warrant {
@@ -452,6 +459,18 @@ impl ForAllSugar {
 
     fn body_boundary(&self, ctx: &SugarCtx) -> String {
         format!("{}::{}::{}", ctx.scope.local_scope(), self.kind, self.var)
+    }
+
+    fn runtime_domain_effect(&self, ctx: &SugarCtx) -> Option<Effect> {
+        forall_domain_endpoint_is_runtime(&self.domain_expr, ctx.scope).then(|| {
+            Effect::LiteralDomain {
+                boundary: self.body_boundary(ctx),
+                reason: "assertion under for context whose domain is over a RUNTIME endpoint \
+                         (`a..b` with a runtime bound -- not a finite construction from source \
+                         literals); released to layer 0"
+                    .to_string(),
+            }
+        })
     }
 
     fn empty_loop_no_panic(&self, ctx: &SugarCtx) -> Desugared {
@@ -563,6 +582,7 @@ pub(crate) fn decompose_for_each(
         domain: ForAllDomain::Sequence(SugarBody::from_node(build_composite(&call.receiver, fcx))),
         body_stmts,
         kind: "for_each",
+        domain_expr: (*call.receiver).clone(),
         literal_arrays: capture_literal_arrays(let_inits),
         closure_body: Some((*closure.body).clone()),
     })
@@ -587,12 +607,91 @@ pub(crate) fn decompose_for_loop(
     };
     Some(ForAllSugar {
         var,
+        domain_expr: (*f.expr).clone(),
         domain,
         body_stmts: f.body.stmts.clone(),
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),
         closure_body: None,
     })
+}
+
+fn forall_domain_endpoint_is_runtime(expr: &Expr, scope: &TemporalScope) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Repeat(_) => false,
+        Expr::Range(range) => {
+            if forall_range_has_char_endpoint(range) {
+                return !forall_ascii_char_range_in_replay_cap(range);
+            }
+            let start_lit = range
+                .start
+                .as_ref()
+                .map(|start| forall_range_endpoint_const_folds(start, scope))
+                .unwrap_or(true);
+            let end_lit = range
+                .end
+                .as_ref()
+                .map(|end| forall_range_endpoint_const_folds(end, scope))
+                .unwrap_or(false);
+            !(start_lit && end_lit)
+        }
+        _ => false,
+    }
+}
+
+fn forall_range_has_char_endpoint(range: &syn::ExprRange) -> bool {
+    range
+        .start
+        .as_deref()
+        .and_then(forall_char_literal_value)
+        .is_some()
+        || range
+            .end
+            .as_deref()
+            .and_then(forall_char_literal_value)
+            .is_some()
+}
+
+fn forall_ascii_char_range_in_replay_cap(range: &syn::ExprRange) -> bool {
+    let Some(start) = range.start.as_deref().and_then(forall_char_literal_value) else {
+        return false;
+    };
+    let Some(end) = range.end.as_deref().and_then(forall_char_literal_value) else {
+        return false;
+    };
+    if !start.is_ascii() || !end.is_ascii() || end < start {
+        return false;
+    }
+    let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+    let Some(len) = u32::from(end)
+        .checked_sub(u32::from(start))
+        .and_then(|span| span.checked_add(if inclusive { 1 } else { 0 }))
+    else {
+        return false;
+    };
+    len > 0 && len <= SUGAR_SEQ_CAP as u32
+}
+
+fn forall_range_endpoint_const_folds(expr: &Expr, scope: &TemporalScope) -> bool {
+    translate_term_in_scope(expr, scope)
+        .ok()
+        .and_then(|term| {
+            term_as_int(&term)
+                .or_else(|| const_fold_int_term(&term))
+                .map(|_| ())
+                .or_else(|| const_fold_u128_term(&term).map(|_| ()))
+        })
+        .is_some()
+}
+
+fn forall_char_literal_value(expr: &Expr) -> Option<char> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Char(ch) => Some(ch.value()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn forall_gap(reason: &str) -> ! {

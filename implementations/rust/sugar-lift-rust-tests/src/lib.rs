@@ -11176,6 +11176,9 @@ fn rewrite_literal_counter_while_to_for(w: &syn::ExprWhile, scope: &TemporalScop
         .let_bindings_iter()
         .find_map(|(bound, init)| (bound == &name).then_some(init.clone()))?;
     let (increment, body_stmts) = w.body.stmts.split_last()?;
+    if body_stmts.is_empty() {
+        return None;
+    }
     if !stmt_is_unit_increment(increment, &name)
         || body_stmts
             .iter()

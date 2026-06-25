@@ -78,7 +78,11 @@ impl Sugar for ConditionalSugar {
         let else_count = count_asserts_in_stmts(&self.else_stmts);
         if then_count + else_count == 0 {
             return self.desugar_sequence_branch(ctx).unwrap_or_else(|| {
-                self.runtime_guard_or_gap("sequence conditional did not select a branch")
+                if self.then_tail.is_none() && self.else_tail.is_none() {
+                    Outcome::Complete(Desugared::Seq(Vec::new()))
+                } else {
+                    self.runtime_guard_or_gap("sequence conditional did not select a branch")
+                }
             });
         }
         // The assertion-bearing path still uses the legacy `Option<Desugared>` bridge.
