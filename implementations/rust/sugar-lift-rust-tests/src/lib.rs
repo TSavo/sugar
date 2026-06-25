@@ -168,6 +168,7 @@ pub mod sugar {
     pub mod result_predicate;
     pub mod result_transpose_collect;
     pub mod rev;
+    pub mod runtime_iterator_source;
     pub mod scan;
     pub mod sequence_floor;
     pub mod should_panic;

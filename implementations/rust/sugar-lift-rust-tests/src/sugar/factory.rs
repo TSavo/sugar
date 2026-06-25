@@ -61,8 +61,8 @@ use tracing::{debug, warn};
 use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
 use crate::{
-    refusal_disposition, token_key, AssertionFactKind, Desugared, Disposition, Effect,
-    FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
+    refusal_disposition, token_key, AssertionFactKind, Desugared, DesugaredElem, Disposition,
+    Effect, FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
     Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
@@ -155,6 +155,19 @@ impl SugarBody<BoolFloor> {
 impl SugarBody<CompositeFloor> {
     pub(crate) fn composite(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_composite(expr, fcx))
+    }
+
+    pub(crate) fn reduce_sequence(
+        &self,
+        ctx: &SugarCtx,
+        owner: &'static str,
+    ) -> FloorRead<Vec<DesugaredElem>> {
+        match self.reduce(ctx) {
+            Outcome::Complete(desugared) => FloorRead::Complete(desugared.accept_sequence_floor(
+                crate::sugar::sequence_floor::RequiredSequenceVisitor { owner },
+            )),
+            Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
+        }
     }
 }
 
