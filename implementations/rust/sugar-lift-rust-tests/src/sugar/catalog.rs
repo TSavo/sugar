@@ -31,12 +31,12 @@ use crate::sugar::{
     raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term, regex_match,
     repeat_term, result_predicate, result_transpose_collect, rev, runtime_iterator_source,
     size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
-    slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_nested_assertion, statement_reflection,
-    statement_runtime_expr, step_by, str_method, string_add, string_predicate, struct_term, take,
-    take_while, term_literal, to_string, transparent_term, try_from, try_from_fn, try_map,
-    tuple_decomp, tuple_term, unary, unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg,
-    zip,
+    slice_search, source_location, statement_async_future, statement_control_flow,
+    statement_future_handoff, statement_loop_advance, statement_nested_assertion,
+    statement_reflection, statement_runtime_expr, step_by, str_method, string_add,
+    string_predicate, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary, unsafe_memory, value_if,
+    vec_literal, vec_macro, wrapping_neg, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -151,6 +151,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &format_args::ESTIMATED_CAPACITY_EXPR_SUGAR,
     &range_accessor::EXPR_SUGAR,
     &range_bounds_contains::EXPR_SUGAR,
+    &source_location::EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &match_node::TERM_EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
@@ -1265,6 +1266,25 @@ mod tests {
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
             Some("atomic_load")
+        );
+    }
+
+    #[test]
+    fn source_location_methods_are_owned_before_generic_method() {
+        let expr: Expr = syn::parse_str("Location::caller().file()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"source_location"),
+            "Location::caller().file() should be a named source-location boundary: {names:?}"
+        );
+        assert!(
+            names.contains(&"method"),
+            "generic method remains a fallback candidate for the source-location call: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("source_location")
         );
     }
 

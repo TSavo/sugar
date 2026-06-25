@@ -7,7 +7,9 @@
 // reason; there is no runtime "unsupported" outcome for "we did not write the sugar".
 //
 // The expansion lives at DESUGAR time, not recognize time: the macro_rules registry
-// hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), NOT
+// hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), not
+// recognize time.
+use sugar_ir_symbolic::str_const;
 use syn::Expr;
 
 use crate::sugar::configuration::{self, CfgDisposition};
@@ -85,6 +87,7 @@ enum MacroTermBody {
         predicate: CfgPredicate,
         site: String,
     },
+    BuiltinFile,
     Expanded(SugarBody<TermFloor>),
     Unconstructible(String),
 }
@@ -105,6 +108,12 @@ fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody 
         return MacroTermBody::Unconstructible(format!(
             "macro `{name}` expansion depth exceeded; write more Sugar for this AST"
         ));
+    }
+    if name == "file"
+        && mac.mac.tokens.is_empty()
+        && fcx.scope().macro_registry().lookup(&name).is_none()
+    {
+        return MacroTermBody::BuiltinFile;
     }
     let Some(rules) = fcx.scope().macro_registry().lookup(&name) else {
         return MacroTermBody::Unconstructible(format!(
@@ -159,6 +168,9 @@ impl Sugar for MacroSugar {
                     }
                 }
             }
+            MacroTermBody::BuiltinFile => {
+                Outcome::Complete(Desugared::Term(str_const(ctx.scope.source_path())))
+            }
             MacroTermBody::Expanded(body) => body.reduce(ctx),
             MacroTermBody::Unconstructible(reason) => {
                 panic!("{reason}");
@@ -181,7 +193,11 @@ mod tests {
     };
 
     fn run(expr: &Expr, options: &LiftOptions) -> Outcome {
-        let scope = TemporalScope::new("test", TemporalPlan::default());
+        run_in_scope(expr, options, "test")
+    }
+
+    fn run_in_scope(expr: &Expr, options: &LiftOptions, local_scope: &str) -> Outcome {
+        let scope = TemporalScope::new(local_scope, TemporalPlan::default());
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, options, &let_inits);
         let node = recognize(expr, &fcx).expect("cfg! is owned by macro term sugar");
@@ -226,6 +242,26 @@ mod tests {
             }
             Outcome::Incomplete(_) => panic!("expected Configuration effect"),
             Outcome::Complete(_) => panic!("ambiguous cfg! must not complete"),
+        }
+    }
+
+    #[test]
+    fn file_macro_term_lifts_to_current_source_path() {
+        let expr: Expr = parse_quote!(file!());
+        let outcome = run_in_scope(
+            &expr,
+            &LiftOptions::default(),
+            "tests/panic/location.rs::location_file_runtime_refused",
+        );
+        let Outcome::Complete(Desugared::Term(term)) = outcome else {
+            panic!("file! must complete to the source-path string literal")
+        };
+        match term.as_ref() {
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => assert_eq!(value, "tests/panic/location.rs"),
+            other => panic!("file! must lift to a String const, got {other:?}"),
         }
     }
 }
