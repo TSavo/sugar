@@ -133,6 +133,12 @@ impl SugarBody<TermFloor> {
     pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_term(expr, fcx))
     }
+
+    pub(crate) fn synthesized_term(expr: &Expr, ctx: &SugarCtx) -> Self {
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        Self::term(expr, &fcx)
+    }
 }
 
 impl SugarBody<IeeeFloatFloor> {
@@ -159,6 +165,12 @@ impl SugarBody<CompositeFloor> {
         Self::from_node(build_composite(expr, fcx))
     }
 
+    pub(crate) fn synthesized_composite(expr: &Expr, ctx: &SugarCtx) -> Self {
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        Self::composite(expr, &fcx)
+    }
+
     pub(crate) fn reduce_sequence(
         &self,
         ctx: &SugarCtx,
@@ -176,6 +188,12 @@ impl SugarBody<CompositeFloor> {
 impl SugarBody<ConstraintFloor> {
     pub(crate) fn constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_constraint(expr, fcx))
+    }
+
+    pub(crate) fn synthesized_constraint(expr: &Expr, ctx: &SugarCtx) -> Self {
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        Self::constraint(expr, &fcx)
     }
 }
 

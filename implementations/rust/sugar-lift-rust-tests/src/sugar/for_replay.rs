@@ -17,7 +17,7 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::configuration::{resolve as cfg_resolve, CfgDisposition};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{
-    build_composite, build_term, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+    has_composite, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::insert::InsertSugar;
 use crate::{
@@ -1261,10 +1261,8 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn emit_constraint_expr(&mut self, expr: &Expr) -> Option<()> {
-        let let_inits = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
-        let node = crate::sugar::factory::build_constraint(expr, &fcx);
-        match node.desugar(self.ctx) {
+        let body = SugarBody::<ConstraintFloor>::synthesized_constraint(expr, self.ctx);
+        match body.desugar(self.ctx) {
             Outcome::Complete(Desugared::Constraints {
                 atom,
                 kind: AssertionFactKind::Warranted,
@@ -1318,9 +1316,8 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn term_from_factory(&mut self, expr: &Expr) -> Result<Rc<Term>, Effect> {
-        let let_inits = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
-        match build_term(expr, &fcx).desugar(self.ctx) {
+        let body = SugarBody::<TermFloor>::synthesized_term(expr, self.ctx);
+        match body.desugar(self.ctx) {
             Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
                 for_replay_construction_gap(format!(
                     "term factory completed `{}` without a Term floor",
@@ -1778,9 +1775,8 @@ fn finite_domain_body_exprs(
 }
 
 fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Result<Vec<Expr>, Effect> {
-    let let_inits = BTreeMap::new();
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    let seq = match build_composite(expr, &fcx).desugar(ctx) {
+    let body = SugarBody::<CompositeFloor>::synthesized_composite(expr, ctx);
+    let seq = match body.desugar(ctx) {
         Outcome::Complete(Desugared::Seq(seq)) => seq,
         Outcome::Complete(_) => {
             for_replay_construction_gap(
