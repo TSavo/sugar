@@ -2927,8 +2927,9 @@ fn expr_signature(expr: &Expr) -> String {
 fn local_const_initializer_is_safe(expr: &Expr) -> bool {
     match strip_refs_groups(expr) {
         _ if is_closed_scalar_literal(expr) => true,
-        Expr::Path(path) if path.qself.is_none() => {
-            primitive_int_const_path_value(&path.path).is_some() || path.path.get_ident().is_some()
+        Expr::Path(path) => {
+            primitive_int_const_expr_value(path).is_some()
+                || (path.qself.is_none() && path.path.get_ident().is_some())
         }
         Expr::Cast(cast) => local_const_initializer_is_safe(&cast.expr),
         Expr::Unary(unary) => local_const_initializer_is_safe(&unary.expr),
@@ -2940,35 +2941,62 @@ fn local_const_initializer_is_safe(expr: &Expr) -> bool {
     }
 }
 
+fn primitive_int_const_expr_value(path: &syn::ExprPath) -> Option<i128> {
+    if let Some(qself) = &path.qself {
+        let syn::Type::Path(ty) = qself.ty.as_ref() else {
+            return None;
+        };
+        let ty = ty.path.segments.last()?.ident.to_string();
+        let name = path.path.segments.last()?.ident.to_string();
+        return primitive_int_const_parts_value(&ty, &name);
+    }
+    primitive_int_const_path_value(&path.path)
+}
+
 fn primitive_int_const_path_value(path: &syn::Path) -> Option<i128> {
     if path.segments.len() != 2 {
         return None;
     }
     let ty = path.segments.first()?.ident.to_string();
     let name = path.segments.last()?.ident.to_string();
-    match (ty.as_str(), name.as_str()) {
+    primitive_int_const_parts_value(&ty, &name)
+}
+
+fn primitive_int_const_parts_value(ty: &str, name: &str) -> Option<i128> {
+    match (ty, name) {
         ("i8", "MIN") => Some(i8::MIN as i128),
         ("i8", "MAX") => Some(i8::MAX as i128),
+        ("i8", "BITS") => Some(i8::BITS as i128),
         ("i16", "MIN") => Some(i16::MIN as i128),
         ("i16", "MAX") => Some(i16::MAX as i128),
+        ("i16", "BITS") => Some(i16::BITS as i128),
         ("i32", "MIN") => Some(i32::MIN as i128),
         ("i32", "MAX") => Some(i32::MAX as i128),
+        ("i32", "BITS") => Some(i32::BITS as i128),
         ("i64", "MIN") => Some(i64::MIN as i128),
         ("i64", "MAX") => Some(i64::MAX as i128),
+        ("i64", "BITS") => Some(i64::BITS as i128),
         ("i128", "MIN") => Some(i128::MIN),
         ("i128", "MAX") => Some(i128::MAX),
+        ("i128", "BITS") => Some(i128::BITS as i128),
         ("isize", "MIN") => Some(isize::MIN as i128),
         ("isize", "MAX") => Some(isize::MAX as i128),
+        ("isize", "BITS") => Some(isize::BITS as i128),
         ("u8", "MIN") => Some(u8::MIN as i128),
         ("u8", "MAX") => Some(u8::MAX as i128),
+        ("u8", "BITS") => Some(u8::BITS as i128),
         ("u16", "MIN") => Some(u16::MIN as i128),
         ("u16", "MAX") => Some(u16::MAX as i128),
+        ("u16", "BITS") => Some(u16::BITS as i128),
         ("u32", "MIN") => Some(u32::MIN as i128),
         ("u32", "MAX") => Some(u32::MAX as i128),
+        ("u32", "BITS") => Some(u32::BITS as i128),
         ("u64", "MIN") => Some(u64::MIN as i128),
         ("u64", "MAX") => Some(u64::MAX as i128),
+        ("u64", "BITS") => Some(u64::BITS as i128),
         ("usize", "MIN") => Some(usize::MIN as i128),
         ("usize", "MAX") => Some(usize::MAX as i128),
+        ("usize", "BITS") => Some(usize::BITS as i128),
         _ => None,
     }
 }
@@ -11616,7 +11644,10 @@ fn collect_assertion_entries<'a>(
             }
             Stmt::Expr(e @ Expr::Match(m), _) => {
                 let match_asserts = count_asserts_in_expr(e);
-                if match_asserts == 0 {
+                if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
+                    entries.push(entry);
+                    *macros_lifted += 1;
+                } else if match_asserts == 0 {
                     if let Some(stmts) = const_selected_match_arm_stmts(m, options) {
                         collect_assertion_entries(
                             &stmts,
@@ -11665,13 +11696,10 @@ fn collect_assertion_entries<'a>(
                             skipped.push(reason.clone());
                         }
                     }
-                    // Panic locus: a match whose every arm but one diverges asserts
-                    // the scrutinee matches the surviving arm. Lift it FIRST (it pins
-                    // the scrutinee's variant with no body asserts to carry).
-                    if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
-                        entries.push(entry);
-                        *macros_lifted += 1;
-                    } else if reflection_boundary.is_some() {
+                    // Panic-locus matches are handled before the assert-count split:
+                    // they can be constraint-shaped even when the surviving arm is
+                    // empty and the match contains no scalar assertion macros.
+                    if reflection_boundary.is_some() {
                         // Reflection match with no panic-locus (no diverging `_` arm): its
                         // body asserts are already accounted above; do NOT also count them
                         // under the generic "under match context" path (double-count).
@@ -19187,6 +19215,63 @@ mod lifter_key_tests {
             }),
             "factory must classify the if-panic expression as a Constraint sugar: {:?}",
             out.factory_audits
+        );
+    }
+
+    #[test]
+    fn match_const_macro_path_panic_locus_lifts_without_scalar_assertion() {
+        let src = r#"
+mod atom {
+    #[derive(PartialEq, Eq)]
+    pub struct Atom;
+
+    pub const FOO_ATOM: Atom = Atom;
+}
+
+macro_rules! atom {
+    ("foo") => {
+        atom::FOO_ATOM
+    };
+}
+
+#[test]
+fn t() {
+    match atom!("foo") {
+        atom!("foo") => {}
+        _ => panic!("expected const pattern"),
+    }
+}
+"#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "const macro-path panic-locus should emit one warranted fact; skips: {:?}; decls: {:?}",
+            out.skip_reasons, out.decls
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("const::atom::FOO_ATOM"),
+            "panic-locus should pin the const macro path identity: {dump}"
+        );
+    }
+
+    #[test]
+    fn return_guard_sequence_if_does_not_gap_without_assertions() {
+        let src = r#"
+#[test]
+fn t() {
+    if !return () {}
+}
+"#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "{:?}", out.decls);
+        assert!(
+            out.warnings
+                .iter()
+                .any(|warning| warning.reason.contains("no liftable scalar assertions")),
+            "return-guard sequence if should reach source accounting, not a factory gap: {:?}",
+            out.warnings
         );
     }
 

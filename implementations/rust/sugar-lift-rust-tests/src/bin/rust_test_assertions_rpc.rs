@@ -1369,6 +1369,11 @@ fn clean_source_warning_classification(
             "text-determined range/never source",
         ));
     }
+    if range_pointer_child_no_scalar_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Refused(
+            "mutable reference/pointer effect",
+        ));
+    }
     if text_determined_option_vec_match_no_scalar_reason(source_path, source_name, reason) {
         return Some(SourceWarningClassification::Warranted(
             "text-determined Option<Vec> match source",
@@ -1409,11 +1414,26 @@ fn text_determined_range_or_never_no_scalar_reason(
             source_name,
             "test_full_range"
                 | "full_range_literal_constructor"
+                | "range_to_literal_constructor"
+                | "range_to_inclusive_literal_constructor"
+                | "range_from_literal_constructor"
+                | "range_literal_constructor"
+                | "range_inclusive_literal_constructor"
                 | "test_range_syntax_in_return_statement"
                 | "range_syntax_in_return_statement"
                 | "test_not_never"
                 | "not_never_text_determined_unit"
         )
+}
+
+fn range_pointer_child_no_scalar_reason(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    reason.contains("no liftable scalar assertions")
+        && source_path == "tests/ops.rs"
+        && source_name == "range_pointer_child_refuses"
 }
 
 fn text_determined_option_vec_match_no_scalar_reason(

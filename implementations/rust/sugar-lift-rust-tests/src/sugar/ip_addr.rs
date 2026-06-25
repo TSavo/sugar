@@ -33,7 +33,7 @@ struct IpAddrPropertySugar {
     site: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LiteralIp {
     Any(IpAddr),
     V4(Ipv4Addr),
@@ -82,7 +82,10 @@ impl Sugar for IpAddrPropertySugar {
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let Some(value) = eval_property(ip, &self.method) else {
-            ip_addr_gap("recognized IP property has no evaluator");
+            ip_addr_gap(&format!(
+                "recognized IP property `{}` has no evaluator at `{}`",
+                self.method, self.site
+            ));
         };
         Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_const(value), bool_const(true)),
@@ -237,7 +240,23 @@ fn resolve_ip_call(call: &ExprCall, fcx: &SugarBuildCtx, depth: usize) -> Option
 
 fn ip_term(ip: LiteralIp) -> Rc<Term> {
     match ip {
-        LiteralIp::Any(IpAddr::V4(addr)) | LiteralIp::V4(addr) => Rc::new(Term::Ctor {
+        LiteralIp::Any(IpAddr::V4(addr)) => Rc::new(Term::Ctor {
+            name: "ip:any-v4".to_string(),
+            args: addr
+                .octets()
+                .into_iter()
+                .map(|octet| num(i128::from(octet)))
+                .collect(),
+        }),
+        LiteralIp::Any(IpAddr::V6(addr)) => Rc::new(Term::Ctor {
+            name: "ip:any-v6".to_string(),
+            args: addr
+                .segments()
+                .into_iter()
+                .map(|segment| num(i128::from(segment)))
+                .collect(),
+        }),
+        LiteralIp::V4(addr) => Rc::new(Term::Ctor {
             name: "ip:v4".to_string(),
             args: addr
                 .octets()
@@ -245,7 +264,7 @@ fn ip_term(ip: LiteralIp) -> Rc<Term> {
                 .map(|octet| num(i128::from(octet)))
                 .collect(),
         }),
-        LiteralIp::Any(IpAddr::V6(addr)) | LiteralIp::V6(addr) => Rc::new(Term::Ctor {
+        LiteralIp::V6(addr) => Rc::new(Term::Ctor {
             name: "ip:v6".to_string(),
             args: addr
                 .segments()
@@ -261,7 +280,7 @@ fn ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
         return None;
     };
     match name.as_str() {
-        "ip:v4" if args.len() == 4 => {
+        "ip:any-v4" if args.len() == 4 => {
             let mut octets = [0u8; 4];
             for (slot, arg) in octets.iter_mut().zip(args.iter()) {
                 *slot = u8::try_from(crate::const_fold_int_term(arg)?).ok()?;
@@ -270,7 +289,7 @@ fn ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
                 octets[0], octets[1], octets[2], octets[3],
             ))))
         }
-        "ip:v6" if args.len() == 8 => {
+        "ip:any-v6" if args.len() == 8 => {
             let mut segments = [0u16; 8];
             for (slot, arg) in segments.iter_mut().zip(args.iter()) {
                 *slot = u16::try_from(crate::const_fold_int_term(arg)?).ok()?;
@@ -285,6 +304,31 @@ fn ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
                 segments[6],
                 segments[7],
             ))))
+        }
+        "ip:v4" if args.len() == 4 => {
+            let mut octets = [0u8; 4];
+            for (slot, arg) in octets.iter_mut().zip(args.iter()) {
+                *slot = u8::try_from(crate::const_fold_int_term(arg)?).ok()?;
+            }
+            Some(LiteralIp::V4(Ipv4Addr::new(
+                octets[0], octets[1], octets[2], octets[3],
+            )))
+        }
+        "ip:v6" if args.len() == 8 => {
+            let mut segments = [0u16; 8];
+            for (slot, arg) in segments.iter_mut().zip(args.iter()) {
+                *slot = u16::try_from(crate::const_fold_int_term(arg)?).ok()?;
+            }
+            Some(LiteralIp::V6(Ipv6Addr::new(
+                segments[0],
+                segments[1],
+                segments[2],
+                segments[3],
+                segments[4],
+                segments[5],
+                segments[6],
+                segments[7],
+            )))
         }
         _ => None,
     }
@@ -520,4 +564,23 @@ fn compact_warrant_fragment(site: &str) -> String {
 
 fn ip_addr_gap(reason: &str) -> ! {
     panic!("ip_addr property did not reach a lawful IP floor: {reason}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ip_floor_roundtrip_preserves_concrete_ipv4_receiver_type() {
+        let ip = LiteralIp::V4(Ipv4Addr::new(255, 255, 255, 255));
+
+        assert_eq!(ip_from_term(&ip_term(ip)), Some(ip));
+    }
+
+    #[test]
+    fn ip_floor_roundtrip_preserves_enum_ipv4_receiver_type() {
+        let ip = LiteralIp::Any(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+        assert_eq!(ip_from_term(&ip_term(ip)), Some(ip));
+    }
 }

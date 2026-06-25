@@ -82,11 +82,6 @@ fn build_macro_assertion_surface(
     let mut surface_exprs = Vec::new();
     collect_assertion_surfaces_from_stmts(&block.stmts, &child_fcx, &mut surface_exprs);
     if surface_exprs.is_empty() {
-        if crate::count_asserts_in_stmts(&block.stmts) > 0 {
-            return Some(MacroAssertionSurfaceBody::Unconstructible(format!(
-                "macro `{name}` expansion contains assertion surface syntax but no factory assertion-surface child was constructible; write more Sugar for this AST"
-            )));
-        }
         return None;
     }
     Some(MacroAssertionSurfaceBody::Expanded(
@@ -201,4 +196,90 @@ fn reduce_surfaces(surfaces: &[SugarBody<AssertionSurfaceFloor>], ctx: &SugarCtx
         kind,
         warrant: Warrant { name: warrant_name },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use syn::Expr;
+
+    use super::*;
+    use crate::{LiftOptions, MacroRegistry, TemporalPlan, TemporalScope};
+
+    fn with_macro_fcx<T>(src: &str, f: impl FnOnce(&SugarBuildCtx<'_, '_>) -> T) -> T {
+        let mut registry = MacroRegistry::new();
+        registry.scan_source(src);
+        let scope = TemporalScope::new("macro-surface-test", TemporalPlan::default())
+            .with_macro_registry(registry);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        f(&fcx)
+    }
+
+    #[test]
+    fn direct_assertion_macro_expansion_is_owned_as_assertion_surface() {
+        let expr: Expr = syn::parse_str("wrap!()").unwrap();
+        with_macro_fcx(
+            r#"
+macro_rules! wrap {
+    () => { assert!(true); };
+}
+"#,
+            |fcx| {
+                assert!(
+                    recognize(&expr, fcx).is_some(),
+                    "direct assertion expansion should be assertion-surface sugar"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn guarded_assertion_macro_expansion_declines_to_statement_collector() {
+        let expr: Expr = syn::parse_str("wrap!()").unwrap();
+        with_macro_fcx(
+            r#"
+macro_rules! wrap {
+    () => {
+        if true {
+            assert!(true);
+        }
+    };
+}
+"#,
+            |fcx| {
+                assert!(
+                    recognize(&expr, fcx).is_none(),
+                    "guarded expansion needs statement-position collection to preserve the guard"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn item_assertion_macro_expansion_declines_to_statement_collector() {
+        let expr: Expr = syn::parse_str("suite!()").unwrap();
+        with_macro_fcx(
+            r#"
+macro_rules! suite {
+    () => {
+        mod generated {
+            pub fn run() {
+                assert_eq!(1, 1);
+            }
+        }
+        generated::run();
+    };
+}
+"#,
+            |fcx| {
+                assert!(
+                    recognize(&expr, fcx).is_none(),
+                    "item expansion needs the normal statement collector to walk item bodies"
+                );
+            },
+        );
+    }
 }
