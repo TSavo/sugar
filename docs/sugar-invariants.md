@@ -4,8 +4,9 @@ Sugar is the factory layer that turns Rust surface syntax into lawful ProofIR
 floors. These rules are construction law, not style preferences.
 
 The law is simple: recognize the source shape, construct typed children, reduce
-recursively, delegate domain work to floors, bubble real effects unchanged, and
-panic on impossible ownership.
+recursively, delegate domain work to floors, and then produce exactly one of two
+lawful outcomes: `Complete`, or `Incomplete` because of a real runtime
+`Effect`. Every other scenario is a panic.
 
 ## Numerous Dumb Sugars
 
@@ -27,7 +28,7 @@ floors, classify child effects, or decide semantic outcomes.
 Optional paths may ask the catalog whether a role recognizes a source site
 before building it. Required children use the appropriate `build_*` operation.
 If a required child cannot be built, that is a construction-law gap and must
-stay loud.
+panic.
 
 ## Construction Builds Typed Bodies
 
@@ -42,17 +43,17 @@ child body that reopens the factory from `desugar`.
 Construction does not decide. It does not peek at the child's result to choose
 an outcome. It builds the graph; recursive reduction collapses it later.
 
-## Complete Or Named Incomplete
+## Complete Or Effect Incomplete
 
-A properly operating sugar has two terminal outcomes:
+A properly operating sugar has exactly two terminal outcomes:
 
 - `Complete`: it reduced to a lawful floor.
-- `Incomplete(Effect)`: it hit a real, named effect boundary.
+- `Incomplete(Effect)`: it hit a real, named runtime effect boundary.
 
 There is no third terminal verdict for "not implemented", "unclassified", or
 "I do not know how to reduce this". A factory miss or unclassified source shape
-is a gap path and must stay loud. It is not an effect and must not be laundered
-as an incomplete runtime result.
+is a panic path. It is not an effect and must not be laundered as an incomplete
+runtime result.
 
 ## Effects Bubble Unchanged
 
@@ -91,7 +92,7 @@ semantic stops.
 
 A sugar does not invent an effect because its implementation is incomplete. If
 the source is constructible but unsupported, write the sugar, add the missing
-floor operation, or let the construction gap stay loud.
+floor operation, or let the construction gap panic.
 
 ## Delegate To Floors
 
@@ -138,16 +139,20 @@ If the router needs behavior, write the sugar or add the floor visitor. Do not
 hide behavior in the router. Do not turn non-recognition into a fake effect.
 Do not special-case source syntax in `lib` when a small sugar can own it.
 
-## Panic On Impossible Ownership
+## Panic On Every Non-Effect Gap
+
+Any path that is not `Complete` and is not `Incomplete` because of a real
+runtime `Effect` must panic. The panic is the instrument that says the sugar
+graph is missing construction law, ownership, or a floor operation.
 
 If a sugar is constructed for a source shape the Rust compiler would never allow
-that sugar to own, the correct behavior is a loud gap/panic, not an invented
-effect. The compiler is an axiom for this layer: we are not a Rust compiler and
-we do not second-guess type validity.
+that sugar to own, the correct behavior is a panic, not an invented effect. The
+compiler is an axiom for this layer: we are not a Rust compiler and we do not
+second-guess type validity.
 
 If construction cannot build the required typed child floors, construction must
-fail loudly. Do not construct a sugar with raw child syntax and reopen the
-factory later from `desugar`.
+panic. Do not construct a sugar with raw child syntax and reopen the factory
+later from `desugar`.
 
 ## Forbidden Moves
 
