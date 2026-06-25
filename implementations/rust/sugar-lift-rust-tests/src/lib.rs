@@ -16153,8 +16153,10 @@ fn lower_assert_eq(
     )? {
         return Ok(entry);
     }
-    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)?;
-    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)?;
+    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)
+        .map_err(|effect| effect.reason())?;
+    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)
+        .map_err(|effect| effect.reason())?;
     Ok(assertion_entry_from_eq(lhs, rhs, scope))
 }
 
@@ -16176,8 +16178,10 @@ fn lower_assert_ne(
     {
         return Err(format!("assert_ne!: {reason}"));
     }
-    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)?;
-    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)?;
+    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)
+        .map_err(|effect| effect.reason())?;
+    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)
+        .map_err(|effect| effect.reason())?;
     Ok(assertion_entry_from_relation(
         lhs,
         rhs,
@@ -17431,7 +17435,9 @@ fn panic_locus_subject_refusal_reason(
     {
         return None;
     }
-    let reason = translate_term_in_scope(subject, scope).err()?;
+    let reason = translate_term_in_scope(subject, scope)
+        .err()
+        .map(|effect| effect.reason())?;
     Some(format!(
         "reached assertion surface but panic-locus match scrutinee is not a liftable term: {reason}"
     ))
@@ -18206,7 +18212,7 @@ fn literal_aggregate_term_in_scope<'a>(
         // Each element is translated through the same sound term path. An
         // element that cannot be translated (e.g. a &mut borrow) propagates its
         // refusal via `?`, so the aggregate is only built from accountable terms.
-        let term = translate_term_in_scope(elem, scope)?;
+        let term = translate_term_in_scope(elem, scope).map_err(|effect| effect.reason())?;
         if !is_literal_identity_term(term.as_ref()) {
             all_literal = false;
         }

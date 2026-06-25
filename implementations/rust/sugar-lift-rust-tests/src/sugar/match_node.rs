@@ -254,9 +254,7 @@ impl Sugar for MatchValueTermSugar {
         }
         match translate_term_in_scope(body, &arm_scope) {
             Ok(term) => Outcome::Complete(Desugared::Term(term)),
-            Err(reason) => {
-                unreachable!("constructed match value body did not reduce as a term: {reason}")
-            }
+            Err(effect) => Outcome::Incomplete(effect),
         }
     }
 

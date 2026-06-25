@@ -50,7 +50,7 @@ impl Sugar for ConstBlockSugar {
                 term,
                 ctx.scope.local_scope(),
             ))),
-            Err(reason) => panic!("{reason}"),
+            Err(effect) => Outcome::Incomplete(effect),
         }
     }
 }
