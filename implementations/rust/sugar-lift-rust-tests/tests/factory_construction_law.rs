@@ -90,6 +90,8 @@ const AGGREGATE_TERM_RECOGNIZERS: &[&str] = &[
 const FORBIDDEN_EAGER_AGGREGATE_SYMBOLS: &[&str] =
     &["literal_aggregate_term_in_scope", "reasoned_incomplete"];
 
+const FORBIDDEN_REASON_LEAF_OWNER_FILES: &[&str] = &["src/sugar/closure_term.rs"];
+
 #[test]
 fn names_and_blames_raw_child_fields_on_sugar_types() {
     let violations = raw_child_field_violations();
@@ -167,6 +169,27 @@ fn names_and_blames_eager_aggregate_term_fallthroughs() {
     assert!(
         violations.is_empty(),
         "construction-law eager aggregate violation: array/tuple/vec/repeat term sugar must reduce children lazily and propagate child effects.\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn names_and_blames_typed_effect_owners_using_reason_leaf() {
+    let manifest = manifest_dir();
+    let mut violations = Vec::new();
+    for rel in FORBIDDEN_REASON_LEAF_OWNER_FILES {
+        let path = manifest.join(rel);
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        if src.contains("reasoned_incomplete") {
+            violations.push(format!(
+                "{rel}: typed effect owner still constructs `reasoned_incomplete`; return the named Effect directly"
+            ));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "construction-law typed-effect violation: if a sugar owns the semantic stop, it must return its named Effect instead of a legacy reason leaf.\n{}",
         violations.join("\n")
     );
 }
