@@ -11547,34 +11547,19 @@ fn collect_assertion_entries<'a>(
                     for name in for_scope.take_inlined_value_helpers() {
                         reduced_helpers.insert(name);
                     }
-                    if let Some(desugared) = lifted {
-                        // The loop memento is named `<test>::loop::<var>` by the
-                        // `ForAllSugar` warrant, mirroring the Python reference
-                        // (layer2.py PATTERN 1). A named universal is federatable and
-                        // the engine conjoins it ambiently.
-                        emit_desugared(desugared, entries, macros_lifted);
-                    } else {
-                        // The DIG declined (literal-body half handled above by
-                        // `lift_bounded_forall`). This is the REFUSE half: a for-loop whose
-                        // DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED terminal
-                        // Effect (Incomplete side of Outcome{Complete|Incomplete}) -- not unclassified WORK. The
-                        // classification is detection-EARNED (a specific runtime cause), never
-                        // a blanket relabel: a literal-domain + literal-body + simple-counter
-                        // loop DIGS above; a computable-but-unimplemented body (in-scope value,
-                        // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
-                        // loop var) STAYS UNCLASSIFIED here (the inverse of fake-complete is
-                        // fake-REFUSE, equally forbidden -- never refuse to zero the count).
-                        let reason = for_context_refusal_reason(
-                            f,
-                            &for_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            macro_depth,
-                            factory_audits,
-                        );
-                        for _ in 0..count {
-                            skipped.push(reason.clone());
+                    match lifted {
+                        Outcome::Complete(desugared) => {
+                            // The loop memento is named `<test>::loop::<var>` by the
+                            // `ForAllSugar` warrant, mirroring the Python reference
+                            // (layer2.py PATTERN 1). A named universal is federatable and
+                            // the engine conjoins it ambiently.
+                            emit_desugared(desugared, entries, macros_lifted);
+                        }
+                        Outcome::Incomplete(effect) => {
+                            let reason = effect.reason();
+                            for _ in 0..count {
+                                skipped.push(reason.clone());
+                            }
                         }
                     }
                 }

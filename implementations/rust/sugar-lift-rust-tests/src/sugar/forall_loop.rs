@@ -10,7 +10,7 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::forall;
 use crate::sugar::statement_position;
 use crate::{
-    Desugared, FactoryAuditLog, FloatWidthScope, LiftOptions, ReductionCtx, Sugar, TemporalScope,
+    FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -34,7 +34,7 @@ pub(crate) fn desugar_statement_for_loop(
     let_inits: &BTreeMap<String, &Expr>,
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Option<Desugared> {
+) -> Outcome {
     statement_position::desugar_composite_expr(
         expr,
         scope,
@@ -45,5 +45,4 @@ pub(crate) fn desugar_statement_for_loop(
         macro_depth,
         factory_audits,
     )
-    .complete()
 }
