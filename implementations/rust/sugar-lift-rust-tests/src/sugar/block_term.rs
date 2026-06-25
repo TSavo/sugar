@@ -11,8 +11,8 @@ use std::rc::Rc;
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    substitute_expr, token_key, translate_term_in_scope_with_audits, ExprBindings, FactoryAuditLog,
-    Outcome, Sugar, SugarCtx, TemporalScope,
+    substitute_expr, token_key, translate_term_in_scope_with_audits, Effect, ExprBindings,
+    FactoryAuditLog, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 use sugar_ir_symbolic::Term;
 use syn::{Expr, Item, Pat, Stmt};
@@ -33,7 +33,7 @@ pub(crate) fn translate_expression_only_block_in_scope(
     block: &syn::Block,
     label: &str,
     scope: &TemporalScope,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     translate_expression_only_block_in_scope_with_audits(block, label, scope, None)
 }
 
@@ -42,19 +42,26 @@ pub(crate) fn translate_expression_only_block_in_scope_with_audits(
     label: &str,
     scope: &TemporalScope,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     match block.stmts.as_slice() {
         [Stmt::Expr(expr, None)] => {
             if let Some(nested_const) = find_const_expr(expr) {
-                return Err(format!("unsupported term `{}`", token_key(nested_const)));
+                block_term_gap(format!(
+                    "unsupported nested const term `{}`",
+                    token_key(nested_const)
+                ));
             }
             translate_term_in_scope_with_audits(expr, scope, factory_audits)
         }
-        _ => Err(format!(
+        _ => block_term_gap(format!(
             "{label} block is not an expression-only term `{}`",
             token_key(block)
         )),
     }
+}
+
+fn block_term_gap(reason: String) -> ! {
+    panic!("block_term did not reach a lawful term floor: {reason}")
 }
 
 fn find_const_expr(expr: &Expr) -> Option<&Expr> {

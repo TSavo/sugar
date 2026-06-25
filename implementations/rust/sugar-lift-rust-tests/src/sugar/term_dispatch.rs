@@ -33,7 +33,7 @@ pub(crate) fn value_if_term(cond: Rc<Term>, then_term: Rc<Term>, else_term: Rc<T
 pub(crate) fn translate_term_in_scope(
     expr: &Expr,
     scope: &TemporalScope,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     translate_term_in_scope_with_audits(expr, scope, None)
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn translate_term_in_scope_with_audits(
     expr: &Expr,
     scope: &TemporalScope,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     let options = LiftOptions::default();
     let let_inits = std::collections::BTreeMap::new();
     let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
@@ -58,10 +58,13 @@ pub(crate) fn translate_term_in_scope_with_audits(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        Outcome::Complete(d) => d
-            .into_term()
-            .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
-        Outcome::Incomplete(effect) => Err(effect.reason()),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| {
+            term_dispatch_gap(format!(
+                "term factory completed `{}` without a Term floor",
+                token_key(expr)
+            ))
+        }),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
@@ -69,7 +72,7 @@ pub(crate) fn translate_assertion_term_in_scope_with_audits(
     expr: &Expr,
     scope: &TemporalScope,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     match expr {
         Expr::Const(const_block) => {
             let term = translate_expression_only_block_in_scope_with_audits(
@@ -100,6 +103,10 @@ pub(crate) fn translate_assertion_term_in_scope_with_audits(
         }
         _ => translate_term_in_scope_with_audits(expr, scope, factory_audits),
     }
+}
+
+fn term_dispatch_gap(reason: String) -> ! {
+    panic!("term_dispatch did not reach a lawful term floor: {reason}")
 }
 
 /// A finite-domain occurrence context for a term-floor curry.
