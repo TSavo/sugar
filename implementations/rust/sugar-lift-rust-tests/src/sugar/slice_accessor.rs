@@ -310,12 +310,7 @@ fn sequence_from_body(
         Outcome::Complete(d) => Ok(d
             .into_seq()
             .unwrap_or_else(|| slice_accessor_gap(&format!("{label} reduced to non-sequence")))),
-        Outcome::Incomplete(effect) => {
-            if effect.reason().contains("structural backstop") {
-                slice_accessor_gap(&format!("{label} hit structural backstop"));
-            }
-            Err(Outcome::Incomplete(effect))
-        }
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -328,12 +323,7 @@ fn term_from_body(
         Outcome::Complete(d) => Ok(d
             .into_term()
             .unwrap_or_else(|| slice_accessor_gap(&format!("{label} reduced to non-term")))),
-        Outcome::Incomplete(effect) => {
-            if effect.reason().contains("structural backstop") {
-                slice_accessor_gap(&format!("{label} hit structural backstop"));
-            }
-            Err(Outcome::Incomplete(effect))
-        }
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 

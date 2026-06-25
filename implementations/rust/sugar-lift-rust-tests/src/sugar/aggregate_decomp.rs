@@ -567,12 +567,7 @@ fn term_or_construction_gap(
         Outcome::Complete(desugared) => Ok(desugared
             .into_term()
             .unwrap_or_else(|| panic!("{label} reduced to non-term"))),
-        Outcome::Incomplete(effect) => {
-            if effect.reason().contains("structural backstop") {
-                aggregate_decomp_construction_gap(label);
-            }
-            Err(Outcome::Incomplete(effect))
-        }
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
