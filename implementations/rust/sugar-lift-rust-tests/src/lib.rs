@@ -21352,7 +21352,7 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn map_over_literal_domain_with_mutating_capture_body_is_refused_bin2() {
+    fn map_over_literal_domain_with_mutating_capture_body_is_refused_mutation() {
         let src = r#"
             #[test]
             fn map_body_mutates_capture() {
@@ -21378,8 +21378,8 @@ mod lifter_key_tests {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| r.contains("MUTATES captured runtime state")),
-            "the mutating map body must be named as a bin-2 refusal; got {:?}",
+                .any(|r| r.contains("side-effecting closure body")),
+            "the mutating map body must be named as a Mutation refusal; got {:?}",
             out.skip_reasons
         );
         assert!(
