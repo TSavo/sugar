@@ -195,6 +195,8 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     }
+                } else if args.visual {
+                    render_report_visual(&report, prove_report.as_ref())
                 } else {
                     render_report_human(&report, prove_report.as_ref())
                 };
@@ -1958,6 +1960,164 @@ fn render_factory_walk_rows(factory_walk: &[Value], project_root: Option<&Path>)
         }
     }
     out
+}
+
+const ANSI_GREEN: &str = "\u{1b}[32m";
+const ANSI_RED: &str = "\u{1b}[31m";
+const ANSI_RESET: &str = "\u{1b}[0m";
+
+#[derive(Clone, Copy)]
+enum VisualTone {
+    Green,
+    Red,
+}
+
+struct VisualFactoryWalkRow {
+    context: String,
+    source: String,
+    label: String,
+    tone: VisualTone,
+}
+
+fn render_report_visual(
+    report: &LiftSourceReport,
+    prove_report: Option<&sugar_verifier::Report>,
+) -> String {
+    let mut out = render_visual_source_report(report);
+    if let Some(prove_report) = prove_report {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+        out.push_str("prove report (solver witness):\n");
+        out.push_str(&report_fmt::format_report_pretty(prove_report, false));
+    }
+    out
+}
+
+fn render_visual_source_report(report: &LiftSourceReport) -> String {
+    let rows = visual_factory_walk_rows(&report.factory_walk, report.project_root.as_deref());
+    let mut out = String::new();
+    out.push_str("factory visual:\n");
+    if rows.is_empty() {
+        out.push_str("  <no factory walk emitted>\n");
+        return out;
+    }
+
+    let mut current_context = String::new();
+    for row in rows {
+        if row.context != current_context {
+            current_context = row.context.clone();
+            out.push_str(&format!("  contract {current_context}\n"));
+        }
+        out.push_str(&format!(
+            "    {}  {}\n",
+            ansi_paint(&row.source, row.tone),
+            row.label
+        ));
+    }
+    out
+}
+
+fn visual_factory_walk_rows(
+    factory_walk: &[Value],
+    project_root: Option<&Path>,
+) -> Vec<VisualFactoryWalkRow> {
+    let mut red_seen: BTreeSet<String> = BTreeSet::new();
+    let mut rows = Vec::new();
+    for row in factory_walk {
+        let file = row
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+            .to_string();
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        let raw_verdict = if status == "unresolved" {
+            "gap"
+        } else {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete")
+        };
+        let context = factory_walk_context_key(row, &file);
+        let reason = row
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty());
+        let (tone, label) = if raw_verdict == "complete" {
+            if red_seen.contains(&context) {
+                (VisualTone::Red, "RED".to_string())
+            } else {
+                (VisualTone::Green, "GREEN".to_string())
+            }
+        } else if raw_verdict == "gap" {
+            let here = red_seen.insert(context.clone());
+            let prefix = if here { "RED HERE gap" } else { "RED gap" };
+            (
+                VisualTone::Red,
+                reason
+                    .map(|reason| format!("{prefix}: {reason}"))
+                    .unwrap_or_else(|| prefix.to_string()),
+            )
+        } else {
+            let here = red_seen.insert(context.clone());
+            let prefix = if here {
+                "RED HERE effect"
+            } else {
+                "RED effect"
+            };
+            (
+                VisualTone::Red,
+                reason
+                    .map(|reason| format!("{prefix}: {reason}"))
+                    .unwrap_or_else(|| prefix.to_string()),
+            )
+        };
+        rows.push(VisualFactoryWalkRow {
+            context,
+            source: resolve_factory_walk_visual_source(project_root, row),
+            label,
+            tone,
+        });
+    }
+    rows
+}
+
+fn ansi_paint(source: &str, tone: VisualTone) -> String {
+    let color = match tone {
+        VisualTone::Green => ANSI_GREEN,
+        VisualTone::Red => ANSI_RED,
+    };
+    format!("{color}{source}{ANSI_RESET}")
+}
+
+fn resolve_factory_walk_visual_source(project_root: Option<&Path>, row: &Value) -> String {
+    let Some(root) = project_root else {
+        return resolve_factory_walk_term(project_root, row);
+    };
+    let Some(memento_value) = row.get("sourceMemento") else {
+        return resolve_factory_walk_term(project_root, row);
+    };
+    let Some(memento) = source_memento_from_report_json(memento_value) else {
+        return resolve_factory_walk_term(project_root, row);
+    };
+    match sugar_walk::source_oracle::resolve_source_memento(root, &memento) {
+        Ok(resolved) => source_lines_for_memento(root, &memento)
+            .unwrap_or_else(|| resolved.fragment.body_text.trim().to_string()),
+        Err(refusal) => format!("<source memento unresolved: {}>", refusal.reason),
+    }
+}
+
+fn source_lines_for_memento(
+    root: &Path,
+    memento: &sugar_walk::source_oracle::SourceMemento,
+) -> Option<String> {
+    let source = std::fs::read_to_string(root.join(&memento.file)).ok()?;
+    let lines = source.lines().collect::<Vec<_>>();
+    let start = memento.span.start_line.checked_sub(1)?;
+    let end = memento.span.end_line.max(memento.span.start_line);
+    let selected = lines.get(start..end)?;
+    Some(selected.join("\n").trim().to_string())
 }
 
 fn factory_walk_context_key(row: &Value, file: &str) -> String {
@@ -4668,6 +4828,7 @@ mod tests {
             library_bindings: false,
             report: false,
             report_summary: false,
+            visual: false,
             prove: false,
             z3: "z3".to_string(),
             with: vec![],
@@ -5689,8 +5850,8 @@ mod tests {
             "factoryAuditSummary": {
                 "emittedRows": 4,
                 "statusCounts": {
-                    "warranted": 2,
-                    "refused": 2,
+                    "warranted": 3,
+                    "refused": 1,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -5822,6 +5983,144 @@ mod tests {
             .unwrap_or_else(|| panic!("parent bubble must be plain incomplete:\n{human}"));
 
         assert!(child < parent, "{human}");
+    }
+
+    #[test]
+    fn visual_report_prints_source_lines_green_and_red_with_effect_inline() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("lib.rs"),
+            r#"
+fn sample() {
+    let x = 1;
+    let y = 2;
+    let z = runtime();
+    let a = 10;
+}
+"#,
+        )
+        .expect("write source");
+        let source_text = std::fs::read_to_string(source_dir.join("lib.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&source_text).expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let memento_for_local = |stmt_index: usize| {
+            let syn::Stmt::Local(local) = &item.block.stmts[stmt_index] else {
+                panic!("expected local statement");
+            };
+            sugar_walk::source_oracle::source_memento_of_term_span(
+                "src/lib.rs",
+                &source_text,
+                local.init.as_ref().expect("local init").expr.span(),
+                "sample",
+                &item.sig,
+                &item.block,
+            )
+            .expect("term memento")
+            .to_json()
+        };
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 1,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 4,
+                "statusCounts": {
+                    "warranted": 3,
+                    "refused": 1,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 3,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term",
+                        "sourceMemento": memento_for_local(0)
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term",
+                        "sourceMemento": memento_for_local(1)
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 5,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "address_cast",
+                        "status": "refused",
+                        "verdict": "incomplete",
+                        "output": "effect",
+                        "reason": "runtime boundary: pointer identity",
+                        "sourceMemento": memento_for_local(2)
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 6,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term",
+                        "sourceMemento": memento_for_local(3)
+                    }
+                ]
+            }
+        });
+        let mut report = source_report_from_lift_response(&response, None).expect("source report");
+        report.project_root = Some(root.path().to_path_buf());
+
+        let visual = render_visual_source_report(&report);
+
+        assert!(
+            visual.contains("\u{1b}[32mlet x = 1;\u{1b}[0m  GREEN"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32mlet y = 2;\u{1b}[0m  GREEN"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains(
+                "\u{1b}[31mlet z = runtime();\u{1b}[0m  RED HERE effect: runtime boundary: pointer identity"
+            ),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[31mlet a = 10;\u{1b}[0m  RED"),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains("let a = 10;\u{1b}[0m  RED HERE"),
+            "{visual}"
+        );
     }
 
     #[test]
