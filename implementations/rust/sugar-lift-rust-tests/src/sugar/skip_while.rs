@@ -8,7 +8,7 @@
 
 use syn::Expr;
 
-use crate::sugar::bool_predicate::BoolPredicateClosure;
+use crate::sugar::bool_predicate::{BoolPredicateClosure, BoolPredicateFunction};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
@@ -23,9 +23,6 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if call.method != "skip_while" || call.args.len() != 1 {
         return None;
     }
-    let Expr::Closure(pred) = &call.args[0] else {
-        return None;
-    };
     if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
         && !has_composite(&call.receiver, fcx)
     {
@@ -33,13 +30,42 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     }
     Some(Box::new(SkipWhileRecognizedSugar {
         inner: SugarBody::composite(&call.receiver, fcx),
-        pred: BoolPredicateClosure::build(pred.clone(), fcx)?,
+        pred: SkipWhilePredicate::build(&call.args[0], fcx)?,
     }))
+}
+
+pub(crate) enum SkipWhilePredicate {
+    Closure(BoolPredicateClosure),
+    Function(BoolPredicateFunction),
+}
+
+impl SkipWhilePredicate {
+    pub(crate) fn build(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+        match crate::strip_refs_groups(expr) {
+            Expr::Closure(pred) => {
+                BoolPredicateClosure::build(pred.clone(), fcx).map(Self::Closure)
+            }
+            other => BoolPredicateFunction::build(other.clone(), fcx).map(Self::Function),
+        }
+    }
+
+    fn eval_for_elem(
+        &self,
+        elem: &crate::DesugaredElem,
+        ordinal: usize,
+        family: &'static str,
+        ctx: &SugarCtx,
+    ) -> Result<bool, Outcome> {
+        match self {
+            Self::Closure(pred) => pred.eval_for_elem(elem, ordinal, family, ctx),
+            Self::Function(pred) => pred.eval_for_elem(elem, ordinal, family, ctx),
+        }
+    }
 }
 
 struct SkipWhileRecognizedSugar {
     inner: SugarBody<CompositeFloor>,
-    pred: BoolPredicateClosure,
+    pred: SkipWhilePredicate,
 }
 
 impl Sugar for SkipWhileRecognizedSugar {
@@ -51,7 +77,7 @@ impl Sugar for SkipWhileRecognizedSugar {
 /// Drop the leading run of elements where `pred` const-evaluates true.
 pub(crate) struct SkipWhileSugar {
     pub(crate) inner: SugarBody<CompositeFloor>,
-    pub(crate) pred: BoolPredicateClosure,
+    pub(crate) pred: SkipWhilePredicate,
 }
 
 impl Sugar for SkipWhileSugar {
@@ -62,7 +88,7 @@ impl Sugar for SkipWhileSugar {
 
 fn reduce_skip_while(
     inner: &SugarBody<CompositeFloor>,
-    pred: &BoolPredicateClosure,
+    pred: &SkipWhilePredicate,
     ctx: &SugarCtx,
 ) -> Outcome {
     let seq = match inner.reduce(ctx) {
