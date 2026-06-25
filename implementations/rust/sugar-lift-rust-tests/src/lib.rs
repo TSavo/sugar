@@ -8036,6 +8036,7 @@ enum Outcome {
 /// site). The reason strings are kept BYTE-IDENTICAL to the proto strings the collector
 /// emitted before this enum existed, so `refusal_disposition` classifies them terminal and
 /// the CID is conserved.
+#[derive(Debug)]
 enum Effect {
     /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
     /// `.push`, an assignment). The asserted value varies per iteration independently of
