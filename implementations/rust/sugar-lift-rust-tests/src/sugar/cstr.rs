@@ -16,7 +16,10 @@ use crate::{
     bytes_literal_term_from_bytes, bytes_to_hex, num, Desugared, Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term("cstr", recognize);
+// A stable binding that resolves to compiler-axiom CStr bytes is a concrete
+// literal floor before generic bound-path transparency.
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::term_before("cstr", &["bound_path"], recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if has_literal_cstr_floor(expr, fcx) {

@@ -29,8 +29,13 @@ use crate::{
     ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite_before("for_replay", &["forall_loop"], recognize);
+// Replay is the precise owner when a mutating loop is fully literal-determined;
+// the mutation sugar remains the conservative boundary only after replay declines.
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
+    "for_replay",
+    &["for_loop_mutation", "forall_loop"],
+    recognize,
+);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::ForLoop(for_loop) = expr else {

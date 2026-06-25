@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("option_adaptor", SugarRole::Term, recognize);
+    ExprSugarClaim::with_ordering("option_adaptor", SugarRole::Term, &["map_term"], recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
