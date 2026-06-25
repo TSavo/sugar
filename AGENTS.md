@@ -1,37 +1,62 @@
-# Repository Guidelines
+# Instrument Driven Development
 
-## Project Structure & Module Organization
+## Manifesto: Instrument Driven Development
 
-This repository is the Sugar workspace. Core implementations live under `implementations/` by language (`rust/`, `python/`, `java/`, `go/`, etc.). The Rust crates form a Cargo workspace in `implementations/rust/`. End-to-end examples and receipts are in `examples/`; protocol and design material lives in `protocol/`, `docs/`, and `conformance/`. Automation and helper tooling are in `Makefile`, `bin/`, `scripts/`, and `tools/`.
+The sacred cows of development are familiar: do not check in broken code, do
+not merge failing tests, do not cause regressions. They are not moral laws.
+They are compensating controls for low observability. They survive because most
+teams move slowly enough that gates feel affordable.
 
-## Build, Test, and Development Commands
+At extreme velocity, gates become the bottleneck. A review gate, a green-CI
+gate, a release gate, a "wait for the full sweep" gate: each one serializes the
+work. It asks every parallel shot to queue behind a single reading that cannot
+exist until after the shot lands. The gate is not safety. The gate is latency
+wearing a safety vest.
 
-- `make help`: list supported build and test targets.
-- `make build-rust`: build the Rust workspace in release mode.
-- `make test-rust`: run Rust workspace and Rust-driven RPC tests.
-- `make test-python`: run Python kit tests.
-- `make test-all`: run the acid test (`test-rust` plus `test-python`).
-- `make test-showcases`: run checked-in end-to-end showcase receipts.
-- `cd implementations/rust && cargo fmt`: format Rust code.
-- `cd implementations/rust && cargo test -p sugar-cli <test-name> -- --nocapture`: run a focused Rust test.
+Instrument Driven Development is the replacement bargain. If we want to break
+the sacred cows without drowning in hidden damage, we do not replace discipline
+with vibes. We replace gates with instruments.
 
-## Coding Style & Naming Conventions
+TDD pins behavior: given this input, prove this output. IDD pins direction:
+given this codebase, measure the ways it is drifting away from the shape we
+intend. It turns architectural judgment into executable telemetry.
 
-Keep changes small, explicit, and consistent with nearby code. Rust uses `cargo fmt`, snake_case functions/modules, and crate-local unit tests when practical. Shell scripts should be Bash/POSIX clear and executable only when intended. Do not move generated proofs, receipts, or vendored artifacts unless the task requires it.
+The first invariant is temporal: every "first I'll, then I'll" is suspect.
+"First I'll run the suite, then I'll commit." "First I'll make sure it
+compiles, then I'll start." "First I'll launch the checks, then I'll wait."
+This is gate-thinking reasserting itself as prudence. The thing named first is
+the thing to relocate: last, parallel, latent, or delegated to CI. Only creating
+the exact red instrument, or turning that red instrument green, gets to be
+first. Consuming broad validation does not. If it is broad confidence
+telemetry, launch it and keep moving. If it is final hygiene, do it at the
+edge. Do not let the preflight become the work.
 
-## Testing Guidelines
+Most important engineering rules begin as taste. Authentication belongs at the
+boundary. Storage details should not leak into handlers. Errors should stay
+typed until the edge. Migrations should be reversible. Parsers should have one
+owner. Background jobs should be idempotent. Secrets should never cross a log
+boundary. Dead code should disappear, not collect a permission slip. These
+start as "vibes" because experienced engineers can feel the shape before they
+can point to every violation.
 
-Prefer focused regression tests before broader suites. For Sugar behavior, assert exact reports, receipts, CIDs, or verifier outcomes rather than inferred behavior. Start with the smallest relevant command, then widen to `make test-rust`, `make test-python`, `make test-all`, or a specific `examples/*/run.sh` when the blast radius warrants it.
+Vibes are useless at agent speed. A vibe in chat decays. A vibe in a plan goes
+stale. A vibe in a comment becomes folklore. So the first act is to convert the
+vibe into a vector: named axes, current `R`, observed `Delta R` between runs,
+and predicted `Epsilon R` for the change about to land.
 
-## Commit & Pull Request Guidelines
+The first artifact is not a checklist. It is not a reminder. It is a red
+instrument: a unit test, compiler failure, report, receipt, or static audit
+that recognizes the live offender set. Its failure names the pattern, points at
+the file and line, shows the illegal shape, and describes the replacement
+architecture. It says: move this policy to the boundary; replace this stringly
+error with a typed result; delete this dead path; put this storage concern
+behind the repository; split this God function; make this migration idempotent;
+stop logging this secret.
 
-Commit messages are short imperative summaries, often followed by PR numbers after merge, for example `Mint toolchain run witnesses from mint path (#2297)`. PR descriptions should state what changed, why, and the validation commands run. Keep unrelated local work out of the branch; stage files explicitly.
-
-## Agent-Specific Instructions
-
-For isolated work, create repo-local worktrees under `.worktrees/` from `origin/main`. Before editing, check `git status --short --branch`. If a narrower `AGENTS.md` exists in a subdirectory, follow that file for work inside its scope.
-
-For debt, migration, and removal work, do not pin the work as a checklist or threshold. Measure it. Build the automated instrument first: a focused test, compiler check, or report that recognizes the whole live offender set, reports current `R`, stays red while the stable-zero terms are nonzero, and prints the replacement plan for each offender. `Delta R` is what you read by comparing one instrument run to the next. `Epsilon R` is the predicted change for the work about to land. If the goal is to move logic out of `lib`, the failing instrument should identify every illegal resident and describe the tiny replacement sugar or floor delegation that will remove it. Fly by that red compiler/test signal until stable zero makes it silent.
+Then the agent can do what agents are good at: chase green. The context is no
+longer a fragile paragraph in chat; it is executable gravity. As long as red
+remains, drift is visible. When silence arrives at stable zero, the vibe has
+become law.
 
 ## Sacred cows: massive parallelism is moving fast and breaking things — loudly
 
@@ -47,7 +72,7 @@ So we ask the inverted question. Not "how do we go fast safely," but "what would
 
 **Measure every gap.** This is delta-epsilon testing, and it is indifferent to what we build. Every goal is a vector of named remaining-work counts, `R`. At each check-in the instrument reports current `R`. `Delta R` is what you read by comparing that run with the previous run — what actually moved. Separately, every change carries `Epsilon R` — the change we predict when that work lands. We are done only at a *stable* zero: `R`, eyeballed `Delta`, and predicted `Epsilon` all zero, every floor intact. We never guess where we stand; we read it. And we read it late, on purpose: the measurement lands after the shot, never before — `Epsilon R` exists precisely because the observed signal has not arrived yet. Latency is not a defect to engineer away; it is the shape of telemetry itself. The gate's whole error was to demand the reading before the shot. We take the same reading after, and fix forward.
 
-A checklist is not measurement. A threshold is not measurement. Both freeze what one agent happened to notice, then ask every later agent to trust that stale map. The instrument is automated recognition of the live work: a test, compiler error, or report that turns red for every remaining offender and says what must replace it. When the goal is removal, the failure output is part of the design: it names the current illegal shape and the boring, tiny sugar or floor delegation that makes it disappear. We do not fly by promises, comments, pinned plans, or hand-maintained counts. We fly by the red compiler, the red test, and the measured `R` they expose.
+A checklist is not measurement. A threshold is not measurement. Both freeze what one agent happened to notice, then ask every later agent to trust that stale map. The instrument is automated recognition of the live work: a test, compiler error, or report that turns red for every remaining offender and says what must replace it. When the goal is removal, the failure output is part of the design: it names the current illegal shape and the replacement architecture that makes it disappear. We do not fly by promises, comments, pinned plans, or hand-maintained counts. We fly by the red compiler, the red test, and the measured `R` they expose.
 
 Those two are the gate's entire job — keep silent ruin from shipping — done without ever stopping the line. And they are one loop, not two tools: automated instrumentation reports current `R`, humans read `Delta R` from one run to the next, each change states predicted `Epsilon R`, and the system stays red until all three are zero. Red is red. There is no softer red for "known debt," no green because the count improved, and no threshold that turns remaining work into success. **That silence is the proof the zero is real, and it is load-bearing forward: once delta-epsilon is zero you know the instrument cannot fire again, so red after that is, by definition, a regression** — the stable zero, broken by new work, announcing itself the one way that cannot be ignored.
 
@@ -57,12 +82,31 @@ And now those three commandments read differently. "Don't check in broken code" 
 
 In practice: we do not gate. We instrument, fire, measure impact, and fire again. The merge is not a prize awarded after a slow compile, test, and sweep — it is the measurement boundary for the next shot.
 
-- Goal vector: every long-term goal defines `R(t)`, a vector of named remaining-work counts — `failing_tests`, `untyped_call_sites`, `unmigrated_callers`, `endpoints_without_auth`, whatever names the gaps for this goal. Keep axes separate; do not hide distinct gaps inside one number.
+Name the first-then inversions out loud, because they often arrive disguised as
+responsibility:
+
+- "I'll run the entire test suite, then commit and PR." This is the old gate in
+  its church clothes. The full suite is background telemetry. Commit, PR, merge,
+  then run the sweep where its latency cannot serialize the next shot.
+- "I'll just make sure everything is still compiling, then get to work." This
+  asks permission from a signal that should be either the instrument itself or
+  a background sweep. If compile is the instrument, make it speak. If it is
+  broad confidence telemetry, launch it and keep moving.
+- "I'll run the unit test before I make any changes." If the unit test already
+  pins the target and is red, turn it green. If the target is not pinned, write
+  the red instrument first. Do not run tests first to admire the starting state.
+  The point is to create executable gravity or follow it home.
+- "I'll spawn the tests in parallel, then start once they finish." Parallelism
+  that you wait on is just a slower gate with better fan noise. Kick off the
+  process proactively, then stop waiting to write code. Background signals are
+  impact telemetry for the next shot, not permission for this one.
+
+- Goal vector: every long-term goal defines `R(t)`, a vector of named remaining-work counts — `failing_tests`, `compiler_warnings`, `untyped_error_paths`, `unmigrated_callers`, `dead_code_sites`, `endpoints_without_auth`, `queries_without_limits`, whatever names the gaps for this goal. Keep axes separate; do not hide distinct gaps inside one number.
 - Stable-zero invariant: the instrument measures `R(t)` at each check-in. `Delta R(t) = R(t) - R(t-1)` is read by comparing one run to the next. The change author names `Epsilon R(t)`, the predicted change from the work being landed or launched. The system stays red until `R(t) == 0`, eyeballed `Delta R(t) == 0`, predicted `Epsilon R(t) == 0`, and every floor invariant still holds.
 - Floors: a floor is a safety invariant the instrumentation must hold — `data_loss == 0`, no secret committed to the repo, no test deleted to turn the build green. It is not a progress counter, and not an absolute you can never touch: you may change a floor only WITH GOOD REASON, stated on the record. A PR may lower `R` freely; to move a floor it must say why. The sin is never the reasoned change — it is silent drift, a floor that drops because no one decided to drop it.
 - New feature: write the focused unit test first. The test names the behavior, fails or would have failed before the change, and becomes the local proof that the feature exists. Add implementation and instrumentation after the test defines the target.
 - Regression: write the regression unit test first. Reproduce the failure in the smallest test that would have caught it. If the failure cannot be seen clearly, add instrumentation first, then add the regression test, then fix.
-- Long-term goal: write automated instrumentation for each `R` component. The instrument scans the live offender set, prints each offender with its replacement plan, reports current `R`, and exits red until stable zero. Compare consecutive runs to read `Delta R`; the PR or follow-on note states predicted `Epsilon R`. There is no threshold to update downward and no hand-maintained count to bless the merge. Counts are measured output, not authored state.
+- Long-term goal: write automated instrumentation for each `R` component. The instrument scans the live offender set, prints each offender with its replacement plan, reports current `R`, and exits red until stable zero. The replacement plan should name the new owner, boundary, typed contract, deletion path, migration target, or panic condition in enough detail that the next agent knows what green means. Compare consecutive runs to read `Delta R`; the PR or follow-on note states predicted `Epsilon R`. There is no threshold to update downward and no hand-maintained count to bless the merge. Counts are measured output, not authored state.
 - Panic: wire every must-never-happen failure to halt the program, and run it *alongside* the automated instrumentation, never instead of it (see the section head). The panic is impact telemetry of the good kind — it cannot be missed and is fixed on contact. A panic after `Delta R` and `Epsilon R` have reached zero is, by definition, a regression: the most valuable alarm you own.
 - Shot accounting: every PR states which `R` component it intends to lower, the predicted `Epsilon R`, and which floors it preserves. After the next instrument run, compare against the previous run and report the eyeballed `Delta R`. If `R > 0` and both eyeballed `Delta R` and predicted `Epsilon R` are zero, the work is stalled, not complete. If `R == 0` but predicted `Epsilon R` is nonzero, the zero is unstable.
 - Instrumentation: every change needs observability at the boundary where a future agent would otherwise have to guess. Use the repo's logging/tracing/report machinery, and include exact paths to logs, reports, receipts, or run outputs in the PR notes.
@@ -70,3 +114,68 @@ In practice: we do not gate. We instrument, fire, measure impact, and fire again
 - Background: after the merge, start the slow compile/test/prove/sweep in `tmux`, `bcargo`, or on `battleaxe`. Report the command, host, log path, and next expected signal as `Epsilon R`.
 - Fire again: once the background signal is launched, move to the next shot. If CI red, delayed logs, or long-run failures land later, treat them as measured impact for the next fix-forward PR.
 - Parallel fire: launch independent work streams when they do not collide. If a merge conflict, broken main, or failed background run blocks the next shot, resolve that concrete blocker and keep moving.
+
+## Repository Mechanics
+
+The manifesto above is the operating model. The rest of this file is local
+mechanics for applying it in this checkout.
+
+## Project Structure & Module Organization
+
+This repository is the Sugar workspace. Core implementations live under
+`implementations/` by language (`rust/`, `python/`, `java/`, `go/`, etc.). The
+Rust crates form a Cargo workspace in `implementations/rust/`. End-to-end
+examples and receipts are in `examples/`; protocol and design material lives in
+`protocol/`, `docs/`, and `conformance/`. Automation and helper tooling are in
+`Makefile`, `bin/`, `scripts/`, and `tools/`.
+
+## Build, Test, and Development Commands
+
+- `make help`: list supported build and test targets.
+- `make build-rust`: build the Rust workspace in release mode.
+- `make test-rust`: run Rust workspace and Rust-driven RPC tests.
+- `make test-python`: run Python kit tests.
+- `make test-all`: run the acid test (`test-rust` plus `test-python`).
+- `make test-showcases`: run checked-in end-to-end showcase receipts.
+- `cd implementations/rust && cargo fmt`: format Rust code.
+- `cd implementations/rust && cargo test -p sugar-cli <test-name> -- --nocapture`: run a focused Rust test.
+
+## Coding Style & Naming Conventions
+
+Keep changes small, explicit, and consistent with nearby code. Rust uses
+`cargo fmt`, snake_case functions/modules, and crate-local unit tests when
+practical. Shell scripts should be Bash/POSIX clear and executable only when
+intended. Do not move generated proofs, receipts, or vendored artifacts unless
+the task requires it.
+
+## Testing Guidelines
+
+Prefer focused regression tests before broader suites. For Sugar behavior,
+assert exact reports, receipts, CIDs, or verifier outcomes rather than inferred
+behavior. Start with the smallest relevant command, then widen to
+`make test-rust`, `make test-python`, `make test-all`, or a specific
+`examples/*/run.sh` when the blast radius warrants it.
+
+## Commit & Pull Request Guidelines
+
+Commit messages are short imperative summaries, often followed by PR numbers
+after merge, for example `Mint toolchain run witnesses from mint path (#2297)`.
+PR descriptions should state what changed, why, and the validation commands
+run. Keep unrelated local work out of the branch; stage files explicitly.
+
+## Agent-Specific Instructions
+
+For isolated work, create repo-local worktrees under `.worktrees/` from
+`origin/main`. Before editing, check `git status --short --branch`. If a
+narrower `AGENTS.md` exists in a subdirectory, follow that file for work inside
+its scope.
+
+For debt, migration, and removal work, follow the IDD loop above. Do not pin
+the work as a checklist or threshold. Build the automated instrument first: a
+focused test, compiler check, or report that recognizes the whole live offender
+set, reports current `R`, stays red while the stable-zero terms are nonzero, and
+prints the replacement plan for each offender. If the goal is ownership cleanup,
+the failing instrument should identify every illegal resident and describe the
+boundary, abstraction, visitor, typed result, deletion, or migration that will
+remove it. Fly by that red compiler/test signal until stable zero makes it
+silent.
