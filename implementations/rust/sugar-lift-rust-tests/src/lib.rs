@@ -9363,7 +9363,11 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// REAL value teeth (a wrong anchor goes z3-UNSAT). A body that still bottoms out in
     /// an opaque leaf (a further no-source call, a runtime method, a `&mut` adaptor)
     /// returns `None`.
-    pub(crate) fn try_inline_value_call(&self, func: &Expr, args: &[Expr]) -> Option<Rc<Term>> {
+    pub(crate) fn try_inline_value_call(
+        &self,
+        func: &Expr,
+        args: &[Expr],
+    ) -> Result<Option<Rc<Term>>, Effect> {
         sugar::call::try_inline_value_call(self, func, args)
     }
 }

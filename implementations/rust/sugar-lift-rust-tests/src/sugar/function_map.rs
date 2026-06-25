@@ -150,7 +150,7 @@ fn reduce_function_map(
         let arg = value
             .to_expr()
             .unwrap_or_else(|| function_map_gap("function map element could not materialize"));
-        let mapped = eval_function_value(func, arg, ctx)
+        let mapped = eval_function_value(func, arg, ctx)?
             .unwrap_or_else(|| function_map_gap("function map body did not reduce to a literal"));
         let expr = mapped
             .to_expr()
@@ -173,14 +173,23 @@ fn function_map_gap(reason: &str) -> ! {
     panic!("function_map did not reach a lawful floor: {reason}")
 }
 
-fn eval_function_value(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<ConstVal> {
-    if let Some(term) = ctx.try_inline_value_call(func, std::slice::from_ref(&arg)) {
+fn eval_function_value(
+    func: &Expr,
+    arg: Expr,
+    ctx: &SugarCtx,
+) -> Result<Option<ConstVal>, Outcome> {
+    if let Some(term) = ctx
+        .try_inline_value_call(func, std::slice::from_ref(&arg))
+        .map_err(Outcome::Incomplete)?
+    {
         if let Some(value) = const_val_from_term(&term) {
-            return Some(value);
+            return Ok(Some(value));
         }
     }
-    let resolved = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options)?;
-    const_eval(&resolved, &BTreeMap::new())
+    let Some(resolved) = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options) else {
+        return Ok(None);
+    };
+    Ok(const_eval(&resolved, &BTreeMap::new()))
 }
 
 fn const_val_from_term(term: &Rc<Term>) -> Option<ConstVal> {
