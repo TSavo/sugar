@@ -95,6 +95,7 @@ pub mod sugar {
     pub mod float_refinement;
     pub mod fold;
     pub mod for_each;
+    pub mod for_loop_mutation;
     pub mod for_replay;
     pub mod forall;
     pub mod forall_loop;
@@ -25519,8 +25520,8 @@ mod lifter_key_tests {
         );
     }
 
-    // ── `.any()`/adaptor over a LITERAL domain whose closure body reads a MUTABLE
-    // capture is a runtime (bin-2) refusal ──
+    // ── `.any()`/adaptor over a LITERAL domain whose closure body reads a mutable
+    // view-invalidated capture is a terminal temporal refusal ──
     // Corpus: iter/adapters/zip.rs::test_zip_map_sideffectful -- `let mut xs = [0; 6]`
     // mutated by `xs.iter_mut().map(|x| *x += 1)`, then
     // `assert!([&[..], &[..]].iter().any(|v| &xs == *v))`. The DOMAIN is a literal array
@@ -25528,7 +25529,9 @@ mod lifter_key_tests {
 
     #[test]
     fn any_over_literal_domain_with_mut_capture_body_is_refused_bin2() {
-        // POSITIVE: a literal-array `.any` whose body reads a `let mut` capture -> bin-2.
+        // POSITIVE: a literal-array `.any` whose body reads `xs` after `.iter_mut()`
+        // exposed a mutable view. The temporal owner refuses the stale read; the
+        // `.any` sugar must not fake-discharge it.
         let src = r#"
             #[test]
             fn t() {
@@ -25545,13 +25548,14 @@ mod lifter_key_tests {
             contract_names(&out)
         );
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| r.contains("READS a MUTABLE-local capture")),
-            "the mut-capture body bin-2 reason must be emitted; got {:?}",
+            out.skip_reasons.iter().any(|r| {
+                r.contains("temporally unstable mutable view read of `xs` after `.iter_mut()`")
+            }),
+            "the mutable-view temporal refusal must be emitted; got {:?}",
             out.skip_reasons
         );
-        // TEETH: `bin-2` -> terminal (refused), not parked unclassified.
+        // TEETH: mutable-view temporal instability -> terminal (refused), not parked
+        // unclassified.
         assert!(
             out.skip_reasons.iter().all(|r| matches!(
                 refusal_disposition(r),
