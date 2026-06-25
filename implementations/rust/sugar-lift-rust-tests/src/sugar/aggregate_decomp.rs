@@ -15,7 +15,6 @@ use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::monadic::RES_OK;
 use crate::{
     callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
     repeat_count_in_scope, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,
@@ -94,11 +93,6 @@ fn aggregateish(expr: &Expr) -> bool {
         Expr::Struct(_) | Expr::Path(_) => true,
         Expr::Index(index) => is_full_range(&index.index) || aggregateish(&index.expr),
         Expr::Cast(cast) => aggregateish(&cast.expr),
-        Expr::MethodCall(call)
-            if matches!(call.method.to_string().as_str(), "unwrap" | "expect") =>
-        {
-            true
-        }
         Expr::Call(call) => call.args.iter().any(explicit_aggregateish),
         Expr::Paren(paren) => aggregateish(&paren.expr),
         Expr::Group(group) => aggregateish(&group.expr),
@@ -112,11 +106,6 @@ fn explicit_aggregateish(expr: &Expr) -> bool {
         Expr::Array(_) | Expr::Repeat(_) | Expr::Struct(_) => true,
         Expr::Index(index) => is_full_range(&index.index) || explicit_aggregateish(&index.expr),
         Expr::Cast(cast) => explicit_aggregateish(&cast.expr),
-        Expr::MethodCall(call)
-            if matches!(call.method.to_string().as_str(), "unwrap" | "expect") =>
-        {
-            true
-        }
         Expr::Call(call) => call.args.iter().any(explicit_aggregateish),
         Expr::Paren(paren) => explicit_aggregateish(&paren.expr),
         Expr::Group(group) => explicit_aggregateish(&group.expr),
@@ -142,9 +131,6 @@ enum AggregateBody {
     },
     CollectVec {
         receiver: SugarBody<CompositeFloor>,
-    },
-    UnwrapResult {
-        receiver: SugarBody<TermFloor>,
     },
     Term {
         body: SugarBody<TermFloor>,
@@ -290,13 +276,8 @@ fn aggregate_body(expr: &Expr, fcx: &SugarBuildCtx, seen: &mut BTreeSet<String>)
                     body: SugarBody::term(expr, fcx),
                 };
             }
-            if let Expr::Call(receiver_call) = strip_refs_groups(&call.receiver) {
-                if receiver_call.args.len() == 1 && is_try_from_callee(&receiver_call.func) {
-                    return aggregate_body(&receiver_call.args[0], fcx, seen);
-                }
-            }
-            AggregateBody::UnwrapResult {
-                receiver: SugarBody::term(&call.receiver, fcx),
+            AggregateBody::Term {
+                body: SugarBody::term(expr, fcx),
             }
         }
         Expr::Call(call) => match structural_ctor_term_name(&call.func) {
@@ -304,9 +285,6 @@ fn aggregate_body(expr: &Expr, fcx: &SugarBuildCtx, seen: &mut BTreeSet<String>)
                 name,
                 arg: Box::new(aggregate_body(&call.args[0], fcx, seen)),
             },
-            _ if call.args.len() == 1 && is_try_from_callee(&call.func) => {
-                aggregate_body(&call.args[0], fcx, seen)
-            }
             _ => AggregateBody::Term {
                 body: SugarBody::term(expr, fcx),
             },
@@ -378,7 +356,6 @@ fn aggregate_components(
             Ok(Some(out))
         }
         AggregateBody::CollectVec { receiver } => collect_vec_components(receiver, ctx),
-        AggregateBody::UnwrapResult { receiver } => unwrap_result_components(receiver, ctx),
         AggregateBody::Term { body } => {
             let term = text_determined_term(body, ctx)?;
             grounded_term_components(term)
@@ -446,26 +423,6 @@ fn collect_vec_components(
         out.push(term);
     }
     Ok(Some(out))
-}
-
-fn unwrap_result_components(
-    receiver: &SugarBody<TermFloor>,
-    ctx: &SugarCtx,
-) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
-    let term = match receiver.reduce(ctx) {
-        Outcome::Complete(desugared) => desugared
-            .into_term()
-            .unwrap_or_else(|| panic!("aggregate unwrap receiver reduced to non-term")),
-        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
-    };
-    let Term::Ctor { name, args } = term.as_ref() else {
-        return Ok(None);
-    };
-    if name == RES_OK && args.len() == 1 {
-        grounded_term_components(Rc::clone(&args[0]))
-    } else {
-        Ok(None)
-    }
 }
 
 fn text_determined_term(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
@@ -570,16 +527,6 @@ fn term_or_construction_gap(
             .unwrap_or_else(|| panic!("{label} reduced to non-term"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
-}
-
-fn is_try_from_callee(func: &Expr) -> bool {
-    let Expr::Path(path) = strip_refs_groups(func) else {
-        return false;
-    };
-    path.path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "try_from")
 }
 
 fn is_full_range(expr: &Expr) -> bool {
