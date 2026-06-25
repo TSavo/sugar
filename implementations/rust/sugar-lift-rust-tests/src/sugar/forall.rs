@@ -22,11 +22,12 @@ use crate::sugar::factory::{
 };
 use crate::sugar::method_family;
 use crate::{
-    bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
-    const_fold_int_term, const_val_term, count_asserts_in_stmts, loop_body_mutates,
-    resolve_index_in_formula, subst_var_in_formula, term_as_int, translate_term_in_scope,
-    AssertionFactKind, BoundedDomain, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome,
-    ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
+    bounded_domain_from_expr, capture_literal_arrays, closure_body_advances_iterator,
+    closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term, const_val_term,
+    count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula, subst_var_in_formula,
+    term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Effect,
+    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
+    SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -298,6 +299,10 @@ pub(crate) struct ForAllSugar {
     /// (sound under-claim, the established floor). Empty for a `for x in <range>`
     /// whose body indexes nothing -- then this is inert.
     literal_arrays: BTreeMap<String, Vec<Expr>>,
+    /// Raw closure body for `.for_each` source sites. The body is not decomposed at
+    /// construction; desugar uses it only to ask the closure effect scanners whether
+    /// the point-wise universal would be unsound.
+    closure_body: Option<Expr>,
 }
 
 enum ForAllDomain {
@@ -316,6 +321,18 @@ impl Sugar for ForAllSugar {
 
 impl ForAllSugar {
     fn desugar_forall(&self, ctx: &SugarCtx) -> Result<Desugared, Outcome> {
+        if let Some(body) = &self.closure_body {
+            if closure_body_advances_iterator(body) {
+                return Err(Outcome::Incomplete(Effect::IterAdvance {
+                    boundary: self.body_boundary(ctx),
+                }));
+            }
+            if closure_body_is_side_effecting(body) {
+                return Err(Outcome::Incomplete(Effect::Mutation {
+                    boundary: self.body_boundary(ctx),
+                }));
+            }
+        }
         if loop_body_mutates(&self.body_stmts) {
             return Err(Outcome::Incomplete(Effect::Mutation {
                 boundary: self.body_boundary(ctx),
@@ -543,6 +560,7 @@ pub(crate) fn decompose_for_each(
         body_stmts,
         kind: "for_each",
         literal_arrays: capture_literal_arrays(let_inits),
+        closure_body: Some((*closure.body).clone()),
     })
 }
 
@@ -569,6 +587,7 @@ pub(crate) fn decompose_for_loop(
         body_stmts: f.body.stmts.clone(),
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),
+        closure_body: None,
     })
 }
 

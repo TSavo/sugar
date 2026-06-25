@@ -9933,7 +9933,7 @@ const PURE_CLOSURE_ADAPTORS: &[&str] = &[
 /// iterator-advancing method (`iter.next()`, `v.push(..)`, ...). A side-effecting
 /// body is not a pure point-wise claim, so a universal over the closure parameter
 /// would be a false claim -- it is TERMINAL, not dissolvable / liftable.
-fn closure_body_is_side_effecting(body: &Expr) -> bool {
+pub(crate) fn closure_body_is_side_effecting(body: &Expr) -> bool {
     let stmts: Vec<Stmt> = match body {
         Expr::Block(b) => b.block.stmts.clone(),
         other => vec![Stmt::Expr(other.clone(), None)],
@@ -9999,7 +9999,7 @@ fn closure_body_is_side_effecting(body: &Expr) -> bool {
 /// `IterAdvanceEffect` (vs a captured-state assignment, which types as
 /// `MutationEffect`). Scans the body and any assert-macro args (the advance frequently
 /// lives in `assert_eq!(Some(x), iter.next())`), mirroring `MethScan`.
-fn closure_body_advances_iterator(body: &Expr) -> bool {
+pub(crate) fn closure_body_advances_iterator(body: &Expr) -> bool {
     const ITER_ADVANCE_METHODS: &[&str] = &["next", "next_back", "nth", "nth_back"];
     struct Scan {
         found: bool,
@@ -11906,7 +11906,7 @@ fn collect_assertion_entries<'a>(
                     // and add the named universal; the body asserts are accounted by
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
-                    let desugared = {
+                    let composite_outcome = {
                         // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
                         // statement), or a bare `.for_each` (the same bounded
                         // universal as the equivalent for-loop). Only ask the
@@ -11926,15 +11926,23 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             );
-                            sugar::factory::build_composite(e, &fcx)
-                                .desugar(&ctx)
-                                .complete()
+                            Some(sugar::factory::build_composite(e, &fcx).desugar(&ctx))
                         } else {
                             None
                         }
                     };
-                    if let Some(desugared) = desugared {
-                        emit_desugared(desugared, entries, macros_lifted);
+                    if let Some(outcome) = composite_outcome {
+                        match outcome {
+                            Outcome::Complete(desugared) => {
+                                emit_desugared(desugared, entries, macros_lifted);
+                            }
+                            Outcome::Incomplete(effect) => {
+                                let count = count_asserts_in_expr(e);
+                                for _ in 0..count {
+                                    skipped.push(effect.reason());
+                                }
+                            }
+                        }
                         true
                     } else {
                         // const_eval_select((), compiletime, runtime): inline the

@@ -1318,6 +1318,23 @@ mod tests {
     }
 
     #[test]
+    fn iterator_clone_over_literal_bound_receiver_is_identity_composite() {
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert(
+            "iter".to_string(),
+            syn::parse_str("[1, 2, 3].iter()").unwrap(),
+        );
+        let expr: Expr = syn::parse_str("iter.clone()").unwrap();
+        let names =
+            candidate_names_for_role_with_let_inits(&expr, SugarRole::Composite, &let_inits);
+
+        assert!(
+            names.contains(&"iterator"),
+            "clone over a literal-derived iterator should be a composite identity adaptor: {names:?}"
+        );
+    }
+
+    #[test]
     fn for_loop_over_literal_range_is_owned_by_forall_loop_sugar() {
         let expr: Expr = syn::parse_str("for x in 0..3 { assert!(x >= 0); }").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Composite);
