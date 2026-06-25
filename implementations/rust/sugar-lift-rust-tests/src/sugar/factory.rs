@@ -551,7 +551,7 @@ impl FactoryAuditSeed {
         }
     }
 
-    fn unresolved_reason(&self) -> String {
+    pub(crate) fn unresolved_reason(&self) -> String {
         match self.selected {
             Some(selected) => format!(
                 "Sugar `{selected}` did not desugar `{}` to bedrock for role {}; write more Sugar for this AST",

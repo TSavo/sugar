@@ -4,15 +4,17 @@
 
 use crate::{Outcome, Sugar, SugarCtx};
 
-pub(crate) fn unsupported() -> Box<dyn Sugar> {
-    Box::new(UnsupportedSugar)
+pub(crate) fn unsupported(reason: String) -> Box<dyn Sugar> {
+    Box::new(UnsupportedSugar { reason })
 }
 
-struct UnsupportedSugar;
+struct UnsupportedSugar {
+    reason: String,
+}
 
 impl Sugar for UnsupportedSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        factory_gap("no sugar candidate reached this source shape")
+        factory_gap(&self.reason)
     }
 }
 

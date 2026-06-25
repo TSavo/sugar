@@ -10,6 +10,18 @@ use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num, Desugared,
 };
 
+pub(crate) const VALUE_IF_TERM: &str = "value:if";
+
+pub(crate) fn value_if_term(cond: Rc<Term>, then_term: Rc<Term>, else_term: Rc<Term>) -> Rc<Term> {
+    if let Some(value) = literal_predicate_bool(&cond) {
+        return if value { then_term } else { else_term };
+    }
+    Rc::new(Term::Ctor {
+        name: VALUE_IF_TERM.to_string(),
+        args: vec![cond, then_term, else_term],
+    })
+}
+
 /// A finite-domain occurrence context for a term-floor curry.
 ///
 /// The caller supplies the binding (`param := arg`) and the occurrence owner
@@ -309,6 +321,12 @@ fn curry_term(
                     args: Vec::new(),
                 })
             }
+        }
+        Term::Ctor { name, args } if name == VALUE_IF_TERM && args.len() == 3 => {
+            let cond = curry_term(&args[0], param, arg, occurrence);
+            let then_term = curry_term(&args[1], param, arg, occurrence);
+            let else_term = curry_term(&args[2], param, arg, occurrence);
+            value_if_term(cond, then_term, else_term)
         }
         Term::Ctor { name, args } => Rc::new(Term::Ctor {
             name: name.clone(),
