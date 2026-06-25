@@ -47,7 +47,7 @@ use crate::sugar::factory::{
 use crate::sugar::int_literal::{
     numeric_floor_from_term, ExactInt, IntKind as NumericIntKind, NumericFloor,
 };
-use crate::sugar::term_dispatch::{TermFloorAccept, TermFloorVisitor};
+use crate::sugar::monadic::OPT_SOME;
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{ConstValue, Term};
 
@@ -680,42 +680,48 @@ impl FmtValue {
 }
 
 fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
-    term.accept_term_floor(FormatValueTermVisitor { owner })
+    format_value_from_term_floor_opt(term).unwrap_or_else(|| {
+        panic!(
+            "{} term floor did not dispatch to a literal format value: {}",
+            owner,
+            canonical_term_sig(term)
+        )
+    })
 }
 
-struct FormatValueTermVisitor<'a> {
-    owner: &'a str,
+pub(crate) fn display_literal_term_floor(term: &Rc<Term>) -> Option<String> {
+    format_value_from_term_floor_opt(term)?
+        .render(&Spec::display())
+        .ok()?
 }
 
-impl TermFloorVisitor for FormatValueTermVisitor<'_> {
-    type Output = FmtValue;
+fn format_value_from_term_floor_opt(term: &Rc<Term>) -> Option<FmtValue> {
+    if let Some(floor) = numeric_floor_from_term(term) {
+        return format_value_from_numeric_floor(floor);
+    }
 
-    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
-        if let Some(floor) = numeric_floor_from_term(term) {
-            return format_value_from_numeric_floor(floor).unwrap_or_else(|| {
-                panic!(
-                    "{} numeric term floor did not fit the format integer carrier: {}",
-                    self.owner,
-                    canonical_term_sig(term)
-                )
-            });
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::String(value),
+            ..
+        } => Some(FmtValue::Str(value.clone())),
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(FmtValue::Bool(*value)),
+        Term::Ctor { name, args } if name == "method:unwrap" && args.len() == 1 => {
+            literal_unwrap_format_value(&args[0])
         }
+        _ => None,
+    }
+}
 
-        match term.as_ref() {
-            Term::Const {
-                value: ConstValue::String(value),
-                ..
-            } => FmtValue::Str(value.clone()),
-            Term::Const {
-                value: ConstValue::Bool(value),
-                ..
-            } => FmtValue::Bool(*value),
-            _ => panic!(
-                "{} term floor did not dispatch to a literal format value: {}",
-                self.owner,
-                canonical_term_sig(term)
-            ),
+fn literal_unwrap_format_value(term: &Rc<Term>) -> Option<FmtValue> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
+            format_value_from_term_floor_opt(&args[0])
         }
+        _ => None,
     }
 }
 

@@ -1041,6 +1041,69 @@ mod tests {
     }
 
     #[test]
+    fn char_to_string_prioritizes_char_floor_before_generic_to_string() {
+        let expr: Expr = syn::parse_str("'a'.to_string()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        assert!(
+            names.contains(&"char_literal_method"),
+            "char literal receiver should be claimed by CharMethodSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"to_string"),
+            "char literal receiver should also be claimed by generic ToStringSugar: {names:?}"
+        );
+
+        let selected = selected_candidate_name_for_role(&expr, SugarRole::Term);
+        assert_eq!(
+            selected,
+            Some("char_literal_method"),
+            "char receiver semantics belong to the char floor before generic stringification"
+        );
+    }
+
+    #[test]
+    fn bound_char_to_string_prioritizes_char_floor_before_generic_to_string() {
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("ch".to_string(), syn::parse_str::<Expr>("'z'").unwrap());
+        let expr: Expr = syn::parse_str("ch.to_string()").unwrap();
+        let names = candidate_names_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+        assert!(
+            names.contains(&"char_literal_method"),
+            "bound char literal receiver should be claimed by CharMethodSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"to_string"),
+            "bound char literal receiver should also be claimed by generic ToStringSugar: {names:?}"
+        );
+
+        let selected =
+            selected_candidate_name_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+        assert_eq!(
+            selected,
+            Some("char_literal_method"),
+            "SSA-resolved char literals keep the char-floor owner"
+        );
+    }
+
+    #[test]
+    fn unknown_to_string_receiver_stays_with_generic_to_string() {
+        let expr: Expr = syn::parse_str("id.to_string()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        assert!(
+            names.contains(&"to_string"),
+            "unknown receiver still belongs to the generic formatting sugar: {names:?}"
+        );
+        assert!(
+            !names.contains(&"char_literal_method"),
+            "CharMethodSugar must not pretend an unknown receiver is a char: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("to_string")
+        );
+    }
+
+    #[test]
     fn char_method_path_receiver_is_recognized_lazily() {
         let expr: Expr = syn::parse_str("c.to_ascii_lowercase()").unwrap();
         let selected = selected_candidate_name_for_role(&expr, SugarRole::Term);
