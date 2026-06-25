@@ -11623,7 +11623,8 @@ fn collect_assertion_entries<'a>(
                 }
             }
             Stmt::Expr(e @ Expr::Match(m), _) => {
-                if count_asserts_in_expr(e) == 0 {
+                let match_asserts = count_asserts_in_expr(e);
+                if match_asserts == 0 {
                     if let Some(stmts) = const_selected_match_arm_stmts(m, options) {
                         collect_assertion_entries(
                             &stmts,
@@ -11645,123 +11646,128 @@ fn collect_assertion_entries<'a>(
                             &layout_types,
                         );
                     }
-                }
-                // OPAQUE-REFLECTION qualified continue path (value NOT in scope): a
-                // `match Type::of::<T>().kind { TypeKind::X(b) => assert_eq!(b.field, ..) }`
-                // reads its asserted values out of compile-time reflection over runtime
-                // type identity (`TypeId`) -- not a value constructed from source
-                // literals. The surviving arm's BODY asserts (the ones the panic-locus
-                // variant pin does NOT carry) are TERMINAL over that named continuation;
-                // account them here so they do not fall to the unenumerated safety net.
-                // The variant-pin discharge (below) is unchanged. A match over a
-                // CONSTRUCTED literal scrutinee has no reflection call -> None -> the
-                // ordinary path (complete / under-match-context), never reflection-refused.
-                let reflection_boundary = reflection_scrutinee(strip_const_block(&m.expr));
-                if let Some(b) = &reflection_boundary {
-                    let body_asserts: usize = m
-                        .arms
-                        .iter()
-                        .filter(|a| !expr_diverges_in_scope(&a.body, &temporal_scope))
-                        .map(|a| count_asserts_in_match_arm_body(&a.body))
-                        .sum();
-                    let reason = (Effect::Reflection {
-                        boundary: b.clone(),
-                    })
-                    .reason();
-                    for _ in 0..body_asserts {
-                        skipped.push(reason.clone());
-                    }
-                }
-                // Panic locus: a match whose every arm but one diverges asserts
-                // the scrutinee matches the surviving arm. Lift it FIRST (it pins
-                // the scrutinee's variant with no body asserts to carry).
-                if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
-                    entries.push(entry);
-                    *macros_lifted += 1;
-                } else if reflection_boundary.is_some() {
-                    // Reflection match with no panic-locus (no diverging `_` arm): its
-                    // body asserts are already accounted above; do NOT also count them
-                    // under the generic "under match context" path (double-count).
-                } else if let Some(eff) =
-                    runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
-                {
-                    let count: usize = m
-                        .arms
-                        .iter()
-                        .map(|a| count_asserts_in_match_arm_body(&a.body))
-                        .sum();
-                    let reason = eff.reason();
-                    for _ in 0..count {
-                        skipped.push(reason.clone());
-                    }
-                } else if let Some(desugared) = {
-                    // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
-                    // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
-                    // its arm asserts (a match IS nested conditionals; this generalizes
-                    // `ConditionalSugar` from a bool guard to N pattern discriminants).
-                    // EXACT-OR-BAIL: scrutinee must translate, every pattern must
-                    // reduce to a discriminant (binding/guard/or/range arms bail), and
-                    // the arm asserts must fully lift; a bail keeps the refusal below.
-                    // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
-                    let ctx = sugar_ctx_with_factory_audits(
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                        factory_audits,
-                    );
-                    let fcx =
-                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx)
-                        .desugar(&ctx)
-                        .complete()
-                } {
-                    emit_desugared(desugared, entries, macros_lifted);
-                    // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
-                    // (it does not exist on this target). Those arms' asserts are NOT in
-                    // the emitted conjunction, so account them HERE with a precise reason
-                    // (a cfg-inactive arm, mirroring `account_skipped_module`) -- otherwise
-                    // they fall to the generic per-fn safety net. SILENT stays 0; the
-                    // surviving (active) arm is the one that ran. Corpus: num/wrapping.rs.
-                    for arm in &m.arms {
-                        if matches!(cfg_resolve(&arm.attrs, options), CfgDisposition::Absent(_)) {
-                            let inactive = count_asserts_in_match_arm_body(&arm.body);
-                            for _ in 0..inactive {
-                                skipped.push(
-                                    "assertion in a cfg-inactive match arm (not present on this target); refused"
-                                        .to_string(),
-                                );
-                            }
+                } else {
+                    // OPAQUE-REFLECTION qualified continue path (value NOT in scope): a
+                    // `match Type::of::<T>().kind { TypeKind::X(b) => assert_eq!(b.field, ..) }`
+                    // reads its asserted values out of compile-time reflection over runtime
+                    // type identity (`TypeId`) -- not a value constructed from source
+                    // literals. The surviving arm's BODY asserts (the ones the panic-locus
+                    // variant pin does NOT carry) are TERMINAL over that named continuation;
+                    // account them here so they do not fall to the unenumerated safety net.
+                    // The variant-pin discharge (below) is unchanged. A match over a
+                    // CONSTRUCTED literal scrutinee has no reflection call -> None -> the
+                    // ordinary path (complete / under-match-context), never reflection-refused.
+                    let reflection_boundary = reflection_scrutinee(strip_const_block(&m.expr));
+                    if let Some(b) = &reflection_boundary {
+                        let body_asserts: usize = m
+                            .arms
+                            .iter()
+                            .filter(|a| !expr_diverges_in_scope(&a.body, &temporal_scope))
+                            .map(|a| count_asserts_in_match_arm_body(&a.body))
+                            .sum();
+                        let reason = (Effect::Reflection {
+                            boundary: b.clone(),
+                        })
+                        .reason();
+                        for _ in 0..body_asserts {
+                            skipped.push(reason.clone());
                         }
                     }
-                } else {
-                    let count: usize = m
-                        .arms
-                        .iter()
-                        .map(|a| count_asserts_in_match_arm_body(&a.body))
-                        .sum();
-                    // RESOLVE-THEN-CLASSIFY (the match-context tail): a `match` whose
-                    // SCRUTINEE is a RUNTIME call result (`match it.next() { Some(x) =>
-                    // assert_eq!(*x, ..) }`, `it` a `let mut` iterator) reads its asserted
-                    // values out of the runtime arm taken by a runtime iterator-advance --
-                    // no single timeless `t`, the SAME terminal class as the existing
-                    // `RuntimeMatchScrutineeEffect` (`operand is a runtime non-scalar
-                    // result`). Name it terminal. DISCRIMINATION: a `match` over a
-                    // CONSTRUCTED literal/path scrutinee is NOT a runtime call result
-                    // (`expr_is_runtime_call_result` false), so it STAYS the generic
-                    // UNCLASSIFIED reason -- the fake-refuse guardrail. Corpus:
-                    // option.rs::test_mut_iter (`match it.next()`).
-                    let reason = if let Some(eff) =
+                    // Panic locus: a match whose every arm but one diverges asserts
+                    // the scrutinee matches the surviving arm. Lift it FIRST (it pins
+                    // the scrutinee's variant with no body asserts to carry).
+                    if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
+                        entries.push(entry);
+                        *macros_lifted += 1;
+                    } else if reflection_boundary.is_some() {
+                        // Reflection match with no panic-locus (no diverging `_` arm): its
+                        // body asserts are already accounted above; do NOT also count them
+                        // under the generic "under match context" path (double-count).
+                    } else if let Some(eff) =
                         runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
                     {
-                        eff.reason()
+                        let count: usize = m
+                            .arms
+                            .iter()
+                            .map(|a| count_asserts_in_match_arm_body(&a.body))
+                            .sum();
+                        let reason = eff.reason();
+                        for _ in 0..count {
+                            skipped.push(reason.clone());
+                        }
+                    } else if let Some(desugared) = {
+                        // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
+                        // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
+                        // its arm asserts (a match IS nested conditionals; this generalizes
+                        // `ConditionalSugar` from a bool guard to N pattern discriminants).
+                        // EXACT-OR-BAIL: scrutinee must translate, every pattern must
+                        // reduce to a discriminant (binding/guard/or/range arms bail), and
+                        // the arm asserts must fully lift; a bail keeps the refusal below.
+                        // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
+                        let ctx = sugar_ctx_with_factory_audits(
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                            factory_audits,
+                        );
+                        let fcx = sugar::factory::SugarBuildCtx::new(
+                            &temporal_scope,
+                            options,
+                            &let_inits,
+                        );
+                        sugar::factory::build_composite(e, &fcx)
+                            .desugar(&ctx)
+                            .complete()
+                    } {
+                        emit_desugared(desugared, entries, macros_lifted);
+                        // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
+                        // (it does not exist on this target). Those arms' asserts are NOT in
+                        // the emitted conjunction, so account them HERE with a precise reason
+                        // (a cfg-inactive arm, mirroring `account_skipped_module`) -- otherwise
+                        // they fall to the generic per-fn safety net. SILENT stays 0; the
+                        // surviving (active) arm is the one that ran. Corpus: num/wrapping.rs.
+                        for arm in &m.arms {
+                            if matches!(cfg_resolve(&arm.attrs, options), CfgDisposition::Absent(_))
+                            {
+                                let inactive = count_asserts_in_match_arm_body(&arm.body);
+                                for _ in 0..inactive {
+                                    skipped.push(
+                                        "assertion in a cfg-inactive match arm (not present on this target); refused"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
                     } else {
-                        "assertion under match context: not unconditional point-wise; released to layer 0"
-                            .to_string()
-                    };
-                    for _ in 0..count {
-                        skipped.push(reason.clone());
+                        let count: usize = m
+                            .arms
+                            .iter()
+                            .map(|a| count_asserts_in_match_arm_body(&a.body))
+                            .sum();
+                        // RESOLVE-THEN-CLASSIFY (the match-context tail): a `match` whose
+                        // SCRUTINEE is a RUNTIME call result (`match it.next() { Some(x) =>
+                        // assert_eq!(*x, ..) }`, `it` a `let mut` iterator) reads its asserted
+                        // values out of the runtime arm taken by a runtime iterator-advance --
+                        // no single timeless `t`, the SAME terminal class as the existing
+                        // `RuntimeMatchScrutineeEffect` (`operand is a runtime non-scalar
+                        // result`). Name it terminal. DISCRIMINATION: a `match` over a
+                        // CONSTRUCTED literal/path scrutinee is NOT a runtime call result
+                        // (`expr_is_runtime_call_result` false), so it STAYS the generic
+                        // UNCLASSIFIED reason -- the fake-refuse guardrail. Corpus:
+                        // option.rs::test_mut_iter (`match it.next()`).
+                        let reason = if let Some(eff) =
+                            runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
+                        {
+                            eff.reason()
+                        } else {
+                            "assertion under match context: not unconditional point-wise; released to layer 0"
+                                .to_string()
+                        };
+                        for _ in 0..count {
+                            skipped.push(reason.clone());
+                        }
                     }
                 }
             }
@@ -16818,6 +16824,9 @@ fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<
     let reducer = ReductionCtx::from_items(&items);
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
+    if !sugar::factory::has_expr_role(expr, &fcx, sugar::claim::SugarRole::MatchScrutineeVerdict) {
+        return None;
+    }
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::MatchScrutineeVerdict);
     match node.desugar(&ctx) {
@@ -21100,6 +21109,44 @@ mod lifter_key_tests {
         assert!(
             scope.stable_let_binding_for_term("read1").is_none(),
             "a shadowed binding that still references its own name must not become a stable binding"
+        );
+    }
+
+    #[test]
+    fn runtime_match_scrutinee_router_declines_literal_match_scrutinee() {
+        let expr: Expr = syn::parse_str(
+            r#"match 2 {
+                1 => unselected_probe(),
+                2 => selected_probe(),
+                _ => unselected_probe(),
+            }"#,
+        )
+        .expect("literal match expression");
+        let scope = TemporalScope::new("literal_match_scrutinee", TemporalPlan::default());
+
+        assert!(
+            runtime_match_scrutinee_effect(&expr, &scope).is_none(),
+            "literal match scrutinees are owned by match/statement visitation, not the \
+             runtime-match-scrutinee refusal sugar"
+        );
+    }
+
+    #[test]
+    fn runtime_match_scrutinee_router_reads_match_scrutinee_sugar_verdict() {
+        let expr: Expr = syn::parse_str("match b.binary_search(&3) { Ok(_) => true, _ => false }")
+            .expect("runtime-call match expression");
+        let scope = TemporalScope::new("runtime_match_scrutinee", TemporalPlan::default());
+        let effect = runtime_match_scrutinee_effect(&expr, &scope)
+            .expect("runtime-call match scrutinee should be a named sugar verdict");
+
+        assert!(
+            matches!(effect, Effect::RuntimeMatchScrutinee { .. }),
+            "runtime-call match scrutinees must reduce through MatchScrutineeSugar"
+        );
+        assert!(
+            effect.reason().contains("runtime call result"),
+            "the sugar verdict should carry the named runtime-scrutinee refusal: {}",
+            effect.reason()
         );
     }
 
