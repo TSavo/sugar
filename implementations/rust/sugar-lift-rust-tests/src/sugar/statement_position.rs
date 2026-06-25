@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use syn::{BinOp, Expr};
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::{
     closure_body_advances_iterator, count_asserts_in_expr, count_asserts_in_stmts,
     expr_contains_await, reflection_scrutinee, strip_const_block, sugar_ctx_with_factory_audits,
@@ -25,6 +25,29 @@ pub(crate) fn desugar_composite_expr(
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Outcome {
+    let fcx = SugarBuildCtx::new(scope, options, let_inits);
+    let body = SugarBody::composite(expr, &fcx);
+    desugar_composite_body(
+        &body,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_composite_body(
+    body: &SugarBody<CompositeFloor>,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Outcome {
     let ctx = sugar_ctx_with_factory_audits(
         scope,
         options,
@@ -33,8 +56,7 @@ pub(crate) fn desugar_composite_expr(
         macro_depth,
         factory_audits,
     );
-    let fcx = SugarBuildCtx::new(scope, options, let_inits);
-    build_composite(expr, &fcx).desugar(&ctx)
+    body.desugar(&ctx)
 }
 
 #[allow(clippy::too_many_arguments)]
