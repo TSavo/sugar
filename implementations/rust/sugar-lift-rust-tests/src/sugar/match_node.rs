@@ -17,9 +17,10 @@ use syn::{Expr, Pat, Stmt};
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
+use crate::sugar::term_literal::translate_lit;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
-    expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
+    expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path,
     translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, Effect, LiftOptions,
     Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
 };
