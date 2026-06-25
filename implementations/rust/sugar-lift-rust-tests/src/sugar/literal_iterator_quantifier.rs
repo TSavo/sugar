@@ -19,8 +19,8 @@ use crate::sugar::term_dispatch::{
     TermFloorAccept,
 };
 use crate::{
-    bool_const, closure_simple_param_name, const_val_term, make_var, token_key, AssertionFactKind,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, Warrant,
+    bool_const, const_val_term, make_var, token_key, AssertionFactKind, Desugared, DesugaredElem,
+    Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -77,6 +77,22 @@ fn recognize_method(
             body: SugarBody::term(closure.body.as_ref(), fcx),
         },
     })
+}
+
+/// The bound parameter name of a single-parameter closure, accepting `|x|` and a
+/// reference pattern `|&x|` (and `|&mut x|`), through a type ascription `|x: T|`.
+/// `None` for a wildcard `|_|` or any destructuring pattern.
+fn closure_simple_param_name(closure: &syn::ExprClosure) -> Option<String> {
+    fn ident_of(pat: &syn::Pat) -> Option<String> {
+        match pat {
+            syn::Pat::Ident(id) if id.subpat.is_none() => Some(id.ident.to_string()),
+            syn::Pat::Reference(r) => ident_of(&r.pat),
+            syn::Pat::Paren(p) => ident_of(&p.pat),
+            syn::Pat::Type(t) => ident_of(&t.pat),
+            _ => None,
+        }
+    }
+    ident_of(closure.inputs.first()?)
 }
 
 impl Sugar for LiteralIteratorQuantifierSugar {
