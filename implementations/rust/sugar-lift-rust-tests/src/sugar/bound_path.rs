@@ -241,7 +241,11 @@ fn construct_term_body(
         );
         return Some(SugarBody::from_node(resolved_term(term)));
     }
-    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    let init = fcx
+        .let_inits()
+        .get(name)
+        .copied()
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
     Some(SugarBody::term(init, child_fcx))
 }
 
@@ -253,7 +257,11 @@ fn construct_constraint_body(
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Constraint) {
         return Some(SugarBody::constraint(&current, child_fcx));
     }
-    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    let init = fcx
+        .let_inits()
+        .get(name)
+        .copied()
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
     Some(SugarBody::constraint(init, child_fcx))
 }
 
@@ -265,7 +273,11 @@ fn construct_composite_body(
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Composite) {
         return Some(SugarBody::composite(&current, child_fcx));
     }
-    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    let init = fcx
+        .let_inits()
+        .get(name)
+        .copied()
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
     Some(SugarBody::composite(init, child_fcx))
 }
 

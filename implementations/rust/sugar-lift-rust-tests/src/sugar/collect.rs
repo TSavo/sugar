@@ -14,6 +14,7 @@ use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
@@ -67,6 +68,7 @@ enum CollectPlan {
     },
     MapMonadic {
         base: SugarBody<CompositeFloor>,
+        base_static_len: Option<usize>,
         closure: ExprClosure,
         kind: CollectKind,
     },
@@ -101,6 +103,11 @@ impl CollectPlan {
         let kind = monadic_kind_of_closure(closure)?;
         Some(Self::MapMonadic {
             base: sequence_body(&call.receiver, fcx),
+            base_static_len: method_family::literal_sequence_static_len_in_scope(
+                &call.receiver,
+                fcx.let_inits(),
+                fcx.scope(),
+            ),
             closure: closure.clone(),
             kind,
         })
@@ -155,10 +162,20 @@ impl CollectPlan {
             }
             CollectPlan::MapMonadic {
                 base,
+                base_static_len,
                 closure,
                 kind,
             } => {
-                let seq = sequence_from_body(base, ctx)?;
+                let seq = match sequence_from_body(base, ctx) {
+                    Ok(seq) => seq,
+                    Err(effect)
+                        if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON)
+                            && *base_static_len == Some(0) =>
+                    {
+                        Vec::new()
+                    }
+                    Err(effect) => return Err(effect),
+                };
                 let mut collected = Vec::with_capacity(seq.len());
                 for elem in seq {
                     let Some(value) = elem.value.as_ref() else {
