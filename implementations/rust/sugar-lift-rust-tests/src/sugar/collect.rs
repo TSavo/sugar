@@ -33,15 +33,24 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if call.method != "collect" || !call.args.is_empty() {
         return None;
     }
+    if let Some(plan) = CollectPlan::runtime_callable_from_receiver(&call.receiver, fcx) {
+        return Some(Box::new(CollectSugar {
+            plan,
+            let_inits: capture_let_inits(fcx),
+        }));
+    }
     if !crate::resolves_literal_sequence_in_scope(&call.receiver, fcx) {
         return None;
     }
-    let plan = if collects_vec(call) && CollectPlan::from_receiver(&call.receiver).is_none() {
+    let map_plan = CollectPlan::from_receiver(&call.receiver);
+    let plan = if collects_vec(call) && map_plan.is_none() {
         CollectPlan::PlainVec {
             base_expr: (*call.receiver).clone(),
         }
+    } else if let Some(plan) = map_plan {
+        plan
     } else {
-        CollectPlan::from_receiver(&call.receiver)?
+        CollectPlan::runtime_callable_from_receiver(&call.receiver, fcx)?
     };
     debug!(
         target: "sugar_lift_rust_tests::sugar::collect",
@@ -67,6 +76,10 @@ enum CollectPlan {
         base_expr: Expr,
         closure: ExprClosure,
         kind: CollectKind,
+    },
+    RuntimeCallableMap {
+        boundary: String,
+        reason: String,
     },
 }
 
@@ -97,6 +110,41 @@ impl CollectPlan {
             base_expr: (*call.receiver).clone(),
             closure: closure.clone(),
             kind,
+        })
+    }
+
+    fn runtime_callable_from_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+        let kind = expected_collect_kind(fcx)?;
+        let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+            return None;
+        };
+        if call.method != "map" || call.args.len() != 1 {
+            return None;
+        }
+        method_family::literal_sequence_static_len_in_scope(
+            &call.receiver,
+            fcx.let_inits(),
+            fcx.scope(),
+        )?;
+        let Expr::Closure(_) = strip_refs_groups(&call.args[0]) else {
+            return None;
+        };
+        if !crate::closure_body_calls_through_param(&call.args[0]) {
+            return None;
+        }
+        let domain = crate::token_key(&call.receiver);
+        let boundary = crate::token_key(expr);
+        let kind = match kind {
+            CollectKind::Option => "Option",
+            CollectKind::Result => "Result",
+        };
+        Some(Self::RuntimeCallableMap {
+            boundary,
+            reason: format!(
+                "iterator/option adaptor `.map(|..| ..).collect::<{kind}<Vec<_>>` over {domain} whose closure body \
+                 performs a runtime call through closure body parameter (bin-2: dynamic \
+                 callable element, not constructed from source literals); refused"
+            ),
         })
     }
 
@@ -231,6 +279,12 @@ impl CollectPlan {
                     CollectKind::Option => monadic::some_term(vec),
                     CollectKind::Result => monadic::ok_term(vec),
                 }))
+            }
+            CollectPlan::RuntimeCallableMap { boundary, reason } => {
+                Err(Effect::RuntimeCallableElement {
+                    boundary: boundary.clone(),
+                    reason: reason.clone(),
+                })
             }
         }
     }
@@ -394,6 +448,17 @@ fn closure_body_expr(closure: &ExprClosure) -> Option<&Expr> {
             _ => None,
         },
         other => Some(other),
+    }
+}
+
+fn expected_collect_kind(fcx: &SugarBuildCtx) -> Option<CollectKind> {
+    let ty = fcx.expected_type()?;
+    if ty.starts_with("Option") && ty.contains("Vec") {
+        Some(CollectKind::Option)
+    } else if ty.starts_with("Result") && ty.contains("Vec") {
+        Some(CollectKind::Result)
+    } else {
+        None
     }
 }
 
