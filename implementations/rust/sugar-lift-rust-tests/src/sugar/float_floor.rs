@@ -114,6 +114,24 @@ impl IeeeFloatValue {
         }
     }
 
+    pub(crate) fn into_width_term(self, target: IeeeFloatWidth, site: &str) -> Rc<Term> {
+        self.into_width(target, site).term()
+    }
+
+    fn into_width(self, target: IeeeFloatWidth, site: &str) -> Self {
+        match (self, target) {
+            (IeeeFloatValue::F32(value), IeeeFloatWidth::F32) => IeeeFloatValue::F32(value),
+            (IeeeFloatValue::F32(value), IeeeFloatWidth::F64) => {
+                IeeeFloatValue::F64(f64::from(value))
+            }
+            (IeeeFloatValue::F64(value), IeeeFloatWidth::F64) => IeeeFloatValue::F64(value),
+            (IeeeFloatValue::F64(_), IeeeFloatWidth::F32) => {
+                let target = target.accept_ieee_float_width(IeeeFloatWidthNameVisitor);
+                panic!("std Into is not implemented from `f64` to `{target}` for `{site}`")
+            }
+        }
+    }
+
     fn neg(self) -> Self {
         match self {
             IeeeFloatValue::F32(value) => IeeeFloatValue::F32(-value),
@@ -956,5 +974,19 @@ mod tests {
             IeeeFloatWidth::F64.accept_ieee_float_width(IeeeFloatWidthNameVisitor),
             "f64"
         );
+    }
+
+    #[test]
+    fn float_width_into_widens_f32_to_f64_floor() {
+        let term = IeeeFloatValue::F32(1.5).into_width_term(IeeeFloatWidth::F64, "test");
+        let value = match term.accept_ieee_float(RequiredIeeeFloatVisitor) {
+            Ok(value) => value,
+            Err(_) => panic!("expected widened float floor"),
+        };
+
+        match value {
+            IeeeFloatValue::F64(actual) => assert_eq!(actual, 1.5),
+            _ => panic!("expected widened f64 floor"),
+        }
     }
 }
