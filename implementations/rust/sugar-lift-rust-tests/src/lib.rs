@@ -4459,11 +4459,11 @@ struct TemporalPlan {
     /// the `@adv` occurrence tag. Iterators ARE in `versioned` (so reads are tagged
     /// and `@adv` applies) but are NOT in `interior_mut` (no per-statement tick).
     iterators: BTreeSet<String>,
-    /// Locals MUTATED through a `&mut` alias the tracker cannot resolve (`let r = &mut x;
-    /// *r += 1;`). The alias-deref mutation is refused, so the rewrite never applies it
-    /// and `x`'s tracked value goes stale; a read of `x` must REFUSE rather than lift the
-    /// stale literal (which would refute a true assertion -- the inverse cardinal sin).
-    /// See `collect_alias_deref_mutated`. Conservative refuse-tightening, no new warrant.
+    /// Locals syntactically MUTATED through a `&mut` alias (`let r = &mut x; *r += 1;`).
+    /// This is only the static danger mark: the temporal rewrite ledger may later prove
+    /// the write replayed exactly. If it did not, a read of `x` must REFUSE rather than
+    /// lift the stale literal (which would refute a true assertion -- the inverse cardinal
+    /// sin). See `collect_alias_deref_mutated`.
     alias_deref_mutated: BTreeSet<String>,
     /// Locals whose value is TEMPORALLY UNSTABLE because they are mutated in a loop the
     /// tracker cannot unroll-resolve, then read AFTER the loop -- a frozen loop counter
@@ -4841,21 +4841,21 @@ impl TemporalScope {
     }
 
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
-        if self.plan.alias_deref_mutated.contains(name) {
+        if self.alias_deref_mutation_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
     pub(crate) fn temporal_rewrite_term_for(&self, name: &str) -> Option<Rc<Term>> {
-        if self.plan.alias_deref_mutated.contains(name) {
+        if self.alias_deref_mutation_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().term_for(name)
     }
 
     pub(crate) fn temporal_rewrite_index_expr_for(&self, name: &str, index: usize) -> Option<Expr> {
-        if self.plan.alias_deref_mutated.contains(name) {
+        if self.alias_deref_mutation_needs_refusal(name) {
             return None;
         }
         self.temporal_rewrite.borrow().expr_for_index(name, index)
@@ -5075,11 +5075,21 @@ impl TemporalScope {
         self.plan.mut_locals.contains(name)
     }
 
-    /// Whether `name` is MUTATED through a `&mut` alias the tracker cannot resolve
-    /// (`let r = &mut x; *r += 1;`). Such a local's tracked value is stale, so a read of
-    /// it must REFUSE rather than lift the stale literal (the no-false-refutation gate).
+    /// Whether `name` is MUTATED through a `&mut` alias the temporal replay ledger did
+    /// not resolve. Such a local's tracked value is stale, so a read of it must REFUSE
+    /// rather than lift the stale literal (the no-false-refutation gate). Literal
+    /// assignments replayed through `TemporalRewriteState` are not stale and may lift.
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
-        self.plan.alias_deref_mutated.contains(name)
+        self.alias_deref_mutation_needs_refusal(name)
+    }
+
+    fn alias_deref_mutation_needs_refusal(&self, name: &str) -> bool {
+        if !self.plan.alias_deref_mutated.contains(name) {
+            return false;
+        }
+        let temporal_rewrite = self.temporal_rewrite.borrow();
+        temporal_rewrite.unknown_mutation_reason(name).is_none()
+            && !temporal_rewrite.replayed_mutable_alias_base(name)
     }
 
     /// Whether `name` is a TEMPORALLY-UNSTABLE loop counter (mutated in a loop the tracker
@@ -5126,7 +5136,7 @@ impl TemporalScope {
         if !is_unqualified_local_name(&name) {
             return Ok(name);
         }
-        if self.plan.alias_deref_mutated.contains(&name) {
+        if self.is_alias_deref_mutated(&name) {
             return Err(format!(
                 "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
                  between borrow and read, so there is no single timeless value to read at the \
