@@ -12,8 +12,8 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::{ConstValue, Sort, Term};
 use syn::{
-    Expr, ExprCall, ExprLit, ExprPath, FnArg, ForeignItem, Item, ItemFn, Lit, Pat, ReturnType,
-    Stmt, UnOp,
+    Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, FnArg, ForeignItem, Item, ItemFn, Lit, Pat,
+    ReturnType, Stmt, UnOp,
 };
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
@@ -23,10 +23,46 @@ use crate::{
     strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
-#[derive(Clone, Copy)]
+pub(crate) type FloatWidthScope = std::collections::BTreeMap<String, IeeeFloatWidth>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IeeeFloatWidth {
     F32,
     F64,
+}
+
+pub(crate) trait IeeeFloatWidthVisitor {
+    type Output;
+
+    fn visit_f32(self) -> Self::Output;
+    fn visit_f64(self) -> Self::Output;
+}
+
+pub(crate) trait IeeeFloatWidthAccept {
+    fn accept_ieee_float_width<V: IeeeFloatWidthVisitor>(self, visitor: V) -> V::Output;
+}
+
+impl IeeeFloatWidthAccept for IeeeFloatWidth {
+    fn accept_ieee_float_width<V: IeeeFloatWidthVisitor>(self, visitor: V) -> V::Output {
+        match self {
+            IeeeFloatWidth::F32 => visitor.visit_f32(),
+            IeeeFloatWidth::F64 => visitor.visit_f64(),
+        }
+    }
+}
+
+pub(crate) struct IeeeFloatWidthNameVisitor;
+
+impl IeeeFloatWidthVisitor for IeeeFloatWidthNameVisitor {
+    type Output = &'static str;
+
+    fn visit_f32(self) -> Self::Output {
+        "f32"
+    }
+
+    fn visit_f64(self) -> Self::Output {
+        "f64"
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -522,6 +558,124 @@ pub(crate) fn from_bits_width(func: &Expr) -> Option<IeeeFloatWidth> {
     width_from_ident(&path.segments[0].ident.to_string())
 }
 
+pub(crate) fn stable_width_from_type_key(ty: &str) -> Option<IeeeFloatWidth> {
+    ty.rsplit("::").next().and_then(width_from_ident)
+}
+
+pub(crate) fn stable_width_from_method_turbofish(call: &ExprMethodCall) -> Option<IeeeFloatWidth> {
+    if call.method != "parse" {
+        return None;
+    }
+    let args = call.turbofish.as_ref()?;
+    stable_width_from_angle_args(args)
+}
+
+pub(crate) fn unstable_width_from_method_turbofish(call: &ExprMethodCall) -> Option<&'static str> {
+    if call.method != "parse" {
+        return None;
+    }
+    let args = call.turbofish.as_ref()?;
+    unstable_width_from_angle_args(args)
+}
+
+pub(crate) fn stable_width_from_method_name(method: &str) -> Option<IeeeFloatWidth> {
+    if method.ends_with("_f32") {
+        Some(IeeeFloatWidth::F32)
+    } else if method.ends_with("_f64") {
+        Some(IeeeFloatWidth::F64)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn unstable_width_from_method_name(method: &str) -> Option<&'static str> {
+    if method.ends_with("_f16") {
+        Some("f16")
+    } else if method.ends_with("_f128") {
+        Some("f128")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn stable_width_from_type(ty: &syn::Type) -> Option<IeeeFloatWidth> {
+    match ty {
+        syn::Type::Path(path) => stable_width_from_path(&path.path),
+        syn::Type::Paren(paren) => stable_width_from_type(&paren.elem),
+        syn::Type::Group(group) => stable_width_from_type(&group.elem),
+        _ => None,
+    }
+}
+
+pub(crate) fn stable_width_from_path(path: &syn::Path) -> Option<IeeeFloatWidth> {
+    for segment in &path.segments {
+        if let Some(width) = width_from_ident(&segment.ident.to_string()) {
+            return Some(width);
+        }
+    }
+    None
+}
+
+pub(crate) fn unstable_width_from_type(ty: &syn::Type) -> Option<&'static str> {
+    match ty {
+        syn::Type::Path(path) => unstable_width_from_path(&path.path),
+        syn::Type::Paren(paren) => unstable_width_from_type(&paren.elem),
+        syn::Type::Group(group) => unstable_width_from_type(&group.elem),
+        _ => None,
+    }
+}
+
+pub(crate) fn stable_width_from_suffix(suffix: &str) -> Option<IeeeFloatWidth> {
+    match suffix {
+        "f32" => Some(IeeeFloatWidth::F32),
+        "f64" => Some(IeeeFloatWidth::F64),
+        _ => None,
+    }
+}
+
+pub(crate) fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "f16" => Some("f16"),
+        "f128" => Some("f128"),
+        _ => None,
+    }
+}
+
+fn stable_width_from_angle_args(
+    args: &syn::AngleBracketedGenericArguments,
+) -> Option<IeeeFloatWidth> {
+    if args.args.len() != 1 {
+        return None;
+    }
+    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
+        return None;
+    };
+    stable_width_from_type(ty)
+}
+
+fn unstable_width_from_angle_args(
+    args: &syn::AngleBracketedGenericArguments,
+) -> Option<&'static str> {
+    if args.args.len() != 1 {
+        return None;
+    }
+    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
+        return None;
+    };
+    unstable_width_from_type(ty)
+}
+
+pub(crate) fn unstable_width_from_path(path: &syn::Path) -> Option<&'static str> {
+    for segment in &path.segments {
+        match segment.ident.to_string().as_str() {
+            "f16" => return Some("f16"),
+            "f128" => return Some("f128"),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Option<IeeeFloatSource> {
     let (ty, konst) = if let Some(qself) = &path.qself {
         let konst = path
@@ -576,10 +730,7 @@ fn primitive_float_type_name(ty: &syn::Type) -> Option<String> {
 }
 
 fn width_from_type(ty: &syn::Type) -> Option<IeeeFloatWidth> {
-    let syn::Type::Path(path) = ty else {
-        return None;
-    };
-    width_from_ident(&path.path.segments.last()?.ident.to_string())
+    stable_width_from_type(ty)
 }
 
 fn width_from_ident(ident: &str) -> Option<IeeeFloatWidth> {
@@ -768,4 +919,42 @@ pub(crate) fn ieee_refinement(boundary: &str, reason: String) -> Outcome {
 
 fn float_floor_gap(reason: &str) -> ! {
     panic!("IEEE float floor did not reach a lawful floor: {reason}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use syn::{parse_quote, Expr};
+
+    #[test]
+    fn float_width_type_keys_parse_as_floor_widths() {
+        assert_eq!(stable_width_from_type_key("f64"), Some(IeeeFloatWidth::F64));
+        assert_eq!(
+            stable_width_from_type_key("std::primitive::f32"),
+            Some(IeeeFloatWidth::F32)
+        );
+        assert_eq!(stable_width_from_type_key("usize"), None);
+    }
+
+    #[test]
+    fn float_width_parse_turbofish_delegates_to_floor_width() {
+        let expr: Expr = parse_quote!("NaN".parse::<f32>());
+        let Expr::MethodCall(call) = expr else {
+            panic!("expected parse::<f32>() method call");
+        };
+
+        assert_eq!(
+            stable_width_from_method_turbofish(&call),
+            Some(IeeeFloatWidth::F32)
+        );
+    }
+
+    #[test]
+    fn float_width_visitor_projects_atom_label_width() {
+        assert_eq!(
+            IeeeFloatWidth::F64.accept_ieee_float_width(IeeeFloatWidthNameVisitor),
+            "f64"
+        );
+    }
 }

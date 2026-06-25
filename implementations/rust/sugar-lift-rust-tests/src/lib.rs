@@ -1947,7 +1947,6 @@ fn source_assertion_entries_in_stmts(
                 temporal_scope.record_verbatim_macro_item(tokens);
             }
             Stmt::Local(local) => {
-                update_float_width_scope_for_pat(&local.pat, &mut float_widths);
                 if let Some(init) = &local.init {
                     if let Some(stmts) = sugar::let_stmt::initializer_fact_stmts(&init.expr) {
                         entries.extend(source_assertion_entries_in_stmts(
@@ -9486,7 +9485,7 @@ pub(crate) fn should_panic_temporal_callsite_records(
         .with_layout_type_registry(layout_types)
         .with_value_type_registry(value_types)
         .with_const_registry(reducer.const_registry_snapshot());
-    let mut float_widths = FloatWidthScope::new();
+    let float_widths = FloatWidthScope::new();
     let mut records = Vec::new();
     for stmt in stmts {
         let span = stmt.span();
@@ -9501,7 +9500,6 @@ pub(crate) fn should_panic_temporal_callsite_records(
             });
         }
         if let Stmt::Local(local) = stmt {
-            update_float_width_scope_for_pat(&local.pat, &mut float_widths);
             record_simple_value_binding(&mut temporal_scope, local);
             temporal_scope.record_temporal_rewrite_local(local);
         }
@@ -11131,7 +11129,6 @@ fn collect_assertion_entries<'a>(
                 temporal_scope.record_verbatim_macro_item(tokens);
             }
             Stmt::Local(local) => {
-                update_float_width_scope_for_pat(&local.pat, float_widths);
                 if let Some(init) = &local.init {
                     // `LetSugar`: a let initializer is still a fact-emission surface.
                     // Feed initializer-level macro / if / match / block surfaces back to
@@ -16850,215 +16847,7 @@ fn mutable_local_slice_predicate_reason(expr: &Expr, scope: &TemporalScope) -> O
     })
 }
 
-type FloatWidthScope = BTreeMap<String, &'static str>;
-
-fn update_float_width_scope_for_pat(pat: &Pat, out: &mut FloatWidthScope) {
-    remove_float_width_idents(pat, out);
-    match pat {
-        Pat::Type(pat_type) => {
-            if let Some(width) = float_width_from_type(&pat_type.ty) {
-                collect_float_width_ident_pat(&pat_type.pat, width, out);
-            }
-        }
-        Pat::Paren(paren) => update_float_width_scope_for_pat(&paren.pat, out),
-        _ => {}
-    }
-}
-
-fn remove_float_width_idents(pat: &Pat, out: &mut FloatWidthScope) {
-    match pat {
-        Pat::Ident(ident) => {
-            out.remove(&ident.ident.to_string());
-            if let Some((_, subpat)) = &ident.subpat {
-                remove_float_width_idents(subpat, out);
-            }
-        }
-        Pat::Or(or) => {
-            for case in &or.cases {
-                remove_float_width_idents(case, out);
-            }
-        }
-        Pat::Paren(paren) => remove_float_width_idents(&paren.pat, out),
-        Pat::Reference(reference) => remove_float_width_idents(&reference.pat, out),
-        Pat::Slice(slice) => {
-            for elem in &slice.elems {
-                remove_float_width_idents(elem, out);
-            }
-        }
-        Pat::Struct(pat_struct) => {
-            for field in &pat_struct.fields {
-                remove_float_width_idents(&field.pat, out);
-            }
-        }
-        Pat::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                remove_float_width_idents(elem, out);
-            }
-        }
-        Pat::TupleStruct(tuple_struct) => {
-            for elem in &tuple_struct.elems {
-                remove_float_width_idents(elem, out);
-            }
-        }
-        Pat::Type(pat_type) => remove_float_width_idents(&pat_type.pat, out),
-        _ => {}
-    }
-}
-
-fn collect_float_width_ident_pat(pat: &Pat, width: &'static str, out: &mut FloatWidthScope) {
-    match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => {
-            out.insert(ident.ident.to_string(), width);
-        }
-        Pat::Paren(paren) => collect_float_width_ident_pat(&paren.pat, width, out),
-        _ => {}
-    }
-}
-
-fn float_width_from_type(ty: &Type) -> Option<&'static str> {
-    match ty {
-        Type::Path(path) => float_width_from_path(&path.path),
-        Type::Paren(paren) => float_width_from_type(&paren.elem),
-        Type::Group(group) => float_width_from_type(&group.elem),
-        _ => None,
-    }
-}
-
-fn float_refinement_receiver_width(
-    expr: &Expr,
-    float_widths: &FloatWidthScope,
-) -> Option<&'static str> {
-    match expr {
-        Expr::MethodCall(call) => float_width_from_method_name(&call.method.to_string())
-            .or_else(|| float_width_from_method_turbofish(call))
-            .or_else(|| {
-                if call.method == "unwrap" {
-                    float_refinement_receiver_width(&call.receiver, float_widths)
-                } else {
-                    None
-                }
-            }),
-        Expr::Path(path) => {
-            let name = path_to_name(&path.path);
-            float_widths
-                .get(&name)
-                .copied()
-                .or_else(|| float_width_from_path(&path.path))
-        }
-        Expr::Lit(ExprLit {
-            lit: Lit::Float(lit),
-            ..
-        }) => float_width_from_suffix(lit.suffix()),
-        Expr::Paren(paren) => float_refinement_receiver_width(&paren.expr, float_widths),
-        Expr::Group(group) => float_refinement_receiver_width(&group.expr, float_widths),
-        _ => None,
-    }
-}
-
-fn float_width_from_method_turbofish(call: &syn::ExprMethodCall) -> Option<&'static str> {
-    if call.method != "parse" {
-        return None;
-    }
-    let args = call.turbofish.as_ref()?;
-    float_width_from_angle_args(args)
-}
-
-fn unstable_width_from_method_turbofish(call: &syn::ExprMethodCall) -> Option<&'static str> {
-    if call.method != "parse" {
-        return None;
-    }
-    let args = call.turbofish.as_ref()?;
-    unstable_width_from_angle_args(args)
-}
-
-fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Option<&'static str> {
-    if args.args.len() != 1 {
-        return None;
-    }
-    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
-        return None;
-    };
-    float_width_from_type(ty)
-}
-
-fn unstable_width_from_angle_args(
-    args: &syn::AngleBracketedGenericArguments,
-) -> Option<&'static str> {
-    if args.args.len() != 1 {
-        return None;
-    }
-    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
-        return None;
-    };
-    unstable_width_from_type(ty)
-}
-
-fn unstable_width_from_type(ty: &Type) -> Option<&'static str> {
-    match ty {
-        Type::Path(path) => unstable_width_from_path(&path.path),
-        Type::Paren(paren) => unstable_width_from_type(&paren.elem),
-        Type::Group(group) => unstable_width_from_type(&group.elem),
-        _ => None,
-    }
-}
-
-fn float_width_from_method_name(method: &str) -> Option<&'static str> {
-    if method.ends_with("_f32") {
-        Some("f32")
-    } else if method.ends_with("_f64") {
-        Some("f64")
-    } else {
-        None
-    }
-}
-
-fn unstable_width_from_method_name(method: &str) -> Option<&'static str> {
-    if method.ends_with("_f16") {
-        Some("f16")
-    } else if method.ends_with("_f128") {
-        Some("f128")
-    } else {
-        None
-    }
-}
-
-fn float_width_from_path(path: &syn::Path) -> Option<&'static str> {
-    for segment in &path.segments {
-        match segment.ident.to_string().as_str() {
-            "f32" => return Some("f32"),
-            "f64" => return Some("f64"),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn unstable_width_from_path(path: &syn::Path) -> Option<&'static str> {
-    for segment in &path.segments {
-        match segment.ident.to_string().as_str() {
-            "f16" => return Some("f16"),
-            "f128" => return Some("f128"),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn float_width_from_suffix(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "f32" => Some("f32"),
-        "f64" => Some("f64"),
-        _ => None,
-    }
-}
-
-fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "f16" => Some("f16"),
-        "f128" => Some("f128"),
-        _ => None,
-    }
-}
+type FloatWidthScope = sugar::float_floor::FloatWidthScope;
 
 pub(crate) fn assertion_entry_from_eq(
     lhs: Rc<Term>,
