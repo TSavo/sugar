@@ -9760,6 +9760,13 @@ struct PanicFreedomCallsiteVisitor<'a> {
 }
 
 impl PanicFreedomCallsiteVisitor<'_> {
+    fn visit_executed_closure_body(&mut self, body: &Expr) {
+        match body {
+            Expr::Block(block) => self.visit_block(&block.block),
+            other => self.visit_expr(other),
+        }
+    }
+
     fn visit_macro_site(&mut self, mac: &syn::Macro, attrs: &[syn::Attribute]) {
         if is_unconditional_panic_macro(mac) {
             self.out.push(Expr::Macro(syn::ExprMacro {
@@ -9809,7 +9816,24 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
         if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
             self.out.push(expr);
         }
-        syn::visit::visit_expr_method_call(self, call);
+        let finite_for_each = call.method == "for_each"
+            && call.args.len() == 1
+            && sugar::method_family::literal_sequence_static_len_in_scope(
+                &call.receiver,
+                &BTreeMap::new(),
+                self.scope,
+            )
+            .is_some();
+        self.visit_expr(&call.receiver);
+        for arg in &call.args {
+            if finite_for_each {
+                if let Expr::Closure(closure) = arg {
+                    self.visit_executed_closure_body(&closure.body);
+                    continue;
+                }
+            }
+            self.visit_expr(arg);
+        }
     }
 
     fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
@@ -11419,7 +11443,12 @@ fn collect_assertion_entries<'a>(
                     reducer,
                     macro_depth,
                 );
-                if temporal_scope.is_inside_const_item_initializer() && count > 0 {
+                if count == 0 {
+                    // Support-only loop body: the panic-freedom visitor already walked
+                    // visited finite-loop bodies and queued their callsite facts. With no
+                    // assertion surface, there is no forall obligation for this arm to
+                    // prove or refuse.
+                } else if temporal_scope.is_inside_const_item_initializer() {
                     let reason = for_context_refusal_reason(
                         f,
                         &for_scope,
@@ -11432,53 +11461,53 @@ fn collect_assertion_entries<'a>(
                     for _ in 0..count {
                         skipped.push(reason.clone());
                     }
-                    continue;
-                }
-                // A bounded loop is the universal it states: `ForAllSugar` reads the
-                // range as a guard and lifts forall x. (guard => body) (or the finite
-                // conjunction over a literal array). If the body does not wholly
-                // compute to truth values, the desugar bails (refuse below).
-                let lifted = sugar::forall_loop::desugar_statement_for_loop(
-                    e,
-                    &for_scope,
-                    options,
-                    reducer,
-                    float_widths,
-                    &let_inits,
-                    macro_depth,
-                    factory_audits,
-                );
-                for name in for_scope.take_inlined_value_helpers() {
-                    reduced_helpers.insert(name);
-                }
-                if let Some(desugared) = lifted {
-                    // The loop memento is named `<test>::loop::<var>` by the
-                    // `ForAllSugar` warrant, mirroring the Python reference
-                    // (layer2.py PATTERN 1). A named universal is federatable and
-                    // the engine conjoins it ambiently.
-                    emit_desugared(desugared, entries, macros_lifted);
                 } else {
-                    // The DIG declined (literal-body half handled above by
-                    // `lift_bounded_forall`). This is the REFUSE half: a for-loop whose
-                    // DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED terminal
-                    // Effect (Incomplete side of Outcome{Complete|Incomplete}) -- not unclassified WORK. The
-                    // classification is detection-EARNED (a specific runtime cause), never
-                    // a blanket relabel: a literal-domain + literal-body + simple-counter
-                    // loop DIGS above; a computable-but-unimplemented body (in-scope value,
-                    // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
-                    // loop var) STAYS UNCLASSIFIED here (the inverse of fake-complete is
-                    // fake-REFUSE, equally forbidden -- never refuse to zero the count).
-                    let reason = for_context_refusal_reason(
-                        f,
+                    // A bounded loop is the universal it states: `ForAllSugar` reads the
+                    // range as a guard and lifts forall x. (guard => body) (or the finite
+                    // conjunction over a literal array). If the body does not wholly
+                    // compute to truth values, the desugar bails (refuse below).
+                    let lifted = sugar::forall_loop::desugar_statement_for_loop(
+                        e,
                         &for_scope,
                         options,
                         reducer,
                         float_widths,
+                        &let_inits,
                         macro_depth,
                         factory_audits,
                     );
-                    for _ in 0..count {
-                        skipped.push(reason.clone());
+                    for name in for_scope.take_inlined_value_helpers() {
+                        reduced_helpers.insert(name);
+                    }
+                    if let Some(desugared) = lifted {
+                        // The loop memento is named `<test>::loop::<var>` by the
+                        // `ForAllSugar` warrant, mirroring the Python reference
+                        // (layer2.py PATTERN 1). A named universal is federatable and
+                        // the engine conjoins it ambiently.
+                        emit_desugared(desugared, entries, macros_lifted);
+                    } else {
+                        // The DIG declined (literal-body half handled above by
+                        // `lift_bounded_forall`). This is the REFUSE half: a for-loop whose
+                        // DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED terminal
+                        // Effect (Incomplete side of Outcome{Complete|Incomplete}) -- not unclassified WORK. The
+                        // classification is detection-EARNED (a specific runtime cause), never
+                        // a blanket relabel: a literal-domain + literal-body + simple-counter
+                        // loop DIGS above; a computable-but-unimplemented body (in-scope value,
+                        // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
+                        // loop var) STAYS UNCLASSIFIED here (the inverse of fake-complete is
+                        // fake-REFUSE, equally forbidden -- never refuse to zero the count).
+                        let reason = for_context_refusal_reason(
+                            f,
+                            &for_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                            factory_audits,
+                        );
+                        for _ in 0..count {
+                            skipped.push(reason.clone());
+                        }
                     }
                 }
             }
@@ -11854,16 +11883,20 @@ fn collect_assertion_entries<'a>(
                     // and add the named universal; the body asserts are accounted by
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
-                    let composite_outcome = sugar::statement_position::desugar_statement_composite(
-                        e,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        &let_inits,
-                        macro_depth,
-                        factory_audits,
-                    );
+                    let composite_outcome = (count_asserts_in_expr(e) > 0)
+                        .then(|| {
+                            sugar::statement_position::desugar_statement_composite(
+                                e,
+                                &temporal_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                &let_inits,
+                                macro_depth,
+                                factory_audits,
+                            )
+                        })
+                        .flatten();
                     if let Some(outcome) = composite_outcome {
                         match outcome {
                             Outcome::Complete(desugared) => {
