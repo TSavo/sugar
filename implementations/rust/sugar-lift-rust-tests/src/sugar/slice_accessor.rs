@@ -14,8 +14,8 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    bool_const, const_fold_int_term, const_val_term, num, strip_refs_groups, ConstVal, Desugared,
-    DesugaredElem, Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, const_val_term, num, simple_path_name, strip_refs_groups,
+    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -47,6 +47,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     };
     Some(Box::new(SliceAccessorSugar {
         kind,
+        receiver_name: simple_path_name(&call.receiver),
         receiver,
         arg,
     }))
@@ -64,6 +65,7 @@ enum AccessKind {
 
 struct SliceAccessorSugar {
     kind: AccessKind,
+    receiver_name: Option<String>,
     receiver: SugarBody<CompositeFloor>,
     arg: SliceAccessorArg,
 }
@@ -76,6 +78,9 @@ enum SliceAccessorArg {
 
 impl Sugar for SliceAccessorSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(effect) = self.mutable_local_predicate_effect(ctx) {
+            return Outcome::Incomplete(effect);
+        }
         let seq = match sequence_from_body(&self.receiver, ctx, "slice accessor receiver") {
             Ok(seq) => seq,
             Err(outcome) => return outcome,
@@ -89,6 +94,32 @@ impl Sugar for SliceAccessorSugar {
 }
 
 impl SliceAccessorSugar {
+    fn mutable_local_predicate_effect(&self, ctx: &SugarCtx) -> Option<Effect> {
+        if !matches!(
+            self.kind,
+            AccessKind::Contains | AccessKind::StartsWith | AccessKind::EndsWith
+        ) {
+            return None;
+        }
+        let receiver = self.receiver_name.as_ref()?;
+        if ctx
+            .scope
+            .let_binding_for_audit(receiver)
+            .is_some_and(|init| matches!(strip_refs_groups(init), Expr::Range(_)))
+        {
+            return None;
+        }
+        if !ctx.scope.is_mut_local(receiver) {
+            return None;
+        }
+        let method = self.kind.method_name().to_string();
+        Some(Effect::MutableLocalSlicePredicate {
+            boundary: format!("{receiver}.{method}(..)"),
+            method,
+            receiver: receiver.clone(),
+        })
+    }
+
     fn eval(&self, ctx: &SugarCtx, seq: &[DesugaredElem]) -> Result<Rc<Term>, Outcome> {
         match self.kind {
             AccessKind::First => option_at(seq.first()),
@@ -149,6 +180,19 @@ impl SliceAccessorSugar {
     }
 }
 
+impl AccessKind {
+    fn method_name(self) -> &'static str {
+        match self {
+            AccessKind::First => "first",
+            AccessKind::Last => "last",
+            AccessKind::Get => "get",
+            AccessKind::Contains => "contains",
+            AccessKind::StartsWith => "starts_with",
+            AccessKind::EndsWith => "ends_with",
+        }
+    }
+}
+
 fn recognize_kind(call: &ExprMethodCall) -> Option<AccessKind> {
     Some(match call.method.to_string().as_str() {
         "first" if call.args.is_empty() => AccessKind::First,
@@ -183,8 +227,13 @@ fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool 
                 .let_inits()
                 .get(&name)
                 .copied()
-                .or_else(|| fcx.scope().stable_let_binding_for_term(&name));
-            bound.is_some_and(|init| !text_receiver_shape(init, fcx, depth + 1))
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .or_else(|| fcx.scope().let_binding_for_audit(&name));
+            bound.is_some_and(|init| {
+                !matches!(strip_refs_groups(init), Expr::Range(_))
+                    && !text_receiver_shape(init, fcx, depth + 1)
+            }) || fcx.scope().is_temporally_unstable_read(&name)
+                || fcx.scope().unknown_mutation_reason(&name).is_some()
         }
         Expr::MethodCall(call) if call.args.is_empty() => {
             matches!(
