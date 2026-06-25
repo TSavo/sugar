@@ -6,10 +6,15 @@
 // unsupported block structure stays a loud gap.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{substitute_expr, token_key, ExprBindings, Outcome, Sugar, SugarCtx};
+use crate::{
+    substitute_expr, token_key, translate_term_in_scope_with_audits, ExprBindings, FactoryAuditLog,
+    Outcome, Sugar, SugarCtx, TemporalScope,
+};
+use sugar_ir_symbolic::Term;
 use syn::{Expr, Item, Pat, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -20,6 +25,66 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     match expr {
         Expr::Unsafe(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
         Expr::Block(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
+        _ => None,
+    }
+}
+
+pub(crate) fn translate_expression_only_block_in_scope(
+    block: &syn::Block,
+    label: &str,
+    scope: &TemporalScope,
+) -> Result<Rc<Term>, String> {
+    translate_expression_only_block_in_scope_with_audits(block, label, scope, None)
+}
+
+pub(crate) fn translate_expression_only_block_in_scope_with_audits(
+    block: &syn::Block,
+    label: &str,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
+    match block.stmts.as_slice() {
+        [Stmt::Expr(expr, None)] => {
+            if let Some(nested_const) = find_const_expr(expr) {
+                return Err(format!("unsupported term `{}`", token_key(nested_const)));
+            }
+            translate_term_in_scope_with_audits(expr, scope, factory_audits)
+        }
+        _ => Err(format!(
+            "{label} block is not an expression-only term `{}`",
+            token_key(block)
+        )),
+    }
+}
+
+fn find_const_expr(expr: &Expr) -> Option<&Expr> {
+    match expr {
+        Expr::Const(_) => Some(expr),
+        Expr::Unary(unary) => find_const_expr(&unary.expr),
+        Expr::Call(call) => call
+            .args
+            .iter()
+            .find_map(find_const_expr)
+            .or_else(|| find_const_expr(&call.func)),
+        Expr::Array(array) => array.elems.iter().find_map(find_const_expr),
+        Expr::Tuple(tuple) => tuple.elems.iter().find_map(find_const_expr),
+        Expr::MethodCall(call) => {
+            find_const_expr(&call.receiver).or_else(|| call.args.iter().find_map(find_const_expr))
+        }
+        Expr::Await(await_expr) => find_const_expr(&await_expr.base),
+        Expr::Reference(reference) => find_const_expr(&reference.expr),
+        Expr::Cast(cast) => find_const_expr(&cast.expr),
+        Expr::Range(range) => range
+            .start
+            .as_deref()
+            .and_then(find_const_expr)
+            .or_else(|| range.end.as_deref().and_then(find_const_expr)),
+        Expr::Field(field) => find_const_expr(&field.base),
+        Expr::Binary(binary) => {
+            find_const_expr(&binary.left).or_else(|| find_const_expr(&binary.right))
+        }
+        Expr::Paren(paren) => find_const_expr(&paren.expr),
+        Expr::Group(group) => find_const_expr(&group.expr),
         _ => None,
     }
 }

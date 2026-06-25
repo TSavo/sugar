@@ -5,12 +5,10 @@
 // ordinary term catalog, where `ConstSugar`, `UnitPathSugar`, or `PathSugar` own
 // the source meaning.
 
+use crate::sugar::block_term::translate_expression_only_block_in_scope;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::unit_path::{unit_path_literal_name, unit_path_name};
-use crate::{
-    make_var, scope_const_block_locals, token_key, translate_expression_only_block_in_scope,
-    Desugared, Outcome, Sugar, SugarCtx,
-};
+use crate::{make_var, scope_const_block_locals, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
