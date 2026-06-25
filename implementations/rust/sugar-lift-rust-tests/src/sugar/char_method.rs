@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("char_literal_method", &["method"], recognize);
+    ExprSugarClaim::term_before("char_literal_method", &["to_string", "method"], recognize);
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "constraint_char_literal_method",
@@ -43,7 +43,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         "to_ascii_lowercase" if call.args.is_empty() => CharMethodKind::AsciiLower,
         "to_uppercase" if call.args.is_empty() => CharMethodKind::UnicodeUpper,
         "to_lowercase" if call.args.is_empty() => CharMethodKind::UnicodeLower,
-        "to_string" if call.args.is_empty() => CharMethodKind::ToString,
+        "to_string"
+            if call.args.is_empty()
+                && char_to_string_receiver_resolves_literal(&call.receiver, fcx) =>
+        {
+            CharMethodKind::ToString
+        }
         "len_utf8" if call.args.is_empty() => CharMethodKind::LenUtf8,
         "to_digit" if call.args.len() == 1 => CharMethodKind::ToDigit {
             radix: SugarBody::term(&call.args[0], fcx),
@@ -85,6 +90,35 @@ fn definitely_not_char_receiver(expr: &Expr) -> bool {
         }) => false,
         Expr::Lit(_) => true,
         Expr::MethodCall(call) => definitely_not_char_receiver(&call.receiver),
+        _ => false,
+    }
+}
+
+fn char_to_string_receiver_resolves_literal(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(_), ..
+        }) => true,
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+            else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            char_to_string_receiver_resolves_literal(init, &child_fcx)
+        }
+        Expr::Paren(paren) => char_to_string_receiver_resolves_literal(&paren.expr, fcx),
+        Expr::Group(group) => char_to_string_receiver_resolves_literal(&group.expr, fcx),
         _ => false,
     }
 }

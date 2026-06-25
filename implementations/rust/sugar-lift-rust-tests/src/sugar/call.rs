@@ -214,7 +214,7 @@ fn fold_char_from_u32_call(head_key: &str, arg: &Rc<Term>) -> Option<Rc<Term>> {
 fn is_char_from_u32_head(head_key: &str) -> bool {
     matches!(
         head_key,
-        "char::from_u32" | "core::char::from_u32" | "std::char::from_u32"
+        "from_u32" | "char::from_u32" | "core::char::from_u32" | "std::char::from_u32"
     )
 }
 
@@ -336,6 +336,28 @@ mod tests {
                 assert!(args.is_empty());
             }
             other => panic!("expected a Ctor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn imported_from_u32_folds_to_char_option() {
+        let node = CallSugar::new("from_u32", vec![term_body("97")]);
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
+        };
+        match term.as_ref() {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "opt:some");
+                assert_eq!(args.len(), 1);
+                match args[0].as_ref() {
+                    Term::Const {
+                        value: sugar_ir_symbolic::ConstValue::String(value),
+                        ..
+                    } => assert_eq!(value, "a"),
+                    other => panic!("expected char string payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected Option ctor, got {other:?}"),
         }
     }
 

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, ConstValue, LetBinding, Term};
+use sugar_ir_symbolic::{make_var, str_const, ConstValue, LetBinding, Term};
 
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
@@ -292,6 +292,15 @@ fn curry_term(
                     .map(|child| curry_term(child, param, arg, occurrence))
                     .collect(),
             });
+            if name == "method:to_string" && args.len() == 1 {
+                let Term::Ctor { args, .. } = curried.as_ref() else {
+                    unreachable!("curried to_string term stayed a ctor");
+                };
+                if let Some(value) = crate::sugar::format::display_literal_term_floor(&args[0]) {
+                    return str_const(value);
+                }
+                return curried;
+            }
             if let Some(value) = literal_predicate_bool(&curried) {
                 bool_const(value)
             } else {
@@ -564,6 +573,31 @@ mod tests {
             curried.accept_term_floor(LiteralPredicateBoolVisitor),
             Some(true)
         );
+    }
+
+    #[test]
+    fn curry_dispatches_literal_to_string_to_format_floor() {
+        let term = Rc::new(Term::Ctor {
+            name: "method:to_string".to_string(),
+            args: vec![var("id")],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "id",
+            arg: &num(42),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 0,
+            },
+        });
+
+        match curried.as_ref() {
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => assert_eq!(value, "42"),
+            other => panic!("expected curried to_string literal, got {other:?}"),
+        }
     }
 
     #[test]
