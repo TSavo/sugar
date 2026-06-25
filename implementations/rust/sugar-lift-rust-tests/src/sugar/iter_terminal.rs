@@ -674,7 +674,7 @@ impl IterTerminalSugar {
         match candidate.desugar(ctx) {
             Outcome::Complete(d) => Ok(d.into_seq()),
             Outcome::Incomplete(effect)
-                if allow_empty_domain && effect.reason() == EMPTY_DOMAIN_REASON =>
+                if allow_empty_domain && effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) =>
             {
                 Ok(Some(Vec::new()))
             }
@@ -852,7 +852,8 @@ impl IterTerminalSugar {
                     None => iter_terminal_gap("iterator terminal receiver reduced to non-sequence"),
                 },
                 Outcome::Incomplete(effect)
-                    if effect.reason() == EMPTY_DOMAIN_REASON && allow_empty_sequence =>
+                    if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON)
+                        && allow_empty_sequence =>
                 {
                     Vec::new()
                 }

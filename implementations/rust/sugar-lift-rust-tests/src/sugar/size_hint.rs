@@ -61,7 +61,9 @@ impl Sugar for SizeHintTupleProducer {
                 Some(seq) => seq,
                 None => size_hint_gap("size_hint receiver reduced to non-sequence"),
             },
-            Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => Vec::new(),
+            Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
+                Vec::new()
+            }
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let len = seq.len();

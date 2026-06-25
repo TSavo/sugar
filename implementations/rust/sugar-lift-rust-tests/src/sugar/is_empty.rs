@@ -157,7 +157,8 @@ impl Sugar for IsEmptySugar {
         let value = match sequence_from_body(&self.receiver, ctx, "is_empty receiver") {
             Ok(seq) => seq.is_empty(),
             Err(Outcome::Incomplete(effect))
-                if effect.reason() == EMPTY_DOMAIN_REASON && self.static_len == Some(0) =>
+                if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON)
+                    && self.static_len == Some(0) =>
             {
                 true
             }
@@ -235,7 +236,9 @@ fn source_reduces_to_sequence(
 ) -> Result<bool, Outcome> {
     match body.reduce(ctx) {
         Outcome::Complete(d) => Ok(d.into_seq().is_some()),
-        Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => Ok(true),
+        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
+            Ok(true)
+        }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
