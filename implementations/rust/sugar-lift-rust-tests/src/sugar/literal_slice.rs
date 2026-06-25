@@ -14,7 +14,7 @@ use tracing::debug;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_eval, const_int, strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
-    SUGAR_SEQ_CAP,
+    TemporalScope, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -28,7 +28,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return None;
     };
-    let array = resolve_literal_array(&index.expr, fcx.let_inits(), 0)?;
+    let array = resolve_literal_array(&index.expr, fcx.let_inits(), Some(fcx.scope()), 0)?;
     let (start, end) = slice_bounds(&index.index, array.elems.len())?;
     debug!(
         target: "sugar_lift_rust_tests::sugar::literal_slice",
@@ -56,10 +56,26 @@ pub(crate) fn is_literal_slice_base<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
 ) -> bool {
+    is_literal_slice_base_inner(expr, let_inits, None)
+}
+
+pub(crate) fn is_literal_slice_base_in_scope<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+) -> bool {
+    is_literal_slice_base_inner(expr, let_inits, Some(scope))
+}
+
+fn is_literal_slice_base_inner<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: Option<&'a TemporalScope>,
+) -> bool {
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return false;
     };
-    resolve_literal_array(&index.expr, let_inits, 0)
+    resolve_literal_array(&index.expr, let_inits, scope, 0)
         .and_then(|array| slice_bounds(&index.index, array.elems.len()))
         .is_some()
 }
@@ -68,10 +84,26 @@ pub(crate) fn literal_slice_len<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
 ) -> Option<usize> {
+    literal_slice_len_inner(expr, let_inits, None)
+}
+
+pub(crate) fn literal_slice_len_in_scope<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+) -> Option<usize> {
+    literal_slice_len_inner(expr, let_inits, Some(scope))
+}
+
+fn literal_slice_len_inner<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: Option<&'a TemporalScope>,
+) -> Option<usize> {
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return None;
     };
-    let array = resolve_literal_array(&index.expr, let_inits, 0)?;
+    let array = resolve_literal_array(&index.expr, let_inits, scope, 0)?;
     let (start, end) = slice_bounds(&index.index, array.elems.len())?;
     Some(end - start)
 }
@@ -89,6 +121,7 @@ impl Sugar for LiteralSliceSugar {
 fn resolve_literal_array<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
+    scope: Option<&'a TemporalScope>,
     depth: usize,
 ) -> Option<&'a ExprArray> {
     const MAX_DEPTH: usize = 8;
@@ -99,8 +132,11 @@ fn resolve_literal_array<'a>(
         Expr::Array(array) => Some(array),
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
-            let init = let_inits.get(&name)?;
-            resolve_literal_array(init, let_inits, depth + 1)
+            let init = let_inits
+                .get(&name)
+                .copied()
+                .or_else(|| scope.and_then(|scope| scope.stable_let_binding_for_term(&name)))?;
+            resolve_literal_array(init, let_inits, scope, depth + 1)
         }
         _ => None,
     }
