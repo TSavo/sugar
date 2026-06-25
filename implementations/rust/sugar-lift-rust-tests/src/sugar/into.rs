@@ -32,19 +32,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if call.method != "into" || !call.args.is_empty() {
         return None;
     }
-    let Some(target_type) = fcx.expected_type().map(str::to_string) else {
-        panic!(
-            "into sugar cannot be constructed without compiler-provided target type for `{}`",
-            token_key(expr)
-        )
-    };
-    let target = into_target(&target_type).unwrap_or_else(|| {
-        panic!(
-            "into target `{}` has no primitive-floor dispatch owner yet for `{}`",
-            target_type,
-            token_key(expr)
-        )
-    });
+    let target_type = fcx.expected_type()?;
+    let target = into_target(target_type)?;
     let receiver = match target {
         IntoTarget::Integer(_) => IntoReceiver::Integer(SugarBody::term(&call.receiver, fcx)),
         IntoTarget::Float(width) => IntoReceiver::Float(SugarBody::ieee_float(
