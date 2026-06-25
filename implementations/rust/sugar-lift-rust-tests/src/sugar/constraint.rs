@@ -16,13 +16,14 @@ use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
-    literal_char_predicate_atom, literal_string_value, parse_macro_args, token_key,
-    AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Outcome, RelationOp, Sugar,
-    SugarCtx, Warrant,
+    literal_char_predicate_atom, literal_string_value, parse_macro_args,
+    sugar_ctx_with_factory_audits, token_key, AssertionEntry, AssertionFactKind, CfgDisposition,
+    CfgPredicate, Desugared, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx,
+    RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
-use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, Token, Type, UnOp};
+use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Item, Lit, Token, Type, UnOp};
 use tracing::debug;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
@@ -93,6 +94,47 @@ pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     SugarRole::SupportConstraint,
     recognize_no_panic_call,
 );
+
+pub(crate) fn assertion_entry_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<AssertionEntry, String> {
+    let options = LiftOptions::default();
+    let let_inits = BTreeMap::new();
+    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
+    let body = SugarBody::<ConstraintFloor>::constraint(expr, &fcx);
+    let items: Vec<Item> = Vec::new();
+    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+    let mut local_float_widths = float_widths.clone();
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        &options,
+        &reducer,
+        &mut local_float_widths,
+        0,
+        factory_audits,
+    );
+    match body.reduce(&ctx) {
+        Outcome::Complete(Desugared::Constraints {
+            atom,
+            n,
+            kind,
+            warrant,
+        }) => Ok(AssertionEntry {
+            name: warrant.name,
+            atom,
+            fact_span: None,
+            kind,
+            claim_count: n,
+        }),
+        Outcome::Complete(_) => {
+            constraint_gap("boolean assertion reduced to a non-constraint floor");
+        }
+        Outcome::Incomplete(effect) => Err(effect.reason()),
+    }
+}
 
 struct RelationMacroSugar {
     name: String,
@@ -1181,4 +1223,158 @@ fn constraint_gap(reason: impl Into<String>) -> ! {
         "constraint did not reach a lawful proof-universe floor: {}",
         reason.into()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FloatWidthScope, TemporalPlan, TemporalScope};
+
+    #[test]
+    fn bool_assertion_entry_delegates_binary_payload_to_constraint_floor() {
+        let expr: Expr =
+            syn::parse_str("x + 2 == y && !(z < 3)").expect("parse bool assertion payload");
+        let scope = TemporalScope::new("bool-assertion-test", TemporalPlan::default());
+        let float_widths = FloatWidthScope::new();
+
+        let entry = assertion_entry_with_audits(&expr, &scope, &float_widths, None)
+            .expect("constraint floor should lift bool payload");
+
+        assert_eq!(entry.kind, AssertionFactKind::Warranted);
+        assert_eq!(entry.claim_count, 1);
+        let Formula::Connective { kind, operands } = entry.atom.as_ref() else {
+            panic!(
+                "expected && payload to reduce to conjunction, got {:?}",
+                entry.atom
+            );
+        };
+        assert_eq!(kind, "and");
+        assert_eq!(operands.len(), 2);
+
+        assert_plus_relation(operands[0].as_ref());
+        let Formula::Connective {
+            kind: not_kind,
+            operands: not_operands,
+        } = operands[1].as_ref()
+        else {
+            panic!(
+                "expected right side to reduce to not(<), got {:?}",
+                operands[1]
+            );
+        };
+        assert_eq!(not_kind, "not");
+        assert_eq!(not_operands.len(), 1);
+        assert_var_int_relation(not_operands[0].as_ref(), "<", "z", 3);
+    }
+
+    #[test]
+    fn bool_assertion_entry_reduces_bound_matches_macro_subject() {
+        let expr: Expr = syn::parse_str("matches!(p, Poll::Ready(_))")
+            .expect("parse matches! assertion payload");
+        let mut scope = TemporalScope::new("matches-assertion-test", TemporalPlan::default());
+        let init: Expr = syn::parse_str("poll_it()").expect("parse runtime call initializer");
+        scope.record_let_binding("p", init);
+        let float_widths = FloatWidthScope::new();
+
+        let entry = assertion_entry_with_audits(&expr, &scope, &float_widths, None)
+            .expect("matches! payload should reduce through ConstraintFloor");
+
+        let Formula::Atomic { name, args } = entry.atom.as_ref() else {
+            panic!("expected matches! discriminant atom, got {:?}", entry.atom);
+        };
+        assert_eq!(name, "=");
+        assert_eq!(args.len(), 2);
+        let Term::Ctor {
+            name: variant_name,
+            args: variant_args,
+        } = args[0].as_ref()
+        else {
+            panic!("expected variant_of lhs, got {:?}", args[0]);
+        };
+        assert_eq!(variant_name, "variant_of");
+        assert_eq!(variant_args.len(), 1);
+        assert_str_term(args[1].as_ref(), "variant::Poll::Ready");
+    }
+
+    #[test]
+    fn bool_assertion_entry_reduces_negated_matches_macro_subject() {
+        let expr: Expr = syn::parse_str("!matches!(p, Poll::Ready(_))")
+            .expect("parse negated matches! assertion payload");
+        let scope = TemporalScope::new("matches-negation-test", TemporalPlan::default());
+        let float_widths = FloatWidthScope::new();
+
+        let entry = assertion_entry_with_audits(&expr, &scope, &float_widths, None)
+            .expect("negated matches! payload should reduce through ConstraintFloor");
+
+        let Formula::Connective { kind, operands } = entry.atom.as_ref() else {
+            panic!(
+                "expected negated matches! to reduce to not(..), got {:?}",
+                entry.atom
+            );
+        };
+        assert_eq!(kind, "not");
+        assert_eq!(operands.len(), 1);
+    }
+
+    fn assert_plus_relation(formula: &Formula) {
+        let Formula::Atomic { name, args } = formula else {
+            panic!("expected atomic relation, got {formula:?}");
+        };
+        assert_eq!(name, "=");
+        assert_eq!(args.len(), 2);
+        let Term::Ctor {
+            name: plus_name,
+            args: plus_args,
+        } = args[0].as_ref()
+        else {
+            panic!(
+                "expected x + 2 to reduce through BinOpSugar, got {:?}",
+                args[0]
+            );
+        };
+        assert_eq!(plus_name, "+");
+        assert_eq!(plus_args.len(), 2);
+        assert_var_term(plus_args[0].as_ref(), "x");
+        assert_int_term(plus_args[1].as_ref(), 2);
+        assert_var_term(args[1].as_ref(), "y");
+    }
+
+    fn assert_var_int_relation(formula: &Formula, expected_name: &str, lhs: &str, rhs: i128) {
+        let Formula::Atomic { name, args } = formula else {
+            panic!("expected atomic relation, got {formula:?}");
+        };
+        assert_eq!(name, expected_name);
+        assert_eq!(args.len(), 2);
+        assert_var_term(args[0].as_ref(), lhs);
+        assert_int_term(args[1].as_ref(), rhs);
+    }
+
+    fn assert_var_term(term: &Term, expected: &str) {
+        let Term::Var { name } = term else {
+            panic!("expected var {expected}, got {term:?}");
+        };
+        assert_eq!(name, expected);
+    }
+
+    fn assert_int_term(term: &Term, expected: i128) {
+        let Term::Const {
+            value: ConstValue::Int(value),
+            ..
+        } = term
+        else {
+            panic!("expected int constant {expected}, got {term:?}");
+        };
+        assert_eq!(*value, expected);
+    }
+
+    fn assert_str_term(term: &Term, expected: &str) {
+        let Term::Const {
+            value: ConstValue::String(value),
+            ..
+        } = term
+        else {
+            panic!("expected string constant {expected}, got {term:?}");
+        };
+        assert_eq!(value, expected);
+    }
 }

@@ -16137,7 +16137,7 @@ fn lower_assert_condition(
     float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
-    translate_bool_assertion_with_audits(expr, scope, float_widths, factory_audits)
+    sugar::constraint::assertion_entry_with_audits(expr, scope, float_widths, factory_audits)
 }
 
 fn substitute_exprs_with_closure_captures(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
@@ -16765,209 +16765,19 @@ fn is_dot_token(token: &proc_macro2::TokenTree) -> bool {
     matches!(token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '.')
 }
 
-fn translate_bool_assertion(
-    expr: &Expr,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-) -> Result<AssertionEntry, String> {
-    translate_bool_assertion_with_audits(expr, scope, float_widths, None)
-}
-
-fn translate_bool_assertion_with_audits(
-    expr: &Expr,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<AssertionEntry, String> {
-    if let Some(reason) = source_location_runtime_reason(expr) {
-        return Err(format!("assert!: {reason}"));
-    }
-    if let Some(reason) = mutable_local_slice_predicate_reason(expr, scope) {
-        return Err(reason);
-    }
-    if let Some(entry) = sugar::raw_addr_term::pointer_eq_assertion_entry(expr, scope)? {
-        return Ok(entry);
-    }
-    if let Some(entry) = translate_string_predicate_assertion(expr, scope)? {
-        return Ok(entry);
-    }
-    if let Some(entry) = translate_literal_iterator_assertion(expr, scope, float_widths)? {
-        return Ok(entry);
-    }
-    if let Some(entry) = sugar::float_refinement::assertion_entry(expr, scope, float_widths)? {
-        return Ok(entry);
-    }
-    if let Some(entry) = translate_matches_assertion(expr, scope)? {
-        return Ok(entry);
-    }
-    match expr {
-        Expr::Binary(binary) => {
-            translate_binary_bool_assertion_with_audits(binary, scope, float_widths, factory_audits)
-        }
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => {
-            if let Some(entry) = translate_string_predicate_assertion(&unary.expr, scope)? {
-                return Ok(AssertionEntry {
-                    name: entry.name,
-                    atom: not_(entry.atom),
-                    fact_span: entry.fact_span,
-                    kind: entry.kind,
-                    claim_count: entry.claim_count,
-                });
-            }
-            if let Some(entry) =
-                sugar::float_refinement::assertion_entry(&unary.expr, scope, float_widths)?
-            {
-                return Ok(AssertionEntry {
-                    name: entry.name,
-                    atom: not_(entry.atom),
-                    fact_span: entry.fact_span,
-                    kind: entry.kind,
-                    claim_count: entry.claim_count,
-                });
-            }
-            // `!matches!(x, Type::Variant)` — negate the discriminant atom. This
-            // MUST run before the opaque-term fallback below, which would lower a
-            // `matches!` macro to an unconstrained `macro:...` Var equated to false
-            // (a vacuous lift with no teeth) rather than the real discriminant.
-            if let Some(entry) = translate_matches_assertion(&unary.expr, scope)? {
-                return Ok(AssertionEntry {
-                    name: entry.name,
-                    atom: not_(entry.atom),
-                    fact_span: entry.fact_span,
-                    kind: entry.kind,
-                    claim_count: entry.claim_count,
-                });
-            }
-            // `!(<lhs> <cmp> <rhs>)` is a NEGATED comparison. Route it to the
-            // relation-ATOM path (`not_` over the `lt`/`ge`/... atom) BEFORE the
-            // term fallback below. BinaryOpSugar made `translate_term_in_scope`
-            // succeed on a term-position comparison (emitting a `cmp:*` bool ctor),
-            // which would otherwise divert this to `eq(cmp:lt(..), false)` and break
-            // EUF-coalescing of a negated comparison with its positive sibling
-            // (`assert!(x >= 3); assert!(!(x < 3))` must share the `lt`/`ge` atom
-            // shape -- see negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
-            if let Expr::Binary(binary) = unwrap_paren_group(&unary.expr) {
-                if relation_from_binop(&binary.op).is_some() {
-                    let entry = translate_binary_bool_assertion_with_audits(
-                        binary,
-                        scope,
-                        float_widths,
-                        factory_audits,
-                    )?;
-                    return Ok(AssertionEntry {
-                        name: entry.name,
-                        atom: not_(entry.atom),
-                        fact_span: entry.fact_span,
-                        kind: entry.kind,
-                        claim_count: entry.claim_count,
-                    });
-                }
-            }
-            if let Ok(term) =
-                translate_term_in_scope_with_audits(&unary.expr, scope, factory_audits)
-            {
-                Ok(assertion_entry_from_eq(term, bool_const(false), scope))
-            } else {
-                let entry = translate_bool_assertion_with_audits(
-                    &unary.expr,
-                    scope,
-                    float_widths,
-                    factory_audits,
-                )?;
-                Ok(AssertionEntry {
-                    name: entry.name,
-                    atom: not_(entry.atom),
-                    fact_span: entry.fact_span,
-                    kind: entry.kind,
-                    claim_count: entry.claim_count,
-                })
-            }
-        }
-        Expr::Lit(ExprLit {
-            lit: Lit::Bool(b), ..
-        }) => {
-            // A bare boolean LITERAL assert `assert!(true)` / `assert!(false)` is a
-            // CONSTANT claim -- the timeless value is fixed from the source literal.
-            // `assert!(true)` lifts to the tautology `true == true`; `assert!(false)`
-            // lifts to the refutable `false == true` (UNSAT, a real refutation). This
-            // is faithful and teethed: a bare `assert!(false)` is a statement that
-            // always panics, and its lift is UNSAT -- never fake-green. Corpus shape:
-            // bool.rs::test_bool_not (`if !true { assert!(false) }`).
-            Ok(assertion_entry_from_eq(
-                bool_const(b.value),
-                bool_const(true),
-                scope,
-            ))
-        }
-        Expr::Path(_) => {
-            // A bare boolean place `assert!(flag)` asserts the boolean is true:
-            // lift `flag == true`. `assert!` requires a bool operand, so this is
-            // type-safe WITHOUT type info; it is teethed, not vacuous -- a sibling
-            // `assert!(!flag)` over the same place is `flag==true ∧ flag==false`,
-            // UNSAT. (A `Field` place like `assert!(x.flag)` is already handled by
-            // the call/method/field arm below.)
-            let term = translate_term_in_scope_with_audits(expr, scope, factory_audits)?;
-            Ok(assertion_entry_from_eq(term, bool_const(true), scope))
-        }
-        Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => {
-            // `<coll>.all(|x| ..)` / `.any(|x| ..)` is an iterator quantifier
-            // (∀ / ∃ over the receiver's elements). We do not yet LIFT it, but we
-            // pay the provenance debt: name whether the collection is a finite
-            // CONSTRUCTION (literal -> bin-1, drainable by unroll) or RUNTIME data
-            // (opaque -> bin-2, the membrane), so the bin sort is structural rather
-            // than presumed from the bare `|x|` shape.
-            if let Some(reason) = closure_adaptor_refusal(expr, scope) {
-                return Err(reason);
-            }
-            let term = translate_term_in_scope_with_audits(expr, scope, factory_audits)?;
-            if is_refinement_predicate_term(term.as_ref()) {
-                return Err(format!(
-                    "refinement predicate remains out of this exact-value slice `{}`",
-                    token_key(expr)
-                ));
-            }
-            Ok(assertion_entry_from_eq(term, bool_const(true), scope))
-        }
-        Expr::Paren(paren) => {
-            translate_bool_assertion_with_audits(&paren.expr, scope, float_widths, factory_audits)
-        }
-        Expr::Group(group) => {
-            translate_bool_assertion_with_audits(&group.expr, scope, float_widths, factory_audits)
-        }
-        other => {
-            // REFUSE HALF: a `match <runtime call> { .. }` scrutinee (the corpus
-            // `match b.binary_search(&3) { Ok(1..=3) => true, _ => false }`) asserts the arm
-            // taken by a RUNTIME non-scalar result -- no single timeless `t`, kin to `bin-2`.
-            // EARNED by `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal
-            // scrutinee (no runtime call) matches None and STAYS the bare `only scalar equality`
-            // reason below -- UNCLASSIFIED (the inverse-sin guardrail against fake-refuse).
-            if let Some(effect) = runtime_match_scrutinee_effect(other, scope) {
-                return Err(effect.reason());
-            }
-            Err(format!(
-                "only scalar equality is liftable, got `{}`",
-                token_key(other)
-            ))
-        }
-    }
-}
-
 /// Thin node-router: a `match <runtime call> { .. }` is classified by the `MatchScrutineeSugar`
 /// node, which names the runtime-match-scrutinee verdict in its own `desugar` -- the asserted
 /// value is the arm taken by a RUNTIME non-scalar result (a method call `b.binary_search(&3)`
 /// or a free-function call), not a scalar equality over constructible values, so there is no
 /// single timeless `t` (the `RuntimeMatchScrutinee` boundary is the match's token-key). BOTH
-/// callsites route through this ONE router: the statement-context `Stmt::Expr(Expr::Match)`
-/// residue and the expression-position `translate_bool_assertion` half-refuse. Each caller
-/// renders `effect.reason()` (which `refusal_disposition` classifies terminal) on a `Some`,
-/// and on `None` keeps its OWN site-specific generic reason (the "under match context" /
-/// "only scalar equality" string) -- byte-identical to before.
+/// callsites route through this ONE router: callers render `effect.reason()` (which
+/// `refusal_disposition` classifies terminal) on a `Some`, and keep their OWN site-specific
+/// generic reason on `None`.
 ///
 /// The verdict is purely SYNTACTIC (the node's `desugar` ignores its `SugarCtx`), so this
-/// router needs no scope/options -- which is why the ctx-less `translate_bool_assertion`
-/// caller can route through it unchanged. It builds the node and inspects its single verdict
-/// leaf; the node's STRUCTURAL backstop maps to `None` (the old fall-through), exactly as the
-/// other thin node-routers do.
+/// router needs no scope/options. It builds the node and inspects its single verdict leaf; the
+/// node's STRUCTURAL backstop maps to `None` (the old fall-through), exactly as the other thin
+/// node-routers do.
 ///
 /// SOUNDNESS (the fake-refuse guardrail): the node fires ONLY on a DETECTED runtime-call
 /// scrutinee. A non-`match` expr OR a `match` over a CONSTRUCTED literal / path / index
@@ -17235,97 +17045,6 @@ fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
     match suffix {
         "f16" => Some("f16"),
         "f128" => Some("f128"),
-        _ => None,
-    }
-}
-
-fn translate_binary_bool_assertion_with_audits(
-    binary: &syn::ExprBinary,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<AssertionEntry, String> {
-    match &binary.op {
-        BinOp::And(_) | BinOp::Or(_) => {
-            let left = translate_bool_assertion_with_audits(
-                &binary.left,
-                scope,
-                float_widths,
-                factory_audits,
-            )?;
-            let right = translate_bool_assertion_with_audits(
-                &binary.right,
-                scope,
-                float_widths,
-                factory_audits,
-            )?;
-            let name = common_assertion_name(&left.name, &right.name);
-            let atom = if matches!(binary.op, BinOp::And(_)) {
-                and_(vec![left.atom, right.atom])
-            } else {
-                or_(vec![left.atom, right.atom])
-            };
-            Ok(AssertionEntry {
-                name,
-                atom,
-                fact_span: None,
-                kind: if left.kind.is_warranted() || right.kind.is_warranted() {
-                    AssertionFactKind::Warranted
-                } else {
-                    AssertionFactKind::Support
-                },
-                claim_count: left.claim_count + right.claim_count,
-            })
-        }
-        BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
-            if let Some(reason) = source_location_runtime_reason(&binary.left)
-                .or_else(|| source_location_runtime_reason(&binary.right))
-            {
-                return Err(format!("assert!: {reason}"));
-            }
-            if let Some(reason) =
-                sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(
-                    &binary.left,
-                    &binary.right,
-                )
-            {
-                return Err(format!("assert!: {reason}"));
-            }
-            // For == only: intercept infinity-constant equality before the
-            // Real-equality path. != and ordered comparisons fall through unchanged.
-            if matches!(binary.op, BinOp::Eq(_)) {
-                if let Some(entry) = sugar::infinity_eq::assertion_entry_with_audits(
-                    &binary.left,
-                    &binary.right,
-                    scope,
-                    float_widths,
-                    factory_audits,
-                )? {
-                    return Ok(entry);
-                }
-            }
-            let op = relation_from_binop(&binary.op)
-                .expect("comparison op matched but did not map to relation");
-            let lhs =
-                translate_assertion_term_in_scope_with_audits(&binary.left, scope, factory_audits)?;
-            let rhs = translate_assertion_term_in_scope_with_audits(
-                &binary.right,
-                scope,
-                factory_audits,
-            )?;
-            Ok(assertion_entry_from_relation(lhs, rhs, op, scope))
-        }
-        _ => {
-            let expr = Expr::Binary(binary.clone());
-            let term = translate_term_in_scope_with_audits(&expr, scope, factory_audits)?;
-            Ok(assertion_entry_from_eq(term, bool_const(true), scope))
-        }
-    }
-}
-
-fn common_assertion_name(left: &Option<String>, right: &Option<String>) -> Option<String> {
-    match (left, right) {
-        (Some(left), Some(right)) if left == right => Some(left.clone()),
         _ => None,
     }
 }
@@ -18494,7 +18213,8 @@ fn translate_literal_iterator_assertion(
         let mut binds = ExprBindings::new();
         binds.insert(param_name.clone(), element);
         let body = substitute_expr(closure.body.as_ref(), &binds);
-        let entry = translate_bool_assertion(&body, scope, float_widths)?;
+        let entry =
+            sugar::constraint::assertion_entry_with_audits(&body, scope, float_widths, None)?;
         atoms.push(entry.atom);
     }
     let atom = quantifier_join(&method, atoms);
@@ -19011,7 +18731,12 @@ fn emit_guard_return_value(block: &syn::Block, scope: &TemporalScope) -> Option<
         if !term_is_euf_value(&ret_term) {
             return None;
         }
-        let cond = match translate_bool_assertion(&if_expr.cond, scope, &FloatWidthScope::new()) {
+        let cond = match sugar::constraint::assertion_entry_with_audits(
+            &if_expr.cond,
+            scope,
+            &FloatWidthScope::new(),
+            None,
+        ) {
             Ok(entry) => entry.atom,
             Err(_) => {
                 let t = translate_term_in_scope(&if_expr.cond, scope).ok()?;
@@ -19116,7 +18841,12 @@ fn tail_inv(tail: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
     //     comparisons/connectives in this position; term-position `cmp:*` ctors are
     //     for nested values, not the returned bool relation itself.
     if is_bool_shaped_expr(tail) {
-        if let Ok(entry) = translate_bool_assertion(tail, scope, &FloatWidthScope::new()) {
+        if let Ok(entry) = sugar::constraint::assertion_entry_with_audits(
+            tail,
+            scope,
+            &FloatWidthScope::new(),
+            None,
+        ) {
             return Some(biconditional_out(entry.atom));
         }
     }
@@ -19568,7 +19298,12 @@ fn collect_if_clauses(
     if is_non_term_control_expr(&if_expr.cond) {
         return None;
     }
-    let cond = match translate_bool_assertion(&if_expr.cond, scope, &FloatWidthScope::new()) {
+    let cond = match sugar::constraint::assertion_entry_with_audits(
+        &if_expr.cond,
+        scope,
+        &FloatWidthScope::new(),
+        None,
+    ) {
         Ok(entry) => entry.atom,
         Err(_) => {
             let t = translate_term_in_scope(&if_expr.cond, scope).ok()?;
@@ -19766,7 +19501,13 @@ fn matches_membership_formula(mac: &syn::Macro, scope: &TemporalScope) -> Option
     // Guarded: discriminant /\ guard[pattern bindings := payload accessors].
     let scrutinee_term = scrutinee_scalar_var(&scrutinee)?;
     let (disc, bindings) = match_arm_discriminant(&scrutinee_term, &pat)?;
-    let entry = translate_bool_assertion(&guard, scope, &FloatWidthScope::new()).ok()?;
+    let entry = sugar::constraint::assertion_entry_with_audits(
+        &guard,
+        scope,
+        &FloatWidthScope::new(),
+        None,
+    )
+    .ok()?;
     let mut guard_f = entry.atom;
     for (name, term) in &bindings {
         guard_f = subst_var_in_formula(&guard_f, name, term);
