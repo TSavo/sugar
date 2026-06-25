@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `IteratorSugar`: the `.iter()` / `.into_iter()` identity-family adaptor over a
-// sequence Sugar. It is the explicit node between a literal domain and terminals like
+// sequence Sugar. It is the explicit node between a composite domain and terminals like
 // `.next()`: `[1, 2, 3]` -> `LiteralSugar`, `.iter()` -> `IteratorSugar`, `.next()` ->
-// `IterTerminalSugar`. Recognition claims only receivers that are already literal-resolvable
-// through the Composite/literal-sequence factory gates; unknown runtime-looking receivers stay
-// structural factory holes instead of being laundered into a named runtime verdict.
+// `IterTerminalSugar`. The adaptor itself is boring: it delegates to the receiver's
+// Composite body and bubbles any effect owned by that receiver.
 
 use syn::Expr;
 
-use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
-use crate::sugar::method_family;
+use crate::sugar::factory::{has_composite, CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -26,11 +24,11 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     }
     match call.method.to_string().as_str() {
         "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "by_ref" | "clone" => {
+            if !has_composite(&call.receiver, fcx) {
+                return None;
+            }
             Some(Box::new(IteratorSugar {
-                receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
-                    &call.receiver,
-                    fcx,
-                )?),
+                receiver: SugarBody::composite(&call.receiver, fcx),
             }))
         }
         _ => None,
@@ -44,16 +42,12 @@ pub(crate) struct IteratorSugar {
 
 impl Sugar for IteratorSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match self.receiver.reduce(ctx) {
-            Outcome::Complete(desugared) => match desugared.into_seq() {
-                Some(seq) => Outcome::Complete(Desugared::Seq(seq)),
-                None => iterator_gap("iterator receiver reduced to non-sequence"),
-            },
-            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        match self
+            .receiver
+            .reduce_sequence(ctx, "iterator identity adaptor receiver")
+        {
+            FloorRead::Complete(seq) => Outcome::Complete(Desugared::Seq(seq)),
+            FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
         }
     }
-}
-
-fn iterator_gap(reason: &str) -> ! {
-    panic!("iterator did not reach a lawful floor: {reason}")
 }

@@ -29,13 +29,13 @@ use crate::sugar::{
     option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
     range_accessor, range_construct, range_contains, range_term, raw_addr_term, reference_sequence,
     reference_term, regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
-    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
-    slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_nested_assertion, statement_reflection,
-    statement_runtime_expr, step_by, str_method, string_add, string_predicate, struct_term, take,
-    take_while, term_literal, to_string, transparent_term, try_from, try_from_fn, try_map,
-    tuple_decomp, tuple_term, unary, unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg,
-    zip,
+    runtime_iterator_source, size_hint, sizeof, skip, skip_while, slice_accessor,
+    slice_chunk_window, slice_index, slice_search, statement_async_future, statement_control_flow,
+    statement_future_handoff, statement_loop_advance, statement_nested_assertion,
+    statement_reflection, statement_runtime_expr, step_by, str_method, string_add,
+    string_predicate, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary, unsafe_memory, value_if,
+    vec_literal, vec_macro, wrapping_neg, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -188,6 +188,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &vec_literal::EXPR_SUGAR,
     &collection_literal::EXPR_SUGAR,
     &literal::EXPR_SUGAR,
+    &runtime_iterator_source::EXPR_SUGAR,
     &kmerge::EXPR_SUGAR,
     &chain::EXPR_SUGAR,
     &flatten::EXPR_SUGAR,
