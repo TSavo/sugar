@@ -17293,7 +17293,7 @@ fn literal_array_split_mut_destructure_warrants_and_bad_twin_refutes() {
 }
 
 #[test]
-fn unresolved_destructure_trace_gap_stays_unclassified_not_refused() {
+fn unresolved_destructure_trace_is_gap_not_fake_unclassified() {
     let src = r#"
         use std::cell::{Ref, RefCell};
 
@@ -17304,31 +17304,22 @@ fn unresolved_destructure_trace_gap_stays_unclassified_not_refused() {
             assert_eq!(*b1, [1]);
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/cell/ref_map_split_trace_gap.rs");
-    assert_eq!(
-        out.assertions_lifted, 0,
-        "RefCell map_split is not currently traced to a literal source: {:?}",
-        out.decls
+    let panic = std::panic::catch_unwind(|| {
+        lift_file(&parse(src), "coretests/cell/ref_map_split_trace_gap.rs")
+    })
+    .expect_err("untraced destructure must be a direct gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
+    assert!(
+        message.contains("destructured source trace unresolved for `b1`"),
+        "gap must name the unresolved destructured binding: {message}"
     );
     assert!(
-        out.skip_reasons.iter().any(|reason| {
-            reason.contains("destructured source trace unresolved")
-                && sugar_lift_rust_tests::refusal_disposition(reason)
-                    == sugar_lift_rust_tests::Disposition::Unclassified
-        }),
-        "untraced destructure should stay unclassified, not terminal refused: {:?}",
-        out.skip_reasons
-    );
-    assert!(
-        out.factory_audits.iter().any(|audit| {
-            audit.reason.as_deref().is_some_and(|reason| {
-                reason.contains("destructured source trace unresolved")
-                    && sugar_lift_rust_tests::refusal_disposition(reason)
-                        == sugar_lift_rust_tests::Disposition::Unclassified
-            }) && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
-        }),
-        "untraced destructure should remain factory-unresolved/unclassified: {:?}",
-        out.factory_audits
+        !message.contains("legacy reason leaf"),
+        "untraced destructure must gap directly, not through ReasonedIncompleteSugar: {message}"
     );
 }
 

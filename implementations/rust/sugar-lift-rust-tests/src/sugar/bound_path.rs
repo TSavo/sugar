@@ -120,12 +120,22 @@ struct BoundPathTemporalEffectSugar {
     reason: String,
 }
 
+struct BoundPathGapSugar {
+    reason: String,
+}
+
 impl Sugar for BoundPathTemporalEffectSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
             boundary: self.boundary.clone(),
             reason: self.reason.clone(),
         })
+    }
+}
+
+impl Sugar for BoundPathGapSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        panic!("{}", self.reason);
     }
 }
 
@@ -290,11 +300,13 @@ fn unresolved_destructured_source_backstop(
     fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_unresolved_destructured_local(name).then(|| {
-        reasoned_incomplete(format!(
-            "destructured source trace unresolved for `{name}`: pattern binding participates \
+        Box::new(BoundPathGapSugar {
+            reason: format!(
+                "destructured source trace unresolved for `{name}`: pattern binding participates \
              in the assertion, but SSA has not traced the destructured source to literal \
              components yet"
-        ))
+            ),
+        }) as Box<dyn Sugar>
     })
 }
 
