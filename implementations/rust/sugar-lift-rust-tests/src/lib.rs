@@ -217,9 +217,12 @@ pub mod sugar {
     pub mod zip;
 }
 
-use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audits;
 use crate::sugar::configuration::{
     resolve as cfg_resolve, resolve_predicate as cfg_resolve_predicate, CfgDisposition,
+};
+pub(crate) use crate::sugar::term_dispatch::{
+    translate_assertion_term_in_scope_with_audits, translate_term_in_scope,
+    translate_term_in_scope_with_audits,
 };
 use quote::ToTokens;
 use sugar_ir_symbolic::{
@@ -19571,56 +19574,6 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
     false
 }
 
-/// The THIN ADAPTER over the recursive term factory (`sugar::factory::build_term`). The
-/// fat 30-arm `match` over `Expr` that used to live here has been RELOCATED, arm for
-/// arm, into `build` (which is now the COMPLETE term lifter); this function survives
-/// only to keep the name + signature its many callers depend on. It builds a
-/// `SugarBuildCtx` + `SugarCtx` from `scope` (the dual build-time / desugar-time envs),
-/// runs `build(expr).desugar(ctx)`, and unwraps the total `Outcome`:
-///   * `Complete(Term)` -> `Ok(term)` (the term floor reached truth);
-///   * `Complete(Seq | Constraints)` -> the structural backstop `Err` (a term-position
-///     operand that completed to a non-term payload -- impossible for the term arms, but
-///     total here via `into_term() -> None`);
-///   * `Incomplete(effect)` -> `Err(effect.reason())` (a named order-loss boundary / a
-///     reasoned `unsupported term` leaf -- the SAME string the old arm's `Err`
-///     carried, so the wire format / CID / counts are conserved).
-/// There is NO legacy fallback: every shape is owned by a `build` arm.
-fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
-    translate_term_in_scope_with_audits(expr, scope, None)
-}
-
-fn translate_term_in_scope_with_audits(
-    expr: &Expr,
-    scope: &TemporalScope,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Rc<Term>, String> {
-    let options = LiftOptions::default();
-    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &let_inits);
-    let node = sugar::factory::build_term(expr, &fcx);
-    let items: Vec<Item> = Vec::new();
-    // Seed the reducer from the macro registry the scope carries, so a TERM-POSITION
-    // macro invocation (`add2!(2,3)` in `assert_eq!(add2!(2,3), 5)`) can be EXPANDED at
-    // desugar time (`MacroSugar::desugar` reads `ctx.reducer.macro_rules(..)`). Without
-    // this seed the adapter's reducer is empty and every term-position macro goes opaque.
-    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
-    let mut float_widths = FloatWidthScope::new();
-    let ctx = sugar_ctx_with_factory_audits(
-        scope,
-        &options,
-        &reducer,
-        &mut float_widths,
-        0,
-        factory_audits,
-    );
-    match node.desugar(&ctx) {
-        Outcome::Complete(d) => d
-            .into_term()
-            .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
-        Outcome::Incomplete(effect) => Err(effect.reason()),
-    }
-}
-
 fn const_index_term_in_scope(
     index: &syn::ExprIndex,
     scope: &TemporalScope,
@@ -19657,51 +19610,6 @@ fn is_const_like_path(path: &syn::Path) -> bool {
         && ident
             .chars()
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
-}
-
-fn translate_assertion_term_in_scope_with_audits(
-    expr: &Expr,
-    scope: &TemporalScope,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Rc<Term>, String> {
-    match expr {
-        Expr::Const(const_block) => {
-            let term = translate_expression_only_block_in_scope_with_audits(
-                &const_block.block,
-                "const",
-                scope,
-                factory_audits,
-            )?;
-            Ok(scope_const_block_locals(term, scope.local_scope()))
-        }
-        // `None` is the std `Option` unit constructor -- a MONADIC value, the same
-        // family as `Some(x)`. It grounds to the reserved `opt:none` ctor (the
-        // ADT-backed `Option` value), NOT the federated `call:None` EUF, so an
-        // `assert_eq!(opt, None)` meets `opt:some(_)`/`opt:none` structurally (the
-        // teeth: `Some(1) == None` is z3-UNSAT). Byte-aligned with `MonadicSugar`
-        // in the term factory, which owns the `Some`/`Ok`/`Err` arms (reached via
-        // the `_ =>` delegation below). Matches the FINAL segment ident so a
-        // turbofish (`None::<isize>`) / qualified path grounds too.
-        Expr::Path(path)
-            if path
-                .path
-                .segments
-                .last()
-                .is_some_and(|seg| seg.ident == "None") =>
-        {
-            Ok(Rc::new(Term::Ctor {
-                name: sugar::monadic::OPT_NONE.to_string(),
-                args: Vec::new(),
-            }))
-        }
-        Expr::Paren(paren) => {
-            translate_assertion_term_in_scope_with_audits(&paren.expr, scope, factory_audits)
-        }
-        Expr::Group(group) => {
-            translate_assertion_term_in_scope_with_audits(&group.expr, scope, factory_audits)
-        }
-        _ => translate_term_in_scope_with_audits(expr, scope, factory_audits),
-    }
 }
 
 fn scope_const_block_locals(term: Rc<Term>, local_scope: &str) -> Rc<Term> {

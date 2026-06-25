@@ -23308,21 +23308,27 @@ fn t() {
 #[test]
 fn unexpandable_term_position_macro_is_gap_not_opaque_var() {
     // REGRESSION GUARD: a macro we hold NO definition for (a builtin / opaque macro,
-    // here `line!`) in term position is a factory gap. It must not fall back to a coarse
-    // opaque `macro:<tokens>` Complete.
+    // here `line!`) in term position is a direct factory gap. It must not fall back to a
+    // coarse opaque `macro:<tokens>` Complete, and it must not be counted as a runtime
+    // Incomplete effect.
     let src = r#"
 #[test]
 fn t() {
     assert_eq!(line!(), 0);
 }
 "#;
-    let out = lift_file(&parse(src), "tests/macro_term.rs");
+    let panic = std::panic::catch_unwind(|| lift_file(&parse(src), "tests/macro_term.rs"))
+        .expect_err("unexpandable macro must be a direct construction gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
     assert!(
-        warranted_decls(&out).is_empty(),
-        "unexpandable macro must not warrant an opaque Complete: {:?}",
-        out.decls
+        message.contains("macro `line` has no visible macro_rules source")
+            && message.contains("write more Sugar"),
+        "unexpected macro-term gap panic: {message}"
     );
-    assert_factory_gap_for_site(&out, "macro_term", "line !");
 }
 
 #[test]
