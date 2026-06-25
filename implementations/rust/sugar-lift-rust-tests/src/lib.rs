@@ -17577,7 +17577,9 @@ fn callsite_child_fallback_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc
     // opaque receiver identity for `method:<m>#panic_callsite(...)` support.
     if let Expr::Path(path) = strip_refs_groups(expr) {
         if path.qself.is_none() {
-            return scope.path_name(&path.path).ok().map(make_var);
+            if let Ok(name) = scope.path_name(&path.path) {
+                return Some(make_var(name));
+            }
         }
     }
     Some(Rc::new(Term::Ctor {
