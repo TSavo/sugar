@@ -13,14 +13,14 @@ use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
 use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
-    canonical_term_sig, closure_single_param_ident, const_eval, const_fold_int_term,
-    primitive_int_term, strip_refs_groups, term_as_int, u128_term, BoundedDomain, ConstVal,
-    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    canonical_term_sig, closure_single_param_ident, const_eval, primitive_int_term,
+    strip_refs_groups, u128_term, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -34,18 +34,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     if let Some(plan) = CollectPlan::runtime_callable_from_receiver(&call.receiver, fcx) {
-        return Some(Box::new(CollectSugar {
-            plan,
-            let_inits: capture_let_inits(fcx),
-        }));
+        return Some(Box::new(CollectSugar { plan }));
     }
     if !crate::resolves_literal_sequence_in_scope(&call.receiver, fcx) {
         return None;
     }
-    let map_plan = CollectPlan::from_receiver(&call.receiver);
+    let map_plan = CollectPlan::from_receiver(&call.receiver, fcx);
     let plan = if collects_vec(call) && map_plan.is_none() {
         CollectPlan::PlainVec {
-            base_expr: (*call.receiver).clone(),
+            base: sequence_body(&call.receiver, fcx),
         }
     } else if let Some(plan) = map_plan {
         plan
@@ -57,23 +54,19 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         receiver = %crate::token_key(&call.receiver),
         "recognized collect"
     );
-    Some(Box::new(CollectSugar {
-        plan,
-        let_inits: capture_let_inits(fcx),
-    }))
+    Some(Box::new(CollectSugar { plan }))
 }
 
 struct CollectSugar {
     plan: CollectPlan,
-    let_inits: BTreeMap<String, Expr>,
 }
 
 enum CollectPlan {
     PlainVec {
-        base_expr: Expr,
+        base: SugarBody<CompositeFloor>,
     },
     MapMonadic {
-        base_expr: Expr,
+        base: SugarBody<CompositeFloor>,
         closure: ExprClosure,
         kind: CollectKind,
     },
@@ -95,7 +88,7 @@ enum MonadicValue {
 }
 
 impl CollectPlan {
-    fn from_receiver(expr: &Expr) -> Option<Self> {
+    fn from_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
         let Expr::MethodCall(call) = strip_refs_groups(expr) else {
             return None;
         };
@@ -107,7 +100,7 @@ impl CollectPlan {
         };
         let kind = monadic_kind_of_closure(closure)?;
         Some(Self::MapMonadic {
-            base_expr: (*call.receiver).clone(),
+            base: sequence_body(&call.receiver, fcx),
             closure: closure.clone(),
             kind,
         })
@@ -148,44 +141,10 @@ impl CollectPlan {
         })
     }
 
-    fn reduce(
-        &self,
-        ctx: &SugarCtx,
-        captured_let_inits: &BTreeMap<String, Expr>,
-    ) -> Result<Option<Rc<Term>>, Effect> {
+    fn reduce(&self, ctx: &SugarCtx) -> Result<Option<Rc<Term>>, Effect> {
         match self {
-            CollectPlan::PlainVec { base_expr } => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits: BTreeMap<String, &Expr> = stable
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init))
-                    .chain(
-                        captured_let_inits
-                            .iter()
-                            .map(|(name, init)| (name.clone(), init)),
-                    )
-                    .collect();
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let seq = if method_family::literal_sequence_static_len_in_scope(
-                    base_expr, &let_inits, ctx.scope,
-                ) == Some(0)
-                {
-                    Vec::new()
-                } else {
-                    let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
-                        .unwrap_or_else(|| build_composite(base_expr, &fcx));
-                    match base.desugar(ctx) {
-                        Outcome::Complete(d) => match d.into_seq() {
-                            Some(seq) => seq,
-                            None => return Ok(None),
-                        },
-                        Outcome::Incomplete(effect) => match empty_literal_sequence(base_expr, ctx)
-                        {
-                            Some(seq) => seq,
-                            None => return Err(effect),
-                        },
-                    }
-                };
+            CollectPlan::PlainVec { base } => {
+                let seq = sequence_from_body(base, ctx)?;
                 let collected = seq.iter().map(elem_term).collect::<Vec<_>>();
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::collect",
@@ -195,41 +154,11 @@ impl CollectPlan {
                 Ok(Some(literal_vec_term(&collected)))
             }
             CollectPlan::MapMonadic {
-                base_expr,
+                base,
                 closure,
                 kind,
             } => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits: BTreeMap<String, &Expr> = stable
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init))
-                    .chain(
-                        captured_let_inits
-                            .iter()
-                            .map(|(name, init)| (name.clone(), init)),
-                    )
-                    .collect();
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let seq = if method_family::literal_sequence_static_len_in_scope(
-                    base_expr, &let_inits, ctx.scope,
-                ) == Some(0)
-                {
-                    Vec::new()
-                } else {
-                    let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
-                        .unwrap_or_else(|| build_composite(base_expr, &fcx));
-                    match base.desugar(ctx) {
-                        Outcome::Complete(d) => match d.into_seq() {
-                            Some(seq) => seq,
-                            None => return Ok(None),
-                        },
-                        Outcome::Incomplete(effect) => match empty_literal_sequence(base_expr, ctx)
-                        {
-                            Some(seq) => seq,
-                            None => return Err(effect),
-                        },
-                    }
-                };
+                let seq = sequence_from_body(base, ctx)?;
                 let mut collected = Vec::with_capacity(seq.len());
                 for elem in seq {
                     let Some(value) = elem.value.as_ref() else {
@@ -284,37 +213,28 @@ impl CollectPlan {
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+fn sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+    SugarBody::from_node(
+        method_family::build_literal_sequence_composite(expr, fcx)
+            .unwrap_or_else(|| build_composite(expr, fcx)),
+    )
 }
 
-fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredElem>> {
-    match strip_refs_groups(expr) {
-        Expr::Array(arr) if arr.elems.is_empty() => Some(Vec::new()),
-        Expr::Range(_) => {
-            let BoundedDomain::Range {
-                start,
-                end,
-                inclusive,
-            } = crate::bounded_domain_from_expr(expr, ctx.scope)?
-            else {
-                return None;
-            };
-            let s = term_as_int(&start).or_else(|| const_fold_int_term(&start))?;
-            let e = term_as_int(&end).or_else(|| const_fold_int_term(&end))?;
-            let end_exclusive = if inclusive { e.checked_add(1)? } else { e };
-            (end_exclusive <= s).then(Vec::new)
-        }
-        _ => None,
+fn sequence_from_body(
+    body: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Vec<DesugaredElem>, Effect> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d.into_seq().unwrap_or_else(|| {
+            collect_gap("recognized collect receiver reduced to a non-sequence floor")
+        })),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
 impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match self.plan.reduce(ctx, &self.let_inits) {
+        match self.plan.reduce(ctx) {
             Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
             Ok(None) => collect_gap("recognized collect chain did not reduce to a literal floor"),
             Err(effect) => Outcome::Incomplete(effect),
