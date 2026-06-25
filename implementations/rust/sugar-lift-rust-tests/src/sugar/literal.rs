@@ -13,8 +13,8 @@ use syn::Expr;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
-    strip_refs_groups, term_as_int, token_key, u128_expr, BoundedDomain, ConstVal, Desugared,
-    DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    literal_byte_string_value, strip_refs_groups, term_as_int, token_key, u128_expr, BoundedDomain,
+    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 // ── NAMED-DRAGON reasons for the six unwarrantable literal SHAPES ─────────────────────
@@ -51,8 +51,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// (`literal_aggregate_term` ctor) — the two roles genuinely differ (a `Seq` domain vs
 /// a term aggregate).
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
+    match strip_refs_groups(expr) {
         Expr::Array(_) | Expr::Range(_) => Some(Box::new(LiteralSugar { base: expr.clone() })),
+        _ if literal_byte_string_value(expr).is_some() => {
+            Some(Box::new(LiteralSugar { base: expr.clone() }))
+        }
         _ => None,
     }
 }
@@ -99,6 +102,9 @@ impl LiteralSugar {
     fn build(&self, ctx: &SugarCtx) -> Option<Desugared> {
         (|| {
             if let Some(seq) = literal_ascii_char_range_seq(&self.base) {
+                return Some(Desugared::Seq(seq));
+            }
+            if let Some(seq) = literal_byte_string_seq(&self.base) {
                 return Some(Desugared::Seq(seq));
             }
 
@@ -214,6 +220,26 @@ fn literal_ascii_char_range_seq(expr: &Expr) -> Option<Vec<DesugaredElem>> {
         .collect()
 }
 
+fn literal_byte_string_seq(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    let bytes = literal_byte_string_value(expr)?;
+    if bytes.is_empty() || bytes.len() > SUGAR_SEQ_CAP as usize {
+        return None;
+    }
+    bytes
+        .into_iter()
+        .map(|byte| {
+            Some(DesugaredElem {
+                expr: byte_expr(byte)?,
+                value: Some(ConstVal::Int(i128::from(byte))),
+            })
+        })
+        .collect()
+}
+
+fn byte_expr(byte: u8) -> Option<Expr> {
+    syn::parse_str(&format!("{byte}u8")).ok()
+}
+
 fn literal_ascii_char(expr: &Expr) -> Option<u32> {
     match strip_refs_groups(expr) {
         Expr::Lit(syn::ExprLit {
@@ -274,6 +300,18 @@ fn classify_unwarrantable_literal(base: &Expr) -> Option<&'static str> {
             // A remaining bound is a non-literal/non-const path or expression (`len`, `x`,
             // `x + 3`): not text-determined -> a runtime bound.
             Some(RUNTIME_BOUND_REASON)
+        }
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::ByteStr(bytes),
+            ..
+        }) => {
+            if bytes.value().is_empty() {
+                Some(EMPTY_DOMAIN_REASON)
+            } else if bytes.value().len() > SUGAR_SEQ_CAP as usize {
+                Some(OVERSIZE_DOMAIN_REASON)
+            } else {
+                None
+            }
         }
         _ => None,
     }

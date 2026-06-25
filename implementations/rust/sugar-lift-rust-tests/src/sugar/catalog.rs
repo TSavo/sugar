@@ -816,6 +816,41 @@ mod tests {
     }
 
     #[test]
+    fn literal_iterator_quantifier_owns_constraint_before_bool_method_fallback() {
+        let inline: Expr = syn::parse_str("[1, 2, 3].iter().all(|&x| x < 10)").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&inline, SugarRole::Constraint),
+            Some("constraint_literal_iterator_quantifier")
+        );
+
+        let boxed: Expr = syn::parse_str("v.iter().any(|&x| x % 2 == 0)").unwrap();
+        let let_inits = BTreeMap::from([(
+            "v".to_string(),
+            syn::parse_str::<Expr>("Box::new([1, 2, 3, 4, 5])").unwrap(),
+        )]);
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(
+                &boxed,
+                SugarRole::Constraint,
+                &let_inits
+            ),
+            Some("constraint_literal_iterator_quantifier")
+        );
+
+        let bytes: Expr = syn::parse_str("b\"abc\".iter().all(|b| b.is_ascii())").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&bytes, SugarRole::Constraint),
+            Some("constraint_literal_iterator_quantifier")
+        );
+
+        let chars: Expr = syn::parse_str("\"abc\".chars().all(|ch| ch.is_ascii())").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&chars, SugarRole::Constraint),
+            Some("constraint_literal_iterator_quantifier")
+        );
+    }
+
+    #[test]
     fn arbitrary_predicate_method_names_are_not_builtin_constraint_semantics() {
         let expr: Expr = syn::parse_str("value().is(3)").unwrap();
         let constraint_names = candidate_names_for_role(&expr, SugarRole::Constraint);

@@ -19,8 +19,9 @@ use crate::sugar::term_dispatch::{
     TermFloorAccept,
 };
 use crate::{
-    bool_const, const_val_term, make_var, token_key, AssertionFactKind, Desugared, DesugaredElem,
-    Outcome, Sugar, SugarCtx, Warrant,
+    ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
+    const_fold_int_term, const_val_term, make_var, token_key, AssertionFactKind, Desugared,
+    DesugaredElem, Outcome, RelationOp, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -111,7 +112,7 @@ impl Sugar for LiteralIteratorQuantifierSugar {
                 Ok(term) => term,
                 Err(outcome) => return outcome,
             };
-            let PredicateAtom { atom, literal } = predicate_atom(term);
+            let PredicateAtom { atom, literal } = predicate_atom(term, ctx);
             warranted &= literal;
             atoms.push(atom);
         }
@@ -180,8 +181,13 @@ struct PredicateAtom {
     literal: bool,
 }
 
-fn predicate_atom(term: Rc<Term>) -> PredicateAtom {
-    if let Some(value) = term.accept_term_floor(LiteralPredicateBoolVisitor) {
+fn predicate_atom(term: Rc<Term>, ctx: &SugarCtx) -> PredicateAtom {
+    let literal = term
+        .accept_term_floor(LiteralPredicateBoolVisitor)
+        .is_some();
+    if let Some(atom) = predicate_formula_from_term(&term, ctx) {
+        PredicateAtom { atom, literal }
+    } else if let Some(value) = term.accept_term_floor(LiteralPredicateBoolVisitor) {
         PredicateAtom {
             atom: eq(bool_const(value), bool_const(true)),
             literal: true,
@@ -192,6 +198,50 @@ fn predicate_atom(term: Rc<Term>) -> PredicateAtom {
             literal: false,
         }
     }
+}
+
+fn predicate_formula_from_term(term: &Rc<Term>, ctx: &SugarCtx) -> Option<Rc<Formula>> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if args.len() == 2 => {
+            let op = relation_from_cmp_ctor(name)?;
+            Some(
+                assertion_entry_from_relation(args[0].clone(), args[1].clone(), op, ctx.scope).atom,
+            )
+        }
+        Term::Ctor { name, args } if name.starts_with("method:") && args.len() == 1 => {
+            let method = name.strip_prefix("method:")?;
+            let receiver = peel_deref_term(args[0].clone());
+            if const_fold_int_term(&receiver).is_some() {
+                ascii_byte_class_atom(method, receiver)
+            } else {
+                ascii_char_class_atom(method, receiver)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn relation_from_cmp_ctor(name: &str) -> Option<RelationOp> {
+    match name {
+        "cmp:eq" => Some(RelationOp::Eq),
+        "cmp:neq" => Some(RelationOp::Ne),
+        "cmp:lt" => Some(RelationOp::Lt),
+        "cmp:le" => Some(RelationOp::Le),
+        "cmp:gt" => Some(RelationOp::Gt),
+        "cmp:ge" => Some(RelationOp::Ge),
+        _ => None,
+    }
+}
+
+fn peel_deref_term(mut term: Rc<Term>) -> Rc<Term> {
+    while let Term::Ctor { name, args } = term.as_ref() {
+        if name == "deref" && args.len() == 1 {
+            term = args[0].clone();
+        } else {
+            break;
+        }
+    }
+    term
 }
 
 fn elem_term_floor(elem: &DesugaredElem) -> Rc<Term> {
