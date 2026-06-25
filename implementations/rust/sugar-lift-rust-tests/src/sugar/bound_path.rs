@@ -278,7 +278,11 @@ fn construct_tuple_producer_body(
         return has_tuple_producer(&current, child_fcx)
             .then(|| SugarBody::tuple_producer(&current, child_fcx));
     }
-    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    let init = fcx
+        .let_inits()
+        .get(name)
+        .copied()
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
     has_tuple_producer(init, child_fcx).then(|| SugarBody::tuple_producer(init, child_fcx))
 }
 
