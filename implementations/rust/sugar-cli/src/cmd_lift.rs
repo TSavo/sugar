@@ -5,8 +5,9 @@
 // step owned by `sugar mint`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
@@ -71,6 +72,10 @@ pub fn run(args: LiftArgs) -> u8 {
         report_summary = lift_options.report_summary,
         "lift: dispatching configured surface"
     );
+    let source_oracle_routes = vec![source_oracle_route_for_surface(
+        &surface,
+        lift_options.workspace_override.clone(),
+    )];
 
     match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
@@ -144,6 +149,7 @@ pub fn run(args: LiftArgs) -> u8 {
                         }
                     };
                 report.project_root = Some(project_root.clone());
+                report.source_oracle_routes = source_oracle_routes.clone();
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
                     trace_lift_report_checkpoint("before_prepare_lift_report_prove_inputs");
@@ -502,6 +508,7 @@ fn run_configured_lift_report_graph(
         }
     };
     report.project_root = Some(project_root.to_path_buf());
+    report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
     let prove_with = if args.prove {
@@ -714,6 +721,26 @@ fn lift_options_for_plugin(plugin: &PluginEntry) -> LiftPluginOptions {
     }
 }
 
+fn source_oracle_routes_for_plugins(plugins: &[PluginEntry]) -> Vec<SourceOracleRoute> {
+    plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .map(|plugin| {
+            source_oracle_route_for_surface(&plugin.surface, plugin.workspace_override.clone())
+        })
+        .collect()
+}
+
+fn source_oracle_route_for_surface(
+    surface: &str,
+    workspace_override: Option<String>,
+) -> SourceOracleRoute {
+    SourceOracleRoute {
+        surface: surface.to_string(),
+        workspace_override,
+    }
+}
+
 fn matching_lift_plugin<'a>(
     project_cfg: &'a ProjectConfig,
     surface: &str,
@@ -736,6 +763,7 @@ struct LiftSourceReport {
     call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
+    source_oracle_routes: Vec<SourceOracleRoute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -745,6 +773,12 @@ struct LiftReportSummary {
     unresolved_factory_sites: Vec<Value>,
     factory_walk: Vec<Value>,
     project_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceOracleRoute {
+    surface: String,
+    workspace_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1286,6 +1320,7 @@ fn source_report_from_lift_response(
         call_edges,
         vendor_conjoins,
         project_root: None,
+        source_oracle_routes: Vec::new(),
     })
 }
 
@@ -2177,6 +2212,12 @@ struct VisualFactoryWalkRow {
     tone: VisualTone,
 }
 
+#[derive(Clone, Copy)]
+struct VisualSourceLookup<'a> {
+    project_root: Option<&'a Path>,
+    routes: &'a [SourceOracleRoute],
+}
+
 struct VisualBoundaryRow {
     context: String,
     sort_key: (u64, u64, u64, u64),
@@ -2201,9 +2242,13 @@ fn render_report_visual(
 }
 
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
-    let rows = visual_factory_walk_rows(&report.factory_walk, report.project_root.as_deref());
+    let source_lookup = VisualSourceLookup {
+        project_root: report.project_root.as_deref(),
+        routes: &report.source_oracle_routes,
+    };
+    let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
-    out.push_str(&render_universe_visual_report(report));
+    out.push_str(&render_universe_visual_report(report, source_lookup));
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
@@ -2219,27 +2264,29 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             current_context = row.context.clone();
             out.push_str(&format!("  contract {current_context}\n"));
         }
-        out.push_str(&format!(
-            "    {}  {}\n",
-            ansi_paint(&row.source, row.tone),
-            row.label
-        ));
+        render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
     }
     out
 }
 
-fn render_universe_visual_report(report: &LiftSourceReport) -> String {
+fn render_universe_visual_report(
+    report: &LiftSourceReport,
+    source_lookup: VisualSourceLookup<'_>,
+) -> String {
     if report.contracts.is_empty() {
         return String::new();
     }
-    let boundaries = visual_boundary_rows(&report.factory_walk, report.project_root.as_deref());
+    let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
     out.push_str("universe visual:\n");
     for contract in &report.contracts {
         let name = contract_value_name(contract).unwrap_or("<unknown contract>");
         let predicates = contract_predicate_rows(contract);
         out.push_str(&format!("  universe {name}\n"));
-        out.push_str(&format!("    FOL: {}\n", format_contract_fol(contract)));
+        out.push_str(&format!(
+            "    FOL: {}\n",
+            format_contract_visual_fol(contract)
+        ));
         let warrants = contract_source_warrants(contract);
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
@@ -2247,8 +2294,9 @@ fn render_universe_visual_report(report: &LiftSourceReport) -> String {
         }
         render_universe_warrant_breakdown(
             &mut out,
-            report.project_root.as_deref(),
+            source_lookup,
             &boundaries,
+            &report.factory_walk,
             &warrants,
             &predicates,
         );
@@ -2256,10 +2304,16 @@ fn render_universe_visual_report(report: &LiftSourceReport) -> String {
     out
 }
 
+fn format_contract_visual_fol(contract: &Value) -> String {
+    let name = contract_value_name(contract).unwrap_or("<unknown contract>");
+    let rendered = contract_universe_reading(contract);
+    format!("{name} ⊢ {rendered}")
+}
+
 enum UniverseVisualItem<'a> {
     Boundary(&'a VisualBoundaryRow),
     Predicate {
-        warrant: &'a Value,
+        source: String,
         predicate: String,
         sort_key: (u64, u64, u64, u64),
     },
@@ -2267,8 +2321,9 @@ enum UniverseVisualItem<'a> {
 
 fn render_universe_warrant_breakdown(
     out: &mut String,
-    project_root: Option<&Path>,
+    source_lookup: VisualSourceLookup<'_>,
     boundaries: &[VisualBoundaryRow],
+    factory_walk: &[Value],
     warrants: &[&Value],
     predicates: &[String],
 ) {
@@ -2283,20 +2338,31 @@ fn render_universe_warrant_breakdown(
     {
         items.push(UniverseVisualItem::Boundary(boundary));
     }
-    for (index, warrant) in warrants.iter().enumerate() {
-        let predicate = predicates
-            .get(index)
-            .cloned()
-            .unwrap_or_else(|| "<predicate unavailable>".to_string());
-        let sort_key = warrant
-            .get("span")
-            .map(source_span_sort_key)
-            .unwrap_or_default();
-        items.push(UniverseVisualItem::Predicate {
-            warrant,
-            predicate,
-            sort_key,
-        });
+    let factory_predicates = universe_factory_predicate_rows(factory_walk, source_lookup, &context);
+    if factory_predicates.is_empty() {
+        for (index, warrant) in warrants.iter().enumerate() {
+            let predicate = predicates
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| "<predicate unavailable>".to_string());
+            let sort_key = warrant
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or_default();
+            items.push(UniverseVisualItem::Predicate {
+                source: resolve_source_memento_visual_source(source_lookup, warrant),
+                predicate,
+                sort_key,
+            });
+        }
+    } else {
+        for predicate in factory_predicates {
+            items.push(UniverseVisualItem::Predicate {
+                source: predicate.source,
+                predicate: predicate.predicate,
+                sort_key: predicate.sort_key,
+            });
+        }
     }
     items.sort_by_key(|item| match item {
         UniverseVisualItem::Boundary(boundary) => (boundary.sort_key, 0_u8),
@@ -2308,14 +2374,15 @@ fn render_universe_warrant_breakdown(
         match item {
             UniverseVisualItem::Boundary(boundary) => {
                 red = true;
-                out.push_str(&format!(
-                    "    {}  {}\n",
-                    ansi_paint(&boundary.source, VisualTone::Red),
-                    boundary.label
-                ));
+                render_visual_source_annotation(
+                    out,
+                    &boundary.source,
+                    VisualTone::Red,
+                    &boundary.label,
+                );
             }
             UniverseVisualItem::Predicate {
-                warrant, predicate, ..
+                source, predicate, ..
             } => {
                 let tone = if red {
                     VisualTone::Red
@@ -2323,21 +2390,72 @@ fn render_universe_warrant_breakdown(
                     VisualTone::Green
                 };
                 let status = if red { "RED" } else { "GREEN" };
-                out.push_str(&format!(
-                    "    {}  {status} predicate: {predicate}\n",
-                    ansi_paint(
-                        &resolve_source_memento_visual_source(project_root, warrant),
-                        tone
-                    ),
-                ));
+                let annotation = if red {
+                    status.to_string()
+                } else {
+                    format!("{status} ⊢ {predicate}")
+                };
+                render_visual_source_annotation(out, &source, tone, &annotation);
             }
         }
     }
 }
 
+fn render_visual_source_annotation(
+    out: &mut String,
+    source: &str,
+    tone: VisualTone,
+    annotation: &str,
+) {
+    let first = source.lines().next().unwrap_or("");
+    if first.is_empty() {
+        out.push_str(&format!("    {}  {annotation}\n", ansi_paint("", tone)));
+        return;
+    }
+    out.push_str(&format!("    {}  {annotation}\n", ansi_paint(first, tone)));
+}
+
+struct UniverseFactoryPredicateRow {
+    source: String,
+    predicate: String,
+    sort_key: (u64, u64, u64, u64),
+}
+
+fn universe_factory_predicate_rows(
+    factory_walk: &[Value],
+    source_lookup: VisualSourceLookup<'_>,
+    context: &str,
+) -> Vec<UniverseFactoryPredicateRow> {
+    factory_walk
+        .iter()
+        .filter_map(|row| {
+            let memento = row.get("sourceMemento")?;
+            if source_memento_context_key(memento) != context {
+                return None;
+            }
+            let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+            if status != "warranted" && status != "support" {
+                return None;
+            }
+            let formula = row
+                .get("emittedFormula")
+                .or_else(|| row.get("emitted_formula"))
+                .or_else(|| row.get("formula"))?;
+            Some(UniverseFactoryPredicateRow {
+                source: resolve_source_memento_visual_source(source_lookup, memento),
+                predicate: proofir_formula_to_fol_with_instances(formula),
+                sort_key: memento
+                    .get("span")
+                    .map(source_span_sort_key)
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
 fn visual_boundary_rows(
     factory_walk: &[Value],
-    project_root: Option<&Path>,
+    source_lookup: VisualSourceLookup<'_>,
 ) -> Vec<VisualBoundaryRow> {
     let mut red_seen: BTreeSet<String> = BTreeSet::new();
     let mut rows = Vec::new();
@@ -2376,7 +2494,7 @@ fn visual_boundary_rows(
                 .get("span")
                 .map(source_span_sort_key)
                 .unwrap_or_default(),
-            source: resolve_source_memento_visual_source(project_root, memento),
+            source: resolve_source_memento_visual_source(source_lookup, memento),
             label,
         });
     }
@@ -2385,7 +2503,7 @@ fn visual_boundary_rows(
 
 fn visual_factory_walk_rows(
     factory_walk: &[Value],
-    project_root: Option<&Path>,
+    source_lookup: VisualSourceLookup<'_>,
 ) -> Vec<VisualFactoryWalkRow> {
     let mut red_seen: BTreeSet<String> = BTreeSet::new();
     let mut rows = Vec::new();
@@ -2409,10 +2527,20 @@ fn visual_factory_walk_rows(
             .and_then(Value::as_str)
             .filter(|reason| !reason.is_empty());
         let (tone, label) = if raw_verdict == "complete" {
+            let predicate = row
+                .get("emittedFormula")
+                .or_else(|| row.get("emitted_formula"))
+                .or_else(|| row.get("formula"))
+                .map(proofir_formula_to_fol_with_instances);
             if red_seen.contains(&context) {
                 (VisualTone::Red, "RED".to_string())
             } else {
-                (VisualTone::Green, "GREEN".to_string())
+                (
+                    VisualTone::Green,
+                    predicate
+                        .map(|predicate| format!("GREEN ⊢ {predicate}"))
+                        .unwrap_or_else(|| "GREEN".to_string()),
+                )
             }
         } else if raw_verdict == "gap" {
             let here = red_seen.insert(context.clone());
@@ -2439,7 +2567,7 @@ fn visual_factory_walk_rows(
         };
         rows.push(VisualFactoryWalkRow {
             context,
-            source: resolve_factory_walk_visual_source(project_root, row),
+            source: resolve_factory_walk_visual_source(source_lookup, row),
             label,
             tone,
         });
@@ -2455,18 +2583,26 @@ fn ansi_paint(source: &str, tone: VisualTone) -> String {
     format!("{color}{source}{ANSI_RESET}")
 }
 
-fn resolve_factory_walk_visual_source(project_root: Option<&Path>, row: &Value) -> String {
+fn resolve_factory_walk_visual_source(
+    source_lookup: VisualSourceLookup<'_>,
+    row: &Value,
+) -> String {
     let Some(memento_value) = row.get("sourceMemento") else {
-        return resolve_factory_walk_term(project_root, row);
+        return resolve_factory_walk_term(source_lookup.project_root, row);
     };
-    resolve_source_memento_visual_source(project_root, memento_value)
+    resolve_source_memento_visual_source(source_lookup, memento_value)
 }
 
 fn resolve_source_memento_visual_source(
-    project_root: Option<&Path>,
+    source_lookup: VisualSourceLookup<'_>,
     memento_value: &Value,
 ) -> String {
-    let Some(root) = project_root else {
+    if let Some(resolved) =
+        resolve_source_memento_visual_source_via_rpc(source_lookup, memento_value)
+    {
+        return resolved;
+    }
+    let Some(root) = source_lookup.project_root else {
         return "<source memento unresolved: missing project root>".to_string();
     };
     let Some(memento) = source_memento_from_report_json(memento_value) else {
@@ -2477,6 +2613,213 @@ fn resolve_source_memento_visual_source(
             .unwrap_or_else(|| resolved.fragment.body_text.trim().to_string()),
         Err(refusal) => format!("<source memento unresolved: {}>", refusal.reason),
     }
+}
+
+fn resolve_source_memento_visual_source_via_rpc(
+    source_lookup: VisualSourceLookup<'_>,
+    memento_value: &Value,
+) -> Option<String> {
+    let project_root = source_lookup.project_root?;
+    let routed = routed_source_memento(project_root, source_lookup.routes, memento_value)?;
+    match invoke_source_oracle_route(
+        project_root,
+        &routed.route,
+        &routed.workspace_root,
+        &routed.memento,
+    ) {
+        Ok(source) => Some(source),
+        Err(error) => Some(format!("<source memento unresolved: {error}>")),
+    }
+}
+
+struct RoutedSourceMemento {
+    route: SourceOracleRoute,
+    workspace_root: PathBuf,
+    memento: Value,
+}
+
+fn routed_source_memento(
+    project_root: &Path,
+    routes: &[SourceOracleRoute],
+    memento_value: &Value,
+) -> Option<RoutedSourceMemento> {
+    let file = memento_value.get("file").and_then(Value::as_str)?;
+    let (route, routed_file) = select_source_oracle_route(routes, file)?;
+    let mut memento = memento_value.clone();
+    if let Value::Object(object) = &mut memento {
+        object.insert("file".to_string(), Value::String(routed_file));
+    }
+    Some(RoutedSourceMemento {
+        workspace_root: route_workspace_root(project_root, route),
+        route: route.clone(),
+        memento,
+    })
+}
+
+fn select_source_oracle_route<'a>(
+    routes: &'a [SourceOracleRoute],
+    file: &str,
+) -> Option<(&'a SourceOracleRoute, String)> {
+    let normalized_file = normalize_report_path(file);
+    let mut best: Option<(&SourceOracleRoute, String, usize)> = None;
+    for route in routes {
+        let Some(prefix) = normalized_workspace_prefix(route.workspace_override.as_deref()) else {
+            continue;
+        };
+        let Some(stripped) = strip_report_path_prefix(&normalized_file, &prefix) else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(_, _, best_len)| prefix.len() > *best_len)
+        {
+            best = Some((route, stripped, prefix.len()));
+        }
+    }
+    if let Some((route, file, _)) = best {
+        return Some((route, file));
+    }
+    match routes {
+        [route] if normalized_workspace_prefix(route.workspace_override.as_deref()).is_some() => {
+            Some((route, normalized_file))
+        }
+        _ => None,
+    }
+}
+
+fn strip_report_path_prefix(file: &str, prefix: &str) -> Option<String> {
+    if file == prefix {
+        return None;
+    }
+    file.strip_prefix(&format!("{prefix}/"))
+        .map(str::to_string)
+        .filter(|rest| !rest.is_empty())
+}
+
+fn normalized_workspace_prefix(workspace_override: Option<&str>) -> Option<String> {
+    let raw = workspace_override?.trim();
+    if raw.is_empty() || raw == "." {
+        return None;
+    }
+    Some(normalize_report_path(raw).trim_end_matches('/').to_string())
+        .filter(|prefix| !prefix.is_empty())
+}
+
+fn normalize_report_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
+}
+
+fn route_workspace_root(project_root: &Path, route: &SourceOracleRoute) -> PathBuf {
+    let root = match route.workspace_override.as_deref().and_then(|raw| {
+        let trimmed = raw.trim();
+        (!trimmed.is_empty() && trimmed != ".").then_some(trimmed)
+    }) {
+        Some(raw) => {
+            let configured = PathBuf::from(raw);
+            if configured.is_absolute() {
+                configured
+            } else {
+                project_root.join(configured)
+            }
+        }
+        None => project_root.to_path_buf(),
+    };
+    root.canonicalize().unwrap_or(root)
+}
+
+fn invoke_source_oracle_route(
+    project_root: &Path,
+    route: &SourceOracleRoute,
+    workspace_root: &Path,
+    memento: &Value,
+) -> Result<String, String> {
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, &route.surface)?;
+    let (program, args) = manifest.command.split_first().ok_or_else(|| {
+        format!(
+            "source oracle surface `{}` has empty command",
+            route.surface
+        )
+    })?;
+    let mut command = Command::new(program);
+    command.args(args);
+    if let Some(working_dir) = lift_plugin::resolved_working_dir_for(project_root, &manifest) {
+        command.current_dir(working_dir);
+    } else {
+        command.current_dir(project_root);
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("spawn source oracle `{}`: {error}", route.surface))?;
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| format!("source oracle `{}` stdin closed", route.surface))?;
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sugar.plugin.resolve_source_memento",
+            "params": {
+                "workspace_root": workspace_root.to_string_lossy(),
+                "sourceMemento": memento,
+            }
+        });
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::to_string(&request).map_err(|error| error.to_string())?
+        )
+        .map_err(|error| format!("write source oracle request: {error}"))?;
+        let shutdown = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "shutdown",
+            "params": {}
+        });
+        writeln!(stdin, "{}", serde_json::to_string(&shutdown).unwrap())
+            .map_err(|error| format!("write source oracle shutdown: {error}"))?;
+    }
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("source oracle `{}` stdout closed", route.surface))?;
+    let mut reader = BufReader::new(stdout);
+    let mut response_line = String::new();
+    reader
+        .read_line(&mut response_line)
+        .map_err(|error| format!("read source oracle response: {error}"))?;
+    let _ = child.wait();
+    let response: Value = serde_json::from_str(&response_line).map_err(|error| {
+        format!(
+            "parse source oracle response: {error}; raw={}",
+            response_line.trim_end()
+        )
+    })?;
+    if let Some(error) = response.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("source oracle refused");
+        return Err(message.to_string());
+    }
+    response
+        .get("result")
+        .and_then(|result| {
+            result
+                .get("source")
+                .or_else(|| result.get("bodyText"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "source oracle `{}` response missing result.source",
+                route.surface
+            )
+        })
 }
 
 fn source_lines_for_memento(
@@ -4724,22 +5067,63 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 .join(", ");
             format!("{name}({rendered_args})")
         }
+        "let" | "Let" => proofir_let_term_to_fol(term),
         other => {
             serde_json::to_string(term).unwrap_or_else(|_| format!("<unrenderable {other} term>"))
         }
     }
 }
 
+fn proofir_let_term_to_fol(term: &Value) -> String {
+    let bindings = term
+        .get("bindings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let body = term
+        .get("body")
+        .map(proofir_term_to_fol)
+        .unwrap_or_else(|| "<missing body>".to_string());
+    if bindings.is_empty() {
+        return body;
+    }
+    let rendered_bindings = bindings
+        .iter()
+        .map(|binding| {
+            let name = binding.get("name").and_then(Value::as_str).unwrap_or("?");
+            let bound = binding
+                .get("boundTerm")
+                .or_else(|| binding.get("bound_term"))
+                .map(proofir_term_to_fol)
+                .unwrap_or_else(|| "<missing bound>".to_string());
+            format!("{name} = {bound}")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("let {rendered_bindings} in {body}")
+}
+
 fn format_symbolic_ctor(name: &str, args: &[Value]) -> Option<String> {
+    if name == "cf_ite" {
+        return format_cf_ite_term(args);
+    }
     let symbol = match name {
-        "bv32.add" | "concept:add" => "+",
-        "bv32.sub" | "concept:sub" => "-",
-        "bv32.mul" | "concept:mul" => "*",
+        "bv32.add" | "concept:add" | "+" => "+",
+        "bv32.sub" | "concept:sub" | "-" => "-",
+        "bv32.mul" | "concept:mul" | "*" => "*",
+        "/" => "/",
+        "%" => "%",
         "bv32.and" => "&",
         "bv32.or" => "|",
         "bv32.xor" => "⊕",
         "bv32.shl" => "<<",
         "bv32.lshr" => ">>>",
+        "cf_eq" => "=",
+        "cf_ne" => "≠",
+        "cf_lt" => "<",
+        "cf_le" => "≤",
+        "cf_gt" => ">",
+        "cf_ge" => "≥",
         _ => return None,
     };
     if args.len() != 2 {
@@ -4751,6 +5135,26 @@ fn format_symbolic_ctor(name: &str, args: &[Value]) -> Option<String> {
         symbol,
         proofir_term_to_fol(&args[1])
     ))
+}
+
+fn format_cf_ite_term(args: &[Value]) -> Option<String> {
+    if args.len() != 3 {
+        return None;
+    }
+    Some(format!(
+        "if {} then {} else {}",
+        trim_wrapping_parens(&proofir_term_to_fol(&args[0])),
+        proofir_term_to_fol(&args[1]),
+        proofir_term_to_fol(&args[2])
+    ))
+}
+
+fn trim_wrapping_parens(rendered: &str) -> &str {
+    if rendered.starts_with('(') && rendered.ends_with(')') {
+        &rendered[1..rendered.len() - 1]
+    } else {
+        rendered
+    }
 }
 
 fn scalar_value_to_fol(value: &Value) -> String {
@@ -4997,6 +5401,7 @@ mod tests {
             call_edges: vec![],
             vendor_conjoins: vec![],
             project_root: None,
+            source_oracle_routes: Vec::new(),
         }
     }
 
@@ -5963,6 +6368,59 @@ mod tests {
     }
 
     #[test]
+    fn proofir_fol_printer_renders_let_terms_symbolically_without_json() {
+        let formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "result"},
+                {
+                    "kind": "let",
+                    "bindings": [
+                        {
+                            "name": "rem",
+                            "boundTerm": {
+                                "kind": "ctor",
+                                "name": "%",
+                                "args": [
+                                    {"kind": "var", "name": "bytes_len"},
+                                    {"kind": "const", "value": 3, "sort": {"kind": "primitive", "name": "Int"}}
+                                ]
+                            }
+                        }
+                    ],
+                    "body": {
+                        "kind": "ctor",
+                        "name": "cf_ite",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "cf_gt",
+                                "args": [
+                                    {"kind": "var", "name": "rem"},
+                                    {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                                ]
+                            },
+                            {"kind": "var", "name": "some_len"},
+                            {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let rendered = proofir_formula_to_fol(&formula);
+        assert_eq!(
+            rendered,
+            "result = let rem = (bytes_len % 3) in if rem > 0 then some_len else Some(complete_chunk_output)"
+        );
+        assert!(
+            !rendered.contains("boundTerm") && !rendered.contains("\"kind\""),
+            "FOL output must not leak serialized ProofIR JSON: {rendered}"
+        );
+    }
+
+    #[test]
     fn proofir_fol_printer_summarizes_structured_base64_payloads() {
         let formula = serde_json::json!({
             "kind": "atomic",
@@ -6687,15 +7145,15 @@ fn sample() {
         assert!(visual.contains("universe visual:"), "{visual}");
         assert!(visual.contains("  universe src/lib.rs::sample"), "{visual}");
         assert!(
-            visual.contains("    FOL: src/lib.rs::sample :: 1 = 1 ∧ 2 = 2 ∧ 10 = 10"),
+            visual.contains("    FOL: src/lib.rs::sample ⊢ 1 = 1 ∧ 2 = 2 ∧ 10 = 10"),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32massert_eq!(1, 1);\u{1b}[0m  GREEN predicate: 1 = 1"),
+            visual.contains("\u{1b}[32massert_eq!(1, 1);\u{1b}[0m  GREEN ⊢ 1 = 1"),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32massert_eq!(2, 2);\u{1b}[0m  GREEN predicate: 2 = 2"),
+            visual.contains("\u{1b}[32massert_eq!(2, 2);\u{1b}[0m  GREEN ⊢ 2 = 2"),
             "{visual}"
         );
         assert!(
@@ -6705,8 +7163,375 @@ fn sample() {
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED predicate: 10 = 10"),
+            visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED"),
             "{visual}"
+        );
+        assert!(
+            !visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED ⊢ 10 = 10"),
+            "red rows are effect-shadowed unknowns; move the predicate before RED HERE or do not print it:\n{visual}"
+        );
+        assert!(
+            !visual.contains("RED ⊢"),
+            "red source rows are unknown and must not render predicates:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_projects_function_universe_through_factory_emitted_formulas() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("lib.rs"),
+            r#"
+fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
+    let rem = bytes_len % 3;
+    let encoded_rem = rem + 1;
+    Some(encoded_rem)
+}
+"#,
+        )
+        .expect("write source");
+        let source_text = std::fs::read_to_string(source_dir.join("lib.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&source_text).expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let function_memento = sugar_walk::source_oracle::source_memento_of_named_item_fn(
+            "src/lib.rs",
+            &source_text,
+            "encoded_len",
+            item,
+        )
+        .to_json();
+        let memento_for_stmt = |stmt_index: usize| {
+            let stmt = &item.block.stmts[stmt_index];
+            sugar_walk::source_oracle::source_memento_of_statement_span(
+                "src/lib.rs",
+                &source_text,
+                stmt.span(),
+                "encoded_len",
+                &item.sig,
+                &item.block,
+            )
+            .expect("statement memento")
+            .to_json()
+        };
+        let rem_stmt = memento_for_stmt(0);
+        let encoded_rem_stmt = memento_for_stmt(1);
+        let rem_formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "rem"},
+                {"kind": "ctor", "name": "%", "args": [
+                    {"kind": "var", "name": "bytes_len"},
+                    {"kind": "const", "value": 3, "sort": {"name": "Int"}}
+                ]}
+            ]
+        });
+        let encoded_rem_formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "encoded_rem"},
+                {"kind": "ctor", "name": "+", "args": [
+                    {"kind": "var", "name": "rem"},
+                    {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                ]}
+            ]
+        });
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "encoded_len",
+                    "outBinding": "result",
+                    "post": {
+                        "kind": "and",
+                        "operands": [
+                            rem_formula.clone(),
+                            encoded_rem_formula.clone()
+                        ]
+                    },
+                    "sourceWarrants": [
+                        function_memento
+                    ]
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 2,
+                "statusCounts": {
+                    "warranted": 2,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 3,
+                        "requested_role": "FunctionBodyConstraint",
+                        "ast_kind": "stmt",
+                        "selected": "let_statement_constraint",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": rem_stmt,
+                        "emittedFormula": rem_formula
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "FunctionBodyConstraint",
+                        "ast_kind": "stmt",
+                        "selected": "let_statement_constraint",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": encoded_rem_stmt,
+                        "emittedFormula": encoded_rem_formula
+                    }
+                ]
+            }
+        });
+        let mut report = source_report_from_lift_response(&response, None).expect("source report");
+        report.project_root = Some(root.path().to_path_buf());
+
+        let visual = render_visual_source_report(&report);
+
+        assert!(visual.contains("  universe encoded_len"), "{visual}");
+        assert!(
+            visual
+                .contains("    FOL: encoded_len ⊢ rem = (bytes_len % 3) ∧ encoded_rem = (rem + 1)"),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains("boundTerm") && !visual.contains("\"kind\""),
+            "visual FOL must be human-readable symbols, not serialized ProofIR JSON:\n{visual}"
+        );
+        assert!(
+            visual.contains(
+                "\u{1b}[32mlet rem = bytes_len % 3;\u{1b}[0m  GREEN ⊢ rem = (bytes_len % 3)"
+            ),
+            "{visual}"
+        );
+        assert!(
+            visual.contains(
+                "\u{1b}[32mlet encoded_rem = rem + 1;\u{1b}[0m  GREEN ⊢ encoded_rem = (rem + 1)"
+            ),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains("fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize>"),
+            "function universe projection must use factory-emitted line pins instead of the whole-function source warrant:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_prints_source_line_per_predicate_not_multiline_blob() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("lib.rs"),
+            r#"
+fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
+    let rem = bytes_len % 3;
+    if rem > 0 {
+        if padding {
+            Some(4)
+        } else {
+            Some(2)
+        }
+    } else {
+        Some(0)
+    }
+}
+"#,
+        )
+        .expect("write source");
+        let source_text = std::fs::read_to_string(source_dir.join("lib.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&source_text).expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let function_memento = sugar_walk::source_oracle::source_memento_of_named_item_fn(
+            "src/lib.rs",
+            &source_text,
+            "encoded_len",
+            item,
+        )
+        .to_json();
+        let tail_expr = match item.block.stmts.last().expect("tail stmt") {
+            syn::Stmt::Expr(expr, None) => expr,
+            other => panic!("expected tail expr, got {other:?}"),
+        };
+        let tail_memento = sugar_walk::source_oracle::source_memento_of_term_span(
+            "src/lib.rs",
+            &source_text,
+            tail_expr.span(),
+            "encoded_len",
+            &item.sig,
+            &item.block,
+        )
+        .expect("tail expression memento")
+        .to_json();
+        let result_formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "result"},
+                {"kind": "ctor", "name": "cf_ite", "args": [
+                    {"kind": "ctor", "name": "cf_gt", "args": [
+                        {"kind": "var", "name": "rem"},
+                        {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                    ]},
+                    {"kind": "ctor", "name": "Some", "args": [{"kind": "const", "value": 4, "sort": {"kind": "primitive", "name": "Int"}}]},
+                    {"kind": "ctor", "name": "Some", "args": [{"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}]}
+                ]}
+            ]
+        });
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "encoded_len",
+                    "outBinding": "result",
+                    "post": result_formula.clone(),
+                    "sourceWarrants": [function_memento]
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 1,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "FunctionBodyConstraint",
+                        "ast_kind": "expr",
+                        "selected": "result_expression_constraint",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": tail_memento,
+                        "emittedFormula": result_formula
+                    }
+                ]
+            }
+        });
+        let mut report = source_report_from_lift_response(&response, None).expect("source report");
+        report.project_root = Some(root.path().to_path_buf());
+
+        let visual = render_visual_source_report(&report);
+
+        assert!(
+            visual.contains("    FOL: encoded_len ⊢ result = if rem > 0 then Some(4) else Some(0)"),
+            "visual FOL must use turnstile and symbols, not JSON:\n{visual}"
+        );
+        assert!(
+            !visual.contains("boundTerm") && !visual.contains("\"kind\""),
+            "visual FOL must not leak serialized ProofIR JSON:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32mif rem > 0 {\u{1b}[0m  GREEN ⊢ result = if rem > 0 then Some(4) else Some(0)"),
+            "source line must carry its emitted predicate inline:\n{visual}"
+        );
+        assert!(
+            !visual.contains("if padding {"),
+            "visual report must not collapse a multi-line source block into one predicate row:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_source_oracle_route_strips_workspace_override_prefix() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let vendor = root.path().join("vendor/base64-0.22.1");
+        std::fs::create_dir_all(&vendor).expect("create vendor dir");
+        let route = SourceOracleRoute {
+            surface: "rust-fn-contracts".to_string(),
+            workspace_override: Some("vendor/base64-0.22.1".to_string()),
+        };
+        let memento = serde_json::json!({
+            "file": "vendor/base64-0.22.1/src/encode.rs",
+            "sourceFunctionName": "encoded_len",
+            "span": {"start_line": 10, "start_col": 4, "end_line": 10, "end_col": 32},
+            "paramNames": ["bytes_len"],
+            "source_cid": "blake3-512:source",
+            "template_cid": "blake3-512:template"
+        });
+
+        let routed = routed_source_memento(root.path(), &[route], &memento)
+            .expect("workspace override route");
+
+        assert_eq!(
+            routed.memento["file"], "src/encode.rs",
+            "visual source oracle requests must strip the report-only workspace prefix"
+        );
+        assert_eq!(
+            routed.workspace_root,
+            vendor.canonicalize().unwrap_or(vendor),
+            "visual source oracle requests must run against the plugin workspace root"
+        );
+    }
+
+    #[test]
+    fn visual_source_oracle_route_keeps_local_files_out_of_vendor_override() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let routes = [
+            SourceOracleRoute {
+                surface: "rust-test-assertions".to_string(),
+                workspace_override: None,
+            },
+            SourceOracleRoute {
+                surface: "rust-fn-contracts".to_string(),
+                workspace_override: Some("vendor/base64-0.22.1".to_string()),
+            },
+        ];
+        let memento = serde_json::json!({
+            "file": "src/lib.rs",
+            "sourceFunctionName": "tests::test_encoded_len_unpadded_0_exact_row",
+            "span": {"start_line": 10, "start_col": 8, "end_line": 10, "end_col": 52},
+            "paramNames": [],
+            "source_cid": "blake3-512:source",
+            "template_cid": "blake3-512:template"
+        });
+
+        assert!(
+            routed_source_memento(root.path(), &routes, &memento).is_none(),
+            "a configured graph must not send local showcase source to the only vendor override; visual should fall back to the local project source oracle"
         );
     }
 
@@ -7596,6 +8421,7 @@ fn sample() {
                 )),
             }],
             project_root: None,
+            source_oracle_routes: Vec::new(),
         };
         let human = render_source_report_human(&report);
 

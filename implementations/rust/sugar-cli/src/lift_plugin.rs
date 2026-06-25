@@ -407,6 +407,13 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifes
     ))
 }
 
+pub(crate) fn find_manifest_for_surface(
+    project_root: &Path,
+    surface: &str,
+) -> Result<LiftPluginManifest, String> {
+    find_manifest(project_root, surface)
+}
+
 fn resolved_working_dir(project_root: &Path, manifest: &LiftPluginManifest) -> Option<PathBuf> {
     manifest.working_dir.as_ref().map(|working_dir| {
         if working_dir.is_absolute() {

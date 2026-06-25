@@ -54,6 +54,8 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use quote::ToTokens;
+use sugar_canonicalizer::encode_jcs;
+use sugar_ir_symbolic::serialize::formula_to_value;
 use syn::spanned::Spanned;
 use syn::{Expr, Item};
 use tracing::{debug, warn};
@@ -540,7 +542,8 @@ impl FactoryAuditSeed {
 
     fn audit_result(&self, outcome: &Outcome) -> FactoryAudit {
         let (disposition, output, reason) = self.disposition_outcome(outcome);
-        self.audit_with(disposition, output, reason)
+        let emitted_formula = emitted_formula_jcs(outcome);
+        self.audit_with(disposition, output, reason, emitted_formula)
     }
 
     fn audit_with(
@@ -548,6 +551,7 @@ impl FactoryAuditSeed {
         disposition: FactoryDisposition,
         output: &'static str,
         reason: Option<String>,
+        emitted_formula: Option<String>,
     ) -> FactoryAudit {
         FactoryAudit {
             ast_kind: self.ast_kind,
@@ -560,6 +564,7 @@ impl FactoryAuditSeed {
             disposition,
             output,
             reason,
+            emitted_formula,
         }
     }
 
@@ -634,6 +639,13 @@ impl FactoryAuditSeed {
             ),
         }
     }
+}
+
+fn emitted_formula_jcs(outcome: &Outcome) -> Option<String> {
+    let Outcome::Complete(Desugared::Constraints { atom, .. }) = outcome else {
+        return None;
+    };
+    Some(encode_jcs(formula_to_value(atom.as_ref()).as_ref()))
 }
 
 fn factory_audit_span(span: proc_macro2::Span) -> FactoryAuditSpan {

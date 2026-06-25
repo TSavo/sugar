@@ -352,6 +352,7 @@ pub struct FactoryAudit {
     pub disposition: FactoryDisposition,
     pub output: &'static str,
     pub reason: Option<String>,
+    pub emitted_formula: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

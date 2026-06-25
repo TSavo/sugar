@@ -3425,6 +3425,10 @@ fn factory_audit_row(
     if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
         row["supportKind"] = json!("inert");
     }
+    if let Some(formula) = &audit.emitted_formula {
+        row["emittedFormula"] = serde_json::from_str(formula)
+            .expect("factory audit emitted formula must be canonical formula JSON");
+    }
     row
 }
 
@@ -3617,6 +3621,9 @@ fn factory_walk_row(row: &Value) -> Value {
     if let Some(occurrences) = row.get("occurrences").cloned() {
         compact["occurrences"] = occurrences;
     }
+    if let Some(formula) = row.get("emittedFormula").cloned() {
+        compact["emittedFormula"] = formula;
+    }
     compact
 }
 
@@ -3647,6 +3654,9 @@ fn factory_summary_site_row(row: &Value) -> Value {
     }
     if let Some(occurrences) = row.get("occurrences").cloned() {
         compact["occurrences"] = occurrences;
+    }
+    if let Some(formula) = row.get("emittedFormula").cloned() {
+        compact["emittedFormula"] = formula;
     }
     compact
 }
@@ -6080,6 +6090,7 @@ fn literal_counter_while_literal_twin() {
                 disposition: sugar_lift_rust_tests::FactoryDisposition::Support,
                 output: "empty-sequence",
                 reason: Some("empty sequence is inert support".to_string()),
+                emitted_formula: None,
             }],
             &mut source_cache,
             &fns,
@@ -6087,6 +6098,36 @@ fn literal_counter_while_literal_twin() {
 
         assert_eq!(rows[0]["status"], "support");
         assert_eq!(rows[0]["supportKind"], "inert", "{rows:?}");
+        assert!(rows[0].get("term").is_none(), "{rows:?}");
+        assert!(rows[0].get("site").is_none(), "{rows:?}");
+    }
+
+    #[test]
+    fn factory_audit_rows_preserve_emitted_constraint_formula() {
+        let mut source_cache = FileSourceOracleCache::new("src/lib.rs", "");
+        let fns = Vec::new();
+        let formula = eq(make_var("lhs"), make_var("rhs"));
+        let rows = factory_audits_json(
+            "src/lib.rs",
+            &[FactoryAudit {
+                ast_kind: "expr",
+                site: "assert_eq!(lhs, rhs)".to_string(),
+                line: 1,
+                span: None,
+                requested_role: "AssertionSurface".to_string(),
+                selected: Some("assertion_surface_relation_macro"),
+                candidates: Vec::new(),
+                disposition: sugar_lift_rust_tests::FactoryDisposition::Warranted,
+                output: "constraints",
+                reason: None,
+                emitted_formula: Some(encode_jcs(formula_to_value(formula.as_ref()).as_ref())),
+            }],
+            &mut source_cache,
+            &fns,
+        );
+
+        assert_eq!(rows[0]["emittedFormula"]["kind"], "atomic", "{rows:?}");
+        assert_eq!(rows[0]["emittedFormula"]["name"], "=", "{rows:?}");
         assert!(rows[0].get("term").is_none(), "{rows:?}");
         assert!(rows[0].get("site").is_none(), "{rows:?}");
     }
@@ -6139,6 +6180,7 @@ fn literal_counter_while_literal_twin() {
             disposition: sugar_lift_rust_tests::FactoryDisposition::Warranted,
             output: "term",
             reason: None,
+            emitted_formula: None,
         };
         let refused = FactoryAudit {
             disposition: sugar_lift_rust_tests::FactoryDisposition::Refused,
