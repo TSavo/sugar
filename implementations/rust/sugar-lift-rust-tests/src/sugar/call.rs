@@ -25,6 +25,7 @@
 // CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble has been cleared,
 // and then emits the `call:` ctor.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{str_const, Term};
@@ -34,12 +35,192 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::resolved_term;
 use crate::{
-    const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
-    Desugared, Outcome, Sugar, SugarCtx,
+    assoc_call_key, const_fold_int_term, const_fold_u128_term, expr_head_key, num,
+    resolve_value_call_inline, sugar_ctx, type_id_of_call_term, u128_term, Desugared, Outcome,
+    Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
+
+/// Resolve and exact-or-bail inline a visible pure value call for caller-owned
+/// sugar such as literal function maps.
+///
+/// Ordinary call terms still compose as `call:f(args)` so source contracts can
+/// link at the callsite. This helper is only for sugars whose own semantics
+/// require evaluating a callback over literal data. The substituted body is
+/// rebuilt through term sugar at a bumped inline depth, and the result commits
+/// only if it grounds completely to constants/constructors with no opaque call,
+/// method, or variable leaves.
+pub(crate) fn try_inline_value_call(
+    ctx: &SugarCtx,
+    func: &Expr,
+    args: &[Expr],
+) -> Option<Rc<Term>> {
+    if ctx.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return None;
+    }
+    let inlined = resolve_value_call_inline(func, args, ctx.scope, ctx.options)?;
+    let inlined = inline_visible_value_calls(ctx, &inlined, ctx.macro_depth + 1)?;
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    let node = crate::sugar::factory::build_term(&inlined, &fcx);
+    let mut fw = ctx.float_widths.borrow_mut();
+    let child = sugar_ctx(
+        ctx.scope,
+        ctx.options,
+        ctx.reducer,
+        &mut *fw,
+        ctx.macro_depth + 1,
+    );
+    let term = match node.desugar(&child) {
+        Outcome::Complete(d) => d.into_term()?,
+        Outcome::Incomplete(_) => return None,
+    };
+    if is_fully_grounded_term(&term) {
+        if let Some(name) = value_call_support_key(func) {
+            ctx.scope.record_inlined_value_helper(&name);
+        }
+        Some(term)
+    } else {
+        None
+    }
+}
+
+/// Inline visible pure value calls inside a substituted helper body for exact
+/// callback evaluation. Ordinary call sugar still owns source callsites and
+/// emits opaque `call:*` terms; this pass is only the caller-requested
+/// evaluation path, and the grounded-term gate below decides whether it commits.
+fn inline_visible_value_calls(ctx: &SugarCtx, expr: &Expr, depth: usize) -> Option<Expr> {
+    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return None;
+    }
+    match expr {
+        Expr::Call(call) => {
+            let args = call
+                .args
+                .iter()
+                .map(|arg| inline_visible_value_calls(ctx, arg, depth + 1))
+                .collect::<Option<Vec<_>>>()?;
+            if let Some(resolved) =
+                resolve_value_call_inline(&call.func, &args, ctx.scope, ctx.options)
+            {
+                return inline_visible_value_calls(ctx, &resolved, depth + 1);
+            }
+            let mut out = call.clone();
+            out.func = Box::new(inline_visible_value_calls(ctx, &call.func, depth + 1)?);
+            out.args = args.into_iter().collect();
+            Some(Expr::Call(out))
+        }
+        Expr::Binary(binary) => {
+            let mut out = binary.clone();
+            out.left = Box::new(inline_visible_value_calls(ctx, &binary.left, depth + 1)?);
+            out.right = Box::new(inline_visible_value_calls(ctx, &binary.right, depth + 1)?);
+            Some(Expr::Binary(out))
+        }
+        Expr::Unary(unary) => {
+            let mut out = unary.clone();
+            out.expr = Box::new(inline_visible_value_calls(ctx, &unary.expr, depth + 1)?);
+            Some(Expr::Unary(out))
+        }
+        Expr::Paren(paren) => {
+            let mut out = paren.clone();
+            out.expr = Box::new(inline_visible_value_calls(ctx, &paren.expr, depth + 1)?);
+            Some(Expr::Paren(out))
+        }
+        Expr::Group(group) => {
+            let mut out = group.clone();
+            out.expr = Box::new(inline_visible_value_calls(ctx, &group.expr, depth + 1)?);
+            Some(Expr::Group(out))
+        }
+        Expr::Reference(reference) => {
+            let mut out = reference.clone();
+            out.expr = Box::new(inline_visible_value_calls(ctx, &reference.expr, depth + 1)?);
+            Some(Expr::Reference(out))
+        }
+        Expr::Cast(cast) => {
+            let mut out = cast.clone();
+            out.expr = Box::new(inline_visible_value_calls(ctx, &cast.expr, depth + 1)?);
+            Some(Expr::Cast(out))
+        }
+        Expr::Array(array) => {
+            let mut out = array.clone();
+            out.elems = array
+                .elems
+                .iter()
+                .map(|elem| inline_visible_value_calls(ctx, elem, depth + 1))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .collect();
+            Some(Expr::Array(out))
+        }
+        Expr::Tuple(tuple) => {
+            let mut out = tuple.clone();
+            out.elems = tuple
+                .elems
+                .iter()
+                .map(|elem| inline_visible_value_calls(ctx, elem, depth + 1))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .collect();
+            Some(Expr::Tuple(out))
+        }
+        Expr::Field(field) => {
+            let mut out = field.clone();
+            out.base = Box::new(inline_visible_value_calls(ctx, &field.base, depth + 1)?);
+            Some(Expr::Field(out))
+        }
+        Expr::MethodCall(call) => {
+            let mut out = call.clone();
+            out.receiver = Box::new(inline_visible_value_calls(ctx, &call.receiver, depth + 1)?);
+            out.args = call
+                .args
+                .iter()
+                .map(|arg| inline_visible_value_calls(ctx, arg, depth + 1))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .collect();
+            Some(Expr::MethodCall(out))
+        }
+        _ => Some(expr.clone()),
+    }
+}
+
+/// The source-support key of a value call, peeling `Paren`/`Group`.
+/// Free functions use `f`; associated impl functions use `Type::f`, matching the
+/// impl method registry's identity so support records cannot collide on bare
+/// method names like `new` / `get`.
+fn value_call_support_key(func: &Expr) -> Option<String> {
+    let inner = match func {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Path(path) = inner else { return None };
+    if path.qself.is_some() {
+        return None;
+    }
+    if let Some(ident) = path.path.get_ident() {
+        return Some(ident.to_string());
+    }
+    let (self_ty, name) = assoc_call_key(&path.path)?;
+    Some(format!("{self_ty}::{name}"))
+}
+
+/// Exact-or-bail predicate for term-position value-call inlining.
+fn is_fully_grounded_term(term: &Term) -> bool {
+    match term {
+        Term::Const { .. } => true,
+        Term::Var { .. } => false,
+        Term::Lambda { .. } | Term::Let { .. } => false,
+        Term::Ctor { name, args } => {
+            if name.starts_with("call:") || name.starts_with("method:") {
+                return false;
+            }
+            args.iter().all(|a| is_fully_grounded_term(a))
+        }
+    }
+}
 
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
 /// `TypeId::of` const-fold preamble FIRST (a resolved term, or a construction gap on

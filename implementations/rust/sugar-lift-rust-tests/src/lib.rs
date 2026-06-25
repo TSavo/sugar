@@ -9174,61 +9174,11 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// an opaque leaf (a further no-source call, a runtime method, a `&mut` adaptor)
     /// returns `None`.
     pub(crate) fn try_inline_value_call(&self, func: &Expr, args: &[Expr]) -> Option<Rc<Term>> {
-        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
-            return None; // recursion guard -> bail to opaque
-        }
-        let inlined = resolve_value_call_inline(func, args, self.scope, self.options)?;
-        // Re-build the substituted body's return expr through the term factory and
-        // desugar it with the inline depth bumped (so a nested call re-resolves here,
-        // bounded). The child ctx shares the scope/reducer/options; only the depth grows.
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let node = sugar::factory::build_term(&inlined, &fcx);
-        let mut fw = self.float_widths.borrow_mut();
-        let child = sugar_ctx(
-            self.scope,
-            self.options,
-            self.reducer,
-            &mut *fw,
-            self.macro_depth + 1,
-        );
-        let term = match node.desugar(&child) {
-            Outcome::Complete(d) => d.into_term()?,
-            Outcome::Incomplete(_) => return None, // a named effect -> bail to opaque
-        };
-        // EXACT-OR-BAIL: commit the peel only if it grounded all the way out.
-        if is_fully_grounded_term(&term) {
-            if let Some(name) = value_call_support_key(func) {
-                self.scope.record_inlined_value_helper(&name);
-            }
-            Some(term)
-        } else {
-            None
-        }
+        sugar::call::try_inline_value_call(self, func, args)
     }
 }
 
-/// The source-support key of a value call, peeling `Paren`/`Group`.
-/// Free functions use `f`; associated impl functions use `Type::f`, matching the
-/// impl method registry's identity so support records cannot collide on bare
-/// method names like `new` / `get`.
-fn value_call_support_key(func: &Expr) -> Option<String> {
-    let inner = match func {
-        Expr::Paren(p) => &*p.expr,
-        Expr::Group(g) => &*g.expr,
-        other => other,
-    };
-    let Expr::Path(path) = inner else { return None };
-    if path.qself.is_some() {
-        return None;
-    }
-    if let Some(ident) = path.path.get_ident() {
-        return Some(ident.to_string());
-    }
-    let (self_ty, name) = assoc_call_key(&path.path)?;
-    Some(format!("{self_ty}::{name}"))
-}
-
+/// Split an associated call path into `(SelfTy, method)`.
 fn assoc_call_key(path: &syn::Path) -> Option<(String, String)> {
     if path.segments.len() < 2 {
         return None;
@@ -9241,31 +9191,6 @@ fn assoc_call_key(path: &syn::Path) -> Option<(String, String)> {
         .nth(1)
         .map(|seg| seg.ident.to_string())?;
     Some((self_ty, method))
-}
-
-/// The exact-or-bail predicate for term-position value-call inlining: a term is FULLY
-/// GROUNDED iff it bottoms out entirely in CONSTANTS under arithmetic / comparison /
-/// structural constructors, with NO bare `Var` (an unresolved param or opaque local) and
-/// NO opaque `call:`/`method:` ctor (a further no-source call or runtime method). A
-/// `Lambda`/`Let` term in this position is also not a grounded scalar value -- reject.
-/// This is the gate that keeps inlining from inflating a discharge into an unclassified:
-/// it commits a peel ONLY when the body re-built to literals/arith.
-fn is_fully_grounded_term(term: &Term) -> bool {
-    match term {
-        Term::Const { .. } => true,
-        // A bare variable is an unresolved param / opaque local -- NOT grounded.
-        Term::Var { .. } => false,
-        // A lambda / let in value position is not a ground scalar value here.
-        Term::Lambda { .. } | Term::Let { .. } => false,
-        Term::Ctor { name, args } => {
-            // The opaque under-claim leaves: a further no-source call or a runtime
-            // method. Their presence means the body did NOT ground all the way out.
-            if name.starts_with("call:") || name.starts_with("method:") {
-                return false;
-            }
-            args.iter().all(|a| is_fully_grounded_term(a))
-        }
-    }
 }
 
 /// Emit a desugared constraint terminal into the collector's `entries` (the
