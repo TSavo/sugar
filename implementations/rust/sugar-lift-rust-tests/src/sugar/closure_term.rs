@@ -10,12 +10,28 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, Term};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
-use crate::{is_unqualified_local_name, names_referenced_in_expr, token_key, Sugar};
+use crate::sugar::term_leaf::resolved_term;
+use crate::{
+    is_unqualified_local_name, names_referenced_in_expr, token_key, Effect, Outcome, Sugar,
+    SugarCtx,
+};
 use syn::{Expr, Pat};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);
+
+struct ClosureAmbiguousCaptureSugar {
+    name: String,
+}
+
+impl Sugar for ClosureAmbiguousCaptureSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+            boundary: self.name.clone(),
+            reason: format!("closure captures ambiguous local `{}`; refused", self.name),
+        })
+    }
+}
 
 /// TERM recognizer for `Expr::Closure`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -42,9 +58,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         }
         if is_unqualified_local_name(&name) && scope.plan_versioned_contains(&name) {
             if scope.ambiguous_contains(&name) {
-                return Some(reasoned_incomplete(format!(
-                    "closure captures ambiguous local `{name}`; refused"
-                )));
+                return Some(Box::new(ClosureAmbiguousCaptureSugar { name }));
             }
             let vname = match scope.version_of(&name) {
                 Some(v) => format!("{name}@def{v}"),
