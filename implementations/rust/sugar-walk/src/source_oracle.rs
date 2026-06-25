@@ -1038,6 +1038,7 @@ fn source_span_eq(a: &SrcSpan, b: &SrcSpan) -> bool {
         && a.end_col == b.end_col
 }
 
+#[derive(Clone)]
 struct SourceFnRef<'a> {
     full_name: String,
     leaf_name: String,
@@ -1052,8 +1053,20 @@ fn locate_source_fn<'a>(
     items: &'a [syn::Item],
     memento: &SourceMemento,
 ) -> Option<SourceFnRef<'a>> {
-    let mut matches = Vec::new();
-    collect_source_fns(items, &mut matches);
+    let mut candidates = Vec::new();
+    collect_source_fns(items, &mut candidates);
+    let mut matches = candidates
+        .iter()
+        .map(|candidate| SourceFnRef {
+            full_name: candidate.full_name.clone(),
+            leaf_name: candidate.leaf_name.clone(),
+            span: candidate.span,
+            start_line: candidate.start_line,
+            end_line: candidate.end_line,
+            sig: candidate.sig,
+            block: candidate.block,
+        })
+        .collect::<Vec<_>>();
     let wanted = memento.source_function_name();
     matches.retain(|candidate| {
         wanted.is_none_or(|name| {
@@ -1063,26 +1076,30 @@ fn locate_source_fn<'a>(
         })
     });
     if matches.is_empty() {
-        return None;
+        return locate_source_fn_by_span(&candidates, memento);
     }
     if matches.len() > 1 && memento.span.start_line > 0 {
-        for candidate in &matches {
-            if candidate.start_line <= memento.span.start_line
-                && memento.span.start_line <= candidate.end_line
-            {
-                return Some(SourceFnRef {
-                    full_name: candidate.full_name.clone(),
-                    leaf_name: candidate.leaf_name.clone(),
-                    span: candidate.span,
-                    start_line: candidate.start_line,
-                    end_line: candidate.end_line,
-                    sig: candidate.sig,
-                    block: candidate.block,
-                });
-            }
+        if let Some(candidate) = locate_source_fn_by_span(&matches, memento) {
+            return Some(candidate);
         }
     }
     matches.into_iter().next()
+}
+
+fn locate_source_fn_by_span<'a>(
+    matches: &[SourceFnRef<'a>],
+    memento: &SourceMemento,
+) -> Option<SourceFnRef<'a>> {
+    if memento.span.start_line == 0 {
+        return None;
+    }
+    matches
+        .iter()
+        .find(|candidate| {
+            candidate.start_line <= memento.span.start_line
+                && memento.span.start_line <= candidate.end_line
+        })
+        .cloned()
 }
 
 fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>) {
@@ -1584,6 +1601,65 @@ mod tests {
             "assert_eq!(1 + 1, 2);"
         );
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_oracle_uses_memento_span_when_display_function_name_does_not_match_ast_name() {
+        use syn::spanned::Spanned;
+
+        let root = std::env::temp_dir().join(format!(
+            "sugar-source-oracle-display-name-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        let src = r#"
+pub trait Engine {
+    fn config(&self) -> bool;
+}
+
+pub struct GeneralPurpose;
+
+impl Engine for GeneralPurpose {
+    fn config(&self) -> bool {
+        let ok = true;
+        ok
+    }
+}
+"#;
+        std::fs::write(root.join("src/lib.rs"), src).expect("write source");
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let syn::Item::Impl(item_impl) = &file.items[2] else {
+            panic!("expected impl");
+        };
+        let syn::ImplItem::Fn(method) = &item_impl.items[0] else {
+            panic!("expected method");
+        };
+        let item_fn = syn::ItemFn {
+            attrs: method.attrs.clone(),
+            vis: method.vis.clone(),
+            sig: method.sig.clone(),
+            block: Box::new(method.block.clone()),
+        };
+        let mut memento = source_memento_of_statement_span(
+            "src/lib.rs",
+            src,
+            item_fn.block.stmts[0].span(),
+            "<GeneralPurpose as super::Engine>::config",
+            &item_fn.sig,
+            &item_fn.block,
+        )
+        .expect("statement memento");
+        memento.function_name = "<GeneralPurpose as super::Engine>::config".to_string();
+
+        let resolved = resolve_source_memento(&root, &memento)
+            .expect("span-bearing memento should resolve even with display-only function name");
+
+        assert_eq!(resolved.fragment.body_text, "let ok = true;");
         let _ = std::fs::remove_dir_all(root);
     }
 

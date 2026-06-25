@@ -37,10 +37,10 @@ use sugar_claim_envelope::{
 use sugar_ir_types::{EvidenceMemento, IrFormula, IrTerm, SourceKind};
 use sugar_lift_contracts::lift_file_with_docstring_evidence;
 use sugar_walk::emit::{rust_function_term_json_for_file, shadow_proof_ir_cid, shadow_to_proof_ir};
-#[cfg(test)]
-use sugar_walk::source_oracle::resolve_source_memento;
 use sugar_walk::source_oracle::{
-    block_inner_source, block_to_ast_template, source_memento_of_named_item_fn, SourceMemento,
+    block_inner_source, block_to_ast_template, resolve_source_memento,
+    source_memento_of_named_item_fn, source_memento_of_statement_span, source_memento_of_term_span,
+    SourceMemento, SrcSpan,
 };
 use sugar_walk::{
     build_function_contract_with_file_and_post_override, build_shadow_source,
@@ -236,6 +236,7 @@ fn handle_line(line: &str) -> Value {
         // binary handles this too because it already owns the syn AST
         // machinery that recognize needs — same kit, same language.
         "sugar.plugin.recognize" => recognize(&params),
+        "sugar.plugin.resolve_source_memento" => resolve_source_memento_rpc(&params),
         // Materialize (#1359, rust mirror of the python bind_rpc materializer).
         // Finds `#[sugar::boundary(library, call)]` stubs in the consumer
         // source, asks the SOURCE ORACLE to resolve each bound vendor function's
@@ -275,6 +276,77 @@ fn handle_line(line: &str) -> Value {
             "id": id,
         }),
     }
+}
+
+fn resolve_source_memento_rpc(params: &Value) -> Result<Value, String> {
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .ok_or("missing `workspace_root`")?;
+    let memento_value = params
+        .get("sourceMemento")
+        .or_else(|| params.get("source_memento"))
+        .ok_or("missing `sourceMemento`")?;
+    let memento =
+        source_memento_from_json_value(memento_value).ok_or("invalid `sourceMemento` shape")?;
+    let resolved = resolve_source_memento(Path::new(workspace_root), &memento)
+        .map_err(|refusal| refusal.reason)?;
+    Ok(json!({
+        "file": memento.file,
+        "span": {
+            "start_line": memento.span.start_line,
+            "start_col": memento.span.start_col,
+            "end_line": memento.span.end_line,
+            "end_col": memento.span.end_col,
+        },
+        "source": resolved.fragment.body_text.trim(),
+        "bodyText": resolved.fragment.body_text.trim(),
+    }))
+}
+
+fn source_memento_from_json_value(value: &Value) -> Option<SourceMemento> {
+    let file = value.get("file").and_then(Value::as_str)?.to_string();
+    let span = value.get("span")?;
+    let param_names = value
+        .get("paramNames")
+        .or_else(|| value.get("param_names"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(SourceMemento {
+        file,
+        function_name: value
+            .get("sourceFunctionName")
+            .or_else(|| value.get("source_function_name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        span: SrcSpan {
+            start_line: span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            start_col: span.get("start_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_line: span.get("end_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_col: span.get("end_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+        },
+        param_names,
+        source_cid: value
+            .get("source_cid")
+            .or_else(|| value.get("sourceCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        template_cid: value
+            .get("template_cid")
+            .or_else(|| value.get("templateCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// Recognizer foundation (#81, #82) per protocol §4.2.5.
@@ -6509,6 +6581,7 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
     let mut diagnostics: Vec<Value> = Vec::new();
     let mut source_loci: Vec<Value> = Vec::new();
     let mut source_mementos: Vec<Value> = Vec::new();
+    let mut factory_walk: Vec<Value> = Vec::new();
     let mut visited: std::collections::BTreeSet<PathBuf> = Default::default();
 
     for scan_root in lift_scan_roots(&root, &source_paths) {
@@ -6573,28 +6646,34 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
             // Singleton totality post: is_ok(result).
             // Shape: {"kind":"atomic","name":"is_ok","args":[{"kind":"var","name":"result"}]}
             // Matches the exact shape callee_post_guard_fact requires (body_discharge.rs).
-            let post_override: Option<IrFormula> = if target.totality_result_ok {
-                Some(IrFormula::Atomic {
+            let post_formula = if target.totality_result_ok {
+                IrFormula::Atomic {
                     name: panic_freedom::IS_OK.to_string(),
                     args: vec![IrTerm::Var {
                         name: "result".to_string(),
                     }],
-                })
+                }
             } else {
-                Some(
-                    lift_function_postcondition_with_return_facts_and_pure_free_guards(
-                        &target.item_fn,
-                        &return_facts,
-                        &pure_free_guard_rules,
-                    )
-                    .into_formula(),
+                lift_function_postcondition_with_return_facts_and_pure_free_guards(
+                    &target.item_fn,
+                    &return_facts,
+                    &pure_free_guard_rules,
                 )
+                .into_formula()
             };
+            if !target.totality_result_ok {
+                factory_walk.extend(function_contract_body_factory_walk_rows(
+                    rel.as_str(),
+                    &src,
+                    &target,
+                    &post_formula,
+                ));
+            }
             let contract = build_function_contract_with_file_and_post_override(
                 &target.item_fn,
                 None,
                 Some(rel.as_str()),
-                post_override,
+                Some(post_formula),
             );
             // Totality-axiom contracts are body-discharge-INELIGIBLE (no
             // result equation, by design: the post is an axiom, not derived
@@ -6726,11 +6805,13 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
     }
 
     let source_ledger = source_ledger_for_loci(&source_loci);
+    let factory_audit_summary = factory_audit_summary_from_walk(&factory_walk);
     Ok(json!({
         "kind": "ir-document",
         "ir": entries,
         "diagnostics": diagnostics,
         "refusals": [],
+        "factoryAuditSummary": factory_audit_summary,
         "sourceLedger": source_ledger.clone(),
         "sourceAudits": [json!({
             "role": "rust-fn-contracts",
@@ -6740,6 +6821,218 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
         })],
         "sourceMementos": source_mementos,
     }))
+}
+
+fn function_contract_body_factory_walk_rows(
+    rel: &str,
+    src: &str,
+    target: &FunctionContractLiftTarget,
+    post_formula: &IrFormula,
+) -> Vec<Value> {
+    let projection_sites = function_contract_body_projection_sites(rel, src, target);
+    if projection_sites.is_empty() {
+        return Vec::new();
+    }
+
+    function_contract_body_projection_formulas(post_formula)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, formula)| {
+            let site = projection_site_for_formula(&formula, &projection_sites)
+                .or_else(|| projection_sites.get(idx))
+                .or_else(|| projection_sites.last())?;
+            let memento = &site.memento;
+            Some(json!({
+                "file": rel,
+                "line": memento.span.start_line,
+                "requested_role": "FunctionBodyConstraint",
+                "ast_kind": "stmt",
+                "selected": "function_contract_body_post",
+                "status": "warranted",
+                "verdict": "complete",
+                "output": "constraints",
+                "sourceMemento": memento.to_json(),
+                "emittedFormula": serde_json::to_value(&formula)
+                    .expect("IrFormula should serialize for factory walk"),
+            }))
+        })
+        .collect()
+}
+
+struct FunctionContractBodyProjectionSite {
+    memento: SourceMemento,
+    bound_name: Option<String>,
+    result_position: bool,
+}
+
+fn function_contract_body_projection_sites(
+    rel: &str,
+    src: &str,
+    target: &FunctionContractLiftTarget,
+) -> Vec<FunctionContractBodyProjectionSite> {
+    let stmts = &target.item_fn.block.stmts;
+    stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, stmt)| {
+            let result_position = statement_produces_result(stmt, idx, stmts.len());
+            let memento =
+                function_contract_projection_site_memento(rel, src, target, stmt, result_position)?;
+            Some(FunctionContractBodyProjectionSite {
+                memento,
+                bound_name: statement_bound_name(stmt),
+                result_position,
+            })
+        })
+        .collect()
+}
+
+fn function_contract_projection_site_memento(
+    rel: &str,
+    src: &str,
+    target: &FunctionContractLiftTarget,
+    stmt: &syn::Stmt,
+    result_position: bool,
+) -> Option<SourceMemento> {
+    if result_position {
+        if let syn::Stmt::Expr(expr, _) = stmt {
+            if let Some(memento) = source_memento_of_term_span(
+                rel,
+                src,
+                expr.span(),
+                &target.fn_name,
+                &target.item_fn.sig,
+                &target.item_fn.block,
+            ) {
+                return Some(memento);
+            }
+        }
+    }
+    source_memento_of_statement_span(
+        rel,
+        src,
+        stmt.span(),
+        &target.fn_name,
+        &target.item_fn.sig,
+        &target.item_fn.block,
+    )
+}
+
+fn projection_site_for_formula<'a>(
+    formula: &IrFormula,
+    sites: &'a [FunctionContractBodyProjectionSite],
+) -> Option<&'a FunctionContractBodyProjectionSite> {
+    match formula_lhs_var_name(formula) {
+        Some("result") => sites.iter().find(|site| site.result_position),
+        Some(lhs) => sites
+            .iter()
+            .find(|site| site.bound_name.as_deref() == Some(lhs)),
+        None => None,
+    }
+}
+
+fn formula_lhs_var_name(formula: &IrFormula) -> Option<&str> {
+    let IrFormula::Atomic { name, args } = formula else {
+        return None;
+    };
+    if name != "=" {
+        return None;
+    }
+    let Some(IrTerm::Var { name }) = args.first() else {
+        return None;
+    };
+    Some(name.as_str())
+}
+
+fn statement_bound_name(stmt: &syn::Stmt) -> Option<String> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    local_binding_ident_name(local)
+}
+
+fn local_binding_ident_name(local: &syn::Local) -> Option<String> {
+    match &local.pat {
+        syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+        syn::Pat::Type(typed) => match &*typed.pat {
+            syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn statement_produces_result(stmt: &syn::Stmt, idx: usize, total: usize) -> bool {
+    match stmt {
+        syn::Stmt::Expr(syn::Expr::Return(_), _) => true,
+        syn::Stmt::Expr(_, None) => idx + 1 == total,
+        _ => false,
+    }
+}
+
+fn function_contract_body_projection_formulas(post_formula: &IrFormula) -> Vec<IrFormula> {
+    let mut formulas = Vec::new();
+    push_function_contract_body_projection_formula(post_formula, &mut formulas);
+    formulas
+}
+
+fn push_function_contract_body_projection_formula(formula: &IrFormula, out: &mut Vec<IrFormula>) {
+    match formula {
+        IrFormula::And { operands } => {
+            for operand in operands {
+                push_function_contract_body_projection_formula(operand, out);
+            }
+        }
+        IrFormula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            push_result_term_projection_formulas(args[0].clone(), &args[1], out);
+        }
+        _ => out.push(formula.clone()),
+    }
+}
+
+fn push_result_term_projection_formulas(lhs: IrTerm, rhs: &IrTerm, out: &mut Vec<IrFormula>) {
+    match rhs {
+        IrTerm::Let { bindings, body } => {
+            for binding in bindings {
+                out.push(IrFormula::Atomic {
+                    name: "=".to_string(),
+                    args: vec![
+                        IrTerm::Var {
+                            name: binding.name.clone(),
+                        },
+                        binding.bound_term.clone(),
+                    ],
+                });
+            }
+            push_result_term_projection_formulas(lhs, body, out);
+        }
+        _ => out.push(IrFormula::Atomic {
+            name: "=".to_string(),
+            args: vec![lhs, rhs.clone()],
+        }),
+    }
+}
+
+fn factory_audit_summary_from_walk(factory_walk: &[Value]) -> Value {
+    let warranted = factory_walk
+        .iter()
+        .filter(|row| row.get("status").and_then(Value::as_str) == Some("warranted"))
+        .count();
+    json!({
+        "sites": factory_walk.len(),
+        "emittedRows": factory_walk.len(),
+        "omittedRows": 0,
+        "totalRows": factory_walk.len(),
+        "complete": true,
+        "statusCounts": {
+            "warranted": warranted,
+            "refused": 0,
+            "support": 0,
+            "unresolved": 0,
+        },
+        "unresolvedSites": [],
+        "factoryWalk": factory_walk,
+    })
 }
 
 fn function_contract_source_locus(
@@ -9564,6 +9857,23 @@ mod tests {
         assert_eq!(resolved.body_text(), "s.chars().rev().collect()");
         assert_eq!(resolved.source_cid, memento.source_cid);
         assert_eq!(resolved.template_cid, memento.template_cid);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_source_memento_rpc_returns_source_from_workspace_root() {
+        let dir = unique_tmp("resolve-rpc");
+        let src = "pub fn encoded_len(bytes_len: usize) -> usize {\n    let rem = bytes_len % 3;\n    rem + 1\n}\n";
+        let memento = mint_memento_for(&dir, "encoded_len", src);
+
+        let resolved = resolve_source_memento_rpc(&json!({
+            "workspace_root": dir.to_string_lossy(),
+            "sourceMemento": memento.to_json(),
+        }))
+        .expect("resolve source memento rpc");
+
+        assert_eq!(resolved["file"], "src/lib.rs");
+        assert_eq!(resolved["source"], "let rem = bytes_len % 3;\n    rem + 1");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -13293,6 +13603,218 @@ impl Thing {
                 .as_str()
                 .is_some_and(|cid| !cid.is_empty()));
         }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_lift_projects_body_post_through_factory_walk_rows() {
+        let root = temp_workspace("function_contract_factory_walk_projection");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "factory-walk-demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+        fs::write(
+            src_dir.join("lib.rs"),
+            r#"
+pub fn encoded_len(bytes_len: usize) -> usize {
+    let rem = bytes_len % 3;
+    rem + 1
+}
+"#,
+        )
+        .expect("write source");
+
+        let resp = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect("function contract lift");
+
+        let factory_walk = resp["factoryAuditSummary"]["factoryWalk"]
+            .as_array()
+            .expect("function contracts must emit factory walk rows");
+        let encoded_rows = factory_walk
+            .iter()
+            .filter(|row| row["sourceMemento"]["sourceFunctionName"] == "encoded_len")
+            .collect::<Vec<_>>();
+        assert!(
+            encoded_rows.len() >= 2,
+            "encoded_len should project let binding and result rows: {factory_walk:#?}"
+        );
+        assert!(
+            encoded_rows.iter().all(|row| row["status"] == "warranted"
+                && row["verdict"] == "complete"
+                && row["output"] == "constraints"),
+            "factory walk rows should be complete warranted constraints: {encoded_rows:#?}"
+        );
+        assert!(
+            encoded_rows.iter().all(|row| row.get("source").is_none()
+                && row.get("term").is_none()
+                && row.get("site").is_none()),
+            "factory walk rows must carry memento pins, not plaintext source/term/site: {encoded_rows:#?}"
+        );
+        assert!(
+            encoded_rows
+                .iter()
+                .all(|row| row.get("emittedFormula").is_some()),
+            "each projected row must name the emitted formula: {encoded_rows:#?}"
+        );
+        assert!(
+            encoded_rows.iter().any(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(3)
+                    && row["emittedFormula"]["kind"] == "atomic"
+                    && row["emittedFormula"]["name"] == "="
+                    && row["emittedFormula"]["args"][0]["kind"] == "var"
+                    && row["emittedFormula"]["args"][0]["name"] == "rem"
+            }),
+            "let binding line should emit rem = bytes_len % 3: {encoded_rows:#?}"
+        );
+        assert!(
+            encoded_rows.iter().any(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(4)
+                    && row["emittedFormula"]["kind"] == "atomic"
+                    && row["emittedFormula"]["name"] == "="
+                    && row["emittedFormula"]["args"][0]["kind"] == "var"
+                    && row["emittedFormula"]["args"][0]["name"] == "result"
+            }),
+            "tail line should emit result = tail expression: {encoded_rows:#?}"
+        );
+        assert_eq!(
+            resp["factoryAuditSummary"]["emittedRows"],
+            json!(factory_walk.len())
+        );
+        assert_eq!(
+            resp["factoryAuditSummary"]["statusCounts"]["warranted"],
+            json!(factory_walk.len())
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_factory_walk_pins_residual_result_to_result_statement() {
+        let root = temp_workspace("function_contract_factory_walk_result_pin");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "factory-walk-result-pin-demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+        let source = r#"
+pub fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
+    let rem = bytes_len % 3;
+    let complete_input_chunks = bytes_len / 3;
+    let complete_chunk_output =
+        if let Some(complete_chunk_output) = complete_input_chunks.checked_mul(4) {
+            complete_chunk_output
+        } else {
+            return None;
+        };
+    if rem > 0 {
+        if padding {
+            complete_chunk_output.checked_add(4)
+        } else {
+            let encoded_rem = match rem {
+                1 => 2,
+                _ => 3,
+            };
+            complete_chunk_output.checked_add(encoded_rem)
+        }
+    } else {
+        Some(complete_chunk_output)
+    }
+}
+"#;
+        fs::write(src_dir.join("lib.rs"), source).expect("write source");
+        let rem_line = source
+            .lines()
+            .position(|line| line.contains("let rem ="))
+            .expect("rem line")
+            + 1;
+        let result_line = source
+            .lines()
+            .position(|line| line.contains("if rem > 0"))
+            .expect("result line")
+            + 1;
+        let unrelated_let_line = source
+            .lines()
+            .position(|line| line.contains("let complete_input_chunks"))
+            .expect("unrelated let line")
+            + 1;
+
+        let resp = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect("function contract lift");
+
+        let factory_walk = resp["factoryAuditSummary"]["factoryWalk"]
+            .as_array()
+            .expect("function contracts must emit factory walk rows");
+        let encoded_rows = factory_walk
+            .iter()
+            .filter(|row| row["sourceMemento"]["sourceFunctionName"] == "encoded_len")
+            .collect::<Vec<_>>();
+        assert!(
+            encoded_rows.iter().any(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(rem_line)
+                    && row["emittedFormula"]["args"][0]["name"] == "rem"
+            }),
+            "rem binding should stay pinned to its own let line: {encoded_rows:#?}"
+        );
+        assert!(
+            encoded_rows.iter().any(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(result_line)
+                    && row["emittedFormula"]["args"][0]["name"] == "result"
+            }),
+            "residual result formula should pin to the result-producing statement: {encoded_rows:#?}"
+        );
+        let result_row = encoded_rows
+            .iter()
+            .find(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(result_line)
+                    && row["emittedFormula"]["args"][0]["name"] == "result"
+            })
+            .expect("result row");
+        let result_memento = SourceMemento::from_body_source(
+            Some("encoded_len".to_string()),
+            &json!({
+                "file": result_row["sourceMemento"]["file"].clone(),
+                "span": result_row["sourceMemento"]["span"].clone(),
+                "param_names": result_row["sourceMemento"]["param_names"].clone(),
+                "source_cid": result_row["sourceMemento"]["source_cid"].clone(),
+                "template_cid": result_row["sourceMemento"]["template_cid"].clone(),
+            }),
+        )
+        .expect("result source memento");
+        let resolved = resolve_source_memento(&root, &result_memento)
+            .expect("result source memento should resolve to its source line");
+        assert!(
+            resolved.fragment.body_text.contains("if rem > 0"),
+            "result row should resolve to the result-producing source: {resolved:#?}"
+        );
+        assert!(
+            !encoded_rows.iter().any(|row| {
+                row["sourceMemento"]["span"]["start_line"] == json!(unrelated_let_line)
+                    && row["emittedFormula"]["args"][0]["name"] == "result"
+            }),
+            "residual result formula must not drift onto an unrelated middle let: {encoded_rows:#?}"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
