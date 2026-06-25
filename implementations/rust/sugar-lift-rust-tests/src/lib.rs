@@ -161,6 +161,7 @@ pub mod sugar {
     pub mod range_contains;
     pub mod range_term;
     pub mod raw_addr_term;
+    pub mod raw_pointer_arithmetic;
     pub mod reference_sequence;
     pub mod reference_term;
     pub mod regex_match;
