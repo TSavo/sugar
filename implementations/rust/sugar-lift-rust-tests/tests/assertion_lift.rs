@@ -17297,12 +17297,24 @@ fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
         "runtime split source should be refused by the destructure boundary: {:?}",
         out.skip_reasons
     );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|reason| reason.contains("destructured source runtime, not literal"))
+        .unwrap_or_else(|| {
+            panic!(
+                "runtime split source should name the destructured-source boundary: {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "runtime destructured source must be a terminal named effect: {reason}"
+    );
     assert!(
-        out.skip_reasons
-            .iter()
-            .any(|reason| reason.contains("destructured source runtime, not literal")),
-        "runtime split source should name the destructured-source boundary: {:?}",
-        out.skip_reasons
+        !reason.contains("legacy reason leaf"),
+        "runtime destructured source must not route through ReasonedIncompleteSugar: {reason}"
     );
 }
 
@@ -31398,12 +31410,24 @@ fn slice_tuple_pattern_destructure_runtime_sources_are_named_refused() {
             "{label}: runtime destructured source should be refused, not unsupported: {:?}",
             out.skip_reasons
         );
+        let reason = out
+            .skip_reasons
+            .iter()
+            .find(|reason| reason.contains("destructured source runtime, not literal"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label}: missing destructured-source refusal reason: {:?}",
+                    out.skip_reasons
+                )
+            });
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused,
+            "{label}: runtime destructured source must be terminal: {reason}"
+        );
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|reason| reason.contains("destructured source runtime, not literal")),
-            "{label}: missing destructured-source refusal reason: {:?}",
-            out.skip_reasons
+            !reason.contains("legacy reason leaf"),
+            "{label}: must not route through ReasonedIncompleteSugar: {reason}"
         );
     }
 }

@@ -9,7 +9,7 @@ use crate::sugar::factory::{
     has_tuple_producer, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
     TupleProducerFloor,
 };
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
+use crate::sugar::term_leaf::resolved_term;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
 use tracing::debug;
@@ -120,6 +120,11 @@ struct BoundPathTemporalEffectSugar {
     reason: String,
 }
 
+struct BoundPathRuntimeDestructuredSourceSugar {
+    boundary: String,
+    reason: String,
+}
+
 struct BoundPathGapSugar {
     reason: String,
 }
@@ -127,6 +132,15 @@ struct BoundPathGapSugar {
 impl Sugar for BoundPathTemporalEffectSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+            boundary: self.boundary.clone(),
+            reason: self.reason.clone(),
+        })
+    }
+}
+
+impl Sugar for BoundPathRuntimeDestructuredSourceSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeDestructuredSource {
             boundary: self.boundary.clone(),
             reason: self.reason.clone(),
         })
@@ -287,11 +301,15 @@ impl Sugar for BoundPathSugar {
 
 fn runtime_destructured_source_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_runtime_destructured_local(name).then(|| {
-        reasoned_incomplete(format!(
+        let reason = format!(
             "destructured source runtime, not literal for `{name}`: pattern binding participates \
              in the assertion, but the destructured source did not resolve to a literal tuple/array; \
              refused"
-        ))
+        );
+        Box::new(BoundPathRuntimeDestructuredSourceSugar {
+            boundary: name.to_string(),
+            reason,
+        }) as Box<dyn Sugar>
     })
 }
 
