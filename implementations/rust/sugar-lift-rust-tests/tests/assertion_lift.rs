@@ -7584,7 +7584,8 @@ fn range_rebinds() {
         names,
         vec![
             "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:0))::assertion",
-            "method:contains#euf#c:callresult_method_contains_a2(c:range_incl(i:0:u32,i:4294967295),c:ref(i:0))::assertion",
+            // `u32::MAX` is a compiler-known primitive const, so its floor keeps the u32 sort.
+            "method:contains#euf#c:callresult_method_contains_a2(c:range_incl(i:0:u32,i:4294967295:u32),c:ref(i:0))::assertion",
         ]
     );
 }
