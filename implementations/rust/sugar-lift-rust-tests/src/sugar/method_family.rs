@@ -76,7 +76,7 @@ pub(crate) fn build_literal_sequence_composite(
     // Scope-aware base gate: a const-length repeat (`[7; SIZE]`) resolves to a finite literal
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
     if !is_literal_sequence_base_in_scope(&base, fcx.scope())
-        && !literal_slice::is_literal_slice_base(&base, fcx.let_inits())
+        && !literal_slice::is_literal_slice_base_in_scope(&base, fcx.let_inits(), fcx.scope())
         && !literal_iter_call_base(&base)
         && !has_composite(&base, fcx)
     {
@@ -281,7 +281,10 @@ fn literal_sequence_static_len_inner<'a>(
     match strip_refs_groups(expr) {
         Expr::Array(array) => Some(array.elems.len()),
         Expr::Range(range) => literal_range_len(range),
-        Expr::Index(_) => literal_slice::literal_slice_len(expr, let_inits),
+        Expr::Index(_) => match scope {
+            Some(scope) => literal_slice::literal_slice_len_in_scope(expr, let_inits, scope),
+            None => literal_slice::literal_slice_len(expr, let_inits),
+        },
         Expr::Call(call) => literal_iter_call_len(call),
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
@@ -417,7 +420,7 @@ fn literal_collection_static_len_proof_inner<'a>(
         }),
         Expr::Index(_) => Some(StaticCollectionLenProof {
             source: expr.clone(),
-            len: literal_slice::literal_slice_len(expr, let_inits)?,
+            len: literal_slice::literal_slice_len_in_scope(expr, let_inits, scope)?,
             saw_length_only_adapter: false,
         }),
         Expr::Call(call) if literal_iter_call_len(call).is_some() => {

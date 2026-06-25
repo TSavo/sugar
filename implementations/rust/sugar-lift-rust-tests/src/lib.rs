@@ -6119,7 +6119,7 @@ pub(crate) fn resolves_literal_sequence_in_scope(
         return false;
     };
     sugar::method_family::is_literal_sequence_base_in_scope(&base, fcx.scope())
-        || sugar::literal_slice::is_literal_slice_base(&base, fcx.let_inits())
+        || sugar::literal_slice::is_literal_slice_base_in_scope(&base, fcx.let_inits(), fcx.scope())
         || sugar::factory::has_composite(&base, fcx)
 }
 
