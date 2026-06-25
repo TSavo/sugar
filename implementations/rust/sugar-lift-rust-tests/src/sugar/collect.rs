@@ -13,7 +13,7 @@ use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
 use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
@@ -186,13 +186,7 @@ impl CollectPlan {
                         },
                     }
                 };
-                let Some(collected) = seq
-                    .iter()
-                    .map(|elem| elem_term(elem, ctx, &fcx))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    return Ok(None);
-                };
+                let collected = seq.iter().map(elem_term).collect::<Vec<_>>();
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::collect",
                     len = collected.len(),
@@ -462,14 +456,13 @@ fn expected_collect_kind(fcx: &SugarBuildCtx) -> Option<CollectKind> {
     }
 }
 
-fn elem_term(elem: &DesugaredElem, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Option<Rc<Term>> {
-    if let Some(value) = elem.value.as_ref().and_then(const_val_term) {
-        return Some(value);
-    }
-    build_term(&elem.expr, fcx)
-        .desugar(ctx)
-        .complete()?
-        .into_term()
+fn elem_term(elem: &DesugaredElem) -> Rc<Term> {
+    elem.value
+        .as_ref()
+        .and_then(const_val_term)
+        .unwrap_or_else(|| {
+            panic!("collect sequence element did not dispatch to a literal term floor")
+        })
 }
 
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
