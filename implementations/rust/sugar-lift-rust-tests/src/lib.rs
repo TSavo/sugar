@@ -864,6 +864,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // monomorphizes it. The sugar owns the stop instead of emitting a fake symbolic
         // layout term.
         || reason.contains("layout is unknown to this lift")
+        // TERMINAL: a Regex pattern reaches the shared RegLan lowering authority, and that
+        // authority proves the pattern uses a non-regular feature such as a backreference.
+        // The regex sugar owns this refusal; emitting `str.in-regex` would be a fake
+        // membership claim outside ProofIR's regular-language fragment.
+        || reason.contains("not expressible as RegLan")
         // TERMINAL: stdlib `SliceIndex::index` over a literal slice can be evaluated
         // exactly. If that evaluation says the index is out of bounds, the source path
         // panics; there is no scalar value to lift. The `get` twin still discharges to
