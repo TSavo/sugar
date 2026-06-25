@@ -25,7 +25,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     match call.method.to_string().as_str() {
-        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "by_ref" => {
+        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "by_ref" | "clone" => {
             Some(Box::new(IteratorSugar {
                 receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
                     &call.receiver,
