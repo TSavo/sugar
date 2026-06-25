@@ -1,7 +1,8 @@
-> The sacred cows exist because human attention used to be the scarce resource.
-> At agent speed, generation is cheap and parallel; reliable orientation is
-> scarce. So process must pin orientation in executable instruments, not in
-> meetings, careful intentions, or waiting for green.
+> With human teams, orientation was comparatively plentiful and generation was
+> scarce. With agents, generation is cheap and parallel while reliable
+> orientation is scarce. The invariant inverted; the process did not. So process
+> must pin orientation in executable instruments, not in meetings, careful
+> intentions, or waiting for green.
 
 > "The past 3 years of my journey with AI can be summarized as a series of
 > increasingly sophisticated arguments about why it's wrong about process."
@@ -17,15 +18,29 @@ not merge failing tests, do not cause regressions. They are not moral laws.
 They are compensating controls for low observability. They survive because most
 teams move slowly enough that gates feel affordable.
 
+For human teams, the bargain was coherent. The people doing the work carried
+the architecture in their heads, remembered yesterday's conversation, and were
+expensive to interrupt. Orientation was relatively abundant because it lived in
+the team. Generation was scarce because every change cost human hours. A gate
+protected the expensive thing.
+
+Agents invert that economy. Generation becomes cheap, parallel, and relentless.
+Orientation becomes the scarce resource: the goal, the taste, the boundary, the
+reason a change is good instead of merely plausible. A process built for scarce
+generation will keep protecting generation after generation has stopped being
+the bottleneck. It will serialize the cheap thing while letting the scarce
+thing decay.
+
 At extreme velocity, gates become the bottleneck. A review gate, a green-CI
 gate, a release gate, a "wait for the full sweep" gate: each one serializes the
 work. It asks every parallel shot to queue behind a single reading that cannot
 exist until after the shot lands. The gate is not safety. The gate is latency
-wearing a safety vest.
+wearing a safety vest, and it spends orientation while pretending to save risk.
 
 Instrument Driven Development is the replacement bargain. If we want to break
 the sacred cows without drowning in hidden damage, we do not replace discipline
-with vibes. We replace gates with instruments.
+with vibes. We replace gates with instruments. The instrument is where
+orientation is stored.
 
 TDD pins behavior: given this input, prove this output. IDD pins direction:
 given this codebase, measure the ways it is drifting away from the shape we
@@ -52,7 +67,8 @@ can point to every violation.
 Vibes are useless at agent speed. A vibe in chat decays. A vibe in a plan goes
 stale. A vibe in a comment becomes folklore. So the first act is to convert the
 vibe into a vector: named axes, current `R`, observed `Delta R` between runs,
-and predicted `Epsilon R` for the change about to land.
+and predicted `Epsilon R` for the change about to land. The vector is not just
+tracking work. It is preserving orientation against drift.
 
 The first artifact is not a checklist. It is not a reminder. It is a red
 instrument: a unit test, compiler failure, report, receipt, or static audit
@@ -66,7 +82,8 @@ stop logging this secret.
 Then the agent can do what agents are good at: chase green. The context is no
 longer a fragile paragraph in chat; it is executable gravity. As long as red
 remains, drift is visible. When silence arrives at stable zero, the vibe has
-become law.
+become law. The abundant resource is allowed to run; the scarce resource is
+pinned.
 
 ## Sacred cows: massive parallelism is moving fast and breaking things — loudly
 
@@ -74,23 +91,23 @@ Three commandments are carved over every engineering door: **don't check in brok
 
 "Move fast and break things" is half a sentence. Breaking things is fine; breakage that *hides* is what kills you — it accumulates into a swamp no one can see the bottom of. So teams do the obvious thing and add a gate: review-then-merge, prove-then-ship, green-CI-before-anything. The gate feels like the price of speed without chaos.
 
-But a gate is a serialization point, and serialization is the death of parallelism. Every shot queues behind the gate and waits for green; fire a hundred agents and all hundred stall at the same checkpoint — the gate, not the work, is the bottleneck. You cannot fan out through a gate. And the green it waits for is *always late*: every measurement worth having is taken after the shot lands, never before. A gate orders the shot to wait on a signal that does not exist yet — and cannot, until the shot is fired. That is why it serializes; it has inverted cause and effect.
+But a gate is a serialization point, and serialization is the death of parallelism. Every shot queues behind the gate and waits for green; fire a hundred agents and all hundred stall at the same checkpoint — the gate, not the work, is the bottleneck. You cannot fan out through a gate. And the green it waits for is *always late*: every measurement worth having is taken after the shot lands, never before. A gate orders the shot to wait on a signal that does not exist yet — and cannot, until the shot is fired. That is why it serializes; it has inverted cause and effect. It is also guarding the old scarce resource: generation. While it waits, the new scarce resource — orientation — leaks away.
 
 So we ask the inverted question. Not "how do we go fast safely," but "what would make breaking things safe enough that the gate becomes unnecessary?" There are exactly two answers, and everything here is built on them.
 
 **Make every break loud.** A failure that must never happen does not earn a counter we promise to lower someday — it earns a `panic`. It stops the program. A break that stops the program cannot hide and cannot accumulate; it is fixed on contact. (It is why you never find a type error sitting in a shipped binary — not because they never arise, but because the compiler refuses to emit one while a single type is unaccounted; the hole halts the build, so it dies before it has a name.) Loud breakage is breakage you can afford to cause.
 
-**Measure every gap.** This is delta-epsilon testing, and it is indifferent to what we build. Every goal is a vector of named remaining-work counts, `R`. At each check-in the instrument reports current `R`. `Delta R` is what you read by comparing that run with the previous run — what actually moved. Separately, every change carries `Epsilon R` — the change we predict when that work lands. We are done only at a *stable* zero: `R`, eyeballed `Delta`, and predicted `Epsilon` all zero, every floor intact. We never guess where we stand; we read it. And we read it late, on purpose: the measurement lands after the shot, never before — `Epsilon R` exists precisely because the observed signal has not arrived yet. Latency is not a defect to engineer away; it is the shape of telemetry itself. The gate's whole error was to demand the reading before the shot. We take the same reading after, and fix forward.
+**Measure every gap.** This is delta-epsilon testing, and it is indifferent to what we build. Every goal is a vector of named remaining-work counts, `R`. At each check-in the instrument reports current `R`. `Delta R` is what you read by comparing that run with the previous run — what actually moved. Separately, every change carries `Epsilon R` — the change we predict when that work lands. We are done only at a *stable* zero: `R`, eyeballed `Delta`, and predicted `Epsilon` all zero, every floor intact. We never guess where we stand; we read it. And we read it late, on purpose: the measurement lands after the shot, never before — `Epsilon R` exists precisely because the observed signal has not arrived yet. Latency is not a defect to engineer away; it is the shape of telemetry itself. The gate's whole error was to demand the reading before the shot. We take the same reading after, and fix forward. The point is not merely to count work; it is to keep orientation alive between shot and signal.
 
 A checklist is not measurement. A threshold is not measurement. Both freeze what one agent happened to notice, then ask every later agent to trust that stale map. The instrument is automated recognition of the live work: a test, compiler error, or report that turns red for every remaining offender and says what must replace it. When the goal is removal, the failure output is part of the design: it names the current illegal shape and the replacement architecture that makes it disappear. We do not fly by promises, comments, pinned plans, or hand-maintained counts. We fly by the red compiler, the red test, and the measured `R` they expose.
 
 Those two are the gate's entire job — keep silent ruin from shipping — done without ever stopping the line. And they are one loop, not two tools: automated instrumentation reports current `R`, humans read `Delta R` from one run to the next, each change states predicted `Epsilon R`, and the system stays red until all three are zero. Red is red. There is no softer red for "known debt," no green because the count improved, and no threshold that turns remaining work into success. **That silence is the proof the zero is real, and it is load-bearing forward: once delta-epsilon is zero you know the instrument cannot fire again, so red after that is, by definition, a regression** — the stable zero, broken by new work, announcing itself the one way that cannot be ignored.
 
-Here is the payoff, and it is the whole reason the discipline exists: **once breakage is loud and state is measured, there is nothing left to coordinate for safety.** Agents still divide the work so their shots do not collide — parallelism is not the absence of a plan — but no agent waits on another for *permission*. A broken shot screams and is fixed forward. The ledger keeps everyone honest about what remains. So you fire every shot you have, in parallel, the moment it is ready — and massive parallelism is not a technique you bolt on, it is what *falls out* of moving fast and breaking things loudly. The gates were the only thing stopping you; the instruments made them unnecessary.
+Here is the payoff, and it is the whole reason the discipline exists: **once breakage is loud and state is measured, there is nothing left to coordinate for safety.** Agents still divide the work so their shots do not collide — parallelism is not the absence of a plan — but no agent waits on another for *permission*. A broken shot screams and is fixed forward. The ledger keeps everyone honest about what remains. So you fire every shot you have, in parallel, the moment it is ready — and massive parallelism is not a technique you bolt on, it is what *falls out* of moving fast and breaking things loudly. The gates were the only thing stopping you; the instruments made them unnecessary. They let the cheap resource run while the scarce resource stays pinned.
 
-And now those three commandments read differently. "Don't check in broken code" was never the real law — it was a cheap stand-in for *measure your breakage and make it loud.* A failing test you refuse to merge is only an assertion you blocked at a gate instead of instrumenting; a regression you forbid is a count you declined to track. The old rules were a poor team's telemetry, the best you can manage when you cannot see your own state. So the instruments are not free and they are not optional — they are the price of killing the rules, and you pay it up front: the loud-break machinery and the latent measurement are built *before* the parallelism they buy. Remove a gate and the only thing between you and the swamp is the measurement you invested in. Kill the rule, buy the instrument.
+And now those three commandments read differently. "Don't check in broken code" was never the real law — it was a cheap stand-in for *measure your breakage and make it loud.* A failing test you refuse to merge is only an assertion you blocked at a gate instead of instrumenting; a regression you forbid is a count you declined to track. The old rules were a poor team's telemetry, the best you can manage when you cannot see your own state. They made sense when people were the continuity mechanism and generation was expensive. They stop making sense when agents generate faster than they can stay oriented. So the instruments are not free and they are not optional — they are the price of killing the rules, and you pay it up front: the loud-break machinery and the latent measurement are built *before* the parallelism they buy. Remove a gate and the only thing between you and the swamp is the measurement you invested in. Kill the rule, buy the instrument.
 
-In practice: we do not gate. We instrument, fire, measure impact, and fire again. The merge is not a prize awarded after a slow compile, test, and sweep — it is the measurement boundary for the next shot.
+In practice: we do not gate. We instrument, fire, measure impact, and fire again. The merge is not a prize awarded after a slow compile, test, and sweep — it is the measurement boundary for the next shot. Do not spend scarce orientation waiting on abundant generation.
 
 Name the first-then inversions out loud, because they often arrive disguised as
 responsibility:
@@ -111,7 +128,7 @@ responsibility:
   process proactively, then stop waiting to write code. Background signals are
   impact telemetry for the next shot, not permission for this one.
 
-- Goal vector: every long-term goal defines `R(t)`, a vector of named remaining-work counts — `failing_tests`, `compiler_warnings`, `untyped_error_paths`, `unmigrated_callers`, `dead_code_sites`, `endpoints_without_auth`, `queries_without_limits`, whatever names the gaps for this goal. Keep axes separate; do not hide distinct gaps inside one number.
+- Goal vector: every long-term goal defines `R(t)`, a vector of named remaining-work counts — `failing_tests`, `compiler_warnings`, `untyped_error_paths`, `unmigrated_callers`, `dead_code_sites`, `endpoints_without_auth`, `queries_without_limits`, whatever names the gaps for this goal. Keep axes separate; do not hide distinct gaps inside one number. The vector is the orientation payload: it tells every later agent what the work means.
 - Stable-zero invariant: the instrument measures `R(t)` at each check-in. `Delta R(t) = R(t) - R(t-1)` is read by comparing one run to the next. The change author names `Epsilon R(t)`, the predicted change from the work being landed or launched. The system stays red until `R(t) == 0`, eyeballed `Delta R(t) == 0`, predicted `Epsilon R(t) == 0`, and every floor invariant still holds.
 - Floors: a floor is a safety invariant the instrumentation must hold — `data_loss == 0`, no secret committed to the repo, no test deleted to turn the build green. It is not a progress counter, and not an absolute you can never touch: you may change a floor only WITH GOOD REASON, stated on the record. A PR may lower `R` freely; to move a floor it must say why. The sin is never the reasoned change — it is silent drift, a floor that drops because no one decided to drop it.
 - New feature: write the focused unit test first. The test names the behavior, fails or would have failed before the change, and becomes the local proof that the feature exists. Add implementation and instrumentation after the test defines the target.
