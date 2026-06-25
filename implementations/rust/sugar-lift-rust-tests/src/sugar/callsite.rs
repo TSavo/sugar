@@ -69,7 +69,6 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
 
 fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> {
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = crate::sugar::factory::SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
     let dig_child = |expr: &Expr| -> Rc<Term> {
         if crate::sugar::method_family::literal_sequence_static_len_in_scope(
             expr, &let_inits, ctx.scope,
@@ -90,22 +89,7 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
         if source_less_format_args_builtin(expr, ctx) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
-        let reduction = {
-            let mut fw = ctx.float_widths.borrow_mut();
-            let child = SugarCtx {
-                scope: ctx.scope,
-                options: ctx.options,
-                reducer: ctx.reducer,
-                float_widths: std::cell::RefCell::new(&mut *fw),
-                factory_audits: ctx.factory_audits,
-                macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
-            };
-            crate::sugar::factory::build_term(expr, &fcx).reduce(&child)
-        };
-        match reduction {
-            Outcome::Complete(d) => d.into_term().unwrap_or_else(opaque_or_fallback),
-            Outcome::Incomplete(_) => opaque_or_fallback(),
-        }
+        callsite_child_identity_term(expr, ctx.scope)
     };
 
     match expr {
