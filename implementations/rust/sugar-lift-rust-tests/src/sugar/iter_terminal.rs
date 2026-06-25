@@ -206,23 +206,20 @@ fn recognized_receiver_is_static_sequence(
     {
         return true;
     }
-    if terminal_reads_iterator_cursor(terminal) && direct_unrewritten_path_receiver(&call.receiver)
+    // Bare-path `next`/`next_back` still belong to the cursor replay lane when
+    // the receiver is literal-backed. `try_fold` consumes a cursor without
+    // modeling the residual state here, so a direct local receiver must fall
+    // through until a temporal sugar owns that rewrite.
+    if terminal_consumes_cursor_without_replay(terminal)
+        && direct_unrewritten_path_receiver(&call.receiver)
     {
         return false;
     }
     receiver_resolves_static_sequence(&call.receiver, fcx, 0)
 }
 
-fn terminal_reads_iterator_cursor(terminal: &Terminal) -> bool {
-    matches!(
-        terminal,
-        Terminal::Next
-            | Terminal::NextBack
-            | Terminal::Nth(_)
-            | Terminal::NthBack(_)
-            | Terminal::AdvanceBy(_)
-            | Terminal::TryFold { .. }
-    )
+fn terminal_consumes_cursor_without_replay(terminal: &Terminal) -> bool {
+    matches!(terminal, Terminal::TryFold { .. })
 }
 
 fn direct_unrewritten_path_receiver(expr: &Expr) -> bool {
