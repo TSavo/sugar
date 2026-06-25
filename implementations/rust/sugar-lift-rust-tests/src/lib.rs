@@ -10527,14 +10527,6 @@ fn stmts_from_match_arm_body(body: &Expr) -> Vec<Stmt> {
     }
 }
 
-struct ConfigGateSugar;
-
-impl Sugar for ConfigGateSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Complete(Desugared::Seq(Vec::new()))
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn collect_statement_macro_entries<'a>(
     attrs: &[syn::Attribute],
@@ -10556,8 +10548,10 @@ fn collect_statement_macro_entries<'a>(
         .last()
         .map(|seg| seg.ident.to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
-    let cfg_gate =
-        sugar::configuration::ConfigurationSugar::new(attrs.to_vec(), Box::new(ConfigGateSugar));
+    let cfg_gate = sugar::configuration::ConfigurationSugar::new(
+        attrs.to_vec(),
+        Box::new(sugar::configuration::EmptyConfigGateSugar),
+    );
     match cfg_gate.disposition(options) {
         CfgDisposition::Present => {}
         CfgDisposition::Absent(reason) => {
