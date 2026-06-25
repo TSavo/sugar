@@ -34,6 +34,7 @@ pub mod sugar {
     pub mod array_repeat;
     pub mod array_term;
     pub mod assign_op;
+    pub mod atomic_load;
     pub mod await_term;
     pub mod backstop;
     pub mod binop;
@@ -8076,6 +8077,11 @@ enum Effect {
     /// `RuntimeNumericOperand`: the sender dispatches to the float floor and bubbles this
     /// only when no literal IEEE value exists.
     RuntimeFloatOperand { boundary: String, operation: String },
+    /// ATOMIC-LOAD: `.load(Ordering::*)` reads interior-mutable atomic state through
+    /// shared-reference semantics. Path receivers that the temporal planner can version
+    /// stay on the method-key floor; non-path receivers have no single binding identity
+    /// to version, so the load source owns the runtime boundary.
+    AtomicLoad { boundary: String },
     /// FLOAT-IEEE-REFINEMENT: the source is float-shaped, but the exact IEEE proposition is
     /// outside the modeled floor: f16/f128, signed-zero as a Real, NaN/infinity requested as
     /// a finite Real, or another named float representation boundary. This is a real float
@@ -8226,6 +8232,10 @@ impl Effect {
             Effect::RuntimeFloatOperand { boundary, .. } => {
                 format!("runtime float operand, not literal `{boundary}`")
             }
+            Effect::AtomicLoad { .. } => {
+                "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state"
+                    .to_string()
+            }
             Effect::FloatIeeeRefinement { reason, .. } => reason.clone(),
             Effect::RepresentationCast { boundary, kind } => format!(
                 "unsupported term `{boundary}`: effectful / raw-pointer / mutable-reference term \
@@ -8277,6 +8287,7 @@ impl Effect {
             | Effect::UndefinedBehavior { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RuntimeFloatOperand { boundary, .. }
+            | Effect::AtomicLoad { boundary }
             | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }

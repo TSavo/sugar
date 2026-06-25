@@ -104,9 +104,10 @@ impl IndexSugar {
             return Ok(None);
         };
         let seq = match container.reduce(ctx) {
-            Outcome::Complete(d) => d
-                .into_seq()
-                .unwrap_or_else(|| index_gap("index literal container reduced to non-sequence")),
+            Outcome::Complete(d) => match d.into_seq() {
+                Some(seq) => seq,
+                None => return Ok(None),
+            },
             Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
         };
         let idx = match term_from_body(&self.idx, ctx, "index position") {
