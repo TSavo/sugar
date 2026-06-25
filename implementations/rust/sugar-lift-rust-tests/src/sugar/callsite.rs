@@ -89,6 +89,9 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
         if source_less_format_args_builtin(expr, ctx) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
+        if let Some(term) = callsite_child_floor_term(expr, ctx) {
+            return term;
+        }
         callsite_child_identity_term(expr, ctx.scope)
     };
 
@@ -131,6 +134,13 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
             "opaque callsite term constructed for non-call expression `{}`",
             expr_head_key(expr)
         ),
+    }
+}
+
+fn callsite_child_floor_term(expr: &Expr, ctx: &SugarCtx) -> Option<Rc<Term>> {
+    match crate::sugar::factory::SugarBody::synthesized_term(expr, ctx).reduce(ctx) {
+        Outcome::Complete(desugared) => desugared.into_term(),
+        Outcome::Incomplete(_) => None,
     }
 }
 
