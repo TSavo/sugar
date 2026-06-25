@@ -12720,9 +12720,10 @@ fn t() {
 }
 
 #[test]
-fn matches_macro_binding_pattern_refused_by_name() {
+fn matches_macro_binding_pattern_is_construction_gap() {
     // Discrimination: a single-segment lowercase pattern is a catch-all BINDING
-    // (always matches), not an unambiguous variant. Refused by name.
+    // (always matches), not an unambiguous variant. That is missing pattern
+    // semantics, not a runtime effect, so it must gap directly.
     let src = r#"
 #[test]
 fn t() {
@@ -12730,15 +12731,7 @@ fn t() {
     assert!(matches!(p, anything));
 }
 "#;
-    let out = lift_file(&parse(src), "tests/poll.rs");
-    assert_eq!(out.assertions_lifted, 0, "binding matches! must not lift");
-    assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("unambiguous qualified variant")),
-        "refusal must name the ambiguity: {:?}",
-        out.skip_reasons
-    );
+    assert_matches_macro_gap(src, "unambiguous qualified variant");
 }
 
 #[test]
@@ -12875,9 +12868,9 @@ fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 2))); }
 }
 
 #[test]
-fn matches_macro_tuple_pattern_binding_component_bails() {
+fn matches_macro_tuple_pattern_binding_component_is_construction_gap() {
     // EXACT-OR-BAIL: a binding component (`x`) is not a closed pin -> the whole
-    // tuple bails. It must NOT lift a partial claim; refused by name.
+    // tuple gaps. It must NOT lift a partial claim or fake an effect.
     let src = r#"
 #[test]
 fn t() {
@@ -12885,23 +12878,13 @@ fn t() {
     assert!(matches!(s, (Bound::End, x)));
 }
 "#;
-    let out = lift_file(&parse(src), "tests/ops.rs");
-    assert_eq!(
-        out.assertions_lifted, 0,
-        "a binding component must bail, not partially lift"
-    );
-    assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("unambiguous qualified variant")),
-        "refusal must name the ambiguity: {:?}",
-        out.skip_reasons
-    );
+    assert_matches_macro_gap(src, "unambiguous qualified variant");
 }
 
 #[test]
-fn matches_macro_tuple_pattern_all_wildcard_has_no_teeth_bails() {
-    // A `(_, _)` tuple pins nothing -> no teeth -> bail (never a vacuous lift).
+fn matches_macro_tuple_pattern_all_wildcard_has_no_teeth_is_construction_gap() {
+    // A `(_, _)` tuple pins nothing -> no teeth -> construction gap (never a
+    // vacuous lift and never an Incomplete effect).
     let src = r#"
 #[test]
 fn t() {
@@ -12909,8 +12892,29 @@ fn t() {
     assert!(matches!(s, (_, _)));
 }
 "#;
-    let out = lift_file(&parse(src), "tests/ops.rs");
-    assert_eq!(out.assertions_lifted, 0, "all-wildcard tuple must not lift");
+    assert_matches_macro_gap(src, "unambiguous qualified variant");
+}
+
+fn assert_matches_macro_gap(src: &str, reason_needle: &str) {
+    let panic = std::panic::catch_unwind(|| lift_file(&parse(src), "tests/matches.rs"))
+        .expect_err("unsupported matches! pattern must be a direct construction gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
+    assert!(
+        message.contains("matches_macro did not reach a lawful floor"),
+        "gap must come from matches_macro directly: {message}"
+    );
+    assert!(
+        message.contains(reason_needle),
+        "gap must name the missing pattern semantics: {message}"
+    );
+    assert!(
+        !message.contains("legacy reason leaf"),
+        "matches_macro must not hide the gap behind ReasonedIncompleteSugar: {message}"
+    );
 }
 
 // --- array-repeat literal tranche (assert_eq!(x, [elem; N])) ---

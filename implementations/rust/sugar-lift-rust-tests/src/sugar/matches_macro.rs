@@ -33,6 +33,15 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !mac.path.is_ident("matches") {
         return None;
     }
+    let (subject, pattern) = parse_subject_pattern(mac.tokens.clone())?;
+    Some(Box::new(MatchesMacroSugar {
+        subject: SugarBody::term(&subject, fcx),
+        pattern,
+        site: token_key(expr),
+    }))
+}
+
+pub(crate) fn parse_subject_pattern(tokens: proc_macro2::TokenStream) -> Option<(Expr, Pat)> {
     let parser = |input: ParseStream| -> syn::Result<(Expr, Pat)> {
         let subject: Expr = input.parse()?;
         input.parse::<Token![,]>()?;
@@ -40,12 +49,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         let _ = input.parse::<proc_macro2::TokenStream>();
         Ok((subject, pat))
     };
-    let (subject, pattern) = Parser::parse2(parser, mac.tokens.clone()).ok()?;
-    Some(Box::new(MatchesMacroSugar {
-        subject: SugarBody::term(&subject, fcx),
-        pattern,
-        site: token_key(expr),
-    }))
+    Parser::parse2(parser, tokens).ok()
 }
 
 impl Sugar for MatchesMacroSugar {

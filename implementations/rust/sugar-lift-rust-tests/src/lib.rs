@@ -9591,6 +9591,14 @@ impl TemporalCallsiteVisitor {
             self.visit_expr(&rhs);
             return;
         }
+        if mac.path.is_ident("matches") {
+            if let Some((subject, _pattern)) =
+                sugar::matches_macro::parse_subject_pattern(mac.tokens.clone())
+            {
+                self.visit_expr(&subject);
+            }
+            return;
+        }
         if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
             for expr in args.exprs {
                 self.visit_expr(&expr);
@@ -9733,6 +9741,14 @@ impl PanicFreedomCallsiteVisitor<'_> {
         if let Some((lhs, rhs)) = assert_eq_const_safe_macro_operands(mac) {
             self.visit_expr(&lhs);
             self.visit_expr(&rhs);
+            return;
+        }
+        if mac.path.is_ident("matches") {
+            if let Some((subject, _pattern)) =
+                sugar::matches_macro::parse_subject_pattern(mac.tokens.clone())
+            {
+                self.visit_expr(&subject);
+            }
             return;
         }
         if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
@@ -17218,102 +17234,6 @@ fn pattern_variant_path(pat: &syn::Pat) -> Option<String> {
     }
 }
 
-/// Lift `assert!(matches!(subject, Type::Variant ...))` as a variant-discriminant
-/// assertion: `variant_of(subject) == "variant::<Type::Variant>"` -- the SAME
-/// construction-semantics atom panic-locus lifting emits (`panic_locus_entry`),
-/// with the same teeth (two variants are distinct string constants, so claiming
-/// both is UNSAT).
-///
-/// SOUND SCOPE: `matches!(x, P)` is exactly `match x { P => true, _ => false }`,
-/// so a passing `assert!(matches!(x, P [if g]))` means x matched P (and, if
-/// present, the guard g held) -- the discriminant `variant_of(x) == "variant::P"`
-/// is therefore IMPLIED. We lift only that (weaker, always-implied) discriminant
-/// fact, so both value-binding subpatterns (`V { f }`, `V(inner)`) AND a trailing
-/// GUARD (`P if g`) are fine: the lifted obligation is implied either way, and
-/// dropping g loses only refutation power, never soundness. (This differs from
-/// `panic_locus_match_entry`, which refuses guards: a `match` has multiple arms,
-/// the same pattern can recur with different guards, and which arm a value reaches
-/// is genuinely guard-dependent -- the single-pattern `matches!` macro has no such
-/// ambiguity.) We REFUSE BY NAME only the shapes where the discriminant itself is
-/// NOT unambiguous:
-///   - an or-pattern (`A | B`): a disjunction is not a single discriminant;
-///   - a binding / wildcard / single-segment path: a lowercase `foo` is a
-///     catch-all binding (always matches), and a bare `Foo` is ambiguous between
-///     a unit variant and an associated const -- not an unambiguous `Type::Variant`.
-fn translate_matches_assertion(
-    expr: &Expr,
-    scope: &TemporalScope,
-) -> Result<Option<AssertionEntry>, String> {
-    let Expr::Macro(m) = expr else {
-        return Ok(None);
-    };
-    if !m.mac.path.is_ident("matches") {
-        return Ok(None);
-    }
-    // Parse `subject , pattern (if guard)?` from the macro token stream.
-    let parser = |input: ParseStream| -> syn::Result<(Expr, syn::Pat)> {
-        let subject: Expr = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let pat = syn::Pat::parse_multi_with_leading_vert(input)?;
-        // A trailing `if <guard>` is consumed but NOT modeled: for the ASSERTED
-        // direction, `matches!(x, V if g)` true ⟹ x matches V AND g, so the
-        // discriminant `variant_of(x) == "variant::V"` is IMPLIED regardless of g.
-        // Lifting the discriminant and dropping the guard is therefore SOUND (a
-        // weaker, always-implied fact); not modeling g loses only refutation power,
-        // never soundness -- the same tradeoff `collect_ambient_foralls` makes.
-        let _ = input.parse::<proc_macro2::TokenStream>();
-        Ok((subject, pat))
-    };
-    let (subject, pat) = match Parser::parse2(parser, m.mac.tokens.clone()) {
-        Ok(v) => v,
-        // Not the `matches!(expr, pat)` shape we lift; fall through to the
-        // ordinary boolean-assertion paths (which will name their own refusal).
-        Err(_) => return Ok(None),
-    };
-    let Some(variant) = strict_variant_path(&pat) else {
-        // NESTED WRAPPER: `matches!(x, Some(Inner::V))` / `Ok(..)` / `Err(..)`.
-        // The single-segment wrapper is a known prelude variant (so `variant_of(x)
-        // == "variant::Some"` is unambiguous), and its inner pattern -- when a
-        // qualified variant -- pins the payload's discriminant via the payload
-        // accessor. This is the meaningful claim (`Some(Widen)` vs `Some(Halt)`),
-        // so we lift the conjunction, not just the trivial outer `Some`.
-        if let Some((wrapper, inner)) = wrapped_variant(&pat) {
-            return Ok(wrapped_variant_entry(
-                &subject,
-                &wrapper,
-                inner.as_deref(),
-                scope,
-            ));
-        }
-        // TUPLE PATTERN: `matches!(subj, (Type::Variant, 1))` pins each tuple
-        // COMPONENT of the subject -- a qualified variant via its discriminant
-        // (`variant_of(field:i(subj)) == "variant::Type::Variant"`) and a literal
-        // by value (`field:i(subj) == <lit>`). `field:i(subj)` is a congruent
-        // uninterpreted accessor, so two claims about the same subject's i-th
-        // component coalesce and a contradicting claim is UNSAT (the teeth). EXACT-
-        // OR-BAIL: every component must be a strict qualified variant or a closed
-        // literal (a binding / range / nested / non-literal component bails the
-        // whole pattern -- we never lift a partially-pinned tuple); a `_` wildcard
-        // simply contributes no constraint, and the entry refuses if NOTHING is
-        // pinned (no teeth).
-        if let Some(entry) = tuple_pattern_entry(&subject, &pat, scope) {
-            return Ok(Some(entry));
-        }
-        return Err(format!(
-            "matches! pattern is not an unambiguous qualified variant \
-             (binding/wildcard/single-segment/or-pattern); refused by name: `{}`",
-            token_key(expr)
-        ));
-    };
-    match panic_locus_entry(&subject, &variant, scope) {
-        Some(entry) => Ok(Some(entry)),
-        None => Err(format!(
-            "matches! subject is not a liftable term: `{}`",
-            token_key(&subject)
-        )),
-    }
-}
-
 /// A nested known-wrapper pattern `Some(P)` / `Ok(P)` / `Err(P)`: returns the
 /// single-segment wrapper variant name and the inner variant IF the inner pattern
 /// is itself a qualified `Type::Variant` (else `None` -- a `Some(_)` / `Some(x)`
@@ -17332,53 +17252,6 @@ fn wrapped_variant(pat: &syn::Pat) -> Option<(String, Option<String>)> {
         }
         _ => None,
     }
-}
-
-/// Build the nested-wrapper discriminant entry:
-///   `variant_of(subject) == "variant::<wrapper>"`  (always), AND
-///   `variant_of(payload:<wrapper>(subject)) == "variant::<inner>"`  (if inner is
-///   a qualified variant).
-/// The payload accessor `payload:<wrapper>(subject)` is an uninterpreted Ctor; by
-/// congruence, two claims about the same subject's payload share it, so asserting
-/// two distinct inner variants is UNSAT (the teeth). The contract NAME keys on the
-/// subject (via the outer entry), so siblings about the same subject conjoin.
-fn wrapped_variant_entry(
-    subject: &Expr,
-    wrapper: &str,
-    inner: Option<&str>,
-    scope: &TemporalScope,
-) -> Option<AssertionEntry> {
-    let subject_term = translate_term_in_scope(subject, scope).ok()?;
-    let outer_lhs = Rc::new(Term::Ctor {
-        name: "variant_of".to_string(),
-        args: vec![subject_term.clone()],
-    });
-    let outer = assertion_entry_from_eq(outer_lhs, str_const(format!("variant::{wrapper}")), scope);
-    let Some(inner_variant) = inner else {
-        // `Some(_)` / `Some(x)`: only the outer wrapper is pinned.
-        return Some(outer);
-    };
-    let payload = Rc::new(Term::Ctor {
-        name: format!("payload:{wrapper}"),
-        args: vec![subject_term],
-    });
-    let inner_lhs = Rc::new(Term::Ctor {
-        name: "variant_of".to_string(),
-        args: vec![payload],
-    });
-    let inner_atom = assertion_entry_from_eq(
-        inner_lhs,
-        str_const(format!("variant::{inner_variant}")),
-        scope,
-    )
-    .atom;
-    Some(AssertionEntry {
-        name: outer.name,
-        atom: and_(vec![outer.atom, inner_atom]),
-        fact_span: outer.fact_span,
-        kind: outer.kind,
-        claim_count: outer.claim_count,
-    })
 }
 
 /// `matches!(subject, (C0, C1, ...))` over a TUPLE pattern: pin each component
@@ -21399,6 +21272,30 @@ mod lifter_key_tests {
                 && dump.contains("not")
                 && dump.contains("call:std::env::args#panic_callsite"),
             "the only emitted universe should be not(panic(args-callsite)): {dump}"
+        );
+    }
+
+    #[test]
+    fn panic_freedom_matches_macro_visits_subject_not_pattern_constructor() {
+        // In `matches!(subject, Pattern)`, only `subject` is evaluated. The pattern
+        // spelling can look like a call (`Poll::Ready(_)`) to `syn::Expr`, but it is
+        // not a runtime callsite and must not be fed to NoPanicCallSugar.
+        let stmt: Stmt = syn::parse_str("assert!(matches!(poll_it(), Poll::Ready(_)));").unwrap();
+        let scope = TemporalScope::new("matches-panic-freedom", TemporalPlan::default());
+        let options = LiftOptions::default();
+
+        let sites = callsite_exprs_in_stmt(&stmt, &scope, &options)
+            .into_iter()
+            .map(token_key)
+            .collect::<Vec<_>>();
+
+        assert!(
+            sites.iter().any(|site| site == "poll_it ()"),
+            "the matches! subject is evaluated and should be visited: {sites:?}"
+        );
+        assert!(
+            sites.iter().all(|site| !site.contains("Poll :: Ready")),
+            "the matches! pattern constructor is not evaluated: {sites:?}"
         );
     }
 
