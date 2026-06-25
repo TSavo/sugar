@@ -12927,8 +12927,9 @@ fn t() { let s = f(); assert_eq!(s, Pair { b: 2, a: 1 }); }
 }
 
 #[test]
-fn struct_literal_with_rest_refused_by_name() {
-    // Discrimination: `..base` means the value is not fully pinned -> refused.
+fn struct_literal_with_rest_is_gap_not_fake_refusal() {
+    // Discrimination: `..base` means this sugar has not constructed the complete
+    // field floor yet. That is work/gap, not an effect and not a refused assertion.
     let src = r#"
 #[test]
 fn t() {
@@ -12937,14 +12938,20 @@ fn t() {
     assert_eq!(s, Config { name: "x", ..base });
 }
 "#;
-    let out = lift_file(&parse(src), "src/x.rs");
-    assert_eq!(out.assertions_lifted, 0, "..rest struct must not lift");
+    let panic = std::panic::catch_unwind(|| lift_file(&parse(src), "src/x.rs"))
+        .expect_err("struct update literal must be a direct gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
     assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("..rest") || r.contains("not fully pinned")),
-        "refusal must name the ..rest: {:?}",
-        out.skip_reasons
+        message.contains("struct literal with `..rest` is not fully pinned"),
+        "gap must name the struct update site: {message}"
+    );
+    assert!(
+        !message.contains("legacy reason leaf"),
+        "struct update must gap directly, not through ReasonedIncompleteSugar: {message}"
     );
 }
 
