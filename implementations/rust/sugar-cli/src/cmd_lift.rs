@@ -129,7 +129,7 @@ pub fn run(args: LiftArgs) -> u8 {
                     return EXIT_OK;
                 }
                 trace_lift_report_checkpoint("before_source_report_from_lift_response");
-                let report =
+                let mut report =
                     match source_report_from_lift_response(response, args.contract.as_deref()) {
                         Ok(report) => report,
                         Err(error) => {
@@ -137,6 +137,7 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     };
+                report.project_root = Some(project_root.clone());
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
                     trace_lift_report_checkpoint("before_prepare_lift_report_prove_inputs");
@@ -528,11 +529,13 @@ struct LiftSourceReport {
     ledger: Value,
     audits: Vec<Value>,
     factory_audits: Vec<Value>,
+    factory_walk: Vec<Value>,
     assertion_surface_audits: Vec<Value>,
     source_mementos: Vec<Value>,
     contracts: Vec<Value>,
     call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
+    project_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1054,6 +1057,8 @@ fn source_report_from_lift_response(
     );
     let factory_audits = matching_report_factory_audits(response, contract_filter)?;
     trace_lift_collection_checkpoint("source_report.factory_audits", factory_audits.len());
+    let factory_walk = matching_report_factory_walk(response, contract_filter)?;
+    trace_lift_collection_checkpoint("source_report.factory_walk", factory_walk.len());
     let assertion_surface_audits =
         matching_report_assertion_surface_audits(response, contract_filter);
     trace_lift_collection_checkpoint(
@@ -1074,11 +1079,13 @@ fn source_report_from_lift_response(
         ledger,
         audits: filtered_audits,
         factory_audits,
+        factory_walk,
         assertion_surface_audits,
         source_mementos,
         contracts,
         call_edges,
         vendor_conjoins,
+        project_root: None,
     })
 }
 
@@ -1251,6 +1258,33 @@ fn matching_report_factory_audits(
         rows,
         |row| contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter)),
         |row| row,
+    ))
+}
+
+fn matching_report_factory_walk(
+    response: &Value,
+    contract_filter: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let Some(rows) = response
+        .get("factoryAuditSummary")
+        .and_then(|summary| summary.get("factoryWalk"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    for row in rows {
+        if row.get("term").is_some() || row.get("site").is_some() || row.get("source").is_some() {
+            return Err(
+                "factoryAuditSummary.factoryWalk carried plaintext source/term; walk rows must carry SourceMemento pins only"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(clone_matching_report_values(
+        "matching_report_factory_walk",
+        rows,
+        |row| contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter)),
+        normalize_factory_gap_walk_row,
     ))
 }
 
@@ -1659,6 +1693,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "sourceLedger": report.ledger,
         "sourceAudits": report.audits,
         "factoryAudits": report.factory_audits,
+        "factoryWalk": report.factory_walk,
         "assertionSurfaceAudits": report.assertion_surface_audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
@@ -1822,11 +1857,22 @@ fn format_unresolved_factory_site_detail(project_root: Option<&Path>, row: &Valu
 }
 
 fn render_factory_walk(summary: &LiftReportSummary) -> String {
-    if summary.factory_walk.is_empty() {
+    render_factory_walk_rows(&summary.factory_walk, summary.project_root.as_deref())
+}
+
+struct RenderedFactoryWalkRow<'a> {
+    row: &'a Value,
+    verdict: &'static str,
+}
+
+fn render_factory_walk_rows(factory_walk: &[Value], project_root: Option<&Path>) -> String {
+    if factory_walk.is_empty() {
         return String::new();
     }
-    let mut by_line: BTreeMap<(String, u64), Vec<Value>> = BTreeMap::new();
-    for row in &summary.factory_walk {
+    let mut by_line: BTreeMap<(String, u64), Vec<RenderedFactoryWalkRow<'_>>> = BTreeMap::new();
+    let mut incomplete_here_seen: BTreeSet<String> = BTreeSet::new();
+    let mut gap_here_seen: BTreeSet<String> = BTreeSet::new();
+    for row in factory_walk {
         let file = row
             .get("file")
             .and_then(Value::as_str)
@@ -1842,43 +1888,42 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
                     .and_then(Value::as_u64)
             })
             .unwrap_or(0);
-        by_line.entry((file, line)).or_default().push(row.clone());
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        let raw_verdict = if status == "unresolved" {
+            "gap"
+        } else {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete")
+        };
+        let context_key = factory_walk_context_key(row, &file);
+        let verdict = if raw_verdict == "complete" {
+            "complete"
+        } else if raw_verdict == "gap" {
+            if gap_here_seen.insert(context_key) {
+                "GAP HERE"
+            } else {
+                "gap"
+            }
+        } else if incomplete_here_seen.insert(context_key) {
+            "INCOMPLETE HERE"
+        } else {
+            "incomplete"
+        };
+        by_line
+            .entry((file, line))
+            .or_default()
+            .push(RenderedFactoryWalkRow { row, verdict });
     }
 
     let mut out = String::new();
     out.push_str("factory whole-walk:\n");
-    let mut incomplete_here_seen: BTreeSet<(String, u64)> = BTreeSet::new();
-    let mut gap_here_seen: BTreeSet<(String, u64)> = BTreeSet::new();
-    for ((file, line), mut rows) in by_line {
-        rows.sort_by_key(|row| {
-            row.get("sourceMemento")
-                .and_then(|memento| memento.get("span"))
-                .map(source_span_sort_key)
-                .unwrap_or((line, 0, line, 0))
-        });
+    for ((file, line), rows) in by_line {
         out.push_str(&format!("  {file}:{line}\n"));
-        for row in rows {
+        for rendered in rows {
+            let row = rendered.row;
+            let verdict = rendered.verdict;
             let status = normalized_source_status(row.get("status").and_then(Value::as_str));
-            let raw_verdict = if status == "unresolved" {
-                "gap"
-            } else {
-                row.get("verdict")
-                    .and_then(Value::as_str)
-                    .unwrap_or("incomplete")
-            };
-            let verdict = if raw_verdict == "complete" {
-                "complete"
-            } else if raw_verdict == "gap" {
-                if gap_here_seen.insert((file.clone(), line)) {
-                    "GAP HERE"
-                } else {
-                    "gap"
-                }
-            } else if incomplete_here_seen.insert((file.clone(), line)) {
-                "INCOMPLETE HERE"
-            } else {
-                "incomplete"
-            };
             let role = row
                 .get("requested_role")
                 .and_then(Value::as_str)
@@ -1893,7 +1938,7 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
             } else {
                 row.get("output").and_then(Value::as_str).unwrap_or("?")
             };
-            let term = resolve_factory_walk_term(summary.project_root.as_deref(), &row);
+            let term = resolve_factory_walk_term(project_root, row);
             out.push_str(&format!(
                 "    {verdict} [{role}/{ast_kind}] selected={selected} output={output} term=`{term}`"
             ));
@@ -1913,6 +1958,22 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
         }
     }
     out
+}
+
+fn factory_walk_context_key(row: &Value, file: &str) -> String {
+    let source_function = row
+        .get("sourceMemento")
+        .and_then(|memento| {
+            memento
+                .get("sourceFunctionName")
+                .or_else(|| memento.get("source_function_name"))
+        })
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    match source_function {
+        Some(function) => format!("{file}::{function}"),
+        None => file.to_string(),
+    }
 }
 
 fn source_span_sort_key(span: &Value) -> (u64, u64, u64, u64) {
@@ -2095,6 +2156,11 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         "render_source_report_human.after_factory_accounting",
         out.len(),
     );
+    out.push_str(&render_factory_walk_rows(
+        &report.factory_walk,
+        report.project_root.as_deref(),
+    ));
+    trace_lift_render_checkpoint("render_source_report_human.after_factory_walk", out.len());
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
         trace_lift_render_checkpoint("render_source_report_human.end", out.len());
@@ -4347,11 +4413,13 @@ mod tests {
                 "loci": []
             })],
             factory_audits: vec![],
+            factory_walk: vec![],
             assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
             call_edges: vec![],
             vendor_conjoins: vec![],
+            project_root: None,
         }
     }
 
@@ -5603,6 +5671,160 @@ mod tests {
     }
 
     #[test]
+    fn full_report_renders_factory_walk_from_summary() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 1,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 4,
+                "statusCounts": {
+                    "warranted": 2,
+                    "refused": 2,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term"
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 5,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term"
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 6,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "address_cast",
+                        "status": "refused",
+                        "verdict": "incomplete",
+                        "output": "effect",
+                        "reason": "runtime boundary: pointer identity"
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 7,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "literal_int",
+                        "status": "refused",
+                        "verdict": "incomplete",
+                        "output": "effect",
+                        "reason": "runtime boundary already reached"
+                    }
+                ]
+            }
+        });
+
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("factory whole-walk:"), "{human}");
+        assert!(
+            human.contains("complete [Term/expr] selected=literal_int output=term"),
+            "{human}"
+        );
+        assert!(
+            human.contains("INCOMPLETE HERE [Term/expr] selected=address_cast output=effect"),
+            "{human}"
+        );
+        assert!(
+            human.contains("incomplete [Term/expr] selected=literal_int output=effect"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn factory_walk_marks_incomplete_here_in_walk_order_not_span_order() {
+        let child_memento = serde_json::json!({
+            "file": "src/lib.rs",
+            "sourceFunctionName": "demo",
+            "span": {"start_line": 7, "start_col": 18, "end_line": 7, "end_col": 24},
+            "paramNames": []
+        });
+        let parent_memento = serde_json::json!({
+            "file": "src/lib.rs",
+            "sourceFunctionName": "demo",
+            "span": {"start_line": 7, "start_col": 4, "end_line": 7, "end_col": 25},
+            "paramNames": []
+        });
+        let summary = LiftReportSummary {
+            ledger: serde_json::json!({}),
+            factory: FactoryAccountingSummary {
+                sites: 2,
+                warranted: 0,
+                refused: 2,
+                support: 0,
+                unresolved: 0,
+            },
+            unresolved_factory_sites: vec![],
+            factory_walk: vec![
+                serde_json::json!({
+                    "file": "src/lib.rs",
+                    "line": 7,
+                    "requested_role": "Term",
+                    "ast_kind": "expr",
+                    "selected": "address_cast",
+                    "status": "refused",
+                    "verdict": "incomplete",
+                    "output": "effect",
+                    "reason": "runtime boundary: pointer identity",
+                    "sourceMemento": child_memento
+                }),
+                serde_json::json!({
+                    "file": "src/lib.rs",
+                    "line": 7,
+                    "requested_role": "Term",
+                    "ast_kind": "expr",
+                    "selected": "let_binding",
+                    "status": "refused",
+                    "verdict": "incomplete",
+                    "output": "effect",
+                    "reason": "runtime boundary: pointer identity",
+                    "sourceMemento": parent_memento
+                }),
+            ],
+            project_root: None,
+        };
+
+        let human = render_factory_walk(&summary);
+        let child = human
+            .find("INCOMPLETE HERE [Term/expr] selected=address_cast")
+            .unwrap_or_else(|| panic!("child boundary must be marked HERE:\n{human}"));
+        let parent = human
+            .find("incomplete [Term/expr] selected=let_binding")
+            .unwrap_or_else(|| panic!("parent bubble must be plain incomplete:\n{human}"));
+
+        assert!(child < parent, "{human}");
+    }
+
+    #[test]
     fn summary_report_rejects_plaintext_factory_walk_terms() {
         let response = serde_json::json!({
             "kind": "ir-document",
@@ -6467,6 +6689,7 @@ mod tests {
                 "loci": []
             })],
             factory_audits: vec![],
+            factory_walk: vec![],
             assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
@@ -6486,6 +6709,7 @@ mod tests {
                     "src/lib.rs:1-9 enc(input) source_cid=blake3-512:source".to_string(),
                 )),
             }],
+            project_root: None,
         };
         let human = render_source_report_human(&report);
 
