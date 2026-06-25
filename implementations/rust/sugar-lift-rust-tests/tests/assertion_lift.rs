@@ -17687,29 +17687,33 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
 }
 
 #[test]
-fn iter_find_with_unconstevaluable_closure_stays_opaque() {
-    // CONST-EVAL-OR-BAIL: a `.find` closure whose body reads an OUTER runtime
+fn iter_find_with_unconstevaluable_closure_is_gap_not_fake_refusal() {
+    // CONST-EVAL-OR-GAP: a `.find` closure whose body reads an OUTER runtime
     // capture (`cap`, not the closure param) cannot const-evaluate over the literal
-    // elements -> the `iter_terminal` reduction bails (the inner desugar would complete,
-    // but `const_eval_unary_closure` returns None on the unbound capture), so the
-    // closure-adaptor provenance path names it (bin-1: domain constructed, body not
-    // yet point-wise liftable) and refuses -- never a fake grounded `opt:some`.
+    // elements yet. The terminal may not invent an effect or route through the legacy
+    // reason leaf; it must gap loudly until the closure body is recursively reduced and
+    // the real owner, `cap`, can bubble its runtime boundary.
     let src =
         "#[test]\nfn t(cap: i32) { assert_eq!([1, 2, 3].iter().find(|x| **x > cap), Some(&1)); }\n";
-    let out = lift_file(&parse(src), "tests/iter_find_runtime_capture.rs");
+    let panic =
+        std::panic::catch_unwind(|| lift_file(&parse(src), "tests/iter_find_runtime_capture.rs"))
+            .expect_err("unconstevaluable `.find` closure must be a direct gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
     assert!(
-        warranted_decls(&out).is_empty(),
-        "a `.find` with a runtime-capture closure must NOT emit warranted facts: {:?}",
-        out.assertion_facts
+        message.contains("iterator terminal did not reach a lawful floor"),
+        "gap must name iter_terminal as the owner: {message}"
     );
     assert!(
-        out.decls.iter().all(|d| {
-            !complete_eq_ctor_name_pairs(d)
-                .iter()
-                .any(|(a, b)| a == "opt:some" && b == "opt:some")
-        }),
-        "a `.find` with a runtime-capture closure must NOT ground to opt:some (const-eval-or-bail): {:?}",
-        out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
+        message.contains("body not yet point-wise liftable"),
+        "gap must keep the closure-adaptor provenance: {message}"
+    );
+    assert!(
+        !message.contains("legacy reason leaf"),
+        "iter_terminal must gap directly, not through ReasonedIncompleteSugar: {message}"
     );
 }
 
