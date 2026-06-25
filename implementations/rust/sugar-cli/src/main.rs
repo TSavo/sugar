@@ -266,6 +266,9 @@ pub struct LiftArgs {
     /// With --report, print only source/factory summary accounting and keep the lift-plugin response slim.
     #[arg(long = "report-summary", requires = "report", conflicts_with_all = ["prove", "contract"])]
     pub report_summary: bool,
+    /// With --report, print the source walk as ANSI green/red lines with the first effect inline.
+    #[arg(long, requires = "report", conflicts_with = "report_summary")]
+    pub visual: bool,
     /// With --report, append the verifier discharge report from the current .proof set.
     #[arg(long = "prove", requires = "report")]
     pub prove: bool,
