@@ -407,8 +407,8 @@ mod tests {
     use crate::sugar::claim::{ExprSugarClaim, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
     use crate::{
-        FactoryAuditLog, FactoryDisposition, LiftOptions, MacroRegistry, Outcome, ReductionCtx,
-        Sugar, SugarCtx, TemporalPlan, TemporalScope,
+        record_simple_value_binding, FactoryAuditLog, FactoryDisposition, LiftOptions,
+        MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalPlan, TemporalScope,
     };
 
     struct NoopSugar;
@@ -1513,6 +1513,58 @@ mod tests {
         assert!(
             monadic < path,
             "MonadicSugar should outrank generic PathSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn let_bound_cstr_literal_is_owned_by_cstr_floor_before_bound_path() {
+        let mut scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let stmt: syn::Stmt = syn::parse_quote! { let a: &CStr = c"hello"; };
+        let syn::Stmt::Local(local) = stmt else {
+            panic!("catalog CStr fixture must parse as a local binding")
+        };
+        record_simple_value_binding(&mut scope, &local);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("a").unwrap();
+        let names: Vec<_> = super::matching_expr_claims_for_role(&expr, &fcx, SugarRole::Term)
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect();
+
+        assert!(
+            names.contains(&"cstr"),
+            "let-bound CStr literal should be claimed by the literal CStr floor: {names:?}"
+        );
+        assert!(
+            names.contains(&"bound_path"),
+            "bound-path transparency remains visible behind the concrete floor owner: {names:?}"
+        );
+        assert_eq!(
+            names.first().copied(),
+            Some("cstr"),
+            "compiler-axiom CStr bytes own the term before generic bound-path transparency"
+        );
+    }
+
+    #[test]
+    fn option_map_over_literal_some_is_owned_by_option_adaptor_before_sequence_map() {
+        let expr: Expr = syn::parse_str("Some(1).map(|x| x + 1)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"option_adaptor"),
+            "monadic map should be claimed by OptionAdaptorSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"map_term"),
+            "generic term map remains visible for non-monadic map-shaped terms: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("option_adaptor"),
+            "Option/Result value adaptors own monadic map before sequence map_term"
         );
     }
 
