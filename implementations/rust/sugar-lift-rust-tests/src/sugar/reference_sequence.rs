@@ -2,7 +2,9 @@
 //
 // `reference_sequence`: a finite literal sequence in REFERENCE / IntoIterator position
 // -- a `&<array>` (or `&name` resolving to a literal array) used directly as an iterator
-// domain, e.g. the `&ys` RHS of `xs.iter().chain(&ys)` or `for &x in &ys`. The factory
+// domain, e.g. the `&ys` RHS of `xs.iter().chain(&ys)` or `for &x in &ys`. Casted slice
+// references such as `&mut [1, 2] as &mut [_]` are the same composite floor: the cast is
+// only the Rust surface type boundary, not sequence semantics. The factory
 // otherwise reaches the literal-sequence recognition (`build_literal_sequence_composite`)
 // ONLY through the explicit `.iter()`-family adaptor (`iterator.rs`) or an array literal;
 // a bare reference (implicitly `IntoIterator`, no `.iter()`) matches no recognizer, so
@@ -27,13 +29,15 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    // Narrow to `Expr::Reference`: array/range literals and `.iter()`-family calls keep
-    // their own specific recognizers; only the bare reference position is newly claimed.
+    // Narrow to reference-shaped wrappers: array/range literals and `.iter()`-family
+    // calls keep their own specific recognizers; only the reference position is claimed.
     // `build_literal_sequence_composite` returns `None` for a non-literal referent (e.g.
     // `&mut runtime`), so the factory falls through for anything that is not a finite
     // literal sequence -- no new domain is admitted.
-    let Expr::Reference(_) = expr else {
-        return None;
+    let source = match expr {
+        Expr::Reference(_) => expr,
+        Expr::Cast(cast) if matches!(cast.expr.as_ref(), Expr::Reference(_)) => &cast.expr,
+        _ => return None,
     };
-    build_literal_sequence_composite(expr, fcx)
+    build_literal_sequence_composite(source, fcx)
 }
