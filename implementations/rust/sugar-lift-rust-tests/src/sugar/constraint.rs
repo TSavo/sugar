@@ -1297,6 +1297,45 @@ mod tests {
     }
 
     #[test]
+    fn assert_macro_surface_reduces_matches_payload_through_matches_sugar() {
+        let expr: Expr = syn::parse_str("assert!(matches!(p, Poll::Ready(_)))")
+            .expect("parse assert matches! surface");
+        let mut scope =
+            TemporalScope::new("matches-assertion-surface-test", TemporalPlan::default());
+        let init: Expr = syn::parse_str("poll_it()").expect("parse runtime call initializer");
+        scope.record_let_binding("p", init);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let reducer = ReductionCtx::from_items_with_imports(&[], scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome = crate::sugar::factory::build_assertion_surface(&expr, &fcx).desugar(&ctx);
+
+        let Outcome::Complete(Desugared::Constraints { atom, kind, .. }) = outcome else {
+            panic!("expected assert!(matches!(..)) surface constraint");
+        };
+        assert_eq!(kind, AssertionFactKind::Warranted);
+        let Formula::Atomic { name, args } = atom.as_ref() else {
+            panic!("expected matches! discriminant atom, got {atom:?}");
+        };
+        assert_eq!(name, "=");
+        assert_eq!(args.len(), 2);
+        let Term::Ctor {
+            name: variant_name,
+            args: variant_args,
+        } = args[0].as_ref()
+        else {
+            panic!("expected variant_of lhs, got {:?}", args[0]);
+        };
+        assert_eq!(variant_name, "variant_of");
+        assert_eq!(variant_args.len(), 1);
+        assert_str_term(args[1].as_ref(), "variant::Poll::Ready");
+    }
+
+    #[test]
     fn bool_assertion_entry_reduces_negated_matches_macro_subject() {
         let expr: Expr = syn::parse_str("!matches!(p, Poll::Ready(_))")
             .expect("parse negated matches! assertion payload");
