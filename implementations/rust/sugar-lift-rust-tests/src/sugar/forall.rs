@@ -24,7 +24,7 @@ use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, closure_body_advances_iterator,
     closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
-    const_fold_u128_term, const_val_term, count_asserts_in_stmts, loop_body_mutates,
+    const_fold_u128_term, const_int, const_val_term, count_asserts_in_stmts, loop_body_mutates,
     resolve_index_in_formula, strip_refs_groups, subst_var_in_formula, term_as_int,
     translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Effect, FloatWidthScope,
     LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
@@ -311,6 +311,13 @@ pub(crate) struct ForAllSugar {
 enum ForAllDomain {
     Bounded(BoundedDomain),
     Sequence(SugarBody<CompositeFloor>),
+    Runtime(ForAllRuntimeDomain),
+}
+
+#[derive(Clone, Copy)]
+enum ForAllRuntimeDomain {
+    OpaqueCollection,
+    RuntimeStepBy,
 }
 
 impl Sugar for ForAllSugar {
@@ -324,6 +331,12 @@ impl Sugar for ForAllSugar {
 
 impl ForAllSugar {
     fn desugar_forall(&self, ctx: &SugarCtx) -> Result<Desugared, Outcome> {
+        let runtime_domain_effect = self.runtime_domain_effect(ctx);
+        if matches!(&self.domain, ForAllDomain::Runtime(_)) {
+            let effect = runtime_domain_effect
+                .unwrap_or_else(|| forall_gap("runtime forall domain missing runtime effect"));
+            return Err(Outcome::Incomplete(effect));
+        }
         if let Some(body) = &self.closure_body {
             if closure_body_advances_iterator(body) {
                 return Err(Outcome::Incomplete(Effect::IterAdvance {
@@ -337,6 +350,9 @@ impl ForAllSugar {
             }
         }
         if loop_body_mutates(&self.body_stmts) {
+            if let Some(effect) = runtime_domain_effect {
+                return Err(Outcome::Incomplete(effect));
+            }
             return Err(Outcome::Incomplete(Effect::Mutation {
                 boundary: self.body_boundary(ctx),
             }));
@@ -423,6 +439,9 @@ impl ForAllSugar {
                 );
                 BoundedDomain::Array(elems)
             }
+            ForAllDomain::Runtime(_) => {
+                forall_gap("runtime forall domain should have returned a runtime effect")
+            }
         };
         let Some((quantified, n_body)) = lift_bounded_forall(
             &self.var,
@@ -436,7 +455,7 @@ impl ForAllSugar {
             ctx.factory_audits,
             &array_terms,
         ) else {
-            if let Some(effect) = self.runtime_domain_effect(ctx) {
+            if let Some(effect) = runtime_domain_effect {
                 return Err(Outcome::Incomplete(effect));
             }
             forall_gap("bounded forall core declined");
@@ -462,14 +481,31 @@ impl ForAllSugar {
     }
 
     fn runtime_domain_effect(&self, ctx: &SugarCtx) -> Option<Effect> {
-        forall_domain_endpoint_is_runtime(&self.domain_expr, ctx.scope).then(|| {
-            Effect::LiteralDomain {
-                boundary: self.body_boundary(ctx),
-                reason: "assertion under for context whose domain is over a RUNTIME endpoint \
-                         (`a..b` with a runtime bound -- not a finite construction from source \
-                         literals); released to layer 0"
+        let reason = match &self.domain {
+            ForAllDomain::Runtime(ForAllRuntimeDomain::OpaqueCollection) => Some(
+                "assertion under for context over an OPAQUE collection (bin-2: runtime data, \
+                 not constructed from source literals); not unconditional point-wise; \
+                 released to layer 0"
                     .to_string(),
+            ),
+            ForAllDomain::Runtime(ForAllRuntimeDomain::RuntimeStepBy) => Some(
+                "assertion under for context over an OPAQUE collection (bin-2: runtime data, \
+                 not constructed from source literals; runtime step_by stride); not \
+                 unconditional point-wise; released to layer 0"
+                    .to_string(),
+            ),
+            ForAllDomain::Bounded(_) | ForAllDomain::Sequence(_) => {
+                forall_domain_endpoint_is_runtime(&self.domain_expr, ctx.scope).then(|| {
+                    "assertion under for context whose domain is over a RUNTIME endpoint \
+                     (`a..b` with a runtime bound -- not a finite construction from source \
+                     literals); released to layer 0"
+                        .to_string()
+                })
             }
+        }?;
+        Some(Effect::LiteralDomain {
+            boundary: self.body_boundary(ctx),
+            reason,
         })
     }
 
@@ -588,9 +624,10 @@ pub(crate) fn decompose_for_each(
     })
 }
 
-/// Build a `ForAllSugar` from a `for <var> in <domain> { body }` loop: the domain
-/// must be a finite construction (closed range / literal array). None (bail)
-/// otherwise. This is the front half of `try_lift_for_loop_forall`.
+/// Build a `ForAllSugar` from a `for <var> in <domain> { body }` loop. Finite
+/// constructions (closed range / literal array / composite sequence) can complete;
+/// earned runtime domains construct too so desugar can produce the named effect.
+/// Everything else remains a construction gap.
 pub(crate) fn decompose_for_loop(
     f: &syn::ExprForLoop,
     scope: &TemporalScope,
@@ -602,6 +639,8 @@ pub(crate) fn decompose_for_loop(
         ForAllDomain::Bounded(domain)
     } else if has_composite(&f.expr, fcx) {
         ForAllDomain::Sequence(SugarBody::from_node(build_composite(&f.expr, fcx)))
+    } else if let Some(runtime) = forall_runtime_domain(&f.expr, scope, fcx) {
+        ForAllDomain::Runtime(runtime)
     } else {
         return None;
     };
@@ -614,6 +653,52 @@ pub(crate) fn decompose_for_loop(
         literal_arrays: capture_literal_arrays(let_inits),
         closure_body: None,
     })
+}
+
+fn forall_runtime_domain(
+    expr: &Expr,
+    scope: &TemporalScope,
+    fcx: &SugarBuildCtx,
+) -> Option<ForAllRuntimeDomain> {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() && path.path.get_ident().is_some() => {
+            Some(ForAllRuntimeDomain::OpaqueCollection)
+        }
+        Expr::MethodCall(call)
+            if call.method == "step_by"
+                && call.args.len() == 1
+                && forall_step_by_receiver_is_finite(&call.receiver, scope, fcx)
+                && !forall_step_arg_const_folds(&call.args[0], scope) =>
+        {
+            Some(ForAllRuntimeDomain::RuntimeStepBy)
+        }
+        _ => None,
+    }
+}
+
+fn forall_step_by_receiver_is_finite(
+    expr: &Expr,
+    scope: &TemporalScope,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    bounded_domain_from_expr(expr, scope).is_some()
+        || method_family::resolves_literal_sequence(expr, fcx.let_inits())
+        || has_composite(expr, fcx)
+}
+
+fn forall_step_arg_const_folds(expr: &Expr, scope: &TemporalScope) -> bool {
+    if const_int(expr).is_some() {
+        return true;
+    }
+    translate_term_in_scope(expr, scope)
+        .ok()
+        .and_then(|term| {
+            term_as_int(&term)
+                .or_else(|| const_fold_int_term(&term))
+                .map(|_| ())
+                .or_else(|| const_fold_u128_term(&term).map(|_| ()))
+        })
+        .is_some()
 }
 
 fn forall_domain_endpoint_is_runtime(expr: &Expr, scope: &TemporalScope) -> bool {
