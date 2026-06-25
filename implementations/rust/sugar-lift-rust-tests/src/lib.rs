@@ -6523,6 +6523,16 @@ impl ConstVal {
     }
 }
 
+pub(crate) fn const_val_i64(value: &ConstVal) -> Option<i64> {
+    let value = match value {
+        ConstVal::Int(n) => *n,
+        ConstVal::PrimitiveInt { raw, kind } => primitive_int_i128(*raw, *kind)?,
+        ConstVal::UInt128(n) => i128::try_from(*n).ok()?,
+        _ => return None,
+    };
+    i64::try_from(value).ok()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PrimitiveIntKind {
     signed: bool,
@@ -6633,9 +6643,10 @@ pub(crate) fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
 /// EXACT-OR-BAIL const-evaluator over the closed `ConstVal` set. Evaluates `expr` given
 /// `env` (closure param bindings to concrete element values). Returns None -- forcing the
 /// whole defold to bail -- for ANYTHING outside the set we can replicate with certainty:
-/// a non-literal leaf, a float, a string, a method/fn call, an index into a runtime value,
-/// an unbound ident, an integer overflow, a division by zero. UNDER-evaluating is a safe
-/// under-claim; a wrong evaluation would be a fake-discharge, so we never guess.
+/// a non-literal leaf, a float, a string, an unsupported method/fn call, an index into a
+/// runtime value, an unbound ident, an integer overflow, a division by zero.
+/// UNDER-evaluating is a safe under-claim; a wrong evaluation would be a fake-discharge,
+/// so we never guess.
 fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => match lit {
@@ -6681,6 +6692,11 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 vals.push(const_eval(e, env)?);
             }
             Some(ConstVal::Tuple(vals))
+        }
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            let receiver = const_eval(&call.receiver, env)?;
+            let arg = const_eval(&call.args[0], env)?;
+            const_numeric_wrapping_method(&receiver, &arg, &call.method.to_string())
         }
         Expr::MethodCall(call) if call.method == "sum" && call.args.is_empty() => {
             let elems = const_eval_iterable_tuple(&call.receiver, env)?;
@@ -6944,6 +6960,33 @@ fn const_numeric_mul(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
             .map(ConstVal::UInt128);
     }
     l.as_int()?.checked_mul(r.as_int()?).map(ConstVal::Int)
+}
+
+fn const_numeric_wrapping_method(
+    receiver: &ConstVal,
+    arg: &ConstVal,
+    method: &str,
+) -> Option<ConstVal> {
+    let (lhs, rhs, kind) = primitive_operands(receiver, arg)?;
+    let raw = match method {
+        "wrapping_add" => lhs.wrapping_add(rhs),
+        "wrapping_sub" => lhs.wrapping_sub(rhs),
+        "wrapping_mul" => lhs.wrapping_mul(rhs),
+        "wrapping_pow" => {
+            let exp = u32::try_from(rhs).ok()?;
+            let mask = primitive_int_max_raw(kind);
+            let mut acc = 1u128;
+            for _ in 0..exp {
+                acc = acc.wrapping_mul(lhs) & mask;
+            }
+            acc
+        }
+        _ => return None,
+    };
+    Some(ConstVal::PrimitiveInt {
+        raw: mask_raw(raw, kind.bits),
+        kind,
+    })
 }
 
 fn const_numeric_div(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
@@ -7649,8 +7692,17 @@ fn closure_single_param_ident(pat: &Pat) -> Option<String> {
 /// accumulator + the iteration's item-component bindings). This is the integer projection
 /// of the exact `const_eval`: it shares the same overflow/div-zero guards but returns an
 /// `i64` (the accumulator regime). Any shape / unbound ident / non-int value -> None
-/// (bail the defold -- a non-const-foldable accumulator is honest unclassified, never a
-/// fake-complete).
+/// (bail the defold loudly; never fake-complete an accumulator update we cannot
+/// represent).
+pub(crate) fn const_fold_acc_update_value(
+    tail: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+) -> Option<ConstVal> {
+    let value = const_eval(tail, env)?;
+    const_val_i64(&value)?;
+    Some(value)
+}
+
 fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
     let cv_env: BTreeMap<String, ConstVal> = env
         .iter()
@@ -7660,9 +7712,7 @@ fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64
     // beyond i64 is not a representable accumulator position -> bail
     // (EXACT-OR-BAIL; a truncation would be a fake-complete), mirroring
     // `const_int_acc_init`.
-    const_eval(tail, &cv_env)?
-        .as_int()
-        .and_then(|n| i64::try_from(n).ok())
+    const_fold_acc_update_value(tail, &cv_env).and_then(|value| const_val_i64(&value))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18626,36 +18676,46 @@ fn literal_array_len_with_lets(expr: &Expr, let_inits: &BTreeMap<String, &Expr>)
 /// position is statically determinable. EXACT-OR-BAIL: anything outside this closed
 /// set (a runtime `.len()`, a non-arithmetic op, a div/rem we don't const-fold here)
 /// returns None and the defolder declines -- a safe under-claim, never a fake-complete.
-fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
-    if let Some(n) = const_int(expr) {
+pub(crate) fn const_acc_init_value(
+    expr: &Expr,
+    let_inits: &BTreeMap<String, &Expr>,
+) -> Option<ConstVal> {
+    if let Some(value) = const_eval(expr, &BTreeMap::new()) {
         // The accumulator start is a bounded cursor position (i64/usize
         // domain). A wide literal here is not a representable cursor start ->
         // bail (EXACT-OR-BAIL; a truncation would be a fake-complete).
-        return i64::try_from(n).ok();
+        const_val_i64(&value)?;
+        return Some(value);
     }
     match expr {
-        Expr::Paren(p) => const_int_acc_init(&p.expr, let_inits),
-        Expr::Group(g) => const_int_acc_init(&g.expr, let_inits),
+        Expr::Paren(p) => const_acc_init_value(&p.expr, let_inits),
+        Expr::Group(g) => const_acc_init_value(&g.expr, let_inits),
         // `<literal-array>.len()` -- the only method we resolve, and only over a
         // literal array. `.len()` on a runtime receiver is NOT const (returns None).
         Expr::MethodCall(m) if m.method == "len" && m.args.is_empty() => {
-            literal_array_len_with_lets(&m.receiver, let_inits)
+            literal_array_len_with_lets(&m.receiver, let_inits).map(|n| ConstVal::Int(n.into()))
         }
         // `a + b` / `a - b` / `a * b` over const-resolvable operands. Saturating
         // semantics are not modeled here; the operands are small literal positions,
         // and a non-arithmetic op (`/`, `%`, shift) bails.
         Expr::Binary(b) => {
-            let lhs = const_int_acc_init(&b.left, let_inits)?;
-            let rhs = const_int_acc_init(&b.right, let_inits)?;
-            match b.op {
-                BinOp::Add(_) => lhs.checked_add(rhs),
-                BinOp::Sub(_) => lhs.checked_sub(rhs),
-                BinOp::Mul(_) => lhs.checked_mul(rhs),
+            let lhs = const_acc_init_value(&b.left, let_inits)?;
+            let rhs = const_acc_init_value(&b.right, let_inits)?;
+            let value = match b.op {
+                BinOp::Add(_) => const_numeric_add(&lhs, &rhs),
+                BinOp::Sub(_) => const_numeric_sub(&lhs, &rhs),
+                BinOp::Mul(_) => const_numeric_mul(&lhs, &rhs),
                 _ => None,
-            }
+            }?;
+            const_val_i64(&value)?;
+            Some(value)
         }
         _ => None,
     }
+}
+
+fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
+    const_acc_init_value(expr, let_inits).and_then(|value| const_val_i64(&value))
 }
 
 /// Peel transparent `(..)` / proc-macro `Group` wrappers off an expression so the
@@ -22015,32 +22075,22 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn defold_non_const_foldable_accumulator_stays_unclassified() {
-        // (f) HONEST BOUNDARY: a literal-domain fold whose tail is NOT a const-foldable
-        // accumulator update (`acc.wrapping_mul(x)` -- a method call we do not const-fold)
-        // is declined by the defolder. The body is pure and the receiver is a pure adaptor,
-        // so HALF 2 does NOT terminal-refuse it -- it stays UNCLASSIFIED (honest work, not a
-        // fake discharge or a fake refusal).
+    fn defold_wrapping_mul_accumulator_lifts() {
+        // (f) FLOOR DELEGATION: `acc.wrapping_mul(x)` over a literal-domain fold is a
+        // primitive-integer floor operation, not an unclassified escape hatch. The `u32`
+        // seed owns the width, so the accumulator update reduces exactly and the fold
+        // warrants the body facts.
         let src = r#"
             #[test]
             fn nf_fold() {
                 let xs = [1u32, 2, 3];
-                let _ = xs.iter().fold(1u32, |acc, &x| { assert!(x > 0); acc.wrapping_mul(x) });
+                let _ = xs.iter().fold(1u32, |acc, &x| { assert!(acc <= 2 && x > 0); acc.wrapping_mul(x) });
             }
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted,
-            0,
-            "a non-const-foldable accumulator must NOT be defolded: {:?}",
-            contract_names(&out)
-        );
-        assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| r.contains("let-initializer expression")
-                    && matches!(refusal_disposition(r), Disposition::Unclassified)),
-            "a non-foldable-acc fold stays UNCLASSIFIED (honest), not terminal: {:?}",
+            out.assertions_lifted, 1,
+            "a literal wrapping accumulator is floor-owned sugar and must lift; reasons: {:?}",
             out.skip_reasons
         );
     }

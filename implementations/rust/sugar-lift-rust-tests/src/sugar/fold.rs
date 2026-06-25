@@ -19,10 +19,11 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     canonical_term_sig, closure_body_is_side_effecting, closure_single_param_ident,
-    collect_assertion_entries, const_fold_acc_update, const_fold_int_term, const_int_acc_init,
-    count_asserts_in_stmts, resolve_index_in_formula, simple_path_name, strip_refs_groups,
-    subst_var_in_formula, token_key, translate_term_in_scope, tuple_components, AssertionFactKind,
-    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
+    collect_assertion_entries, const_acc_init_value, const_fold_acc_update_value,
+    const_fold_int_term, const_int_acc_init, const_val_term, count_asserts_in_stmts,
+    resolve_index_in_formula, simple_path_name, strip_refs_groups, subst_var_in_formula, token_key,
+    translate_term_in_scope, tuple_components, AssertionFactKind, ConstVal, Desugared,
+    DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
 
@@ -125,7 +126,7 @@ pub(crate) struct FoldSugar {
 impl Sugar for FoldSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let let_inits = scope_let_inits(ctx);
-        let acc_0 = const_int_acc_init(&self.init_expr, &let_inits)
+        let acc_0 = const_acc_init_value(&self.init_expr, &let_inits)
             .unwrap_or_else(|| fold_gap("fold accumulator init did not reduce to an integer"));
         let mut seq = match self.receiver.reduce(ctx) {
             Outcome::Complete(Desugared::Seq(seq)) => seq
@@ -155,7 +156,7 @@ impl Sugar for FoldSugar {
             target: "sugar_lift_rust_tests::sugar::fold",
             method = %self.method,
             seq_len = seq.len(),
-            acc0 = acc_0,
+            acc0 = ?acc_0,
             "fold replay resolved temporal sequence"
         );
         let n_body = count_asserts_in_stmts(&self.body_stmts);
@@ -246,23 +247,22 @@ impl Sugar for FoldSugar {
                 target: "sugar_lift_rust_tests::sugar::fold",
                 method = %self.method,
                 iteration,
-                acc,
+                acc = ?acc,
                 item = %elem.label(),
                 value = ?elem.value(),
                 "fold replay iteration"
             );
-            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
-            let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
-            tail_env.insert(self.acc_var.clone(), acc);
+            let acc_term =
+                const_val_term(&acc).unwrap_or_else(|| fold_gap("fold accumulator was not a term"));
+            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &acc_term);
+            let mut tail_env: BTreeMap<String, ConstVal> = BTreeMap::new();
+            tail_env.insert(self.acc_var.clone(), acc.clone());
             match &self.item_binder {
                 FoldItemBinder::Whole(var) => {
                     let t = elem.whole_term(ctx);
                     inst = subst_var_in_formula(&inst, var, &t);
-                    // The fold item enters the bounded i64 accumulator env; a wide
-                    // element value is not a representable cursor input -> bail
-                    // (EXACT-OR-BAIL).
-                    if let Some(n) = elem.whole_i64() {
-                        tail_env.insert(var.clone(), n);
+                    if let Some(value) = elem.whole_value() {
+                        tail_env.insert(var.clone(), value);
                     }
                 }
                 FoldItemBinder::Pair(c0, c1) => {
@@ -270,19 +270,11 @@ impl Sugar for FoldSugar {
                     inst = subst_var_in_formula(&inst, c0, &t0);
                     inst = subst_var_in_formula(&inst, c1, &t1);
                     if let Some(ConstVal::Tuple(parts)) = elem.value() {
-                        if let Some(n) = parts
-                            .first()
-                            .and_then(ConstVal::as_int)
-                            .and_then(|n| i64::try_from(n).ok())
-                        {
-                            tail_env.insert(c0.clone(), n);
+                        if let Some(value) = parts.first() {
+                            tail_env.insert(c0.clone(), value.clone());
                         }
-                        if let Some(n) = parts
-                            .get(1)
-                            .and_then(ConstVal::as_int)
-                            .and_then(|n| i64::try_from(n).ok())
-                        {
-                            tail_env.insert(c1.clone(), n);
+                        if let Some(value) = parts.get(1) {
+                            tail_env.insert(c1.clone(), value.clone());
                         }
                     }
                 }
@@ -294,7 +286,7 @@ impl Sugar for FoldSugar {
                 inst = resolve_index_in_formula(&inst, &array_terms);
             }
             instances.push(inst);
-            acc = const_fold_acc_update(&self.tail, &tail_env)
+            acc = const_fold_acc_update_value(&self.tail, &tail_env)
                 .unwrap_or_else(|| fold_gap("fold accumulator update did not const-fold"));
         }
         let conj = and_(instances);
@@ -340,16 +332,10 @@ impl FoldReplayElem {
         }
     }
 
-    fn whole_i64(&self) -> Option<i64> {
+    fn whole_value(&self) -> Option<ConstVal> {
         match self {
-            FoldReplayElem::Source(elem) => elem
-                .value
-                .as_ref()
-                .and_then(ConstVal::as_int)
-                .and_then(|n| i64::try_from(n).ok()),
-            FoldReplayElem::Term(term) => {
-                const_fold_int_term(term).and_then(|n| i64::try_from(n).ok())
-            }
+            FoldReplayElem::Source(elem) => elem.value.clone(),
+            FoldReplayElem::Term(term) => const_fold_int_term(term).map(ConstVal::Int),
         }
     }
 
