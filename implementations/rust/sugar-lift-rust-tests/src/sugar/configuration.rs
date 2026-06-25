@@ -171,6 +171,16 @@ pub(crate) struct ConfigurationSugar {
     inner: Box<dyn Sugar>,
 }
 
+/// Empty inner sugar for cfg-gated macro collection sites that need to ask a
+/// `ConfigurationSugar` for its disposition before collecting a concrete body.
+pub(crate) struct EmptyConfigGateSugar;
+
+impl Sugar for EmptyConfigGateSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Complete(Desugared::Seq(Vec::new()))
+    }
+}
+
 impl ConfigurationSugar {
     /// Wrap an inner `Sugar` with the `#[cfg(..)]` attrs that gate it.
     pub(crate) fn new(attrs: Vec<Attribute>, inner: Box<dyn Sugar>) -> Self {
