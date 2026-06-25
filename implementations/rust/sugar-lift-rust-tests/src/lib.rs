@@ -183,6 +183,7 @@ pub mod sugar {
     pub mod slice_index;
     pub mod slice_search;
     pub mod source_contract;
+    pub mod source_location;
     pub mod statement_async_future;
     pub mod statement_control_flow;
     pub mod statement_future_handoff;
@@ -541,6 +542,10 @@ pub enum Disposition {
 ///                            code either does not compile as written or needs a concrete
 ///                            monomorphization/callsite before the compiler axiom has a
 ///                            scalar value.
+///   * `source location runtime-determined` -- `Location::caller().{file,line,column}()`
+///                            reads the runtime callsite location. Text macros such as
+///                            `file!()` complete through macro sugar; caller-location
+///                            methods are a named source boundary.
 pub fn refusal_disposition(reason: &str) -> Disposition {
     // INACTIVE: cfg-disabled for this target -- not in this build's universe.
     if reason.contains("inactive cfg") || reason.contains("inactive const if branch") {
@@ -682,6 +687,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // typing + whitelisting moves them unclassified -> refused. Not a fake-zero -- the
         // reflective scrutinee is held + named.)
         || reason.contains("opaque compile-time reflection")
+        // TERMINAL: `Location::caller().file()` / `.line()` / `.column()` read runtime
+        // callsite source location. Literal source macros (`file!`, `line!`, `column!`)
+        // are separate text-determined sugar and do not reach this effect.
+        || reason.contains(SOURCE_LOCATION_RUNTIME_REASON)
         // TERMINAL: the asserted value flows through a `loop { .. }` over a RUNTIME
         // iterator the body advances (`iter.next()` / `iter.size_hint()`). Per-iteration
         // runtime bounds over a decode/parse iterator, no finite literal construction to
@@ -5097,6 +5106,12 @@ impl TemporalScope {
         &self.local_scope
     }
 
+    pub(crate) fn source_path(&self) -> &str {
+        self.local_scope
+            .split_once("::")
+            .map_or(self.local_scope.as_str(), |(source, _)| source)
+    }
+
     /// Whether `name` is a versioned local in the temporal PLAN (`scope.plan.versioned`).
     /// The factory's `Expr::Closure` term arm reads this to decide whether a captured
     /// free var needs an `@def<v>` suffix; the inline source-of-truth arm read
@@ -8256,6 +8271,11 @@ enum Effect {
     /// construction to walk -- a SOURCE property (the `bin-2` class). A `match` over a
     /// CONSTRUCTED literal scrutinee never reaches here, so this only refuses a reflective read.
     Reflection { boundary: String },
+    /// SOURCE-LOCATION: `Location::caller().{file,line,column}()` reads the dynamic callsite
+    /// location. Literal source macros such as `file!()` are text-determined and complete;
+    /// caller-location methods are a real runtime/source boundary and must not be laundered
+    /// through the generic method EUF bridge.
+    SourceLocation { boundary: String },
     /// TYPE-LAYOUT: `mem::size_of::<T>()` asked rustc for a concrete layout through the
     /// monomorphic harness, and rustc did not produce one in this source/harness context.
     /// Concrete layouts complete; a miss is the named layout boundary, not a runtime
@@ -8507,6 +8527,9 @@ impl Effect {
                 "assertion over opaque compile-time reflection `{boundary}` (Type::of/TypeId: \
                  runtime type identity, not constructed from source literals); refused"
             ),
+            Effect::SourceLocation { boundary } => format!(
+                "unsupported term `{boundary}`: {SOURCE_LOCATION_RUNTIME_REASON}; refused"
+            ),
             Effect::TypeLayout { boundary } => format!(
                 "unsupported term `{boundary}`: layout is unknown to this lift \
                  (rustc could not compile a monomorphic size_of harness for this type); refused"
@@ -8636,6 +8659,7 @@ impl Effect {
             | Effect::AmbiguousTemporalIdentity { boundary, .. }
             | Effect::ControlFlow { boundary }
             | Effect::Reflection { boundary }
+            | Effect::SourceLocation { boundary }
             | Effect::TypeLayout { boundary }
             | Effect::LoopAdvance { boundary }
             | Effect::ImplMethod { boundary }
@@ -10811,6 +10835,27 @@ fn statement_position_terminal_effect(
     }
 }
 
+fn push_reflection_match_body_refusals(
+    m: &syn::ExprMatch,
+    scope: &TemporalScope,
+    skipped: &mut Vec<String>,
+) -> bool {
+    let Some(boundary) = reflection_scrutinee(strip_const_block(&m.expr)) else {
+        return false;
+    };
+    let body_asserts: usize = m
+        .arms
+        .iter()
+        .filter(|a| !expr_diverges_in_scope(&a.body, scope))
+        .map(|a| count_asserts_in_match_arm_body(&a.body))
+        .sum();
+    let reason = (Effect::Reflection { boundary }).reason();
+    for _ in 0..body_asserts {
+        skipped.push(reason.clone());
+    }
+    true
+}
+
 /// Thin node-router: a statement-nested `impl` block whose method body carries an assertion is
 /// classified by the `ImplMethodSugar` node. It names the impl-method-reachability verdict in
 /// its own `desugar` -- an assertion lexically inside an impl method body is reachable ONLY at
@@ -12053,6 +12098,7 @@ fn collect_assertion_entries<'a>(
                 if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
+                    push_reflection_match_body_refusals(m, &temporal_scope, skipped);
                 } else if match_asserts == 0 {
                     if let Some(stmts) = const_selected_match_arm_stmts(m, options) {
                         collect_assertion_entries(
@@ -12086,26 +12132,12 @@ fn collect_assertion_entries<'a>(
                     // The variant-pin discharge (below) is unchanged. A match over a
                     // CONSTRUCTED literal scrutinee has no reflection call -> None -> the
                     // ordinary path (complete / under-match-context), never reflection-refused.
-                    let reflection_boundary = reflection_scrutinee(strip_const_block(&m.expr));
-                    if let Some(b) = &reflection_boundary {
-                        let body_asserts: usize = m
-                            .arms
-                            .iter()
-                            .filter(|a| !expr_diverges_in_scope(&a.body, &temporal_scope))
-                            .map(|a| count_asserts_in_match_arm_body(&a.body))
-                            .sum();
-                        let reason = (Effect::Reflection {
-                            boundary: b.clone(),
-                        })
-                        .reason();
-                        for _ in 0..body_asserts {
-                            skipped.push(reason.clone());
-                        }
-                    }
+                    let reflection_accounted =
+                        push_reflection_match_body_refusals(m, &temporal_scope, skipped);
                     // Panic-locus matches are handled before the assert-count split:
                     // they can be constraint-shaped even when the surviving arm is
                     // empty and the match contains no scalar assertion macros.
-                    if reflection_boundary.is_some() {
+                    if reflection_accounted {
                         // Reflection match with no panic-locus (no diverging `_` arm): its
                         // body asserts are already accounted above; do NOT also count them
                         // under the generic "under match context" path (double-count).
@@ -17266,10 +17298,10 @@ pub(crate) fn assertion_entry_from_eq(
     assertion_entry_from_relation(lhs, rhs, RelationOp::Eq, scope)
 }
 
-const SOURCE_LOCATION_RUNTIME_REASON: &str =
+pub(crate) const SOURCE_LOCATION_RUNTIME_REASON: &str =
     "source location runtime-determined, not text-determined";
 
-fn source_location_runtime_reason(expr: &Expr) -> Option<&'static str> {
+pub(crate) fn source_location_runtime_reason(expr: &Expr) -> Option<&'static str> {
     match expr {
         Expr::MethodCall(call)
             if matches!(call.method.to_string().as_str(), "file" | "line" | "column")
@@ -17284,7 +17316,7 @@ fn source_location_runtime_reason(expr: &Expr) -> Option<&'static str> {
     }
 }
 
-fn location_caller_expr(expr: &Expr) -> bool {
+pub(crate) fn location_caller_expr(expr: &Expr) -> bool {
     match expr {
         Expr::Call(call) => {
             let Expr::Path(path) = call.func.as_ref() else {
@@ -23599,6 +23631,7 @@ fn t() {
             "float refinement predicate `is_nan` f16 NaN width not modeled `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
             "assert!: unsupported term `mem::size_of::<T>()`: layout is unknown to this lift (rustc could not compile a monomorphic size_of harness for this type); refused",
+            "assert_eq!: unsupported term `Location :: caller () . file ()`: source location runtime-determined, not text-determined; refused",
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
             "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
