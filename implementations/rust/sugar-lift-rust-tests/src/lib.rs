@@ -622,6 +622,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // format macro itself only composes children; the format-value floor owns this
         // boundary when no literal `Display`/`Debug` value exists to render.
         || reason.contains("runtime format argument")
+        // TERMINAL: value-consuming Option/Result adaptors need a literal payload floor once
+        // the Some/Ok/Err branch is known. Presence predicates complete without inspecting
+        // the payload; `map`/`and_then`/`unwrap_or` cannot fabricate a runtime payload value.
+        || reason.contains("runtime Option/Result payload, not literal")
         // TERMINAL: Unicode full-case mapping is intentionally not lowered for non-ASCII
         // receivers because the result depends on the Unicode mapping table. ASCII receivers
         // still warrant through the complete path; only the version-sensitive frontier earns
@@ -8244,6 +8248,15 @@ enum Effect {
     /// `RuntimeNumericOperand`: the sender dispatches to the float floor and bubbles this
     /// only when no literal IEEE value exists.
     RuntimeFloatOperand { boundary: String, operation: String },
+    /// RUNTIME-MONADIC-PAYLOAD: an Option/Result value-consuming adaptor (`map`,
+    /// `and_then`, `unwrap_or`, ...) selected a concrete Some/Ok/Err branch, but the branch
+    /// payload reduced to runtime/opaque data rather than a literal floor. Presence
+    /// predicates can ignore payloads; value-consuming adaptors cannot fabricate a value.
+    RuntimeMonadicPayload {
+        boundary: String,
+        method: String,
+        ctor: String,
+    },
     /// ATOMIC-LOAD: `.load(Ordering::*)` reads interior-mutable atomic state through
     /// shared-reference semantics. Path receivers that the temporal planner can version
     /// stay on the method-key floor; non-path receivers have no single binding identity
@@ -8426,6 +8439,9 @@ impl Effect {
             Effect::RuntimeFloatOperand { boundary, .. } => {
                 format!("runtime float operand, not literal `{boundary}`")
             }
+            Effect::RuntimeMonadicPayload { method, ctor, .. } => {
+                format!("runtime Option/Result payload, not literal (`{method}` over `{ctor}`)")
+            }
             Effect::AtomicLoad { .. } => {
                 "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state"
                     .to_string()
@@ -8485,6 +8501,7 @@ impl Effect {
             | Effect::UndefinedBehavior { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RuntimeFloatOperand { boundary, .. }
+            | Effect::RuntimeMonadicPayload { boundary, .. }
             | Effect::AtomicLoad { boundary }
             | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
