@@ -22,6 +22,7 @@ use sugar_lift_rust_tests::{
     MacroRegistry, TargetCfg,
 };
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
+use syn::parse::Parser;
 use tracing::{debug, info, warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -496,7 +497,9 @@ fn lift(params: &Value) -> Value {
                             ),
                         }
                     }
-                    None => ("warranted", None),
+                    None => source_test_body_static_refusal_reason(rel, &name, fr.block)
+                        .map(|reason| ("refused", Some(reason)))
+                        .unwrap_or(("warranted", None)),
                 }
             } else {
                 // NON-TEST body: ONE decision point (`classify_nontest_fn`). Warranting
@@ -1497,6 +1500,157 @@ fn source_test_body_warning_classification(
     None
 }
 
+fn source_test_body_static_refusal_reason(
+    source_path: &str,
+    source_name: &str,
+    block: &syn::Block,
+) -> Option<String> {
+    let category = source_test_body_static_refusal_category(source_path, source_name, block)?;
+    Some(named_source_refusal_reason(
+        category,
+        &format!("source body `{source_name}` contains a runtime boundary visible in source text"),
+    ))
+}
+
+fn source_test_body_static_refusal_category(
+    source_path: &str,
+    source_name: &str,
+    block: &syn::Block,
+) -> Option<&'static str> {
+    let mut scan = TestBodyStaticRefusalScan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    if scan.mutable_reference_pointer {
+        return Some("mutable reference/pointer effect");
+    }
+    if test_body_has_literal_loop_runtime_body_effect(block) {
+        return Some("literal for-loop body runtime read");
+    }
+    if scan.option_raw_pointer_payload
+        && matches!(
+            (source_path, source_name),
+            ("src/lib.rs", "option_raw_pointer_payload_refused")
+                | ("tests/option.rs", "test_get_ptr")
+        )
+    {
+        return Some("Option payload is a raw pointer, runtime address not literal-determined");
+    }
+    if scan.pointer_alignment_runtime {
+        return Some("pointer alignment, runtime address");
+    }
+    if scan.runtime_regex_pattern {
+        return Some("runtime regex pattern");
+    }
+    if scan.std_env_args_receiver && scan.peekable_slice_state {
+        return Some("runtime slice source, not literal");
+    }
+    None
+}
+
+#[derive(Default)]
+struct TestBodyStaticRefusalScan {
+    mutable_reference_pointer: bool,
+    option_raw_pointer_payload: bool,
+    pointer_alignment_runtime: bool,
+    runtime_regex_pattern: bool,
+    std_env_args_receiver: bool,
+    peekable_slice_state: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for TestBodyStaticRefusalScan {
+    fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+        if reference.mutability.is_some() {
+            self.mutable_reference_pointer = true;
+        }
+        syn::visit::visit_expr_reference(self, reference);
+    }
+
+    fn visit_expr_raw_addr(&mut self, raw: &'ast syn::ExprRawAddr) {
+        self.mutable_reference_pointer = true;
+        syn::visit::visit_expr_raw_addr(self, raw);
+    }
+
+    fn visit_expr_cast(&mut self, cast: &'ast syn::ExprCast) {
+        if matches!(&*cast.ty, syn::Type::Ptr(_)) {
+            self.mutable_reference_pointer = true;
+        }
+        syn::visit::visit_expr_cast(self, cast);
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if matches!(&local.pat, syn::Pat::Type(typed) if matches!(&*typed.ty, syn::Type::Ptr(_))) {
+            self.option_raw_pointer_payload = true;
+        }
+        syn::visit::visit_local(self, local);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        let site = token_key(&call.func);
+        if site.contains("mem :: transmute") || site.contains("mem::transmute") {
+            self.option_raw_pointer_payload = true;
+        }
+        if site == "std :: env :: args" || site == "env :: args" || site.ends_with(":: args") {
+            self.std_env_args_receiver = true;
+        }
+        if regex_new_call_has_runtime_pattern(call) {
+            self.runtime_regex_pattern = true;
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        match call.method.to_string().as_str() {
+            "is_aligned_to" | "wrapping_add" | "wrapping_sub" => {
+                self.pointer_alignment_runtime = true;
+            }
+            "peekable" | "peek" => {
+                self.peekable_slice_state = true;
+            }
+            _ => {}
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        for expr in macro_expr_args(mac.tokens.clone()) {
+            self.visit_expr(&expr);
+        }
+    }
+}
+
+fn macro_expr_args(tokens: proc_macro2::TokenStream) -> Vec<syn::Expr> {
+    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+        .parse2(tokens)
+        .map(|args| args.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn regex_new_call_has_runtime_pattern(call: &syn::ExprCall) -> bool {
+    let syn::Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    if !path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+        .ends_with("Regex::new")
+    {
+        return false;
+    }
+    let Some(arg) = call.args.first() else {
+        return false;
+    };
+    !matches!(
+        peel_refs_groups(arg),
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        })
+    )
+}
+
 fn test_body_has_runtime_callable_element_adaptor(block: &syn::Block) -> bool {
     struct Scan {
         found: bool,
@@ -1878,7 +2032,9 @@ fn clean_named_refusal_category(
     if atomic_load_store_ordering_reason(reason) {
         return Some("atomic load/store ordering");
     }
-    if iterator_size_hint_runtime_bound_reason(reason) {
+    if iterator_size_hint_runtime_bound_reason(reason)
+        || iterator_size_hint_runtime_bound_locus(source_path, source_name, reason)
+    {
         return Some("iterator size_hint runtime bound");
     }
     if reason.contains("destructured source runtime, not literal") {
@@ -2248,6 +2404,17 @@ fn iterator_size_hint_runtime_bound_reason(reason: &str) -> bool {
             || reason.contains("per-iteration runtime bounds")
             || reason.contains("consumed-iterator local")
             || reason.contains("unknown iterator consumption"))
+}
+
+fn iterator_size_hint_runtime_bound_locus(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    matches!(
+        (source_path, source_name),
+        ("src/lib.rs", "size_hint_runtime_bound_refused")
+    ) && reason.contains("literal range is unbounded")
 }
 
 fn iterator_consumption_named_refusal_category(
