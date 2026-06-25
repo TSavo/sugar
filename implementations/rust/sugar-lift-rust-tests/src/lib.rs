@@ -9797,12 +9797,18 @@ impl PanicFreedomCallsiteVisitor<'_> {
 
 impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-        self.out.push(Expr::Call(call.clone()));
+        let expr = Expr::Call(call.clone());
+        if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
+            self.out.push(expr);
+        }
         syn::visit::visit_expr_call(self, call);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        self.out.push(Expr::MethodCall(call.clone()));
+        let expr = Expr::MethodCall(call.clone());
+        if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
+            self.out.push(expr);
+        }
         syn::visit::visit_expr_method_call(self, call);
     }
 
