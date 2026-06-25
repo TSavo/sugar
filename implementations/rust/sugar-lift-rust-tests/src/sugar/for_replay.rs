@@ -140,7 +140,7 @@ pub(crate) fn desugar_synthesized_for_loop(
     let_inits: &BTreeMap<String, &Expr>,
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Option<Desugared> {
+) -> Outcome {
     crate::sugar::statement_position::desugar_composite_expr(
         expr,
         scope,
@@ -151,7 +151,6 @@ pub(crate) fn desugar_synthesized_for_loop(
         macro_depth,
         factory_audits,
     )
-    .complete()
 }
 
 /// The binding ident for a `for <pat> in ..` loop var. Accepts `Pat::Ident` AND
