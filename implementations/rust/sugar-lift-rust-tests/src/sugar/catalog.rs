@@ -97,6 +97,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &float_literal_method::EXPR_SUGAR,
     &ptr_metadata::EXPR_SUGAR,
     &memchr::EXPR_SUGAR,
+    &raw_addr_term::PTR_EQ_EXPR_SUGAR,
     &call::EXPR_SUGAR,
     &array_term::EXPR_SUGAR,
     &tuple_term::EXPR_SUGAR,
