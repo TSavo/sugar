@@ -1274,13 +1274,6 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 Some(())
             }
             Outcome::Incomplete(effect) => {
-                let reason = effect.reason();
-                if reason.contains("structural backstop") {
-                    for_replay_construction_gap(format!(
-                        "nested assertion `{}` hit the structural backstop",
-                        crate::token_key(expr)
-                    ));
-                }
                 self.terminal_effect = Some(effect);
                 None
             }
