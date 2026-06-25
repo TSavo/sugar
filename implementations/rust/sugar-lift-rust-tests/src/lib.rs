@@ -11755,17 +11755,33 @@ fn collect_assertion_entries<'a>(
                         for _ in 0..count {
                             skipped.push(reason.clone());
                         }
-                    } else if let Some(desugared) = sugar::match_node::desugar_statement_match(
-                        e,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        &let_inits,
-                        macro_depth,
-                        factory_audits,
-                    ) {
-                        emit_desugared(desugared, entries, macros_lifted);
+                    } else {
+                        let match_outcome = sugar::match_node::desugar_statement_match(
+                            e,
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            &let_inits,
+                            macro_depth,
+                            factory_audits,
+                        );
+                        match match_outcome {
+                            Outcome::Complete(desugared) => {
+                                emit_desugared(desugared, entries, macros_lifted);
+                            }
+                            Outcome::Incomplete(effect) => {
+                                let count: usize = m
+                                    .arms
+                                    .iter()
+                                    .map(|a| count_asserts_in_match_arm_body(&a.body))
+                                    .sum();
+                                let reason = effect.reason();
+                                for _ in 0..count {
+                                    skipped.push(reason.clone());
+                                }
+                            }
+                        };
                         // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
                         // (it does not exist on this target). Those arms' asserts are NOT in
                         // the emitted conjunction, so account them HERE with a precise reason
@@ -11783,34 +11799,6 @@ fn collect_assertion_entries<'a>(
                                     );
                                 }
                             }
-                        }
-                    } else {
-                        let count: usize = m
-                            .arms
-                            .iter()
-                            .map(|a| count_asserts_in_match_arm_body(&a.body))
-                            .sum();
-                        // RESOLVE-THEN-CLASSIFY (the match-context tail): a `match` whose
-                        // SCRUTINEE is a RUNTIME call result (`match it.next() { Some(x) =>
-                        // assert_eq!(*x, ..) }`, `it` a `let mut` iterator) reads its asserted
-                        // values out of the runtime arm taken by a runtime iterator-advance --
-                        // no single timeless `t`, the SAME terminal class as the existing
-                        // `RuntimeMatchScrutineeEffect` (`operand is a runtime non-scalar
-                        // result`). Name it terminal. DISCRIMINATION: a `match` over a
-                        // CONSTRUCTED literal/path scrutinee is NOT a runtime call result
-                        // (`expr_is_runtime_call_result` false), so it STAYS the generic
-                        // UNCLASSIFIED reason -- the fake-refuse guardrail. Corpus:
-                        // option.rs::test_mut_iter (`match it.next()`).
-                        let reason = if let Some(eff) =
-                            runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
-                        {
-                            eff.reason()
-                        } else {
-                            "assertion under match context: not unconditional point-wise; released to layer 0"
-                                .to_string()
-                        };
-                        for _ in 0..count {
-                            skipped.push(reason.clone());
                         }
                     }
                 }

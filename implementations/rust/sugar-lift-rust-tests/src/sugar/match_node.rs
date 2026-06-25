@@ -54,7 +54,7 @@ pub(crate) fn desugar_statement_match(
     let_inits: &BTreeMap<String, &Expr>,
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Option<Desugared> {
+) -> Outcome {
     crate::sugar::statement_position::desugar_composite_expr(
         expr,
         scope,
@@ -65,7 +65,6 @@ pub(crate) fn desugar_statement_match(
         macro_depth,
         factory_audits,
     )
-    .complete()
 }
 
 /// TERM recognizer for a value-producing match whose losing arms diverge:
