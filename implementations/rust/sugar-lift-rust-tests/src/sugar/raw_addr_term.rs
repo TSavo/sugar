@@ -101,7 +101,7 @@ impl Sugar for PointerEqTermSugar {
 pub(crate) fn pointer_eq_assertion_entry(
     expr: &Expr,
     scope: &TemporalScope,
-) -> Result<Option<AssertionEntry>, String> {
+) -> Result<Option<AssertionEntry>, Effect> {
     match expr {
         Expr::Paren(paren) => pointer_eq_assertion_entry(&paren.expr, scope),
         Expr::Group(group) => pointer_eq_assertion_entry(&group.expr, scope),
@@ -110,7 +110,7 @@ pub(crate) fn pointer_eq_assertion_entry(
                 return Ok(None);
             };
             if call.args.len() != 2 {
-                return Err("ptr::eq expects two arguments".to_string());
+                panic!("ptr::eq expects two arguments; write more Sugar for this AST");
             }
             let args = call
                 .args
@@ -130,10 +130,10 @@ pub(crate) fn pointer_eq_assertion_entry(
 pub(crate) fn pointer_identity_term(
     expr: &Expr,
     scope: &TemporalScope,
-) -> Result<Rc<Term>, String> {
+) -> Result<Rc<Term>, Effect> {
     match expr {
         Expr::Reference(reference) if reference.mutability.is_some() => {
-            Err(mutable_reference_identity_effect(&token_key(expr)).reason())
+            Err(mutable_reference_identity_effect(&token_key(expr)))
         }
         Expr::Reference(reference) if reference.mutability.is_none() => Ok(Rc::new(Term::Ctor {
             name: "ref".to_string(),
@@ -163,7 +163,7 @@ fn is_mutable_reference_identity(term: &Rc<Term>) -> bool {
     matches!(term.as_ref(), Term::Ctor { name, .. } if name == "ref_mut")
 }
 
-fn reduce_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
+fn reduce_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, Effect> {
     let options = LiftOptions::default();
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
@@ -173,10 +173,16 @@ fn reduce_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, 
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut float_widths, 0, None);
     match body.reduce(&ctx) {
-        Outcome::Complete(desugared) => desugared
-            .into_term()
-            .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
-        Outcome::Incomplete(effect) => Err(effect.reason()),
+        Outcome::Complete(desugared) => match desugared.into_term() {
+            Some(term) => Ok(term),
+            None => {
+                panic!(
+                    "raw pointer identity term `{}` completed a non-Term floor",
+                    token_key(expr)
+                );
+            }
+        },
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
