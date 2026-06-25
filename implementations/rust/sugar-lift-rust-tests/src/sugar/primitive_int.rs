@@ -18,7 +18,7 @@ use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, simple_path_name,
-    strip_refs_groups, u128_term, Desugared, Outcome, Sugar, SugarCtx,
+    strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -377,6 +377,34 @@ fn primitive_int_gap(reason: &str) -> ! {
     panic!("primitive_int completed without a numeric literal floor: {reason}")
 }
 
+fn runtime_numeric_operand(term: &Rc<Term>) -> Option<Outcome> {
+    numeric_floor_from_term(term).is_none().then(|| {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: canonical_term_sig(term),
+            operation: String::new(),
+            kind: String::new(),
+        })
+    })
+}
+
+fn primitive_int_gap_or_runtime(term: &Rc<Term>, reason: &str) -> Outcome {
+    runtime_numeric_operand(term).unwrap_or_else(|| primitive_int_gap(reason))
+}
+
+fn primitive_int_binary_gap_or_runtime(
+    receiver: &Rc<Term>,
+    rhs: &Rc<Term>,
+    reason: &str,
+) -> Outcome {
+    if let Some(outcome) = runtime_numeric_operand(receiver) {
+        return outcome;
+    }
+    if let Some(outcome) = runtime_numeric_operand(rhs) {
+        return outcome;
+    }
+    primitive_int_gap(reason)
+}
+
 fn folded_int_term(term: &Rc<Term>) -> Option<i128> {
     const_fold_int_term(term).or_else(|| match numeric_floor_from_term(term)? {
         NumericFloor::Untyped(value) => Some(value),
@@ -421,7 +449,11 @@ impl Sugar for PrimitiveIntTupleProducer {
         let Some((value, overflow)) =
             overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, self.op, kind_hint)
         else {
-            primitive_int_gap("overflowing tuple operands did not reduce to typed integer floors");
+            return primitive_int_binary_gap_or_runtime(
+                &receiver,
+                &rhs,
+                "overflowing tuple operands did not reduce to typed integer floors",
+            );
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -472,7 +504,10 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(num(i128::from(value))));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    primitive_int_gap("count_ones receiver did not reduce to an integer floor");
+                    return primitive_int_gap_or_runtime(
+                        &receiver,
+                        "count_ones receiver did not reduce to an integer floor",
+                    );
                 };
                 let Some(value) = count_ones_value(lhs, kind_hint) else {
                     primitive_int_gap("count_ones receiver did not carry a computable width");
@@ -589,12 +624,18 @@ impl Sugar for PrimitiveIntSugar {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
                     else {
-                        primitive_int_gap("extremum lhs did not reduce to an integer floor");
+                        return primitive_int_gap_or_runtime(
+                            &receiver,
+                            "extremum lhs did not reduce to an integer floor",
+                        );
                     };
                     let Some(rhs) = const_fold_u128_term(&rhs)
                         .or_else(|| const_fold_int_term(&rhs).and_then(|n| u128::try_from(n).ok()))
                     else {
-                        primitive_int_gap("extremum rhs did not reduce to an integer floor");
+                        return primitive_int_gap_or_runtime(
+                            &rhs,
+                            "extremum rhs did not reduce to an integer floor",
+                        );
                     };
                     let value = if matches!(&self.kind, Kind::Min(_)) {
                         lhs.min(rhs)
@@ -612,10 +653,16 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(u128_term(value)));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    primitive_int_gap("extremum lhs did not reduce to a signed integer floor");
+                    return primitive_int_gap_or_runtime(
+                        &receiver,
+                        "extremum lhs did not reduce to a signed integer floor",
+                    );
                 };
                 let Some(rhs) = const_fold_int_term(&rhs) else {
-                    primitive_int_gap("extremum rhs did not reduce to a signed integer floor");
+                    return primitive_int_gap_or_runtime(
+                        &rhs,
+                        "extremum rhs did not reduce to a signed integer floor",
+                    );
                 };
                 let value = if matches!(&self.kind, Kind::Min(_)) {
                     lhs.min(rhs)
@@ -641,12 +688,18 @@ impl Sugar for PrimitiveIntSugar {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
                     else {
-                        primitive_int_gap("checked lhs did not reduce to an integer floor");
+                        return primitive_int_gap_or_runtime(
+                            &receiver,
+                            "checked lhs did not reduce to an integer floor",
+                        );
                     };
                     let Some(rhs) = const_fold_u128_term(&rhs)
                         .or_else(|| const_fold_int_term(&rhs).and_then(|n| u128::try_from(n).ok()))
                     else {
-                        primitive_int_gap("checked rhs did not reduce to an integer floor");
+                        return primitive_int_gap_or_runtime(
+                            &rhs,
+                            "checked rhs did not reduce to an integer floor",
+                        );
                     };
                     let result = checked_u128(lhs, rhs, *op);
                     debug!(
@@ -664,10 +717,16 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(term));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    primitive_int_gap("checked lhs did not reduce to a signed integer floor");
+                    return primitive_int_gap_or_runtime(
+                        &receiver,
+                        "checked lhs did not reduce to a signed integer floor",
+                    );
                 };
                 let Some(rhs) = const_fold_int_term(&rhs) else {
-                    primitive_int_gap("checked rhs did not reduce to a signed integer floor");
+                    return primitive_int_gap_or_runtime(
+                        &rhs,
+                        "checked rhs did not reduce to a signed integer floor",
+                    );
                 };
                 let result = checked_int_op(lhs, rhs, *op, kind_hint);
                 debug!(
@@ -691,7 +750,11 @@ impl Sugar for PrimitiveIntSugar {
                 };
                 let Some(term) = wrapping_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    primitive_int_gap("wrapping operands did not reduce to typed integer floors");
+                    return primitive_int_binary_gap_or_runtime(
+                        &receiver,
+                        &rhs,
+                        "wrapping operands did not reduce to typed integer floors",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -709,7 +772,11 @@ impl Sugar for PrimitiveIntSugar {
                 };
                 let Some(term) = saturating_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    primitive_int_gap("saturating operands did not reduce to typed integer floors");
+                    return primitive_int_binary_gap_or_runtime(
+                        &receiver,
+                        &rhs,
+                        "saturating operands did not reduce to typed integer floors",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -727,7 +794,9 @@ impl Sugar for PrimitiveIntSugar {
                 };
                 let Some(term) = next_multiple_of_int_term(lhs_i128, lhs_u128, &rhs, kind_hint)
                 else {
-                    primitive_int_gap(
+                    return primitive_int_binary_gap_or_runtime(
+                        &receiver,
+                        &rhs,
                         "next_multiple_of operands did not reduce to typed integer floors",
                     );
                 };
@@ -748,7 +817,9 @@ impl Sugar for PrimitiveIntSugar {
                 let Some((value, overflow)) =
                     overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    primitive_int_gap(
+                    return primitive_int_binary_gap_or_runtime(
+                        &receiver,
+                        &rhs,
                         "overflowing operands did not reduce to typed integer floors",
                     );
                 };
