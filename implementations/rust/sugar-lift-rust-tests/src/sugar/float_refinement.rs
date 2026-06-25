@@ -76,11 +76,14 @@ pub(crate) fn assertion_entry(
     expr: &Expr,
     scope: &crate::TemporalScope,
     _float_widths: &FloatWidthScope,
-) -> Result<Option<AssertionEntry>, String> {
+) -> Result<Option<AssertionEntry>, Effect> {
     match expr {
         Expr::Paren(paren) => assertion_entry(&paren.expr, scope, _float_widths),
         Expr::Group(group) => assertion_entry(&group.expr, scope, _float_widths),
-        Expr::MethodCall(call) => assertion_entry_method(call, scope),
+        Expr::MethodCall(call) if is_liftable_float_refinement_method(&call.method.to_string()) => {
+            assertion_entry_method(call, scope).map(Some)
+        }
+        Expr::MethodCall(_) => Ok(None),
         _ => Ok(None),
     }
 }
@@ -88,15 +91,12 @@ pub(crate) fn assertion_entry(
 fn assertion_entry_method(
     call: &ExprMethodCall,
     scope: &crate::TemporalScope,
-) -> Result<Option<AssertionEntry>, String> {
+) -> Result<AssertionEntry, Effect> {
     let method = call.method.to_string();
     let site = token_key(Expr::MethodCall(call.clone()));
-    if !is_liftable_float_refinement_method(&method) {
-        return Ok(None);
-    }
     if !call.args.is_empty() {
-        return Err(format!(
-            "float refinement predicate takes no arguments `{site}`"
+        float_refinement_gap(&format!(
+            "float refinement predicate takes arguments `{site}`"
         ));
     }
     if let Some(unstable_width) = float_refinement_receiver_unstable_width(&call.receiver) {
@@ -105,23 +105,27 @@ fn assertion_entry_method(
         } else {
             format!("{unstable_width} bit-width not modeled")
         };
-        return Err(format!(
-            "float refinement predicate `{method}` {width_reason} `{site}`"
-        ));
+        return Err(Effect::FloatIeeeRefinement {
+            boundary: site.clone(),
+            reason: format!("float refinement predicate `{method}` {width_reason} `{site}`"),
+        });
     }
     let Some(width) = float_refinement_receiver_width(&call.receiver, scope) else {
-        return Err(format!(
-            "float refinement predicate `{method}` requires known f32/f64 receiver width `{site}`"
-        ));
+        return Err(Effect::FloatIeeeRefinement {
+            boundary: site.clone(),
+            reason: format!(
+                "float refinement predicate `{method}` requires known f32/f64 receiver width `{site}`"
+            ),
+        });
     };
     if let Some(value) = literal_float_refinement_value(&method, &call.receiver) {
-        return Ok(Some(AssertionEntry {
+        return Ok(AssertionEntry {
             name: None,
             atom: eq(bool_const(value), bool_const(true)),
             fact_span: None,
             kind: AssertionFactKind::Warranted,
             claim_count: 1,
-        }));
+        });
     }
 
     let options = LiftOptions::default();
@@ -134,22 +138,16 @@ fn assertion_entry_method(
     let receiver = match SugarBody::term(&call.receiver, &fcx).reduce(&ctx) {
         Outcome::Complete(desugared) => desugared
             .into_term()
-            .unwrap_or_else(|| panic!("typed float refinement receiver reduced to non-term")),
-        Outcome::Incomplete(effect) => {
-            return Err(format!(
-                "float refinement receiver term translation failed for `{}`: {}",
-                token_key(&call.receiver),
-                effect.reason()
-            ));
-        }
+            .unwrap_or_else(|| float_refinement_gap("receiver reduced to a non-term floor")),
+        Outcome::Incomplete(effect) => return Err(effect),
     };
-    Ok(Some(AssertionEntry {
+    Ok(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
         atom: atomic_(float_predicate_atom_name(width, &method), vec![receiver]),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
-    }))
+    })
 }
 
 impl Sugar for FloatRefinementSugar {
@@ -395,9 +393,13 @@ fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>,
     match body.reduce(ctx) {
         Outcome::Complete(desugared) => Ok(desugared
             .into_term()
-            .unwrap_or_else(|| panic!("typed float refinement receiver reduced to non-term"))),
+            .unwrap_or_else(|| float_refinement_gap("receiver reduced to a non-term floor"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
+}
+
+fn float_refinement_gap(reason: &str) -> ! {
+    panic!("float_refinement did not reach a lawful floor: {reason}")
 }
 
 #[cfg(test)]

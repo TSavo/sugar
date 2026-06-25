@@ -16150,7 +16150,9 @@ fn lower_assert_eq(
         scope,
         float_widths,
         factory_audits,
-    )? {
+    )
+    .map_err(|effect| effect.reason())?
+    {
         return Ok(entry);
     }
     let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)

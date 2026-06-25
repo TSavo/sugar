@@ -15,7 +15,7 @@ use crate::sugar::float_floor::{
 };
 use crate::{
     bool_const, callsite_assertion_name, parse_macro_args, sugar_ctx_with_factory_audits,
-    token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
+    token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect,
     FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, Formula, Term};
@@ -99,17 +99,26 @@ pub(crate) fn assertion_entry_with_audits(
     scope: &crate::TemporalScope,
     _float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Option<AssertionEntry>, String> {
+) -> Result<Option<AssertionEntry>, Effect> {
     let (width, is_positive, receiver_expr) =
         match (infinity_constant_kind(lhs), infinity_constant_kind(rhs)) {
             (Some((w, pos)), _) => (w, pos, rhs),
             (None, Some((w, pos))) => (w, pos, lhs),
             (None, None) => return Ok(None),
         };
+    assertion_entry_for_infinity(width, is_positive, receiver_expr, scope, factory_audits).map(Some)
+}
 
+fn assertion_entry_for_infinity(
+    width: IeeeFloatWidth,
+    is_positive: bool,
+    receiver_expr: &Expr,
+    scope: &crate::TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<AssertionEntry, Effect> {
     if let Some(receiver_width) = float_receiver_width(receiver_expr, scope) {
         if receiver_width != width {
-            return Err(format!(
+            infinity_eq_gap(&format!(
                 "infinity equality: receiver width `{}` conflicts with constant width `{}` in `{}`",
                 width_name(receiver_width),
                 width_name(width),
@@ -135,13 +144,7 @@ pub(crate) fn assertion_entry_with_audits(
         Outcome::Complete(desugared) => desugared
             .into_term()
             .unwrap_or_else(|| infinity_eq_gap("receiver reduced to a non-term floor")),
-        Outcome::Incomplete(effect) => {
-            return Err(format!(
-                "infinity equality: receiver term translation failed for `{}`: {}",
-                token_key(receiver_expr),
-                effect.reason()
-            ));
-        }
+        Outcome::Incomplete(effect) => return Err(effect),
     };
 
     let sign_pred = if is_positive {
@@ -159,13 +162,13 @@ pub(crate) fn assertion_entry_with_audits(
             vec![receiver.clone()],
         ),
     ]);
-    Ok(Some(AssertionEntry {
+    Ok(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
         atom,
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
-    }))
+    })
 }
 
 impl Sugar for InfinityEqSugar {
