@@ -19,10 +19,10 @@ use crate::sugar::{
     compute_float, concat_macro, conditional, const_block, const_if, const_item, const_path,
     constraint, control_flow_term, cstr, dormant_mut_ref, duration_accessor, dyn_any, enumerate,
     field_term, filter, filter_map, flat_map, flatten, float_literal_method, float_refinement,
-    fold, for_each, for_replay, forall_loop, format_args, format_macro, from_bool, function_map,
-    identity_map, impl_method, index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt,
-    integer_decode, intersperse, intersperse_collect_string, intersperse_concat, into, ip_addr,
-    is_empty, is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
+    fold, for_each, for_loop_mutation, for_replay, forall_loop, format_args, format_macro,
+    from_bool, function_map, identity_map, impl_method, index, infinity_eq, inspect, int_midpoint,
+    int_pow, int_sqrt, integer_decode, intersperse, intersperse_collect_string, intersperse_concat,
+    into, ip_addr, is_empty, is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
     literal_iterator_quantifier, literal_slice, loop_break_term, macro_assertion_surface,
     macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
     maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
@@ -178,6 +178,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &conditional::EXPR_SUGAR,
     &match_node::EXPR_SUGAR,
     &for_replay::EXPR_SUGAR,
+    &for_loop_mutation::EXPR_SUGAR,
     &forall_loop::EXPR_SUGAR,
     &array_repeat::EXPR_SUGAR,
     &control_flow_term::COMPOSITE_EXPR_SUGAR,
@@ -1340,6 +1341,21 @@ mod tests {
         let names = candidate_names_for_role(&expr, SugarRole::Composite);
 
         assert_eq!(names, vec!["forall_loop"]);
+    }
+
+    #[test]
+    fn for_loop_over_side_effecting_iterator_domain_is_owned_by_mutation_sugar() {
+        let expr: Expr = syn::parse_str("for _ in xs.iter_mut().map(|x| *x += 1) {}").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert!(
+            names.contains(&"for_loop_mutation"),
+            "side-effecting iterator-domain loop should be a named Mutation effect, not a factory gap: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("for_loop_mutation")
+        );
     }
 
     #[test]
