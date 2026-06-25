@@ -11,9 +11,9 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    addr_of_mut, aggregate_decomp, array_repeat, array_term, assign_op, await_term, binop,
-    block_term, bool_bitwise, bool_method, bound_path, call, cast_term, cell_refcell, cfg_select,
-    chain, char_method, char_range_collect_string, char_range_filter_map,
+    addr_of_mut, aggregate_decomp, array_repeat, array_term, assign_op, atomic_load, await_term,
+    binop, block_term, bool_bitwise, bool_method, bound_path, call, cast_term, cell_refcell,
+    cfg_select, chain, char_method, char_range_collect_string, char_range_filter_map,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, collect, collection_literal,
     compute_float, concat_macro, conditional, const_block, const_if, const_item, const_path,
@@ -99,6 +99,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &ptr_metadata::EXPR_SUGAR,
     &memchr::EXPR_SUGAR,
     &raw_addr_term::PTR_EQ_EXPR_SUGAR,
+    &atomic_load::EXPR_SUGAR,
     &call::EXPR_SUGAR,
     &array_term::EXPR_SUGAR,
     &tuple_term::EXPR_SUGAR,
@@ -1132,6 +1133,21 @@ mod tests {
             selected,
             Some("constraint_char_literal_method"),
             "assert-style char bool predicates keep a teethed constraint owner"
+        );
+    }
+
+    #[test]
+    fn atomic_load_method_is_owned_by_atomic_runtime_sugar_before_generic_method() {
+        let expr: Expr = syn::parse_str("witness[3].1.load(Ordering::Relaxed)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"atomic_load"),
+            "atomic .load should be a named runtime boundary before the generic method bridge: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("atomic_load")
         );
     }
 
