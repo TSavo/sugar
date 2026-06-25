@@ -14,7 +14,13 @@ Options:
 
 Environment:
   BCARGO_REMOTE_HOST   SSH host alias to use (default: battleaxe)
-  BCARGO_REMOTE_ROOT   Remote scratch root (default: /home/tsavo/remote/sugar-bcargo)
+  BCARGO_REMOTE_ROOT   Remote scratch root (default: /home/tsavo/remote/sugar-bcargo-<checkout-hash>)
+  BCARGO_CLEAN_REMOTE_ROOT
+                       Set to success or always to remove BCARGO_REMOTE_ROOT
+                       after the remote cargo command. Default: never.
+  BCARGO_CLEAN_REMOTE_ROOT_UNSAFE
+                       Set to 1 to allow cleanup outside
+                       /home/tsavo/remote/sugar-bcargo-*
   BCARGO_PYTHON_ENV    Set to 0 to skip remote Python kit env provisioning
 EOF
 }
@@ -92,6 +98,8 @@ remote_python_venv="$remote_root/python-kit-env"
 remote_python_bin="$remote_python_venv/bin"
 remote_python="$remote_python_bin/python"
 provision_python_env="${BCARGO_PYTHON_ENV:-1}"
+clean_remote_root="${BCARGO_CLEAN_REMOTE_ROOT:-never}"
+clean_remote_root_unsafe="${BCARGO_CLEAN_REMOTE_ROOT_UNSAFE:-0}"
 ssh_bin="${BCARGO_SSH:-ssh}"
 rsync_bin="${BCARGO_RSYNC:-rsync}"
 
@@ -132,6 +140,39 @@ remote_for_local_path() {
 
 run_ssh() {
   "$ssh_bin" -o BatchMode=yes "$remote_host" "$@"
+}
+
+case "$clean_remote_root" in
+  "" | 0 | false | no | never)
+    clean_remote_root="never"
+    ;;
+  1 | true | yes | success)
+    clean_remote_root="success"
+    ;;
+  always)
+    ;;
+  *)
+    echo "bcargo: BCARGO_CLEAN_REMOTE_ROOT must be never, success, or always" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$clean_remote_root" != "never" ]]; then
+  case "$remote_root" in
+    /home/tsavo/remote/sugar-bcargo-*)
+      ;;
+    *)
+      if [[ "$clean_remote_root_unsafe" != "1" ]]; then
+        echo "bcargo: refusing to clean unsafe remote root: $remote_root" >&2
+        echo "bcargo: set BCARGO_CLEAN_REMOTE_ROOT_UNSAFE=1 only for an explicitly disposable root" >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
+
+cleanup_remote_root() {
+  run_ssh "rm -rf $(quote_sh "$remote_root")"
 }
 
 exclude_args=(
@@ -311,6 +352,11 @@ status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
+  if [[ "$clean_remote_root" == "always" ]]; then
+    if ! cleanup_remote_root; then
+      echo "bcargo: remote root cleanup failed after cargo failure: $remote_root" >&2
+    fi
+  fi
   exit "$status"
 fi
 
@@ -321,4 +367,8 @@ if ((${#sync_bins[@]} > 0)); then
     mkdir -p "$(dirname "$local_bin")"
     "$rsync_bin" -az "$remote_host:$remote_bin" "$local_bin"
   done
+fi
+
+if [[ "$clean_remote_root" != "never" ]]; then
+  cleanup_remote_root
 fi
