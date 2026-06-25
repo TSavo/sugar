@@ -222,7 +222,7 @@ fn receiver_is_chunk_window_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize
                     fcx.let_inits()
                         .get(&name)
                         .copied()
-                        .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                        .or_else(|| fcx.scope().replayable_let_binding_for_source(&name))
                         .cloned()
                 })
             })
@@ -269,7 +269,7 @@ fn resolve_chunk_window_receiver<'a>(
             let current = scope
                 .temporal_rewrite_expr_for(&name)
                 .or_else(|| let_inits.get(&name).map(|init| (*init).clone()))
-                .or_else(|| scope.stable_let_binding_for_term(&name).cloned())?;
+                .or_else(|| scope.replayable_let_binding_for_source(&name).cloned())?;
             resolve_chunk_window_receiver(&current, let_inits, scope, depth + 1)
         }
         Expr::Reference(reference) => {
