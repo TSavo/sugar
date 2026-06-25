@@ -63,7 +63,8 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{ConstValue, Term};
 use syn::{Expr, UnOp};
 
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::float_floor::{IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor};
 use crate::{
     bool_const, num, real_const, real_literal_is_zero, token_key, Desugared, Effect, Outcome,
     Sugar, SugarCtx,
@@ -81,6 +82,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             op: unary.op,
             site: token_key(expr),
             inner: SugarBody::term(&unary.expr, fcx),
+            float_inner: matches!(unary.op, UnOp::Neg(_))
+                .then(|| SugarBody::ieee_float(&unary.expr, fcx, None, "unary_neg")),
         })),
         _ => None,
     }
@@ -100,6 +103,10 @@ pub(crate) struct UnarySugar {
     /// mirrors `translate_term_in_scope(&unary.expr, scope)?`; a child `Incomplete`
     /// propagates verbatim.
     pub(crate) inner: SugarBody<TermFloor>,
+    /// The same operand, typed as the IEEE float floor for `-<float>` sign-sensitive
+    /// cases. `UnarySugar` only dispatches through it after the normal term floor says
+    /// the operand is Real zero.
+    pub(crate) float_inner: Option<SugarBody<IeeeFloatFloor>>,
 }
 
 /// Read a desugared CHILD outcome as the `Rc<Term>` an `Expr::Unary` arm would have
@@ -128,6 +135,41 @@ fn unary_gap(reason: &str) -> ! {
     panic!("unary completed without an operand term floor: {reason}")
 }
 
+fn negated_zero_float_floor(
+    child: &SugarBody<IeeeFloatFloor>,
+    ctx: &SugarCtx,
+    site: &str,
+) -> Outcome {
+    match child.reduce(ctx) {
+        Outcome::Complete(desugared) => {
+            let Some(term) = desugared.into_term() else {
+                unary_gap("IEEE float negation child completed as non-term");
+            };
+            term.accept_ieee_float(UnaryNegFloatVisitor { site })
+        }
+        Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+    }
+}
+
+struct UnaryNegFloatVisitor<'a> {
+    site: &'a str,
+}
+
+impl IeeeFloatVisitor for UnaryNegFloatVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_float(self, value: IeeeFloatValue) -> Self::Output {
+        match value.neg().to_real_term(self.site) {
+            Ok(term) => Outcome::Complete(Desugared::Term(term)),
+            Err(outcome) => outcome,
+        }
+    }
+
+    fn visit_non_float(self, _term: &Rc<Term>) -> Self::Output {
+        unary_gap("IEEE float negation child did not dispatch to float floor")
+    }
+}
+
 impl Sugar for UnarySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.op {
@@ -151,7 +193,10 @@ impl Sugar for UnarySugar {
                 } = child.as_ref()
                 {
                     if real_literal_is_zero(value) {
-                        unary_gap("signed zero float literal needs the owning float floor");
+                        let Some(float_inner) = &self.float_inner else {
+                            unary_gap("signed zero float literal needs the owning float floor");
+                        };
+                        return negated_zero_float_floor(float_inner, ctx, &self.site);
                     }
                     return Outcome::Complete(Desugared::Term(real_const(format!("-{value}"))));
                 }

@@ -132,7 +132,7 @@ impl IeeeFloatValue {
         }
     }
 
-    fn neg(self) -> Self {
+    pub(crate) fn neg(self) -> Self {
         match self {
             IeeeFloatValue::F32(value) => IeeeFloatValue::F32(-value),
             IeeeFloatValue::F64(value) => IeeeFloatValue::F64(-value),
