@@ -11,8 +11,8 @@ use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
-    scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, FactoryAuditLog,
-    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, TemporalScope,
+    scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, Effect,
+    FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, TemporalScope,
 };
 
 pub(crate) const VALUE_IF_TERM: &str = "value:if";
@@ -187,6 +187,21 @@ impl TermFloorVisitor for LiteralPredicateBoolVisitor {
     fn visit_term(self, term: &Rc<Term>) -> Self::Output {
         literal_predicate_bool(term)
     }
+}
+
+pub(crate) fn literal_predicate_bool_or_runtime_effect(
+    term: &Rc<Term>,
+) -> Result<Option<bool>, Effect> {
+    if let Some(value) = literal_predicate_bool(term) {
+        return Ok(Some(value));
+    }
+    if let Some(boundary) = runtime_occurrence_boundary(term) {
+        return Err(Effect::OpaqueRuntime {
+            boundary,
+            accessor: false,
+        });
+    }
+    Ok(None)
 }
 
 pub(crate) trait ScalarFloorVisitor {
@@ -440,6 +455,19 @@ fn curry_term(
 
 fn runtime_occurrence_ctor(name: &str) -> bool {
     name.starts_with("call:") || name.starts_with("method:")
+}
+
+fn runtime_occurrence_boundary(term: &Rc<Term>) -> Option<String> {
+    match term.as_ref() {
+        Term::Ctor { name, .. } if runtime_occurrence_ctor(name) => Some(canonical_term_sig(term)),
+        Term::Ctor { args, .. } => args.iter().find_map(runtime_occurrence_boundary),
+        Term::Let { bindings, body } => bindings
+            .iter()
+            .find_map(|binding| runtime_occurrence_boundary(&binding.bound_term))
+            .or_else(|| runtime_occurrence_boundary(body)),
+        Term::Lambda { body, .. } => runtime_occurrence_boundary(body),
+        _ => None,
+    }
 }
 
 fn literal_predicate_bool(term: &Rc<Term>) -> Option<bool> {

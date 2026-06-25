@@ -7,8 +7,7 @@ use syn::Pat;
 
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::term_dispatch::{
-    CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
-    TermFloorAccept,
+    literal_predicate_bool_or_runtime_effect, CurryOccurrence, CurryVisitor, DesugaredFloorAccept,
 };
 use crate::{canonical_term_sig, const_val_term, token_key, DesugaredElem, Outcome, SugarCtx};
 
@@ -49,16 +48,17 @@ impl BoolPredicateClosure {
         let term = body
             .into_term()
             .unwrap_or_else(|| bool_predicate_gap(family, "predicate body reduced to non-Term"));
-        term.accept_term_floor(LiteralPredicateBoolVisitor)
-            .ok_or_else(|| {
-                bool_predicate_gap(
-                    family,
-                    &format!(
-                        "predicate floor did not reduce to literal bool: {}",
-                        canonical_term_sig(&term)
-                    ),
-                )
-            })
+        match literal_predicate_bool_or_runtime_effect(&term) {
+            Ok(Some(value)) => Ok(value),
+            Err(effect) => Err(Outcome::Incomplete(effect)),
+            Ok(None) => bool_predicate_gap(
+                family,
+                &format!(
+                    "predicate floor did not reduce to literal bool: {}",
+                    canonical_term_sig(&term)
+                ),
+            ),
+        }
     }
 }
 
