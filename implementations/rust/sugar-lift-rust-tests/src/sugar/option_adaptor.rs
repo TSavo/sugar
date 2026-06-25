@@ -21,8 +21,8 @@ use crate::sugar::monadic::{
 use crate::sugar::option_unwrap::receiver_resolves_monadic_source;
 use crate::{
     bool_const, const_eval, const_eval_unary_closure, const_fold_int_term, const_fold_u128_term,
-    num, primitive_int_term, str_const, strip_refs_groups, u128_term, ConstVal, Desugared, Outcome,
-    Sugar, SugarCtx,
+    num, primitive_int_term, str_const, strip_refs_groups, u128_term, ConstVal, Desugared, Effect,
+    Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -682,9 +682,11 @@ fn ensure_grounded_payload(
     if is_grounded_literal_term(term.as_ref()) {
         return Ok(());
     }
-    option_adaptor_gap(&format!(
-        "runtime Option/Result payload completed without literal floor (`{method}` over `{ctor}`)"
-    ))
+    Err(Outcome::Incomplete(Effect::RuntimeMonadicPayload {
+        boundary: format!("{method} over {ctor}"),
+        method: method.to_string(),
+        ctor: ctor.to_string(),
+    }))
 }
 
 fn default_term_for_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<Rc<Term>> {
