@@ -13,7 +13,7 @@ use quote::format_ident;
 use sugar_ir_symbolic::{and_, eq, implies, not_, Formula, Term};
 use syn::{BinOp, Expr, Stmt};
 
-use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
     const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
@@ -27,9 +27,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// COMPOSITE recognizer for `Expr::If`: the implication composite ([`ConditionalSugar`]
 /// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => decompose_if(i)`
 /// arm of the old fat `build_composite`, with gaps now loud.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::If(i) => decompose_if(i).map(|node| Box::new(node) as Box<dyn Sugar>),
+        Expr::If(i) => decompose_if(i, fcx).map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
 }
@@ -65,8 +65,11 @@ pub(crate) fn desugar_statement_conditional(
 /// refusal stands).
 pub(crate) struct ConditionalSugar {
     cond: Expr,
+    guard_eval: GuardEval,
     then_stmts: Vec<Stmt>,
     else_stmts: Vec<Stmt>,
+    then_tail: Option<SugarBody<CompositeFloor>>,
+    else_tail: Option<SugarBody<CompositeFloor>>,
 }
 
 impl Sugar for ConditionalSugar {
@@ -98,7 +101,7 @@ impl Sugar for ConditionalSugar {
             }
             // At least one branch must carry an assertion (else nothing to classify --
             // leave it to the existing handling).
-            match const_fold_bool_guard(ctx, &self.cond) {
+            match const_fold_bool_guard(ctx, &self.guard_eval) {
                 Ok(Some(guard_value)) => {
                     let (active_stmts, active_count, inactive_count) = if guard_value {
                         (&self.then_stmts, then_count, else_count)
@@ -189,24 +192,17 @@ impl ConditionalSugar {
         if guard_exits_with_return(&self.cond) {
             return Some(Outcome::Complete(Desugared::Seq(Vec::new())));
         }
-        let guard_value = match const_fold_bool_guard(ctx, &self.cond) {
+        let guard_value = match const_fold_bool_guard(ctx, &self.guard_eval) {
             Ok(Some(value)) => value,
             Ok(None) => return None,
             Err(effect) => return Some(Outcome::Incomplete(effect)),
         };
         let branch = if guard_value {
-            &self.then_stmts
+            &self.then_tail
         } else {
-            &self.else_stmts
+            &self.else_tail
         };
-        let tail = single_expr_tail(branch)?;
-        let let_inits = ctx
-            .scope
-            .let_bindings_iter()
-            .map(|(name, init)| (name.clone(), init))
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        Some(build_composite(tail, &fcx).desugar(ctx))
+        branch.as_ref().map(|tail| tail.desugar(ctx))
     }
 
     /// Lift a branch's statements all-or-nothing through the normal collector,
@@ -285,65 +281,124 @@ fn guard_exits_with_return(cond: &Expr) -> bool {
     }
 }
 
-fn const_fold_bool_guard(ctx: &SugarCtx, cond: &Expr) -> Result<Option<bool>, Effect> {
-    if let Some(value) = crate::const_fold_bool_guard(cond, ctx.options) {
-        return Ok(Some(value));
-    }
-    if guard_mentions_stable_local_path(ctx, cond) {
-        Ok(None)
-    } else {
-        const_fold_bool_guard_from_terms(ctx, cond)
+struct GuardEval {
+    expr: Expr,
+    kind: GuardEvalKind,
+}
+
+enum GuardEvalKind {
+    Transparent(Box<GuardEval>),
+    Not(Box<GuardEval>),
+    And(Box<GuardEval>, Box<GuardEval>),
+    Or(Box<GuardEval>, Box<GuardEval>),
+    Compare {
+        lhs: SugarBody<TermFloor>,
+        rhs: SugarBody<TermFloor>,
+        op: GuardCompareOp,
+    },
+    Other,
+}
+
+#[derive(Clone, Copy)]
+enum GuardCompareOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl GuardCompareOp {
+    fn eval(self, ordering: std::cmp::Ordering) -> bool {
+        match self {
+            Self::Eq => ordering == std::cmp::Ordering::Equal,
+            Self::Ne => ordering != std::cmp::Ordering::Equal,
+            Self::Lt => ordering == std::cmp::Ordering::Less,
+            Self::Le => ordering != std::cmp::Ordering::Greater,
+            Self::Gt => ordering == std::cmp::Ordering::Greater,
+            Self::Ge => ordering != std::cmp::Ordering::Less,
+        }
     }
 }
 
-fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Result<Option<bool>, Effect> {
-    match cond {
-        Expr::Paren(p) => const_fold_bool_guard(ctx, &p.expr),
-        Expr::Group(g) => const_fold_bool_guard(ctx, &g.expr),
-        Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => {
-            Ok(const_fold_bool_guard(ctx, &u.expr)?.map(|value| !value))
+impl GuardEval {
+    fn new(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        let kind = match expr {
+            Expr::Paren(p) => GuardEvalKind::Transparent(Box::new(Self::new(&p.expr, fcx))),
+            Expr::Group(g) => GuardEvalKind::Transparent(Box::new(Self::new(&g.expr, fcx))),
+            Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => {
+                GuardEvalKind::Not(Box::new(Self::new(&u.expr, fcx)))
+            }
+            Expr::Binary(binary) => match binary.op {
+                BinOp::And(_) | BinOp::BitAnd(_) => GuardEvalKind::And(
+                    Box::new(Self::new(&binary.left, fcx)),
+                    Box::new(Self::new(&binary.right, fcx)),
+                ),
+                BinOp::Or(_) | BinOp::BitOr(_) => GuardEvalKind::Or(
+                    Box::new(Self::new(&binary.left, fcx)),
+                    Box::new(Self::new(&binary.right, fcx)),
+                ),
+                BinOp::Eq(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Eq, fcx),
+                BinOp::Ne(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Ne, fcx),
+                BinOp::Lt(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Lt, fcx),
+                BinOp::Le(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Le, fcx),
+                BinOp::Gt(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Gt, fcx),
+                BinOp::Ge(_) => compare_guard(&binary.left, &binary.right, GuardCompareOp::Ge, fcx),
+                _ => GuardEvalKind::Other,
+            },
+            _ => GuardEvalKind::Other,
+        };
+        Self {
+            expr: expr.clone(),
+            kind,
         }
-        Expr::Binary(binary) => match binary.op {
-            BinOp::And(_) | BinOp::BitAnd(_) => {
-                let Some(left) = const_fold_bool_guard(ctx, &binary.left)? else {
+    }
+
+    fn eval(&self, ctx: &SugarCtx) -> Result<Option<bool>, Effect> {
+        if let Some(value) = crate::const_fold_bool_guard(&self.expr, ctx.options) {
+            return Ok(Some(value));
+        }
+        if guard_mentions_stable_local_path(ctx, &self.expr) {
+            return Ok(None);
+        }
+        match &self.kind {
+            GuardEvalKind::Transparent(inner) => inner.eval(ctx),
+            GuardEvalKind::Not(inner) => Ok(inner.eval(ctx)?.map(|value| !value)),
+            GuardEvalKind::And(left, right) => {
+                let Some(left) = left.eval(ctx)? else {
                     return Ok(None);
                 };
                 if !left {
                     return Ok(Some(false));
                 }
-                Ok(const_fold_bool_guard(ctx, &binary.right)?.map(|right| left && right))
+                Ok(right.eval(ctx)?.map(|right| left && right))
             }
-            BinOp::Or(_) | BinOp::BitOr(_) => {
-                let Some(left) = const_fold_bool_guard(ctx, &binary.left)? else {
+            GuardEvalKind::Or(left, right) => {
+                let Some(left) = left.eval(ctx)? else {
                     return Ok(None);
                 };
                 if left {
                     return Ok(Some(true));
                 }
-                Ok(const_fold_bool_guard(ctx, &binary.right)?.map(|right| left || right))
+                Ok(right.eval(ctx)?.map(|right| left || right))
             }
-            BinOp::Eq(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord == std::cmp::Ordering::Equal
-            }),
-            BinOp::Ne(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord != std::cmp::Ordering::Equal
-            }),
-            BinOp::Lt(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord == std::cmp::Ordering::Less
-            }),
-            BinOp::Le(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord != std::cmp::Ordering::Greater
-            }),
-            BinOp::Gt(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord == std::cmp::Ordering::Greater
-            }),
-            BinOp::Ge(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
-                ord != std::cmp::Ordering::Less
-            }),
-            _ => Ok(None),
-        },
-        _ => Ok(None),
+            GuardEvalKind::Compare { lhs, rhs, op } => compare_terms(ctx, lhs, rhs, *op),
+            GuardEvalKind::Other => Ok(None),
+        }
     }
+}
+
+fn compare_guard(lhs: &Expr, rhs: &Expr, op: GuardCompareOp, fcx: &SugarBuildCtx) -> GuardEvalKind {
+    GuardEvalKind::Compare {
+        lhs: SugarBody::term(lhs, fcx),
+        rhs: SugarBody::term(rhs, fcx),
+        op,
+    }
+}
+
+fn const_fold_bool_guard(ctx: &SugarCtx, guard: &GuardEval) -> Result<Option<bool>, Effect> {
+    guard.eval(ctx)
 }
 
 fn guard_mentions_stable_local_path(ctx: &SugarCtx, expr: &Expr) -> bool {
@@ -367,9 +422,9 @@ fn guard_mentions_stable_local_path(ctx: &SugarCtx, expr: &Expr) -> bool {
 
 fn compare_terms(
     ctx: &SugarCtx,
-    lhs: &Expr,
-    rhs: &Expr,
-    pred: impl FnOnce(std::cmp::Ordering) -> bool,
+    lhs: &SugarBody<TermFloor>,
+    rhs: &SugarBody<TermFloor>,
+    op: GuardCompareOp,
 ) -> Result<Option<bool>, Effect> {
     let lhs = term_for_guard_operand(ctx, lhs)?;
     let rhs = term_for_guard_operand(ctx, rhs)?;
@@ -401,13 +456,14 @@ fn compare_terms(
             left.cmp(&right)
         }
     };
-    Ok(Some(pred(ordering)))
+    Ok(Some(op.eval(ordering)))
 }
 
-fn term_for_guard_operand(ctx: &SugarCtx, expr: &Expr) -> Result<Option<Rc<Term>>, Effect> {
-    let empty = BTreeMap::new();
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
-    match build_term(expr, &fcx).desugar(ctx) {
+fn term_for_guard_operand(
+    ctx: &SugarCtx,
+    body: &SugarBody<TermFloor>,
+) -> Result<Option<Rc<Term>>, Effect> {
+    match body.desugar(ctx) {
         Outcome::Complete(desugared) => Ok(desugared.into_term()),
         Outcome::Incomplete(effect) => Err(effect),
     }
@@ -435,7 +491,7 @@ fn conditional_gap(reason: &str) -> ! {
 /// statements and the else-branch statements (a plain `else { .. }` block; an
 /// `else if` chains as a nested `Expr::If`, captured as the single else statement)
 /// are the guarded claims. None if the if has no body to classify.
-pub(crate) fn decompose_if(i: &syn::ExprIf) -> Option<ConditionalSugar> {
+pub(crate) fn decompose_if(i: &syn::ExprIf, fcx: &SugarBuildCtx) -> Option<ConditionalSugar> {
     let else_stmts: Vec<Stmt> = match &i.else_branch {
         Some((_, else_expr)) => match &**else_expr {
             Expr::Block(b) => b.block.stmts.clone(),
@@ -449,7 +505,14 @@ pub(crate) fn decompose_if(i: &syn::ExprIf) -> Option<ConditionalSugar> {
     };
     Some(ConditionalSugar {
         cond: (*i.cond).clone(),
+        guard_eval: GuardEval::new(&i.cond, fcx),
+        then_tail: branch_tail_body(&i.then_branch.stmts, fcx),
+        else_tail: branch_tail_body(&else_stmts, fcx),
         then_stmts: i.then_branch.stmts.clone(),
         else_stmts,
     })
+}
+
+fn branch_tail_body(stmts: &[Stmt], fcx: &SugarBuildCtx) -> Option<SugarBody<CompositeFloor>> {
+    single_expr_tail(stmts).map(|tail| SugarBody::composite(tail, fcx))
 }
