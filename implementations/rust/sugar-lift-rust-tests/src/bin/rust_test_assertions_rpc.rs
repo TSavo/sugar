@@ -1451,6 +1451,14 @@ fn source_test_body_warning_classification(
     reason: &str,
     block: &syn::Block,
 ) -> Option<SourceWarningClassification> {
+    if reason.contains("assertion surface")
+        && reason.contains("emitted only support facts")
+        && test_body_has_runtime_callable_element_adaptor(block)
+    {
+        return Some(SourceWarningClassification::Refused(
+            "runtime callable element boundary",
+        ));
+    }
     if reason.contains("assertion under for context over a LITERAL range") {
         let body_tokens = block.to_token_stream().to_string();
         if (body_tokens.contains("memrchr") || body_tokens.contains("memchr"))
@@ -1467,6 +1475,208 @@ fn source_test_body_warning_classification(
         }
     }
     None
+}
+
+fn test_body_has_runtime_callable_element_adaptor(block: &syn::Block) -> bool {
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_stmt_macro(&mut self, mac: &'ast syn::StmtMacro) {
+            if macro_payload_has_runtime_callable_element_adaptor(&mac.mac) {
+                self.found = true;
+            }
+        }
+
+        fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
+            if macro_payload_has_runtime_callable_element_adaptor(&mac.mac) {
+                self.found = true;
+            }
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if self.found {
+                return;
+            }
+            let method = call.method.to_string();
+            if matches!(
+                method.as_str(),
+                "all" | "any" | "map" | "find" | "filter" | "filter_map" | "find_map" | "position"
+            ) && call
+                .args
+                .iter()
+                .any(closure_body_calls_through_closure_param)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    let mut scan = Scan { found: false };
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
+}
+
+fn macro_payload_has_runtime_callable_element_adaptor(mac: &syn::Macro) -> bool {
+    let Some(name) = mac
+        .path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+    else {
+        return false;
+    };
+    if name != "assert" {
+        return false;
+    }
+    syn::parse2::<syn::Expr>(mac.tokens.clone())
+        .ok()
+        .is_some_and(|expr| expr_has_runtime_callable_element_adaptor(&expr))
+}
+
+fn expr_has_runtime_callable_element_adaptor(expr: &syn::Expr) -> bool {
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if self.found {
+                return;
+            }
+            let method = call.method.to_string();
+            if matches!(
+                method.as_str(),
+                "all" | "any" | "map" | "find" | "filter" | "filter_map" | "find_map" | "position"
+            ) && call
+                .args
+                .iter()
+                .any(closure_body_calls_through_closure_param)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+            syn::visit::visit_expr_closure(self, closure);
+        }
+    }
+
+    let mut scan = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut scan, expr);
+    scan.found
+}
+
+fn closure_body_calls_through_closure_param(expr: &syn::Expr) -> bool {
+    let syn::Expr::Closure(closure) = expr else {
+        return false;
+    };
+    let mut params = BTreeSet::new();
+    for input in &closure.inputs {
+        collect_pattern_idents(input, &mut params);
+    }
+    if params.is_empty() {
+        return false;
+    }
+
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if expr_refs_any_ident(&call.func, self.params) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures own their own parameter namespace.
+        }
+    }
+
+    let mut scan = Scan {
+        params: &params,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut scan, &closure.body);
+    scan.found
+}
+
+fn collect_pattern_idents(pattern: &syn::Pat, out: &mut BTreeSet<String>) {
+    match pattern {
+        syn::Pat::Ident(ident) => {
+            out.insert(ident.ident.to_string());
+        }
+        syn::Pat::Reference(reference) => collect_pattern_idents(&reference.pat, out),
+        syn::Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_pattern_idents(elem, out);
+            }
+        }
+        syn::Pat::TupleStruct(tuple) => {
+            for elem in &tuple.elems {
+                collect_pattern_idents(elem, out);
+            }
+        }
+        syn::Pat::Struct(strukt) => {
+            for field in &strukt.fields {
+                collect_pattern_idents(&field.pat, out);
+            }
+        }
+        syn::Pat::Slice(slice) => {
+            for elem in &slice.elems {
+                collect_pattern_idents(elem, out);
+            }
+        }
+        syn::Pat::Type(typed) => collect_pattern_idents(&typed.pat, out),
+        syn::Pat::Or(or) => {
+            for case in &or.cases {
+                collect_pattern_idents(case, out);
+            }
+        }
+        syn::Pat::Paren(paren) => collect_pattern_idents(&paren.pat, out),
+        syn::Pat::Rest(_) | syn::Pat::Wild(_) | syn::Pat::Lit(_) | syn::Pat::Macro(_) => {}
+        _ => {}
+    }
+}
+
+fn expr_refs_any_ident(expr: &syn::Expr, names: &BTreeSet<String>) -> bool {
+    struct Refs<'a> {
+        names: &'a BTreeSet<String>,
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Refs<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if path
+                .path
+                .get_ident()
+                .is_some_and(|ident| self.names.contains(&ident.to_string()))
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
+    }
+
+    let mut refs = Refs {
+        names,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut refs, expr);
+    refs.found
 }
 
 fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
@@ -3810,6 +4020,43 @@ mod tests {
         assert_eq!(
             clean_named_refusal_category("tests/atomic.rs", "ptr_add_null", runtime_operand_reason),
             None
+        );
+    }
+
+    #[test]
+    fn source_warning_classifier_names_runtime_callable_element_without_refusing_literal_twin() {
+        let reason = "rust test assertions: unsupported assertion surface; released to layer 0: assertion surface `assert ! (funcs . into_iter () . any (| f | f (1) == 1))` emitted only support facts; assertion without warranted fact emitted; released to layer 0";
+        let runtime_body: syn::Block = syn::parse_quote!({
+            let funcs: [fn(i32) -> i32; 1] = [id];
+            assert!(funcs.into_iter().any(|f| f(1) == 1));
+        });
+        assert!(
+            matches!(
+                source_test_body_warning_classification(
+                    "src/source_runtime_callable.rs",
+                    "runtime_callable_element_refused",
+                    reason,
+                    &runtime_body,
+                ),
+                Some(SourceWarningClassification::Refused(
+                    "runtime callable element boundary"
+                ))
+            ),
+            "closure adaptor that invokes its element is a named runtime callable boundary"
+        );
+
+        let literal_body: syn::Block = syn::parse_quote!({
+            assert!([1i32].into_iter().any(|x| x == 1));
+        });
+        assert!(
+            source_test_body_warning_classification(
+                "src/source_runtime_callable.rs",
+                "runtime_callable_element_literal_twin",
+                reason,
+                &literal_body,
+            )
+            .is_none(),
+            "literal element predicates must stay available to warranting sugar"
         );
     }
 
