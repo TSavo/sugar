@@ -15,8 +15,9 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::method_family;
 use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
 use crate::{
-    canonical_term_sig, closure_body_mutates_captured_runtime_state, const_val_term,
-    strip_refs_groups, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
+    const_val_term, strip_refs_groups, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -120,7 +121,7 @@ impl Sugar for MapCallSugar {
             Ok(mapped) => mapped,
             Err(outcome) => return outcome,
         };
-        Outcome::Complete(Desugared::TermSeq(mapped))
+        Outcome::Complete(mapped.into_desugared())
     }
 }
 
@@ -136,7 +137,7 @@ impl Sugar for MapSugar {
             return outcome;
         }
         match reduce_map_body(&self.inner, &self.mapper, ctx) {
-            Ok(mapped) => Outcome::Complete(Desugared::TermSeq(mapped)),
+            Ok(mapped) => Outcome::Complete(mapped.into_desugared()),
             Err(outcome) => outcome,
         }
     }
@@ -156,7 +157,36 @@ impl Sugar for MapTermSugar {
             Ok(mapped) => mapped,
             Err(outcome) => return outcome,
         };
-        Outcome::Complete(Desugared::TermSeq(mapped))
+        Outcome::Complete(Desugared::TermSeq(mapped.into_terms()))
+    }
+}
+
+enum MappedSequence {
+    Values(Vec<DesugaredElem>),
+    Terms(Vec<Rc<Term>>),
+}
+
+impl MappedSequence {
+    fn into_desugared(self) -> Desugared {
+        match self {
+            MappedSequence::Values(values) => Desugared::Seq(values),
+            MappedSequence::Terms(terms) => Desugared::TermSeq(terms),
+        }
+    }
+
+    fn into_terms(self) -> Vec<Rc<Term>> {
+        match self {
+            MappedSequence::Values(values) => values
+                .iter()
+                .map(|elem| {
+                    elem.value
+                        .as_ref()
+                        .and_then(const_val_term)
+                        .unwrap_or_else(|| map_gap("literal map value did not reify to a term"))
+                })
+                .collect(),
+            MappedSequence::Terms(terms) => terms,
+        }
     }
 }
 
@@ -174,7 +204,7 @@ fn reduce_map_body(
     inner: &SugarBody<CompositeFloor>,
     mapper: &MapClosure,
     ctx: &SugarCtx,
-) -> Result<Vec<Rc<Term>>, Outcome> {
+) -> Result<MappedSequence, Outcome> {
     let seq = match inner.reduce(ctx) {
         Outcome::Complete(d) => d
             .into_seq()
@@ -188,7 +218,15 @@ fn reduce_map_sequence(
     seq: Vec<DesugaredElem>,
     mapper: &MapClosure,
     ctx: &SugarCtx,
-) -> Result<Vec<Rc<Term>>, Outcome> {
+) -> Result<MappedSequence, Outcome> {
+    if let Some(values) = reduce_map_sequence_to_values(&seq, mapper) {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::sugar::map",
+            len = values.len(),
+            "literal closure map reduced to value sequence"
+        );
+        return Ok(MappedSequence::Values(values));
+    }
     let mut out = Vec::with_capacity(seq.len());
     for (idx, elem) in seq.into_iter().enumerate() {
         out.push(curry_map_body_for_elem(mapper, &elem, idx, ctx)?);
@@ -198,7 +236,24 @@ fn reduce_map_sequence(
         len = out.len(),
         "literal closure map curried body terms"
     );
-    Ok(out)
+    Ok(MappedSequence::Terms(out))
+}
+
+fn reduce_map_sequence_to_values(
+    seq: &[DesugaredElem],
+    mapper: &MapClosure,
+) -> Option<Vec<DesugaredElem>> {
+    let mut out = Vec::with_capacity(seq.len());
+    for elem in seq {
+        let value = elem.value.as_ref()?;
+        let mapped = const_eval_unary_closure(mapper.expr(), value)?;
+        let expr = mapped.to_expr()?;
+        out.push(DesugaredElem {
+            expr,
+            value: Some(mapped),
+        });
+    }
+    Some(out)
 }
 
 fn curry_map_body_for_elem(

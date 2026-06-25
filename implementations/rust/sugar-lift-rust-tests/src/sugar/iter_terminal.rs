@@ -72,10 +72,10 @@ use crate::sugar::monadic;
 use crate::sugar::term_dispatch::fold_int_terms;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
-    const_eval_unary_closure, const_fold_acc_update, const_fold_int_term, const_int,
-    const_int_acc_init, parse_int_lit, refusal_disposition, simple_path_name, strip_refs_groups,
-    token_key, ConstVal, Desugared, DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx,
-    TemporalScope,
+    const_eval_binary_option_closure, const_eval_unary_closure, const_fold_acc_update,
+    const_fold_int_term, const_int, const_int_acc_init, const_val_term, parse_int_lit,
+    refusal_disposition, simple_path_name, strip_refs_groups, token_key, ConstVal, Desugared,
+    DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -132,6 +132,14 @@ enum Terminal {
     /// `.fold(init, |acc, x| expr)` -- fold from an explicit initializer and return the
     /// final accumulator value directly.
     Fold(Expr, syn::ExprClosure),
+    /// `.try_fold(init, f)` / `.try_rfold(init, f)` -- fold from an explicit initializer
+    /// through an `Option`-returning closure, short-circuiting to `None` or completing
+    /// to `Some(acc)`.
+    TryFold {
+        init: Expr,
+        func: Expr,
+        reverse: bool,
+    },
 }
 
 impl Terminal {
@@ -149,6 +157,7 @@ impl Terminal {
                 | Terminal::Position(_)
                 | Terminal::AdvanceBy(_)
                 | Terminal::Reduce(_)
+                | Terminal::TryFold { .. }
         )
     }
 }
@@ -197,7 +206,27 @@ fn recognized_receiver_is_static_sequence(
     {
         return true;
     }
+    if terminal_reads_iterator_cursor(terminal) && direct_unrewritten_path_receiver(&call.receiver)
+    {
+        return false;
+    }
     receiver_resolves_static_sequence(&call.receiver, fcx, 0)
+}
+
+fn terminal_reads_iterator_cursor(terminal: &Terminal) -> bool {
+    matches!(
+        terminal,
+        Terminal::Next
+            | Terminal::NextBack
+            | Terminal::Nth(_)
+            | Terminal::NthBack(_)
+            | Terminal::AdvanceBy(_)
+            | Terminal::TryFold { .. }
+    )
+}
+
+fn direct_unrewritten_path_receiver(expr: &Expr) -> bool {
+    simple_path_name(expr).is_some()
 }
 
 fn receiver_is_chunk_window_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -293,8 +322,12 @@ fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: us
     if depth > 8 {
         return false;
     }
+    if receiver_has_unreplayable_iterator_source(expr, fcx, depth) {
+        return false;
+    }
     if recognizes_scan_inner(expr, fcx)
         || method_family::resolves_literal_sequence(expr, fcx.let_inits())
+        || crate::resolves_literal_sequence_in_scope(expr, fcx)
         || receiver_has_static_sequence_len(expr, fcx, depth)
         || stable_monadic_terminal_receiver(expr, fcx, depth)
     {
@@ -322,6 +355,40 @@ fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: us
         .copied()
         .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
         .is_some_and(|current| receiver_resolves_static_sequence(current, fcx, depth + 1))
+}
+
+fn receiver_has_unreplayable_iterator_source(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(_) => simple_path_name(expr).is_some_and(|name| {
+            fcx.scope().temporal_rewrite_expr_for(&name).is_none()
+                && (fcx.scope().is_mut_local(&name)
+                    || fcx
+                        .scope()
+                        .unknown_iterator_consumption_reason(&name)
+                        .is_some()
+                    || fcx.scope().is_consumed_iterator_local(&name))
+        }),
+        Expr::MethodCall(call) => {
+            receiver_has_unreplayable_iterator_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Reference(reference) => {
+            receiver_has_unreplayable_iterator_source(&reference.expr, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => {
+            receiver_has_unreplayable_iterator_source(&paren.expr, fcx, depth + 1)
+        }
+        Expr::Group(group) => {
+            receiver_has_unreplayable_iterator_source(&group.expr, fcx, depth + 1)
+        }
+        _ => false,
+    }
 }
 
 fn const_resolved_if_sequence_tail<'a>(expr: &'a Expr, fcx: &SugarBuildCtx) -> Option<&'a Expr> {
@@ -553,6 +620,11 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
             };
             Terminal::Fold(call.args[0].clone(), closure.clone())
         }
+        "try_fold" | "try_rfold" if call.args.len() == 2 => Terminal::TryFold {
+            init: call.args[0].clone(),
+            func: call.args[1].clone(),
+            reverse: call.method == "try_rfold",
+        },
         _ => return None,
     })
 }
@@ -647,7 +719,7 @@ impl IterTerminalSugar {
         match self.terminal {
             // `.reduce()`/`.fold()` define structural empty-sequence results for literal
             // arrays as well as ranges. Keep that existing owner broad.
-            Terminal::Reduce(_) | Terminal::Fold(_, _) => true,
+            Terminal::Reduce(_) | Terminal::Fold(_, _) | Terminal::TryFold { .. } => true,
             // Range-family terminals have a real floor on empty/reversed literal ranges
             // (`count == 0`, positional terminals are `None`, predicates fold to their
             // identity). Do not generalize this to empty `sum`/`product`: those remain
@@ -721,7 +793,12 @@ impl IterTerminalSugar {
         }
     }
 
-    fn reduce_term_seq_terminal(&self, terms: Vec<Rc<Term>>, ctx: &SugarCtx) -> Outcome {
+    fn reduce_term_seq_terminal(
+        &self,
+        terms: Vec<Rc<Term>>,
+        ctx: &SugarCtx,
+        let_inits: &BTreeMap<String, &Expr>,
+    ) -> Outcome {
         if let Terminal::AdvanceBy(_) = &self.terminal {
             let n_term = match self.advance_by_arg_term(ctx) {
                 Ok(term) => term,
@@ -742,6 +819,23 @@ impl IterTerminalSugar {
         }
         if matches!(self.terminal, Terminal::Count) {
             return Outcome::Complete(Desugared::Term(num(terms.len() as i128)));
+        }
+        if let Terminal::TryFold { .. } = &self.terminal {
+            let Some(values) = terms
+                .iter()
+                .map(const_val_from_term)
+                .collect::<Option<Vec<_>>>()
+            else {
+                return self.named_closure_boundary(ctx).unwrap_or_else(|| {
+                    iter_terminal_gap("try_fold term sequence did not reduce to literal values")
+                });
+            };
+            let Some(term) = self.try_fold_values(values, ctx, let_inits) else {
+                return self.named_closure_boundary(ctx).unwrap_or_else(|| {
+                    iter_terminal_gap("try_fold term sequence did not reach an Option floor")
+                });
+            };
+            return Outcome::Complete(Desugared::Term(term));
         }
         let positional_idx = match &self.terminal {
             Terminal::Next => Some(Some(0usize)),
@@ -861,7 +955,7 @@ impl IterTerminalSugar {
         } else {
             match self.receiver.body.reduce(ctx) {
                 Outcome::Complete(Desugared::TermSeq(terms)) => {
-                    return self.reduce_term_seq_terminal(terms, ctx);
+                    return self.reduce_term_seq_terminal(terms, ctx, &let_inits);
                 }
                 Outcome::Complete(d) => match d.into_seq() {
                     Some(seq) => seq,
@@ -1121,6 +1215,15 @@ impl IterTerminalSugar {
                 }
                 return Some(Desugared::Term(num(i128::from(acc))));
             }
+            if let Terminal::TryFold { .. } = &self.terminal {
+                let values = seq
+                    .iter()
+                    .map(|elem| elem.value.clone())
+                    .collect::<Option<Vec<_>>>()?;
+                return self
+                    .try_fold_values(values, ctx, &let_inits)
+                    .map(Desugared::Term);
+            }
             // Numeric reductions: exact const ints only. Empty product uses the Rust
             // multiplicative identity; empty sum uses additive identity.
             match self.terminal {
@@ -1144,7 +1247,10 @@ impl IterTerminalSugar {
         match reduced {
             Some(d) => Outcome::Complete(d),
             None => self.named_closure_boundary(ctx).unwrap_or_else(|| {
-                iter_terminal_gap("iterator terminal reduction did not reach a floor")
+                iter_terminal_gap(&format!(
+                    "iterator terminal reduction did not reach a floor at `{}`",
+                    self.site_key
+                ))
             }),
         }
     }
@@ -1156,7 +1262,8 @@ impl IterTerminalSugar {
             | Terminal::Find(_)
             | Terminal::Position(_)
             | Terminal::Reduce(_)
-            | Terminal::Fold(_, _) => {
+            | Terminal::Fold(_, _)
+            | Terminal::TryFold { .. } => {
                 let reason = self.closure_refusal.clone()?;
                 match refusal_disposition(&reason) {
                     Disposition::Refused => {
@@ -1170,6 +1277,86 @@ impl IterTerminalSugar {
             }
             _ => None,
         }
+    }
+
+    fn try_fold_values(
+        &self,
+        mut values: Vec<ConstVal>,
+        ctx: &SugarCtx,
+        let_inits: &BTreeMap<String, &Expr>,
+    ) -> Option<Rc<Term>> {
+        let Terminal::TryFold {
+            init,
+            func,
+            reverse,
+        } = &self.terminal
+        else {
+            return None;
+        };
+        if *reverse {
+            values.reverse();
+        }
+        let closure = resolve_try_fold_closure(func, let_inits, ctx.scope, 0)?;
+        if closure_body_is_side_effecting(&closure.body) {
+            return None;
+        }
+        let mut acc = ConstVal::Int(i128::from(const_int_acc_init(init, let_inits)?));
+        for value in values {
+            let step = const_eval_binary_option_closure(&closure, &acc, &value)?;
+            let Some(next_acc) = step else {
+                return Some(monadic::none_term());
+            };
+            acc = next_acc;
+        }
+        Some(monadic::some_term(const_val_term(&acc)?))
+    }
+}
+
+fn resolve_try_fold_closure<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+    depth: usize,
+) -> Option<syn::ExprClosure> {
+    if depth > 8 {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Closure(closure) => Some(closure.clone()),
+        Expr::Reference(reference) => {
+            resolve_try_fold_closure(&reference.expr, let_inits, scope, depth + 1)
+        }
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            let init = let_inits
+                .get(&name)
+                .copied()
+                .or_else(|| scope.stable_let_binding_for_term(&name))?;
+            resolve_try_fold_closure(init, let_inits, scope, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn const_val_from_term(term: &Rc<Term>) -> Option<ConstVal> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Int(value),
+            ..
+        } => Some(ConstVal::Int(*value)),
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(ConstVal::Bool(*value)),
+        Term::Const {
+            value: ConstValue::String(value),
+            ..
+        } => {
+            let mut chars = value.chars();
+            let ch = chars.next()?;
+            chars.next().is_none().then_some(ConstVal::Char(ch))
+        }
+        _ => None,
     }
 }
 

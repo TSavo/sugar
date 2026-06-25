@@ -6256,18 +6256,16 @@ fn peel_fold_adaptors_inner<'a>(
                         }
                         _ => return None,
                     },
-                    ("filter_map", 1) => match &m.args[0] {
-                        Expr::Closure(c) => {
-                            let f = c.clone();
-                            Box::new(move |inner, _fcx| {
-                                Box::new(sugar::filter_map::FilterMapSugar {
-                                    inner: sugar::factory::SugarBody::from_node(inner),
-                                    mapper: sugar::filter_map::FilterMapClosure::new(f),
-                                })
+                    ("filter_map", 1) => {
+                        let f =
+                            resolve_adaptor_closure_arg(&m.args[0], let_inits, scope, depth + 1)?;
+                        Box::new(move |inner, _fcx| {
+                            Box::new(sugar::filter_map::FilterMapSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                mapper: sugar::filter_map::FilterMapClosure::new(f),
                             })
-                        }
-                        _ => return None,
-                    },
+                        })
+                    }
                     ("intersperse", 1) => {
                         let separator = m.args[0].clone();
                         Box::new(move |inner, _fcx| {
@@ -6286,25 +6284,20 @@ fn peel_fold_adaptors_inner<'a>(
                             })
                         })
                     }
-                    ("skip_while", 1) => match &m.args[0] {
-                        Expr::Closure(c) => {
-                            let pred = c.clone();
-                            Box::new(move |inner, fcx| {
-                                Box::new(sugar::skip_while::SkipWhileSugar {
-                                    inner: sugar::factory::SugarBody::from_node(inner),
-                                    pred: sugar::bool_predicate::BoolPredicateClosure::build(
-                                        pred, fcx,
-                                    )
+                    ("skip_while", 1) => {
+                        let pred = m.args[0].clone();
+                        Box::new(move |inner, fcx| {
+                            Box::new(sugar::skip_while::SkipWhileSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                pred: sugar::skip_while::SkipWhilePredicate::build(&pred, fcx)
                                     .unwrap_or_else(|| {
                                         panic!(
                                             "skip_while wrapper could not construct predicate body"
                                         )
                                     }),
-                                })
                             })
-                        }
-                        _ => return None,
-                    },
+                        })
+                    }
                     ("take_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
@@ -6428,18 +6421,16 @@ fn peel_fold_adaptors_inner<'a>(
                     // `.flat_map(|x| [..])`: map each element to a finite literal
                     // sub-sequence and concatenate (exact-or-refuse inside
                     // `FlatMapSugar::desugar` / `const_eval_flat_map_closure`).
-                    ("flat_map", 1) => match &m.args[0] {
-                        Expr::Closure(c) => {
-                            let f = c.clone();
-                            Box::new(move |inner, _fcx| {
-                                Box::new(sugar::flat_map::FlatMapSugar {
-                                    inner: sugar::factory::SugarBody::from_node(inner),
-                                    mapper: sugar::flat_map::FlatMapClosure::new(f),
-                                })
+                    ("flat_map", 1) => {
+                        let f =
+                            resolve_adaptor_closure_arg(&m.args[0], let_inits, scope, depth + 1)?;
+                        Box::new(move |inner, _fcx| {
+                            Box::new(sugar::flat_map::FlatMapSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                mapper: sugar::flat_map::FlatMapClosure::new(f),
                             })
-                        }
-                        _ => return None,
-                    },
+                        })
+                    }
                     // Every other adaptor: not yet provably exact -> bail. (`filter_map`
                     // completes above via the composable `FilterMapSugar` over the closed
                     // Option-eval.)
@@ -6498,6 +6489,33 @@ fn peel_fold_adaptors_inner<'a>(
     Some((PeeledExpr::Borrowed(cur), adaptors_rev))
 }
 
+fn resolve_adaptor_closure_arg<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: Option<&'a TemporalScope>,
+    depth: usize,
+) -> Option<syn::ExprClosure> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Closure(closure) => Some(closure.clone()),
+        Expr::Reference(reference) => {
+            resolve_adaptor_closure_arg(&reference.expr, let_inits, scope, depth + 1)
+        }
+        Expr::Path(path) => {
+            let name = path.path.get_ident()?.to_string();
+            let init = let_inits
+                .get(&name)
+                .copied()
+                .or_else(|| scope.and_then(|scope| scope.stable_let_binding_for_term(&name)))?;
+            resolve_adaptor_closure_arg(init, let_inits, scope, depth + 1)
+        }
+        _ => None,
+    }
+}
+
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor
 /// closure (`.filter`/`.map`/`.skip_while`/...). DELIBERATELY NARROW: only the value
 /// kinds whose Rust semantics we can replicate with certainty -- integer, bool, char,
@@ -6538,10 +6556,13 @@ impl ConstVal {
                     .collect::<Option<Vec<_>>>()?;
                 return Some(syn::parse_quote!([#(#elems),*]));
             }
-            // a tuple element fed to a later adaptor stays a ConstVal; only scalars are
-            // ever materialized back to an Expr (the fold item). A tuple item is uncommon
-            // and we conservatively decline materializing it.
-            ConstVal::Tuple(_) => return None,
+            ConstVal::Tuple(items) => {
+                let elems = items
+                    .iter()
+                    .map(ConstVal::to_expr)
+                    .collect::<Option<Vec<_>>>()?;
+                return Some(syn::parse_quote!((#(#elems),*)));
+            }
         };
         syn::parse_str::<Expr>(&s).ok()
     }
@@ -7623,6 +7644,27 @@ fn const_eval_option_closure(
 /// Evaluate an expression whose VALUE is an `Option` to a concrete `Option<ConstVal>`:
 /// `None`, `Some(<pure>)`, or `if <pure-cond> { <opt> } else { <opt> }`. `None` (BAIL)
 /// for any other shape. EXACT-OR-BAIL over the canonical `const_eval` floor.
+pub(crate) fn const_eval_binary_option_closure(
+    closure: &syn::ExprClosure,
+    acc: &ConstVal,
+    item: &ConstVal,
+) -> Option<Option<ConstVal>> {
+    if closure.inputs.len() != 2 {
+        return None;
+    }
+    let mut env = BTreeMap::new();
+    bind_const_closure_arg(&closure.inputs[0], acc, &mut env)?;
+    bind_const_closure_arg(&closure.inputs[1], item, &mut env)?;
+    let body: &Expr = match &*closure.body {
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => e,
+            _ => return None,
+        },
+        other => other,
+    };
+    const_eval_option_expr(body, &env)
+}
+
 fn const_eval_option_expr(
     expr: &Expr,
     env: &BTreeMap<String, ConstVal>,
@@ -7639,6 +7681,9 @@ fn const_eval_option_expr(
         // `Some(<pure>)`.
         Expr::Call(c) => {
             let Expr::Path(p) = &*c.func else { return None };
+            if let Some(result) = const_eval_checked_int_call(&p.path, &c.args, env) {
+                return Some(result);
+            }
             if !p.path.is_ident("Some") || c.args.len() != 1 {
                 return None;
             }
@@ -7660,6 +7705,112 @@ fn const_eval_option_expr(
         }
         _ => None,
     }
+}
+
+fn const_eval_checked_int_call(
+    path: &syn::Path,
+    args: &syn::punctuated::Punctuated<Expr, syn::token::Comma>,
+    env: &BTreeMap<String, ConstVal>,
+) -> Option<Option<ConstVal>> {
+    if args.len() != 2 || path.segments.len() < 2 {
+        return None;
+    }
+    let method = path.segments.last()?.ident.to_string();
+    let op = match method.as_str() {
+        "checked_add" => "add",
+        "checked_sub" => "sub",
+        "checked_mul" => "mul",
+        "checked_div" => "div",
+        _ => return None,
+    };
+    let kind = path
+        .segments
+        .iter()
+        .rev()
+        .nth(1)
+        .and_then(|segment| primitive_int_kind(&segment.ident.to_string()))?;
+    let lhs = const_eval(args.first()?, env)?;
+    let rhs = const_eval(args.iter().nth(1)?, env)?;
+    if kind.signed {
+        let lhs = signed_value_for_kind(&lhs, kind)?;
+        let rhs = signed_value_for_kind(&rhs, kind)?;
+        let value = match op {
+            "add" => lhs.checked_add(rhs),
+            "sub" => lhs.checked_sub(rhs),
+            "mul" => lhs.checked_mul(rhs),
+            "div" if rhs != 0 => lhs.checked_div(rhs),
+            "div" => None,
+            _ => None,
+        };
+        return Some(
+            value
+                .filter(|value| signed_fits_kind(*value, kind))
+                .map(ConstVal::Int),
+        );
+    }
+    let lhs = unsigned_value_for_kind(&lhs, kind)?;
+    let rhs = unsigned_value_for_kind(&rhs, kind)?;
+    let value = match op {
+        "add" => lhs.checked_add(rhs),
+        "sub" => lhs.checked_sub(rhs),
+        "mul" => lhs.checked_mul(rhs),
+        "div" if rhs != 0 => Some(lhs / rhs),
+        "div" => None,
+        _ => None,
+    };
+    Some(
+        value
+            .filter(|value| *value <= primitive_int_max_raw(kind))
+            .map(|raw| {
+                if kind.name == "u128" {
+                    ConstVal::UInt128(raw)
+                } else {
+                    ConstVal::PrimitiveInt {
+                        raw: mask_raw(raw, kind.bits),
+                        kind,
+                    }
+                }
+            }),
+    )
+}
+
+fn signed_value_for_kind(value: &ConstVal, kind: PrimitiveIntKind) -> Option<i128> {
+    let value = match value {
+        ConstVal::Int(n) => *n,
+        ConstVal::PrimitiveInt { raw, kind } => primitive_int_i128(*raw, *kind)?,
+        ConstVal::UInt128(n) => i128::try_from(*n).ok()?,
+        _ => return None,
+    };
+    signed_fits_kind(value, kind).then_some(value)
+}
+
+fn unsigned_value_for_kind(value: &ConstVal, kind: PrimitiveIntKind) -> Option<u128> {
+    let value = match value {
+        ConstVal::Int(n) => u128::try_from(*n).ok()?,
+        ConstVal::PrimitiveInt { raw, kind } if !kind.signed => mask_raw(*raw, kind.bits),
+        ConstVal::PrimitiveInt { raw, kind } => {
+            let signed = primitive_int_i128(*raw, *kind)?;
+            u128::try_from(signed).ok()?
+        }
+        ConstVal::UInt128(n) => *n,
+        _ => return None,
+    };
+    (value <= primitive_int_max_raw(kind)).then_some(value)
+}
+
+fn signed_fits_kind(value: i128, kind: PrimitiveIntKind) -> bool {
+    if !kind.signed {
+        return false;
+    }
+    let max = match kind.bits {
+        128 => i128::MAX,
+        bits => (1i128 << (bits - 1)) - 1,
+    };
+    let min = match kind.bits {
+        128 => i128::MIN,
+        bits => -(1i128 << (bits - 1)),
+    };
+    (min..=max).contains(&value)
 }
 
 fn const_eval_iterable_tuple(
@@ -16342,6 +16493,7 @@ pub(crate) fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String>
 fn simple_pat_name(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(ident) if ident.subpat.is_none() => Some(ident.ident.to_string()),
+        Pat::Reference(reference) => simple_pat_name(&reference.pat),
         Pat::Type(pat_type) => simple_pat_name(&pat_type.pat),
         Pat::Paren(paren) => simple_pat_name(&paren.pat),
         _ => None,
