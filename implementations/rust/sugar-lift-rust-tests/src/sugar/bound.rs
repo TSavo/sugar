@@ -36,8 +36,7 @@
 // BOUNDARY (the honest stop). Only OPERANDS that are already `Sugar`-typed route
 // through `BoundSugar`. The pattern operand of `Regex::new(<pattern>)` is the one
 // such site today (a `Box<dyn Sugar>` child). The other in-scope binding resolvers --
-// the closed `try_fold` value-evaluator (`resolve_closure` / `eval_seq_chain`), the
-// scalar-literal-array quantifier domain (`scalar_iter_domain_elems`), and the
+// the scalar-literal-array quantifier domain (`scalar_iter_domain_elems`) and the
 // EUF `let`-prefix substitution (`collect_let_subst` / `let_prefix_euf_term`) --
 // resolve a binding to a raw `Expr` / `Rc<Term>` and recurse a NON-`Sugar` evaluator;
 // they cannot route through a `Box<dyn Sugar>` node without re-architecting those

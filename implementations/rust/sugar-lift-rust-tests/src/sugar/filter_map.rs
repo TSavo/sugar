@@ -3,9 +3,8 @@
 // `FilterMapSugar`: the `.filter_map(f)` adaptor. A decorator `Sugar` over an inner
 // sequence-`Sugar` that const-evaluates the `Option`-returning closure over each
 // element and keeps the `Some(v)` values (dropping the `None`s). The composable
-// mirror of the `filter_map` arm already proven diggable in the closed `try_fold`
-// value-evaluator (`try_fold_eval::eval_seq_chain`): SAME `const_eval` floor, SAME
-// `Some`/`None` Option-shape, now wired as a decorator so a `filter_map` feeding a
+// `filter_map` arm uses the same `const_eval` floor and `Some`/`None` Option-shape as
+// the other iterator sugars, wired as a decorator so a `filter_map` feeding a
 // `fold`/`rfold`/`for_each`/for-loop terminal completes through the ordinary `Sugar` tree.
 // Bails (None) on an opaque element (no const value), a non-`Option` / runtime closure
 // result, or a kept value it cannot materialize back to an `Expr` -- exact-or-bail,

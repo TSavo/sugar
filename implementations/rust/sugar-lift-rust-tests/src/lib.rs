@@ -17,7 +17,6 @@ use std::rc::Rc;
 
 pub mod closed_eval;
 mod macro_expand;
-mod try_fold_eval;
 
 // The `Sugar` decorator classes each live in their own self-contained module under
 // `src/sugar/`. Each is a child of the crate root, so it can see the crate-root-private
@@ -4496,13 +4495,11 @@ pub(crate) struct TemporalScope {
     /// quantifier path declines rather than over-claims).
     literal_arrays: BTreeMap<String, Vec<Expr>>,
     /// In-scope simple `let <id> = <init>;` initializer EXPRS for this block, owned.
-    /// Used ONLY by the closed `try_fold` value-evaluator (`try_fold_eval`) to resolve
-    /// a `let`-bound fold closure (`let f = &|..| ..;` then `xs.try_fold(7, f)`) or a
-    /// `let`-bound receiver chain back to its source. Resolution is gated on
+    /// Binding-aware sugars and value resolvers use this map to recurse through the
+    /// initializer in effect at the reference's program point. Resolution is gated on
     /// `!is_mut_local` (a `let mut` binding could be reassigned, so its later value is
     /// not the written init -- such a name is NOT resolved). EXACT-OR-BAIL: an absent
-    /// / unresolvable binding makes the evaluator decline (the operand stays in its
-    /// existing refusal -- a safe under-claim).
+    /// / unresolvable binding makes the caller decline rather than over-claim.
     let_bindings: BTreeMap<String, Expr>,
     /// Expected type pinned by a typed simple binding (`let x: T = ...`). The factory
     /// threads this through a later `BoundPathSugar` construction so target-typed sugars
@@ -7433,12 +7430,11 @@ fn unsuffixed_int_literal(expr: &Expr) -> Option<i128> {
 /// constructor, a `Some(<pure>)` call, or an `if <pure-cond> { <opt> } else { <opt> }`
 /// (the `filter_map` / `map_while` shape). Returns `Some(Some(v))` (kept, value `v`),
 /// `Some(None)` (dropped), or `None` (BAIL -- an unmodeled body / opaque element /
-/// non-const-foldable piece). This is the crate-level twin of the closed `try_fold`
-/// value-evaluator's `eval_option_closure` (`try_fold_eval`), sharing the SAME
-/// `const_eval` floor, lifted here so the composable `FilterMapSugar` / `MapWhileSugar`
-/// decorators const-evaluate an `Option`-closure over each element exactly as the
-/// `MapSugar` decorator const-evaluates a value-closure. A wrong BAIL is a safe
-/// under-claim; a wrong VALUE would be a fake-discharge, so we never guess.
+/// non-const-foldable piece). This is the shared `const_eval` floor for composable
+/// `FilterMapSugar` / `MapWhileSugar` decorators: const-evaluate an `Option`-closure
+/// over each element exactly as the `MapSugar` decorator const-evaluates a
+/// value-closure. A wrong BAIL is a safe under-claim; a wrong VALUE would be a
+/// fake-discharge, so we never guess.
 fn const_eval_option_closure(
     closure: &syn::ExprClosure,
     arg: &ConstVal,
@@ -7460,8 +7456,7 @@ fn const_eval_option_closure(
 
 /// Evaluate an expression whose VALUE is an `Option` to a concrete `Option<ConstVal>`:
 /// `None`, `Some(<pure>)`, or `if <pure-cond> { <opt> } else { <opt> }`. `None` (BAIL)
-/// for any other shape. EXACT-OR-BAIL; the dual of `eval_option_expr` in
-/// `try_fold_eval`, over the canonical `const_eval` floor.
+/// for any other shape. EXACT-OR-BAIL over the canonical `const_eval` floor.
 fn const_eval_option_expr(
     expr: &Expr,
     env: &BTreeMap<String, ConstVal>,
@@ -11022,8 +11017,8 @@ fn collect_assertion_entries<'a>(
             registry
         });
     // `let_bindings` is advanced INCREMENTALLY in the statement loop below (see
-    // `record_let_binding`), so a `try_fold` operand resolves the binding in EFFECT at
-    // its position -- shadowing-correct. (A block-wide capture would let a LATER
+    // `record_let_binding`), so binding-aware sugars resolve the initializer in EFFECT
+    // at their position -- shadowing-correct. (A block-wide capture would let a LATER
     // `let f = ..` shadow leak back to an EARLIER assert's `f`, mis-grounding it.)
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
     // run time, calls its runtime fn. Find such calls in this block and the
