@@ -17226,15 +17226,6 @@ fn infinity_constant_kind(expr: &Expr) -> Option<(&'static str, bool)> {
 /// Returns `Ok(None)` if neither operand is an infinity constant (caller falls
 /// through to the existing path). Returns `Err` only if the constant was
 /// detected but the receiver term translation fails.
-fn translate_infinity_eq_assertion(
-    lhs: &Expr,
-    rhs: &Expr,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-) -> Result<Option<AssertionEntry>, String> {
-    translate_infinity_eq_assertion_with_audits(lhs, rhs, scope, float_widths, None)
-}
-
 fn translate_infinity_eq_assertion_with_audits(
     lhs: &Expr,
     rhs: &Expr,
@@ -17550,14 +17541,6 @@ fn translate_pointer_identity_term(expr: &Expr, scope: &TemporalScope) -> Result
         Expr::Group(group) => translate_pointer_identity_term(&group.expr, scope),
         other => translate_term_in_scope(other, scope),
     }
-}
-
-fn translate_binary_bool_assertion(
-    binary: &syn::ExprBinary,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-) -> Result<AssertionEntry, String> {
-    translate_binary_bool_assertion_with_audits(binary, scope, float_widths, None)
 }
 
 fn translate_binary_bool_assertion_with_audits(
@@ -20902,13 +20885,6 @@ fn is_const_like_path(path: &syn::Path) -> bool {
         && ident
             .chars()
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
-}
-
-fn translate_assertion_term_in_scope(
-    expr: &Expr,
-    scope: &TemporalScope,
-) -> Result<Rc<Term>, String> {
-    translate_assertion_term_in_scope_with_audits(expr, scope, None)
 }
 
 fn translate_assertion_term_in_scope_with_audits(
