@@ -22,8 +22,9 @@ use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
     expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path,
     translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, Effect, LiftOptions,
-    Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
+    Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
 };
+use crate::{FactoryAuditLog, FloatWidthScope};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("match_node", recognize_composite);
@@ -40,6 +41,30 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
             .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_statement_match(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Option<Desugared> {
+    crate::sugar::statement_position::desugar_composite_expr(
+        expr,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        let_inits,
+        macro_depth,
+        factory_audits,
+    )
+    .complete()
 }
 
 /// TERM recognizer for a value-producing match whose losing arms diverge:

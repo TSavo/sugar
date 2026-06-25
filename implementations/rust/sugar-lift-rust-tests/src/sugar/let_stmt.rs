@@ -10,7 +10,60 @@
 // It only presents initializer expression shapes back to the existing factory/collector.
 // The downstream sugar walk still has exactly two outcomes: Complete or Incomplete.
 
+use std::collections::BTreeMap;
+
 use syn::{Expr, Stmt};
+
+use crate::sugar::factory::SugarBuildCtx;
+use crate::{FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalScope};
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_initializer_composite(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Option<Outcome> {
+    let fcx = SugarBuildCtx::new(scope, options, let_inits);
+    let zero_len_literal_sequence =
+        crate::sugar::method_family::literal_sequence_static_len_in_scope(expr, let_inits, scope)
+            == Some(0);
+    if zero_len_literal_sequence || !initializer_fact_composite_selected(expr, &fcx) {
+        return None;
+    }
+    Some(crate::sugar::statement_position::desugar_composite_expr(
+        expr,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        let_inits,
+        macro_depth,
+        factory_audits,
+    ))
+}
+
+fn initializer_fact_composite_selected(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Some(selected) = crate::sugar::catalog::matching_expr_claims_for_role(
+        expr,
+        fcx,
+        crate::sugar::claim::SugarRole::Composite,
+    )
+    .into_iter()
+    .next()
+    .map(|candidate| candidate.name()) else {
+        return false;
+    };
+
+    // This eager let-initializer drain exists only for Composite sugars that emit
+    // facts from a finite literal body. Ordinary value composites, such as `if`
+    // initializers, stay lazy and are reduced only by the owning parent sugar.
+    matches!(selected, "fold" | "for_each")
+}
 
 /// Statements whose fact surfaces are executed while evaluating a `let` initializer.
 ///

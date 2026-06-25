@@ -10881,27 +10881,6 @@ fn expr_contains_assignment_to_name(expr: &Expr, name: &str) -> bool {
     }
 }
 
-fn let_initializer_fact_composite_selected(
-    expr: &Expr,
-    fcx: &sugar::factory::SugarBuildCtx,
-) -> bool {
-    let Some(selected) = sugar::catalog::matching_expr_claims_for_role(
-        expr,
-        fcx,
-        sugar::claim::SugarRole::Composite,
-    )
-    .into_iter()
-    .next()
-    .map(|candidate| candidate.name()) else {
-        return false;
-    };
-
-    // This eager let-initializer drain exists only for Composite sugars that emit
-    // facts from a finite literal body. Ordinary value composites, such as `if`
-    // initializers, stay lazy and are reduced only by the owning parent sugar.
-    matches!(selected, "fold" | "for_each")
-}
-
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -11132,41 +11111,16 @@ fn collect_assertion_entries<'a>(
                             &visible_fn_registry,
                             &layout_types,
                         );
-                    } else if let Some(outcome) = {
-                        // DESUGAR (the typed `Sugar` spine): a `.fold`/`.rfold`
-                        // (`FoldSugar`) or a `.for_each` (`ForEachSugar`) over a
-                        // finite literal domain desugars to its finite conjunction
-                        // (the construction axiom: desugar fold with fold). The
-                        // `Sugar` tree is built by `decompose_*` (node + children)
-                        // and walked by `desugar()`; the warranted emission drains
-                        // its output. A bail (`None`) at any layer falls through.
-                        let ctx = sugar_ctx_with_factory_audits(
-                            &temporal_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            macro_depth,
-                            factory_audits,
-                        );
-                        let fcx = sugar::factory::SugarBuildCtx::new(
-                            &temporal_scope,
-                            options,
-                            &let_inits,
-                        );
-                        let zero_len_literal_sequence =
-                            sugar::method_family::literal_sequence_static_len_in_scope(
-                                &init.expr,
-                                &let_inits,
-                                &temporal_scope,
-                            ) == Some(0);
-                        if !zero_len_literal_sequence
-                            && let_initializer_fact_composite_selected(&init.expr, &fcx)
-                        {
-                            Some(sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx))
-                        } else {
-                            None
-                        }
-                    } {
+                    } else if let Some(outcome) = sugar::let_stmt::desugar_initializer_composite(
+                        &init.expr,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        &let_inits,
+                        macro_depth,
+                        factory_audits,
+                    ) {
                         match outcome {
                             Outcome::Complete(desugared) => {
                                 emit_desugared(desugared, entries, macros_lifted);
@@ -11369,23 +11323,16 @@ fn collect_assertion_entries<'a>(
                 // range as a guard and lifts forall x. (guard => body) (or the finite
                 // conjunction over a literal array). If the body does not wholly
                 // compute to truth values, the desugar bails (refuse below).
-                let lifted = {
-                    let ctx = sugar_ctx_with_factory_audits(
-                        &for_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                        factory_audits,
-                    );
-                    // FACTORY WIRING: a constructible `Expr::ForLoop` builds the typed
-                    // `ForAllSugar`; an unconstructible one declines, and the catalog
-                    // miss stays a loud factory gap instead of a deferred backstop node.
-                    let fcx = sugar::factory::SugarBuildCtx::new(&for_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx)
-                        .desugar(&ctx)
-                        .complete()
-                };
+                let lifted = sugar::forall_loop::desugar_statement_for_loop(
+                    e,
+                    &for_scope,
+                    options,
+                    reducer,
+                    float_widths,
+                    &let_inits,
+                    macro_depth,
+                    factory_audits,
+                );
                 for name in for_scope.take_inlined_value_helpers() {
                     reduced_helpers.insert(name);
                 }
@@ -11437,22 +11384,16 @@ fn collect_assertion_entries<'a>(
                 let lifted = rewrite_while_let_next_if_to_for(w, stmts)
                     .or_else(|| rewrite_literal_counter_while_to_for(w, &temporal_scope))
                     .and_then(|synth_for| {
-                        let ctx = sugar_ctx_with_factory_audits(
+                        sugar::for_replay::desugar_synthesized_for_loop(
+                            &synth_for,
                             &temporal_scope,
                             options,
                             reducer,
                             float_widths,
+                            &let_inits,
                             macro_depth,
                             factory_audits,
-                        );
-                        let fcx = sugar::factory::SugarBuildCtx::new(
-                            &temporal_scope,
-                            options,
-                            &let_inits,
-                        );
-                        sugar::factory::build_composite(&synth_for, &fcx)
-                            .desugar(&ctx)
-                            .complete()
+                        )
                     });
                 if let Some(desugared) = lifted {
                     if total == 0 {
@@ -11508,17 +11449,16 @@ fn collect_assertion_entries<'a>(
                     // -- the claim-side atom. The sugar owns the terminal boundary:
                     // Complete emits the guarded claim, Incomplete bubbles its named
                     // effect, and a construction gap panics inside the sugar.
-                    let ctx = sugar_ctx_with_factory_audits(
+                    match sugar::conditional::desugar_statement_conditional(
+                        e,
                         &temporal_scope,
                         options,
                         reducer,
                         float_widths,
+                        &let_inits,
                         macro_depth,
                         factory_audits,
-                    );
-                    let fcx =
-                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    match sugar::factory::build_composite(e, &fcx).desugar(&ctx) {
+                    ) {
                         Outcome::Complete(desugared) => {
                             emit_desugared(desugared, entries, macros_lifted);
                         }
@@ -11608,32 +11548,16 @@ fn collect_assertion_entries<'a>(
                         for _ in 0..count {
                             skipped.push(reason.clone());
                         }
-                    } else if let Some(desugared) = {
-                        // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
-                        // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
-                        // its arm asserts (a match IS nested conditionals; this generalizes
-                        // `ConditionalSugar` from a bool guard to N pattern discriminants).
-                        // EXACT-OR-BAIL: scrutinee must translate, every pattern must
-                        // reduce to a discriminant (binding/guard/or/range arms bail), and
-                        // the arm asserts must fully lift; a bail keeps the refusal below.
-                        // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
-                        let ctx = sugar_ctx_with_factory_audits(
-                            &temporal_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            macro_depth,
-                            factory_audits,
-                        );
-                        let fcx = sugar::factory::SugarBuildCtx::new(
-                            &temporal_scope,
-                            options,
-                            &let_inits,
-                        );
-                        sugar::factory::build_composite(e, &fcx)
-                            .desugar(&ctx)
-                            .complete()
-                    } {
+                    } else if let Some(desugared) = sugar::match_node::desugar_statement_match(
+                        e,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        &let_inits,
+                        macro_depth,
+                        factory_audits,
+                    ) {
                         emit_desugared(desugared, entries, macros_lifted);
                         // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
                         // (it does not exist on this target). Those arms' asserts are NOT in
@@ -11819,31 +11743,16 @@ fn collect_assertion_entries<'a>(
                     // and add the named universal; the body asserts are accounted by
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
-                    let composite_outcome = {
-                        // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
-                        // statement), or a bare `.for_each` (the same bounded
-                        // universal as the equivalent for-loop). Only ask the
-                        // composite role when a Sugar claims it; otherwise later
-                        // routes like CallsiteSugar may own the expression.
-                        let fcx = sugar::factory::SugarBuildCtx::new(
-                            &temporal_scope,
-                            options,
-                            &let_inits,
-                        );
-                        if sugar::factory::has_composite(e, &fcx) {
-                            let ctx = sugar_ctx_with_factory_audits(
-                                &temporal_scope,
-                                options,
-                                reducer,
-                                float_widths,
-                                macro_depth,
-                                factory_audits,
-                            );
-                            Some(sugar::factory::build_composite(e, &fcx).desugar(&ctx))
-                        } else {
-                            None
-                        }
-                    };
+                    let composite_outcome = sugar::statement_position::desugar_statement_composite(
+                        e,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        &let_inits,
+                        macro_depth,
+                        factory_audits,
+                    );
                     if let Some(outcome) = composite_outcome {
                         match outcome {
                             Outcome::Complete(desugared) => {

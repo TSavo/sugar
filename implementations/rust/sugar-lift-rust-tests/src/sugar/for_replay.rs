@@ -25,7 +25,8 @@ use crate::{
     count_asserts_in_stmts, helper_param_names, macro_is_assertion_surface, path_to_variant_string,
     simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens,
     term_as_int, translate_term_in_scope, u128_expr, AssertionFactKind, BoundedDomain, ConstVal,
-    Desugared, Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
+    Desugared, Effect, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome,
+    ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -122,6 +123,30 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         body_stmts: for_loop.body.stmts.clone(),
         seed_names,
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn desugar_synthesized_for_loop(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Option<Desugared> {
+    crate::sugar::statement_position::desugar_composite_expr(
+        expr,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        let_inits,
+        macro_depth,
+        factory_audits,
+    )
+    .complete()
 }
 
 /// The binding ident for a `for <pat> in ..` loop var. Accepts `Pat::Ident` AND
