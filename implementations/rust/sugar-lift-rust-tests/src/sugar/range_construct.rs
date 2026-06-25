@@ -17,21 +17,6 @@ use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("range_construct", recognize);
 
-pub(crate) fn is_range_construct_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Struct(s) => {
-            s.rest.is_none() && RangeConstructKind::from_struct_path(&s.path).is_some()
-        }
-        Expr::Call(call) => {
-            let Expr::Path(path) = call.func.as_ref() else {
-                return false;
-            };
-            call.args.len() == 2 && RangeConstructKind::from_call_path(&path.path).is_some()
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Struct(s) => {

@@ -11228,41 +11228,12 @@ fn collect_assertion_entries<'a>(
                             Outcome::Complete(desugared) => {
                                 emit_desugared(desugared, entries, macros_lifted);
                             }
-                            Outcome::Incomplete(effect)
-                                if sugar::range_construct::is_range_construct_expr(&init.expr) =>
-                            {
-                                skipped.push(effect.reason())
-                            }
-                            Outcome::Incomplete(_) => {
+                            Outcome::Incomplete(effect) => {
                                 let mut count = count_asserts_in_expr(&init.expr);
                                 if let Some((_, diverge)) = &init.diverge {
                                     count += count_asserts_in_expr(diverge);
                                 }
-                                let reason = closure_method_terminal_effect(
-                                    &init.expr,
-                                    &temporal_scope,
-                                    options,
-                                    reducer,
-                                    float_widths,
-                                    macro_depth,
-                                    &let_inits,
-                                    factory_audits,
-                                )
-                                .or_else(|| {
-                                    statement_position_terminal_effect(
-                                        &init.expr,
-                                        &temporal_scope,
-                                        options,
-                                        reducer,
-                                        float_widths,
-                                        macro_depth,
-                                        factory_audits,
-                                    )
-                                })
-                                .map(|e| e.reason())
-                                .unwrap_or_else(|| {
-                                    "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
-                                });
+                                let reason = effect.reason();
                                 for _ in 0..count {
                                     skipped.push(reason.clone());
                                 }
@@ -22226,10 +22197,11 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn dig_runtime_predicate_in_filter_bails() {
-        // (d) BAIL: the `.filter` predicate references a RUNTIME binding (`threshold`, bound
-        // to a fn call), so the const-evaluator cannot decide which elements are kept -- it
-        // bails. The fold stays UNCLASSIFIED (honest), NEVER a fake-complete over a guessed seq.
+    fn dig_runtime_predicate_in_filter_refuses() {
+        // (d) RUNTIME BUBBLE: the `.filter` predicate references a RUNTIME binding
+        // (`threshold`, bound to a fn call), so the bool floor cannot decide which
+        // elements are kept. The runtime call leaf owns the existing OpaqueRuntime
+        // effect; filter only bubbles it and never guesses a kept set.
         let src = r#"
             #[test]
             fn rt_filt() {
@@ -22242,8 +22214,16 @@ mod lifter_key_tests {
         assert_eq!(
             out.assertions_lifted,
             0,
-            "a runtime-predicate filter must BAIL (cannot decide the kept set exactly): {:?}",
+            "a runtime-predicate filter must not guess the kept set: {:?}",
             contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| {
+                r.contains("opaque runtime")
+                    && matches!(refusal_disposition(r), Disposition::Refused)
+            }),
+            "runtime predicate must bubble a named OpaqueRuntime refusal: {:?}",
+            out.skip_reasons
         );
     }
 
