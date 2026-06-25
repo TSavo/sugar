@@ -36,8 +36,8 @@ use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::resolved_term;
 use crate::{
     assoc_call_key, const_fold_int_term, const_fold_u128_term, expr_head_key, num,
-    resolve_value_call_inline, sugar_ctx, type_id_of_call_term, u128_term, Desugared, Outcome,
-    Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
+    resolve_value_call_inline, sugar_ctx, type_id_of_call_term, u128_term, Desugared, Effect,
+    Outcome, Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -56,12 +56,16 @@ pub(crate) fn try_inline_value_call(
     ctx: &SugarCtx,
     func: &Expr,
     args: &[Expr],
-) -> Option<Rc<Term>> {
+) -> Result<Option<Rc<Term>>, Effect> {
     if ctx.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
-        return None;
+        return Ok(None);
     }
-    let inlined = resolve_value_call_inline(func, args, ctx.scope, ctx.options)?;
-    let inlined = inline_visible_value_calls(ctx, &inlined, ctx.macro_depth + 1)?;
+    let Some(inlined) = resolve_value_call_inline(func, args, ctx.scope, ctx.options) else {
+        return Ok(None);
+    };
+    let Some(inlined) = inline_visible_value_calls(ctx, &inlined, ctx.macro_depth + 1) else {
+        return Ok(None);
+    };
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
     let node = crate::sugar::factory::build_term(&inlined, &fcx);
@@ -74,16 +78,19 @@ pub(crate) fn try_inline_value_call(
         ctx.macro_depth + 1,
     );
     let term = match node.desugar(&child) {
-        Outcome::Complete(d) => d.into_term()?,
-        Outcome::Incomplete(_) => return None,
+        Outcome::Complete(d) => match d.into_term() {
+            Some(term) => term,
+            None => return Ok(None),
+        },
+        Outcome::Incomplete(effect) => return Err(effect),
     };
     if is_fully_grounded_term(&term) {
         if let Some(name) = value_call_support_key(func) {
             ctx.scope.record_inlined_value_helper(&name);
         }
-        Some(term)
+        Ok(Some(term))
     } else {
-        None
+        Ok(None)
     }
 }
 
