@@ -7,9 +7,9 @@
 // domain), so they are SEPARATE nodes per role — never one node on a position
 // flag. Byte-identical to the `Expr::Array` arm of the old fat factory.
 
-use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
-use crate::{literal_aggregate_term_in_scope, Sugar};
+use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx};
+use crate::Sugar;
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -20,8 +20,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Array(array) = expr else {
         return None;
     };
-    match literal_aggregate_term_in_scope("Array", array.elems.iter(), expr, fcx.scope()) {
-        Ok(term) => Some(resolved_term(term)),
-        Err(reason) => Some(reasoned_incomplete(reason)),
-    }
+    Some(Box::new(LiteralAggregateTermSugar::new(
+        "Array",
+        array
+            .elems
+            .iter()
+            .map(|elem| SugarBody::term(elem, fcx))
+            .collect(),
+    )))
 }
