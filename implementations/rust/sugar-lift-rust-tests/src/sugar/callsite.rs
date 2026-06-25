@@ -74,6 +74,9 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
             opaque_callsite_term(ctx, expr)
                 .or_else(|| callsite_child_fallback_term(expr, ctx.scope))
         };
+        if matches!(expr, Expr::Call(_) | Expr::MethodCall(_)) {
+            return opaque_or_fallback();
+        }
         let reduction = {
             let mut fw = ctx.float_widths.borrow_mut();
             let child = SugarCtx {
