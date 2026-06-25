@@ -1979,6 +1979,13 @@ struct VisualFactoryWalkRow {
     tone: VisualTone,
 }
 
+struct VisualBoundaryRow {
+    context: String,
+    sort_key: (u64, u64, u64, u64),
+    source: String,
+    label: String,
+}
+
 fn render_report_visual(
     report: &LiftSourceReport,
     prove_report: Option<&sugar_verifier::Report>,
@@ -1998,6 +2005,10 @@ fn render_report_visual(
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
     let rows = visual_factory_walk_rows(&report.factory_walk, report.project_root.as_deref());
     let mut out = String::new();
+    out.push_str(&render_universe_visual_report(report));
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
     out.push_str("factory visual:\n");
     if rows.is_empty() {
         out.push_str("  <no factory walk emitted>\n");
@@ -2017,6 +2028,161 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         ));
     }
     out
+}
+
+fn render_universe_visual_report(report: &LiftSourceReport) -> String {
+    if report.contracts.is_empty() {
+        return String::new();
+    }
+    let boundaries = visual_boundary_rows(&report.factory_walk, report.project_root.as_deref());
+    let mut out = String::new();
+    out.push_str("universe visual:\n");
+    for contract in &report.contracts {
+        let name = contract_value_name(contract).unwrap_or("<unknown contract>");
+        let predicates = contract_predicate_rows(contract);
+        out.push_str(&format!("  universe {name}\n"));
+        out.push_str(&format!("    FOL: {}\n", format_contract_fol(contract)));
+        let warrants = contract_source_warrants(contract);
+        if warrants.is_empty() {
+            out.push_str("    <no source warrants emitted>\n");
+            continue;
+        }
+        render_universe_warrant_breakdown(
+            &mut out,
+            report.project_root.as_deref(),
+            &boundaries,
+            &warrants,
+            &predicates,
+        );
+    }
+    out
+}
+
+enum UniverseVisualItem<'a> {
+    Boundary(&'a VisualBoundaryRow),
+    Predicate {
+        warrant: &'a Value,
+        predicate: String,
+        sort_key: (u64, u64, u64, u64),
+    },
+}
+
+fn render_universe_warrant_breakdown(
+    out: &mut String,
+    project_root: Option<&Path>,
+    boundaries: &[VisualBoundaryRow],
+    warrants: &[&Value],
+    predicates: &[String],
+) {
+    let context = warrants
+        .first()
+        .map(|warrant| source_memento_context_key(warrant))
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let mut items = Vec::new();
+    for boundary in boundaries
+        .iter()
+        .filter(|boundary| boundary.context == context)
+    {
+        items.push(UniverseVisualItem::Boundary(boundary));
+    }
+    for (index, warrant) in warrants.iter().enumerate() {
+        let predicate = predicates
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| "<predicate unavailable>".to_string());
+        let sort_key = warrant
+            .get("span")
+            .map(source_span_sort_key)
+            .unwrap_or_default();
+        items.push(UniverseVisualItem::Predicate {
+            warrant,
+            predicate,
+            sort_key,
+        });
+    }
+    items.sort_by_key(|item| match item {
+        UniverseVisualItem::Boundary(boundary) => (boundary.sort_key, 0_u8),
+        UniverseVisualItem::Predicate { sort_key, .. } => (*sort_key, 1_u8),
+    });
+
+    let mut red = false;
+    for item in items {
+        match item {
+            UniverseVisualItem::Boundary(boundary) => {
+                red = true;
+                out.push_str(&format!(
+                    "    {}  {}\n",
+                    ansi_paint(&boundary.source, VisualTone::Red),
+                    boundary.label
+                ));
+            }
+            UniverseVisualItem::Predicate {
+                warrant, predicate, ..
+            } => {
+                let tone = if red {
+                    VisualTone::Red
+                } else {
+                    VisualTone::Green
+                };
+                let status = if red { "RED" } else { "GREEN" };
+                out.push_str(&format!(
+                    "    {}  {status} predicate: {predicate}\n",
+                    ansi_paint(
+                        &resolve_source_memento_visual_source(project_root, warrant),
+                        tone
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+fn visual_boundary_rows(
+    factory_walk: &[Value],
+    project_root: Option<&Path>,
+) -> Vec<VisualBoundaryRow> {
+    let mut red_seen: BTreeSet<String> = BTreeSet::new();
+    let mut rows = Vec::new();
+    for row in factory_walk {
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        let raw_verdict = if status == "unresolved" {
+            "gap"
+        } else {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete")
+        };
+        if raw_verdict == "complete" {
+            continue;
+        }
+        let Some(memento) = row.get("sourceMemento") else {
+            continue;
+        };
+        let context = source_memento_context_key(memento);
+        let here = red_seen.insert(context.clone());
+        let prefix = match raw_verdict {
+            "gap" if here => "RED HERE gap",
+            "gap" => "RED gap",
+            _ if here => "RED HERE effect",
+            _ => "RED effect",
+        };
+        let label = row
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| format!("{prefix}: {reason}"))
+            .unwrap_or_else(|| prefix.to_string());
+        rows.push(VisualBoundaryRow {
+            context,
+            sort_key: memento
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or_default(),
+            source: resolve_source_memento_visual_source(project_root, memento),
+            label,
+        });
+    }
+    rows
 }
 
 fn visual_factory_walk_rows(
@@ -2092,14 +2258,21 @@ fn ansi_paint(source: &str, tone: VisualTone) -> String {
 }
 
 fn resolve_factory_walk_visual_source(project_root: Option<&Path>, row: &Value) -> String {
-    let Some(root) = project_root else {
-        return resolve_factory_walk_term(project_root, row);
-    };
     let Some(memento_value) = row.get("sourceMemento") else {
         return resolve_factory_walk_term(project_root, row);
     };
+    resolve_source_memento_visual_source(project_root, memento_value)
+}
+
+fn resolve_source_memento_visual_source(
+    project_root: Option<&Path>,
+    memento_value: &Value,
+) -> String {
+    let Some(root) = project_root else {
+        return "<source memento unresolved: missing project root>".to_string();
+    };
     let Some(memento) = source_memento_from_report_json(memento_value) else {
-        return resolve_factory_walk_term(project_root, row);
+        return "<source memento invalid>".to_string();
     };
     match sugar_walk::source_oracle::resolve_source_memento(root, &memento) {
         Ok(resolved) => source_lines_for_memento(root, &memento)
@@ -2134,6 +2307,52 @@ fn factory_walk_context_key(row: &Value, file: &str) -> String {
         Some(function) => format!("{file}::{function}"),
         None => file.to_string(),
     }
+}
+
+fn source_memento_context_key(memento: &Value) -> String {
+    let file = memento
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let source_function = memento
+        .get("sourceFunctionName")
+        .or_else(|| memento.get("source_function_name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    match source_function {
+        Some(function) => format!("{file}::{function}"),
+        None => file.to_string(),
+    }
+}
+
+fn contract_source_warrants(contract: &Value) -> Vec<&Value> {
+    contract
+        .get("sourceWarrants")
+        .or_else(|| contract.get("source_warrants"))
+        .and_then(Value::as_array)
+        .map(|warrants| warrants.iter().collect())
+        .unwrap_or_default()
+}
+
+fn contract_predicate_rows(contract: &Value) -> Vec<String> {
+    for field in ["post", "inv", "pre"] {
+        if let Some(formula) = contract.get(field) {
+            return formula_predicate_rows(formula);
+        }
+    }
+    Vec::new()
+}
+
+fn formula_predicate_rows(formula: &Value) -> Vec<String> {
+    if formula.get("kind").and_then(Value::as_str) == Some("and") {
+        if let Some(operands) = formula.get("operands").and_then(Value::as_array) {
+            return operands
+                .iter()
+                .map(proofir_formula_to_fol_with_instances)
+                .collect();
+        }
+    }
+    vec![proofir_formula_to_fol_with_instances(formula)]
 }
 
 fn source_span_sort_key(span: &Value) -> (u64, u64, u64, u64) {
@@ -6119,6 +6338,176 @@ fn sample() {
         );
         assert!(
             !visual.contains("let a = 10;\u{1b}[0m  RED HERE"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_projects_universe_warrants_through_green_until_red_state() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("lib.rs"),
+            r#"
+fn sample() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+    let z = runtime();
+    assert_eq!(10, 10);
+}
+"#,
+        )
+        .expect("write source");
+        let source_text = std::fs::read_to_string(source_dir.join("lib.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&source_text).expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let memento_for_stmt = |stmt_index: usize| {
+            let stmt = &item.block.stmts[stmt_index];
+            sugar_walk::source_oracle::source_memento_of_statement_span(
+                "src/lib.rs",
+                &source_text,
+                stmt.span(),
+                "sample",
+                &item.sig,
+                &item.block,
+            )
+            .expect("statement memento")
+            .to_json()
+        };
+        let first_assert = memento_for_stmt(0);
+        let second_assert = memento_for_stmt(1);
+        let effect_site = memento_for_stmt(2);
+        let downstream_assert = memento_for_stmt(3);
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "src/lib.rs::sample",
+                    "outBinding": "out",
+                    "inv": {
+                        "kind": "and",
+                        "operands": [
+                            { "kind": "atomic", "name": "=", "args": [
+                                {"kind": "const", "value": 1, "sort": {"name": "Int"}},
+                                {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                            ]},
+                            { "kind": "atomic", "name": "=", "args": [
+                                {"kind": "const", "value": 2, "sort": {"name": "Int"}},
+                                {"kind": "const", "value": 2, "sort": {"name": "Int"}}
+                            ]},
+                            { "kind": "atomic", "name": "=", "args": [
+                                {"kind": "const", "value": 10, "sort": {"name": "Int"}},
+                                {"kind": "const", "value": 10, "sort": {"name": "Int"}}
+                            ]}
+                        ]
+                    },
+                    "sourceWarrants": [
+                        first_assert.clone(),
+                        second_assert.clone(),
+                        downstream_assert.clone()
+                    ]
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 4,
+                "statusCounts": {
+                    "warranted": 3,
+                    "refused": 1,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 3,
+                        "requested_role": "AssertionSurface",
+                        "ast_kind": "expr",
+                        "selected": "assertion_surface_relation_macro",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": first_assert
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "AssertionSurface",
+                        "ast_kind": "expr",
+                        "selected": "assertion_surface_relation_macro",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": second_assert
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 5,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "runtime_call",
+                        "status": "refused",
+                        "verdict": "incomplete",
+                        "output": "effect",
+                        "reason": "runtime boundary: pointer identity",
+                        "sourceMemento": effect_site
+                    },
+                    {
+                        "file": "src/lib.rs",
+                        "line": 6,
+                        "requested_role": "AssertionSurface",
+                        "ast_kind": "expr",
+                        "selected": "assertion_surface_relation_macro",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "constraints",
+                        "sourceMemento": downstream_assert
+                    }
+                ]
+            }
+        });
+        let mut report = source_report_from_lift_response(&response, None).expect("source report");
+        report.project_root = Some(root.path().to_path_buf());
+
+        let visual = render_visual_source_report(&report);
+
+        assert!(visual.contains("universe visual:"), "{visual}");
+        assert!(visual.contains("  universe src/lib.rs::sample"), "{visual}");
+        assert!(
+            visual.contains("    FOL: src/lib.rs::sample :: 1 = 1 ∧ 2 = 2 ∧ 10 = 10"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32massert_eq!(1, 1);\u{1b}[0m  GREEN predicate: 1 = 1"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32massert_eq!(2, 2);\u{1b}[0m  GREEN predicate: 2 = 2"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains(
+                "\u{1b}[31mlet z = runtime();\u{1b}[0m  RED HERE effect: runtime boundary: pointer identity"
+            ),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED predicate: 10 = 10"),
             "{visual}"
         );
     }
