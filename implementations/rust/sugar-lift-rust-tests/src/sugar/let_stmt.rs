@@ -23,8 +23,10 @@ pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
         Expr::Block(block) => block_fact_stmts(&block.block.stmts),
         Expr::Unsafe(unsafe_expr) => Some(unsafe_expr.block.stmts.clone()),
         Expr::Const(const_expr) => Some(const_expr.block.stmts.clone()),
-        Expr::Macro(expr_macro) => Some(vec![Stmt::Expr(Expr::Macro(expr_macro.clone()), None)]),
-        Expr::If(_) | Expr::Match(_) => Some(vec![Stmt::Expr(expr.clone(), None)]),
+        Expr::Macro(expr_macro) if macro_is_initializer_fact_surface(&expr_macro.mac) => {
+            Some(vec![Stmt::Expr(Expr::Macro(expr_macro.clone()), None)])
+        }
+        Expr::If(_) | Expr::Match(_) => control_flow_fact_stmts(expr),
         Expr::Paren(paren) => initializer_fact_stmts(&paren.expr),
         Expr::Group(group) => initializer_fact_stmts(&group.expr),
         _ => {
@@ -32,6 +34,128 @@ pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
             collect_eager_fact_stmts(expr, &mut stmts);
             (!stmts.is_empty()).then_some(stmts)
         }
+    }
+}
+
+fn control_flow_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
+    expr_contains_initializer_fact_surface(expr).then(|| vec![Stmt::Expr(expr.clone(), None)])
+}
+
+fn stmts_contain_initializer_fact_surface(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .filter(|init| init.diverge.is_none())
+            .is_some_and(|init| expr_contains_initializer_fact_surface(&init.expr)),
+        Stmt::Expr(expr, _) => expr_contains_initializer_fact_surface(expr),
+        Stmt::Macro(stmt_macro) => macro_is_initializer_fact_surface(&stmt_macro.mac),
+        Stmt::Item(_) => false,
+    })
+}
+
+fn macro_is_initializer_fact_surface(mac: &syn::Macro) -> bool {
+    crate::macro_is_assertion_surface(mac)
+        || mac.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "panic" | "unreachable" | "todo" | "unimplemented"
+            )
+        })
+}
+
+fn expr_contains_initializer_fact_surface(expr: &Expr) -> bool {
+    match expr {
+        Expr::Macro(expr_macro) => macro_is_initializer_fact_surface(&expr_macro.mac),
+        Expr::Block(block) => stmts_contain_initializer_fact_surface(&block.block.stmts),
+        Expr::Unsafe(unsafe_expr) => {
+            stmts_contain_initializer_fact_surface(&unsafe_expr.block.stmts)
+        }
+        Expr::Const(const_expr) => stmts_contain_initializer_fact_surface(&const_expr.block.stmts),
+        Expr::If(if_expr) => {
+            expr_contains_initializer_fact_surface(&if_expr.cond)
+                || stmts_contain_initializer_fact_surface(&if_expr.then_branch.stmts)
+                || if_expr
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, expr)| expr_contains_initializer_fact_surface(expr))
+        }
+        Expr::Match(match_expr) => {
+            expr_contains_initializer_fact_surface(&match_expr.expr)
+                || match_expr.arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|(_, guard)| expr_contains_initializer_fact_surface(guard))
+                        || expr_contains_initializer_fact_surface(&arm.body)
+                })
+        }
+        Expr::MethodCall(method) => {
+            expr_contains_initializer_fact_surface(&method.receiver)
+                || method
+                    .args
+                    .iter()
+                    .any(expr_contains_initializer_fact_surface)
+        }
+        Expr::Call(call) => {
+            expr_contains_initializer_fact_surface(&call.func)
+                || call.args.iter().any(expr_contains_initializer_fact_surface)
+        }
+        Expr::Field(field) => expr_contains_initializer_fact_surface(&field.base),
+        Expr::Index(index) => {
+            expr_contains_initializer_fact_surface(&index.expr)
+                || expr_contains_initializer_fact_surface(&index.index)
+        }
+        Expr::Await(await_expr) => expr_contains_initializer_fact_surface(&await_expr.base),
+        Expr::Try(try_expr) => expr_contains_initializer_fact_surface(&try_expr.expr),
+        Expr::Reference(reference) => expr_contains_initializer_fact_surface(&reference.expr),
+        Expr::Unary(unary) => expr_contains_initializer_fact_surface(&unary.expr),
+        Expr::Cast(cast) => expr_contains_initializer_fact_surface(&cast.expr),
+        Expr::Binary(binary) => {
+            expr_contains_initializer_fact_surface(&binary.left)
+                || expr_contains_initializer_fact_surface(&binary.right)
+        }
+        Expr::Assign(assign) => {
+            expr_contains_initializer_fact_surface(&assign.left)
+                || expr_contains_initializer_fact_surface(&assign.right)
+        }
+        Expr::Range(range) => {
+            range
+                .start
+                .as_ref()
+                .is_some_and(|expr| expr_contains_initializer_fact_surface(expr))
+                || range
+                    .end
+                    .as_ref()
+                    .is_some_and(|expr| expr_contains_initializer_fact_surface(expr))
+        }
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .any(expr_contains_initializer_fact_surface),
+        Expr::Repeat(repeat) => {
+            expr_contains_initializer_fact_surface(&repeat.expr)
+                || expr_contains_initializer_fact_surface(&repeat.len)
+        }
+        Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .any(expr_contains_initializer_fact_surface),
+        Expr::Struct(struct_expr) => {
+            struct_expr
+                .fields
+                .iter()
+                .any(|field| expr_contains_initializer_fact_surface(&field.expr))
+                || struct_expr
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| expr_contains_initializer_fact_surface(rest))
+        }
+        Expr::Paren(paren) => expr_contains_initializer_fact_surface(&paren.expr),
+        Expr::Group(group) => expr_contains_initializer_fact_surface(&group.expr),
+        // A closure / async block body is not executed while evaluating the initializer.
+        // Driver/handoff sugar owns those boundaries.
+        Expr::Closure(_) | Expr::Async(_) => false,
+        _ => false,
     }
 }
 
@@ -57,7 +181,7 @@ fn block_fact_stmts(stmts: &[Stmt]) -> Option<Vec<Stmt>> {
 
 fn collect_eager_fact_stmts(expr: &Expr, out: &mut Vec<Stmt>) {
     match expr {
-        Expr::Macro(expr_macro) if crate::macro_is_assertion_surface(&expr_macro.mac) => {
+        Expr::Macro(expr_macro) if macro_is_initializer_fact_surface(&expr_macro.mac) => {
             out.push(Stmt::Expr(Expr::Macro(expr_macro.clone()), None));
         }
         Expr::MethodCall(method) => {
@@ -161,6 +285,31 @@ mod tests {
         let stmts = initializer_fact_stmts(&expr).expect("match initializers are surfaced");
         assert_eq!(stmts.len(), 1);
         assert!(matches!(&stmts[0], Stmt::Expr(Expr::Match(_), None)));
+    }
+
+    #[test]
+    fn value_if_initializer_without_facts_is_not_a_fact_surface() {
+        let expr: Expr = parse_quote!(if cfg!(miri) {
+            char::from_u32(0xD800 - 10).unwrap()
+        } else {
+            '\0'
+        });
+        assert!(
+            initializer_fact_stmts(&expr).is_none(),
+            "a value-only conditional initializer must stay lazy for its owning parent sugar"
+        );
+    }
+
+    #[test]
+    fn if_initializer_with_assertion_is_a_fact_surface() {
+        let expr: Expr = parse_quote!(if ready() {
+            assert!(x > 0)
+        } else {
+            assert!(x <= 0)
+        });
+        let stmts = initializer_fact_stmts(&expr).expect("asserting if initializers are surfaced");
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(&stmts[0], Stmt::Expr(Expr::If(_), None)));
     }
 
     #[test]
