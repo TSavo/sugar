@@ -52,8 +52,8 @@ use crate::sugar::format::{
     stable_let_bindings,
 };
 use crate::{
-    callsite_assertion_name, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx,
-    Warrant,
+    callsite_assertion_name, sugar_ctx, AssertionEntry, AssertionFactKind, Desugared, Effect,
+    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 use sugar_ir_symbolic::{atomic_, str_const, Formula, Term};
 
@@ -215,6 +215,54 @@ pub(crate) fn recognize_regex_match(
     }
 }
 
+pub(crate) fn assertion_entry(
+    expr: &Expr,
+    scope: &TemporalScope,
+) -> Result<Option<AssertionEntry>, String> {
+    // Only immutable `let` bindings resolve a bound regex. A `let mut re` could
+    // be reassigned, so its later value is not the written `Regex::new(lit)` init.
+    let stable_bindings = stable_let_bindings(scope);
+    let options = LiftOptions::default();
+    let stable_binding_refs = stable_let_refs(&stable_bindings);
+    let fcx = SugarBuildCtx::new(scope, &options, &stable_binding_refs);
+    let Some(matched) = recognize_regex_match(expr, &stable_bindings, &fcx) else {
+        return Ok(None);
+    };
+
+    let mut float_widths = FloatWidthScope::new();
+    let reducer = ReductionCtx::from_items(&[]);
+    let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
+    let pattern_str = match matched.resolve_pattern_floor(&ctx) {
+        FloorRead::Complete(pattern) => pattern,
+        FloorRead::Incomplete(_) => return Ok(None),
+    };
+    if let Err(error) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
+        return Err(regex_pattern_error_reason(&pattern_str, error));
+    }
+
+    let subject = match SugarBody::term(&matched.subject, &fcx).reduce(&ctx) {
+        Outcome::Complete(desugared) => desugared.into_term().unwrap_or_else(|| {
+            regex_gap(
+                "regex subject completed a non-Term where a Term was required; write more Sugar for this AST",
+            )
+        }),
+        Outcome::Incomplete(_) => return Ok(None),
+    };
+    let pattern = str_const(pattern_str);
+    let name = method_assertion_name(
+        matched.method,
+        vec![subject.clone(), pattern.clone()],
+        scope.local_scope(),
+    );
+    Ok(Some(AssertionEntry {
+        name,
+        atom: atomic_("str.in-regex", vec![subject, pattern]),
+        fact_span: None,
+        kind: AssertionFactKind::Warranted,
+        claim_count: 1,
+    }))
+}
+
 /// Walk a receiver chain back to the `Regex::new(<pattern-expr>)` it was built
 /// from, returning the RAW pattern operand expr (NOT yet resolved to a literal).
 /// Recognizes the construction site through the `Result` peel and a `let`-bound
@@ -319,7 +367,18 @@ fn regex_pattern_incomplete(
     pattern: String,
     error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
 ) -> Outcome {
-    let reason = match error {
+    let reason = regex_pattern_error_reason(&pattern, error);
+    Outcome::Incomplete(Effect::RegexPattern {
+        boundary: pattern,
+        reason,
+    })
+}
+
+fn regex_pattern_error_reason(
+    pattern: &str,
+    error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
+) -> String {
+    match error {
         sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
             "regex pattern `{}` uses a non-regular feature ({feat}) -- not expressible \
              as RegLan; refused by name (no str.in-regex membership row)",
@@ -329,11 +388,7 @@ fn regex_pattern_incomplete(
             "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
             pattern
         ),
-    };
-    Outcome::Incomplete(Effect::RegexPattern {
-        boundary: pattern,
-        reason,
-    })
+    }
 }
 
 fn regex_gap(reason: &str) -> ! {

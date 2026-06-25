@@ -18432,7 +18432,7 @@ fn translate_string_predicate_assertion(
     // refuse-by-name boundary for non-regular features. This runs FIRST so an
     // `is_match` / `is_some` over a `Regex::new(...)` chain routes here before the
     // generic method-name arms; a foreign `is_match` falls through (None).
-    if let Some(entry) = translate_regex_match_assertion(expr, scope)? {
+    if let Some(entry) = sugar::regex_match::assertion_entry(expr, scope)? {
         return Ok(Some(entry));
     }
     match expr {
@@ -18685,93 +18685,6 @@ fn translate_string_predicate_assertion(
 /// not a recognized regex-match shape or the pattern child does not complete to a
 /// string literal — never a fake-refuse; the construct simply is not a regex
 /// membership.
-fn translate_regex_match_assertion(
-    expr: &Expr,
-    scope: &TemporalScope,
-) -> Result<Option<AssertionEntry>, String> {
-    // Only IMMUTABLE `let` bindings resolve a bound regex: a `let mut re` could be
-    // reassigned, so its later value is not the written `Regex::new(lit)` init
-    // (mirrors the `try_fold` evaluator's `!is_mut_local` gate). A mut binding is
-    // excluded, so an unstable receiver is declined rather than mis-resolved.
-    let stable_bindings: BTreeMap<String, Expr> = scope
-        .let_bindings
-        .iter()
-        .filter(|(name, _)| !scope.is_mut_local(name))
-        .map(|(name, init)| (name.clone(), init.clone()))
-        .collect();
-    let options = LiftOptions::default();
-    let stable_binding_refs: BTreeMap<String, &Expr> = stable_bindings
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect();
-    let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &stable_binding_refs);
-    let Some(m) = sugar::regex_match::recognize_regex_match(expr, &stable_bindings, &fcx) else {
-        return Ok(None);
-    };
-    // COMPOSITIONAL pattern resolution: the pattern operand is an INNER `Sugar`,
-    // resolved by DESUGARING it (mirroring `MapSugar`'s inner). `Complete` -> the
-    // resolved string literal (a literal / const-string / `concat!` / `format!` /
-    // pure helper call all flow through this one path); `Incomplete` -> a genuinely
-    // runtime / unsupported pattern -> DECLINE (None), the composition frontier
-    // that flips to complete when its producer lands. We never bail merely because the
-    // pattern is not an inline literal.
-    let mut fw = FloatWidthScope::new();
-    let reducer = ReductionCtx::from_items(&[]);
-    let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
-    let pattern_str = match m.resolve_pattern_floor(&ctx) {
-        sugar::factory::FloorRead::Complete(pattern) => pattern,
-        sugar::factory::FloorRead::Incomplete(_) => {
-            // Runtime / unsupported pattern operand -> not a recognized regex
-            // membership today (the composition frontier). Declined, not refused.
-            return Ok(None);
-        }
-    };
-    // REFUSE BY NAME at lift time if the resolved pattern is not a regular language
-    // — mirroring the Java `PatternUniverseWalker`, which refuses a non-regular
-    // `@Pattern` at walk time (no row emitted, the floor stands). We use the SINGLE
-    // lowering authority (`regex_regln`) as the regularity oracle so rust and Java
-    // share ONE verdict; a non-regular feature (backreference, lookahead/behind,
-    // atomic/possessive group, inline flag, `\b`) names the boundary precisely.
-    // This is a REFUSAL (Err), never a silent drop: the false membership claim is
-    // accounted, not vanished.
-    if let Err(e) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
-        return Err(match e {
-            sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
-                "regex pattern `{}` uses a non-regular feature ({feat}) — not expressible \
-                 as RegLan; refused by name (no str.in-regex membership row)",
-                pattern_str
-            ),
-            sugar_ir_compiler_smt_lib::regex_regln::RegexError::Malformed(msg) => format!(
-                "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
-                pattern_str
-            ),
-        });
-    }
-    // The subject is translated in scope: a string literal is the POINT case (a
-    // decidable membership of a concrete string), a variable is the UNIVERSAL
-    // membership case (an opaque String term whose value z3 quantifies over). A
-    // subject we cannot translate to a term is declined (None) — not refused.
-    let Ok(subject) = translate_term_in_scope(&m.subject, scope) else {
-        return Ok(None);
-    };
-    // The resolved pattern is carried verbatim as a String-sorted const. The atom
-    // is `str.in-regex(subject, pattern)` — arg order and shape byte-identical to
-    // the Java `@Pattern` emission (`buildRegexUniverseContract`).
-    let pattern = str_const(pattern_str);
-    let name = method_call_assertion_name(
-        m.method,
-        vec![subject.clone(), pattern.clone()],
-        scope.local_scope(),
-    );
-    Ok(Some(AssertionEntry {
-        name,
-        atom: atomic_("str.in-regex", vec![subject, pattern]),
-        fact_span: None,
-        kind: AssertionFactKind::Warranted,
-        claim_count: 1,
-    }))
-}
-
 fn ascii_char_class_assertion(
     call: &syn::ExprMethodCall,
     local_scope: &str,
