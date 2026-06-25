@@ -35,9 +35,9 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::resolved_term;
 use crate::{
-    assoc_call_key, const_fold_int_term, const_fold_u128_term, expr_head_key, num,
-    resolve_value_call_inline, sugar_ctx, type_id_of_call_term, u128_term, Desugared, Effect,
-    Outcome, Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
+    assoc_call_key, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term,
+    expr_head_key, num, resolve_value_call_inline, type_id_of_call_term, u128_term, Desugared,
+    Effect, Outcome, Sugar, SugarCtx, MAX_VALUE_CALL_INLINE_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -49,9 +49,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Ordinary call terms still compose as `call:f(args)` so source contracts can
 /// link at the callsite. This helper is only for sugars whose own semantics
 /// require evaluating a callback over literal data. The substituted body is
-/// rebuilt through term sugar at a bumped inline depth, and the result commits
-/// only if it grounds completely to constants/constructors with no opaque call,
-/// method, or variable leaves.
+/// reduced through the literal floor. The result commits only if that floor owns
+/// the substituted value completely; otherwise this helper exact-bails and the
+/// ordinary call owner keeps the opaque call term.
 pub(crate) fn try_inline_value_call(
     ctx: &SugarCtx,
     func: &Expr,
@@ -66,25 +66,9 @@ pub(crate) fn try_inline_value_call(
     let Some(inlined) = inline_visible_value_calls(ctx, &inlined, ctx.macro_depth + 1) else {
         return Ok(None);
     };
-    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    let node = crate::sugar::factory::build_term(&inlined, &fcx);
-    let mut fw = ctx.float_widths.borrow_mut();
-    let child = sugar_ctx(
-        ctx.scope,
-        ctx.options,
-        ctx.reducer,
-        &mut *fw,
-        ctx.macro_depth + 1,
-    );
-    let term = match node.desugar(&child) {
-        Outcome::Complete(d) => match d.into_term() {
-            Some(term) => term,
-            None => return Ok(None),
-        },
-        Outcome::Incomplete(effect) => return Err(effect),
-    };
-    if is_fully_grounded_term(&term) {
+    if let Some(term) =
+        const_eval(&inlined, &BTreeMap::new()).and_then(|value| const_val_term(&value))
+    {
         if let Some(name) = value_call_support_key(func) {
             ctx.scope.record_inlined_value_helper(&name);
         }
@@ -212,21 +196,6 @@ fn value_call_support_key(func: &Expr) -> Option<String> {
     }
     let (self_ty, name) = assoc_call_key(&path.path)?;
     Some(format!("{self_ty}::{name}"))
-}
-
-/// Exact-or-bail predicate for term-position value-call inlining.
-fn is_fully_grounded_term(term: &Term) -> bool {
-    match term {
-        Term::Const { .. } => true,
-        Term::Var { .. } => false,
-        Term::Lambda { .. } | Term::Let { .. } => false,
-        Term::Ctor { name, args } => {
-            if name.starts_with("call:") || name.starts_with("method:") {
-                return false;
-            }
-            args.iter().all(|a| is_fully_grounded_term(a))
-        }
-    }
 }
 
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
