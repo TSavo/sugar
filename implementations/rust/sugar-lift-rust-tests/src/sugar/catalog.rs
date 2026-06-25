@@ -80,6 +80,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &float_refinement::CONSTRAINT_EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
+    &monadic::COMPOSITE_EXPR_SUGAR,
     &cstr::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
@@ -548,6 +549,21 @@ mod tests {
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
             Some("value_if")
+        );
+    }
+
+    #[test]
+    fn monadic_option_constructors_are_composite_iter_sources() {
+        let some: Expr = syn::parse_str("Some(42)").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&some, SugarRole::Composite),
+            Some("monadic_composite")
+        );
+
+        let none: Expr = syn::parse_str("None").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&none, SugarRole::Composite),
+            Some("monadic_composite")
         );
     }
 
