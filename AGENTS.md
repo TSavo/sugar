@@ -1,3 +1,8 @@
+> "The past 3 years of my journey with AI can be summarized as a series of
+> increasingly sophisticated arguments about why it's wrong about process."
+>
+> - T Savo, June 25, 2026
+
 # Instrument Driven Development
 
 ## Manifesto: Instrument Driven Development
