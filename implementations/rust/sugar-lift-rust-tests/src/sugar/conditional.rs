@@ -98,32 +98,36 @@ impl Sugar for ConditionalSugar {
             }
             // At least one branch must carry an assertion (else nothing to classify --
             // leave it to the existing handling).
-            if let Some(guard_value) = const_fold_bool_guard(ctx, &self.cond) {
-                let (active_stmts, active_count, inactive_count) = if guard_value {
-                    (&self.then_stmts, then_count, else_count)
-                } else {
-                    (&self.else_stmts, else_count, then_count)
-                };
-                let mut conjuncts = Vec::new();
-                if active_count > 0 {
-                    conjuncts.push(self.lift_branch_conj(active_stmts, active_count, ctx)?);
+            match const_fold_bool_guard(ctx, &self.cond) {
+                Ok(Some(guard_value)) => {
+                    let (active_stmts, active_count, inactive_count) = if guard_value {
+                        (&self.then_stmts, then_count, else_count)
+                    } else {
+                        (&self.else_stmts, else_count, then_count)
+                    };
+                    let mut conjuncts = Vec::new();
+                    if active_count > 0 {
+                        conjuncts.push(self.lift_branch_conj(active_stmts, active_count, ctx)?);
+                    }
+                    if inactive_count > 0 {
+                        conjuncts.push(eq(bool_const(true), bool_const(true)));
+                    }
+                    if conjuncts.is_empty() {
+                        return None;
+                    }
+                    let atom = and_(conjuncts);
+                    let warrant = Warrant {
+                        name: Some(format!("{}::if", ctx.scope.local_scope())),
+                    };
+                    return Some(Outcome::Complete(Desugared::Constraints {
+                        atom,
+                        n: active_count + inactive_count,
+                        kind: AssertionFactKind::Warranted,
+                        warrant,
+                    }));
                 }
-                if inactive_count > 0 {
-                    conjuncts.push(eq(bool_const(true), bool_const(true)));
-                }
-                if conjuncts.is_empty() {
-                    return None;
-                }
-                let atom = and_(conjuncts);
-                let warrant = Warrant {
-                    name: Some(format!("{}::if", ctx.scope.local_scope())),
-                };
-                return Some(Outcome::Complete(Desugared::Constraints {
-                    atom,
-                    n: active_count + inactive_count,
-                    kind: AssertionFactKind::Warranted,
-                    warrant,
-                }));
+                Ok(None) => {}
+                Err(effect) => return Some(Outcome::Incomplete(effect)),
             }
             // Neither branch may mutate captured state: a single guarded implication is
             // a point-wise claim only if the branch body is pure.
@@ -185,7 +189,11 @@ impl ConditionalSugar {
         if guard_exits_with_return(&self.cond) {
             return Some(Outcome::Complete(Desugared::Seq(Vec::new())));
         }
-        let guard_value = const_fold_bool_guard(ctx, &self.cond)?;
+        let guard_value = match const_fold_bool_guard(ctx, &self.cond) {
+            Ok(Some(value)) => value,
+            Ok(None) => return None,
+            Err(effect) => return Some(Outcome::Incomplete(effect)),
+        };
         let branch = if guard_value {
             &self.then_stmts
         } else {
@@ -277,32 +285,43 @@ fn guard_exits_with_return(cond: &Expr) -> bool {
     }
 }
 
-fn const_fold_bool_guard(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
-    crate::const_fold_bool_guard(cond, ctx.options).or_else(|| {
-        if guard_mentions_stable_local_path(ctx, cond) {
-            None
-        } else {
-            const_fold_bool_guard_from_terms(ctx, cond)
-        }
-    })
+fn const_fold_bool_guard(ctx: &SugarCtx, cond: &Expr) -> Result<Option<bool>, Effect> {
+    if let Some(value) = crate::const_fold_bool_guard(cond, ctx.options) {
+        return Ok(Some(value));
+    }
+    if guard_mentions_stable_local_path(ctx, cond) {
+        Ok(None)
+    } else {
+        const_fold_bool_guard_from_terms(ctx, cond)
+    }
 }
 
-fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
+fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Result<Option<bool>, Effect> {
     match cond {
         Expr::Paren(p) => const_fold_bool_guard(ctx, &p.expr),
         Expr::Group(g) => const_fold_bool_guard(ctx, &g.expr),
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => {
-            const_fold_bool_guard(ctx, &u.expr).map(|value| !value)
+            Ok(const_fold_bool_guard(ctx, &u.expr)?.map(|value| !value))
         }
         Expr::Binary(binary) => match binary.op {
-            BinOp::And(_) | BinOp::BitAnd(_) => Some(
-                const_fold_bool_guard(ctx, &binary.left)?
-                    && const_fold_bool_guard(ctx, &binary.right)?,
-            ),
-            BinOp::Or(_) | BinOp::BitOr(_) => Some(
-                const_fold_bool_guard(ctx, &binary.left)?
-                    || const_fold_bool_guard(ctx, &binary.right)?,
-            ),
+            BinOp::And(_) | BinOp::BitAnd(_) => {
+                let Some(left) = const_fold_bool_guard(ctx, &binary.left)? else {
+                    return Ok(None);
+                };
+                if !left {
+                    return Ok(Some(false));
+                }
+                Ok(const_fold_bool_guard(ctx, &binary.right)?.map(|right| left && right))
+            }
+            BinOp::Or(_) | BinOp::BitOr(_) => {
+                let Some(left) = const_fold_bool_guard(ctx, &binary.left)? else {
+                    return Ok(None);
+                };
+                if left {
+                    return Ok(Some(true));
+                }
+                Ok(const_fold_bool_guard(ctx, &binary.right)?.map(|right| left || right))
+            }
             BinOp::Eq(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
                 ord == std::cmp::Ordering::Equal
             }),
@@ -321,9 +340,9 @@ fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Option<bool>
             BinOp::Ge(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
                 ord != std::cmp::Ordering::Less
             }),
-            _ => None,
+            _ => Ok(None),
         },
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -351,30 +370,46 @@ fn compare_terms(
     lhs: &Expr,
     rhs: &Expr,
     pred: impl FnOnce(std::cmp::Ordering) -> bool,
-) -> Option<bool> {
+) -> Result<Option<bool>, Effect> {
     let lhs = term_for_guard_operand(ctx, lhs)?;
     let rhs = term_for_guard_operand(ctx, rhs)?;
+    let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
+        return Ok(None);
+    };
     let ordering = match (const_fold_u128_term(&lhs), const_fold_u128_term(&rhs)) {
         (Some(left), Some(right)) => left.cmp(&right),
         (Some(left), None) => {
-            let right = u128::try_from(const_fold_int_term(&rhs)?).ok()?;
+            let Some(right) =
+                const_fold_int_term(&rhs).and_then(|value| u128::try_from(value).ok())
+            else {
+                return Ok(None);
+            };
             left.cmp(&right)
         }
         (None, Some(right)) => {
-            let left = u128::try_from(const_fold_int_term(&lhs)?).ok()?;
+            let Some(left) = const_fold_int_term(&lhs).and_then(|value| u128::try_from(value).ok())
+            else {
+                return Ok(None);
+            };
             left.cmp(&right)
         }
-        (None, None) => const_fold_int_term(&lhs)?.cmp(&const_fold_int_term(&rhs)?),
+        (None, None) => {
+            let (Some(left), Some(right)) = (const_fold_int_term(&lhs), const_fold_int_term(&rhs))
+            else {
+                return Ok(None);
+            };
+            left.cmp(&right)
+        }
     };
-    Some(pred(ordering))
+    Ok(Some(pred(ordering)))
 }
 
-fn term_for_guard_operand(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
+fn term_for_guard_operand(ctx: &SugarCtx, expr: &Expr) -> Result<Option<Rc<Term>>, Effect> {
     let empty = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
     match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term(),
-        Outcome::Incomplete(_) => None,
+        Outcome::Complete(desugared) => Ok(desugared.into_term()),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
