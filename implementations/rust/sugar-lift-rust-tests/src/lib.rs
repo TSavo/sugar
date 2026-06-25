@@ -21344,59 +21344,6 @@ fn integer_scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
     }
 }
 
-fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
-    match &lit.lit {
-        Lit::Int(i) => {
-            // A CONCRETE Int const whose WIDTH (u8 … i128 / usize / isize) is
-            // carried in the const's SORT, never by opaquing the term. The proofir
-            // compiler maps any non-{Int,Bool,Real,String} primitive sort -> Int
-            // for SMT (emit_sort_with_reason), so the value stays concrete and
-            // `2u8 + 3u8 == 6` is still REFUTED — no arithmetic-masking falsePass.
-            // The width rides in the canonical callsite KEY (canonical_term_sig
-            // renders `i:{v}:{width}`), so `align_of_val(&1u8)=1` and `&1u64=8` get
-            // DISTINCT obligations instead of collapsing onto `ref(i:1)`.
-            let suffix = i.suffix();
-            if suffix == "u128" {
-                return Ok(u128_term(parse_u128_lit(i)?));
-            }
-            if suffix.is_empty() {
-                match parse_int_lit(i) {
-                    Ok(value) => Ok(num(value)),
-                    Err(_) => Ok(u128_term(parse_u128_lit(i)?)),
-                }
-            } else {
-                let value = parse_int_lit(i)?;
-                Ok(Rc::new(Term::Const {
-                    value: ConstValue::Int(value),
-                    sort: sugar_ir_symbolic::Sort {
-                        name: suffix.to_string(),
-                    },
-                }))
-            }
-        }
-        Lit::Float(f) => canonical_float_literal(f).map(real_const),
-        Lit::Str(s) => Ok(str_const(s.value())),
-        Lit::Char(c) => Ok(str_const(c.value().to_string())),
-        Lit::Bool(b) => Ok(bool_const(b.value)),
-        Lit::ByteStr(bs) => Ok(bytes_literal_term_from_bytes(&bs.value())),
-        // A byte literal `b'0'` is pure sugar for a `u8` constant (here 48): it
-        // carries a fixed numeric value and rust types it `u8`. Dissolve it to the
-        // same concrete-Int-with-u8-sort form a `48u8` literal lifts to, so a direct
-        // byte operand (`assert_eq!(byte, b'0')`) is liftable and `b'0' != 49` is
-        // REFUTED via the existing int path — no new refutation logic, no masking.
-        Lit::Byte(b) => Ok(Rc::new(Term::Const {
-            value: ConstValue::Int(i128::from(b.value())),
-            sort: sugar_ir_symbolic::Sort {
-                name: "u8".to_string(),
-            },
-        })),
-        other => Err(format!(
-            "only integer/string/char/finite decimal float scalar constants are liftable, got `{}`",
-            token_key(other)
-        )),
-    }
-}
-
 /// Encode a byte slice as a lower-hex string: each byte as exactly two hex
 /// digits, concatenated.  No external crate dependency required.
 fn bytes_to_hex(bytes: &[u8]) -> String {

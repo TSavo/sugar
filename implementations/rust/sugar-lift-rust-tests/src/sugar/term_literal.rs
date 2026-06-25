@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `TermLiteralSugar`: the TERM-FLOOR LEAF for a scalar literal in term position --
-// the constructive node mirror of the `Expr::Lit` arm of `translate_term_in_scope`:
+// the constructive node mirror of the `Expr::Lit` arm of term dispatch:
 //
-//     Expr::Lit(lit) => translate_lit(lit),
+//     Expr::Lit(lit) => term_literal::translate_lit(lit),
 //
-// `translate_lit` (in `lib.rs`) maps each `syn::Lit` to its keyed `Term`:
+// `translate_lit` maps each `syn::Lit` to its keyed `Term`:
 //   * `Lit::Int`  -> `num(value)` (no suffix) or a `Term::Const { value:
 //                    ConstValue::Int, sort: <suffix> }` (width-keyed in the sort);
 //   * `Lit::Float` -> `canonical_float_literal(f).map(real_const)`;
@@ -44,10 +44,16 @@
 // separate sequence-floor claims (`LiteralSugar`); scalar literals stay here via
 // `translate_lit`.
 
+use std::rc::Rc;
+
+use sugar_ir_symbolic::{num, real_const, str_const, ConstValue, Term};
 use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{translate_lit, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    bool_const, bytes_literal_term_from_bytes, canonical_float_literal, parse_int_lit,
+    parse_u128_lit, token_key, u128_term, Desugared, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("term_literal", recognize);
@@ -60,6 +66,59 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
             Some(Box::new(TermLiteralSugar { lit: lit.clone() }))
         }
         _ => None,
+    }
+}
+
+pub(crate) fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
+    match &lit.lit {
+        Lit::Int(i) => {
+            // A CONCRETE Int const whose WIDTH (u8 ... i128 / usize / isize) is
+            // carried in the const's SORT, never by opaquing the term. The proofir
+            // compiler maps any non-{Int,Bool,Real,String} primitive sort -> Int
+            // for SMT (emit_sort_with_reason), so the value stays concrete and
+            // `2u8 + 3u8 == 6` is still REFUTED -- no arithmetic-masking falsePass.
+            // The width rides in the canonical callsite KEY (canonical_term_sig
+            // renders `i:{v}:{width}`), so `align_of_val(&1u8)=1` and `&1u64=8` get
+            // DISTINCT obligations instead of collapsing onto `ref(i:1)`.
+            let suffix = i.suffix();
+            if suffix == "u128" {
+                return Ok(u128_term(parse_u128_lit(i)?));
+            }
+            if suffix.is_empty() {
+                match parse_int_lit(i) {
+                    Ok(value) => Ok(num(value)),
+                    Err(_) => Ok(u128_term(parse_u128_lit(i)?)),
+                }
+            } else {
+                let value = parse_int_lit(i)?;
+                Ok(Rc::new(Term::Const {
+                    value: ConstValue::Int(value),
+                    sort: sugar_ir_symbolic::Sort {
+                        name: suffix.to_string(),
+                    },
+                }))
+            }
+        }
+        Lit::Float(f) => canonical_float_literal(f).map(real_const),
+        Lit::Str(s) => Ok(str_const(s.value())),
+        Lit::Char(c) => Ok(str_const(c.value().to_string())),
+        Lit::Bool(b) => Ok(bool_const(b.value)),
+        Lit::ByteStr(bs) => Ok(bytes_literal_term_from_bytes(&bs.value())),
+        // A byte literal `b'0'` is pure sugar for a `u8` constant (here 48): it
+        // carries a fixed numeric value and rust types it `u8`. Dissolve it to the
+        // same concrete-Int-with-u8-sort form a `48u8` literal lifts to, so a direct
+        // byte operand (`assert_eq!(byte, b'0')`) is liftable and `b'0' != 49` is
+        // REFUTED via the existing int path -- no new refutation logic, no masking.
+        Lit::Byte(b) => Ok(Rc::new(Term::Const {
+            value: ConstValue::Int(i128::from(b.value())),
+            sort: sugar_ir_symbolic::Sort {
+                name: "u8".to_string(),
+            },
+        })),
+        other => Err(format!(
+            "only integer/string/char/finite decimal float scalar constants are liftable, got `{}`",
+            token_key(other)
+        )),
     }
 }
 
