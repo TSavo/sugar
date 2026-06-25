@@ -18,6 +18,12 @@ struct Offender {
     action: &'static str,
 }
 
+#[derive(Clone, Copy)]
+struct CodeLine<'a> {
+    number: usize,
+    code: &'a str,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ReplacementPlan {
     module: &'static str,
@@ -94,6 +100,37 @@ fn function_spans(src: &str) -> Vec<FunctionSpan> {
     spans
 }
 
+#[test]
+fn late_factory_reopens_ignore_cfg_test_unit_helpers() {
+    let src = r#"
+fn production_boundary() {
+    match sugar::factory::build_term(&expr, &fcx).desugar(&ctx) {
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod lifter_key_tests {
+    #[test]
+    fn regression_tooth() {
+        match sugar::factory::build_term(&expr, &fcx).desugar(&ctx) {
+            _ => {}
+        }
+    }
+}
+"#;
+    let functions = function_spans(src);
+    let offenders = late_factory_reopens(src, &functions);
+    assert_eq!(
+        offenders
+            .iter()
+            .map(|offender| offender.line)
+            .collect::<Vec<_>>(),
+        vec![3],
+        "only production factory reopens belong in the lib-gravity R vector"
+    );
+}
+
 fn impl_type_name(ty: &syn::Type) -> String {
     match ty {
         syn::Type::Path(path) => path
@@ -108,14 +145,14 @@ fn impl_type_name(ty: &syn::Type) -> String {
 }
 
 fn inline_sugar_impls(src: &str) -> Vec<Offender> {
-    src.lines()
-        .enumerate()
-        .filter_map(|(idx, line)| {
-            line.contains("impl Sugar for").then(|| Offender {
+    production_lines(src)
+        .into_iter()
+        .filter_map(|line| {
+            line.code.contains("impl Sugar for").then(|| Offender {
                 axis: "inline_sugar_impls_in_lib",
-                line: idx + 1,
-                key: inline_sugar_key(line),
-                symbol: line.trim().to_string(),
+                line: line.number,
+                key: inline_sugar_key(line.code),
+                symbol: line.code.to_string(),
                 action: "move the Sugar impl into src/sugar/<domain>.rs and register its claim",
             })
         })
@@ -187,9 +224,9 @@ fn late_factory_reopens(src: &str, functions: &[FunctionSpan]) -> Vec<Offender> 
 
     let mut offenders = Vec::new();
     let mut occurrences = BTreeMap::<String, usize>::new();
-    for (idx, line) in src.lines().enumerate() {
-        let line_no = idx + 1;
-        let trimmed = line.trim();
+    for line in production_lines(src) {
+        let line_no = line.number;
+        let trimmed = line.code;
         let owner = current_function(functions, line_no);
         if trimmed.starts_with("//")
             || !trimmed.contains("sugar::factory::build_")
@@ -210,6 +247,54 @@ fn late_factory_reopens(src: &str, functions: &[FunctionSpan]) -> Vec<Offender> 
         });
     }
     offenders
+}
+
+fn production_lines(text: &str) -> Vec<CodeLine<'_>> {
+    let mut out = Vec::new();
+    let mut pending_cfg_test = false;
+    let mut test_mod_depth = None::<i32>;
+
+    for (idx, raw) in text.lines().enumerate() {
+        let number = idx + 1;
+        let trimmed = raw.trim();
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+            continue;
+        }
+        if pending_cfg_test && trimmed.starts_with("mod ") {
+            pending_cfg_test = false;
+            let depth = raw.matches('{').count() as i32 - raw.matches('}').count() as i32;
+            test_mod_depth = Some(depth.max(1));
+            continue;
+        }
+        pending_cfg_test = false;
+
+        if let Some(depth) = test_mod_depth.as_mut() {
+            *depth += raw.matches('{').count() as i32;
+            *depth -= raw.matches('}').count() as i32;
+            if *depth <= 0 {
+                test_mod_depth = None;
+            }
+            continue;
+        }
+
+        let Some(code) = strip_line_comment(raw).map(str::trim) else {
+            continue;
+        };
+        if code.is_empty() || code.starts_with("//") || code.starts_with("///") {
+            continue;
+        }
+        out.push(CodeLine { number, code });
+    }
+    out
+}
+
+fn strip_line_comment(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!") {
+        return None;
+    }
+    Some(line.split("//").next().unwrap_or(line))
 }
 
 fn current_function<'a>(functions: &'a [FunctionSpan], line: usize) -> Option<&'a str> {
