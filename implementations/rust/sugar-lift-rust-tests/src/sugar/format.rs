@@ -647,6 +647,7 @@ pub(crate) enum FmtValue {
     Str(String),
     CStr(CStrBytes),
     Bool(bool),
+    DebugText(String),
 }
 
 trait FormatLiteralVisitor {
@@ -659,6 +660,7 @@ trait FormatLiteralVisitor {
     fn visit_string(self, value: &str) -> Self::Output;
     fn visit_cstr(self, value: &CStrBytes) -> Self::Output;
     fn visit_bool(self, value: bool) -> Self::Output;
+    fn visit_debug_text(self, value: &str) -> Self::Output;
 }
 
 impl FmtValue {
@@ -671,6 +673,7 @@ impl FmtValue {
             FmtValue::Str(value) => visitor.visit_string(value),
             FmtValue::CStr(value) => visitor.visit_cstr(value),
             FmtValue::Bool(value) => visitor.visit_bool(*value),
+            FmtValue::DebugText(value) => visitor.visit_debug_text(value),
         }
     }
 
@@ -712,7 +715,7 @@ fn format_value_from_term_floor_opt(term: &Rc<Term>) -> Option<FmtValue> {
         Term::Ctor { name, args } if name == "method:unwrap" && args.len() == 1 => {
             literal_unwrap_format_value(&args[0])
         }
-        _ => None,
+        _ => crate::sugar::range_term::literal_range_debug_string(term).map(FmtValue::DebugText),
     }
 }
 
@@ -793,6 +796,18 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
 
     fn visit_bool(self, value: bool) -> Self::Output {
         Ok(render_bool(value, self.spec))
+    }
+
+    fn visit_debug_text(self, value: &str) -> Self::Output {
+        if self.spec.kind == Kind::Debug
+            && !self.spec.plus
+            && self.spec.zero_width.is_none()
+            && self.spec.precision.is_none()
+        {
+            Ok(Some(value.to_string()))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -2634,6 +2649,42 @@ mod tests {
         assert_eq!(
             value.render(&Spec::parse("?").unwrap()).unwrap().as_deref(),
             Some("5")
+        );
+    }
+
+    #[test]
+    fn format_value_dispatches_completed_inclusive_range_term_floor() {
+        let value = format_value_from_term_floor(
+            &Rc::new(Term::Ctor {
+                name: "range_incl".to_string(),
+                args: vec![num(1), num(1)],
+            }),
+            "test",
+        );
+        assert_eq!(
+            value.render(&Spec::parse("?").unwrap()).unwrap().as_deref(),
+            Some("1..=1")
+        );
+    }
+
+    #[test]
+    fn format_value_dispatches_replayed_inclusive_range_skip_floor() {
+        let value = format_value_from_term_floor(
+            &Rc::new(Term::Ctor {
+                name: "method:skip".to_string(),
+                args: vec![
+                    Rc::new(Term::Ctor {
+                        name: "range_incl".to_string(),
+                        args: vec![num(1), num(1)],
+                    }),
+                    num(1),
+                ],
+            }),
+            "test",
+        );
+        assert_eq!(
+            value.render(&Spec::parse("?").unwrap()).unwrap().as_deref(),
+            Some("1..=1 (exhausted)")
         );
     }
 

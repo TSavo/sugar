@@ -22556,13 +22556,13 @@ mod lifter_key_tests {
         );
     }
 
-    // ── Fix E: format! with mut local is refused ─────────────────────────────
+    // ── format! over replayed literal range state ───────────────────────────
     //
-    // `format!("{:?}", r)` where `r` is `let mut r = ...` must be refused as
-    // temporally unstable (different program points see different values of r).
+    // `format!("{:?}", r)` where `r` is a literal range is owned by the range
+    // floor. A replayed `next()` rewrites the child floor before format renders.
 
     #[test]
-    fn format_macro_with_mut_local_arg_is_refused() {
+    fn format_macro_with_mut_local_arg_replays_literal_range_state() {
         let src = r#"
             #[test]
             fn test_fmt() {
@@ -22573,31 +22573,23 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        // The format! assertions must be refused (skip reasons present),
-        // not lifted into contradictory obligations.
-        let refused = out
-            .skip_reasons
-            .iter()
-            .any(|r| r.contains("runtime format argument"))
-            || out
-                .skip_reasons
-                .iter()
-                .any(|r| r.contains("mut") && r.contains("local"))
-            || out
-                .skip_reasons
-                .iter()
-                .any(|r| r.contains("temporally unstable"));
         assert!(
-            refused,
-            "format! with mut local should be refused by name; skips: {:?}",
+            out.skip_reasons.is_empty(),
+            "replayed literal range Debug should not invent a format effect: {:?}",
             out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both pre- and post-next range Debug assertions should lift: {:?}",
+            out
         );
     }
 
     #[test]
-    fn format_macro_with_inline_capture_mut_local_is_refused() {
-        // `format!("{socket}")` with `let mut socket = ...` uses implicit capture.
-        // The `socket` identifier is embedded in the format string literal.
+    fn format_macro_with_inline_capture_shadowed_literal_lifts() {
+        // `let mut socket = 42` is not an effect by itself, and the later
+        // `let socket = 99` shadows rather than mutates. The inline capture
+        // desugars through the child binding floor and remains literal.
         let src = r#"
             #[test]
             fn socket_test() {
@@ -22608,19 +22600,15 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        // The format! with inline mut capture must be refused.
-        let refused = out
-            .skip_reasons
-            .iter()
-            .any(|r| r.contains("runtime format argument"))
-            || out
-                .skip_reasons
-                .iter()
-                .any(|r| r.contains("temporally unstable") || r.contains("mut"));
         assert!(
-            refused,
-            "format! with inline mut capture should be refused by name; skips: {:?}",
+            out.skip_reasons.is_empty(),
+            "inline capture over shadowed literal bindings should not invent a format effect: {:?}",
             out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both inline captures should lift through literal child floors: {:?}",
+            out
         );
     }
 
