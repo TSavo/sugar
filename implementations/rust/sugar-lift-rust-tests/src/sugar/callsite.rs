@@ -77,6 +77,9 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
         if matches!(expr, Expr::Call(_) | Expr::MethodCall(_)) {
             return opaque_or_fallback();
         }
+        if source_less_format_args_builtin(expr, ctx) {
+            return callsite_child_fallback_term(expr, ctx.scope);
+        }
         let reduction = {
             let mut fw = ctx.float_widths.borrow_mut();
             let child = SugarCtx {
@@ -132,6 +135,11 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
         }
         _ => None,
     }
+}
+
+fn source_less_format_args_builtin(expr: &Expr, ctx: &SugarCtx) -> bool {
+    crate::sugar::format::is_format_args_macro_shape(expr)
+        && ctx.scope.macro_registry().lookup("format_args").is_none()
 }
 
 /// A call-site inlining opportunity, decomposed from a bare call statement. The
@@ -532,7 +540,10 @@ pub fn classify_residue_reason(reason: &str) -> ResidueCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{lift_file_with_macro_imports, refusal_disposition, Disposition, MacroRegistry};
+    use crate::{
+        lift_file_with_macro_imports, refusal_disposition, sugar_ctx, Disposition, FloatWidthScope,
+        LiftOptions, MacroRegistry, ReductionCtx, TemporalPlan, TemporalScope,
+    };
 
     fn lift(src: &str) -> crate::AdapterOutput {
         let file = syn::parse_file(src).expect("parse");
@@ -553,6 +564,42 @@ mod tests {
 
     fn discharged(out: &crate::AdapterOutput) -> usize {
         out.assertions_lifted
+    }
+
+    #[test]
+    fn format_args_builtin_child_falls_back_for_panic_subject_identity() {
+        let expr: Expr =
+            syn::parse_str(r#"format_args!("Hello").estimated_capacity()"#).expect("parse expr");
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let term = opaque_callsite_term(&ctx, &expr)
+            .expect("format_args method call should produce a panic subject");
+        let Term::Ctor { name, args } = term.as_ref() else {
+            panic!("expected callsite ctor, got {term:?}");
+        };
+        assert_eq!(name, "method:estimated_capacity#panic_callsite");
+        assert_eq!(args.len(), 1);
+        let Term::Ctor {
+            name: receiver_name,
+            args: receiver_args,
+        } = args[0].as_ref()
+        else {
+            panic!("expected opaque receiver ctor, got {:?}", args[0]);
+        };
+        assert!(
+            receiver_name.starts_with("opaque:callsite-child:")
+                && receiver_name.contains("format_args"),
+            "format_args! receiver should be an opaque callsite child, got {receiver_name}"
+        );
+        assert!(
+            receiver_args.is_empty(),
+            "opaque callsite child should not carry forged macro children"
+        );
     }
 
     // ── DIG: a closed-arg call to a pure scalar helper INLINES and discharges. The

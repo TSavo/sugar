@@ -61,3 +61,43 @@ impl Sugar for EstimatedCapacitySugar {
         Outcome::Complete(Desugared::Term(num(self.capacity as i128)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use sugar_ir_symbolic::ConstValue;
+
+    use super::*;
+    use crate::{
+        sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan, TemporalScope,
+    };
+
+    #[test]
+    fn recognizes_builtin_format_args_estimated_capacity() {
+        let expr: Expr = syn::parse_str(r#"format_args!("Hello").estimated_capacity()"#)
+            .expect("format_args method parses");
+        let scope = TemporalScope::new("format-args-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = recognize_estimated_capacity(&expr, &fcx)
+            .expect("builtin format_args estimated_capacity should be owned");
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let Outcome::Complete(Desugared::Term(term)) = node.desugar(&ctx) else {
+            panic!("format_args estimated_capacity should complete to a term");
+        };
+        let sugar_ir_symbolic::Term::Const {
+            value: ConstValue::Int(value),
+            ..
+        } = term.as_ref()
+        else {
+            panic!("expected integer capacity term, got {term:?}");
+        };
+        assert_eq!(*value, 5);
+    }
+}

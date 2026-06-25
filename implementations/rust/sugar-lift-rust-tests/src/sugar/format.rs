@@ -48,7 +48,7 @@ use crate::sugar::int_literal::{
     numeric_floor_from_term, ExactInt, IntKind as NumericIntKind, NumericFloor,
 };
 use crate::sugar::monadic::OPT_SOME;
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{ConstValue, Term};
 
 /// The terminal reason for an `f16`/`f128` formatting operand: the stable toolchain
@@ -411,9 +411,14 @@ impl Sugar for FormatValueBody {
                 FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
             FormatValueBody::Term(child) => match child.reduce(ctx) {
-                Outcome::Complete(Desugared::Term(term)) => Outcome::Complete(
-                    Desugared::FormatValue(format_value_from_term_floor(&term, "format argument")),
-                ),
+                Outcome::Complete(Desugared::Term(term)) => {
+                    match format_value_from_term_floor_opt(&term) {
+                        Some(value) => Outcome::Complete(Desugared::FormatValue(value)),
+                        None => Outcome::Incomplete(runtime_format_argument_effect(
+                            &canonical_term_sig(&term),
+                        )),
+                    }
+                }
                 Outcome::Complete(_) => {
                     panic!("format argument child completed a non-term floor; fix the factory")
                 }
@@ -456,11 +461,10 @@ impl Sugar for FormatValueBody {
                 let folded = match fold_format_values(op, left, right) {
                     Ok(value) => value,
                     Err(reason)
-                        if reason.contains("format integer arithmetic did not constant-fold") =>
+                        if reason
+                            .contains("format integer arithmetic overflow or divide-by-zero") =>
                     {
-                        panic!(
-                            "format integer arithmetic did not reduce through owning floors: {reason}"
-                        );
+                        return Outcome::Incomplete(format_arithmetic_effect(&reason));
                     }
                     Err(reason) => panic!("{reason}"),
                 };
@@ -520,12 +524,8 @@ fn fold_format_values(
         },
     ) = (&left, &right)
     {
-        return fold_int_arith(op, *lv, *ls, *rv, *rs)
-            .map(|(value, suffix)| FmtValue::Int { value, suffix })
-            .ok_or_else(|| {
-                "format integer arithmetic did not constant-fold; write more Sugar for this AST"
-                    .to_string()
-            });
+        return fold_int_arith_for_format(op, *lv, *ls, *rv, *rs)
+            .map(|(value, suffix)| FmtValue::Int { value, suffix });
     }
 
     if matches!(op, syn::BinOp::Div(_)) {
@@ -682,6 +682,7 @@ impl FmtValue {
     }
 }
 
+#[cfg(test)]
 fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
     format_value_from_term_floor_opt(term).unwrap_or_else(|| {
         panic!(
@@ -690,6 +691,20 @@ fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
             canonical_term_sig(term)
         )
     })
+}
+
+fn runtime_format_argument_effect(boundary: &str) -> Effect {
+    Effect::FormatArgument {
+        boundary: boundary.to_string(),
+        reason: format!("runtime format argument `{boundary}`, not literal-determined; refused"),
+    }
+}
+
+fn format_arithmetic_effect(reason: &str) -> Effect {
+    Effect::FormatArgument {
+        boundary: "format integer arithmetic".to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 pub(crate) fn display_literal_term_floor(term: &Rc<Term>) -> Option<String> {
@@ -1742,14 +1757,9 @@ fn is_fmt_arith_op(op: &syn::BinOp) -> bool {
     )
 }
 
-/// Constant-fold an integer `+ - * / %` over two reconstructed literal operands with
-/// CHECKED, width-aware semantics — the recompute-don't-trust floor for closed integer
-/// arithmetic. Returns `None` (bail -> factory gap, never a forged value) when the
-/// result is NOT text-determined to a single in-range
-/// value: a mixed concrete-width pair (not a valid rust expr), an i128-carrier overflow,
-/// a divide/remainder by zero, a `u128` operand (the i128 carrier cannot faithfully hold
-/// the full `u128` range), or a result outside the resolved type's value range (a real
-/// rust overflow that panics in debug / wraps in release — never a speakable value).
+/// Legacy helper wrapper for checked integer formatting arithmetic. The constructed
+/// sugar path calls `fold_int_arith_for_format` so it can distinguish a real
+/// non-text-determined arithmetic boundary from a compiler-impossible operand mix.
 fn fold_int_arith(
     op: &syn::BinOp,
     lv: i128,
@@ -1757,37 +1767,62 @@ fn fold_int_arith(
     rv: i128,
     rs: IntKind,
 ) -> Option<(i128, IntKind)> {
-    let suffix = reconcile_int_suffix(ls, rs)?;
+    fold_int_arith_for_format(op, lv, ls, rv, rs).ok()
+}
+
+fn fold_int_arith_for_format(
+    op: &syn::BinOp,
+    lv: i128,
+    ls: IntKind,
+    rv: i128,
+    rs: IntKind,
+) -> Result<(i128, IntKind), String> {
+    let Some(suffix) = reconcile_int_suffix(ls, rs) else {
+        return Err(
+            "format integer arithmetic operands have incompatible primitive widths; rustc would reject this source"
+                .to_string(),
+        );
+    };
     // `u128` near its top cannot be represented in the signed i128 carrier — bail rather
     // than risk a wrapped reconstruction.
     if matches!(suffix, IntKind::U128) {
-        return None;
+        return Err(format_int_arith_boundary());
     }
     let result = match op {
-        syn::BinOp::Add(_) => lv.checked_add(rv)?,
-        syn::BinOp::Sub(_) => lv.checked_sub(rv)?,
-        syn::BinOp::Mul(_) => lv.checked_mul(rv)?,
+        syn::BinOp::Add(_) => lv.checked_add(rv),
+        syn::BinOp::Sub(_) => lv.checked_sub(rv),
+        syn::BinOp::Mul(_) => lv.checked_mul(rv),
         // integer `/` and `%` truncate toward zero (i128 matches); div/rem by zero and
         // `MIN / -1` overflow both bail via the zero guard + `checked_*`.
         syn::BinOp::Div(_) => {
             if rv == 0 {
-                return None;
+                return Err(format_int_arith_boundary());
             }
-            lv.checked_div(rv)?
+            lv.checked_div(rv)
         }
         syn::BinOp::Rem(_) => {
             if rv == 0 {
-                return None;
+                return Err(format_int_arith_boundary());
             }
-            lv.checked_rem(rv)?
+            lv.checked_rem(rv)
         }
-        _ => return None,
-    };
-    let (min, max) = int_value_range(suffix)?;
-    if result < min || result > max {
-        return None;
+        _ => {
+            return Err("format integer arithmetic is not supported for this operator".to_string());
+        }
     }
-    Some((result, suffix))
+    .ok_or_else(format_int_arith_boundary)?;
+    let Some((min, max)) = int_value_range(suffix) else {
+        return Err(format_int_arith_boundary());
+    };
+    if result < min || result > max {
+        return Err(format_int_arith_boundary());
+    }
+    Ok((result, suffix))
+}
+
+fn format_int_arith_boundary() -> String {
+    "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
+        .to_string()
 }
 
 /// Reconcile the width suffix of two arithmetic operands. Equal kinds keep their kind;
