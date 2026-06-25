@@ -35,12 +35,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let func = TryMapFunc::from_arg(strip_refs_groups(&call.args[0]), fcx)?;
     Some(Box::new(TryMapSugar {
         receiver: SugarBody::composite(&call.receiver, fcx),
+        receiver_expr: call.receiver.as_ref().clone(),
         func,
     }))
 }
 
 struct TryMapSugar {
     receiver: SugarBody<CompositeFloor>,
+    receiver_expr: Expr,
     func: TryMapFunc,
 }
 
@@ -73,29 +75,20 @@ impl TryMapFunc {
 
 impl Sugar for TryMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        reduce_try_map(&self.receiver, &self.func, ctx)
+        reduce_try_map(&self.receiver, &self.receiver_expr, &self.func, ctx)
     }
 }
 
 fn reduce_try_map(
     receiver: &SugarBody<CompositeFloor>,
+    receiver_expr: &Expr,
     func: &TryMapFunc,
     ctx: &SugarCtx,
 ) -> Outcome {
-    let seq = match receiver.reduce(ctx) {
-        Outcome::Complete(d) => d
-            .into_seq()
-            .unwrap_or_else(|| try_map_gap("try_map receiver reduced to non-sequence")),
-        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    let values = match try_map_receiver_values(receiver, receiver_expr, ctx) {
+        Ok(values) => values,
+        Err(outcome) => return outcome,
     };
-    let values = seq
-        .iter()
-        .map(|elem| {
-            elem.value
-                .clone()
-                .unwrap_or_else(|| try_map_gap("try_map receiver element was not literal"))
-        })
-        .collect::<Vec<_>>();
     let mut mapped = Vec::with_capacity(values.len());
     for (index, value) in values.iter().enumerate() {
         match eval_option_function(func, value, ctx)
@@ -122,6 +115,38 @@ fn reduce_try_map(
         "literal array try_map reduced to Some(array)"
     );
     Outcome::Complete(Desugared::Term(monadic::some_term(array_term)))
+}
+
+fn try_map_receiver_values(
+    receiver: &SugarBody<CompositeFloor>,
+    receiver_expr: &Expr,
+    ctx: &SugarCtx,
+) -> Result<Vec<ConstVal>, Outcome> {
+    let seq = match receiver.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .unwrap_or_else(|| try_map_gap("try_map receiver reduced to non-sequence")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
+    let raw_values = literal_receiver_values(receiver_expr);
+    if let Some(raw_values) = &raw_values {
+        if raw_values.len() != seq.len() {
+            try_map_gap("try_map receiver raw literal length diverged from composite body");
+        }
+    }
+    Ok(seq
+        .iter()
+        .enumerate()
+        .map(|(index, elem)| {
+            elem.value.clone().unwrap_or_else(|| {
+                raw_values
+                    .as_ref()
+                    .and_then(|values| values.get(index))
+                    .cloned()
+                    .unwrap_or_else(|| try_map_gap("try_map receiver element was not literal"))
+            })
+        })
+        .collect::<Vec<_>>())
 }
 
 fn try_map_gap(reason: &str) -> ! {
