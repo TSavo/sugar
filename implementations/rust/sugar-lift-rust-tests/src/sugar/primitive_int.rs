@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::int_literal::{numeric_floor_from_term, ExactInt, NumericFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
@@ -376,6 +377,34 @@ fn primitive_int_gap(reason: &str) -> ! {
     panic!("primitive_int completed without a numeric literal floor: {reason}")
 }
 
+fn folded_int_term(term: &Rc<Term>) -> Option<i128> {
+    const_fold_int_term(term).or_else(|| match numeric_floor_from_term(term)? {
+        NumericFloor::Untyped(value) => Some(value),
+        NumericFloor::Typed {
+            value: ExactInt::Signed(value),
+            ..
+        } => Some(value),
+        NumericFloor::Typed {
+            value: ExactInt::Unsigned(value),
+            ..
+        } => i128::try_from(value).ok(),
+    })
+}
+
+fn folded_u128_term(term: &Rc<Term>) -> Option<u128> {
+    const_fold_u128_term(term).or_else(|| match numeric_floor_from_term(term)? {
+        NumericFloor::Untyped(value) => u128::try_from(value).ok(),
+        NumericFloor::Typed {
+            value: ExactInt::Signed(value),
+            ..
+        } => u128::try_from(value).ok(),
+        NumericFloor::Typed {
+            value: ExactInt::Unsigned(value),
+            ..
+        } => Some(value),
+    })
+}
+
 impl Sugar for PrimitiveIntTupleProducer {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match term_body(&self.receiver, ctx, "primitive_int overflowing receiver") {
@@ -386,8 +415,8 @@ impl Sugar for PrimitiveIntTupleProducer {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let lhs_u128 = const_fold_u128_term(&receiver);
-        let lhs_i128 = const_fold_int_term(&receiver);
+        let lhs_u128 = folded_u128_term(&receiver);
+        let lhs_i128 = folded_int_term(&receiver);
         let kind_hint = self.kind_hint;
         let Some((value, overflow)) =
             overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, self.op, kind_hint)
@@ -425,8 +454,8 @@ impl Sugar for PrimitiveIntSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let lhs_u128 = const_fold_u128_term(&receiver);
-        let lhs_i128 = const_fold_int_term(&receiver);
+        let lhs_u128 = folded_u128_term(&receiver);
+        let lhs_i128 = folded_int_term(&receiver);
         let kind_hint = self.kind_hint;
 
         match &self.kind {

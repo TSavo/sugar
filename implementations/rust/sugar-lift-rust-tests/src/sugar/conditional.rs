@@ -182,6 +182,9 @@ impl Sugar for ConditionalSugar {
 
 impl ConditionalSugar {
     fn desugar_sequence_branch(&self, ctx: &SugarCtx) -> Option<Outcome> {
+        if guard_exits_with_return(&self.cond) {
+            return Some(Outcome::Complete(Desugared::Seq(Vec::new())));
+        }
         let guard_value = const_fold_bool_guard(ctx, &self.cond)?;
         let branch = if guard_value {
             &self.then_stmts
@@ -261,6 +264,16 @@ fn single_expr_tail(stmts: &[Stmt]) -> Option<&Expr> {
     match stmts {
         [Stmt::Expr(expr, None)] => Some(expr),
         _ => None,
+    }
+}
+
+fn guard_exits_with_return(cond: &Expr) -> bool {
+    match cond {
+        Expr::Return(_) => true,
+        Expr::Paren(p) => guard_exits_with_return(&p.expr),
+        Expr::Group(g) => guard_exits_with_return(&g.expr),
+        Expr::Unary(u) => guard_exits_with_return(&u.expr),
+        _ => false,
     }
 }
 

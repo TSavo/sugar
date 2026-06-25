@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, ConstValue, Formula, Term};
-use syn::{BinOp, Expr, Lit, Pat, Stmt, UnOp};
+use syn::{BinOp, Expr, Item, Lit, Pat, Stmt, Type, UnOp};
 use tracing::debug;
 
 use crate::sugar::callsite::{CallsiteOutcome, CallsiteSugar};
@@ -982,6 +982,18 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                     self.emit_constraint_expr(&substituted)
                 }
             }
+            Stmt::Item(Item::Const(item)) => {
+                let expr = replay_const_initializer_expr(item);
+                let expr = substitute_expr(&expr, &self.bindings);
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    binding = item.ident.to_string(),
+                    value = %crate::token_key(&expr),
+                    "bound local const during finite loop replay"
+                );
+                self.bindings.insert(item.ident.to_string(), expr);
+                Some(())
+            }
             Stmt::Item(_) => Some(()),
         }
     }
@@ -1762,6 +1774,38 @@ fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {
         values.push(value);
     }
     Some(values)
+}
+
+fn replay_const_initializer_expr(item: &syn::ItemConst) -> Expr {
+    let init = item.expr.as_ref();
+    if replay_const_type_is_primitive_int(&item.ty) {
+        let ty = item.ty.as_ref();
+        syn::parse_quote!((#init) as #ty)
+    } else {
+        init.clone()
+    }
+}
+
+fn replay_const_type_is_primitive_int(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.path.segments.last().is_some_and(|segment| {
+        matches!(
+            segment.ident.to_string().as_str(),
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+        )
+    })
 }
 
 fn expr_const_int(expr: &Expr, scope: &crate::TemporalScope) -> Option<i128> {
