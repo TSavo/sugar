@@ -1172,6 +1172,22 @@ mod tests {
     }
 
     #[test]
+    fn runtime_ascii_char_predicate_declines_string_predicate_lane() {
+        let expr: Expr = syn::parse_str("c.is_ascii_lowercase()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Constraint);
+
+        assert!(
+            !names.contains(&"constraint_string_predicate"),
+            "a runtime/source char receiver is not a literal string predicate floor: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Constraint),
+            Some("constraint_bool_expr"),
+            "runtime char predicates fall through to the generic bool-term owner"
+        );
+    }
+
+    #[test]
     fn atomic_load_method_is_owned_by_atomic_runtime_sugar_before_generic_method() {
         let expr: Expr = syn::parse_str("witness[3].1.load(Ordering::Relaxed)").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Term);
