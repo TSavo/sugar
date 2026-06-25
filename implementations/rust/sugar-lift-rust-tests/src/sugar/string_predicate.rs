@@ -355,6 +355,13 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
         }
         _ => return None,
     };
+    if matches!(
+        kind,
+        StringPredicateKind::Contains | StringPredicateKind::Prefix | StringPredicateKind::Suffix
+    ) && !string_receiver_shape(&call.receiver, fcx, 0)
+    {
+        return None;
+    }
 
     Some(Box::new(StringPredicateSugar {
         method,
@@ -363,6 +370,55 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
         arg: predicate_arg(call, kind, fcx),
         kind,
     }))
+}
+
+fn string_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => true,
+        Expr::Macro(m) => m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "format" || s.ident == "concat"),
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            fcx.scope()
+                .stable_let_binding_for_term(&name)
+                .or_else(|| fcx.let_inits().get(&name).copied())
+                .is_some_and(|init| string_receiver_shape(init, fcx, depth + 1))
+        }
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => true,
+        Expr::MethodCall(call) if string_result_method(&call.method.to_string()) => {
+            string_receiver_shape(&call.receiver, fcx, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn string_result_method(method: &str) -> bool {
+    matches!(
+        method,
+        "to_ascii_uppercase"
+            | "to_ascii_lowercase"
+            | "to_uppercase"
+            | "to_lowercase"
+            | "replace"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "repeat"
+    )
 }
 
 fn predicate_arg(

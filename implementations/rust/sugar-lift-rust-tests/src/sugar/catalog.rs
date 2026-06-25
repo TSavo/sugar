@@ -1172,6 +1172,16 @@ mod tests {
             ),
             Some("str_method")
         );
+        let string_constraint_names = candidate_names_for_role_with_let_inits(
+            &string_expr,
+            SugarRole::Constraint,
+            &string_inits,
+        );
+        assert!(
+            string_constraint_names.contains(&"constraint_string_predicate"),
+            "text-bound assert predicate should stay in the string predicate lane: \
+             {string_constraint_names:?}"
+        );
 
         let mut slice_inits = BTreeMap::new();
         slice_inits.insert(
@@ -1196,6 +1206,17 @@ mod tests {
                 &slice_inits
             ),
             Some("slice_accessor")
+        );
+        let slice_prefix_expr: Expr = syn::parse_str("xs.starts_with(&[1, 2])").unwrap();
+        let slice_constraint_names = candidate_names_for_role_with_let_inits(
+            &slice_prefix_expr,
+            SugarRole::Constraint,
+            &slice_inits,
+        );
+        assert!(
+            !slice_constraint_names.contains(&"constraint_string_predicate"),
+            "array-bound starts_with must not be claimed as a string predicate: \
+             {slice_constraint_names:?}"
         );
     }
 

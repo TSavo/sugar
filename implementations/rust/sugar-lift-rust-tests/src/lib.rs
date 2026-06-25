@@ -7914,6 +7914,16 @@ enum Effect {
     /// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
     /// container is a mutable local -- so this can only refuse a genuinely-mutable read.
     TemporalRead { boundary: String },
+    /// MUTABLE-LOCAL SLICE PREDICATE: a direct slice/string predicate (`contains`,
+    /// `starts_with`, `ends_with`) reads a receiver whose temporal ledger has already proved
+    /// mutation/instability. The predicate source construct owns this boundary: asking the
+    /// receiver path for a timeless sequence would erase the method shape into a generic
+    /// mutable-container read.
+    MutableLocalSlicePredicate {
+        boundary: String,
+        method: String,
+        receiver: String,
+    },
     /// AMBIGUOUS-TEMPORAL-IDENTITY: a versioned local path is read after the collector
     /// proved more than one temporal identity could own that name. The path leaf owns the
     /// refusal because a `Term::Var` key would otherwise pick one state arbitrarily.
@@ -8128,6 +8138,13 @@ impl Effect {
             Effect::TemporalRead { boundary } => format!(
                 "unsupported term `{boundary}`: mutable container is not temporally stable"
             ),
+            Effect::MutableLocalSlicePredicate {
+                method, receiver, ..
+            } => format!(
+                "{method} predicate over a MUTABLE-local receiver `{receiver}` \
+                 (bin-2: a slice/string mutated by side-effecting iteration, not \
+                 constructed from source literals); refused"
+            ),
             Effect::AmbiguousTemporalIdentity { reason, .. } => reason.clone(),
             Effect::ControlFlow { boundary } => format!(
                 "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
@@ -8232,6 +8249,7 @@ impl Effect {
             | Effect::Tls { boundary }
             | Effect::Io { boundary }
             | Effect::TemporalRead { boundary }
+            | Effect::MutableLocalSlicePredicate { boundary, .. }
             | Effect::AmbiguousTemporalIdentity { boundary, .. }
             | Effect::ControlFlow { boundary }
             | Effect::Reflection { boundary }
@@ -16824,30 +16842,6 @@ pub(crate) fn expr_is_runtime_call_result(expr: &Expr) -> bool {
     }
 }
 
-fn mutable_local_slice_predicate_reason(expr: &Expr, scope: &TemporalScope) -> Option<String> {
-    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
-        return None;
-    };
-    let method = call.method.to_string();
-    if !matches!(method.as_str(), "contains" | "starts_with" | "ends_with") {
-        return None;
-    }
-    let recv_name = simple_path_name(&call.receiver)?;
-    if scope
-        .let_binding_for_audit(&recv_name)
-        .is_some_and(|init| matches!(strip_refs_groups(init), Expr::Range(_)))
-    {
-        return None;
-    }
-    scope.is_mut_local(&recv_name).then(|| {
-        format!(
-            "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
-             (bin-2: a slice/string mutated by side-effecting iteration, not \
-             constructed from source literals); refused"
-        )
-    })
-}
-
 type FloatWidthScope = sugar::float_floor::FloatWidthScope;
 
 pub(crate) fn assertion_entry_from_eq(
@@ -23187,6 +23181,11 @@ mod lifter_key_tests {
             },
             Effect::TemporalRead {
                 boundary: "a[i]".to_string(),
+            },
+            Effect::MutableLocalSlicePredicate {
+                boundary: "a.starts_with(..)".to_string(),
+                method: "starts_with".to_string(),
+                receiver: "a".to_string(),
             },
             Effect::ControlFlow {
                 boundary: "try { maybe_fut? }".to_string(),
