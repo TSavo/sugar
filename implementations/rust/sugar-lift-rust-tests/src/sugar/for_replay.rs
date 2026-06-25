@@ -1296,7 +1296,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn ground_expr_from_factory(&mut self, expr: &Expr) -> Option<Expr> {
-        let term = self.term_from_factory(expr)?;
+        let term = self.term_from_factory_or_record(expr)?;
         let value = term_ground_expr(&term)?;
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
@@ -1307,20 +1307,27 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         Some(value)
     }
 
-    fn term_from_factory(&mut self, expr: &Expr) -> Option<Rc<Term>> {
+    fn term_from_factory_or_record(&mut self, expr: &Expr) -> Option<Rc<Term>> {
+        match self.term_from_factory(expr) {
+            Ok(term) => Some(term),
+            Err(effect) => {
+                self.terminal_effect = Some(effect);
+                None
+            }
+        }
+    }
+
+    fn term_from_factory(&mut self, expr: &Expr) -> Result<Rc<Term>, Effect> {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
         match build_term(expr, &fcx).desugar(self.ctx) {
-            Outcome::Complete(desugared) => desugared.into_term().or_else(|| {
+            Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
                 for_replay_construction_gap(format!(
                     "term factory completed `{}` without a Term floor",
                     crate::token_key(expr)
                 ))
             }),
-            Outcome::Incomplete(effect) => {
-                self.terminal_effect = Some(effect);
-                None
-            }
+            Outcome::Incomplete(effect) => Err(effect),
         }
     }
 
@@ -1530,7 +1537,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 _ => None,
             },
             _ => {
-                let term = self.term_from_factory(&substituted)?;
+                let term = self.term_from_factory_or_record(&substituted)?;
                 match term.as_ref() {
                     Term::Const {
                         value: sugar_ir_symbolic::ConstValue::Bool(value),
@@ -1544,13 +1551,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
 
     fn expr_const_int(&mut self, expr: &Expr) -> Option<i128> {
         let substituted = substitute_expr(expr, &self.bindings);
-        let term = self.term_from_factory(&substituted)?;
+        let term = self.term_from_factory_or_record(&substituted)?;
         term_as_int(&term).or_else(|| const_fold_int_term(&term))
     }
 
     fn expr_const_u128(&mut self, expr: &Expr) -> Option<u128> {
         let substituted = substitute_expr(expr, &self.bindings);
-        let term = self.term_from_factory(&substituted)?;
+        let term = self.term_from_factory_or_record(&substituted)?;
         const_fold_u128_term(&term)
     }
 
