@@ -28,6 +28,8 @@ fn sugar_invariant_rake_vector_is_stable_zero() {
     offenders.extend(typed_effect_erased_to_reason_string(&files));
     offenders.extend(effect_reason_branching(&files));
     offenders.extend(factory_reentry_from_reduction(&files));
+    offenders.extend(absence_shaped_child_effect_helpers(&files));
+    offenders.extend(stringly_child_effect_helpers(&files));
 
     offenders.sort_by_key(|offender| {
         (
@@ -203,6 +205,67 @@ fn factory_reentry_from_reduction(files: &[SourceFile]) -> Vec<Offender> {
     })
 }
 
+fn absence_shaped_child_effect_helpers(files: &[SourceFile]) -> Vec<Offender> {
+    let mut offenders = Vec::new();
+    for file in files
+        .iter()
+        .filter(|file| file.rel.starts_with("src/sugar/"))
+    {
+        if is_reporting_boundary(&file.rel) {
+            continue;
+        }
+        for block in function_blocks(file) {
+            if !absence_shaped_return(&block.signature) {
+                continue;
+            }
+            if !touches_child_effect_surface(&block.body) {
+                continue;
+            }
+            offenders.push(Offender {
+                axis: "absence_shaped_child_effect_helper",
+                file: file.rel.clone(),
+                line: block.start_line,
+                observed: block.signature,
+                fix: "absence is only recognizer decline or static no-match: if this helper \
+                      reduces/desugars children, change the return type to Outcome, \
+                      Result<T, Outcome>, or Result<T, Effect>; bubble child effects typed \
+                      and panic on impossible floor/construction gaps",
+            });
+        }
+    }
+    offenders
+}
+
+fn stringly_child_effect_helpers(files: &[SourceFile]) -> Vec<Offender> {
+    let mut offenders = Vec::new();
+    for file in files
+        .iter()
+        .filter(|file| file.rel.starts_with("src/sugar/"))
+    {
+        if is_reporting_boundary(&file.rel) {
+            continue;
+        }
+        for block in function_blocks(file) {
+            if !stringly_return(&block.signature) {
+                continue;
+            }
+            if !touches_child_effect_surface(&block.body) {
+                continue;
+            }
+            offenders.push(Offender {
+                axis: "stringly_child_effect_helper",
+                file: file.rel.clone(),
+                line: block.start_line,
+                observed: block.signature,
+                fix: "typed effects stay typed: replace String error transport with Effect, \
+                      Outcome, Result<T, Effect>, or Result<T, Outcome>; render \
+                      effect.reason() only at a reporting boundary",
+            });
+        }
+    }
+    offenders
+}
+
 fn find_lines(
     files: &[SourceFile],
     axis: &'static str,
@@ -224,6 +287,170 @@ fn find_lines(
 struct CodeLine<'a> {
     number: usize,
     code: &'a str,
+}
+
+struct FunctionBlock {
+    start_line: usize,
+    signature: String,
+    body: String,
+}
+
+fn function_blocks(file: &SourceFile) -> Vec<FunctionBlock> {
+    let mut blocks = Vec::new();
+    let mut pending_cfg_test = false;
+    let mut test_mod_depth = None::<i32>;
+    let mut active = None::<ActiveFunction>;
+
+    for (idx, raw) in file.text.lines().enumerate() {
+        let number = idx + 1;
+        let trimmed = raw.trim();
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+            continue;
+        }
+        if pending_cfg_test && trimmed.starts_with("mod tests") {
+            pending_cfg_test = false;
+            let depth = raw.matches('{').count() as i32 - raw.matches('}').count() as i32;
+            test_mod_depth = Some(depth.max(1));
+            continue;
+        }
+        pending_cfg_test = false;
+
+        if let Some(depth) = test_mod_depth.as_mut() {
+            *depth += raw.matches('{').count() as i32;
+            *depth -= raw.matches('}').count() as i32;
+            if *depth <= 0 {
+                test_mod_depth = None;
+            }
+            continue;
+        }
+
+        let Some(code) = strip_line_comment(raw).map(str::trim) else {
+            continue;
+        };
+        if code.is_empty() {
+            continue;
+        }
+
+        if let Some(active_fn) = active.as_mut() {
+            active_fn.push(code);
+            if active_fn.is_complete() {
+                let done = active.take().expect("active function just completed");
+                blocks.push(done.into_block());
+            }
+            continue;
+        }
+
+        if looks_like_fn_start(code) {
+            let mut active_fn = ActiveFunction::new(number);
+            active_fn.push(code);
+            if active_fn.is_complete() {
+                blocks.push(active_fn.into_block());
+            } else {
+                active = Some(active_fn);
+            }
+        }
+    }
+    blocks
+}
+
+struct ActiveFunction {
+    start_line: usize,
+    lines: Vec<String>,
+    seen_body: bool,
+    depth: i32,
+}
+
+impl ActiveFunction {
+    fn new(start_line: usize) -> Self {
+        Self {
+            start_line,
+            lines: Vec::new(),
+            seen_body: false,
+            depth: 0,
+        }
+    }
+
+    fn push(&mut self, code: &str) {
+        self.lines.push(code.to_string());
+        if code.contains('{') {
+            self.seen_body = true;
+        }
+        if self.seen_body {
+            self.depth += code.matches('{').count() as i32;
+            self.depth -= code.matches('}').count() as i32;
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.seen_body && self.depth <= 0
+    }
+
+    fn into_block(self) -> FunctionBlock {
+        let joined = self.lines.join(" ");
+        let signature = joined
+            .split('{')
+            .next()
+            .unwrap_or(joined.as_str())
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        FunctionBlock {
+            start_line: self.start_line,
+            signature,
+            body: joined,
+        }
+    }
+}
+
+fn looks_like_fn_start(code: &str) -> bool {
+    code.starts_with("fn ")
+        || code.starts_with("pub fn ")
+        || code.starts_with("pub(crate) fn ")
+        || code.starts_with("pub(super) fn ")
+        || code.starts_with("pub(in ")
+        || code.starts_with("async fn ")
+        || code.starts_with("pub async fn ")
+        || code.starts_with("pub(crate) async fn ")
+        || code.starts_with("pub(super) async fn ")
+}
+
+fn absence_shaped_return(signature: &str) -> bool {
+    if signature.contains("Outcome") || signature.contains("Effect") {
+        return false;
+    }
+    let compact = compact_signature(signature);
+    [
+        "->Option<Desugared",
+        "->Option<Rc<Term>>",
+        "->Option<Vec<Expr>>",
+        "->Option<Vec<DesugaredElem>>",
+        "->Option<AssertionEntry>",
+        "->Result<Option<",
+    ]
+    .iter()
+    .any(|needle| compact.contains(needle))
+}
+
+fn stringly_return(signature: &str) -> bool {
+    compact_signature(signature).contains("->Result<")
+        && compact_signature(signature).contains("String>")
+}
+
+fn compact_signature(signature: &str) -> String {
+    signature
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+}
+
+fn touches_child_effect_surface(body: &str) -> bool {
+    body.contains(".complete()")
+        || body.contains("Outcome::Incomplete")
+        || body.contains("FloorRead::Incomplete")
+        || body.contains("effect.reason()")
+        || body.contains(".desugar(")
+        || body.contains(".reduce(")
 }
 
 fn production_lines(text: &str) -> Vec<CodeLine<'_>> {
