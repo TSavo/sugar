@@ -11575,7 +11575,7 @@ fn collect_assertion_entries<'a>(
                 // `rewrite_while_let_next_if_to_for`); otherwise we fall through to refuse.
                 let lifted = rewrite_while_let_next_if_to_for(w, stmts)
                     .or_else(|| rewrite_literal_counter_while_to_for(w, &temporal_scope))
-                    .and_then(|synth_for| {
+                    .map(|synth_for| {
                         sugar::for_replay::desugar_synthesized_for_loop(
                             &synth_for,
                             &temporal_scope,
@@ -11587,17 +11587,26 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                         )
                     });
-                if let Some(desugared) = lifted {
-                    if total == 0 {
-                        statement_temporal_replayed = true;
+                match lifted {
+                    Some(Outcome::Complete(desugared)) => {
+                        if total == 0 {
+                            statement_temporal_replayed = true;
+                        }
+                        emit_desugared(desugared, entries, macros_lifted);
                     }
-                    emit_desugared(desugared, entries, macros_lifted);
-                } else {
-                    for _ in 0..total {
-                        skipped.push(
-                            "assertion under while context: not unconditional point-wise; released to layer 0"
-                                .to_string(),
-                        );
+                    Some(Outcome::Incomplete(effect)) => {
+                        let reason = effect.reason();
+                        for _ in 0..total {
+                            skipped.push(reason.clone());
+                        }
+                    }
+                    None => {
+                        for _ in 0..total {
+                            skipped.push(
+                                "assertion under while context: not unconditional point-wise; released to layer 0"
+                                    .to_string(),
+                            );
+                        }
                     }
                 }
             }
