@@ -797,6 +797,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("chunk source is runtime slice, not literal")
         || reason.contains("runtime slice source, not literal")
         || reason.contains("runtime slice index, not literal")
+        || reason.contains("destructured source runtime, not literal")
         || reason.contains("dyn Any concrete type not statically determined")
         || reason.contains("runtime IP address receiver, not literal")
         || reason.contains("runtime memchr needle, not literal")
@@ -8017,6 +8018,12 @@ enum Effect {
     /// `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal scrutinee stays
     /// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail).
     RuntimeMatchScrutinee { boundary: String },
+    /// RUNTIME-DESTRUCTURED-SOURCE: a local introduced by a tuple/slice/array pattern is
+    /// later read, but the source being destructured is runtime data rather than a
+    /// literal tuple/array. Literal destructures complete by tracing the component floor;
+    /// this fires only when the destructured source has no literal floor to hand to the
+    /// binding.
+    RuntimeDestructuredSource { boundary: String, reason: String },
     /// ARRAY-REPEAT (non-literal): an array-repeat `[elem; N]` whose length `N` is NOT a plain
     /// literal -- a const-generic param or a const expression (`[0u8; SIZE]`, `[(); SIZE - 1]`).
     /// With a NON-literal count there is no finite construction from the written literal to
@@ -8186,6 +8193,7 @@ impl Effect {
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
                  literals); refused"
             ),
+            Effect::RuntimeDestructuredSource { reason, .. } => reason.clone(),
             // Carries the existing "array-repeat ... non-literal length ... refused by name"
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
             // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
@@ -8245,6 +8253,7 @@ impl Effect {
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
+            | Effect::RuntimeDestructuredSource { boundary, .. }
             | Effect::ArrayRepeat { boundary }
             | Effect::LiteralDomain { boundary, .. }
             | Effect::LiteralPanic { boundary, .. }
@@ -25961,6 +25970,7 @@ mod lifter_key_tests {
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
             "array-repeat length 18446744073709551615 exceeds the 4096-element expansion bound; refused by name: `[() ; usize :: MAX]`",
             "out-of-bounds unchecked slice indexing `[10 , 20 , 30] . get_unchecked (5)` is undefined behavior with no determinate value; refused",
+            "destructured source runtime, not literal for `a`: pattern binding participates in the assertion, but the destructured source did not resolve to a literal tuple/array; refused",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
