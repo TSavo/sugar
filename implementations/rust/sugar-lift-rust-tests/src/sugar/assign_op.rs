@@ -582,6 +582,7 @@ impl TemporalRewriteState {
                 let mut applied = self.apply_consumption_expr(&for_loop.expr)
                     | self.apply_consumption_stmts(&for_loop.body.stmts);
                 applied |= self.apply_for_loop_iterator_exhaustion(for_loop);
+                applied |= self.invalidate_unreplayed_for_loop_mutations(for_loop);
                 applied
             }
             Expr::While(while_expr) => {
@@ -614,6 +615,21 @@ impl TemporalRewriteState {
             applied |= self.apply_statement(stmt);
         }
         applied
+    }
+
+    fn invalidate_unreplayed_for_loop_mutations(&mut self, for_loop: &syn::ExprForLoop) -> bool {
+        let mutated = loop_mutation_names_in_stmts(&for_loop.body.stmts);
+        let unreplayed = mutated
+            .into_iter()
+            .filter(|name| !self.exact_loop_replayed(name))
+            .collect::<BTreeSet<_>>();
+        if unreplayed.is_empty() {
+            return false;
+        }
+        self.invalidate_unreplayed_loop_mutations(
+            &unreplayed,
+            "for-loop domain runtime, not literal",
+        )
     }
 
     fn apply_scoped_block_stmts(&mut self, stmts: &[Stmt]) -> bool {
