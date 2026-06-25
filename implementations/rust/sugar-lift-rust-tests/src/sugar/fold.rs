@@ -18,11 +18,11 @@ use syn::{Expr, Pat, Stmt};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
-    const_fold_acc_update, const_int_acc_init, count_asserts_in_stmts, resolve_index_in_formula,
-    simple_path_name, strip_refs_groups, subst_var_in_formula, token_key, translate_term_in_scope,
-    tuple_components, AssertionFactKind, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
-    Warrant, SUGAR_SEQ_CAP,
+    canonical_term_sig, closure_body_is_side_effecting, closure_single_param_ident,
+    collect_assertion_entries, const_fold_acc_update, const_fold_int_term, const_int_acc_init,
+    count_asserts_in_stmts, resolve_index_in_formula, simple_path_name, strip_refs_groups,
+    subst_var_in_formula, token_key, translate_term_in_scope, tuple_components, AssertionFactKind,
+    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
 
@@ -128,9 +128,15 @@ impl Sugar for FoldSugar {
         let acc_0 = const_int_acc_init(&self.init_expr, &let_inits)
             .unwrap_or_else(|| fold_gap("fold accumulator init did not reduce to an integer"));
         let mut seq = match self.receiver.reduce(ctx) {
-            Outcome::Complete(d) => d
-                .into_seq()
-                .unwrap_or_else(|| fold_gap("fold receiver reduced to non-sequence")),
+            Outcome::Complete(Desugared::Seq(seq)) => seq
+                .into_iter()
+                .map(FoldReplayElem::Source)
+                .collect::<Vec<_>>(),
+            Outcome::Complete(Desugared::TermSeq(terms)) => terms
+                .into_iter()
+                .map(FoldReplayElem::Term)
+                .collect::<Vec<_>>(),
+            Outcome::Complete(_) => fold_gap("fold receiver reduced to non-sequence"),
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         if self.rev_fold {
@@ -241,8 +247,8 @@ impl Sugar for FoldSugar {
                 method = %self.method,
                 iteration,
                 acc,
-                item = %token_key(&elem.expr),
-                value = ?elem.value,
+                item = %elem.label(),
+                value = ?elem.value(),
                 "fold replay iteration"
             );
             let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
@@ -250,36 +256,20 @@ impl Sugar for FoldSugar {
             tail_env.insert(self.acc_var.clone(), acc);
             match &self.item_binder {
                 FoldItemBinder::Whole(var) => {
-                    let t = translate_term_in_scope(&elem.expr, ctx.scope)
-                        .unwrap_or_else(|_| fold_gap("fold item did not reduce to a term"));
+                    let t = elem.whole_term(ctx);
                     inst = subst_var_in_formula(&inst, var, &t);
                     // The fold item enters the bounded i64 accumulator env; a wide
                     // element value is not a representable cursor input -> bail
                     // (EXACT-OR-BAIL).
-                    if let Some(n) = elem
-                        .value
-                        .as_ref()
-                        .and_then(ConstVal::as_int)
-                        .and_then(|n| i64::try_from(n).ok())
-                    {
+                    if let Some(n) = elem.whole_i64() {
                         tail_env.insert(var.clone(), n);
                     }
                 }
                 FoldItemBinder::Pair(c0, c1) => {
-                    let comps = tuple_components(&elem.expr)
-                        .unwrap_or_else(|| fold_gap("fold pair item was not a tuple"));
-                    if comps.len() != 2 {
-                        fold_gap("fold pair item did not have exactly two components");
-                    }
-                    let t0 = translate_term_in_scope(comps[0], ctx.scope).unwrap_or_else(|_| {
-                        fold_gap("fold pair component 0 did not reduce to a term")
-                    });
-                    let t1 = translate_term_in_scope(comps[1], ctx.scope).unwrap_or_else(|_| {
-                        fold_gap("fold pair component 1 did not reduce to a term")
-                    });
+                    let (t0, t1) = elem.pair_terms(ctx);
                     inst = subst_var_in_formula(&inst, c0, &t0);
                     inst = subst_var_in_formula(&inst, c1, &t1);
-                    if let Some(ConstVal::Tuple(parts)) = &elem.value {
+                    if let Some(ConstVal::Tuple(parts)) = elem.value() {
                         if let Some(n) = parts
                             .first()
                             .and_then(ConstVal::as_int)
@@ -317,6 +307,66 @@ impl Sugar for FoldSugar {
             kind: AssertionFactKind::Warranted,
             warrant,
         })
+    }
+}
+
+enum FoldReplayElem {
+    Source(DesugaredElem),
+    Term(Rc<Term>),
+}
+
+impl FoldReplayElem {
+    fn label(&self) -> String {
+        match self {
+            FoldReplayElem::Source(elem) => token_key(&elem.expr),
+            FoldReplayElem::Term(term) => canonical_term_sig(term),
+        }
+    }
+
+    fn value(&self) -> Option<&ConstVal> {
+        match self {
+            FoldReplayElem::Source(elem) => elem.value.as_ref(),
+            FoldReplayElem::Term(_) => None,
+        }
+    }
+
+    fn whole_term(&self, ctx: &SugarCtx) -> Rc<Term> {
+        match self {
+            FoldReplayElem::Source(elem) => translate_term_in_scope(&elem.expr, ctx.scope)
+                .unwrap_or_else(|_| fold_gap("fold item did not reduce to a term")),
+            FoldReplayElem::Term(term) => {
+                const_fold_int_term(term).map_or_else(|| Rc::clone(term), num)
+            }
+        }
+    }
+
+    fn whole_i64(&self) -> Option<i64> {
+        match self {
+            FoldReplayElem::Source(elem) => elem
+                .value
+                .as_ref()
+                .and_then(ConstVal::as_int)
+                .and_then(|n| i64::try_from(n).ok()),
+            FoldReplayElem::Term(term) => {
+                const_fold_int_term(term).and_then(|n| i64::try_from(n).ok())
+            }
+        }
+    }
+
+    fn pair_terms(&self, ctx: &SugarCtx) -> (Rc<Term>, Rc<Term>) {
+        let FoldReplayElem::Source(elem) = self else {
+            fold_gap("fold pair item reduced to term sequence without tuple components");
+        };
+        let comps = tuple_components(&elem.expr)
+            .unwrap_or_else(|| fold_gap("fold pair item was not a tuple"));
+        if comps.len() != 2 {
+            fold_gap("fold pair item did not have exactly two components");
+        }
+        let t0 = translate_term_in_scope(comps[0], ctx.scope)
+            .unwrap_or_else(|_| fold_gap("fold pair component 0 did not reduce to a term"));
+        let t1 = translate_term_in_scope(comps[1], ctx.scope)
+            .unwrap_or_else(|_| fold_gap("fold pair component 1 did not reduce to a term"));
+        (t0, t1)
     }
 }
 
