@@ -92,6 +92,28 @@ const FORBIDDEN_EAGER_AGGREGATE_SYMBOLS: &[&str] =
 
 const FORBIDDEN_REASON_LEAF_OWNER_FILES: &[&str] = &["src/sugar/closure_term.rs"];
 
+const TARGET_TYPED_METHOD_SPECIALIZATIONS: &[TargetTypedMethodSpecialization] =
+    &[TargetTypedMethodSpecialization {
+        module: "src/sugar/into.rs",
+        claim: "into::EXPR_SUGAR",
+        sugar: "IntoSugar",
+        fallback_claim: "method::EXPR_SUGAR",
+        required_ordering: "ExprSugarClaim::term_before(\"into\", &[\"method\"], recognize)",
+        required_decline: "fcx.expected_type()?",
+        replacement: "target-typed `.into()` sugar owns only typed primitive conversions; \
+                      untyped `.into()` belongs to generic MethodSugar via catalog fallthrough",
+    }];
+
+struct TargetTypedMethodSpecialization {
+    module: &'static str,
+    claim: &'static str,
+    sugar: &'static str,
+    fallback_claim: &'static str,
+    required_ordering: &'static str,
+    required_decline: &'static str,
+    replacement: &'static str,
+}
+
 #[test]
 fn names_and_blames_raw_child_fields_on_sugar_types() {
     let violations = raw_child_field_violations();
@@ -194,8 +216,80 @@ fn names_and_blames_typed_effect_owners_using_reason_leaf() {
     );
 }
 
+#[test]
+fn names_and_blames_target_typed_method_specializations_that_block_fallback() {
+    let violations = target_typed_method_fallthrough_violations();
+    assert!(
+        violations.is_empty(),
+        "construction-law target-typed method fallthrough violation: \
+         a target-typed method specialization may be catalogued before MethodSugar only if \
+         it declines when its typed context is absent. Otherwise it steals untyped method calls \
+         from the generic method floor.\n{}",
+        violations.join("\n")
+    );
+}
+
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn target_typed_method_fallthrough_violations() -> Vec<String> {
+    let manifest = manifest_dir();
+    let src_root = manifest.join("src");
+    let catalog = fs::read_to_string(src_root.join("sugar/catalog.rs"))
+        .unwrap_or_else(|err| panic!("read src/sugar/catalog.rs: {err}"));
+    let claim_catalog = expr_claim_catalog(&catalog);
+    let mut violations = Vec::new();
+
+    for spec in TARGET_TYPED_METHOD_SPECIALIZATIONS {
+        let module = fs::read_to_string(src_root.join(spec.module.strip_prefix("src/").unwrap()))
+            .unwrap_or_else(|err| panic!("read {}: {err}", spec.module));
+        if !module.contains(spec.required_ordering) {
+            violations.push(format!(
+                "{}: {} must declare `{}` so catalog order documents that `{}` is allowed to run before `{}`",
+                spec.module, spec.sugar, spec.required_ordering, spec.sugar, spec.fallback_claim
+            ));
+        }
+        if !module.contains(spec.required_decline) {
+            violations.push(format!(
+                "{}: {} must decline with `{}` before construction; {}",
+                spec.module, spec.sugar, spec.required_decline, spec.replacement
+            ));
+        }
+        let claim_marker = format!("&{}", spec.claim);
+        let fallback_marker = format!("&{}", spec.fallback_claim);
+        match (
+            claim_catalog.find(&claim_marker),
+            claim_catalog.find(&fallback_marker),
+        ) {
+            (Some(specialized), Some(fallback)) if specialized < fallback => {}
+            (Some(_), Some(_)) => violations.push(format!(
+                "src/sugar/catalog.rs: `{}` must appear before `{}` so typed specialization gets first refusal without blocking fallback",
+                spec.claim, spec.fallback_claim
+            )),
+            (None, _) => violations.push(format!(
+                "src/sugar/catalog.rs: missing target-typed claim `{}`",
+                spec.claim
+            )),
+            (_, None) => violations.push(format!(
+                "src/sugar/catalog.rs: missing generic fallback claim `{}`",
+                spec.fallback_claim
+            )),
+        }
+    }
+
+    violations
+}
+
+fn expr_claim_catalog(catalog: &str) -> &str {
+    let start = catalog
+        .find("const EXPR_CLAIMS")
+        .expect("catalog defines EXPR_CLAIMS");
+    let tail = &catalog[start..];
+    let end = tail
+        .find("const ITEM_CLAIMS")
+        .expect("catalog defines ITEM_CLAIMS after EXPR_CLAIMS");
+    &tail[..end]
 }
 
 fn raw_child_field_violations() -> Vec<String> {
