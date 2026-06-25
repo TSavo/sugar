@@ -5118,40 +5118,57 @@ fn slice_get_unchecked_out_of_domain_refuses() {
 }
 
 #[test]
-fn slice_mut_index_methods_refuse_as_representation_boundaries() {
-    for (src, label) in [
+fn slice_mut_index_methods_ground_written_literal_borrows() {
+    let src = r#"
+        #[test]
+        fn t_mut_slice_index_literal() {
+            assert_eq!(Clamp(2).get_mut(&mut [0, 1] as &mut [_]), 1.get_mut(&mut [0, 1] as &mut [_]));
+            assert_eq!(Clamp(2).index_mut(&mut [0, 1] as &mut [_]), 1.index_mut(&mut [0, 1] as &mut [_]));
+            assert_eq!(
+                unsafe { &*Clamp(2).get_unchecked_mut(&mut [0, 1] as &mut [_]) },
+                unsafe { &*1.get_unchecked_mut(&mut [0, 1] as &mut [_]) }
+            );
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/mut_literal.rs");
+    assert!(
+        out.assertions_lifted >= 3,
+        "literal-backed mutable SliceIndex calls should ground to value floors: lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("effectful / raw-pointer / mutable-reference term")),
+        "written literal mutable borrows should not be refused before SliceIndex value grounding: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn slice_mut_index_methods_refuse_runtime_mutable_slice_sources() {
+    for (expr, label) in [
+        ("Clamp(2).get_mut(xs.as_mut_slice())", "get_mut"),
+        ("Clamp(2).index_mut(xs.as_mut_slice())", "index_mut"),
         (
-            r#"
-            #[test]
-            fn t_get_mut() {
-                assert_eq!(Clamp(2).get_mut(&mut [0, 1] as &mut [_]), None::<&mut i32>);
-            }
-            "#,
-            "get_mut",
-        ),
-        (
-            r#"
-            #[test]
-            fn t_index_mut() {
-                assert_eq!(Clamp(2).index_mut(&mut [0, 1] as &mut [_]), &mut 0);
-            }
-            "#,
-            "index_mut",
-        ),
-        (
-            r#"
-            #[test]
-            fn t_get_unchecked_mut() {
-                assert_eq!(unsafe { Clamp(2).get_unchecked_mut(&mut [0, 1] as &mut [_]) }, &mut 0);
-            }
-            "#,
+            "unsafe { Clamp(2).get_unchecked_mut(xs.as_mut_slice()) }",
             "get_unchecked_mut",
         ),
     ] {
-        let out = lift_file(&parse(src), &format!("coretests/slice/{label}.rs"));
+        let src = format!(
+            r#"
+            #[test]
+            fn t_{label}_runtime() {{
+                let mut xs = vec![0, 1];
+                assert_eq!({expr}, None::<&mut i32>);
+            }}
+            "#
+        );
+        let out = lift_file(&parse(&src), &format!("coretests/slice/{label}_runtime.rs"));
         assert_eq!(
             out.assertions_lifted, 0,
-            "{label} must not fabricate a timeless value: {:?}",
+            "{label} over a runtime mutable slice must not fabricate a timeless value: {:?}",
             out.decls
         );
         let reason = out
@@ -5163,7 +5180,7 @@ fn slice_mut_index_methods_refuse_as_representation_boundaries() {
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "{label} must refuse as a mutable-reference representation boundary: {:?}",
+                    "{label} must refuse runtime mutable slices as a representation boundary: {:?}",
                     out.skip_reasons
                 )
             });
