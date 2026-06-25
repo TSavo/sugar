@@ -16302,15 +16302,23 @@ fn complete_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i
     out
 }
 
-/// The ctor-NAME pairs of every `=` atom whose BOTH operands are `Term::Ctor`
-/// (e.g. `=(opt:some(1), opt:some(1))` -> `("opt:some","opt:some")`). Used to
-/// assert the monadic `Option`/`Result` constructors GROUND to their reserved
+/// The ctor-NAME pairs of every structural `=` atom whose BOTH operands carry
+/// ADT constructor tags (e.g. `=(opt:some(1), opt:some(1))` or its lowered
+/// `ctor:opt:some:1` tag equality -> `("opt:some","opt:some")`). Used to assert
+/// the monadic `Option`/`Result` constructors GROUND to their reserved
 /// ADT-backed names (not the federated `call:eq:Some` EUF, which would be a
-/// `=(call:eq:Some(..), true)` shape with a Bool-const operand, not two ctors).
+/// `=(call:eq:Some(..), true)` shape with a Bool-const operand, not two ctor tags).
 fn complete_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
     fn ctor_name(t: &Term) -> Option<String> {
         match t {
             Term::Ctor { name, .. } => Some(name.clone()),
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => value
+                .strip_prefix("ctor:")
+                .and_then(|tag| tag.rsplit_once(':'))
+                .map(|(name, _arity)| name.to_string()),
             _ => None,
         }
     }
