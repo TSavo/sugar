@@ -737,6 +737,149 @@ done
 }
 
 #[test]
+fn lift_report_runs_configured_producers_and_implication_consumers() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let producer_manifest = project.join(".sugar/lift/rust-fn-contracts");
+    let consumer_manifest = project.join(".sugar/lift/rust-implications");
+    fs::create_dir_all(&producer_manifest).expect("create producer manifest dir");
+    fs::create_dir_all(&consumer_manifest).expect("create consumer manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "rust-fn-contracts"
+kind = "lift"
+surface = "rust-fn-contracts"
+emit = "ir-document"
+workspace_override = "vendor/base64-0.22.1"
+
+[[plugins]]
+name = "rust-implications"
+kind = "lift"
+surface = "rust-implications"
+"#,
+    )
+    .expect("write project config");
+
+    let producer = dir.path().join("producer.sh");
+    write_executable(
+        &producer,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"function-contract","name":"encoded_len","outBinding":"out","post":{"kind":"atomic","name":"=","args":[{"kind":"var","name":"out"},{"kind":"ctor","name":"call:encoded_len","args":[{"kind":"var","name":"n"},{"kind":"var","name":"padded"}]}]},"sourceWarrants":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[{"role":"rust-fn-contracts","universe_kind":"function-contract","totals":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"loci":[{"file":"src/encode.rs","role":"rust-fn-contracts","universe_kind":"function-contract","ast_path":"encoded_len","sourceFunctionName":"encoded_len","line":97,"col":0}]}],"factoryAudits":[],"sourceMementos":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"refused":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}'
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+
+    let consumer = dir.path().join("consumer.sh");
+    write_executable(
+        &consumer,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"consumer","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    printf 'consumer must be dispatched via lift_implications, not lift: %s\n' "$line" >&2
+    exit 44
+  elif [[ "$line" == *'"method":"sugar.plugin.lift_implications"'* ]]; then
+    if [[ "$line" != *'"contract_bindings"'* || "$line" != *'"name":"encoded_len"'* ]]; then
+      printf 'consumer did not receive encoded_len contract_bindings: %s\n' "$line" >&2
+      exit 45
+    fi
+    cid="${line#*\"contract_cid\":\"}"
+    cid="${cid%%\"*}"
+    if [[ "$cid" != blake3-512:* ]]; then
+      printf 'consumer received invalid contract cid: %s\n' "$line" >&2
+      exit 46
+    fi
+    printf '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"bridge","name":"dig:encoded_len","sourceSymbol":"encoded_len","targetContractCid":"%s","targetLayer":"rust-fn-contracts"}],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_refused":0,"source_unresolved":0},"sourceAudits":[],"factoryAudits":[],"sourceMementos":[],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"refused":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}\n' "$cid"
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+
+    fs::write(
+        producer_manifest.join("manifest.toml"),
+        format!(
+            "name = \"rust-fn-contracts\"\ncommand = [\"{}\"]\n",
+            producer.display()
+        ),
+    )
+    .expect("write producer manifest");
+    fs::write(
+        consumer_manifest.join("manifest.toml"),
+        format!(
+            "name = \"rust-implications\"\ncommand = [\"{}\"]\nmethod = \"sugar.plugin.lift_implications\"\nphase = \"consumer\"\n",
+            consumer.display()
+        ),
+    )
+    .expect("write consumer manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must run configured producer plus implication consumer\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let names = report["contracts"]
+        .as_array()
+        .expect("contracts array")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        names.contains(&"encoded_len"),
+        "report must include the body-dig emitted encoded_len post universe: {names:?}"
+    );
+    assert!(
+        names.contains(&"dig:encoded_len"),
+        "report must include the implication-lifted dig bridge: {names:?}"
+    );
+    let source_files = report["sourceMementos"]
+        .as_array()
+        .expect("sourceMementos array")
+        .iter()
+        .filter_map(|entry| entry["file"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        source_files.contains(&"vendor/base64-0.22.1/src/encode.rs"),
+        "body-dig source mementos must be rebased through the configured workspace_override: {source_files:?}"
+    );
+    let encoded_len_contract = report["contracts"]
+        .as_array()
+        .expect("contracts array")
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("encoded_len"))
+        .expect("encoded_len contract");
+    assert_eq!(
+        encoded_len_contract["sourceWarrants"][0]["file"].as_str(),
+        Some("vendor/base64-0.22.1/src/encode.rs"),
+        "body-dig source warrants must name the replacement sugar's source line in the visual frame"
+    );
+}
+
+#[test]
 fn mint_ignores_emit_only_plugin_registrations() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
