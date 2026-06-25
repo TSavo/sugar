@@ -396,7 +396,14 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn can_apply_action(&self, action: &TemporalRewriteAction) -> bool {
-        self.target_for_lhs(action.target_lhs()).is_some()
+        let Some(target) = self.target_for_lhs(action.target_lhs()) else {
+            return false;
+        };
+        self.target_accepts_term_assignment(&target)
+            && match action {
+                TemporalRewriteAction::Assign { .. } => true,
+                TemporalRewriteAction::CompoundAssign { .. } => self.target_term(&target).is_some(),
+            }
     }
 
     pub(crate) fn expr_bindings(&self) -> BTreeMap<String, Expr> {
@@ -1324,13 +1331,6 @@ impl TemporalRewriteState {
     fn target_for_index(&self, index: &syn::ExprIndex) -> Option<Target> {
         let idx = self.index_value(&index.index)?;
         let base_name = simple_path_name(&index.expr)?;
-        if self.values.contains_key(&base_name) {
-            return Some(Target::Element {
-                base: base_name,
-                index: idx,
-                replayable_alias: false,
-            });
-        }
         match self.aliases.get(&base_name)? {
             RewritePlace::Slice { base, start, len } if idx < *len => Some(Target::Element {
                 base: base.clone(),
@@ -1340,6 +1340,15 @@ impl TemporalRewriteState {
             RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
                 None
             }
+        }
+    }
+
+    fn target_accepts_term_assignment(&self, target: &Target) -> bool {
+        match target {
+            Target::Scalar { .. } => true,
+            Target::Element {
+                replayable_alias, ..
+            } => *replayable_alias,
         }
     }
 
@@ -1414,7 +1423,16 @@ impl TemporalRewriteState {
                 self.term_values.insert(name, term);
                 true
             }
-            Target::Element { .. } => false,
+            Target::Element {
+                base,
+                index,
+                replayable_alias,
+            } => {
+                let Some(value) = int_expr_from_term(&term) else {
+                    return false;
+                };
+                self.set_aggregate_element(&base, index, value, replayable_alias)
+            }
         }
     }
 
@@ -2277,6 +2295,10 @@ fn expr_term_floor(expr: &Expr, state: &TemporalRewriteState) -> Option<Rc<Term>
     state.int_value(expr).map(num)
 }
 
+fn int_expr_from_term(term: &Rc<Term>) -> Option<Expr> {
+    const_fold_int_term(term).and_then(int_expr)
+}
+
 fn binop_kind_term_name(kind: BinOpKind) -> &'static str {
     match kind {
         BinOpKind::Add => "+",
@@ -2580,6 +2602,13 @@ fn bool_term(value: bool) -> Rc<Term> {
 mod tests {
     use super::*;
 
+    fn int_term(value: i128) -> Rc<Term> {
+        Rc::new(Term::Const {
+            value: ConstValue::Int(value),
+            sort: Sort::int(),
+        })
+    }
+
     #[test]
     fn scoped_block_replays_mut_ref_assignment_to_outer_base() {
         let block: syn::Block = syn::parse_quote!({
@@ -2628,5 +2657,49 @@ mod tests {
         );
         assert!(state.replayed_mutable_alias_base("r"));
         assert!(state.expr_for("p").is_none(), "block-local alias leaked");
+    }
+
+    #[test]
+    fn term_replay_updates_disjoint_element_alias() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("v", syn::parse_quote!(vec![1, 2, 3]));
+        state.aliases.insert(
+            "a".to_string(),
+            RewritePlace::Element {
+                base: "v".to_string(),
+                index: 2,
+            },
+        );
+        let lhs: Expr = syn::parse_quote!(*a);
+
+        assert!(state.apply_compound_assign_term(&lhs, BinOpKind::Add, int_term(10)));
+        assert_eq!(
+            state
+                .expr_for_index("v", 2)
+                .and_then(|expr| const_int(&expr)),
+            Some(13)
+        );
+        assert!(state.replayed_mutable_alias_base("v"));
+    }
+
+    #[test]
+    fn direct_element_assignment_is_not_temporal_rewrite_claim() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("buf", syn::parse_quote!([0i32, 0, 0]));
+        let expr: Expr = syn::parse_quote!(buf[0] = 7);
+        let action = TemporalRewriteAction::from_expr(
+            &expr,
+            &SugarBuildCtx::new(
+                &crate::TemporalScope::new("assign-op-test", crate::TemporalPlan::default()),
+                &crate::LiftOptions::default(),
+                &BTreeMap::new(),
+            ),
+        )
+        .expect("assignment action");
+
+        assert!(
+            !state.can_apply_action(&action),
+            "direct mutable-container element writes are not replayable temporal sugar"
+        );
     }
 }
