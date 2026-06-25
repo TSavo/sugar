@@ -63,7 +63,8 @@ use syn::{Expr, Stmt};
 use tracing::debug;
 
 use crate::sugar::factory::{
-    build_composite, build_term, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+    build_composite, desugar_build_ctx, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+    TermFloor,
 };
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
@@ -170,11 +171,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !recognized_receiver_is_static_sequence(call, &terminal, fcx) {
         return None;
     }
+    let advance_by_arg = advance_by_arg_body(&terminal, fcx);
     Some(Box::new(IterTerminalSugar {
         terminal,
         site_key: token_key(expr),
         closure_refusal: closure_adaptor_refusal(expr, fcx.scope()),
         receiver: IterTerminalReceiver::new((*call.receiver).clone(), fcx),
+        advance_by_arg,
         let_inits: capture_let_inits(fcx),
     }))
 }
@@ -578,6 +581,13 @@ fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
         .collect()
 }
 
+fn advance_by_arg_body(terminal: &Terminal, fcx: &SugarBuildCtx) -> Option<SugarBody<TermFloor>> {
+    match terminal {
+        Terminal::AdvanceBy(arg) => Some(SugarBody::term(arg, fcx)),
+        _ => None,
+    }
+}
+
 fn unit_term() -> Rc<Term> {
     make_var("literal:Tuple()")
 }
@@ -595,6 +605,7 @@ struct IterTerminalSugar {
     site_key: String,
     closure_refusal: Option<String>,
     receiver: IterTerminalReceiver,
+    advance_by_arg: Option<SugarBody<TermFloor>>,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -615,6 +626,18 @@ impl IterTerminalReceiver {
 }
 
 impl IterTerminalSugar {
+    fn advance_by_arg_term(&self, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+        let Some(arg) = &self.advance_by_arg else {
+            iter_terminal_gap("advance_by terminal missing constructed argument body");
+        };
+        match arg.desugar(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .ok_or_else(|| iter_terminal_gap("advance_by argument reduced to non-Term")),
+            Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+        }
+    }
+
     fn accepts_empty_sequence_for_source<'a>(
         &self,
         let_inits: &BTreeMap<String, &'a Expr>,
@@ -697,19 +720,11 @@ impl IterTerminalSugar {
         }
     }
 
-    fn reduce_term_seq_terminal(
-        &self,
-        terms: Vec<Rc<Term>>,
-        fcx: &SugarBuildCtx,
-        ctx: &SugarCtx,
-    ) -> Outcome {
-        if let Terminal::AdvanceBy(arg) = &self.terminal {
-            let n_term = match build_term(arg, fcx).desugar(ctx) {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => iter_terminal_gap("advance_by argument reduced to non-Term"),
-                },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    fn reduce_term_seq_terminal(&self, terms: Vec<Rc<Term>>, ctx: &SugarCtx) -> Outcome {
+        if let Terminal::AdvanceBy(_) = &self.terminal {
+            let n_term = match self.advance_by_arg_term(ctx) {
+                Ok(term) => term,
+                Err(outcome) => return outcome,
             };
             let Some(n) = term_as_usize(&n_term) else {
                 iter_terminal_gap(
@@ -770,7 +785,7 @@ impl IterTerminalSugar {
                     .map(|(name, init)| (name.clone(), init)),
             )
             .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let fcx = desugar_build_ctx(ctx.scope, ctx.options, &let_inits);
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
         if let Some(name) = simple_path_name(&self.receiver.source) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
@@ -845,7 +860,7 @@ impl IterTerminalSugar {
         } else {
             match self.receiver.body.reduce(ctx) {
                 Outcome::Complete(Desugared::TermSeq(terms)) => {
-                    return self.reduce_term_seq_terminal(terms, &fcx, ctx);
+                    return self.reduce_term_seq_terminal(terms, ctx);
                 }
                 Outcome::Complete(d) => match d.into_seq() {
                     Some(seq) => seq,
@@ -935,13 +950,10 @@ impl IterTerminalSugar {
                 Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             }
         };
-        if let Terminal::AdvanceBy(arg) = &self.terminal {
-            let n_term = match build_term(arg, &fcx).desugar(ctx) {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => iter_terminal_gap("advance_by argument reduced to non-Term"),
-                },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        if let Terminal::AdvanceBy(_) = &self.terminal {
+            let n_term = match self.advance_by_arg_term(ctx) {
+                Ok(term) => term,
+                Err(outcome) => return outcome,
             };
             let Some(n) = term_as_usize(&n_term) else {
                 iter_terminal_gap(
