@@ -1,5 +1,7 @@
-> T Savo is right, and just crazy enough to follow the physics: at agent speed,
-> the old process is the bug.
+> The sacred cows exist because human attention used to be the scarce resource.
+> At agent speed, generation is cheap and parallel; reliable orientation is
+> scarce. So process must pin orientation in executable instruments, not in
+> meetings, careful intentions, or waiting for green.
 
 > "The past 3 years of my journey with AI can be summarized as a series of
 > increasingly sophisticated arguments about why it's wrong about process."
