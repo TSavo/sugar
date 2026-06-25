@@ -793,6 +793,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // for literal-determined operands in this lift. The child scalar floor owns this
         // effect; parents that need the value dispatch to it and propagate the result.
         || reason.contains("operand, not literal-determined")
+        // TERMINAL: this is the typed Configuration effect emitted by cfg-aware sugars
+        // when no target facts were pinned. The similarly worded collector skip
+        // `ambiguous cfg on assertion; skipped` stays unclassified work below; only an
+        // Effect must be terminal at the factory boundary.
+        || reason.starts_with("ambiguous cfg:")
         || reason.contains("f16/f128 float bit model is not expressible")
         || reason.contains("float bit pattern is not expressible as a finite Real literal")
         // TERMINAL: slice/array accessors only ground when the receiver and any index
@@ -9113,6 +9118,9 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
         let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
+            if matches!(strip_refs_groups(expr), Expr::Path(_)) {
+                return callsite_child_fallback_term(expr, self.scope);
+            }
             if sugar::method_family::literal_sequence_static_len_in_scope(
                 expr, &let_inits, self.scope,
             ) == Some(0)
@@ -10984,6 +10992,27 @@ fn expr_contains_assignment_to_name(expr: &Expr, name: &str) -> bool {
     }
 }
 
+fn let_initializer_fact_composite_selected(
+    expr: &Expr,
+    fcx: &sugar::factory::SugarBuildCtx,
+) -> bool {
+    let Some(selected) = sugar::catalog::matching_expr_claims_for_role(
+        expr,
+        fcx,
+        sugar::claim::SugarRole::Composite,
+    )
+    .into_iter()
+    .next()
+    .map(|candidate| candidate.name()) else {
+        return false;
+    };
+
+    // This eager let-initializer drain exists only for Composite sugars that emit
+    // facts from a finite literal body. Ordinary value composites, such as `if`
+    // initializers, stay lazy and are reduced only by the owning parent sugar.
+    matches!(selected, "fold" | "for_each")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -11242,7 +11271,7 @@ fn collect_assertion_entries<'a>(
                                 &temporal_scope,
                             ) == Some(0);
                         if !zero_len_literal_sequence
-                            && sugar::factory::has_composite(&init.expr, &fcx)
+                            && let_initializer_fact_composite_selected(&init.expr, &fcx)
                         {
                             Some(sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx))
                         } else {
@@ -24620,6 +24649,7 @@ mod lifter_key_tests {
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
             "named refusal (iterator size_hint runtime bound): vendor pin not liftable: assertion surface `it.size_hint()` did not reach bedrock",
+            "ambiguous cfg: no explicit target cfg facts for `miri`",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }

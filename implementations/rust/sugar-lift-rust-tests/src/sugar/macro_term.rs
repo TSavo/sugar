@@ -10,10 +10,11 @@
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), NOT
 use syn::Expr;
 
+use crate::sugar::configuration::{self, CfgDisposition};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
-    macro_literal_contains_mut_local, token_key, Effect, Outcome, Sugar, SugarCtx,
-    MAX_MACRO_EXPANSION_DEPTH,
+    bool_const, macro_literal_contains_mut_local, token_key, CfgPredicate, Desugared, Effect,
+    Outcome, Sugar, SugarCtx, MAX_MACRO_EXPANSION_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -45,6 +46,24 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             },
         }));
     }
+    if m.mac
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "cfg")
+    {
+        return Some(Box::new(MacroSugar {
+            body: match m.mac.parse_body::<CfgPredicate>() {
+                Ok(predicate) => MacroTermBody::CfgPredicate {
+                    predicate,
+                    site: token_str,
+                },
+                Err(error) => MacroTermBody::Unconstructible(format!(
+                    "cfg! term predicate did not parse: {error}; write more Sugar for this AST"
+                )),
+            },
+        }));
+    }
     Some(Box::new(MacroSugar {
         body: build_macro_body(m, fcx),
     }))
@@ -58,7 +77,14 @@ pub(crate) struct MacroSugar {
 }
 
 enum MacroTermBody {
-    MutLocalTemporalEffect { boundary: String, reason: String },
+    MutLocalTemporalEffect {
+        boundary: String,
+        reason: String,
+    },
+    CfgPredicate {
+        predicate: CfgPredicate,
+        site: String,
+    },
     Expanded(SugarBody<TermFloor>),
     Unconstructible(String),
 }
@@ -119,10 +145,87 @@ impl Sugar for MacroSugar {
                     reason: reason.clone(),
                 })
             }
+            MacroTermBody::CfgPredicate { predicate, site } => {
+                match configuration::resolve_predicate(predicate, ctx.options) {
+                    CfgDisposition::Present => Outcome::Complete(Desugared::Term(bool_const(true))),
+                    CfgDisposition::Absent(_) => {
+                        Outcome::Complete(Desugared::Term(bool_const(false)))
+                    }
+                    CfgDisposition::Ambiguous(reason) => {
+                        Outcome::Incomplete(Effect::Configuration {
+                            boundary: site.clone(),
+                            reason: format!("ambiguous cfg: {reason}"),
+                        })
+                    }
+                }
+            }
             MacroTermBody::Expanded(body) => body.reduce(ctx),
             MacroTermBody::Unconstructible(reason) => {
                 panic!("{reason}");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use sugar_ir_symbolic::{ConstValue, Term};
+    use syn::{parse_quote, Expr};
+
+    use super::*;
+    use crate::{
+        sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TargetCfg, TemporalPlan,
+        TemporalScope,
+    };
+
+    fn run(expr: &Expr, options: &LiftOptions) -> Outcome {
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, options, &let_inits);
+        let node = recognize(expr, &fcx).expect("cfg! is owned by macro term sugar");
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, options, &reducer, &mut float_widths, 0);
+        node.desugar(&ctx)
+    }
+
+    fn bool_term(outcome: Outcome) -> bool {
+        let Outcome::Complete(Desugared::Term(term)) = outcome else {
+            panic!("expected Complete(Term(bool))")
+        };
+        match term.as_ref() {
+            Term::Const {
+                value: ConstValue::Bool(value),
+                ..
+            } => *value,
+            other => panic!("expected bool term, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cfg_macro_term_resolves_to_bool_with_target_facts() {
+        let expr: Expr = parse_quote!(cfg!(target_os = "linux"));
+        let target = TargetCfg::from_rustc_cfg_facts(["target_os=\"linux\""]).unwrap();
+        let options = LiftOptions::for_target_cfg(target);
+        assert!(bool_term(run(&expr, &options)));
+    }
+
+    #[test]
+    fn cfg_macro_term_incompletes_when_target_facts_are_absent() {
+        let expr: Expr = parse_quote!(cfg!(target_os = "linux"));
+        match run(&expr, &LiftOptions::default()) {
+            Outcome::Incomplete(Effect::Configuration { boundary, reason }) => {
+                assert_eq!(boundary, "cfg ! (target_os = \"linux\")");
+                assert!(
+                    reason.starts_with("ambiguous cfg: "),
+                    "configuration refusal names the ambiguous predicate: {reason}"
+                );
+            }
+            Outcome::Incomplete(_) => panic!("expected Configuration effect"),
+            Outcome::Complete(_) => panic!("ambiguous cfg! must not complete"),
         }
     }
 }
