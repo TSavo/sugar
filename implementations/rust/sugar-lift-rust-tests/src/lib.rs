@@ -618,6 +618,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // debug-panic behavior or a release-wrap value, so the format value floor stops with
         // a named source boundary.
         || reason.contains("format integer arithmetic overflow or divide-by-zero")
+        // TERMINAL: a `format!` argument reduced to a runtime/non-literal term floor. The
+        // format macro itself only composes children; the format-value floor owns this
+        // boundary when no literal `Display`/`Debug` value exists to render.
+        || reason.contains("runtime format argument")
         // TERMINAL: Unicode full-case mapping is intentionally not lowered for non-ASCII
         // receivers because the result depends on the Unicode mapping table. ASCII receivers
         // still warrant through the complete path; only the version-sensitive frontier earns
@@ -8261,6 +8265,11 @@ enum Effect {
     /// generic "not literal" fallback; it can only bubble an effect that the boundary
     /// owner already emitted.
     RuntimeArgument { boundary: String, reason: String },
+    /// FORMAT-ARGUMENT: `format!`/`to_string` needs a literal format-value floor, but the
+    /// child reduced to runtime/non-literal data or to checked arithmetic with no single
+    /// literal rendering. The format macro composes and bubbles; this boundary is owned by
+    /// the format-value floor.
+    FormatArgument { boundary: String, reason: String },
     /// RUNTIME-CALLABLE-ELEMENT: a literal-domain adaptor invokes the iterated element as
     /// a callable (`|f| (*f)()`). The domain is finite, but the returned value is produced by
     /// dynamic dispatch through the element, not by literal construction.
@@ -8416,6 +8425,7 @@ impl Effect {
                  ({kind}) is not a constructible timeless value; refused"
             ),
             Effect::RuntimeArgument { reason, .. } => reason.clone(),
+            Effect::FormatArgument { reason, .. } => reason.clone(),
             Effect::RuntimeCallableElement { reason, .. } => reason.clone(),
             Effect::UnicodeStringCase { .. } => {
                 "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
@@ -8468,6 +8478,7 @@ impl Effect {
             | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }
+            | Effect::FormatArgument { boundary, .. }
             | Effect::RuntimeCallableElement { boundary, .. }
             | Effect::UnicodeStringCase { boundary }
             | Effect::Configuration { boundary, .. } => boundary.clone(),
@@ -23180,6 +23191,7 @@ fn t() {
             "assertion under while context: not unconditional point-wise; released to layer 0",
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
             "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused",
+            "runtime format argument `runtime_var`, not literal-determined; refused",
             "Unicode string case mapping is not modeled for non-ASCII receivers; refused",
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",

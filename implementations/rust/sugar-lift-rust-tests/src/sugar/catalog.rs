@@ -990,6 +990,25 @@ mod tests {
     }
 
     #[test]
+    fn format_args_estimated_capacity_prioritizes_builtin_before_generic_method() {
+        let expr: Expr = syn::parse_str(r#"format_args!("Hello").estimated_capacity()"#).unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"format_args_estimated_capacity"),
+            "format_args!(...).estimated_capacity() should be claimed by builtin FormatArgsSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"method"),
+            "generic method fallback remains visible behind the builtin owner: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("format_args_estimated_capacity")
+        );
+    }
+
+    #[test]
     fn referenced_format_macro_prioritizes_format_before_reference_wrapper() {
         let expr: Expr = syn::parse_str("&format!(\"{}\", 1)").unwrap();
         let names = candidate_names(&expr);
