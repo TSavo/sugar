@@ -9,6 +9,10 @@ use std::rc::Rc;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::float_floor::{
+    stable_width_from_method_name, stable_width_from_path, stable_width_from_suffix,
+    stable_width_from_type_key, IeeeFloatWidth, IeeeFloatWidthAccept, IeeeFloatWidthNameVisitor,
+};
 use crate::{
     bool_const, callsite_assertion_name, parse_macro_args, sugar_ctx_with_factory_audits,
     token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
@@ -30,7 +34,7 @@ struct InfinityEqSugar {
     name: String,
     receiver: SugarBody<TermFloor>,
     receiver_expr: Expr,
-    width: &'static str,
+    width: IeeeFloatWidth,
     is_positive: bool,
     debug_gated: bool,
 }
@@ -93,7 +97,7 @@ pub(crate) fn assertion_entry_with_audits(
     lhs: &Expr,
     rhs: &Expr,
     scope: &crate::TemporalScope,
-    float_widths: &FloatWidthScope,
+    _float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<Option<AssertionEntry>, String> {
     let (width, is_positive, receiver_expr) =
@@ -103,10 +107,12 @@ pub(crate) fn assertion_entry_with_audits(
             (None, None) => return Ok(None),
         };
 
-    if let Some(receiver_width) = float_receiver_width(receiver_expr, float_widths) {
+    if let Some(receiver_width) = float_receiver_width(receiver_expr, scope) {
         if receiver_width != width {
             return Err(format!(
-                "infinity equality: receiver width `{receiver_width}` conflicts with constant width `{width}` in `{}`",
+                "infinity equality: receiver width `{}` conflicts with constant width `{}` in `{}`",
+                width_name(receiver_width),
+                width_name(width),
                 token_key(receiver_expr)
             ));
         }
@@ -116,7 +122,7 @@ pub(crate) fn assertion_entry_with_audits(
     let reducer = ReductionCtx::from_items(&[]);
     let let_inits = std::collections::BTreeMap::new();
     let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
-    let mut local_float_widths = float_widths.clone();
+    let mut local_float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx_with_factory_audits(
         scope,
         &options,
@@ -144,8 +150,14 @@ pub(crate) fn assertion_entry_with_audits(
         "is_sign_negative"
     };
     let atom = and_(vec![
-        atomic_(format!("float.{width}.is_infinite"), vec![receiver.clone()]),
-        atomic_(format!("float.{width}.{sign_pred}"), vec![receiver.clone()]),
+        atomic_(
+            float_predicate_atom_name(width, "is_infinite"),
+            vec![receiver.clone()],
+        ),
+        atomic_(
+            float_predicate_atom_name(width, sign_pred),
+            vec![receiver.clone()],
+        ),
     ]);
     Ok(Some(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
@@ -162,15 +174,13 @@ impl Sugar for InfinityEqSugar {
             return outcome;
         }
 
-        let receiver_width = {
-            let widths = ctx.float_widths.borrow();
-            float_receiver_width(&self.receiver_expr, &widths)
-        };
+        let receiver_width = float_receiver_width(&self.receiver_expr, ctx.scope);
         if let Some(receiver_width) = receiver_width {
             if receiver_width != self.width {
                 infinity_eq_gap(&format!(
-                    "infinity equality: receiver width `{receiver_width}` conflicts with constant width `{}` in `{}`",
-                    self.width,
+                    "infinity equality: receiver width `{}` conflicts with constant width `{}` in `{}`",
+                    width_name(receiver_width),
+                    width_name(self.width),
                     token_key(&self.receiver_expr)
                 ));
             }
@@ -187,11 +197,11 @@ impl Sugar for InfinityEqSugar {
         };
         let atom = and_(vec![
             atomic_(
-                format!("float.{}.is_infinite", self.width),
+                float_predicate_atom_name(self.width, "is_infinite"),
                 vec![receiver.clone()],
             ),
             atomic_(
-                format!("float.{}.{}", self.width, sign_pred),
+                float_predicate_atom_name(self.width, sign_pred),
                 vec![receiver.clone()],
             ),
         ]);
@@ -202,7 +212,7 @@ impl Sugar for InfinityEqSugar {
     }
 }
 
-fn infinity_constant_kind(expr: &Expr) -> Option<(&'static str, bool)> {
+fn infinity_constant_kind(expr: &Expr) -> Option<(IeeeFloatWidth, bool)> {
     let path = match expr {
         Expr::Path(p) if p.qself.is_none() => &p.path,
         Expr::Paren(paren) => return infinity_constant_kind(&paren.expr),
@@ -217,11 +227,7 @@ fn infinity_constant_kind(expr: &Expr) -> Option<(&'static str, bool)> {
     {
         return None;
     }
-    let width = match segs[0].ident.to_string().as_str() {
-        "f32" => "f32",
-        "f64" => "f64",
-        _ => return None,
-    };
+    let width = stable_width_from_type_key(&segs[0].ident.to_string())?;
     let is_positive = match segs[1].ident.to_string().as_str() {
         "INFINITY" => true,
         "NEG_INFINITY" => false,
@@ -230,64 +236,40 @@ fn infinity_constant_kind(expr: &Expr) -> Option<(&'static str, bool)> {
     Some((width, is_positive))
 }
 
-fn float_receiver_width(
-    expr: &Expr,
-    float_widths: &crate::FloatWidthScope,
-) -> Option<&'static str> {
+fn float_receiver_width(expr: &Expr, scope: &crate::TemporalScope) -> Option<IeeeFloatWidth> {
     match expr {
         Expr::Path(path) => {
             let name = path_to_name(&path.path);
-            float_widths
-                .get(&name)
-                .copied()
-                .or_else(|| float_width_from_path(&path.path))
+            scope
+                .let_binding_expected_type(&name)
+                .and_then(stable_width_from_type_key)
+                .or_else(|| stable_width_from_path(&path.path))
         }
         Expr::Lit(syn::ExprLit {
             lit: syn::Lit::Float(lit),
             ..
-        }) => float_width_from_suffix(lit.suffix()),
+        }) => stable_width_from_suffix(lit.suffix()),
         Expr::MethodCall(call) => {
-            float_width_from_method_name(&call.method.to_string()).or_else(|| {
+            stable_width_from_method_name(&call.method.to_string()).or_else(|| {
                 if call.method == "unwrap" {
-                    float_receiver_width(&call.receiver, float_widths)
+                    float_receiver_width(&call.receiver, scope)
                 } else {
                     None
                 }
             })
         }
-        Expr::Paren(paren) => float_receiver_width(&paren.expr, float_widths),
-        Expr::Group(group) => float_receiver_width(&group.expr, float_widths),
+        Expr::Paren(paren) => float_receiver_width(&paren.expr, scope),
+        Expr::Group(group) => float_receiver_width(&group.expr, scope),
         _ => None,
     }
 }
 
-fn float_width_from_method_name(method: &str) -> Option<&'static str> {
-    if method.ends_with("_f32") {
-        Some("f32")
-    } else if method.ends_with("_f64") {
-        Some("f64")
-    } else {
-        None
-    }
+fn width_name(width: IeeeFloatWidth) -> &'static str {
+    width.accept_ieee_float_width(IeeeFloatWidthNameVisitor)
 }
 
-fn float_width_from_path(path: &syn::Path) -> Option<&'static str> {
-    for segment in &path.segments {
-        match segment.ident.to_string().as_str() {
-            "f32" => return Some("f32"),
-            "f64" => return Some("f64"),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn float_width_from_suffix(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "f32" => Some("f32"),
-        "f64" => Some("f64"),
-        _ => None,
-    }
+fn float_predicate_atom_name(width: IeeeFloatWidth, method: &str) -> String {
+    format!("float.{}.{}", width_name(width), method)
 }
 
 fn path_to_name(path: &syn::Path) -> String {
@@ -345,4 +327,67 @@ fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>,
 
 fn infinity_eq_gap(reason: &str) -> ! {
     panic!("infinity_eq did not reach a lawful floor: {reason}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{record_simple_value_binding, TemporalPlan, TemporalScope};
+    use syn::{parse_quote, Expr, Local, Stmt};
+
+    fn local_from_stmt(stmt: Stmt) -> Local {
+        let Stmt::Local(local) = stmt else {
+            panic!("expected local statement");
+        };
+        local
+    }
+
+    fn scope_after(local: Local) -> TemporalScope {
+        let mut scope = TemporalScope::new("infinity-eq-test", TemporalPlan::default());
+        record_simple_value_binding(&mut scope, &local);
+        scope
+    }
+
+    #[test]
+    fn float_width_positive_infinity_constant_reads_width_from_constant_side() {
+        let expr: Expr = parse_quote!(x == f64::INFINITY);
+        let Expr::Binary(binary) = expr else {
+            panic!("expected binary infinity equality");
+        };
+
+        assert_eq!(
+            infinity_constant_kind(&binary.right),
+            Some((IeeeFloatWidth::F64, true))
+        );
+    }
+
+    #[test]
+    fn float_width_negative_infinity_constant_reads_width_from_constant_side() {
+        let expr: Expr = parse_quote!(x == f32::NEG_INFINITY);
+        let Expr::Binary(binary) = expr else {
+            panic!("expected binary infinity equality");
+        };
+
+        assert_eq!(
+            infinity_constant_kind(&binary.right),
+            Some((IeeeFloatWidth::F32, false))
+        );
+    }
+
+    #[test]
+    fn float_width_typed_infinity_receiver_resolves_through_temporal_scope() {
+        let local = local_from_stmt(parse_quote!(let x: f32 = 1.0;));
+        let scope = scope_after(local);
+        let receiver: Expr = parse_quote!(x);
+
+        assert_eq!(
+            float_receiver_width(&receiver, &scope),
+            Some(IeeeFloatWidth::F32)
+        );
+        assert_eq!(
+            float_predicate_atom_name(IeeeFloatWidth::F32, "is_infinite"),
+            "float.f32.is_infinite"
+        );
+    }
 }

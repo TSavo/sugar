@@ -8,13 +8,19 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::float_floor::{
+    stable_width_from_method_name, stable_width_from_method_turbofish, stable_width_from_path,
+    stable_width_from_suffix, stable_width_from_type_key, unstable_width_from_method_name,
+    unstable_width_from_method_turbofish, unstable_width_from_path, unstable_width_from_suffix,
+    IeeeFloatWidth, IeeeFloatWidthAccept, IeeeFloatWidthNameVisitor,
+};
 use crate::{
     bool_const, callsite_assertion_name, eq, strip_refs_groups, sugar_ctx_with_factory_audits,
     token_key, AssertionEntry, AssertionFactKind, Desugared, Effect, FloatWidthScope, LiftOptions,
     Outcome, ReductionCtx, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{atomic_, Formula, Term};
-use syn::{Expr, ExprLit, ExprMethodCall, Lit, Type};
+use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_float_refinement",
@@ -31,14 +37,14 @@ struct FloatRefinementSugar {
 }
 
 enum FloatReceiverWidth {
-    Static(&'static str),
+    Static(IeeeFloatWidth),
     ScopePath(String),
     Unstable(&'static str),
     Unknown,
 }
 
 enum FloatWidthResolution {
-    Known(&'static str),
+    Known(IeeeFloatWidth),
     Unstable(&'static str),
     Unknown,
 }
@@ -69,12 +75,12 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
 pub(crate) fn assertion_entry(
     expr: &Expr,
     scope: &crate::TemporalScope,
-    float_widths: &FloatWidthScope,
+    _float_widths: &FloatWidthScope,
 ) -> Result<Option<AssertionEntry>, String> {
     match expr {
-        Expr::Paren(paren) => assertion_entry(&paren.expr, scope, float_widths),
-        Expr::Group(group) => assertion_entry(&group.expr, scope, float_widths),
-        Expr::MethodCall(call) => assertion_entry_method(call, scope, float_widths),
+        Expr::Paren(paren) => assertion_entry(&paren.expr, scope, _float_widths),
+        Expr::Group(group) => assertion_entry(&group.expr, scope, _float_widths),
+        Expr::MethodCall(call) => assertion_entry_method(call, scope),
         _ => Ok(None),
     }
 }
@@ -82,7 +88,6 @@ pub(crate) fn assertion_entry(
 fn assertion_entry_method(
     call: &ExprMethodCall,
     scope: &crate::TemporalScope,
-    float_widths: &FloatWidthScope,
 ) -> Result<Option<AssertionEntry>, String> {
     let method = call.method.to_string();
     let site = token_key(Expr::MethodCall(call.clone()));
@@ -104,7 +109,7 @@ fn assertion_entry_method(
             "float refinement predicate `{method}` {width_reason} `{site}`"
         ));
     }
-    let Some(width) = float_refinement_receiver_width(&call.receiver, float_widths) else {
+    let Some(width) = float_refinement_receiver_width(&call.receiver, scope) else {
         return Err(format!(
             "float refinement predicate `{method}` requires known f32/f64 receiver width `{site}`"
         ));
@@ -123,7 +128,7 @@ fn assertion_entry_method(
     let reducer = ReductionCtx::from_items(&[]);
     let let_inits = std::collections::BTreeMap::new();
     let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
-    let mut local_float_widths = float_widths.clone();
+    let mut local_float_widths = FloatWidthScope::new();
     let ctx =
         sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut local_float_widths, 0, None);
     let receiver = match SugarBody::term(&call.receiver, &fcx).reduce(&ctx) {
@@ -140,7 +145,7 @@ fn assertion_entry_method(
     };
     Ok(Some(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
-        atom: atomic_(format!("float.{width}.{method}"), vec![receiver]),
+        atom: atomic_(float_predicate_atom_name(width, &method), vec![receiver]),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
@@ -149,10 +154,7 @@ fn assertion_entry_method(
 
 impl Sugar for FloatRefinementSugar {
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
-        let width = match {
-            let widths = ctx.float_widths.borrow();
-            self.receiver_width.resolve(&widths)
-        } {
+        let width = match self.receiver_width.resolve(ctx.scope) {
             FloatWidthResolution::Known(width) => width,
             FloatWidthResolution::Unstable(unstable_width) => {
                 let width_reason = if unstable_width == "f16" && self.method == "is_nan" {
@@ -187,7 +189,10 @@ impl Sugar for FloatRefinementSugar {
         };
         let name = callsite_assertion_name(receiver.as_ref(), ctx.scope.local_scope());
         constraint(
-            atomic_(format!("float.{width}.{}", self.method), vec![receiver]),
+            atomic_(
+                float_predicate_atom_name(width, &self.method),
+                vec![receiver],
+            ),
             name,
         )
     }
@@ -198,12 +203,12 @@ impl Sugar for FloatRefinementSugar {
 }
 
 impl FloatReceiverWidth {
-    fn resolve(&self, float_widths: &FloatWidthScope) -> FloatWidthResolution {
+    fn resolve(&self, scope: &crate::TemporalScope) -> FloatWidthResolution {
         match self {
-            FloatReceiverWidth::Static(width) => FloatWidthResolution::Known(width),
-            FloatReceiverWidth::ScopePath(name) => float_widths
-                .get(name)
-                .copied()
+            FloatReceiverWidth::Static(width) => FloatWidthResolution::Known(*width),
+            FloatReceiverWidth::ScopePath(name) => scope
+                .let_binding_expected_type(name)
+                .and_then(stable_width_from_type_key)
                 .map(FloatWidthResolution::Known)
                 .unwrap_or(FloatWidthResolution::Unknown),
             FloatReceiverWidth::Unstable(width) => FloatWidthResolution::Unstable(width),
@@ -246,7 +251,7 @@ fn parsed_literal_float(expr: &Expr) -> Option<LiteralFloat> {
 }
 
 fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
-    let width = float_width_from_method_turbofish(call)?;
+    let width = stable_width_from_method_turbofish(call)?;
     let Expr::Lit(ExprLit {
         lit: Lit::Str(lit), ..
     }) = strip_refs_groups(&call.receiver)
@@ -254,9 +259,8 @@ fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
         return None;
     };
     match width {
-        "f32" => lit.value().parse::<f32>().ok().map(LiteralFloat::F32),
-        "f64" => lit.value().parse::<f64>().ok().map(LiteralFloat::F64),
-        _ => None,
+        IeeeFloatWidth::F32 => lit.value().parse::<f32>().ok().map(LiteralFloat::F32),
+        IeeeFloatWidth::F64 => lit.value().parse::<f64>().ok().map(LiteralFloat::F64),
     }
 }
 
@@ -290,10 +294,10 @@ fn float_receiver_width_source(expr: &Expr) -> FloatReceiverWidth {
     }
 }
 
-fn float_refinement_receiver_static_width(expr: &Expr) -> Option<&'static str> {
+fn float_refinement_receiver_static_width(expr: &Expr) -> Option<IeeeFloatWidth> {
     match expr {
-        Expr::MethodCall(call) => float_width_from_method_name(&call.method.to_string())
-            .or_else(|| float_width_from_method_turbofish(call))
+        Expr::MethodCall(call) => stable_width_from_method_name(&call.method.to_string())
+            .or_else(|| stable_width_from_method_turbofish(call))
             .or_else(|| {
                 if call.method == "unwrap" {
                     float_refinement_receiver_static_width(&call.receiver)
@@ -301,11 +305,11 @@ fn float_refinement_receiver_static_width(expr: &Expr) -> Option<&'static str> {
                     None
                 }
             }),
-        Expr::Path(path) => float_width_from_path(&path.path),
+        Expr::Path(path) => stable_width_from_path(&path.path),
         Expr::Lit(ExprLit {
             lit: Lit::Float(lit),
             ..
-        }) => float_width_from_suffix(lit.suffix()),
+        }) => stable_width_from_suffix(lit.suffix()),
         Expr::Paren(paren) => float_refinement_receiver_static_width(&paren.expr),
         Expr::Group(group) => float_refinement_receiver_static_width(&group.expr),
         _ => None,
@@ -314,31 +318,31 @@ fn float_refinement_receiver_static_width(expr: &Expr) -> Option<&'static str> {
 
 fn float_refinement_receiver_width(
     expr: &Expr,
-    float_widths: &FloatWidthScope,
-) -> Option<&'static str> {
+    scope: &crate::TemporalScope,
+) -> Option<IeeeFloatWidth> {
     match expr {
-        Expr::MethodCall(call) => float_width_from_method_name(&call.method.to_string())
-            .or_else(|| float_width_from_method_turbofish(call))
+        Expr::MethodCall(call) => stable_width_from_method_name(&call.method.to_string())
+            .or_else(|| stable_width_from_method_turbofish(call))
             .or_else(|| {
                 if call.method == "unwrap" {
-                    float_refinement_receiver_width(&call.receiver, float_widths)
+                    float_refinement_receiver_width(&call.receiver, scope)
                 } else {
                     None
                 }
             }),
         Expr::Path(path) => {
             let name = path_to_name(&path.path);
-            float_widths
-                .get(&name)
-                .copied()
-                .or_else(|| float_width_from_path(&path.path))
+            scope
+                .let_binding_expected_type(&name)
+                .and_then(stable_width_from_type_key)
+                .or_else(|| stable_width_from_path(&path.path))
         }
         Expr::Lit(ExprLit {
             lit: Lit::Float(lit),
             ..
-        }) => float_width_from_suffix(lit.suffix()),
-        Expr::Paren(paren) => float_refinement_receiver_width(&paren.expr, float_widths),
-        Expr::Group(group) => float_refinement_receiver_width(&group.expr, float_widths),
+        }) => stable_width_from_suffix(lit.suffix()),
+        Expr::Paren(paren) => float_refinement_receiver_width(&paren.expr, scope),
+        Expr::Group(group) => float_refinement_receiver_width(&group.expr, scope),
         _ => None,
     }
 }
@@ -365,118 +369,9 @@ fn float_refinement_receiver_unstable_width(expr: &Expr) -> Option<&'static str>
     }
 }
 
-fn float_width_from_method_turbofish(call: &ExprMethodCall) -> Option<&'static str> {
-    if call.method != "parse" {
-        return None;
-    }
-    let args = call.turbofish.as_ref()?;
-    float_width_from_angle_args(args)
-}
-
-fn unstable_width_from_method_turbofish(call: &ExprMethodCall) -> Option<&'static str> {
-    if call.method != "parse" {
-        return None;
-    }
-    let args = call.turbofish.as_ref()?;
-    unstable_width_from_angle_args(args)
-}
-
-fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Option<&'static str> {
-    if args.args.len() != 1 {
-        return None;
-    }
-    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
-        return None;
-    };
-    float_width_from_type(ty)
-}
-
-fn unstable_width_from_angle_args(
-    args: &syn::AngleBracketedGenericArguments,
-) -> Option<&'static str> {
-    if args.args.len() != 1 {
-        return None;
-    }
-    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
-        return None;
-    };
-    unstable_width_from_type(ty)
-}
-
-fn float_width_from_type(ty: &Type) -> Option<&'static str> {
-    match ty {
-        Type::Path(path) => float_width_from_path(&path.path),
-        Type::Paren(paren) => float_width_from_type(&paren.elem),
-        Type::Group(group) => float_width_from_type(&group.elem),
-        _ => None,
-    }
-}
-
-fn unstable_width_from_type(ty: &Type) -> Option<&'static str> {
-    match ty {
-        Type::Path(path) => unstable_width_from_path(&path.path),
-        Type::Paren(paren) => unstable_width_from_type(&paren.elem),
-        Type::Group(group) => unstable_width_from_type(&group.elem),
-        _ => None,
-    }
-}
-
-fn float_width_from_method_name(method: &str) -> Option<&'static str> {
-    if method.ends_with("_f32") {
-        Some("f32")
-    } else if method.ends_with("_f64") {
-        Some("f64")
-    } else {
-        None
-    }
-}
-
-fn unstable_width_from_method_name(method: &str) -> Option<&'static str> {
-    if method.ends_with("_f16") {
-        Some("f16")
-    } else if method.ends_with("_f128") {
-        Some("f128")
-    } else {
-        None
-    }
-}
-
-fn float_width_from_path(path: &syn::Path) -> Option<&'static str> {
-    for segment in &path.segments {
-        match segment.ident.to_string().as_str() {
-            "f32" => return Some("f32"),
-            "f64" => return Some("f64"),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn unstable_width_from_path(path: &syn::Path) -> Option<&'static str> {
-    for segment in &path.segments {
-        match segment.ident.to_string().as_str() {
-            "f16" => return Some("f16"),
-            "f128" => return Some("f128"),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn float_width_from_suffix(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "f32" => Some("f32"),
-        "f64" => Some("f64"),
-        _ => None,
-    }
-}
-
-fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "f16" => Some("f16"),
-        "f128" => Some("f128"),
-        _ => None,
-    }
+fn float_predicate_atom_name(width: IeeeFloatWidth, method: &str) -> String {
+    let width = width.accept_ieee_float_width(IeeeFloatWidthNameVisitor);
+    format!("float.{width}.{method}")
 }
 
 fn path_to_name(path: &syn::Path) -> String {
@@ -502,5 +397,62 @@ fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>,
             .into_term()
             .unwrap_or_else(|| panic!("typed float refinement receiver reduced to non-term"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{record_simple_value_binding, TemporalPlan, TemporalScope};
+    use syn::{parse_quote, Expr, Local, Stmt};
+
+    fn local_from_stmt(stmt: Stmt) -> Local {
+        let Stmt::Local(local) = stmt else {
+            panic!("expected local statement");
+        };
+        local
+    }
+
+    fn scope_after(local: Local) -> TemporalScope {
+        let mut scope = TemporalScope::new("float-refinement-test", TemporalPlan::default());
+        record_simple_value_binding(&mut scope, &local);
+        scope
+    }
+
+    #[test]
+    fn float_width_typed_bound_receiver_resolves_through_temporal_scope() {
+        let local = local_from_stmt(parse_quote!(let value: f64 = 1.0;));
+        let scope = scope_after(local);
+        let expr: Expr = parse_quote!(value.is_sign_positive());
+        let Expr::MethodCall(call) = expr else {
+            panic!("expected value.is_sign_positive() method call");
+        };
+
+        match float_receiver_width_source(&call.receiver) {
+            FloatReceiverWidth::ScopePath(name) => assert_eq!(name, "value"),
+            _ => panic!("expected typed receiver to be recognized as a bound path"),
+        }
+        assert_eq!(
+            float_refinement_receiver_width(&call.receiver, &scope),
+            Some(IeeeFloatWidth::F64)
+        );
+    }
+
+    #[test]
+    fn float_width_literal_parse_refinement_reduces_to_bool_floor() {
+        let expr: Expr = parse_quote!("NaN".parse::<f32>().unwrap().is_nan());
+        let Expr::MethodCall(call) = expr else {
+            panic!("expected is_nan method call");
+        };
+
+        assert_eq!(
+            literal_float_refinement_value("is_nan", &call.receiver),
+            Some(true)
+        );
+        assert_eq!(
+            float_refinement_receiver_static_width(&call.receiver),
+            Some(IeeeFloatWidth::F32)
+        );
     }
 }
