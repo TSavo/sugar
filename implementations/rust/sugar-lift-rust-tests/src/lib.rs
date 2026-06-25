@@ -8228,6 +8228,10 @@ enum Effect {
     /// generic "not literal" fallback; it can only bubble an effect that the boundary
     /// owner already emitted.
     RuntimeArgument { boundary: String, reason: String },
+    /// RUNTIME-CALLABLE-ELEMENT: a literal-domain adaptor invokes the iterated element as
+    /// a callable (`|f| (*f)()`). The domain is finite, but the returned value is produced by
+    /// dynamic dispatch through the element, not by literal construction.
+    RuntimeCallableElement { boundary: String, reason: String },
     /// UNICODE-STRING-CASE: Rust's full `str::to_uppercase` / `to_lowercase` over a
     /// non-ASCII string depends on Unicode case mapping tables. ASCII receivers complete
     /// through the literal string floor; the version-sensitive frontier is the named stop.
@@ -8376,6 +8380,7 @@ impl Effect {
                  ({kind}) is not a constructible timeless value; refused"
             ),
             Effect::RuntimeArgument { reason, .. } => reason.clone(),
+            Effect::RuntimeCallableElement { reason, .. } => reason.clone(),
             Effect::UnicodeStringCase { .. } => {
                 "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
                     .to_string()
@@ -8426,6 +8431,7 @@ impl Effect {
             | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }
+            | Effect::RuntimeCallableElement { boundary, .. }
             | Effect::UnicodeStringCase { boundary }
             | Effect::Configuration { boundary, .. } => boundary.clone(),
         };
@@ -13083,7 +13089,7 @@ fn expr_refs_captured_name(
     refs.found
 }
 
-fn closure_body_calls_through_param(expr: &Expr) -> bool {
+pub(crate) fn closure_body_calls_through_param(expr: &Expr) -> bool {
     let Expr::Closure(cl) = expr else {
         return false;
     };

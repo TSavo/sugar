@@ -296,8 +296,8 @@ fn literal_sequence_static_len_inner<'a>(
         }
         Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
             // Value-identity adaptors over the element sequence: same length as the receiver.
-            "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "clone" | "rev" | "enumerate"
-            | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
+            "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "clone" | "rev"
+            | "enumerate" | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
                 literal_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)
             }
             _ => None,
