@@ -385,22 +385,20 @@ impl ForAllSugar {
                 domain.clone()
             }
             ForAllDomain::Sequence(receiver) => {
-                let seq = match receiver.reduce(ctx) {
-                    Outcome::Complete(d) => d
-                        .into_seq()
-                        .unwrap_or_else(|| forall_gap("sequence domain reduced to non-sequence")),
+                let elems = match receiver.reduce(ctx) {
+                    Outcome::Complete(d) => sequence_domain_terms(d, ctx),
                     Outcome::Incomplete(effect) => {
                         return Err(Outcome::Incomplete(effect));
                     }
                 };
-                if seq.is_empty() {
+                if elems.is_empty() {
                     return Ok(self.empty_loop_no_panic(ctx));
                 }
-                if seq.len() > SUGAR_SEQ_CAP as usize {
+                if elems.len() > SUGAR_SEQ_CAP as usize {
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::forall",
                         var = self.var.as_str(),
-                        len = seq.len(),
+                        len = elems.len(),
                         cap = SUGAR_SEQ_CAP,
                         "forall sequence domain declined: empty or over cap"
                     );
@@ -408,7 +406,7 @@ impl ForAllSugar {
                         boundary: self.body_boundary(ctx),
                         reason: format!(
                             "forall sequence domain length {} exceeds sugar cap {}",
-                            seq.len(),
+                            elems.len(),
                             SUGAR_SEQ_CAP
                         ),
                     }));
@@ -416,27 +414,9 @@ impl ForAllSugar {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::forall",
                     var = self.var.as_str(),
-                    len = seq.len(),
+                    len = elems.len(),
                     "forall sequence domain materialized"
                 );
-                let mut elems = Vec::with_capacity(seq.len());
-                for elem in seq {
-                    let Some(term) = elem
-                        .value
-                        .as_ref()
-                        .and_then(const_val_term)
-                        .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
-                    else {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::forall",
-                            var = self.var.as_str(),
-                            elem = %crate::token_key(&elem.expr),
-                            "forall sequence domain declined: element did not translate to term"
-                        );
-                        forall_gap("sequence element did not translate to term");
-                    };
-                    elems.push(term);
-                }
                 BoundedDomain::Array(elems)
             }
         };
@@ -494,6 +474,30 @@ impl ForAllSugar {
                 )),
             },
         }
+    }
+}
+
+fn sequence_domain_terms(desugared: Desugared, ctx: &SugarCtx) -> Vec<Rc<Term>> {
+    match desugared {
+        Desugared::Seq(seq) => seq
+            .into_iter()
+            .map(|elem| {
+                elem.value
+                    .as_ref()
+                    .and_then(const_val_term)
+                    .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
+                    .unwrap_or_else(|| {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::forall",
+                            elem = %crate::token_key(&elem.expr),
+                            "forall sequence domain declined: element did not translate to term"
+                        );
+                        forall_gap("sequence element did not translate to term")
+                    })
+            })
+            .collect(),
+        Desugared::TermSeq(terms) => terms,
+        _ => forall_gap("sequence domain reduced to non-sequence"),
     }
 }
 
