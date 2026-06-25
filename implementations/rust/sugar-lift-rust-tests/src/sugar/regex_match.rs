@@ -218,7 +218,7 @@ pub(crate) fn recognize_regex_match(
 pub(crate) fn assertion_entry(
     expr: &Expr,
     scope: &TemporalScope,
-) -> Result<Option<AssertionEntry>, String> {
+) -> Result<Option<AssertionEntry>, Effect> {
     // Only immutable `let` bindings resolve a bound regex. A `let mut re` could
     // be reassigned, so its later value is not the written `Regex::new(lit)` init.
     let stable_bindings = stable_let_bindings(scope);
@@ -234,10 +234,10 @@ pub(crate) fn assertion_entry(
     let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
     let pattern_str = match matched.resolve_pattern_floor(&ctx) {
         FloorRead::Complete(pattern) => pattern,
-        FloorRead::Incomplete(_) => return Ok(None),
+        FloorRead::Incomplete(effect) => return Err(effect),
     };
     if let Err(error) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
-        return Err(regex_pattern_error_reason(&pattern_str, error));
+        return Err(regex_pattern_effect(pattern_str, error));
     }
 
     let subject = match SugarBody::term(&matched.subject, &fcx).reduce(&ctx) {
@@ -246,7 +246,7 @@ pub(crate) fn assertion_entry(
                 "regex subject completed a non-Term where a Term was required; write more Sugar for this AST",
             )
         }),
-        Outcome::Incomplete(_) => return Ok(None),
+        Outcome::Incomplete(effect) => return Err(effect),
     };
     let pattern = str_const(pattern_str);
     let name = method_assertion_name(
@@ -367,11 +367,18 @@ fn regex_pattern_incomplete(
     pattern: String,
     error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
 ) -> Outcome {
+    Outcome::Incomplete(regex_pattern_effect(pattern, error))
+}
+
+fn regex_pattern_effect(
+    pattern: String,
+    error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
+) -> Effect {
     let reason = regex_pattern_error_reason(&pattern, error);
-    Outcome::Incomplete(Effect::RegexPattern {
+    Effect::RegexPattern {
         boundary: pattern,
         reason,
-    })
+    }
 }
 
 fn regex_pattern_error_reason(
