@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use syn::{Expr, Lit, RangeLimits};
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::sugar::monadic::{none_term, some_term};
 use crate::{
@@ -22,7 +22,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
 
 pub(crate) fn recognize(
     expr: &Expr,
-    _fcx: &crate::sugar::factory::SugarBuildCtx,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = peel_refs_groups(expr) else {
         return None;
@@ -36,14 +36,16 @@ pub(crate) fn recognize(
         _ => return None,
     };
     Some(Box::new(MemchrSugar {
-        needle: call.args[0].clone(),
+        needle: SugarBody::term(&call.args[0], fcx),
+        needle_site: call.args[0].clone(),
         haystack: call.args[1].clone(),
         reverse,
     }))
 }
 
 struct MemchrSugar {
-    needle: Expr,
+    needle: SugarBody<TermFloor>,
+    needle_site: Expr,
     haystack: Expr,
     reverse: bool,
 }
@@ -53,16 +55,15 @@ impl Sugar for MemchrSugar {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> =
             stable.iter().map(|(k, v)| (k.clone(), v)).collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let needle = match const_byte_term(&self.needle, &fcx, ctx) {
+        let needle = match const_byte_term(&self.needle, ctx) {
             Ok(Some(byte)) => byte,
             Ok(None) => {
                 return Outcome::Incomplete(Effect::MemchrRuntime {
-                    boundary: token_key(&self.needle),
+                    boundary: token_key(&self.needle_site),
                     reason: format!(
                         "runtime memchr needle, not literal (bin-2: runtime data, not constructed \
                          from source literals); refused: `{}`",
-                        token_key(&self.needle)
+                        token_key(&self.needle_site)
                     ),
                 });
             }
@@ -195,8 +196,8 @@ fn slice_bounds<'a>(
     Ok((start <= end && end <= len).then_some((start, end)))
 }
 
-fn const_byte_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Option<u8>, Effect> {
-    let term = match build_term(expr, fcx).desugar(ctx) {
+fn const_byte_term(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Option<u8>, Effect> {
+    let term = match body.reduce(ctx) {
         Outcome::Complete(d) => d.into_term(),
         Outcome::Incomplete(effect) => return Err(effect),
     };
@@ -208,24 +209,33 @@ fn const_byte_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<O
 
 fn const_int_term<'a>(
     expr: &Expr,
-    ctx: &SugarCtx,
+    _ctx: &SugarCtx,
     let_inits: &BTreeMap<String, &'a Expr>,
 ) -> Result<Option<i128>, Effect> {
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, let_inits);
-    let term = match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term(),
-        Outcome::Incomplete(effect) => return Err(effect),
-    };
-    let Some(term) = term else {
-        return Ok(None);
-    };
-    Ok(const_fold_int_term(&term))
+    Ok(const_int_value(expr, let_inits))
 }
 
 fn const_byte_value(expr: &Expr) -> Option<u8> {
     match const_eval(expr, &BTreeMap::new())? {
         ConstVal::Int(n) => u8::try_from(n).ok(),
         ConstVal::PrimitiveInt { raw, .. } => u8::try_from(raw).ok(),
+        _ => None,
+    }
+}
+
+fn const_int_value<'a>(expr: &Expr, let_inits: &BTreeMap<String, &'a Expr>) -> Option<i128> {
+    let value = match peel_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            let init = let_inits.get(&name).copied()?;
+            const_eval(init, &BTreeMap::new())?
+        }
+        _ => const_eval(expr, &BTreeMap::new())?,
+    };
+    match value {
+        ConstVal::Int(n) => Some(n),
+        ConstVal::PrimitiveInt { raw, .. } => i128::try_from(raw).ok(),
+        ConstVal::UInt128(n) => i128::try_from(n).ok(),
         _ => None,
     }
 }
