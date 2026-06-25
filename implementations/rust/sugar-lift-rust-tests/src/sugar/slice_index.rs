@@ -20,14 +20,77 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, Lit, RangeLimits};
 
 use crate::sugar::monadic;
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
+use crate::sugar::term_leaf::resolved_term;
 use crate::{
     literal_aggregate_term_in_scope, parse_int_lit, strip_refs_groups, token_key,
-    translate_term_in_scope, Sugar,
+    translate_term_in_scope, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("slice_index", recognize);
+
+struct SliceIndexRepresentationSugar {
+    boundary: String,
+    kind: String,
+}
+
+impl Sugar for SliceIndexRepresentationSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RepresentationCast {
+            boundary: self.boundary.clone(),
+            kind: self.kind.clone(),
+        })
+    }
+}
+
+struct SliceIndexLiteralPanicSugar {
+    boundary: String,
+    reason: String,
+}
+
+impl Sugar for SliceIndexLiteralPanicSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::LiteralPanic {
+            boundary: self.boundary.clone(),
+            reason: self.reason.clone(),
+        })
+    }
+}
+
+struct SliceIndexUndefinedBehaviorSugar {
+    boundary: String,
+    reason: String,
+}
+
+impl Sugar for SliceIndexUndefinedBehaviorSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::UndefinedBehavior {
+            boundary: self.boundary.clone(),
+            reason: self.reason.clone(),
+        })
+    }
+}
+
+fn representation_boundary(expr: &Expr, kind: &'static str) -> Box<dyn Sugar> {
+    Box::new(SliceIndexRepresentationSugar {
+        boundary: token_key(expr),
+        kind: kind.to_string(),
+    })
+}
+
+fn literal_panic_boundary(expr: &Expr, reason: String) -> Box<dyn Sugar> {
+    Box::new(SliceIndexLiteralPanicSugar {
+        boundary: token_key(expr),
+        reason,
+    })
+}
+
+fn undefined_behavior_boundary(expr: &Expr, reason: String) -> Box<dyn Sugar> {
+    Box::new(SliceIndexUndefinedBehaviorSugar {
+        boundary: token_key(expr),
+        reason,
+    })
+}
 
 pub(crate) fn recognize(
     expr: &Expr,
@@ -38,19 +101,16 @@ pub(crate) fn recognize(
     };
     match call.method.to_string().as_str() {
         "get_mut" | "index_mut" if call.args.len() == 1 => {
-            return Some(reasoned_incomplete(format!(
-                "unsupported term `{}`: effectful / raw-pointer / mutable-reference term (a `&mut` slice borrow) is not a constructible timeless value; refused",
-                token_key(expr)
-            )));
+            return Some(representation_boundary(expr, "a `&mut` slice borrow"));
         }
         "get_unchecked_mut" if call.args.len() == 1 => {
             // `&mut T` result: a mutable-reference term, not a constructible timeless
             // value -- same boundary as `get_mut`/`index_mut`. Warranting a value
             // through a `&mut` belongs to the borrow path, not here.
-            return Some(reasoned_incomplete(format!(
-                "unsupported term `{}`: effectful / raw-pointer / mutable-reference term (an unchecked `&mut` slice borrow) is not a constructible timeless value; refused",
-                token_key(expr)
-            )));
+            return Some(representation_boundary(
+                expr,
+                "an unchecked `&mut` slice borrow",
+            ));
         }
         "get_unchecked" if call.args.len() == 1 => {
             // `get_unchecked` returns `&T`/`&[T]`; on a literal-backed slice with an
@@ -80,10 +140,13 @@ pub(crate) fn recognize(
             monadic::some_term(inner)
         }
         (MethodKind::Index, None) => {
-            return Some(reasoned_incomplete(format!(
-                "slice index `{}` is out of bounds for a literal slice; refused",
-                token_key(expr)
-            )));
+            return Some(literal_panic_boundary(
+                expr,
+                format!(
+                    "slice index `{}` is out of bounds for a literal slice; refused",
+                    token_key(expr)
+                ),
+            ));
         }
         (MethodKind::Index, Some(selection)) => {
             selection_term(selection, &slice, expr, fcx.scope()).ok()?
@@ -133,10 +196,13 @@ fn recognize_get_unchecked(
             );
             Some(resolved_term(term))
         }
-        None => Some(reasoned_incomplete(format!(
-            "out-of-bounds unchecked slice indexing `{}` is undefined behavior with no determinate value; refused",
-            token_key(expr)
-        ))),
+        None => Some(undefined_behavior_boundary(
+            expr,
+            format!(
+                "out-of-bounds unchecked slice indexing `{}` is undefined behavior with no determinate value; refused",
+                token_key(expr)
+            ),
+        )),
     }
 }
 

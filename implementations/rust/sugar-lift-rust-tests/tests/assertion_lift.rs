@@ -5096,6 +5096,87 @@ fn slice_get_unchecked_out_of_domain_refuses() {
         "out-of-domain get_unchecked must not falsely lift: lifted={} refused={}",
         out.assertions_lifted, out.assertions_refused
     );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|reason| reason.contains("out-of-bounds unchecked slice indexing"))
+        .unwrap_or_else(|| {
+            panic!(
+                "out-of-domain get_unchecked must refuse by name: {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "unchecked out-of-domain indexing is terminal UB, not future work: {reason}"
+    );
+    assert!(
+        !reason.contains("legacy reason leaf"),
+        "unchecked out-of-domain indexing must not route through ReasonedIncompleteSugar: {reason}"
+    );
+}
+
+#[test]
+fn slice_mut_index_methods_refuse_as_representation_boundaries() {
+    for (src, label) in [
+        (
+            r#"
+            #[test]
+            fn t_get_mut() {
+                assert_eq!(Clamp(2).get_mut(&mut [0, 1] as &mut [_]), None::<&mut i32>);
+            }
+            "#,
+            "get_mut",
+        ),
+        (
+            r#"
+            #[test]
+            fn t_index_mut() {
+                assert_eq!(Clamp(2).index_mut(&mut [0, 1] as &mut [_]), &mut 0);
+            }
+            "#,
+            "index_mut",
+        ),
+        (
+            r#"
+            #[test]
+            fn t_get_unchecked_mut() {
+                assert_eq!(unsafe { Clamp(2).get_unchecked_mut(&mut [0, 1] as &mut [_]) }, &mut 0);
+            }
+            "#,
+            "get_unchecked_mut",
+        ),
+    ] {
+        let out = lift_file(&parse(src), &format!("coretests/slice/{label}.rs"));
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "{label} must not fabricate a timeless value: {:?}",
+            out.decls
+        );
+        let reason = out
+            .skip_reasons
+            .iter()
+            .find(|reason| {
+                reason.contains("effectful / raw-pointer / mutable-reference term")
+                    && reason.contains("&mut")
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} must refuse as a mutable-reference representation boundary: {:?}",
+                    out.skip_reasons
+                )
+            });
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused,
+            "{label} refusal must be terminal: {reason}"
+        );
+        assert!(
+            !reason.contains("legacy reason leaf"),
+            "{label} must not route through ReasonedIncompleteSugar: {reason}"
+        );
+    }
 }
 
 // The `coretests/index.rs` SliceIndex-trait shape: `Clamp(idx).get_unchecked(&slice)` --
