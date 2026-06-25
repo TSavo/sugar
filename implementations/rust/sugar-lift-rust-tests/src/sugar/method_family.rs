@@ -440,7 +440,7 @@ fn literal_collection_static_len_proof_inner<'a>(
             let init = let_inits
                 .get(&name)
                 .copied()
-                .or_else(|| scope.stable_let_binding_for_term(&name))?;
+                .or_else(|| scope.replayable_let_binding_for_source(&name))?;
             literal_collection_static_len_proof_inner(init, let_inits, scope, depth + 1)
         }
         Expr::Call(call) if into_iter_arg(call).is_some() => {
