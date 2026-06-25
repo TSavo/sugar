@@ -4588,6 +4588,11 @@ pub(crate) struct TemporalScope {
     /// compiler axiom, so `ConstSugar` resolves it to this initializer and recursively
     /// asks the factory to desugar the initializer term.
     const_registry: ConstRegistry,
+    /// True while the collector is walking a local const/static item initializer. The
+    /// initializer is compiler-evaluated, but assertions nested under its control-flow
+    /// are still conditional source sites; finite replay must not promote them into
+    /// unconditional facts for the enclosing test.
+    inside_const_item_initializer: bool,
     /// Names of value helpers PEELED to ground literals by a term-position inline during
     /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`);
     /// the reduction marker flows OUT so the collector does not also count the helper's
@@ -4629,6 +4634,7 @@ impl TemporalScope {
             layout_type_registry: LayoutTypeRegistry::new(),
             value_type_registry: ValueTypeRegistry::new(),
             const_registry: ConstRegistry::new(),
+            inside_const_item_initializer: false,
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
             dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
             temporal_rewrite: std::cell::RefCell::new(
@@ -4752,6 +4758,15 @@ impl TemporalScope {
         self
     }
 
+    fn with_const_item_initializer(mut self) -> Self {
+        self.inside_const_item_initializer = true;
+        self
+    }
+
+    fn is_inside_const_item_initializer(&self) -> bool {
+        self.inside_const_item_initializer
+    }
+
     pub(crate) fn const_expr_for_path(&self, path: &syn::Path) -> Option<Rc<Expr>> {
         let name = const_path_key(path)?;
         self.const_registry.lookup(&name)
@@ -4767,6 +4782,7 @@ impl TemporalScope {
         let Some(parent) = parent else {
             return self;
         };
+        self.inside_const_item_initializer = parent.inside_const_item_initializer;
         self.let_bindings.extend(
             parent
                 .let_bindings
@@ -11356,6 +11372,26 @@ fn collect_assertion_entries<'a>(
                 let for_scope = temporal_scope
                     .clone()
                     .with_const_registry(scoped_const_registry_for_stmts(stmts, reducer));
+                let count = count_assertion_surface_sites_in_stmts_with_source(
+                    &f.body.stmts,
+                    reducer,
+                    macro_depth,
+                );
+                if temporal_scope.is_inside_const_item_initializer() && count > 0 {
+                    let reason = for_context_refusal_reason(
+                        f,
+                        &for_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        factory_audits,
+                    );
+                    for _ in 0..count {
+                        skipped.push(reason.clone());
+                    }
+                    continue;
+                }
                 // A bounded loop is the universal it states: `ForAllSugar` reads the
                 // range as a guard and lifts forall x. (guard => body) (or the finite
                 // conjunction over a literal array). If the body does not wholly
@@ -11390,11 +11426,6 @@ fn collect_assertion_entries<'a>(
                     // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
                     // loop var) STAYS UNCLASSIFIED here (the inverse of fake-complete is
                     // fake-REFUSE, equally forbidden -- never refuse to zero the count).
-                    let count = count_assertion_surface_sites_in_stmts_with_source(
-                        &f.body.stmts,
-                        reducer,
-                        macro_depth,
-                    );
                     let reason = for_context_refusal_reason(
                         f,
                         &for_scope,
@@ -11722,6 +11753,7 @@ fn collect_assertion_entries<'a>(
                         })],
                         other => vec![Stmt::Expr(other.clone(), None)],
                     };
+                    let const_item_parent = temporal_scope.clone().with_const_item_initializer();
                     collect_assertion_entries(
                         &init_stmts,
                         &child_block_scope(local_scope, stmt_idx),
@@ -11735,7 +11767,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
-                        Some(&temporal_scope),
+                        Some(&const_item_parent),
                         temporal_scope.macro_registry(),
                         &local_fns,
                         &visible_fn_registry,
@@ -19941,9 +19973,9 @@ mod lifter_key_tests {
     fn const_item_conditional_assert_is_not_falsely_lifted() {
         // NEGATIVE TWIN: an assert that sits under a `for` loop INSIDE the const
         // item block is genuinely conditional (per-element). Recursing into the
-        // const-item block must NOT promote it to a point-wise lift -- the
-        // per-assert gating still routes it to the for-context refusal. Over-
-        // claiming it would be a false discharge.
+        // const-item block must NOT promote it to a point-wise lift. Once
+        // `Some(42)` is a lawful Composite floor, the nested assertion still
+        // stops at the for-context boundary, not a factory gap or false discharge.
         // Vendor shape: rust-src coretests iter/mod.rs::test_const_iter.
         let src = r#"
             #[test]
@@ -19961,14 +19993,14 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        // The `assert!(x == 42)` under the `for` must stay refused (conditional);
-        // only the unconditional top-level `assert!(X)` lifts.
+        // The for-loop-dependent const initializer must stay refused at a named
+        // temporal boundary; only the unconditional top-level `assert!(X)` lifts.
         assert!(
             out.skip_reasons
                 .iter()
                 .any(|r| r.contains("under for context")),
-            "the for-bodied assert inside the const block must stay refused as a \
-             for-context assertion, not be falsely lifted: {:?}",
+            "the const loop must stop at a named temporal boundary, not be \
+             falsely lifted: {:?}",
             out.skip_reasons
         );
         assert!(

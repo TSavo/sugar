@@ -43,16 +43,23 @@
 // `Some(some_io())` blows up, never grounds); a child that completes to a
 // non-term is a construction-law bug and panics.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_eval, const_fold_int_term, const_fold_u128_term, strip_refs_groups, ConstVal, Desugared,
+    DesugaredElem, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("monadic", &["call", "path"], recognize);
+
+pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("monadic_composite", recognize_composite);
 
 /// The reserved monadic ctor names. Distinct from the generic `call:<head>`
 /// ctor (`call:Some`/`call:None`) so the equality routes through the plain
@@ -79,6 +86,19 @@ enum Kind {
     /// `Err(x)` -- one inner child.
     Err(SugarBody<TermFloor>),
     /// `None` -- nullary.
+    None,
+}
+
+enum CompositeKind {
+    Some {
+        expr: Expr,
+        body: SugarBody<TermFloor>,
+    },
+    Ok {
+        expr: Expr,
+        body: SugarBody<TermFloor>,
+    },
+    Err(SugarBody<TermFloor>),
     None,
 }
 
@@ -118,6 +138,35 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 return None;
             };
             Some(Box::new(MonadicSugar { kind }))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        // `for _ in None` / `None.into_iter()` is a finite empty sequence.
+        Expr::Path(path) if path_ends_with(path, "None") => Some(Box::new(MonadicCompositeSugar {
+            kind: CompositeKind::None,
+        })),
+        // `Option` / `Result` implement `IntoIterator`: `Some(x)` and `Ok(x)`
+        // yield one value; `Err(x)` yields none after evaluating the payload.
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = &*call.func else {
+                return None;
+            };
+            let expr = strip_refs_groups(&call.args[0]).clone();
+            let body = SugarBody::term(&expr, fcx);
+            let kind = if path_ends_with(path, "Some") {
+                CompositeKind::Some { expr, body }
+            } else if path_ends_with(path, "Ok") {
+                CompositeKind::Ok { expr, body }
+            } else if path_ends_with(path, "Err") {
+                CompositeKind::Err(body)
+            } else {
+                return None;
+            };
+            Some(Box::new(MonadicCompositeSugar { kind }))
         }
         _ => None,
     }
@@ -215,6 +264,69 @@ impl MonadicSugar {
     }
 }
 
+struct MonadicCompositeSugar {
+    kind: CompositeKind,
+}
+
+impl MonadicCompositeSugar {
+    fn reduce_child(
+        name: &str,
+        body: &SugarBody<TermFloor>,
+        ctx: &SugarCtx,
+    ) -> Result<Rc<Term>, Outcome> {
+        match body.reduce(ctx) {
+            Outcome::Complete(d) => match d.into_term() {
+                Some(term) => Ok(term),
+                None => panic!("monadic composite child completed as non-term for `{name}`"),
+            },
+            Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
+        }
+    }
+
+    fn single(name: &str, expr: &Expr, body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Outcome {
+        let term = match Self::reduce_child(name, body, ctx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
+        };
+        Outcome::Complete(Desugared::Seq(vec![DesugaredElem {
+            expr: expr.clone(),
+            value: term_to_const_val(&term).or_else(|| const_eval(expr, &BTreeMap::new())),
+        }]))
+    }
+}
+
+fn term_to_const_val(term: &Rc<Term>) -> Option<ConstVal> {
+    if let Some(value) = const_fold_u128_term(term) {
+        return Some(ConstVal::UInt128(value));
+    }
+    if let Some(value) = const_fold_int_term(term) {
+        return Some(ConstVal::Int(value));
+    }
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(ConstVal::Bool(*value)),
+        _ => None,
+    }
+}
+
+impl Sugar for MonadicCompositeSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match &self.kind {
+            CompositeKind::Some { expr, body } => Self::single("Some", expr, body, ctx),
+            CompositeKind::Ok { expr, body } => Self::single("Ok", expr, body, ctx),
+            CompositeKind::Err(body) => {
+                if let Err(outcome) = Self::reduce_child("Err", body, ctx) {
+                    return outcome;
+                }
+                Outcome::Complete(Desugared::Seq(Vec::new()))
+            }
+            CompositeKind::None => Outcome::Complete(Desugared::Seq(Vec::new())),
+        }
+    }
+}
+
 impl Sugar for MonadicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match &self.kind {
@@ -274,6 +386,13 @@ mod tests {
     fn dug_term(node: &dyn Sugar) -> Rc<Term> {
         match run(node) {
             Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
+        }
+    }
+
+    fn dug_seq(node: &dyn Sugar) -> Vec<DesugaredElem> {
+        match run(node) {
+            Outcome::Complete(d) => d.into_seq().expect("a Seq"),
             Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         }
     }
@@ -338,5 +457,49 @@ mod tests {
         let n = none_term();
         assert_eq!(ctor_of(&n).0, OPT_NONE);
         assert!(ctor_of(&n).1.is_empty());
+    }
+
+    #[test]
+    fn some_and_ok_composites_emit_singleton_sequences() {
+        let expr: Expr = syn::parse_str("42").unwrap();
+        let some = MonadicCompositeSugar {
+            kind: CompositeKind::Some {
+                expr: expr.clone(),
+                body: body(num(42)),
+            },
+        };
+        let ok = MonadicCompositeSugar {
+            kind: CompositeKind::Ok {
+                expr,
+                body: body(num(42)),
+            },
+        };
+
+        let some_seq = dug_seq(&some);
+        let ok_seq = dug_seq(&ok);
+
+        assert_eq!(some_seq.len(), 1);
+        assert_eq!(
+            some_seq[0].value.as_ref().and_then(|value| value.as_int()),
+            Some(42)
+        );
+        assert_eq!(ok_seq.len(), 1);
+        assert_eq!(
+            ok_seq[0].value.as_ref().and_then(|value| value.as_int()),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn none_and_err_composites_emit_empty_sequences() {
+        let none = MonadicCompositeSugar {
+            kind: CompositeKind::None,
+        };
+        let err = MonadicCompositeSugar {
+            kind: CompositeKind::Err(body(num(9))),
+        };
+
+        assert!(dug_seq(&none).is_empty());
+        assert!(dug_seq(&err).is_empty());
     }
 }
