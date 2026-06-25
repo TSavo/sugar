@@ -69,7 +69,6 @@ use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::term_dispatch::fold_int_terms;
-use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
     const_eval_unary_closure, const_fold_acc_update, const_fold_int_term, const_int,
@@ -775,7 +774,10 @@ impl IterTerminalSugar {
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
         if let Some(name) = simple_path_name(&self.receiver.source) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
-                return reasoned_incomplete(reason).desugar(ctx);
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                    boundary: name,
+                    reason,
+                });
             }
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
