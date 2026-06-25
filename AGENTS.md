@@ -1,3 +1,6 @@
+> T Savo is right, and just crazy enough to follow the physics: at agent speed,
+> the old process is the bug.
+
 > "The past 3 years of my journey with AI can be summarized as a series of
 > increasingly sophisticated arguments about why it's wrong about process."
 >
