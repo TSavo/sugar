@@ -8,8 +8,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::sugar::claim::SugarRole;
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{StatementEffectFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     substitute_expr, token_key, translate_term_in_scope_with_audits, Effect, ExprBindings,
     FactoryAuditLog, Outcome, Sugar, SugarCtx, TemporalScope,
@@ -98,31 +97,30 @@ fn find_const_expr(expr: &Expr) -> Option<&Expr> {
 
 struct BlockTermSugar {
     site: String,
-    stmts: Vec<Stmt>,
-    let_inits: BTreeMap<String, Expr>,
+    statement_effects: Vec<SugarBody<StatementEffectFloor>>,
+    tail: Option<SugarBody<TermFloor>>,
 }
 
 impl BlockTermSugar {
     fn boxed(site: &Expr, stmts: Vec<Stmt>, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
         Box::new(Self {
             site: token_key(site),
-            stmts,
-            let_inits: capture_let_inits(fcx),
+            statement_effects: statement_effect_bodies(&stmts, fcx),
+            tail: tail_body(&stmts, fcx),
         })
     }
 }
 
 impl Sugar for BlockTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let let_refs = captured_let_refs(&self.let_inits);
-        if let Some(effect) = first_statement_effect(&self.stmts, ctx, &let_refs) {
-            return Outcome::Incomplete(effect);
+        for body in &self.statement_effects {
+            match body.desugar(ctx) {
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+                Outcome::Complete(_) => {}
+            }
         }
-        if let Some(tail) = inert_prefix_tail(&self.stmts) {
-            return reduce_tail(tail, ctx, &let_refs);
-        }
-        if let Some(tail) = let_prefix_tail_expr(&self.stmts) {
-            return reduce_tail(&tail, ctx, &let_refs);
+        if let Some(tail) = &self.tail {
+            return tail.desugar(ctx);
         }
         panic!("unsupported term `{}`", self.site);
     }
@@ -182,56 +180,33 @@ fn immutable_simple_binding(pat: &Pat) -> Option<String> {
     }
 }
 
-fn first_statement_effect(
+fn statement_effect_bodies(
     stmts: &[Stmt],
-    ctx: &SugarCtx,
-    let_inits: &BTreeMap<String, &Expr>,
-) -> Option<crate::Effect> {
-    stmts.iter().find_map(|stmt| match stmt {
-        Stmt::Macro(stmt_macro) => {
-            let expr = Expr::Macro(syn::ExprMacro {
-                attrs: stmt_macro.attrs.clone(),
-                mac: stmt_macro.mac.clone(),
-            });
-            statement_effect(&expr, ctx, let_inits)
-        }
-        Stmt::Expr(expr, Some(_)) => statement_effect(expr, ctx, let_inits),
-        Stmt::Expr(expr @ Expr::Macro(_), None) => statement_effect(expr, ctx, let_inits),
+    fcx: &SugarBuildCtx,
+) -> Vec<SugarBody<StatementEffectFloor>> {
+    stmts
+        .iter()
+        .filter_map(statement_effect_expr)
+        .filter_map(|expr| SugarBody::statement_effect(&expr, fcx))
+        .collect()
+}
+
+fn statement_effect_expr(stmt: &Stmt) -> Option<Expr> {
+    match stmt {
+        Stmt::Macro(stmt_macro) => Some(Expr::Macro(syn::ExprMacro {
+            attrs: stmt_macro.attrs.clone(),
+            mac: stmt_macro.mac.clone(),
+        })),
+        Stmt::Expr(expr, Some(_)) => Some(expr.clone()),
+        Stmt::Expr(expr @ Expr::Macro(_), None) => Some(expr.clone()),
         Stmt::Expr(_, None) | Stmt::Local(_) | Stmt::Item(_) => None,
-    })
-}
-
-fn statement_effect(
-    expr: &Expr,
-    ctx: &SugarCtx,
-    let_inits: &BTreeMap<String, &Expr>,
-) -> Option<crate::Effect> {
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, let_inits);
-    if !crate::sugar::factory::has_expr_role(expr, &fcx, SugarRole::StatementEffect) {
-        return None;
-    }
-    let node = crate::sugar::factory::build_expr(expr, &fcx, SugarRole::StatementEffect);
-    match node.desugar(ctx) {
-        Outcome::Incomplete(effect) => Some(effect),
-        Outcome::Complete(_) => None,
     }
 }
 
-fn reduce_tail(tail: &Expr, ctx: &SugarCtx, let_inits: &BTreeMap<String, &Expr>) -> Outcome {
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, let_inits);
-    crate::sugar::factory::build_expr(tail, &fcx, SugarRole::Term).desugar(ctx)
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, expr)| (name.clone(), (*expr).clone()))
-        .collect()
-}
-
-fn captured_let_refs(captured: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
-    captured
-        .iter()
-        .map(|(name, expr)| (name.clone(), expr))
-        .collect()
+fn tail_body(stmts: &[Stmt], fcx: &SugarBuildCtx) -> Option<SugarBody<TermFloor>> {
+    if let Some(tail) = inert_prefix_tail(stmts) {
+        return Some(SugarBody::term(tail, fcx));
+    }
+    let tail = let_prefix_tail_expr(stmts)?;
+    Some(SugarBody::term(&tail, fcx))
 }
