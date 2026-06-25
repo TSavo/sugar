@@ -73,8 +73,9 @@ use crate::sugar::term_dispatch::fold_int_terms;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
     const_eval_unary_closure, const_fold_acc_update, const_fold_int_term, const_int,
-    const_int_acc_init, parse_int_lit, simple_path_name, strip_refs_groups, token_key, ConstVal,
-    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, TemporalScope,
+    const_int_acc_init, parse_int_lit, refusal_disposition, simple_path_name, strip_refs_groups,
+    token_key, ConstVal, Desugared, DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx,
+    TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -1155,10 +1156,18 @@ impl IterTerminalSugar {
             | Terminal::Find(_)
             | Terminal::Position(_)
             | Terminal::Reduce(_)
-            | Terminal::Fold(_, _) => self
-                .closure_refusal
-                .clone()
-                .map(|reason| iter_terminal_gap(&reason)),
+            | Terminal::Fold(_, _) => {
+                let reason = self.closure_refusal.clone()?;
+                match refusal_disposition(&reason) {
+                    Disposition::Refused => {
+                        Some(Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                            boundary: self.site_key.clone(),
+                            reason,
+                        }))
+                    }
+                    Disposition::Inactive | Disposition::Unclassified => iter_terminal_gap(&reason),
+                }
+            }
             _ => None,
         }
     }

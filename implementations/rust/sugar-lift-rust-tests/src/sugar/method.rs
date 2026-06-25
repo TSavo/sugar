@@ -10,11 +10,14 @@
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{angle_args_key, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    angle_args_key, is_consuming_iterator_method, receiver_is_versioned_iterator, Desugared,
+    Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("method", recognize);
@@ -75,7 +78,7 @@ impl Sugar for MethodSugar {
                 receiver,
                 args,
             } => {
-                let receiver = match receiver.reduce(ctx) {
+                let mut receiver = match receiver.reduce(ctx) {
                     Outcome::Complete(d) => match d.into_term() {
                         Some(t) => t,
                         None => {
@@ -86,6 +89,16 @@ impl Sugar for MethodSugar {
                     },
                     Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                 };
+                if is_consuming_iterator_method(method) {
+                    if let Term::Var { name } = receiver.as_ref() {
+                        if receiver_is_versioned_iterator(name, ctx.scope) {
+                            let occ = ctx.scope.bump_consuming_occurrence(name);
+                            if occ > 0 {
+                                receiver = make_var(format!("{name}@adv{occ}"));
+                            }
+                        }
+                    }
+                }
                 let mut terms = vec![receiver];
                 for arg in args {
                     let term = match arg.reduce(ctx) {

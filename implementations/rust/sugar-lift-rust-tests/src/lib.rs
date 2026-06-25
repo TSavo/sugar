@@ -9925,7 +9925,7 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let expr = Expr::MethodCall(call.clone());
-        let expr_effect = panic_freedom_expr_callsite_effect(&expr);
+        let expr_effect = panic_freedom_expr_callsite_effect(&expr, self.scope);
         let closure_effect = panic_freedom_closure_callsite_effect(call);
         if sugar::statement_position::future_handoff_boundary(&expr).is_none() {
             self.push_callsite_with_effect(expr, self.ambient_effect.clone().or(expr_effect));
@@ -9990,35 +9990,38 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
 }
 
-fn panic_freedom_expr_callsite_effect(expr: &Expr) -> Option<Effect> {
+fn panic_freedom_expr_callsite_effect(expr: &Expr, scope: &TemporalScope) -> Option<Effect> {
     match expr {
-        Expr::MethodCall(call) => panic_freedom_direct_method_callsite_effect(call)
+        Expr::MethodCall(call) => panic_freedom_direct_method_callsite_effect(call, scope)
             .or_else(|| panic_freedom_closure_callsite_effect(call))
-            .or_else(|| panic_freedom_expr_callsite_effect(&call.receiver))
+            .or_else(|| panic_freedom_expr_callsite_effect(&call.receiver, scope))
             .or_else(|| {
                 call.args
                     .iter()
-                    .find_map(panic_freedom_expr_callsite_effect)
+                    .find_map(|arg| panic_freedom_expr_callsite_effect(arg, scope))
             }),
-        Expr::Call(call) => panic_freedom_expr_callsite_effect(&call.func).or_else(|| {
+        Expr::Call(call) => panic_freedom_expr_callsite_effect(&call.func, scope).or_else(|| {
             call.args
                 .iter()
-                .find_map(panic_freedom_expr_callsite_effect)
+                .find_map(|arg| panic_freedom_expr_callsite_effect(arg, scope))
         }),
-        Expr::Paren(paren) => panic_freedom_expr_callsite_effect(&paren.expr),
-        Expr::Group(group) => panic_freedom_expr_callsite_effect(&group.expr),
-        Expr::Reference(reference) => panic_freedom_expr_callsite_effect(&reference.expr),
-        Expr::Cast(cast) => panic_freedom_expr_callsite_effect(&cast.expr),
+        Expr::Paren(paren) => panic_freedom_expr_callsite_effect(&paren.expr, scope),
+        Expr::Group(group) => panic_freedom_expr_callsite_effect(&group.expr, scope),
+        Expr::Reference(reference) => panic_freedom_expr_callsite_effect(&reference.expr, scope),
+        Expr::Cast(cast) => panic_freedom_expr_callsite_effect(&cast.expr, scope),
         Expr::Block(block) => block
             .block
             .stmts
             .iter()
-            .find_map(panic_freedom_stmt_callsite_effect),
+            .find_map(|stmt| panic_freedom_stmt_callsite_effect(stmt, scope)),
         _ => None,
     }
 }
 
-fn panic_freedom_direct_method_callsite_effect(call: &syn::ExprMethodCall) -> Option<Effect> {
+fn panic_freedom_direct_method_callsite_effect(
+    call: &syn::ExprMethodCall,
+    scope: &TemporalScope,
+) -> Option<Effect> {
     let method = call.method.to_string();
     if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
         return Some(Effect::AmbiguousTemporalIdentity {
@@ -10031,17 +10034,20 @@ fn panic_freedom_direct_method_callsite_effect(call: &syn::ExprMethodCall) -> Op
             ),
         });
     }
-    if panic_freedom_mutating_receiver_method(&method) {
-        let receiver =
-            simple_path_name(&call.receiver).unwrap_or_else(|| token_key(&call.receiver));
-        return Some(Effect::AmbiguousTemporalIdentity {
-            boundary: receiver.clone(),
-            reason: format!(
-                "temporally unstable mutating method read of `{receiver}` after `.{method}()`: \
-                 the method may write receiver state outside the literal temporal rewrite, \
-                 so there is no single timeless value to read at the assertion; refused"
-            ),
-        });
+    if method == "set" {
+        if let Some(receiver) = simple_path_name(&call.receiver) {
+            if scope.temporal_cell_kind(&receiver) == Some(sugar::assign_op::CellKind::Cell) {
+                return Some(Effect::AmbiguousTemporalIdentity {
+                    boundary: receiver.clone(),
+                    reason: format!(
+                        "temporally unstable mutating method read of `{receiver}` after \
+                         `.{method}()`: the method may write receiver state outside the literal \
+                         temporal rewrite, so there is no single timeless value to read at the \
+                         assertion; refused"
+                    ),
+                });
+            }
+        }
     }
     None
 }
@@ -10055,57 +10061,13 @@ fn panic_freedom_iterator_consumption_receiver(call: &syn::ExprMethodCall) -> Op
     }
 }
 
-fn panic_freedom_mutating_receiver_method(method: &str) -> bool {
-    matches!(
-        method,
-        "set"
-            | "replace"
-            | "swap"
-            | "take"
-            | "push"
-            | "push_back"
-            | "push_front"
-            | "pop"
-            | "pop_back"
-            | "pop_front"
-            | "insert"
-            | "remove"
-            | "clear"
-            | "retain"
-            | "resize"
-            | "reserve"
-            | "truncate"
-            | "extend"
-            | "append"
-            | "drain"
-            | "store"
-            | "fetch_add"
-            | "fetch_sub"
-            | "fetch_and"
-            | "fetch_or"
-            | "fetch_xor"
-            | "fetch_nand"
-            | "fetch_max"
-            | "fetch_min"
-            | "fetch_update"
-            | "compare_exchange"
-            | "compare_exchange_weak"
-            | "compare_and_swap"
-            | "write"
-            | "write_all"
-            | "write_str"
-            | "write_fmt"
-            | "send"
-    )
-}
-
-fn panic_freedom_stmt_callsite_effect(stmt: &Stmt) -> Option<Effect> {
+fn panic_freedom_stmt_callsite_effect(stmt: &Stmt, scope: &TemporalScope) -> Option<Effect> {
     match stmt {
         Stmt::Local(local) => local
             .init
             .as_ref()
-            .and_then(|init| panic_freedom_expr_callsite_effect(&init.expr)),
-        Stmt::Expr(expr, _) => panic_freedom_expr_callsite_effect(expr),
+            .and_then(|init| panic_freedom_expr_callsite_effect(&init.expr, scope)),
+        Stmt::Expr(expr, _) => panic_freedom_expr_callsite_effect(expr, scope),
         Stmt::Macro(_) | Stmt::Item(_) => None,
     }
 }
