@@ -3,11 +3,11 @@
 // Literal `RangeInclusive` endpoint accessors.
 //
 // `RangeInclusive::{start,end}` returns shared references to the written endpoints.  For an
-// inline inclusive range whose selected endpoint completes to a concrete integer literal, this is
-// value sugar: lower to `ref(<endpoint>)` so the existing unary deref rule can reduce
-// `*(a..=b).start()` / `*(a..=b).end()` to the literal floor. Recognition is deliberately
-// syntactic and lazy: it selects the endpoint site and constructs the endpoint child body without
-// reducing it. Desugar/reduce owns the terminal decision.
+// inline inclusive range, this is value sugar: lower to `ref(<endpoint floor>)` so the existing
+// unary deref rule can reduce `*(a..=b).start()` / `*(a..=b).end()` through the endpoint's own
+// floor. Recognition is deliberately syntactic and lazy: it selects the endpoint site and
+// constructs the endpoint child body without reducing it. Desugar/reduce owns the terminal
+// decision and bubbles any endpoint effect.
 
 use std::rc::Rc;
 
@@ -15,10 +15,8 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, RangeLimits};
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::term_dispatch::{
-    DesugaredFloorAccept, RequiredTermVisitor, TermFloorAccept, TermFloorVisitor,
-};
-use crate::{const_fold_int_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
+use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("range_accessor", &["method"], recognize);
@@ -45,10 +43,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         EndpointKind::Start => range.start.as_deref(),
         EndpointKind::End => range.end.as_deref(),
     }?;
-    Some(RangeAccessorSugar::new(
-        kind,
-        SugarBody::term(endpoint, fcx),
-    ))
+    Some(RangeAccessorSugar::new(SugarBody::term(endpoint, fcx)))
 }
 
 #[derive(Clone, Copy)]
@@ -58,7 +53,6 @@ enum EndpointKind {
 }
 
 struct RangeAccessorSugar {
-    kind: EndpointKind,
     endpoint: SugarBody<TermFloor>,
 }
 
@@ -70,9 +64,6 @@ impl Sugar for RangeAccessorSugar {
             }),
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        endpoint.accept_term_floor(RequiredLiteralEndpointVisitor {
-            endpoint: self.kind.name(),
-        });
         Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "ref".to_string(),
             args: vec![endpoint],
@@ -80,34 +71,8 @@ impl Sugar for RangeAccessorSugar {
     }
 }
 
-struct RequiredLiteralEndpointVisitor<'a> {
-    endpoint: &'a str,
-}
-
-impl TermFloorVisitor for RequiredLiteralEndpointVisitor<'_> {
-    type Output = ();
-
-    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
-        if const_fold_int_term(term).is_none() {
-            panic!(
-                "range accessor {} endpoint did not dispatch to an integer literal floor",
-                self.endpoint
-            );
-        }
-    }
-}
-
-impl EndpointKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Start => "start",
-            Self::End => "end",
-        }
-    }
-}
-
 impl RangeAccessorSugar {
-    fn new(kind: EndpointKind, endpoint: SugarBody<TermFloor>) -> Box<dyn Sugar> {
-        Box::new(Self { kind, endpoint })
+    fn new(endpoint: SugarBody<TermFloor>) -> Box<dyn Sugar> {
+        Box::new(Self { endpoint })
     }
 }
