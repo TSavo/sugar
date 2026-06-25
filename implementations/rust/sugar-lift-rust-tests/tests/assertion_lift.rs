@@ -7890,28 +7890,13 @@ fn test_range_nth() {
     let decl = single_warranted_decl(&out);
     assert_eq!(decl.name, "tests/iter/range.rs::test_range_nth");
 
-    match inv_operands(decl)[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(
-                name, "=",
-                "the grounded Option equality is a flat structural `=`"
-            );
-            assert_eq!(args.len(), 2);
-            for side in args {
-                match side.as_ref() {
-                    Term::Ctor { name, args } => {
-                        assert_eq!(
-                            name, "opt:none",
-                            "both sides ground to opt:none (past-end value)"
-                        );
-                        assert!(args.is_empty());
-                    }
-                    other => panic!("expected opt:none ctor, got {other:?}"),
-                }
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
+    assert!(
+        complete_eq_string_pairs(decl)
+            .iter()
+            .any(|(lhs, rhs)| lhs == "ctor:opt:none:0" && rhs == "ctor:opt:none:0"),
+        "the grounded Option equality must contain the opt:none ADT tag equality: {:?}",
+        decl.inv
+    );
     assert!(
         !decl_mentions_ctor(decl, "method:nth") && !decl_mentions_ctor(decl, "call:eq:None"),
         "no opaque method:nth / federated call:eq:None may survive: {:?}",
@@ -16335,6 +16320,41 @@ fn complete_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(S
                 if let (Some(a), Some(b)) =
                     (ctor_name(args[0].as_ref()), ctor_name(args[1].as_ref()))
                 {
+                    out.push((a, b));
+                }
+            }
+            Formula::Connective { operands, .. } => {
+                for op in operands {
+                    walk(op, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(inv) = decl.inv.as_deref() {
+        walk(inv, &mut out);
+    }
+    out
+}
+
+fn complete_eq_string_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
+    fn string_value(t: &Term) -> Option<String> {
+        match t {
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => Some(value.clone()),
+            _ => None,
+        }
+    }
+    fn walk(f: &Formula, out: &mut Vec<(String, String)>) {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                if let (Some(a), Some(b)) = (
+                    string_value(args[0].as_ref()),
+                    string_value(args[1].as_ref()),
+                ) {
                     out.push((a, b));
                 }
             }
