@@ -1509,6 +1509,14 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_over_runtime_collection_is_owned_by_forall_loop_sugar() {
+        let expr: Expr = syn::parse_str("for x in items { assert_eq!(x, x); }").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert_eq!(names, vec!["forall_loop"]);
+    }
+
+    #[test]
     fn for_loop_over_side_effecting_iterator_domain_is_owned_by_mutation_sugar() {
         let expr: Expr = syn::parse_str("for _ in xs.iter_mut().map(|x| *x += 1) {}").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Composite);
