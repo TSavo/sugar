@@ -203,12 +203,28 @@ enum RewritePlace {
 
 #[derive(Clone, Debug)]
 enum Target {
-    Scalar(String),
+    Scalar {
+        name: String,
+        replayable_alias: bool,
+    },
     Element {
         base: String,
         index: usize,
         replayable_alias: bool,
     },
+}
+
+#[derive(Clone, Debug)]
+struct TemporalBindingSnapshot {
+    value: Option<Expr>,
+    term_value: Option<Rc<Term>>,
+    alias: Option<RewritePlace>,
+    cell_value: Option<CellState>,
+    unknown_consumed_iterator: Option<String>,
+    unknown_mutation: Option<String>,
+    exhausted_iterator: bool,
+    rewritten_base: bool,
+    loop_replayed: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -319,6 +335,10 @@ impl TemporalRewriteState {
 
     pub(crate) fn unknown_mutation_reason(&self, name: &str) -> Option<String> {
         self.unknown_mutations.get(name).cloned()
+    }
+
+    pub(crate) fn replayed_mutable_alias_base(&self, name: &str) -> bool {
+        self.rewritten_bases.contains(name)
     }
 
     pub(crate) fn cell_kind(&self, name: &str) -> Option<CellKind> {
@@ -549,8 +569,8 @@ impl TemporalRewriteState {
                     || (self.apply_consumption_expr(&assign.left)
                         | self.apply_consumption_expr(&assign.right))
             }
-            Expr::Block(block) => self.apply_consumption_stmts(&block.block.stmts),
-            Expr::Unsafe(block) => self.apply_consumption_stmts(&block.block.stmts),
+            Expr::Block(block) => self.apply_scoped_block_stmts(&block.block.stmts),
+            Expr::Unsafe(block) => self.apply_scoped_block_stmts(&block.block.stmts),
             Expr::ForLoop(for_loop) => {
                 let mut applied = self.apply_consumption_expr(&for_loop.expr)
                     | self.apply_consumption_stmts(&for_loop.body.stmts);
@@ -587,6 +607,69 @@ impl TemporalRewriteState {
             applied |= self.apply_statement(stmt);
         }
         applied
+    }
+
+    fn apply_scoped_block_stmts(&mut self, stmts: &[Stmt]) -> bool {
+        let locals = local_binding_names_in_stmts(stmts);
+        let snapshots: BTreeMap<String, TemporalBindingSnapshot> = locals
+            .iter()
+            .map(|name| (name.clone(), self.snapshot_binding(name)))
+            .collect();
+        let applied = self.apply_nested_block_stmts(stmts);
+        for (name, snapshot) in snapshots {
+            self.restore_binding(&name, snapshot);
+        }
+        applied
+    }
+
+    fn apply_nested_block_stmts(&mut self, stmts: &[Stmt]) -> bool {
+        let mut applied = false;
+        for stmt in stmts {
+            if let Stmt::Local(local) = stmt {
+                self.record_local(local);
+            }
+            applied |= match stmt {
+                Stmt::Expr(expr, _) => {
+                    self.apply_with_trace(expr, true) || self.apply_statement(stmt)
+                }
+                _ => self.apply_statement(stmt),
+            };
+        }
+        applied
+    }
+
+    fn snapshot_binding(&self, name: &str) -> TemporalBindingSnapshot {
+        TemporalBindingSnapshot {
+            value: self.values.get(name).cloned(),
+            term_value: self.term_values.get(name).cloned(),
+            alias: self.aliases.get(name).cloned(),
+            cell_value: self.cell_values.get(name).cloned(),
+            unknown_consumed_iterator: self.unknown_consumed_iterators.get(name).cloned(),
+            unknown_mutation: self.unknown_mutations.get(name).cloned(),
+            exhausted_iterator: self.exhausted_iterators.contains(name),
+            rewritten_base: self.rewritten_bases.contains(name),
+            loop_replayed: self.loop_replayed.contains(name),
+        }
+    }
+
+    fn restore_binding(&mut self, name: &str, snapshot: TemporalBindingSnapshot) {
+        restore_map_entry(&mut self.values, name, snapshot.value);
+        restore_map_entry(&mut self.term_values, name, snapshot.term_value);
+        restore_map_entry(&mut self.aliases, name, snapshot.alias);
+        restore_map_entry(&mut self.cell_values, name, snapshot.cell_value);
+        restore_map_entry(
+            &mut self.unknown_consumed_iterators,
+            name,
+            snapshot.unknown_consumed_iterator,
+        );
+        restore_map_entry(&mut self.unknown_mutations, name, snapshot.unknown_mutation);
+        restore_set_entry(
+            &mut self.exhausted_iterators,
+            name,
+            snapshot.exhausted_iterator,
+        );
+        restore_set_entry(&mut self.rewritten_bases, name, snapshot.rewritten_base);
+        restore_set_entry(&mut self.loop_replayed, name, snapshot.loop_replayed);
     }
 
     fn apply_while_loop(&mut self, while_expr: &syn::ExprWhile) -> bool {
@@ -1196,10 +1279,16 @@ impl TemporalRewriteState {
             Expr::Path(_) => {
                 let name = simple_path_name(lhs)?;
                 if self.has_current_value(&name) {
-                    return Some(Target::Scalar(name));
+                    return Some(Target::Scalar {
+                        name,
+                        replayable_alias: false,
+                    });
                 }
                 match self.aliases.get(&name)? {
-                    RewritePlace::Scalar(base) => Some(Target::Scalar(base.clone())),
+                    RewritePlace::Scalar(base) => Some(Target::Scalar {
+                        name: base.clone(),
+                        replayable_alias: true,
+                    }),
                     RewritePlace::Element { base, index } => Some(Target::Element {
                         base: base.clone(),
                         index: *index,
@@ -1219,7 +1308,10 @@ impl TemporalRewriteState {
     fn target_for_deref(&self, expr: &Expr) -> Option<Target> {
         let name = simple_path_name(expr)?;
         match self.aliases.get(&name)? {
-            RewritePlace::Scalar(base) => Some(Target::Scalar(base.clone())),
+            RewritePlace::Scalar(base) => Some(Target::Scalar {
+                name: base.clone(),
+                replayable_alias: true,
+            }),
             RewritePlace::Element { base, index } => Some(Target::Element {
                 base: base.clone(),
                 index: *index,
@@ -1286,9 +1378,15 @@ impl TemporalRewriteState {
 
     fn set_target(&mut self, target: Target, value: Expr) -> bool {
         match target {
-            Target::Scalar(name) => {
+            Target::Scalar {
+                name,
+                replayable_alias,
+            } => {
                 if self.trackable_value(&value).is_some() {
                     self.term_values.remove(&name);
+                    if replayable_alias {
+                        self.rewritten_bases.insert(name.clone());
+                    }
                     self.values.insert(name, value);
                     true
                 } else {
@@ -1305,8 +1403,14 @@ impl TemporalRewriteState {
 
     fn set_target_term(&mut self, target: Target, term: Rc<Term>) -> bool {
         match target {
-            Target::Scalar(name) => {
+            Target::Scalar {
+                name,
+                replayable_alias,
+            } => {
                 self.values.remove(&name);
+                if replayable_alias {
+                    self.rewritten_bases.insert(name.clone());
+                }
                 self.term_values.insert(name, term);
                 true
             }
@@ -1316,7 +1420,7 @@ impl TemporalRewriteState {
 
     fn target_term(&self, target: &Target) -> Option<Rc<Term>> {
         match target {
-            Target::Scalar(name) => self.term_for(name),
+            Target::Scalar { name, .. } => self.term_for(name),
             Target::Element { base, index, .. } => {
                 let expr = self.aggregate_element(base, *index)?;
                 expr_term_floor(&expr, self)
@@ -1326,7 +1430,7 @@ impl TemporalRewriteState {
 
     fn target_expr(&self, target: &Target) -> Option<Expr> {
         match target {
-            Target::Scalar(name) => self.values.get(name).cloned(),
+            Target::Scalar { name, .. } => self.values.get(name).cloned(),
             Target::Element { base, index, .. } => self.aggregate_element(base, *index),
         }
     }
@@ -2098,14 +2202,14 @@ fn assignment_op(op: &BinOp) -> Option<BinOpKind> {
 
 fn target_label(target: &Target) -> String {
     match target {
-        Target::Scalar(name) => name.clone(),
+        Target::Scalar { name, .. } => name.clone(),
         Target::Element { base, index, .. } => format!("{base}[{index}]"),
     }
 }
 
 fn target_base(target: &Target) -> String {
     match target {
-        Target::Scalar(name) => name.clone(),
+        Target::Scalar { name, .. } => name.clone(),
         Target::Element { base, .. } => base.clone(),
     }
 }
@@ -2268,10 +2372,12 @@ fn literal_index(expr: &Expr) -> Option<usize> {
 }
 
 fn mut_reference_target(expr: &Expr) -> Option<String> {
-    match strip_refs_groups(expr) {
+    match expr {
         Expr::Reference(reference) if reference.mutability.is_some() => {
             simple_path_name(&reference.expr)
         }
+        Expr::Paren(paren) => mut_reference_target(&paren.expr),
+        Expr::Group(group) => mut_reference_target(&group.expr),
         Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "addr_of_mut") => {
             syn::parse2::<syn::Path>(expr_macro.mac.tokens.clone())
                 .ok()
@@ -2336,6 +2442,56 @@ fn simple_pat_binding(pat: &Pat) -> Option<String> {
         Pat::Type(typed) => simple_pat_binding(&typed.pat),
         Pat::Paren(paren) => simple_pat_binding(&paren.pat),
         _ => None,
+    }
+}
+
+fn local_binding_names_in_stmts(stmts: &[Stmt]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for stmt in stmts {
+        let Stmt::Local(local) = stmt else {
+            continue;
+        };
+        collect_local_binding_names(&local.pat, &mut names);
+    }
+    names
+}
+
+fn collect_local_binding_names(pat: &Pat, out: &mut BTreeSet<String>) {
+    match strip_pat(pat) {
+        Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
+            out.insert(ident.ident.to_string());
+        }
+        Pat::Slice(slice) => {
+            for elem in &slice.elems {
+                collect_local_binding_names(elem, out);
+            }
+        }
+        Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_local_binding_names(elem, out);
+            }
+        }
+        Pat::Reference(reference) => collect_local_binding_names(&reference.pat, out),
+        _ => {}
+    }
+}
+
+fn restore_map_entry<V>(map: &mut BTreeMap<String, V>, name: &str, value: Option<V>) {
+    match value {
+        Some(value) => {
+            map.insert(name.to_string(), value);
+        }
+        None => {
+            map.remove(name);
+        }
+    }
+}
+
+fn restore_set_entry(set: &mut BTreeSet<String>, name: &str, present: bool) {
+    if present {
+        set.insert(name.to_string());
+    } else {
+        set.remove(name);
     }
 }
 
@@ -2418,4 +2574,59 @@ fn bool_term(value: bool) -> Rc<Term> {
         value: ConstValue::Bool(value),
         sort: Sort::bool(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_block_replays_mut_ref_assignment_to_outer_base() {
+        let block: syn::Block = syn::parse_quote!({
+            let mut r = 0;
+            {
+                let p = &mut r;
+                *p = 1;
+            }
+        });
+        let mut state = TemporalRewriteState::default();
+        let Stmt::Local(local) = &block.stmts[0] else {
+            panic!("first statement is local");
+        };
+        state.record_local(local);
+        assert_eq!(
+            state.expr_for("r").and_then(|expr| const_int(&expr)),
+            Some(0)
+        );
+        let Stmt::Expr(Expr::Block(inner), _) = &block.stmts[1] else {
+            panic!("second statement is block");
+        };
+        let Stmt::Local(alias) = &inner.block.stmts[0] else {
+            panic!("inner first statement is local alias");
+        };
+        state.record_local(alias);
+        assert!(
+            matches!(state.aliases.get("p"), Some(RewritePlace::Scalar(base)) if base == "r"),
+            "mutable reference alias was not recorded: {:?}",
+            state.aliases
+        );
+        let Stmt::Expr(assign, _) = &inner.block.stmts[1] else {
+            panic!("inner second statement is assignment");
+        };
+        assert!(state.apply_with_trace(assign, false));
+        assert_eq!(
+            state.expr_for("r").and_then(|expr| const_int(&expr)),
+            Some(1)
+        );
+
+        state = TemporalRewriteState::default();
+        state.record_local(local);
+        assert!(state.apply_scoped_block_stmts(&inner.block.stmts));
+        assert_eq!(
+            state.expr_for("r").and_then(|expr| const_int(&expr)),
+            Some(1)
+        );
+        assert!(state.replayed_mutable_alias_base("r"));
+        assert!(state.expr_for("p").is_none(), "block-local alias leaked");
+    }
 }
