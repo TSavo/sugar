@@ -77,6 +77,7 @@ pub(crate) struct TermFloor;
 pub(crate) struct CompositeFloor;
 pub(crate) struct ConstraintFloor;
 pub(crate) struct AssertionSurfaceFloor;
+pub(crate) struct StatementEffectFloor;
 pub(crate) struct TupleProducerFloor;
 pub(crate) struct LiteralStringFloor;
 pub(crate) struct LiteralCStrFloor;
@@ -90,6 +91,7 @@ impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
 impl BodyFloor for ConstraintFloor {}
 impl BodyFloor for AssertionSurfaceFloor {}
+impl BodyFloor for StatementEffectFloor {}
 impl BodyFloor for TupleProducerFloor {}
 impl BodyFloor for LiteralStringFloor {}
 impl BodyFloor for LiteralCStrFloor {}
@@ -180,6 +182,13 @@ impl SugarBody<ConstraintFloor> {
 impl SugarBody<AssertionSurfaceFloor> {
     pub(crate) fn assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_assertion_surface(expr, fcx))
+    }
+}
+
+impl SugarBody<StatementEffectFloor> {
+    pub(crate) fn statement_effect(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+        has_expr_role(expr, fcx, SugarRole::StatementEffect)
+            .then(|| Self::from_node(build_expr(expr, fcx, SugarRole::StatementEffect)))
     }
 }
 
