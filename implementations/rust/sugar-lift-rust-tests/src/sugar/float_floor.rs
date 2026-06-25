@@ -8,6 +8,7 @@
 // floor emits the named runtime-float boundary. If the value is IEEE-shaped but outside
 // the modeled stable f32/f64 floor, the floor emits the named IEEE refinement boundary.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{ConstValue, Sort, Term};
@@ -191,6 +192,96 @@ impl IeeeFloatAccept for Rc<Term> {
             }
             _ => visitor.visit_non_float(self),
         }
+    }
+}
+
+const NAN_COMPARISON_SCAN_CAP: usize = 64;
+
+pub(crate) fn nan_comparison_effect(
+    owner: &str,
+    lhs: &Expr,
+    rhs: &Expr,
+    ctx: &SugarCtx,
+) -> Option<Effect> {
+    let mut seen = BTreeSet::new();
+    let boundary = nan_comparison_boundary(lhs, ctx, &mut seen, 0).or_else(|| {
+        seen.clear();
+        nan_comparison_boundary(rhs, ctx, &mut seen, 0)
+    })?;
+    Some(Effect::FloatIeeeRefinement {
+        boundary: boundary.clone(),
+        reason: format!(
+            "{owner}: NaN comparison `{boundary}` uses Rust float PartialEq/PartialOrd \
+             semantics, not ordinary total-order/equality semantics; refused"
+        ),
+    })
+}
+
+fn nan_comparison_boundary(
+    expr: &Expr,
+    ctx: &SugarCtx,
+    seen: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<String> {
+    if depth > NAN_COMPARISON_SCAN_CAP {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) => {
+            let site = token_key(expr.clone());
+            if primitive_float_nan_assoc_const(path, &site) {
+                return Some(site);
+            }
+            if let Some(init) = ctx.scope.const_expr_for_path(&path.path) {
+                if let Some(boundary) = nan_comparison_boundary(&init, ctx, seen, depth + 1) {
+                    return Some(boundary);
+                }
+            }
+            let name = simple_path_name(expr)?;
+            if !seen.insert(name.clone()) {
+                return None;
+            }
+            let boundary = ctx
+                .scope
+                .stable_let_binding_for_term(&name)
+                .and_then(|init| nan_comparison_boundary(init, ctx, seen, depth + 1));
+            seen.remove(&name);
+            boundary
+        }
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .find_map(|elem| nan_comparison_boundary(elem, ctx, seen, depth + 1)),
+        Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .find_map(|elem| nan_comparison_boundary(elem, ctx, seen, depth + 1)),
+        Expr::Repeat(repeat) => nan_comparison_boundary(&repeat.expr, ctx, seen, depth + 1),
+        Expr::Reference(reference) => {
+            nan_comparison_boundary(&reference.expr, ctx, seen, depth + 1)
+        }
+        Expr::Cast(cast) => nan_comparison_boundary(&cast.expr, ctx, seen, depth + 1),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            nan_comparison_boundary(&unary.expr, ctx, seen, depth + 1)
+        }
+        Expr::Block(block) => nan_comparison_block_tail(&block.block.stmts)
+            .and_then(|tail| nan_comparison_boundary(tail, ctx, seen, depth + 1)),
+        _ => None,
+    }
+}
+
+fn nan_comparison_block_tail(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts.last()? {
+        Stmt::Expr(expr, None) => Some(expr),
+        _ => None,
+    }
+}
+
+fn primitive_float_nan_assoc_const(path: &ExprPath, site: &str) -> bool {
+    match primitive_float_assoc_const(path, site) {
+        Some(IeeeFloatSource::Value(IeeeFloatValue::F32(value))) => value.is_nan(),
+        Some(IeeeFloatSource::Value(IeeeFloatValue::F64(value))) => value.is_nan(),
+        _ => false,
     }
 }
 

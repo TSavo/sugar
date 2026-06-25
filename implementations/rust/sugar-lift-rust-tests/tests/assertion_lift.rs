@@ -7141,6 +7141,7 @@ fn nan_tuple_partial_ord() {
          total order: {:?}",
         out.skip_reasons
     );
+    assert_nan_comparison_factory_rows_are_terminal(&out);
 
     let out = lift_one(
         r#"#[test]
@@ -7159,6 +7160,7 @@ fn nan_array_slice_equality() {
          equality: {:?}",
         out.skip_reasons
     );
+    assert_nan_comparison_factory_rows_are_terminal(&out);
 }
 
 #[test]
@@ -20263,6 +20265,35 @@ fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128
 
 fn lift_one(src: &str) -> sugar_lift_rust_tests::AdapterOutput {
     lift_file(&parse(src), "tests/try_fold.rs")
+}
+
+fn assert_nan_comparison_factory_rows_are_terminal(out: &AdapterOutput) {
+    let rows: Vec<_> = out
+        .factory_audits
+        .iter()
+        .filter(|audit| {
+            audit.reason.as_deref().is_some_and(|reason| {
+                reason.contains("NaN comparison")
+                    && reason.contains("Rust float PartialEq/PartialOrd semantics")
+            })
+        })
+        .collect();
+    assert!(
+        !rows.is_empty(),
+        "expected NaN comparison factory rows in audit: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        rows.iter().all(|audit| {
+            audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+                && audit.output == "effect"
+                && audit
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.contains("write more Sugar"))
+        }),
+        "NaN comparison factory rows must be earned refusals, not structural-backstop dark rows: {rows:?}"
+    );
 }
 
 // ── map.rs:6 / map.rs:7 ──────────────────────────────────────────────────────

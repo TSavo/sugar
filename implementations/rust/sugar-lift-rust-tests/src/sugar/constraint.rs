@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::float_floor;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
@@ -140,6 +141,8 @@ struct RelationMacroSugar {
     name: String,
     lhs: SugarBody<TermFloor>,
     rhs: SugarBody<TermFloor>,
+    lhs_expr: Expr,
+    rhs_expr: Expr,
     op: RelationOp,
     debug_gated: bool,
 }
@@ -252,6 +255,8 @@ fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn 
         name,
         lhs: SugarBody::term(&args.exprs[0], fcx),
         rhs: SugarBody::term(&args.exprs[1], fcx),
+        lhs_expr: args.exprs[0].clone(),
+        rhs_expr: args.exprs[1].clone(),
         op,
         debug_gated,
     }))
@@ -274,6 +279,8 @@ fn recognize_assert_eq_const_safe_macro(
         name: "assert_eq_const_safe".to_string(),
         lhs: SugarBody::term(&lhs_expr, fcx),
         rhs: SugarBody::term(&rhs_expr, fcx),
+        lhs_expr,
+        rhs_expr,
         op: RelationOp::Eq,
         debug_gated: false,
     }))
@@ -311,7 +318,15 @@ impl Sugar for RelationMacroSugar {
         if let Some(outcome) = inactive_debug_assertion(&self.name, self.debug_gated, ctx) {
             return outcome;
         }
-        relation_constraint_from_bodies(&self.name, &self.lhs, &self.rhs, self.op, ctx)
+        relation_constraint_from_bodies(
+            &format!("{}!", self.name),
+            &self.lhs,
+            &self.rhs,
+            &self.lhs_expr,
+            &self.rhs_expr,
+            self.op,
+            ctx,
+        )
     }
 }
 
@@ -401,6 +416,8 @@ enum BoolExprKind {
     Relation {
         lhs: SugarBody<TermFloor>,
         rhs: SugarBody<TermFloor>,
+        lhs_expr: Expr,
+        rhs_expr: Expr,
         op: RelationOp,
     },
     Not(SugarBody<ConstraintFloor>),
@@ -434,6 +451,8 @@ fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 kind: BoolExprKind::Relation {
                     lhs: SugarBody::term(&binary.left, fcx),
                     rhs: SugarBody::term(&binary.right, fcx),
+                    lhs_expr: (*binary.left).clone(),
+                    rhs_expr: (*binary.right).clone(),
                     op,
                 },
             }))
@@ -523,9 +542,13 @@ impl Sugar for BoolExprSugar {
                     },
                 })
             }
-            BoolExprKind::Relation { lhs, rhs, op } => {
-                relation_constraint_from_bodies("assert", lhs, rhs, *op, ctx)
-            }
+            BoolExprKind::Relation {
+                lhs,
+                rhs,
+                lhs_expr,
+                rhs_expr,
+                op,
+            } => relation_constraint_from_bodies("assert!", lhs, rhs, lhs_expr, rhs_expr, *op, ctx),
             BoolExprKind::Not(inner) => {
                 let inner = match constraint_payload(inner, ctx) {
                     Ok(payload) => payload,
@@ -1108,9 +1131,14 @@ fn relation_constraint_from_bodies(
     name: &str,
     lhs: &SugarBody<TermFloor>,
     rhs: &SugarBody<TermFloor>,
+    lhs_expr: &Expr,
+    rhs_expr: &Expr,
     op: RelationOp,
     ctx: &SugarCtx,
 ) -> Outcome {
+    if let Some(effect) = float_floor::nan_comparison_effect(name, lhs_expr, rhs_expr, ctx) {
+        return Outcome::Incomplete(effect);
+    }
     let lhs = match term_payload(lhs, ctx) {
         Ok(term) => term,
         Err(outcome) => return outcome,

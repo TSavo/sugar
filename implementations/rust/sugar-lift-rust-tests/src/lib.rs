@@ -769,6 +769,14 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // unary `Neg` -- a NON-zero float literal (`-1.5`) lifts via `real_const` and never
         // reaches this reason (the fake-refuse guardrail). Typed as `SignedZeroIeeeEffect`.
         || reason.contains("signed zero float literal remains an IEEE refinement")
+        // TERMINAL (FLOAT TAIL #4 -- NaN comparison partial semantics): Rust `f32`/`f64`
+        // comparisons involving NaN follow `PartialEq`/`PartialOrd` IEEE semantics, not
+        // the total equality/order semantics of the ordinary scalar relation lowering.
+        // Treating the comparison as an ordinary FOL equality/order can fake-discharge,
+        // so the relation sugar names the boundary and the factory must count it as an
+        // earned refusal rather than a structural recognizer gap.
+        || reason.contains("NaN comparison")
+            && reason.contains("Rust float PartialEq/PartialOrd semantics")
         // TERMINAL (FLOAT TAIL #3 -- unknown/unstable f-width): a float refinement predicate
         // (`is_nan`/`is_infinite`/..) whose receiver has NO resolvable f32/f64 width -- an
         // f16/f128 unstable-width receiver or an unresolved parse/unwrap chain
@@ -24639,6 +24647,7 @@ mod lifter_key_tests {
             "flt2dec assert: operand is not a closed f32/f64 literal term (ldexp or a format! expected); released to layer 0",
             "signed zero float literal remains an IEEE refinement `- 0.0`",
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
+            "assert!: NaN comparison `f32 :: NAN` uses Rust float PartialEq/PartialOrd semantics, not ordinary total-order/equality semantics; refused",
             "float refinement predicate `is_nan` f16 NaN width not modeled `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
             "assert!: unsupported term `mem::size_of::<T>()`: layout is unknown to this lift (rustc could not compile a monomorphic size_of harness for this type); refused",
