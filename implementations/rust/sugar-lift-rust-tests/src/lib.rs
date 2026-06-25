@@ -709,6 +709,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // guard (`!false`, `cfg!(..)`) has NONE of these signals and STAYS the unclassified
         // "under if context" reason (the fake-refuse guardrail). Typed `IfGuardRuntimeEffect`.
         || reason.contains("under an if-guard over a runtime value")
+        // TERMINAL: a guarded branch mutates state before/around its assertion. The branch
+        // may execute conditionally, and the assertion observes temporal state produced by
+        // that branch, so a single timeless implication would hide a real write effect.
+        || reason.contains("side-effecting if branch")
         // TERMINAL (REFUSE HALF of the expr-statement classification): a bare expression-
         // statement whose asserted value is read through a `&mut` borrow / mutation (the
         // `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))` borrow/
@@ -7975,6 +7979,10 @@ enum Effect {
     /// by `if_guard_is_runtime`; a CONST/cfg/literal guard STAYS UNCLASSIFIED (the
     /// discrimination guardrail against fake-refuse).
     IfGuardRuntime { boundary: String },
+    /// CONDITIONAL-BRANCH-MUTATION: a guarded assertion branch mutates state before/around
+    /// the assertion. A single `guard => claim` formula would erase the temporal write effect,
+    /// so the conditional branch itself owns this named stop.
+    ConditionalBranchMutation { boundary: String },
     /// RUNTIME-EXPR-STMT: a bare expression-statement whose asserted value is read through a
     /// `&mut` borrow or a mutation. A mutably-aliased read has no single timeless `t` (kin to
     /// `mutable container is not temporally stable`). A SOURCE property. Detection is EARNED by
@@ -8183,6 +8191,10 @@ impl Effect {
                 "assertion under an if-guard over a runtime value `{boundary}` (not a constructible \
                  predicate; the guard's truth is not fixed from source literals); refused"
             ),
+            Effect::ConditionalBranchMutation { boundary } => format!(
+                "assertion in a side-effecting if branch `{boundary}` (mutates state before/around \
+                 the assertion; not a pure point-wise claim); refused"
+            ),
             Effect::RuntimeExprStmt { boundary } => format!(
                 "assertion in a runtime expression-statement `{boundary}` (value read through a \
                  `&mut` borrow / mutation, not constructible from source literals); refused"
@@ -8273,6 +8285,7 @@ impl Effect {
             | Effect::LoopAdvance { boundary }
             | Effect::ImplMethod { boundary }
             | Effect::IfGuardRuntime { boundary }
+            | Effect::ConditionalBranchMutation { boundary }
             | Effect::RuntimeExprStmt { boundary }
             | Effect::NestedAssertionValue { boundary }
             | Effect::CellRuntimeAliased { boundary }
@@ -10176,6 +10189,9 @@ pub(crate) fn if_guard_is_runtime(cond: &Expr) -> bool {
     if expr_is_cfg_macro(cond) {
         return false;
     }
+    if closure_body_is_side_effecting(cond) {
+        return true;
+    }
     #[derive(Default)]
     struct Scan {
         runtime: bool,
@@ -11610,12 +11626,12 @@ fn collect_assertion_entries<'a>(
                 } else if let Some(entry) = panic_locus_if_entry(i, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
-                } else if let Some(desugared) = {
+                } else {
                     // `ConditionalSugar`: `if guard { then } [else { else }]` is the
                     // implication `guard => then` (and `not guard => else`) it states
-                    // -- the claim-side atom. EXACT-OR-BAIL (guard must translate, the
-                    // branch asserts must fully lift, pure body); a bail keeps the
-                    // refusal below. SOUNDNESS: never bare `then` -- always guarded.
+                    // -- the claim-side atom. The sugar owns the terminal boundary:
+                    // Complete emits the guarded claim, Incomplete bubbles its named
+                    // effect, and a construction gap panics inside the sugar.
                     let ctx = sugar_ctx_with_factory_audits(
                         &temporal_scope,
                         options,
@@ -11626,37 +11642,20 @@ fn collect_assertion_entries<'a>(
                     );
                     let fcx =
                         sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx)
-                        .desugar(&ctx)
-                        .complete()
-                } {
-                    emit_desugared(desugared, entries, macros_lifted);
-                } else {
-                    let count = count_asserts_in_stmts(&i.then_branch.stmts)
-                        + i.else_branch
-                            .as_ref()
-                            .map_or(0, |(_, e)| count_asserts_in_expr(e));
-                    // The `ConditionalSugar` desugar BAILED. Split the residue by CAUSE:
-                    //   * a RUNTIME guard (reads a runtime value -- a mutable/aliased local,
-                    //     a `&mut` borrow, a method call on a runtime receiver) is a NAMED
-                    //     terminal Effect: `guard => then` cannot be a constructible point-wise
-                    //     predicate because the guard's truth is not fixed from source literals.
-                    //     Typed as `IfGuardRuntimeEffect`. (The Incomplete side.)
-                    //   * a CONST/cfg/literal guard (`!false`, `cfg!(..)`, a const-eq) is
-                    //     COMPUTABLE-but-unimplemented: the implication just is not lifted yet.
-                    //     It STAYS UNCLASSIFIED -- refusing it would be FAKE-REFUSE (the inverse
-                    //     sin of fake-complete). This is the discrimination guardrail.
-                    let reason = if if_guard_is_runtime(&i.cond) {
-                        (Effect::IfGuardRuntime {
-                            boundary: token_key(&i.cond),
-                        })
-                        .reason()
-                    } else {
-                        "assertion under if context: not unconditional point-wise; released to layer 0"
-                            .to_string()
-                    };
-                    for _ in 0..count {
-                        skipped.push(reason.clone());
+                    match sugar::factory::build_composite(e, &fcx).desugar(&ctx) {
+                        Outcome::Complete(desugared) => {
+                            emit_desugared(desugared, entries, macros_lifted);
+                        }
+                        Outcome::Incomplete(effect) => {
+                            let count = count_asserts_in_stmts(&i.then_branch.stmts)
+                                + i.else_branch
+                                    .as_ref()
+                                    .map_or(0, |(_, e)| count_asserts_in_expr(e));
+                            let reason = effect.reason();
+                            for _ in 0..count {
+                                skipped.push(reason.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -24010,8 +24009,9 @@ mod lifter_key_tests {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| r.contains("under if context")),
-            "the side-effecting-guard assert must stay in the if-context refusal: {:?}",
+                .any(|r| r.contains("under an if-guard over a runtime value")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the side-effecting-guard assert must be a named if-guard runtime refusal: {:?}",
             out.skip_reasons
         );
     }
@@ -24038,6 +24038,14 @@ mod lifter_key_tests {
             0,
             "a mutating guarded branch must BAIL (not a timeless point-wise claim): {:?}",
             contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("side-effecting if branch")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the mutating branch must be a named conditional-branch effect: {:?}",
+            out.skip_reasons
         );
     }
 
@@ -24646,6 +24654,7 @@ mod lifter_key_tests {
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
             "named refusal (iterator size_hint runtime bound): vendor pin not liftable: assertion surface `it.size_hint()` did not reach bedrock",
+            "assertion in a side-effecting if branch `then branch guarded by `x > 0`` (mutates state before/around the assertion; not a pure point-wise claim); refused",
             "ambiguous cfg: no explicit target cfg facts for `miri`",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");

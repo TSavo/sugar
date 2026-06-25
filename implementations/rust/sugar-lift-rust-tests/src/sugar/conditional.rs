@@ -68,7 +68,9 @@ impl Sugar for ConditionalSugar {
             // not a timeless predicate). Reuse the verified closure-body scanner over
             // the condition expression.
             if closure_body_is_side_effecting(&self.cond) {
-                return None;
+                return Some(Outcome::Incomplete(Effect::IfGuardRuntime {
+                    boundary: token_key(&self.cond),
+                }));
             }
             // At least one branch must carry an assertion (else nothing to classify --
             // leave it to the existing handling).
@@ -92,17 +94,19 @@ impl Sugar for ConditionalSugar {
                 let warrant = Warrant {
                     name: Some(format!("{}::if", ctx.scope.local_scope())),
                 };
-                return Some(Desugared::Constraints {
+                return Some(Outcome::Complete(Desugared::Constraints {
                     atom,
                     n: active_count + inactive_count,
                     kind: AssertionFactKind::Warranted,
                     warrant,
-                });
+                }));
             }
             // Neither branch may mutate captured state: a single guarded implication is
             // a point-wise claim only if the branch body is pure.
             if loop_body_mutates(&self.then_stmts) || loop_body_mutates(&self.else_stmts) {
-                return None;
+                return Some(Outcome::Incomplete(Effect::ConditionalBranchMutation {
+                    boundary: self.branch_mutation_boundary(),
+                }));
             }
             // The guard formula. FIRST try const-folding a compile-time-constant guard
             // (`!false` -> true, `!true` -> false, `cfg!(target_pointer_width=..)` ->
@@ -139,14 +143,14 @@ impl Sugar for ConditionalSugar {
             let warrant = Warrant {
                 name: Some(format!("{}::if", ctx.scope.local_scope())),
             };
-            Some(Desugared::Constraints {
+            Some(Outcome::Complete(Desugared::Constraints {
                 atom,
                 n: then_count + else_count,
                 kind: AssertionFactKind::Warranted,
                 warrant,
-            })
+            }))
         })() {
-            Some(desugared) => Outcome::Complete(desugared),
+            Some(outcome) => outcome,
             None => self.runtime_guard_or_gap("assertion conditional did not reduce"),
         }
     }
@@ -217,6 +221,15 @@ impl ConditionalSugar {
             });
         }
         conditional_gap(reason)
+    }
+
+    fn branch_mutation_boundary(&self) -> String {
+        let branch = if loop_body_mutates(&self.then_stmts) {
+            "then"
+        } else {
+            "else"
+        };
+        format!("{branch} branch guarded by `{}`", token_key(&self.cond))
     }
 }
 
