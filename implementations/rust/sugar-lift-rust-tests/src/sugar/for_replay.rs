@@ -1026,7 +1026,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         if range_domain_exceeds_replay_cap(&domain, self.ctx.scope) {
             return None;
         }
-        let values = finite_domain_exprs(&domain, self.ctx)?;
+        let values = match finite_domain_exprs(&domain, self.ctx) {
+            Ok(values) => values,
+            Err(effect) => {
+                self.terminal_effect = Some(effect);
+                return None;
+            }
+        };
         if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
             return None;
         }
@@ -1752,27 +1758,49 @@ fn finite_domain_body_exprs(
     Ok(values)
 }
 
-fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {
+fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Result<Vec<Expr>, Effect> {
     let let_inits = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    let seq = build_composite(expr, &fcx)
-        .desugar(ctx)
-        .complete()?
-        .into_seq()?;
+    let seq = match build_composite(expr, &fcx).desugar(ctx) {
+        Outcome::Complete(Desugared::Seq(seq)) => seq,
+        Outcome::Complete(_) => {
+            for_replay_construction_gap(
+                "nested finite domain completed as a non-sequence floor".to_string(),
+            );
+        }
+        Outcome::Incomplete(effect) => return Err(effect),
+    };
     if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
-        return None;
+        return Ok(Vec::new());
     }
     let mut values = Vec::with_capacity(seq.len());
     for elem in seq {
         let value = match elem.value.as_ref() {
-            Some(ConstVal::Int(value)) => int_expr(*value)?,
-            Some(ConstVal::PrimitiveInt { .. }) => elem.value.as_ref()?.to_expr()?,
-            Some(ConstVal::UInt128(value)) => u128_expr(*value)?,
+            Some(ConstVal::Int(value)) => int_expr(*value).unwrap_or_else(|| {
+                for_replay_construction_gap(format!(
+                    "integer nested-domain element `{value}` did not reify to an expression"
+                ))
+            }),
+            Some(ConstVal::PrimitiveInt { .. }) => elem
+                .value
+                .as_ref()
+                .and_then(ConstVal::to_expr)
+                .unwrap_or_else(|| {
+                    for_replay_construction_gap(
+                        "primitive integer nested-domain element did not reify to an expression"
+                            .to_string(),
+                    )
+                }),
+            Some(ConstVal::UInt128(value)) => u128_expr(*value).unwrap_or_else(|| {
+                for_replay_construction_gap(format!(
+                    "u128 nested-domain element `{value}` did not reify to an expression"
+                ))
+            }),
             _ => elem.expr,
         };
         values.push(value);
     }
-    Some(values)
+    Ok(values)
 }
 
 fn replay_const_initializer_expr(item: &syn::ItemConst) -> Expr {
