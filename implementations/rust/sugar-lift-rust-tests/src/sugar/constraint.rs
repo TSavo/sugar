@@ -19,8 +19,8 @@ use crate::{
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
     literal_char_predicate_atom, literal_string_value, parse_macro_args,
     sugar_ctx_with_factory_audits, token_key, AssertionEntry, AssertionFactKind, CfgDisposition,
-    CfgPredicate, Desugared, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx,
-    RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
+    CfgPredicate, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome,
+    ReductionCtx, RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
@@ -101,7 +101,7 @@ pub(crate) fn assertion_entry_with_audits(
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
-) -> Result<AssertionEntry, String> {
+) -> Result<AssertionEntry, Effect> {
     let options = LiftOptions::default();
     let let_inits = BTreeMap::new();
     let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
@@ -133,7 +133,7 @@ pub(crate) fn assertion_entry_with_audits(
         Outcome::Complete(_) => {
             constraint_gap("boolean assertion reduced to a non-constraint floor");
         }
-        Outcome::Incomplete(effect) => Err(effect.reason()),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 

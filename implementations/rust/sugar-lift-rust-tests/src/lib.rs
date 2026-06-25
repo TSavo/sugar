@@ -16196,6 +16196,7 @@ fn lower_assert_condition(
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
     sugar::constraint::assertion_entry_with_audits(expr, scope, float_widths, factory_audits)
+        .map_err(|effect| effect.reason())
 }
 
 fn substitute_exprs_with_closure_captures(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
