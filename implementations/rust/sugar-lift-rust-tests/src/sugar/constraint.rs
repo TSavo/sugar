@@ -838,7 +838,7 @@ impl Sugar for NoPanicCallSugar {
                 if is_no_panic_literal_empty_into_iter(expr)
                     || is_no_panic_empty_literal_sequence_callsite(expr, ctx)
                 {
-                    return no_panic_tautology_for_site(ctx, &self.site);
+                    return no_panic_path_for_empty_literal_site(ctx, expr, &self.site);
                 }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     constraint_gap(format!(
@@ -894,18 +894,22 @@ impl Sugar for NoPanicCallSugar {
     }
 }
 
-fn no_panic_tautology_for_site(ctx: &SugarCtx, site: &str) -> Outcome {
+fn no_panic_path_for_empty_literal_site(ctx: &SugarCtx, expr: &Expr, site: &str) -> Outcome {
+    let subject = ctx
+        .opaque_callsite_term(expr)
+        .unwrap_or_else(|| str_const(format!("{}::{}", ctx.scope.local_scope(), site)));
+    let name = callsite_assertion_name(subject.as_ref(), ctx.scope.local_scope()).or_else(|| {
+        Some(format!(
+            "{}::panic-path::{}",
+            ctx.scope.local_scope(),
+            compact_warrant_fragment(site)
+        ))
+    });
     Outcome::Complete(Desugared::Constraints {
-        atom: eq(bool_const(true), bool_const(true)),
+        atom: not_(atomic_("panic", vec![subject])),
         n: 0,
         kind: AssertionFactKind::Warranted,
-        warrant: Warrant {
-            name: Some(format!(
-                "{}::panic-path::{}",
-                ctx.scope.local_scope(),
-                compact_warrant_fragment(site)
-            )),
-        },
+        warrant: Warrant { name },
     })
 }
 
