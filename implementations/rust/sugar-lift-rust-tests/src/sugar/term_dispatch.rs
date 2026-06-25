@@ -578,10 +578,16 @@ fn literal_byte_method_bool(method: &str, byte: u8) -> Option<bool> {
 pub(crate) fn literal_array_term_from_terms(terms: &[Rc<Term>]) -> Rc<Term> {
     let inner = terms
         .iter()
-        .map(|term| canonical_term_sig(term))
+        .map(literal_array_elem_sig)
         .collect::<Vec<_>>()
         .join(",");
     make_var(format!("literal:Array({inner})"))
+}
+
+fn literal_array_elem_sig(term: &Rc<Term>) -> String {
+    const_fold_int_term(term)
+        .map(|value| canonical_term_sig(&num(value)))
+        .unwrap_or_else(|| canonical_term_sig(term))
 }
 
 pub(crate) fn fold_int_terms(
@@ -839,6 +845,25 @@ mod tests {
             terms.iter().map(const_fold_int_term).collect::<Vec<_>>(),
             vec![Some(11), Some(12),]
         );
+    }
+
+    #[test]
+    fn literal_array_term_canonicalizes_const_foldable_elements() {
+        let add = Rc::new(Term::Ctor {
+            name: "+".to_string(),
+            args: vec![num(1), num(1)],
+        });
+        let cast = Rc::new(Term::Ctor {
+            name: "cast:u64".to_string(),
+            args: vec![num(3)],
+        });
+
+        let array = literal_array_term_from_terms(&[add, cast]);
+
+        match array.as_ref() {
+            Term::Var { name } => assert_eq!(name, "literal:Array(i:2,i:3)"),
+            other => panic!("expected literal array term var, got {other:?}"),
+        }
     }
 
     #[test]
