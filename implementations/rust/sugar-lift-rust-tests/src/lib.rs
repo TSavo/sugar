@@ -16794,7 +16794,7 @@ fn translate_bool_assertion_with_audits(
     if let Some(entry) = translate_literal_iterator_assertion(expr, scope, float_widths)? {
         return Ok(entry);
     }
-    if let Some(entry) = translate_float_refinement_assertion(expr, scope, float_widths)? {
+    if let Some(entry) = sugar::float_refinement::assertion_entry(expr, scope, float_widths)? {
         return Ok(entry);
     }
     if let Some(entry) = translate_matches_assertion(expr, scope)? {
@@ -16815,7 +16815,7 @@ fn translate_bool_assertion_with_audits(
                 });
             }
             if let Some(entry) =
-                translate_float_refinement_assertion(&unary.expr, scope, float_widths)?
+                sugar::float_refinement::assertion_entry(&unary.expr, scope, float_widths)?
             {
                 return Ok(AssertionEntry {
                     name: entry.name,
@@ -17027,151 +17027,6 @@ fn mutable_local_slice_predicate_reason(expr: &Expr, scope: &TemporalScope) -> O
              constructed from source literals); refused"
         )
     })
-}
-
-fn translate_float_refinement_assertion(
-    expr: &Expr,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-) -> Result<Option<AssertionEntry>, String> {
-    match expr {
-        Expr::MethodCall(call) => {
-            let method = call.method.to_string();
-            if !is_liftable_float_refinement_method(&method) {
-                return Ok(None);
-            }
-            if !call.args.is_empty() {
-                return Err(format!(
-                    "float refinement predicate takes no arguments `{}`",
-                    token_key(expr)
-                ));
-            }
-            if let Some(unstable_width) = float_refinement_receiver_unstable_width(&call.receiver) {
-                let width_reason = if unstable_width == "f16" && method == "is_nan" {
-                    "f16 NaN width not modeled".to_string()
-                } else {
-                    format!("{unstable_width} bit-width not modeled")
-                };
-                return Err(format!(
-                    "float refinement predicate `{method}` {width_reason} `{}`",
-                    token_key(expr)
-                ));
-            }
-            let Some(width) = float_refinement_receiver_width(&call.receiver, float_widths) else {
-                return Err(format!(
-                    "float refinement predicate `{method}` requires known f32/f64 receiver width `{}`",
-                    token_key(expr)
-                ));
-            };
-            if let Some(value) = literal_float_refinement_value(&method, &call.receiver) {
-                return Ok(Some(AssertionEntry {
-                    name: None,
-                    atom: eq(bool_const(value), bool_const(true)),
-                    fact_span: None,
-                    kind: AssertionFactKind::Warranted,
-                    claim_count: 1,
-                }));
-            }
-            let receiver = translate_term_in_scope(&call.receiver, scope)?;
-            let name = callsite_assertion_name(receiver.as_ref(), scope.local_scope());
-            Ok(Some(AssertionEntry {
-                name,
-                atom: atomic_(format!("float.{width}.{method}"), vec![receiver]),
-                fact_span: None,
-                kind: AssertionFactKind::Warranted,
-                claim_count: 1,
-            }))
-        }
-        Expr::Paren(paren) => {
-            translate_float_refinement_assertion(&paren.expr, scope, float_widths)
-        }
-        Expr::Group(group) => {
-            translate_float_refinement_assertion(&group.expr, scope, float_widths)
-        }
-        _ => Ok(None),
-    }
-}
-
-fn is_liftable_float_refinement_method(method: &str) -> bool {
-    matches!(
-        method,
-        "is_nan"
-            | "is_infinite"
-            | "is_finite"
-            | "is_normal"
-            | "is_sign_positive"
-            | "is_sign_negative"
-    )
-}
-
-enum LiteralFloat {
-    F32(f32),
-    F64(f64),
-}
-
-impl LiteralFloat {
-    fn is_nan(&self) -> bool {
-        match self {
-            LiteralFloat::F32(value) => value.is_nan(),
-            LiteralFloat::F64(value) => value.is_nan(),
-        }
-    }
-}
-
-fn literal_float_refinement_value(method: &str, receiver: &Expr) -> Option<bool> {
-    match method {
-        "is_nan" => parsed_literal_float(receiver).map(|value| value.is_nan()),
-        _ => None,
-    }
-}
-
-fn parsed_literal_float(expr: &Expr) -> Option<LiteralFloat> {
-    match strip_refs_groups(expr) {
-        Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
-            parsed_literal_float(&call.receiver)
-        }
-        Expr::MethodCall(call) if call.method == "parse" && call.args.is_empty() => {
-            parse_literal_float_call(call)
-        }
-        _ => None,
-    }
-}
-
-fn float_refinement_receiver_unstable_width(expr: &Expr) -> Option<&'static str> {
-    match expr {
-        Expr::MethodCall(call) => unstable_width_from_method_name(&call.method.to_string())
-            .or_else(|| unstable_width_from_method_turbofish(call))
-            .or_else(|| {
-                if call.method == "unwrap" {
-                    float_refinement_receiver_unstable_width(&call.receiver)
-                } else {
-                    None
-                }
-            }),
-        Expr::Path(path) => unstable_width_from_path(&path.path),
-        Expr::Lit(ExprLit {
-            lit: Lit::Float(lit),
-            ..
-        }) => unstable_width_from_suffix(lit.suffix()),
-        Expr::Paren(paren) => float_refinement_receiver_unstable_width(&paren.expr),
-        Expr::Group(group) => float_refinement_receiver_unstable_width(&group.expr),
-        _ => None,
-    }
-}
-
-fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
-    let width = float_width_from_method_turbofish(call)?;
-    let Expr::Lit(ExprLit {
-        lit: Lit::Str(lit), ..
-    }) = strip_refs_groups(&call.receiver)
-    else {
-        return None;
-    };
-    match width {
-        "f32" => lit.value().parse::<f32>().ok().map(LiteralFloat::F32),
-        "f64" => lit.value().parse::<f64>().ok().map(LiteralFloat::F64),
-        _ => None,
-    }
 }
 
 type FloatWidthScope = BTreeMap<String, &'static str>;
