@@ -61,24 +61,34 @@ use crate::{
 /// back to an opaque child identity rather than laundering that value effect into
 /// the panic predicate.
 pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) => Some(opaque_callsite_call_or_method_term(ctx, expr)),
+        _ => None,
+    }
+}
+
+fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> {
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = crate::sugar::factory::SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
+    let dig_child = |expr: &Expr| -> Rc<Term> {
         if crate::sugar::method_family::literal_sequence_static_len_in_scope(
             expr, &let_inits, ctx.scope,
         ) == Some(0)
         {
-            return callsite_child_fallback_term(expr, ctx.scope);
+            return callsite_child_identity_term(expr, ctx.scope);
         }
         let opaque_or_fallback = || {
-            opaque_callsite_term(ctx, expr)
-                .or_else(|| callsite_child_fallback_term(expr, ctx.scope))
+            if matches!(expr, Expr::Call(_) | Expr::MethodCall(_)) {
+                opaque_callsite_call_or_method_term(ctx, expr)
+            } else {
+                callsite_child_identity_term(expr, ctx.scope)
+            }
         };
         if matches!(expr, Expr::Call(_) | Expr::MethodCall(_)) {
             return opaque_or_fallback();
         }
         if source_less_format_args_builtin(expr, ctx) {
-            return callsite_child_fallback_term(expr, ctx.scope);
+            return callsite_child_identity_term(expr, ctx.scope);
         }
         let reduction = {
             let mut fw = ctx.float_widths.borrow_mut();
@@ -93,7 +103,7 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
             crate::sugar::factory::build_term(expr, &fcx).reduce(&child)
         };
         match reduction {
-            Outcome::Complete(d) => d.into_term().or_else(opaque_or_fallback),
+            Outcome::Complete(d) => d.into_term().unwrap_or_else(opaque_or_fallback),
             Outcome::Incomplete(_) => opaque_or_fallback(),
         }
     };
@@ -102,15 +112,15 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
         Expr::Call(call) => {
             let mut args = Vec::new();
             for arg in &call.args {
-                args.push(dig_child(arg)?);
+                args.push(dig_child(arg));
             }
-            Some(Rc::new(Term::Ctor {
+            Rc::new(Term::Ctor {
                 name: format!("call:{}#panic_callsite", expr_head_key(&call.func)),
                 args,
-            }))
+            })
         }
         Expr::MethodCall(call) => {
-            let mut receiver = dig_child(&call.receiver)?;
+            let mut receiver = dig_child(&call.receiver);
             if is_consuming_iterator_method(&call.method.to_string()) {
                 if let Term::Var { name } = receiver.as_ref() {
                     if receiver_is_versioned_iterator(name, ctx.scope) {
@@ -123,18 +133,30 @@ pub(crate) fn opaque_callsite_term(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Ter
             }
             let mut args = vec![receiver];
             for arg in &call.args {
-                args.push(dig_child(arg)?);
+                args.push(dig_child(arg));
             }
-            Some(Rc::new(Term::Ctor {
+            Rc::new(Term::Ctor {
                 name: format!(
                     "method:{}#panic_callsite",
                     crate::sugar::method::method_key(call)
                 ),
                 args,
-            }))
+            })
         }
-        _ => None,
+        _ => panic!(
+            "opaque callsite term constructed for non-call expression `{}`",
+            expr_head_key(expr)
+        ),
     }
+}
+
+fn callsite_child_identity_term(expr: &Expr, scope: &crate::TemporalScope) -> Rc<Term> {
+    callsite_child_fallback_term(expr, scope).unwrap_or_else(|| {
+        panic!(
+            "callsite child identity unavailable for `{}`",
+            expr_head_key(expr)
+        )
+    })
 }
 
 fn source_less_format_args_builtin(expr: &Expr, ctx: &SugarCtx) -> bool {
