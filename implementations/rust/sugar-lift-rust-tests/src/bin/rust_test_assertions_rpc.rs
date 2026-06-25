@@ -2291,7 +2291,9 @@ fn runtime_pointer_atomic_time_refusal_category(
     source_name: &str,
     reason: &str,
 ) -> Option<&'static str> {
-    if !reason.contains("runtime operand, not literal") {
+    let runtime_numeric_operand = reason.contains("runtime operand, not literal")
+        || (reason.contains("runtime raw pointer") && reason.contains("operand, not literal"));
+    if !runtime_numeric_operand {
         return None;
     }
     match (source_path, source_name) {
@@ -4202,6 +4204,15 @@ mod tests {
         let pointer_alignment_reason = "rust test assertions: unsupported assertion surface; released to layer 0: assert_ne!: runtime operand, not literal";
         assert_eq!(
             clean_named_refusal_category("tests/ptr.rs", "is_aligned", pointer_alignment_reason),
+            Some("pointer alignment, runtime address")
+        );
+        let raw_pointer_alignment_reason = "rust test assertions: unsupported assertion surface; released to layer 0: runtime raw pointer wrapping_add operand, not literal-determined";
+        assert_eq!(
+            clean_named_refusal_category(
+                "src/lib.rs",
+                "pointer_alignment_refused",
+                raw_pointer_alignment_reason
+            ),
             Some("pointer alignment, runtime address")
         );
         assert_eq!(
