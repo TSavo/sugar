@@ -69,6 +69,7 @@ help:
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
 	@echo "  make test-<lang>              go / csharp / php / c"
+	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
 	@echo ""
 	@echo "Self-lift experiments:"
 	@echo "  make self-lift-canonicalizer  run sugar-lift against the canonicalizer crate"
@@ -173,6 +174,10 @@ setup-git-hooks:
 .PHONY: test-git-hooks
 test-git-hooks:
 	hooks/tests/pre-commit-format.sh
+
+.PHONY: test-compiler-warning-de
+test-compiler-warning-de:
+	CARGO="$(CARGO)" tests/compiler_warning_delta_epsilon.sh --epsilon "$${SUGAR_WARNING_DE_EPSILON:-compiler_warnings=0}"
 
 .PHONY: test-rust
 # The rust integration tests register per-language carriers via
