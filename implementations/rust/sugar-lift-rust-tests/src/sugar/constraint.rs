@@ -840,9 +840,6 @@ impl Sugar for NoPanicCallSugar {
                 {
                     return no_panic_tautology_for_site(ctx, &self.site);
                 }
-                if let Some(effect) = no_panic_callsite_effect(expr, ctx) {
-                    return Outcome::Incomplete(effect);
-                }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     constraint_gap(format!(
                         "no-panic callsite `{}` had no opaque subject term",
@@ -894,13 +891,6 @@ impl Sugar for NoPanicCallSugar {
             kind,
             warrant: Warrant { name },
         })
-    }
-}
-
-fn no_panic_callsite_effect(expr: &Expr, ctx: &SugarCtx) -> Option<Effect> {
-    match SugarBody::<TermFloor>::synthesized_term(expr, ctx).reduce(ctx) {
-        Outcome::Complete(_) => None,
-        Outcome::Incomplete(effect) => Some(effect),
     }
 }
 
