@@ -8041,6 +8041,11 @@ enum Effect {
     /// `mem::zeroed::<NonZeroU32>()`, ...). Primitive zeroable types complete to their
     /// literal floor; invalid bit patterns stop here by name.
     InvalidBitPattern { boundary: String, reason: String },
+    /// UNDEFINED-BEHAVIOR: a fully-literal unsafe operation asks Rust for a value on a
+    /// source path with no defined value (`get_unchecked` outside a literal slice domain).
+    /// In-domain unsafe indexing completes to the literal floor; only the proved UB branch
+    /// stops here by name.
+    UndefinedBehavior { boundary: String, reason: String },
     /// RUNTIME-NUMERIC-OPERAND: a stdlib/compiler numeric operation is defined only when its
     /// operands are literal-determined in this lift (`i8::midpoint(a, b)`, `u128::from(x)`,
     /// etc.). If a child completes to a non-literal term, there is no concrete numeric floor
@@ -8191,6 +8196,7 @@ impl Effect {
             Effect::LiteralDomain { reason, .. } => reason.clone(),
             Effect::LiteralPanic { reason, .. } => reason.clone(),
             Effect::InvalidBitPattern { reason, .. } => reason.clone(),
+            Effect::UndefinedBehavior { reason, .. } => reason.clone(),
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
             } => format!("runtime {kind} {operation} operand, not literal-determined"),
@@ -8243,6 +8249,7 @@ impl Effect {
             | Effect::LiteralDomain { boundary, .. }
             | Effect::LiteralPanic { boundary, .. }
             | Effect::InvalidBitPattern { boundary, .. }
+            | Effect::UndefinedBehavior { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RuntimeFloatOperand { boundary, .. }
             | Effect::FloatIeeeRefinement { boundary, .. }
@@ -25953,6 +25960,7 @@ mod lifter_key_tests {
             "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
             "array-repeat length 18446744073709551615 exceeds the 4096-element expansion bound; refused by name: `[() ; usize :: MAX]`",
+            "out-of-bounds unchecked slice indexing `[10 , 20 , 30] . get_unchecked (5)` is undefined behavior with no determinate value; refused",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
