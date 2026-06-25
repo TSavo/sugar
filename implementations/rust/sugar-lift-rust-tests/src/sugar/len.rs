@@ -109,7 +109,8 @@ impl Sugar for LenSugar {
         let seq = match sequence_from_body(&self.receiver, ctx, "len receiver") {
             Ok(seq) => seq,
             Err(Outcome::Incomplete(effect))
-                if effect.reason() == EMPTY_DOMAIN_REASON && self.static_len == Some(0) =>
+                if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON)
+                    && self.static_len == Some(0) =>
             {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::len",
@@ -192,7 +193,9 @@ fn source_reduces_to_sequence(
 ) -> Result<bool, Outcome> {
     match body.reduce(ctx) {
         Outcome::Complete(d) => Ok(d.into_seq().is_some()),
-        Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => Ok(true),
+        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
+            Ok(true)
+        }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }

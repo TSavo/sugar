@@ -8300,6 +8300,10 @@ enum Effect {
 }
 
 impl Effect {
+    pub(crate) fn is_literal_domain_reason(&self, expected: &str) -> bool {
+        matches!(self, Effect::LiteralDomain { reason, .. } if reason == expected)
+    }
+
     /// The terminal refusal string (recognized terminal by `refusal_disposition`), kept
     /// BYTE-IDENTICAL to the proto string the collector emitted before this enum existed.
     fn reason(&self) -> String {

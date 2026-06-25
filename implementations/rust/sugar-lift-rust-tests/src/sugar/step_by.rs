@@ -72,7 +72,7 @@ impl Sugar for StepBySugar {
 fn seq_or_empty(outcome: Outcome) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
     match outcome {
         Outcome::Complete(d) => Ok(d.into_seq()),
-        Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => {
+        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
             Ok(Some(Vec::new()))
         }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
