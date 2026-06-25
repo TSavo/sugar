@@ -9023,7 +9023,7 @@ fn sugar_ctx<'a, 'c>(
     sugar_ctx_impl(scope, options, reducer, float_widths, macro_depth, None)
 }
 
-fn sugar_ctx_with_factory_audits<'a, 'c>(
+pub(crate) fn sugar_ctx_with_factory_audits<'a, 'c>(
     scope: &'a TemporalScope,
     options: &'a LiftOptions,
     reducer: &'a ReductionCtx<'c>,
@@ -16089,7 +16089,7 @@ fn lower_assert_eq(
     // Intercept infinity-constant equality before falling through to the
     // Real-equality path. f32/f64 infinity is not a Real value; IEEE exactness
     // gives the sound conjunction instead.
-    if let Some(entry) = translate_infinity_eq_assertion_with_audits(
+    if let Some(entry) = sugar::infinity_eq::assertion_entry_with_audits(
         lhs_expr,
         rhs_expr,
         scope,
@@ -17174,114 +17174,6 @@ fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
     }
 }
 
-/// If `expr` is exactly `f32::INFINITY`, `f64::INFINITY`, `f32::NEG_INFINITY`,
-/// or `f64::NEG_INFINITY` (a two-segment path with no generics), returns
-/// `(width, is_positive)`. Any other expression returns `None`.
-///
-/// This is the ONLY trigger for the infinity-equality conjunction path.
-/// Finite float literals (`1.5f64`) and all other expressions return `None`
-/// and stay on the existing Real-equality path unchanged.
-fn infinity_constant_kind(expr: &Expr) -> Option<(&'static str, bool)> {
-    let path = match expr {
-        Expr::Path(p) if p.qself.is_none() => &p.path,
-        Expr::Paren(paren) => return infinity_constant_kind(&paren.expr),
-        Expr::Group(group) => return infinity_constant_kind(&group.expr),
-        _ => return None,
-    };
-    // Must be exactly two path segments with no arguments: `f32::INFINITY`.
-    let segs: Vec<_> = path.segments.iter().collect();
-    if segs.len() != 2 {
-        return None;
-    }
-    // Both segments must have no generic arguments.
-    for seg in &segs {
-        if !matches!(seg.arguments, syn::PathArguments::None) {
-            return None;
-        }
-    }
-    let type_seg = segs[0].ident.to_string();
-    let const_seg = segs[1].ident.to_string();
-    let width: &'static str = match type_seg.as_str() {
-        "f32" => "f32",
-        "f64" => "f64",
-        _ => return None,
-    };
-    let is_positive = match const_seg.as_str() {
-        "INFINITY" => true,
-        "NEG_INFINITY" => false,
-        _ => return None,
-    };
-    Some((width, is_positive))
-}
-
-/// Attempt to lift `lhs == rhs` (or `rhs == lhs`) where exactly one operand is
-/// an infinity constant path, as the sound predicate conjunction:
-///
-///   `f64::INFINITY`  => `and(float.f64.is_infinite(expr), float.f64.is_sign_positive(expr))`
-///   `f64::NEG_INFINITY` => `and(float.f64.is_infinite(expr), float.f64.is_sign_negative(expr))`
-///
-/// Width is taken from the constant operand. The non-constant operand becomes
-/// the receiver term.
-///
-/// Returns `Ok(None)` if neither operand is an infinity constant (caller falls
-/// through to the existing path). Returns `Err` only if the constant was
-/// detected but the receiver term translation fails.
-fn translate_infinity_eq_assertion_with_audits(
-    lhs: &Expr,
-    rhs: &Expr,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Option<AssertionEntry>, String> {
-    let (width, is_positive, receiver_expr) =
-        match (infinity_constant_kind(lhs), infinity_constant_kind(rhs)) {
-            (Some((w, pos)), _) => (w, pos, rhs),
-            (None, Some((w, pos))) => (w, pos, lhs),
-            (None, None) => return Ok(None),
-        };
-
-    // The receiver must have a known width to avoid lifting a wrong claim.
-    // We accept the width from the constant side if the receiver has no
-    // conflicting annotation (soundness: we know the constant's type so the
-    // equality is between same-type values in valid Rust).
-    // We still check: if the receiver has a conflicting width annotation,
-    // refuse rather than guess.
-    if let Some(receiver_width) = float_refinement_receiver_width(receiver_expr, float_widths) {
-        if receiver_width != width {
-            return Err(format!(
-                "infinity equality: receiver width `{receiver_width}` conflicts with constant width `{width}` in `{}`",
-                token_key(receiver_expr)
-            ));
-        }
-    }
-    // Width is determined by the constant. Translate the receiver as a term.
-    let receiver = translate_term_in_scope_with_audits(receiver_expr, scope, factory_audits)
-        .map_err(|e| {
-            format!(
-                "infinity equality: receiver term translation failed for `{}`: {e}",
-                token_key(receiver_expr)
-            )
-        })?;
-
-    let name = callsite_assertion_name(receiver.as_ref(), scope.local_scope());
-    let sign_pred = if is_positive {
-        "is_sign_positive"
-    } else {
-        "is_sign_negative"
-    };
-    let atom = and_(vec![
-        atomic_(format!("float.{width}.is_infinite"), vec![receiver.clone()]),
-        atomic_(format!("float.{width}.{sign_pred}"), vec![receiver]),
-    ]);
-    Ok(Some(AssertionEntry {
-        name,
-        atom,
-        fact_span: None,
-        kind: AssertionFactKind::Warranted,
-        claim_count: 1,
-    }))
-}
-
 type FloatWidthScope = BTreeMap<String, &'static str>;
 
 fn update_float_width_scope_for_pat(pat: &Pat, out: &mut FloatWidthScope) {
@@ -17598,7 +17490,7 @@ fn translate_binary_bool_assertion_with_audits(
             // For == only: intercept infinity-constant equality before the
             // Real-equality path. != and ordered comparisons fall through unchanged.
             if matches!(binary.op, BinOp::Eq(_)) {
-                if let Some(entry) = translate_infinity_eq_assertion_with_audits(
+                if let Some(entry) = sugar::infinity_eq::assertion_entry_with_audits(
                     &binary.left,
                     &binary.right,
                     scope,

@@ -10,8 +10,9 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
-    bool_const, callsite_assertion_name, parse_macro_args, token_key, AssertionFactKind,
-    CfgDisposition, CfgPredicate, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    bool_const, callsite_assertion_name, parse_macro_args, sugar_ctx_with_factory_audits,
+    token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
+    FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, Formula, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
@@ -85,6 +86,73 @@ fn build(
         width,
         is_positive,
         debug_gated,
+    }))
+}
+
+pub(crate) fn assertion_entry_with_audits(
+    lhs: &Expr,
+    rhs: &Expr,
+    scope: &crate::TemporalScope,
+    float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Option<AssertionEntry>, String> {
+    let (width, is_positive, receiver_expr) =
+        match (infinity_constant_kind(lhs), infinity_constant_kind(rhs)) {
+            (Some((w, pos)), _) => (w, pos, rhs),
+            (None, Some((w, pos))) => (w, pos, lhs),
+            (None, None) => return Ok(None),
+        };
+
+    if let Some(receiver_width) = float_receiver_width(receiver_expr, float_widths) {
+        if receiver_width != width {
+            return Err(format!(
+                "infinity equality: receiver width `{receiver_width}` conflicts with constant width `{width}` in `{}`",
+                token_key(receiver_expr)
+            ));
+        }
+    }
+
+    let options = LiftOptions::default();
+    let reducer = ReductionCtx::from_items(&[]);
+    let let_inits = std::collections::BTreeMap::new();
+    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
+    let mut local_float_widths = float_widths.clone();
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        &options,
+        &reducer,
+        &mut local_float_widths,
+        0,
+        factory_audits,
+    );
+    let receiver = match SugarBody::term(receiver_expr, &fcx).reduce(&ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .unwrap_or_else(|| infinity_eq_gap("receiver reduced to a non-term floor")),
+        Outcome::Incomplete(effect) => {
+            return Err(format!(
+                "infinity equality: receiver term translation failed for `{}`: {}",
+                token_key(receiver_expr),
+                effect.reason()
+            ));
+        }
+    };
+
+    let sign_pred = if is_positive {
+        "is_sign_positive"
+    } else {
+        "is_sign_negative"
+    };
+    let atom = and_(vec![
+        atomic_(format!("float.{width}.is_infinite"), vec![receiver.clone()]),
+        atomic_(format!("float.{width}.{sign_pred}"), vec![receiver.clone()]),
+    ]);
+    Ok(Some(AssertionEntry {
+        name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
+        atom,
+        fact_span: None,
+        kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }))
 }
 
