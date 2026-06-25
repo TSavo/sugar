@@ -15,8 +15,8 @@
 //! Option<Box<dyn Sugar>>` (returns `Some(boxed self)` if this Sugar handles the site --
 //! building any children via `build_term`/`build_composite` -- else `None`) AND its
 //! `desugar`. The former free `decompose_*` functions are reused INSIDE these
-//! recognizers; the old inline `MethodSugar`/`CtorSugar`/`ResolvedTermSugar`/
-//! `ReasonedIncompleteSugar` now live in their own modules. Ambiguity is represented by
+//! recognizers; the old inline `MethodSugar`/`CtorSugar`/`ResolvedTermSugar` now live
+//! in their own modules. Ambiguity is represented by
 //! MULTIPLE candidates, not by a hidden factory choice.
 //!
 //! ## The three laws

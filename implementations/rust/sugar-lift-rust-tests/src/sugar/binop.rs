@@ -12,11 +12,11 @@
 //
 // THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` shape has a PREAMBLE before the
 // arithmetic ctor (the comparison branch that fires when `relation_from_binop(&op)` is
-// `Some`, then the `term_binop_name` lookup itself -- a `None` there is the "unsupported
-// term operator" refusal). Those early returns and the op-name resolution are owned by
-// `recognize`, which builds this node only for the arithmetic tail. This node composes
-// its two pre-built children and emits the arithmetic ctor over their terms, propagating
-// a child `Incomplete` verbatim.
+// `Some`, then the `term_binop_name` lookup itself). Those early returns and the op-name
+// resolution are owned by `recognize`, which builds this node only for the arithmetic
+// tail. If the operator has no arithmetic owner here, construction declines and the
+// factory gap stays loud. This node composes its two pre-built children and emits the
+// arithmetic ctor over their terms, propagating a child `Incomplete` verbatim.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -27,11 +27,10 @@ use syn::{BinOp, Expr};
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
+use crate::sugar::term_leaf::resolved_term;
 use crate::{
     bool_const, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
-    relation_from_binop, term_binop_name, token_key, u128_term, Desugared, Outcome, Sugar,
-    SugarCtx,
+    relation_from_binop, term_binop_name, u128_term, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -39,8 +38,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
 /// comparison branch (const-fold to a Bool, else the `cmp:*` [`CompareSugar`]), then
-/// the arithmetic-op [`BinOpSugar`] (or the
-/// `term_binop_name`-`None` "unsupported term operator" reasoned-Incomplete).
+/// the arithmetic-op [`BinOpSugar`]. If no arithmetic op exists after the bool/compare
+/// branches, this sugar does not own the expression and the factory gap path remains loud.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Binary(binary) = expr else {
         return None;
@@ -63,12 +62,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             rel,
         }));
     }
-    let Some(op) = term_binop_name(&binary.op) else {
-        return Some(reasoned_incomplete(format!(
-            "unsupported term operator `{}`",
-            token_key(expr)
-        )));
-    };
+    let op = term_binop_name(&binary.op)?;
     Some(Box::new(BinOpSugar {
         left: SugarBody::term(&binary.left, fcx),
         right: SugarBody::term(&binary.right, fcx),
