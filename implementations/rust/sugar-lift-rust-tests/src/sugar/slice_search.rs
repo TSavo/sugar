@@ -5,15 +5,13 @@
 // receiver syntactically resolves to a literal array/slice are claimed here, so
 // strings and ranges stay with their own domains.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, atomic_, Term};
 use syn::{BinOp, Expr, ExprClosure, ExprMacro, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
@@ -106,20 +104,12 @@ fn recognize_assert_eq_macro(
 
 fn build_assertion_surface(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(producer) = recognize_tuple_option_producer(lhs, fcx) {
-        let expected = recognize_expected_option_tuple(rhs)?;
-        return Some(Box::new(SliceSplitAssertionSugar {
-            producer,
-            expected,
-            let_inits: capture_let_inits(fcx),
-        }));
+        let expected = recognize_expected_option_tuple(rhs, fcx)?;
+        return Some(Box::new(SliceSplitAssertionSugar { producer, expected }));
     }
     if let Some(producer) = recognize_tuple_option_producer(rhs, fcx) {
-        let expected = recognize_expected_option_tuple(lhs)?;
-        return Some(Box::new(SliceSplitAssertionSugar {
-            producer,
-            expected,
-            let_inits: capture_let_inits(fcx),
-        }));
+        let expected = recognize_expected_option_tuple(lhs, fcx)?;
+        return Some(Box::new(SliceSplitAssertionSugar { producer, expected }));
     }
     None
 }
@@ -232,16 +222,19 @@ enum TupleOptionProducer {
     EnumerateNext { receiver: SugarBody<CompositeFloor> },
 }
 
-#[derive(Clone)]
 enum ExpectedOptionTuple {
-    Some(Vec<Expr>),
+    Some(Vec<ExpectedTuplePart>),
     None,
+}
+
+enum ExpectedTuplePart {
+    Scalar(SugarBody<TermFloor>),
+    Seq(SugarBody<CompositeFloor>),
 }
 
 struct SliceSplitAssertionSugar {
     producer: TupleOptionProducer,
     expected: ExpectedOptionTuple,
-    let_inits: BTreeMap<String, Expr>,
 }
 
 impl Sugar for SliceSplitAssertionSugar {
@@ -267,11 +260,8 @@ impl SliceSplitAssertionSugar {
         &self,
         ctx: &SugarCtx,
     ) -> Result<(Rc<sugar_ir_symbolic::Formula>, Option<Rc<Term>>), Effect> {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let actual = self.actual_parts(ctx)?;
-        option_tuple_atoms(actual, &self.expected, &fcx, ctx)
+        option_tuple_atoms(actual, &self.expected, ctx)
     }
 
     fn actual_parts(&self, ctx: &SugarCtx) -> Result<Option<Vec<ActualPart>>, Effect> {
@@ -420,7 +410,10 @@ fn recognize_enumerate_next_receiver(
     })
 }
 
-fn recognize_expected_option_tuple(expr: &Expr) -> Option<ExpectedOptionTuple> {
+fn recognize_expected_option_tuple(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+) -> Option<ExpectedOptionTuple> {
     match strip_refs_groups(expr) {
         Expr::Path(path) if path_ends_with(path, "None") => Some(ExpectedOptionTuple::None),
         Expr::Call(call) if call.args.len() == 1 => {
@@ -434,17 +427,29 @@ fn recognize_expected_option_tuple(expr: &Expr) -> Option<ExpectedOptionTuple> {
                 return None;
             };
             Some(ExpectedOptionTuple::Some(
-                tuple.elems.iter().cloned().collect(),
+                tuple
+                    .elems
+                    .iter()
+                    .map(|elem| expected_tuple_part(elem, fcx))
+                    .collect(),
             ))
         }
         _ => None,
     }
 }
 
+fn expected_tuple_part(expr: &Expr, fcx: &SugarBuildCtx) -> ExpectedTuplePart {
+    if let Some(seq) = method_family::build_literal_sequence_composite(strip_refs_groups(expr), fcx)
+    {
+        ExpectedTuplePart::Seq(SugarBody::from_node(seq))
+    } else {
+        ExpectedTuplePart::Scalar(SugarBody::term(strip_refs_groups(expr), fcx))
+    }
+}
+
 fn option_tuple_atoms(
     actual: Option<Vec<ActualPart>>,
     expected: &ExpectedOptionTuple,
-    fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
 ) -> Result<(Rc<sugar_ir_symbolic::Formula>, Option<Rc<Term>>), Effect> {
     let mut atoms = Vec::new();
@@ -457,19 +462,19 @@ fn option_tuple_atoms(
                     vec![num(actual.len() as i128), num(expected.len() as i128)],
                 ));
             }
-            for (actual_part, expected_expr) in actual.into_iter().zip(expected) {
-                match actual_part {
-                    ActualPart::Scalar(value) => {
+            for (actual_part, expected_part) in actual.into_iter().zip(expected) {
+                match (actual_part, expected_part) {
+                    (ActualPart::Scalar(value), ExpectedTuplePart::Scalar(expected_body)) => {
                         let lhs = num(value);
-                        let rhs = term_for(strip_refs_groups(expected_expr), fcx, ctx)?;
+                        let rhs = term_body(expected_body, ctx)?;
                         if anchor.is_none() {
                             anchor = Some(Rc::clone(&lhs));
                         }
                         atoms.push(atomic_("=".to_string(), vec![lhs, rhs]));
                     }
-                    ActualPart::Seq(values) => {
+                    (ActualPart::Seq(values), ExpectedTuplePart::Seq(expected_body)) => {
                         let expected_values =
-                            literal_int_sequence_arg(strip_refs_groups(expected_expr), fcx, ctx)?;
+                            int_values(&literal_sequence_body(expected_body, ctx)?);
                         if values.len() != expected_values.len() {
                             atoms.push(atomic_(
                                 "=".to_string(),
@@ -486,6 +491,12 @@ fn option_tuple_atoms(
                             }
                             atoms.push(atomic_("=".to_string(), vec![lhs, num(rhs_value)]));
                         }
+                    }
+                    (ActualPart::Scalar(_), ExpectedTuplePart::Seq(_)) => {
+                        slice_search_gap("expected scalar tuple part was constructed as sequence")
+                    }
+                    (ActualPart::Seq(_), ExpectedTuplePart::Scalar(_)) => {
+                        slice_search_gap("expected sequence tuple part was constructed as scalar")
                     }
                 }
             }
@@ -667,18 +678,8 @@ fn literal_int_values_syntax(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
     }
 }
 
-fn literal_int_sequence_arg(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> Result<Vec<i128>, Effect> {
-    let body = method_family::build_literal_sequence_composite(strip_refs_groups(expr), fcx)
-        .unwrap_or_else(|| slice_search_gap("expected tuple part was not a literal int sequence"));
-    Ok(int_values(&literal_sequence_node(body, ctx)?))
-}
-
-fn term_for(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
-    match build_term(expr, fcx).desugar(ctx) {
+fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
+    match body.reduce(ctx) {
         Outcome::Complete(d) => Ok(d
             .into_term()
             .unwrap_or_else(|| slice_search_gap("expected scalar reduced to non-term"))),
@@ -694,18 +695,6 @@ fn literal_sequence_body(
         Outcome::Complete(d) => Ok(d
             .into_seq()
             .unwrap_or_else(|| slice_search_gap("slice search receiver reduced to non-sequence"))),
-        Outcome::Incomplete(effect) => Err(effect),
-    }
-}
-
-fn literal_sequence_node(
-    node: Box<dyn Sugar>,
-    ctx: &SugarCtx,
-) -> Result<Vec<DesugaredElem>, Effect> {
-    match node.desugar(ctx) {
-        Outcome::Complete(d) => Ok(d
-            .into_seq()
-            .unwrap_or_else(|| slice_search_gap("literal sequence node reduced to non-sequence"))),
         Outcome::Incomplete(effect) => Err(effect),
     }
 }
@@ -730,22 +719,4 @@ fn path_ends_with(path: &syn::ExprPath, name: &str) -> bool {
 
 fn slice_search_gap(reason: &str) -> ! {
     panic!("slice_search did not reach a lawful floor: {reason}")
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
 }
