@@ -1133,7 +1133,7 @@ impl IterTerminalSugar {
         }
     }
 
-    fn named_closure_boundary(&self, ctx: &SugarCtx) -> Option<Outcome> {
+    fn named_closure_boundary(&self, _ctx: &SugarCtx) -> Option<Outcome> {
         match self.terminal {
             Terminal::Any(_)
             | Terminal::All(_)
@@ -1143,7 +1143,7 @@ impl IterTerminalSugar {
             | Terminal::Fold(_, _) => self
                 .closure_refusal
                 .clone()
-                .map(|reason| reasoned_incomplete(reason).desugar(ctx)),
+                .map(|reason| iter_terminal_gap(&reason)),
             _ => None,
         }
     }
