@@ -157,6 +157,7 @@ pub mod sugar {
     pub mod primitive_int;
     pub mod ptr_metadata;
     pub mod range_accessor;
+    pub mod range_bounds_contains;
     pub mod range_construct;
     pub mod range_contains;
     pub mod range_term;
@@ -8171,6 +8172,10 @@ enum Effect {
     /// Literal constructors/macros complete; runtime network values have no source
     /// literal address for this lift to inspect.
     RuntimeIpAddr { boundary: String },
+    /// RANGE-BOUNDS-RUNTIME-VALUE: a `RangeBounds` tuple receiver reaches the trait
+    /// contains surface (`r.contains(&x)`). Child receiver/needle terms reduce first; the
+    /// trait boundary itself is named instead of falling through to a Composite factory gap.
+    RangeBoundsRuntimeValue { boundary: String },
     /// MEMCHR-RUNTIME: `memchr`/`memrchr` can ground literal needles and literal byte
     /// sequences. Runtime needles or haystacks are real runtime data, not a factory gap.
     MemchrRuntime { boundary: String, reason: String },
@@ -8392,6 +8397,9 @@ impl Effect {
             Effect::RuntimeIpAddr { boundary } => {
                 format!("runtime IP address receiver, not literal `{boundary}`")
             }
+            Effect::RangeBoundsRuntimeValue { boundary } => {
+                format!("RangeBounds over runtime value {boundary}")
+            }
             Effect::MemchrRuntime { reason, .. } => reason.clone(),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
@@ -8489,6 +8497,7 @@ impl Effect {
             | Effect::RegexPattern { boundary, .. }
             | Effect::DynAnyConcreteType { boundary }
             | Effect::RuntimeIpAddr { boundary }
+            | Effect::RangeBoundsRuntimeValue { boundary }
             | Effect::MemchrRuntime { boundary, .. }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
