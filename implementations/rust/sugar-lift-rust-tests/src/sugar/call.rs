@@ -247,7 +247,7 @@ mod tests {
     // `Incomplete` propagation.
     use super::*;
     use crate::{
-        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+        sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
         TemporalPlan, TemporalScope,
     };
     use sugar_ir_symbolic::Term;
@@ -264,6 +264,23 @@ mod tests {
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         SugarBody::term(&parsed, &fcx)
+    }
+
+    fn effect_body(reason: &'static str) -> SugarBody<TermFloor> {
+        struct ChildEffect {
+            reason: &'static str,
+        }
+
+        impl Sugar for ChildEffect {
+            fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+                Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                    boundary: "child".to_string(),
+                    reason: self.reason.to_string(),
+                })
+            }
+        }
+
+        SugarBody::from_node(Box::new(ChildEffect { reason }))
     }
 
     /// Run `node.desugar` against a freshly-built, minimal-but-real `SugarCtx`.
@@ -339,17 +356,19 @@ mod tests {
 
     #[test]
     fn propagates_child_hit_verbatim() {
-        // A child that returns Incomplete aborts the whole node with that SAME `Incomplete` (the old named
-        // inner `translate_term_in_scope?` `Err`).
-        let node = CallSugar::new("f", vec![term_body("x"), term_body("&mut y")]);
+        // A child that returns Incomplete aborts the whole node with that SAME
+        // `Incomplete`; call sugar owns no effects of its own.
+        let node = CallSugar::new(
+            "f",
+            vec![term_body("x"), effect_body("synthetic child effect")],
+        );
         match run(&node) {
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 assert!(
-                    reason.contains("unsupported term"),
+                    reason.contains("synthetic child effect"),
                     "unexpected reason: {reason}"
                 );
-                assert!(reason.contains("mutable"), "unexpected reason: {reason}");
             }
             Outcome::Complete(_) => {
                 panic!("expected the child's Incomplete to propagate, got a Complete")

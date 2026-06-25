@@ -114,10 +114,10 @@ impl Sugar for MethodSugar {
 mod tests {
     use super::*;
     use crate::{
-        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+        sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
         TemporalPlan, TemporalScope,
     };
-    use sugar_ir_symbolic::{make_var, Term};
+    use sugar_ir_symbolic::Term;
     use syn::Item;
 
     fn expr(src: &str) -> Expr {
@@ -131,6 +131,23 @@ mod tests {
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         SugarBody::term(&parsed, &fcx)
+    }
+
+    fn effect_body(reason: &'static str) -> SugarBody<TermFloor> {
+        struct ChildEffect {
+            reason: &'static str,
+        }
+
+        impl Sugar for ChildEffect {
+            fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+                Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                    boundary: "child".to_string(),
+                    reason: self.reason.to_string(),
+                })
+            }
+        }
+
+        SugarBody::from_node(Box::new(ChildEffect { reason }))
     }
 
     fn run(node: &MethodSugar) -> Outcome {
@@ -196,13 +213,17 @@ mod tests {
 
     #[test]
     fn propagates_receiver_effect_verbatim() {
-        let node = MethodSugar::new("touch", term_body("&mut receiver"), Vec::new());
+        let node = MethodSugar::new(
+            "touch",
+            effect_body("synthetic receiver effect"),
+            Vec::new(),
+        );
 
         match run(&node) {
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 assert!(
-                    reason.contains("mutable"),
+                    reason.contains("synthetic receiver effect"),
                     "unexpected receiver effect: {reason}"
                 );
             }
@@ -212,13 +233,17 @@ mod tests {
 
     #[test]
     fn propagates_argument_effect_verbatim() {
-        let node = MethodSugar::new("touch", term_body("receiver"), vec![term_body("&mut arg")]);
+        let node = MethodSugar::new(
+            "touch",
+            term_body("receiver"),
+            vec![effect_body("synthetic argument effect")],
+        );
 
         match run(&node) {
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 assert!(
-                    reason.contains("mutable"),
+                    reason.contains("synthetic argument effect"),
                     "unexpected argument effect: {reason}"
                 );
             }
@@ -232,7 +257,7 @@ mod tests {
 
         impl Sugar for NonTermReceiver {
             fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-                Outcome::Complete(Desugared::TermSeq(vec![make_var("not_a_receiver_term")]))
+                Outcome::Complete(Desugared::LiteralString("not a receiver term".to_string()))
             }
         }
 

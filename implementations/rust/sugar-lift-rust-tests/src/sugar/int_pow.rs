@@ -13,6 +13,7 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, PowVisitor};
+use crate::sugar::primitive_int::integer_receiver_can_ground;
 use crate::{
     const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Outcome, Sugar,
     SugarCtx,
@@ -26,6 +27,11 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     };
     if call.method != "pow" || call.args.len() != 1 {
+        return None;
+    }
+    if !integer_receiver_can_ground(&call.receiver, fcx, 0)
+        || !integer_receiver_can_ground(&call.args[0], fcx, 0)
+    {
         return None;
     }
     Some(Box::new(IntPowSugar {
