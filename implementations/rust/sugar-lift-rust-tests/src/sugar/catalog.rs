@@ -1403,6 +1403,18 @@ mod tests {
     }
 
     #[test]
+    fn parenthesized_literal_range_composite_is_owned_by_transparent_wrapper() {
+        let expr: Expr = syn::parse_str("(0..3)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert_eq!(names, vec!["transparent_composite"]);
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("transparent_composite")
+        );
+    }
+
+    #[test]
     fn for_loop_over_literal_range_is_owned_by_forall_loop_sugar() {
         let expr: Expr = syn::parse_str("for x in 0..3 { assert!(x >= 0); }").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Composite);

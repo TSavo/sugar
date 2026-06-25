@@ -51,7 +51,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// (`literal_aggregate_term` ctor) — the two roles genuinely differ (a `Seq` domain vs
 /// a term aggregate).
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match strip_refs_groups(expr) {
+    match expr {
         Expr::Array(_) | Expr::Range(_) => Some(Box::new(LiteralSugar { base: expr.clone() })),
         _ if literal_byte_string_value(expr).is_some() => {
             Some(Box::new(LiteralSugar { base: expr.clone() }))
