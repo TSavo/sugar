@@ -3,11 +3,16 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, str_const, ConstValue, LetBinding, Term};
+use syn::{Expr, Item};
 
+use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audits;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::{
-    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num, Desugared,
+    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
+    scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, FactoryAuditLog,
+    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, TemporalScope,
 };
 
 pub(crate) const VALUE_IF_TERM: &str = "value:if";
@@ -20,6 +25,81 @@ pub(crate) fn value_if_term(cond: Rc<Term>, then_term: Rc<Term>, else_term: Rc<T
         name: VALUE_IF_TERM.to_string(),
         args: vec![cond, then_term, else_term],
     })
+}
+
+/// Thin adapter over the term factory. The term factory owns recognition; this
+/// helper exists only as the old external API for callers that already have a
+/// `TemporalScope`.
+pub(crate) fn translate_term_in_scope(
+    expr: &Expr,
+    scope: &TemporalScope,
+) -> Result<Rc<Term>, String> {
+    translate_term_in_scope_with_audits(expr, scope, None)
+}
+
+pub(crate) fn translate_term_in_scope_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
+    let options = LiftOptions::default();
+    let let_inits = std::collections::BTreeMap::new();
+    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
+    let node = crate::sugar::factory::build_term(expr, &fcx);
+    let items: Vec<Item> = Vec::new();
+    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+    let mut float_widths = FloatWidthScope::new();
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        &options,
+        &reducer,
+        &mut float_widths,
+        0,
+        factory_audits,
+    );
+    match node.desugar(&ctx) {
+        Outcome::Complete(d) => d
+            .into_term()
+            .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
+        Outcome::Incomplete(effect) => Err(effect.reason()),
+    }
+}
+
+pub(crate) fn translate_assertion_term_in_scope_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
+    match expr {
+        Expr::Const(const_block) => {
+            let term = translate_expression_only_block_in_scope_with_audits(
+                &const_block.block,
+                "const",
+                scope,
+                factory_audits,
+            )?;
+            Ok(scope_const_block_locals(term, scope.local_scope()))
+        }
+        Expr::Path(path)
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "None") =>
+        {
+            Ok(Rc::new(Term::Ctor {
+                name: OPT_NONE.to_string(),
+                args: Vec::new(),
+            }))
+        }
+        Expr::Paren(paren) => {
+            translate_assertion_term_in_scope_with_audits(&paren.expr, scope, factory_audits)
+        }
+        Expr::Group(group) => {
+            translate_assertion_term_in_scope_with_audits(&group.expr, scope, factory_audits)
+        }
+        _ => translate_term_in_scope_with_audits(expr, scope, factory_audits),
+    }
 }
 
 /// A finite-domain occurrence context for a term-floor curry.
