@@ -41,11 +41,20 @@ pub(crate) enum SkipWhilePredicate {
 
 impl SkipWhilePredicate {
     pub(crate) fn build(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+        Self::build_result(expr, fcx).ok()
+    }
+
+    pub(crate) fn build_result(expr: &Expr, fcx: &SugarBuildCtx) -> Result<Self, String> {
         match crate::strip_refs_groups(expr) {
-            Expr::Closure(pred) => {
-                BoolPredicateClosure::build(pred.clone(), fcx).map(Self::Closure)
-            }
-            other => BoolPredicateFunction::build(other.clone(), fcx).map(Self::Function),
+            Expr::Closure(pred) => BoolPredicateClosure::build(pred.clone(), fcx)
+                .map(Self::Closure)
+                .ok_or_else(|| {
+                    format!(
+                        "skip_while closure predicate `{}` is not unary",
+                        crate::token_key(expr)
+                    )
+                }),
+            other => BoolPredicateFunction::build_result(other.clone(), fcx).map(Self::Function),
         }
     }
 

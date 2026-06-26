@@ -6,15 +6,19 @@
 // closures, and non-Option bodies stay unclaimed so accounting reports the next
 // real gap.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
+use sugar_ir_symbolic::{num, Term};
 use syn::{Expr, GenericArgument, Path, PathArguments};
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
+use crate::sugar::term_dispatch::{
+    literal_array_term_from_terms, CurryOccurrence, CurryVisitor, TermFloorAccept,
+};
 use crate::{
-    const_eval, const_path_key, literal_aggregate_term_in_scope, parse_int_lit,
-    resolve_value_call_inline, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+    curry_param_name, curry_param_term, helper_param_names, parse_int_lit, strip_refs_groups,
+    value_body_tail_substituted, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -39,132 +43,139 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !fcx.scope().has_visible_fn(&name) {
         return None;
     }
-    Some(Box::new(TryFromFnSugar {
-        source_site: TryFromFnSource::new(expr.clone()),
-        len,
-        func: func.clone(),
-    }))
+    let body = build_try_from_fn_body_or_gap(func, fcx);
+    Some(Box::new(TryFromFnSugar { len, body }))
 }
 
-struct TryFromFnSource {
-    expr: Expr,
-}
-
-impl TryFromFnSource {
-    fn new(expr: Expr) -> Self {
-        Self { expr }
-    }
+fn build_try_from_fn_body_or_gap(func: &Expr, fcx: &SugarBuildCtx) -> TryFromFnBody {
+    TryFromFnBody::build_result(func, fcx).unwrap_or_else(|reason| {
+        panic!("try_from_fn construction gap: {reason}");
+    })
 }
 
 struct TryFromFnSugar {
-    source_site: TryFromFnSource,
     len: usize,
-    func: Expr,
+    body: TryFromFnBody,
+}
+
+struct TryFromFnBody {
+    name: String,
+    curry_param: String,
+    body: SugarBody<TermFloor>,
 }
 
 impl Sugar for TryFromFnSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::Complete(
-            reduce_try_from_fn(&self.source_site.expr, self.len, &self.func, ctx)
-                .unwrap_or_else(|| try_from_fn_gap("try_from_fn did not reduce to a monadic term")),
-        )
+        match reduce_try_from_fn(self.len, &self.body, ctx) {
+            Ok(desugared) => Outcome::Complete(desugared),
+            Err(outcome) => outcome,
+        }
     }
 }
 
-fn reduce_try_from_fn(source: &Expr, len: usize, func: &Expr, ctx: &SugarCtx) -> Option<Desugared> {
+impl TryFromFnBody {
+    fn build_result(func: &Expr, fcx: &SugarBuildCtx) -> Result<Self, String> {
+        let name = simple_fn_name(func).ok_or_else(|| {
+            format!(
+                "try_from_fn mapper `{}` is not a simple visible fn path",
+                crate::token_key(func)
+            )
+        })?;
+        let helper = fcx.scope().visible_fn(&name).ok_or_else(|| {
+            format!("try_from_fn mapper `{name}` is not visible in the current temporal scope")
+        })?;
+        if helper.sig.asyncness.is_some() {
+            return Err(format!("try_from_fn mapper `{name}` is async"));
+        }
+        if crate::count_asserts_in_stmts(&helper.block.stmts) != 0 {
+            return Err(format!("try_from_fn mapper `{name}` contains assertions"));
+        }
+        let params = helper_param_names(&helper).map_err(|reason| {
+            format!("try_from_fn mapper `{name}` parameter list is not curryable: {reason}")
+        })?;
+        let [param] = params.as_slice() else {
+            return Err(format!(
+                "try_from_fn mapper `{name}` has {} parameters, expected exactly one",
+                params.len()
+            ));
+        };
+        let curry_param = curry_param_name(param);
+        let body_scope = fcx
+            .scope()
+            .fork_with_stable_term_binding(param, curry_param_term(param));
+        let body_fcx = fcx.with_scope(&body_scope);
+        let mut bindings = BTreeMap::new();
+        let returned =
+            value_body_tail_substituted(&helper.block, &mut bindings).ok_or_else(|| {
+                format!("try_from_fn mapper `{name}` does not have a pure value tail")
+            })?;
+        Ok(Self {
+            name,
+            curry_param,
+            body: SugarBody::<TermFloor>::term(&returned, &body_fcx),
+        })
+    }
+}
+
+fn reduce_try_from_fn(
+    len: usize,
+    body: &TryFromFnBody,
+    ctx: &SugarCtx,
+) -> Result<Desugared, Outcome> {
+    let mapper = match body.body.reduce(ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .unwrap_or_else(|| try_from_fn_gap("try_from_fn mapper reduced to non-Term")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
     let mut mapped = Vec::with_capacity(len);
     for index in 0..len {
-        let arg = ConstVal::Int(i128::try_from(index).ok()?).to_expr()?;
-        match eval_option_function(func, arg, ctx)? {
-            Some(value) => mapped.push(value.to_expr()?),
-            None => {
+        let index_term = num(i128::try_from(index)
+            .unwrap_or_else(|_| try_from_fn_gap("try_from_fn index exceeded i128")));
+        let curried = mapper.accept_term_floor(CurryVisitor {
+            param: &body.curry_param,
+            arg: &index_term,
+            occurrence: CurryOccurrence {
+                family: "try_from_fn",
+                ordinal: index,
+            },
+        });
+        match option_payload(&curried) {
+            Some(Some(value)) => mapped.push(value),
+            Some(None) => {
                 tracing::debug!(
                     target: "sugar_lift_rust_tests::sugar::try_from_fn",
-                    func = %crate::token_key(func),
+                    func = %body.name,
                     index,
                     "literal array try_from_fn short-circuited to None"
                 );
-                return Some(Desugared::Term(monadic::none_term()));
+                return Ok(Desugared::Term(monadic::none_term()));
             }
+            None => try_from_fn_gap("try_from_fn mapper did not reduce to an Option floor"),
         }
     }
-    let array_term =
-        literal_aggregate_term_in_scope("Array", mapped.iter(), source, ctx.scope).ok()?;
     tracing::debug!(
         target: "sugar_lift_rust_tests::sugar::try_from_fn",
         len,
-        func = %crate::token_key(func),
+        func = %body.name,
         "literal array try_from_fn reduced to Some(array)"
     );
-    Some(Desugared::Term(monadic::some_term(array_term)))
+    Ok(Desugared::Term(monadic::some_term(
+        literal_array_term_from_terms(&mapped),
+    )))
 }
 
 fn try_from_fn_gap(reason: &str) -> ! {
     panic!("{reason}")
 }
 
-fn eval_option_function(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<Option<ConstVal>> {
-    let resolved = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options)?;
-    eval_option_expr(&resolved, &BTreeMap::new())
-}
-
-fn eval_option_expr(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<Option<ConstVal>> {
-    match expr {
-        Expr::Paren(p) => eval_option_expr(&p.expr, env),
-        Expr::Group(g) => eval_option_expr(&g.expr, env),
-        Expr::Reference(r) => eval_option_expr(&r.expr, env),
-        Expr::Block(block) => match block.block.stmts.as_slice() {
-            [syn::Stmt::Expr(expr, None)] => eval_option_expr(expr, env),
-            _ => None,
-        },
-        Expr::Path(path) if path.path.segments.last()?.ident == "None" => Some(None),
-        Expr::Call(call) if call.args.len() == 1 => {
-            let Expr::Path(path) = &*call.func else {
-                return None;
-            };
-            if path.path.segments.last()?.ident != "Some" {
-                return None;
-            }
-            Some(Some(const_value_expr_with_env(&call.args[0], env)?))
-        }
-        Expr::MethodCall(call) if call.method == "checked_mul" && call.args.len() == 1 => {
-            checked_mul_usize(
-                const_value_expr_with_env(&call.receiver, env)?.as_int()?,
-                const_value_expr_with_env(&call.args[0], env)?.as_int()?,
-            )
+fn option_payload(term: &Rc<Term>) -> Option<Option<Rc<Term>>> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == monadic::OPT_NONE && args.is_empty() => Some(None),
+        Term::Ctor { name, args } if name == monadic::OPT_SOME && args.len() == 1 => {
+            Some(Some(Rc::clone(&args[0])))
         }
         _ => None,
-    }
-}
-
-fn checked_mul_usize(lhs: i128, rhs: i128) -> Option<Option<ConstVal>> {
-    let lhs = usize_domain(lhs)?;
-    let rhs = usize_domain(rhs)?;
-    let product = lhs.checked_mul(rhs)?;
-    if product > usize::MAX as u128 {
-        Some(None)
-    } else {
-        Some(Some(ConstVal::Int(product as i128)))
-    }
-}
-
-fn usize_domain(value: i128) -> Option<u128> {
-    if value < 0 || value > usize::MAX as i128 {
-        return None;
-    }
-    Some(value as u128)
-}
-
-fn const_value_expr_with_env(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
-    match expr {
-        Expr::Path(path) => match const_path_key(&path.path)?.as_str() {
-            "usize::MAX" => Some(ConstVal::Int(usize::MAX as i128)),
-            name => env.get(name).cloned(),
-        },
-        Expr::Paren(p) => const_value_expr_with_env(&p.expr, env),
-        Expr::Group(g) => const_value_expr_with_env(&g.expr, env),
-        Expr::Reference(r) => const_value_expr_with_env(&r.expr, env),
-        other => const_eval(other, env),
     }
 }
 

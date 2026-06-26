@@ -80,6 +80,69 @@ fn sugar_raw_expr_storage_names_the_child_or_the_provenance() {
     );
 }
 
+#[derive(Clone, Copy)]
+struct LateFunctionInlineSite {
+    path: &'static str,
+    owner: &'static str,
+    required_patterns: &'static [&'static str],
+    replacement_plan: &'static str,
+}
+
+const LATE_FUNCTION_INLINE_SITES: &[LateFunctionInlineSite] = &[
+    LateFunctionInlineSite {
+        path: "implementations/rust/sugar-lift-rust-tests/src/sugar/bool_predicate.rs",
+        owner: "BoolPredicateFunction",
+        required_patterns: &[
+            "func: Expr",
+            ".value\n            .as_ref()",
+            "value.to_expr()",
+            "ctx.try_inline_value_call(&self.func",
+        ],
+        replacement_plan: "construct a typed BoolPredicateFunctionBody at build time: resolve the visible function, bind its parameter to a curry term, build the returned expression as SugarBody<BoolFloor>, and curry sequence floor terms through that body in desugar",
+    },
+    LateFunctionInlineSite {
+        path: "implementations/rust/sugar-lift-rust-tests/src/sugar/try_from_fn.rs",
+        owner: "TryFromFnSugar",
+        required_patterns: &[
+            "func: Expr",
+            "ConstVal::Int(i128::try_from(index).ok()?).to_expr()",
+            "resolve_value_call_inline(func, &[arg]",
+        ],
+        replacement_plan: "construct a typed TryFromFnBody at recognition: resolve the visible function, bind its index parameter to a curry term, build the returned Option expression as SugarBody<TermFloor>, then curry index terms and read opt:some/opt:none floors",
+    },
+];
+
+#[test]
+fn path_function_callbacks_construct_typed_bodies_before_desugar() {
+    let root = repo_root();
+    let mut offenders = Vec::new();
+    for site in LATE_FUNCTION_INLINE_SITES {
+        let path = root.join(site.path);
+        let source = fs::read_to_string(&path).expect("read path-function callback sugar source");
+        if site
+            .required_patterns
+            .iter()
+            .all(|pattern| source.contains(pattern))
+        {
+            offenders.push(format!(
+                "{}: {} stores a raw path function and rematerializes element source syntax during desugar\n  replacement_plan: {}",
+                site.path, site.owner, site.replacement_plan
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "Path-function callback sugars must construct typed function bodies before desugar. \
+         Literal const-eval may be a fast path, but the hard path must ask for each child \
+         element's floor term and curry it through the typed function body; it must not \
+         rebuild source syntax from sequence elements and late-inline the function. \
+         R.path_function_callback_late_inline.current = {}\n{}",
+        offenders.len(),
+        offenders.join("\n")
+    );
+}
+
 struct FoundField {
     rel_path: PathBuf,
     line: usize,
