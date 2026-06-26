@@ -591,6 +591,12 @@ fn selected_closed_arm<'a>(
     scope: &TemporalScope,
     options: &LiftOptions,
 ) -> Option<(&'a syn::Arm, ExprBindings)> {
+    if crate::expr_is_runtime_call_result(&m.expr) {
+        // Runtime-call scrutinees are owned by match_scrutinee. Closed-match only
+        // selects arms from source-closed data; a catch-all arm must not launder
+        // runtime arm selection into a closed rewrite.
+        return None;
+    }
     if closure_body_is_side_effecting(&m.expr)
         || expr_contains_mutable_reference_or_raw_addr(&m.expr)
     {

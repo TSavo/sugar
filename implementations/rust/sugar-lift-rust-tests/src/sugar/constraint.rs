@@ -1391,10 +1391,30 @@ mod tests {
     #[test]
     fn relation_capability_operand_check_only_classifies_the_compared_value() {
         let expr: Expr = syn::parse_str("value").expect("parse relation operand provenance");
-        let pinned = num(1);
+        let literal = num(1);
+        let direct_literal_mut_ref = Rc::new(Term::Ctor {
+            name: "ref_mut".to_string(),
+            args: vec![Rc::clone(&literal)],
+        });
+        assert!(
+            relation_operand_capability_effect(&expr, &direct_literal_mut_ref).is_none(),
+            "a mutable reference to a literal identity is a closed source value"
+        );
+        let shared_wrapped_literal_mut_ref = Rc::new(Term::Ctor {
+            name: "ref".to_string(),
+            args: vec![Rc::clone(&direct_literal_mut_ref)],
+        });
+        assert!(
+            relation_operand_capability_effect(&expr, &shared_wrapped_literal_mut_ref).is_none(),
+            "a shared wrapper around a literal mutable reference remains a closed source value"
+        );
+
+        let runtime_value = Rc::new(Term::Var {
+            name: "runtime_value".to_string(),
+        });
         let direct_mut_ref = Rc::new(Term::Ctor {
             name: "ref_mut".to_string(),
-            args: vec![Rc::clone(&pinned)],
+            args: vec![Rc::clone(&runtime_value)],
         });
         assert!(
             relation_operand_capability_effect(&expr, &direct_mut_ref).is_some(),
@@ -1413,8 +1433,8 @@ mod tests {
             args: vec![direct_mut_ref],
         });
         assert!(
-            relation_operand_capability_effect(&expr, &value_from_mut_ref_argument).is_none(),
-            "method arguments are child computation, not the relation value's capability"
+            relation_operand_capability_effect(&expr, &value_from_mut_ref_argument).is_some(),
+            "composite relation values must not launder mutable-reference identity"
         );
     }
 

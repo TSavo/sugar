@@ -1967,6 +1967,29 @@ mod tests {
     }
 
     #[test]
+    fn runtime_call_match_constraint_is_owned_by_match_scrutinee_not_closed_match() {
+        let expr: Expr = syn::parse_str(
+            "match c.case() { None => false, Some(CharCase::Lower) => true, _ => false }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Constraint);
+
+        assert!(
+            names.contains(&"constraint_match_scrutinee"),
+            "runtime-call match scrutinees must be recognized by the runtime effect sugar: {names:?}"
+        );
+        assert!(
+            !names.contains(&"constraint_closed_match"),
+            "closed-match sugar must decline runtime-call scrutinees; otherwise the catalog \
+             correctly panics over constraint_closed_match vs constraint_match_scrutinee"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Constraint),
+            Some("constraint_match_scrutinee")
+        );
+    }
+
+    #[test]
     fn runtime_match_scrutinee_term_is_a_catalog_claim() {
         let init: Expr = syn::parse_str("std::env::args().count()").unwrap();
         let mut let_inits = BTreeMap::new();
