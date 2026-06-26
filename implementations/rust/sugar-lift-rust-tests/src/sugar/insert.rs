@@ -108,7 +108,9 @@ impl InsertSugar {
             return Some(ReplayAction::NotMine);
         };
         let key = expr_const_int(key_expr, scope, bindings)?;
-        let map = self.maps.get_mut(&map_name)?;
+        let Some(map) = self.maps.get_mut(&map_name) else {
+            return Some(ReplayAction::NotMine);
+        };
         let was_absent = !map.keys.contains(&key);
         map.insert_step = map.insert_step.checked_add(1)?;
         let term = temporal_insert_predicate_term(
@@ -419,5 +421,39 @@ fn strip_pat(pat: &Pat) -> &Pat {
         Pat::Type(typed) => strip_pat(&typed.pat),
         Pat::Paren(paren) => strip_pat(&paren.pat),
         _ => pat,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{TemporalPlan, TemporalScope};
+
+    #[test]
+    fn untracked_insert_assertion_declines_so_replay_can_use_the_constraint_floor() {
+        let expr: Expr =
+            syn::parse_str("assert!(map.insert(1, 2).is_none())").expect("parse assert");
+        let Expr::Macro(expr_macro) = expr else {
+            panic!("test source must parse as a macro expression");
+        };
+        let scope = TemporalScope::new("insert-side-door-test", TemporalPlan::default());
+        let bindings = ExprBindings::new();
+        let mut sugar = InsertSugar::new();
+
+        match sugar.constraint_for_macro(&expr_macro.mac, &scope, "insert-test", &bindings) {
+            Some(ReplayAction::NotMine) => {}
+            Some(ReplayAction::Handled(_)) => {
+                panic!(
+                    "insert must not claim assertions for maps it did not construct; \
+                     for_replay should delegate ordinary assertions to the constraint floor"
+                );
+            }
+            None => {
+                panic!(
+                    "insert must return NotMine, not None, when an insert-shaped assertion \
+                     has no tracked map state; None blocks the normal assertion floor"
+                );
+            }
+        }
     }
 }

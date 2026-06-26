@@ -16760,6 +16760,7 @@ fn value_body_tail_substituted(block: &syn::Block, binds: &mut ExprBindings) -> 
                 let value = substitute_expr(&init.expr, binds);
                 binds.insert(id, value);
             }
+            Stmt::Item(Item::Use(_)) => {}
             // Any non-`let` leading statement (a bare effectful expr, a nested fn/macro
             // item, ...) means this is not a pure single-value body -- bail.
             _ => return None,
@@ -18916,6 +18917,11 @@ fn const_len_value_in_scope(expr: &Expr, scope: &TemporalScope, depth: usize) ->
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(value) = primitive_int_const_path_value(&path.path) {
                 return Some(value);
+            }
+            if let Some(name) = path.path.get_ident().map(ToString::to_string) {
+                if let Some(current) = scope.temporal_rewrite_expr_for(&name) {
+                    return const_len_value_in_scope(&current, scope, depth + 1);
+                }
             }
             let init = scope.const_expr_for_path(&path.path)?;
             const_len_value_in_scope(&init, scope, depth + 1)

@@ -150,7 +150,7 @@ fn resolve_literal_elems<'a>(
     }
 }
 
-fn slice_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
+pub(crate) fn slice_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
     if let Some(bounds) = exhausted_literal_iterator_block_bounds(expr, len) {
         return Some(bounds);
     }

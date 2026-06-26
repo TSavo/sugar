@@ -4,14 +4,17 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprCall, ExprRange, GenericArgument, UnOp};
+use syn::{Expr, ExprCall, ExprRange, GenericArgument, Type, UnOp};
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+};
+use crate::sugar::literal::OVERSIZE_DOMAIN_REASON;
 use crate::sugar::literal_slice;
 use crate::{
     const_eval, const_int, literal_byte_string_value, literal_string_value, peel_fold_adaptors,
-    peel_fold_adaptors_in_scope, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome,
-    Sugar, SugarCtx, TemporalScope,
+    peel_fold_adaptors_in_scope, resolve_value_call_inline, strip_refs_groups, ConstVal, Desugared,
+    DesugaredElem, Effect, LiftOptions, Outcome, Sugar, SugarCtx, TemporalScope, SUGAR_SEQ_CAP,
 };
 
 pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
@@ -72,6 +75,12 @@ pub(crate) fn build_literal_sequence_composite(
     expr: &Expr,
     fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    if let Some(node) = build_owned_sequence_composite(expr, fcx) {
+        return Some(node);
+    }
+    if let Some(inlined) = resolve_vec_value_call_inline(expr, fcx.scope(), fcx.options()) {
+        return build_literal_sequence_composite(&inlined, fcx);
+    }
     let (base, adaptors) = peel_fold_adaptors_in_scope(expr, fcx.let_inits(), fcx.scope(), 0)?;
     // Scope-aware base gate: a const-length repeat (`[7; SIZE]`) resolves to a finite literal
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
@@ -97,6 +106,62 @@ pub(crate) fn build_literal_sequence_composite(
         node = wrap(node, fcx);
     }
     Some(node)
+}
+
+fn build_owned_sequence_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    match call.method.to_string().as_str() {
+        "repeat" if call.args.len() == 1 => {
+            let count = method_arg_const_usize(call, Some(fcx.scope()))?;
+            literal_sequence_static_len_for_build(&call.receiver, fcx)?;
+            Some(Box::new(RepeatSequenceSugar {
+                inner: SugarBody::from_node(build_literal_sequence_composite(&call.receiver, fcx)?),
+                count,
+                boundary: crate::token_key(expr),
+            }))
+        }
+        "collect" if call.args.is_empty() && collects_vec_like(call) => {
+            Some(build_composite(&call.receiver, fcx))
+        }
+        _ => None,
+    }
+}
+
+struct RepeatSequenceSugar {
+    inner: SugarBody<CompositeFloor>,
+    count: usize,
+    boundary: String,
+}
+
+impl Sugar for RepeatSequenceSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared
+                .into_seq()
+                .unwrap_or_else(|| repeat_sequence_gap("receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let len = match seq.len().checked_mul(self.count) {
+            Some(len) if len <= SUGAR_SEQ_CAP as usize => len,
+            _ => {
+                return Outcome::Incomplete(Effect::LiteralDomain {
+                    boundary: self.boundary.clone(),
+                    reason: OVERSIZE_DOMAIN_REASON.to_string(),
+                })
+            }
+        };
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..self.count {
+            out.extend(seq.iter().cloned());
+        }
+        Outcome::Complete(Desugared::Seq(out))
+    }
+}
+
+fn repeat_sequence_gap(reason: &str) -> ! {
+    panic!("repeat sequence did not reach a lawful floor: {reason}")
 }
 
 struct LiteralIterCallSugar {
@@ -213,17 +278,179 @@ fn literal_iter_call_name(call: &ExprCall) -> Option<String> {
 }
 
 pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
-    crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)
-        .ok()?
-        .into_iter()
-        .map(|value| {
-            let expr = value.to_expr()?;
-            Some(DesugaredElem {
-                expr,
-                value: Some(value),
+    finite_iter_sequence(expr, 0).or_else(|| {
+        crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)
+            .ok()?
+            .into_iter()
+            .map(|value| {
+                let expr = value.to_expr()?;
+                Some(DesugaredElem {
+                    expr,
+                    value: Some(value),
+                })
             })
+            .collect()
+    })
+}
+
+fn finite_iter_sequence(expr: &Expr, depth: usize) -> Option<Vec<DesugaredElem>> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Call(_) => literal_iter_call_sequence(expr),
+        Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
+            "collect" if collects_vec_like(call) => finite_iter_sequence(&call.receiver, depth + 1),
+            "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable"
+            | "by_ref" | "clone" | "rev" | "enumerate" | "to_vec" | "as_slice" | "to_owned"
+            | "into_vec" => finite_iter_sequence(&call.receiver, depth + 1),
+            _ => None,
+        },
+        Expr::MethodCall(call) if call.args.len() == 1 => match call.method.to_string().as_str() {
+            "take" => {
+                let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                if let Some((elem, value)) = iter_repeat_call_elem(&call.receiver) {
+                    return repeat_elem_sequence(elem, value, n);
+                }
+                let mut seq = finite_iter_sequence(&call.receiver, depth + 1)?;
+                seq.truncate(n);
+                Some(seq)
+            }
+            "skip" => {
+                let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                Some(
+                    finite_iter_sequence(&call.receiver, depth + 1)?
+                        .into_iter()
+                        .skip(n)
+                        .collect(),
+                )
+            }
+            "step_by" => {
+                let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                if n == 0 {
+                    return None;
+                }
+                Some(
+                    finite_iter_sequence(&call.receiver, depth + 1)?
+                        .into_iter()
+                        .step_by(n)
+                        .collect(),
+                )
+            }
+            "chain" => {
+                let mut left = finite_iter_sequence(&call.receiver, depth + 1)?;
+                let right = finite_iter_sequence(&call.args[0], depth + 1)?;
+                let len = left.len().checked_add(right.len())?;
+                if len > SUGAR_SEQ_CAP as usize {
+                    return None;
+                }
+                left.extend(right);
+                Some(left)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn iter_repeat_call_elem(expr: &Expr) -> Option<(Expr, ConstVal)> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if literal_iter_call_name(call)?.as_str() != "repeat" || call.args.len() != 1 {
+        return None;
+    }
+    let elem = call.args.first()?.clone();
+    let value = const_eval(&elem, &BTreeMap::new())?;
+    Some((elem, value))
+}
+
+fn repeat_elem_sequence(elem: Expr, value: ConstVal, count: usize) -> Option<Vec<DesugaredElem>> {
+    if count > SUGAR_SEQ_CAP as usize {
+        return None;
+    }
+    Some(
+        (0..count)
+            .map(|_| DesugaredElem {
+                expr: elem.clone(),
+                value: Some(value.clone()),
+            })
+            .collect(),
+    )
+}
+
+fn method_arg_const_usize(
+    call: &syn::ExprMethodCall,
+    scope: Option<&TemporalScope>,
+) -> Option<usize> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    scope
+        .and_then(|scope| crate::repeat_count_in_scope(&call.args[0], scope))
+        .or_else(|| usize::try_from(const_int(&call.args[0])?).ok())
+}
+
+fn collects_vec_like(call: &syn::ExprMethodCall) -> bool {
+    call.turbofish.as_ref().is_some_and(|args| {
+        args.args.iter().any(|arg| {
+            matches!(
+                arg,
+                GenericArgument::Type(syn::Type::Path(path))
+                    if path.qself.is_none()
+                        && path.path.segments.iter().any(|segment| segment.ident == "Vec")
+            )
         })
-        .collect()
+    })
+}
+
+fn resolve_vec_value_call_inline(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Option<Expr> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    call_returns_vec(call, scope)?;
+    let args: Vec<Expr> = call.args.iter().cloned().collect();
+    let inlined = resolve_value_call_inline(&call.func, &args, scope, options)?;
+    Some(annotate_vec_collect_return(inlined))
+}
+
+fn call_returns_vec(call: &ExprCall, scope: &TemporalScope) -> Option<()> {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let name = path.path.get_ident()?.to_string();
+    let helper = scope.fn_registry().lookup(&name)?;
+    return_type_is_vec(&helper.sig.output).then_some(())
+}
+
+fn annotate_vec_collect_return(expr: Expr) -> Expr {
+    let Expr::MethodCall(mut call) = expr else {
+        return expr;
+    };
+    if call.method == "collect" && call.args.is_empty() && call.turbofish.is_none() {
+        call.turbofish = Some(syn::parse_quote!(::<Vec<_>>));
+    }
+    Expr::MethodCall(call)
+}
+
+fn return_type_is_vec(output: &syn::ReturnType) -> bool {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    matches!(
+        ty.as_ref(),
+        Type::Path(path)
+            if path.qself.is_none()
+                && path.path.segments.iter().any(|segment| segment.ident == "Vec")
+    )
 }
 
 #[allow(dead_code)]
@@ -231,7 +458,7 @@ pub(crate) fn literal_sequence_static_len<'a>(
     expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
 ) -> Option<usize> {
-    literal_sequence_static_len_inner(expr, let_inits, None, 0)
+    literal_sequence_static_len_inner(expr, let_inits, None, None, 0)
 }
 
 pub(crate) fn literal_sequence_static_len_in_scope<'a>(
@@ -239,7 +466,20 @@ pub(crate) fn literal_sequence_static_len_in_scope<'a>(
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: &'a TemporalScope,
 ) -> Option<usize> {
-    literal_sequence_static_len_inner(expr, let_inits, Some(scope), 0)
+    literal_sequence_static_len_inner(expr, let_inits, Some(scope), None, 0)
+}
+
+pub(crate) fn literal_sequence_static_len_for_build<'a, 'e>(
+    expr: &Expr,
+    fcx: &SugarBuildCtx<'a, 'e>,
+) -> Option<usize> {
+    literal_sequence_static_len_inner(
+        expr,
+        fcx.let_inits(),
+        Some(fcx.scope()),
+        Some(fcx.options()),
+        0,
+    )
 }
 
 pub(crate) fn literal_range_sequence_static_len_in_scope<'a>(
@@ -273,6 +513,7 @@ fn literal_sequence_static_len_inner<'a>(
     expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: Option<&'a TemporalScope>,
+    options: Option<&'a LiftOptions>,
     depth: usize,
 ) -> Option<usize> {
     const MAX_DEPTH: usize = 8;
@@ -280,35 +521,123 @@ fn literal_sequence_static_len_inner<'a>(
         return None;
     }
     match strip_refs_groups(expr) {
+        _ if literal_byte_string_value(expr).is_some() => {
+            Some(literal_byte_string_value(expr)?.len())
+        }
         Expr::Array(array) => Some(array.elems.len()),
         Expr::Range(range) => literal_range_len(range),
-        Expr::Index(_) => match scope {
-            Some(scope) => literal_slice::literal_slice_len_in_scope(expr, let_inits, scope),
-            None => literal_slice::literal_slice_len(expr, let_inits),
+        Expr::Index(index) => match scope {
+            Some(scope) => literal_slice::literal_slice_len_in_scope(expr, let_inits, scope)
+                .or_else(|| {
+                    let len = literal_sequence_static_len_inner(
+                        &index.expr,
+                        let_inits,
+                        Some(scope),
+                        options,
+                        depth + 1,
+                    )?;
+                    let (start, end) = literal_slice::slice_bounds(&index.index, len)?;
+                    Some(end - start)
+                }),
+            None => literal_slice::literal_slice_len(expr, let_inits).or_else(|| {
+                let len = literal_sequence_static_len_inner(
+                    &index.expr,
+                    let_inits,
+                    None,
+                    None,
+                    depth + 1,
+                )?;
+                let (start, end) = literal_slice::slice_bounds(&index.index, len)?;
+                Some(end - start)
+            }),
         },
-        Expr::Call(call) => literal_iter_call_len(call),
+        Expr::Call(call) => literal_iter_call_len(call).or_else(|| {
+            let scope = scope?;
+            let inlined = match options {
+                Some(options) => resolve_vec_value_call_inline(expr, scope, options)?,
+                None => {
+                    let default_options = LiftOptions::default();
+                    resolve_vec_value_call_inline(expr, scope, &default_options)?
+                }
+            };
+            literal_sequence_static_len_inner(&inlined, let_inits, Some(scope), options, depth + 1)
+        }),
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             if let Some(current) = scope.and_then(|scope| scope.temporal_rewrite_expr_for(&name)) {
-                return literal_sequence_static_len_inner(&current, let_inits, scope, depth + 1);
+                return literal_sequence_static_len_inner(
+                    &current,
+                    let_inits,
+                    scope,
+                    options,
+                    depth + 1,
+                );
             }
             let init = let_inits
                 .get(&name)
                 .copied()
                 .or_else(|| scope.and_then(|scope| scope.stable_let_binding_for_term(&name)))?;
-            literal_sequence_static_len_inner(init, let_inits, scope, depth + 1)
+            literal_sequence_static_len_inner(init, let_inits, scope, options, depth + 1)
         }
         Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
+            "collect" if collects_vec_like(call) => literal_sequence_static_len_inner(
+                &call.receiver,
+                let_inits,
+                scope,
+                options,
+                depth + 1,
+            ),
             // Value-identity adaptors over the element sequence: same length as the receiver.
             "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "clone" | "rev"
             | "enumerate" | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
-                literal_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)
+                literal_sequence_static_len_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    options,
+                    depth + 1,
+                )
             }
             _ => None,
         },
         Expr::MethodCall(call) if call.args.len() == 1 => {
-            let base_len =
-                literal_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)?;
+            if call.method == "take" && iter_repeat_call_elem(&call.receiver).is_some() {
+                return method_arg_const_usize(call, scope);
+            }
+            if call.method == "repeat" {
+                let base_len = literal_sequence_static_len_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    options,
+                    depth + 1,
+                )?;
+                return base_len.checked_mul(method_arg_const_usize(call, scope)?);
+            }
+            if call.method == "chain" {
+                let base_len = literal_sequence_static_len_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    options,
+                    depth + 1,
+                )?;
+                let rhs_len = literal_sequence_static_len_inner(
+                    &call.args[0],
+                    let_inits,
+                    scope,
+                    options,
+                    depth + 1,
+                )?;
+                return base_len.checked_add(rhs_len);
+            }
+            let base_len = literal_sequence_static_len_inner(
+                &call.receiver,
+                let_inits,
+                scope,
+                options,
+                depth + 1,
+            )?;
             match call.method.to_string().as_str() {
                 "skip" => {
                     let n = usize::try_from(const_int(&call.args[0])?).ok()?;

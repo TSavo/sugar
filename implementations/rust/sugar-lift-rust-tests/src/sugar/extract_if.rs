@@ -112,14 +112,18 @@ impl ExtractIfSugar {
             "assert" | "debug_assert" => {
                 let condition = args.exprs.first()?;
                 if let Some((map_name, expected)) = keys_eq_range(condition, scope, bindings) {
-                    let map = self.maps.get(&map_name)?;
+                    let Some(map) = self.maps.get(&map_name) else {
+                        return Some(ReplayAction::NotMine);
+                    };
                     return Some(ReplayAction::Handled(sequence_eq_formula(
                         &map.keys(),
                         &expected,
                     )));
                 }
                 if let Some(map_name) = is_empty_expr(condition) {
-                    let map = self.maps.get(&map_name)?;
+                    let Some(map) = self.maps.get(&map_name) else {
+                        return Some(ReplayAction::NotMine);
+                    };
                     return Some(ReplayAction::Handled(eq(num(map.len()), num(0))));
                 }
                 Some(ReplayAction::NotMine)
@@ -131,7 +135,9 @@ impl ExtractIfSugar {
                 if let Some((map_name, expected)) =
                     len_eq(&args.exprs[0], &args.exprs[1], scope, bindings)
                 {
-                    let map = self.maps.get(&map_name)?;
+                    let Some(map) = self.maps.get(&map_name) else {
+                        return Some(ReplayAction::NotMine);
+                    };
                     return Some(ReplayAction::Handled(eq(num(map.len()), num(expected))));
                 }
                 Some(ReplayAction::NotMine)
@@ -604,5 +610,39 @@ fn strip_pat(pat: &Pat) -> &Pat {
         Pat::Type(typed) => strip_pat(&typed.pat),
         Pat::Paren(paren) => strip_pat(&paren.pat),
         _ => pat,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{TemporalPlan, TemporalScope};
+
+    #[test]
+    fn untracked_len_assertion_declines_so_replay_can_use_the_constraint_floor() {
+        let expr: Expr =
+            syn::parse_str("assert_eq!(prefix.len(), case.len() - pos)").expect("parse assert_eq");
+        let Expr::Macro(expr_macro) = expr else {
+            panic!("test source must parse as a macro expression");
+        };
+        let scope = TemporalScope::new("extract-if-side-door-test", TemporalPlan::default());
+        let bindings = ExprBindings::new();
+        let sugar = ExtractIfSugar::new();
+
+        match sugar.constraint_for_macro(&expr_macro.mac, &scope, &bindings) {
+            Some(ReplayAction::NotMine) => {}
+            Some(ReplayAction::Handled(_)) => {
+                panic!(
+                    "extract_if must not claim ordinary len assertions; \
+                     for_replay should delegate them to the normal constraint floor"
+                );
+            }
+            None => {
+                panic!(
+                    "extract_if must return NotMine, not None, when a len-shaped assertion \
+                     has no tracked map state; None blocks the normal assertion floor"
+                );
+            }
+        }
     }
 }
