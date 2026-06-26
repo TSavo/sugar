@@ -12,13 +12,17 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::int_literal::{numeric_floor_from_term, ExactInt, NumericFloor};
+use crate::sugar::int_literal::{
+    numeric_floor_from_term, primitive_int_kind as int_literal_kind, typed_int_term, ExactInt,
+    IntKind, NumericFloor, PowVisitor, WrappingNegVisitor,
+};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, simple_path_name,
-    strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    strip_refs_groups, term_contains_curry_param, u128_term, Desugared, Effect, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -29,6 +33,133 @@ pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new
     SugarRole::TupleProducer,
     recognize_tuple_producer,
 );
+
+const DEFERRED_PRIMITIVE_METHOD_PREFIX: &str = "method:";
+
+pub(crate) fn deferred_primitive_method_term(
+    method: &str,
+    receiver: Rc<Term>,
+    args: Vec<Rc<Term>>,
+) -> Rc<Term> {
+    let mut all_args = Vec::with_capacity(args.len() + 1);
+    all_args.push(receiver);
+    all_args.extend(args);
+    Rc::new(Term::Ctor {
+        name: format!("{DEFERRED_PRIMITIVE_METHOD_PREFIX}{method}"),
+        args: all_args,
+    })
+}
+
+pub(crate) fn is_deferred_primitive_method_name(name: &str) -> bool {
+    matches!(
+        name.strip_prefix(DEFERRED_PRIMITIVE_METHOD_PREFIX),
+        Some(
+            "wrapping_neg"
+                | "pow"
+                | "abs"
+                | "signum"
+                | "wrapping_add"
+                | "wrapping_sub"
+                | "wrapping_mul"
+                | "wrapping_pow"
+                | "saturating_add"
+                | "saturating_sub"
+                | "saturating_mul"
+                | "saturating_pow"
+        )
+    )
+}
+
+pub(crate) fn try_eval_deferred_primitive_method(
+    name: &str,
+    args: &[Rc<Term>],
+) -> Option<Rc<Term>> {
+    let method = name.strip_prefix(DEFERRED_PRIMITIVE_METHOD_PREFIX)?;
+    match (method, args) {
+        ("wrapping_neg", [receiver]) => numeric_floor_from_term(receiver)?
+            .accept(WrappingNegVisitor)?
+            .term(),
+        ("pow", [receiver, exponent]) => {
+            let exponent = const_fold_int_term(exponent)
+                .or_else(|| const_fold_u128_term(exponent).and_then(|n| i128::try_from(n).ok()))?;
+            if exponent < 0 {
+                return None;
+            }
+            let exponent = u32::try_from(exponent).ok()?;
+            numeric_floor_from_term(receiver)?
+                .accept(PowVisitor { exponent })?
+                .term()
+        }
+        ("abs", [receiver]) => abs_int_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            integer_kind_from_term(receiver),
+        ),
+        ("signum", [receiver]) => signum_int_value(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            integer_kind_from_term(receiver),
+        )
+        .map(num),
+        ("wrapping_add", [receiver, rhs]) => wrapping_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            WrappingOp::Add,
+            integer_kind_from_term(receiver),
+        ),
+        ("wrapping_sub", [receiver, rhs]) => wrapping_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            WrappingOp::Sub,
+            integer_kind_from_term(receiver),
+        ),
+        ("wrapping_mul", [receiver, rhs]) => wrapping_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            WrappingOp::Mul,
+            integer_kind_from_term(receiver),
+        ),
+        ("wrapping_pow", [receiver, rhs]) => wrapping_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            WrappingOp::Pow,
+            integer_kind_from_term(receiver),
+        ),
+        ("saturating_add", [receiver, rhs]) => saturating_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            SaturatingOp::Add,
+            integer_kind_from_term(receiver),
+        ),
+        ("saturating_sub", [receiver, rhs]) => saturating_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            SaturatingOp::Sub,
+            integer_kind_from_term(receiver),
+        ),
+        ("saturating_mul", [receiver, rhs]) => saturating_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            SaturatingOp::Mul,
+            integer_kind_from_term(receiver),
+        ),
+        ("saturating_pow", [receiver, rhs]) => saturating_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            SaturatingOp::Pow,
+            integer_kind_from_term(receiver),
+        ),
+        _ => None,
+    }
+}
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
@@ -182,6 +313,15 @@ pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, dept
             let Some(name) = simple_path_name(expr) else {
                 return false;
             };
+            if fcx
+                .scope()
+                .stable_term_binding_for_term(&name)
+                .is_some_and(|term| {
+                    term_contains_curry_param(&term) || numeric_floor_from_term(&term).is_some()
+                })
+            {
+                return true;
+            }
             fcx.scope()
                 .stable_let_binding_for_term(&name)
                 .is_some_and(|init| integer_receiver_can_ground(init, fcx, depth + 1))
@@ -431,6 +571,17 @@ fn folded_u128_term(term: &Rc<Term>) -> Option<u128> {
             ..
         } => Some(value),
     })
+}
+
+fn integer_kind_from_term(term: &Rc<Term>) -> Option<IntegerKind> {
+    match numeric_floor_from_term(term)? {
+        NumericFloor::Typed { kind, .. } => Some(IntegerKind {
+            signed: kind.signed,
+            bits: kind.bits,
+            name: kind.name,
+        }),
+        NumericFloor::Untyped(_) => None,
+    }
 }
 
 impl Sugar for PrimitiveIntTupleProducer {
@@ -748,6 +899,13 @@ impl Sugar for PrimitiveIntSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
+                if term_contains_curry_param(&receiver) || term_contains_curry_param(&rhs) {
+                    return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                        &self.method,
+                        receiver,
+                        vec![rhs],
+                    )));
+                }
                 let Some(term) = wrapping_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
                     return primitive_int_binary_gap_or_runtime(
@@ -770,6 +928,13 @@ impl Sugar for PrimitiveIntSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
+                if term_contains_curry_param(&receiver) || term_contains_curry_param(&rhs) {
+                    return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                        &self.method,
+                        receiver,
+                        vec![rhs],
+                    )));
+                }
                 let Some(term) = saturating_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
                     return primitive_int_binary_gap_or_runtime(
@@ -837,6 +1002,13 @@ impl Sugar for PrimitiveIntSugar {
                 ])))
             }
             Kind::Abs => {
+                if term_contains_curry_param(&receiver) {
+                    return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                        &self.method,
+                        receiver,
+                        Vec::new(),
+                    )));
+                }
                 if let Some(value) = const_fold_real_term(&receiver) {
                     let Some(value) = real_abs_value(&value) else {
                         primitive_int_gap(
@@ -864,6 +1036,13 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::Signum => {
+                if term_contains_curry_param(&receiver) {
+                    return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                        &self.method,
+                        receiver,
+                        Vec::new(),
+                    )));
+                }
                 if let Some(value) = const_fold_real_term(&receiver) {
                     let Some(value) = real_signum_value(&value) else {
                         primitive_int_gap(
@@ -917,6 +1096,13 @@ fn checked_pow_u128(lhs: u128, exp: u32) -> Option<u128> {
 struct IntegerKind {
     signed: bool,
     bits: u32,
+    name: &'static str,
+}
+
+impl IntegerKind {
+    fn int_kind(self) -> Option<IntKind> {
+        int_literal_kind(self.name)
+    }
 }
 
 fn checked_int_op(lhs: i128, rhs: i128, op: CheckedOp, kind: Option<IntegerKind>) -> Option<i128> {
@@ -971,18 +1157,14 @@ fn wrapping_int_op_term(
         let lhs = masked_raw_bits(lhs, kind)?;
         let rhs = masked_raw_bits(rhs, kind)?;
         let raw = apply_wrapping_raw(lhs, rhs, kind.bits, op)?;
-        return Some(num(signed_value_from_raw(raw, kind)?));
+        return term_for_signed_value(signed_value_from_raw(raw, kind)?, kind);
     }
 
     let lhs = lhs_u128.or_else(|| lhs_i128.and_then(|value| u128::try_from(value).ok()))?;
     let rhs = const_fold_u128_term(rhs)
         .or_else(|| const_fold_int_term(rhs).and_then(|value| u128::try_from(value).ok()))?;
     let raw = apply_wrapping_raw(lhs, rhs, kind.bits, op)?;
-    if kind.bits == 128 {
-        Some(u128_term(raw))
-    } else {
-        Some(num(i128::try_from(raw).ok()?))
-    }
+    term_for_unsigned_raw(raw, kind)
 }
 
 fn apply_wrapping_raw(lhs: u128, rhs: u128, bits: u32, op: WrappingOp) -> Option<u128> {
@@ -1039,7 +1221,7 @@ fn saturating_int_op_term(
                 acc
             }
         };
-        return Some(num(value));
+        return term_for_signed_value(value, kind);
     }
 
     let max = mask_for_bits(kind.bits)?;
@@ -1148,7 +1330,7 @@ fn overflowing_int_op_terms(
                 (acc, overflow)
             }
         };
-        return Some((num(value), overflow));
+        return Some((term_for_signed_value(value, kind)?, overflow));
     }
 
     let lhs = unsigned_lhs(lhs_i128, lhs_u128, kind)?;
@@ -1204,11 +1386,11 @@ fn rhs_exponent(rhs: &Rc<Term>) -> Option<u32> {
 
 fn term_for_unsigned_raw(raw: u128, kind: IntegerKind) -> Option<Rc<Term>> {
     let raw = raw & mask_for_bits(kind.bits)?;
-    if kind.bits == 128 {
-        Some(u128_term(raw))
-    } else {
-        Some(num(i128::try_from(raw).ok()?))
-    }
+    typed_int_term(ExactInt::Unsigned(raw), kind.int_kind()?)
+}
+
+fn term_for_signed_value(value: i128, kind: IntegerKind) -> Option<Rc<Term>> {
+    typed_int_term(ExactInt::Signed(value), kind.int_kind()?)
 }
 
 fn saturating_signed_add(lhs: i128, rhs: i128, min: i128, max: i128) -> i128 {
@@ -1339,6 +1521,7 @@ fn abs_int_term(
         if lhs == min {
             return None;
         }
+        return term_for_signed_value(lhs.checked_abs()?, kind);
     }
     lhs.checked_abs().map(num)
 }
@@ -1481,11 +1664,9 @@ fn isolate_highest_one_term(
         };
         let isolated = isolate_highest_raw(raw, kind.bits)?;
         return if kind.signed {
-            signed_value_from_raw(isolated, kind).map(num)
-        } else if kind.bits == 128 {
-            Some(u128_term(isolated))
+            term_for_signed_value(signed_value_from_raw(isolated, kind)?, kind)
         } else {
-            Some(num(i128::try_from(isolated).ok()?))
+            term_for_unsigned_raw(isolated, kind)
         };
     }
 
@@ -1517,11 +1698,9 @@ fn isolate_lowest_one_term(
         };
         let isolated = isolate_lowest_raw(raw, kind.bits)?;
         return if kind.signed {
-            signed_value_from_raw(isolated, kind).map(num)
-        } else if kind.bits == 128 {
-            Some(u128_term(isolated))
+            term_for_signed_value(signed_value_from_raw(isolated, kind)?, kind)
         } else {
-            Some(num(i128::try_from(isolated).ok()?))
+            term_for_unsigned_raw(isolated, kind)
         };
     }
 
@@ -1619,6 +1798,7 @@ fn integer_kind_hint_in_scope(
                 return Some(IntegerKind {
                     signed: kind.signed,
                     bits: kind.bits,
+                    name: kind.name,
                 });
             }
             if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
@@ -1722,22 +1902,12 @@ fn integer_kind_from_type(ty: &Type) -> Option<IntegerKind> {
 }
 
 fn primitive_integer_kind(name: &str) -> Option<IntegerKind> {
-    let (signed, bits) = match name {
-        "i8" => (true, 8),
-        "i16" => (true, 16),
-        "i32" => (true, 32),
-        "i64" => (true, 64),
-        "i128" => (true, 128),
-        "isize" => (true, usize::BITS),
-        "u8" => (false, 8),
-        "u16" => (false, 16),
-        "u32" => (false, 32),
-        "u64" => (false, 64),
-        "u128" => (false, 128),
-        "usize" => (false, usize::BITS),
-        _ => return None,
-    };
-    Some(IntegerKind { signed, bits })
+    let kind = int_literal_kind(name)?;
+    Some(IntegerKind {
+        signed: kind.signed,
+        bits: kind.bits,
+        name: kind.name,
+    })
 }
 
 fn raw_bits(value: i128, kind: IntegerKind) -> Option<u128> {

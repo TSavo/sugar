@@ -13,10 +13,10 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, PowVisitor};
-use crate::sugar::primitive_int::integer_receiver_can_ground;
+use crate::sugar::primitive_int::{deferred_primitive_method_term, integer_receiver_can_ground};
 use crate::{
-    const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Outcome, Sugar,
-    SugarCtx,
+    const_fold_int_term, const_fold_u128_term, strip_refs_groups, term_contains_curry_param,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -55,6 +55,13 @@ impl Sugar for IntPowSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
+        if term_contains_curry_param(&receiver) || term_contains_curry_param(&exponent) {
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                "pow",
+                receiver,
+                vec![exponent],
+            )));
+        }
         let Some(exponent) = const_fold_int_term(&exponent)
             .or_else(|| const_fold_u128_term(&exponent).and_then(|n| i128::try_from(n).ok()))
         else {

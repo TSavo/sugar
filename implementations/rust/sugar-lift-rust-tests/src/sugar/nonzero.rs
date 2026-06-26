@@ -278,6 +278,7 @@ pub(crate) fn is_nonzero_new_call(expr: &Expr) -> bool {
 pub(crate) struct NonZeroIntegerKind {
     pub(crate) signed: bool,
     pub(crate) bits: u32,
+    pub(crate) name: &'static str,
 }
 
 pub(crate) fn nonzero_assoc_const_expr(expr: &Expr) -> Option<(NonZeroIntegerKind, String)> {
@@ -349,22 +350,22 @@ fn primitive_kind_from_type(ty: &Type) -> Option<NonZeroIntegerKind> {
 }
 
 fn primitive_kind(name: &str) -> Option<NonZeroIntegerKind> {
-    let (signed, bits) = match name {
-        "i8" => (true, 8),
-        "i16" => (true, 16),
-        "i32" => (true, 32),
-        "i64" => (true, 64),
-        "i128" => (true, 128),
-        "isize" => (true, usize::BITS),
-        "u8" => (false, 8),
-        "u16" => (false, 16),
-        "u32" => (false, 32),
-        "u64" => (false, 64),
-        "u128" => (false, 128),
-        "usize" => (false, usize::BITS),
+    let (signed, bits, name) = match name {
+        "i8" => (true, 8, "i8"),
+        "i16" => (true, 16, "i16"),
+        "i32" => (true, 32, "i32"),
+        "i64" => (true, 64, "i64"),
+        "i128" => (true, 128, "i128"),
+        "isize" => (true, usize::BITS, "isize"),
+        "u8" => (false, 8, "u8"),
+        "u16" => (false, 16, "u16"),
+        "u32" => (false, 32, "u32"),
+        "u64" => (false, 64, "u64"),
+        "u128" => (false, 128, "u128"),
+        "usize" => (false, usize::BITS, "usize"),
         _ => return None,
     };
-    Some(NonZeroIntegerKind { signed, bits })
+    Some(NonZeroIntegerKind { signed, bits, name })
 }
 
 fn signed_bounds(bits: u32) -> Option<(i128, i128)> {

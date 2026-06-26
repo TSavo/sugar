@@ -13,7 +13,8 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, WrappingNegVisitor};
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::primitive_int::deferred_primitive_method_term;
+use crate::{strip_refs_groups, term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("wrapping_neg", SugarRole::Term, recognize);
@@ -40,6 +41,13 @@ impl Sugar for WrappingNegSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
+        if term_contains_curry_param(&receiver) {
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                "wrapping_neg",
+                receiver,
+                Vec::new(),
+            )));
+        }
         let Some(floor) = numeric_floor_from_term(&receiver) else {
             panic!(
                 "wrapping_neg receiver did not reduce to a numeric floor; write the owning Sugar before Outcome"

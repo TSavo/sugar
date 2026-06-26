@@ -8,13 +8,14 @@
 
 use std::collections::BTreeMap;
 
-use syn::Expr;
+use syn::{Expr, Lit, UnOp};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
-    literal_byte_string_value, strip_refs_groups, term_as_int, token_key, u128_expr, BoundedDomain,
-    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    literal_byte_string_value, primitive_int_kind, strip_refs_groups, term_as_int, token_key,
+    u128_expr, BoundedDomain, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
+    PrimitiveIntKind, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 // ── NAMED-DRAGON reasons for the six unwarrantable literal SHAPES ─────────────────────
@@ -118,11 +119,14 @@ impl LiteralSugar {
                         if arr.elems.len() > SUGAR_SEQ_CAP as usize {
                             return None;
                         }
+                        let element_kind = array_primitive_element_kind(arr);
                         arr.elems
                             .iter()
                             .map(|e| DesugaredElem {
                                 expr: e.clone(),
-                                value: const_eval(e, &BTreeMap::new()),
+                                value: const_eval(e, &BTreeMap::new()).and_then(|value| {
+                                    coerce_array_element_value(value, element_kind)
+                                }),
                             })
                             .collect()
                     }
@@ -187,6 +191,87 @@ impl LiteralSugar {
             }
             Some(Desugared::Seq(seq))
         })()
+    }
+}
+
+fn array_primitive_element_kind(arr: &syn::ExprArray) -> Option<PrimitiveIntKind> {
+    arr.elems.iter().find_map(expr_primitive_int_kind)
+}
+
+fn expr_primitive_int_kind(expr: &Expr) -> Option<PrimitiveIntKind> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Int(int) if !int.suffix().is_empty() => primitive_int_kind(int.suffix()),
+            _ => None,
+        },
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            expr_primitive_int_kind(&unary.expr)
+        }
+        _ => None,
+    }
+}
+
+fn coerce_array_element_value(value: ConstVal, kind: Option<PrimitiveIntKind>) -> Option<ConstVal> {
+    let Some(kind) = kind else {
+        return Some(value);
+    };
+    match value {
+        ConstVal::Int(value) => coerce_int_to_kind(value, kind),
+        other => Some(other),
+    }
+}
+
+fn coerce_int_to_kind(value: i128, kind: PrimitiveIntKind) -> Option<ConstVal> {
+    let raw = if kind.signed {
+        if !signed_int_fits_kind(value, kind) {
+            return None;
+        }
+        mask_i128_to_kind(value, kind)
+    } else {
+        let value = u128::try_from(value).ok()?;
+        if value > unsigned_max_for_kind(kind) {
+            return None;
+        }
+        mask_u128_to_kind(value, kind)
+    };
+    if kind.name == "u128" {
+        Some(ConstVal::UInt128(raw))
+    } else {
+        Some(ConstVal::PrimitiveInt { raw, kind })
+    }
+}
+
+fn signed_int_fits_kind(value: i128, kind: PrimitiveIntKind) -> bool {
+    let min = if kind.bits == 128 {
+        i128::MIN
+    } else {
+        -(1i128 << (kind.bits - 1))
+    };
+    let max = if kind.bits == 128 {
+        i128::MAX
+    } else {
+        (1i128 << (kind.bits - 1)) - 1
+    };
+    (min..=max).contains(&value)
+}
+
+fn unsigned_max_for_kind(kind: PrimitiveIntKind) -> u128 {
+    if kind.bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << kind.bits) - 1
+    }
+}
+
+fn mask_i128_to_kind(value: i128, kind: PrimitiveIntKind) -> u128 {
+    mask_u128_to_kind(value as u128, kind)
+}
+
+fn mask_u128_to_kind(value: u128, kind: PrimitiveIntKind) -> u128 {
+    if kind.bits == 128 {
+        value
+    } else {
+        value & ((1u128 << kind.bits) - 1)
     }
 }
 

@@ -5084,6 +5084,38 @@ impl TemporalScope {
         self.term_bindings.insert(name.to_string(), term);
     }
 
+    pub(crate) fn fork_with_stable_term_binding(&self, name: &str, term: Rc<Term>) -> Self {
+        let mut fork = Self {
+            local_scope: self.local_scope.clone(),
+            plan: self.plan.clone(),
+            versions: self.versions.clone(),
+            ambiguous: self.ambiguous.clone(),
+            consuming_occurrence: std::cell::RefCell::new(
+                self.consuming_occurrence.borrow().clone(),
+            ),
+            literal_arrays: self.literal_arrays.clone(),
+            let_bindings: self.let_bindings.clone(),
+            let_binding_types: self.let_binding_types.clone(),
+            term_bindings: self.term_bindings.clone(),
+            runtime_destructured_locals: self.runtime_destructured_locals.clone(),
+            unresolved_destructured_locals: self.unresolved_destructured_locals.clone(),
+            macro_registry: self.macro_registry.clone(),
+            fn_registry: self.fn_registry.clone(),
+            impl_value_registry: self.impl_value_registry.clone(),
+            layout_type_registry: self.layout_type_registry.clone(),
+            value_type_registry: self.value_type_registry.clone(),
+            const_registry: self.const_registry.clone(),
+            inside_const_item_initializer: self.inside_const_item_initializer,
+            inlined_value_helpers: std::cell::RefCell::new(
+                self.inlined_value_helpers.borrow().clone(),
+            ),
+            dormant_mut_ref: self.dormant_mut_ref.clone(),
+            temporal_rewrite: std::cell::RefCell::new(self.temporal_rewrite.borrow().clone()),
+        };
+        fork.record_let_term_binding(name, term);
+        fork
+    }
+
     fn record_runtime_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
         self.let_binding_types.remove(name);
@@ -6748,6 +6780,35 @@ pub(crate) fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
         ConstVal::Bool(b) => Some(bool_const(*b)),
         ConstVal::Char(c) => Some(str_const(c.to_string())),
         _ => None,
+    }
+}
+
+pub(crate) const CURRY_PARAM_PREFIX: &str = "curry:param:";
+
+pub(crate) fn curry_param_name(param: &str) -> String {
+    format!("{CURRY_PARAM_PREFIX}{param}")
+}
+
+pub(crate) fn curry_param_term(param: &str) -> Rc<Term> {
+    make_var(curry_param_name(param))
+}
+
+pub(crate) fn term_is_curry_param(term: &Rc<Term>) -> bool {
+    matches!(term.as_ref(), Term::Var { name } if name.starts_with(CURRY_PARAM_PREFIX))
+}
+
+pub(crate) fn term_contains_curry_param(term: &Rc<Term>) -> bool {
+    match term.as_ref() {
+        Term::Var { name } => name.starts_with(CURRY_PARAM_PREFIX),
+        Term::Ctor { args, .. } => args.iter().any(term_contains_curry_param),
+        Term::Lambda { body, .. } => term_contains_curry_param(body),
+        Term::Let { bindings, body } => {
+            bindings
+                .iter()
+                .any(|binding| term_contains_curry_param(&binding.bound_term))
+                || term_contains_curry_param(body)
+        }
+        Term::Const { .. } => false,
     }
 }
 
