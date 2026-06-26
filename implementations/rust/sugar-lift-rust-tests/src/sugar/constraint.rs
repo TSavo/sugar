@@ -1270,7 +1270,7 @@ fn relation_operand_capability_kind(term: &Rc<Term>) -> Option<&'static str> {
         // Shared borrows are value-transparent for relations; keep looking through them so
         // `&&mut x` cannot smuggle mutable-reference identity into a relational warrant.
         "ref" if args.len() == 1 => relation_operand_capability_kind(&args[0]),
-        _ => None,
+        _ => args.iter().find_map(relation_operand_capability_kind),
     }
 }
 

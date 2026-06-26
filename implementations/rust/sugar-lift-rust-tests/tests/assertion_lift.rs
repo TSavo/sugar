@@ -11955,14 +11955,10 @@ fn eff() {
 }
 
 #[test]
-fn constructed_scrutinee_match_does_not_fake_refuse() {
-    // DISCRIMINATION (the fake-refuse guardrail for the match-context tail): a match whose
-    // scrutinee is a CONSTRUCTED literal/path (NOT a runtime call result) must NOT be
-    // terminal-refused as a runtime-scrutinee match -- it stays the generic UNCLASSIFIED
-    // "under match context" reason (a lifter limitation, recoverable work). This proves
-    // the runtime-scrutinee refusal is EARNED by the runtime call shape, not a blanket
-    // relabel of every match-context residue.
-    let src = r#"
+fn constructed_scrutinee_match_destructures_literal_tuple_with_teeth() {
+    // A constructed tuple scrutinee is source-determined. The match sugar selects the
+    // reachable arm, substitutes pattern bindings, and delegates the arm assertion.
+    let good = r#"
 #[test]
 fn ctor() {
     let pair = (1i64, 2i64);
@@ -11973,25 +11969,32 @@ fn ctor() {
     }
 }
 "#;
-    let out = lift_file(&parse(src), "tests/ctor.rs");
-    // Whatever the complete outcome, NO reason may be the runtime-scrutinee terminal: a
-    // constructed scrutinee is not a runtime call result.
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .all(|r| !r.contains("runtime non-scalar result")),
-        "a constructed-scrutinee match must NOT be fake-refused as runtime: {:?}",
-        refusal_reasons(&out)
+    let out = lift_file(&parse(good), "tests/ctor.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", refusal_reasons(&out));
+    assert_warranted_decls_not_refuted(&out, "closed_tuple_match_good");
+
+    let bad = good.replace("assert_eq!(a, 1i64);", "assert_eq!(a, 9i64);");
+    let bad_out = lift_file(&parse(&bad), "tests/ctor_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted,
+        1,
+        "{:?}",
+        refusal_reasons(&bad_out)
     );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "closed_tuple_match_bad",
+    ) {
+        assert!(!sat, "wrong tuple binding match twin must be z3-UNSAT");
+    }
 }
 
 #[test]
-fn match_binding_arm_bails_to_match_context_refusal() {
-    // Structural: a binding arm `x =>` re-names the scrutinee (always matches --
-    // not a discriminant), an arm guard `n if .. =>`, and an or-pattern `A | B =>`
-    // each BAIL the whole match. The asserts fall to the existing match-context
-    // refusal, never to a (wrong) bare lift.
-    let binding = r#"
+fn closed_match_binding_guard_and_or_patterns_warrant_with_teeth() {
+    let cases = [
+        (
+            "binding",
+            r#"
 #[test]
 fn bind() {
     let n = 1;
@@ -11999,59 +12002,88 @@ fn bind() {
         x => assert_eq!(x, 1),
     }
 }
-"#;
-    let out = lift_file(&parse(binding), "tests/bind.rs");
-    assert_eq!(out.assertions_lifted, 0, "a binding arm must not lift");
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .any(|r| r.contains("match context")),
-        "binding-arm assert must be a named match-context refusal: {:?}",
-        refusal_reasons(&out)
-    );
-
-    let guarded = r#"
+"#,
+            r#"
+#[test]
+fn bind() {
+    let n = 1;
+    match n {
+        x => assert_eq!(x, 2),
+    }
+}
+"#,
+        ),
+        (
+            "guard",
+            r#"
 #[test]
 fn guarded() {
     let n = 1;
     match n {
-        m if m > 0 => assert_eq!(n, 1),
+        m if m > 0 => assert_eq!(m, 1),
         _ => assert_eq!(n, 0),
     }
 }
-"#;
-    let out = lift_file(&parse(guarded), "tests/g.rs");
-    assert_eq!(out.assertions_lifted, 0, "an arm guard must bail the match");
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .any(|r| r.contains("match context")),
-        "guarded-arm assert must be a named match-context refusal: {:?}",
-        refusal_reasons(&out)
-    );
-
-    let or_pat = r#"
+"#,
+            r#"
+#[test]
+fn guarded() {
+    let n = 1;
+    match n {
+        m if m > 0 => assert_eq!(m, 2),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#,
+        ),
+        (
+            "or",
+            r#"
 #[test]
 fn orpat() {
     let n = 1;
     match n {
-        1 | 2 => assert_eq!(n, 1),
+        1 | 2 => assert_eq!(1, 1),
         _ => assert_eq!(n, 0),
     }
 }
-"#;
-    let out = lift_file(&parse(or_pat), "tests/or.rs");
-    assert_eq!(
-        out.assertions_lifted, 0,
-        "an or-pattern arm must bail the match"
-    );
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .any(|r| r.contains("match context")),
-        "or-pattern-arm assert must be a named match-context refusal: {:?}",
-        refusal_reasons(&out)
-    );
+"#,
+            r#"
+#[test]
+fn orpat() {
+    let n = 1;
+    match n {
+        1 | 2 => assert_eq!(1, 2),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#,
+        ),
+    ];
+    for (label, good, bad) in cases {
+        let out = lift_file(&parse(good), &format!("tests/{label}.rs"));
+        assert_eq!(
+            out.assertions_lifted,
+            1,
+            "{label} should warrant: {:?}",
+            refusal_reasons(&out)
+        );
+        assert_warranted_decls_not_refuted(&out, &format!("closed_match_{label}_good"));
+
+        let bad_out = lift_file(&parse(bad), &format!("tests/{label}_bad.rs"));
+        assert_eq!(
+            bad_out.assertions_lifted,
+            1,
+            "{label} bad twin should still lift: {:?}",
+            refusal_reasons(&bad_out)
+        );
+        if let Some(sat) = z3_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            &format!("closed_match_{label}_bad"),
+        ) {
+            assert!(!sat, "{label} bad twin must be z3-UNSAT");
+        }
+    }
 }
 
 #[test]
@@ -19679,34 +19711,27 @@ fn t() {
 }
 
 #[test]
-fn match_over_constructed_scrutinee_stays_unclassified() {
-    // DISCRIMINATION: a `match` over a CONSTRUCTED scrutinee (a path/const, no runtime call) is
-    // diggable (branch partitioning) -- it must STAY the unclassified `only scalar equality`
-    // reason, never the runtime terminal.
-    let src = r#"
+fn match_over_const_scrutinee_warrants_bool_constraint_with_teeth() {
+    let good = r#"
+const SOME_CONST: i32 = 1;
+
 #[test]
 fn t() {
     assert!(match SOME_CONST { 1 => true, _ => false, });
 }
 "#;
-    let out = lift_file(&parse(src), "tests/matchconst.rs");
-    assert!(
-        !out.skip_reasons
-            .iter()
-            .any(|r| r.contains("operand is a runtime non-scalar result")),
-        "a match over a constructed scrutinee must NOT be fake-refused: {:?}",
-        out.skip_reasons
-    );
-    if let Some(r) = out
-        .skip_reasons
-        .iter()
-        .find(|r| r.contains("only scalar equality"))
-    {
-        assert_eq!(
-            disp2(r),
-            sugar_lift_rust_tests::Disposition::Unclassified,
-            "a constructed-scrutinee match must be UNCLASSIFIED work: {r}"
-        );
+    let out = lift_file(&parse(good), "tests/matchconst.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_warranted_decls_not_refuted(&out, "closed_const_match_good");
+
+    let bad = good.replace("1 => true, _ => false", "1 => false, _ => true");
+    let bad_out = lift_file(&parse(&bad), "tests/matchconst_bad.rs");
+    assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "closed_const_match_bad",
+    ) {
+        assert!(!sat, "wrong closed const match twin must be z3-UNSAT");
     }
 }
 
