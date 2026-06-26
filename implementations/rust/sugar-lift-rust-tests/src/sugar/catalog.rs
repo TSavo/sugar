@@ -36,7 +36,7 @@ use crate::sugar::{
     statement_nested_assertion, statement_reflection, statement_runtime_expr, step_by, str_method,
     string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
     transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
-    unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, zip,
+    unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, write_macro, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -174,6 +174,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &transparent_term::TERM_EXPR_SUGAR,
     &format_macro::EXPR_SUGAR,
     &concat_macro::EXPR_SUGAR,
+    &write_macro::EXPR_SUGAR,
     &vec_macro::EXPR_SUGAR,
     &offset_of::EXPR_SUGAR,
     &addr_of_mut::EXPR_SUGAR,
@@ -1031,6 +1032,60 @@ mod tests {
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
             Some("format_macro")
+        );
+    }
+
+    #[test]
+    fn write_macro_prioritizes_write_before_generic_macro_sugar() {
+        for src in [
+            r#"write!(f, "A")"#,
+            r#"write!(&mut got, "{}", value)"#,
+            r#"writeln!(f)"#,
+        ] {
+            let expr: Expr = syn::parse_str(src).unwrap();
+            let names = candidate_names_for_role(&expr, SugarRole::Term);
+            let write = names
+                .iter()
+                .position(|name| *name == "write_macro")
+                .unwrap_or_else(|| panic!("{src} should be claimed by WriteMacroSugar"));
+            let macro_term = names
+                .iter()
+                .position(|name| *name == "macro_term")
+                .unwrap_or_else(|| {
+                    panic!("{src} should still expose the generic MacroTermSugar fallback")
+                });
+
+            assert!(
+                write < macro_term,
+                "WriteMacroSugar should outrank generic MacroTermSugar for {src}: {names:?}"
+            );
+            assert_eq!(
+                selected_candidate_name_for_role(&expr, SugarRole::Term),
+                Some("write_macro")
+            );
+        }
+    }
+
+    #[test]
+    fn write_macro_unwrap_reports_fmt_write_effect_instead_of_macro_rules_gap() {
+        let expr: Expr = syn::parse_str(r#"write!(&mut got, "{}", value).unwrap()"#).unwrap();
+        let scope = TemporalScope::new("catalog-write-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = crate::sugar::factory::build_term(&expr, &fcx);
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = crate::FloatWidthScope::new();
+        let ctx = crate::sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let Outcome::Incomplete(effect) = node.desugar(&ctx) else {
+            panic!("write!(...).unwrap() should refuse as fmt-write effect");
+        };
+        let reason = effect.reason();
+        assert!(
+            reason.contains("mutable-local state machine driven by fmt-write"),
+            "write! should report the fmt-write boundary, got {reason:?}"
         );
     }
 

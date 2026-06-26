@@ -220,6 +220,7 @@ pub mod sugar {
     pub mod vec_literal;
     pub mod vec_macro;
     pub mod wrapping_neg;
+    pub mod write_macro;
     pub mod zip;
 }
 
