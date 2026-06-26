@@ -16,7 +16,9 @@ use tracing::debug;
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::monadic;
-use crate::{const_int, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_int, is_closed_scalar_literal, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer("size_hint_tuple_producer", recognize);
@@ -99,7 +101,8 @@ fn exact_static_size_hint_len(expr: &Expr) -> Option<usize> {
                 }
                 "take" => exact_static_size_hint_len(&call.receiver)
                     .map(|len| len.min(n))
-                    .or_else(|| is_open_ended_literal_range(&call.receiver).then_some(n)),
+                    .or_else(|| is_open_ended_literal_range(&call.receiver).then_some(n))
+                    .or_else(|| is_literal_repeat_source(&call.receiver).then_some(n)),
                 "step_by" if n > 0 => {
                     exact_static_size_hint_len(&call.receiver).map(|len| stepped_len(len, n))
                 }
@@ -108,6 +111,22 @@ fn exact_static_size_hint_len(expr: &Expr) -> Option<usize> {
         }
         _ => None,
     }
+}
+
+fn is_literal_repeat_source(expr: &Expr) -> bool {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if call.args.len() != 1 || !is_closed_scalar_literal(&call.args[0]) {
+        return false;
+    }
+    let Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "repeat")
 }
 
 fn const_usize(expr: &Expr) -> Option<usize> {

@@ -8657,6 +8657,11 @@ enum Effect {
     /// `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal scrutinee stays
     /// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail).
     RuntimeMatchScrutinee { boundary: String },
+    /// TYPE-INFERRED-PARSE-RESULT: `str::parse()` without turbofish takes its result type
+    /// from the surrounding relation. The same call syntax can denote distinct parser
+    /// results under different expected types, so relation sugar must refuse the source
+    /// boundary before reducing the call to an opaque term identity.
+    TypeInferredParseResult { assertion: String, boundary: String },
     /// PANIC-PAYLOAD: `catch_unwind` proves a branch can capture panic state, but
     /// downcasting/dereferencing that captured payload reads runtime exception state. The
     /// branch tag may be a fact; the payload bytes are not a source literal floor.
@@ -8880,6 +8885,15 @@ impl Effect {
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
                  literals); refused"
             ),
+            Effect::TypeInferredParseResult {
+                assertion,
+                boundary,
+            } => format!(
+                "{assertion}: {}",
+                sugar::constraint_runtime_boundary::type_inferred_parse_result_site_reason(
+                    boundary
+                )
+            ),
             Effect::PanicPayload { boundary } => format!(
                 "panic payload downcast reads runtime exception state `{boundary}`; refused"
             ),
@@ -8967,6 +8981,7 @@ impl Effect {
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
+            | Effect::TypeInferredParseResult { boundary, .. }
             | Effect::PanicPayload { boundary }
             | Effect::RuntimeDestructuredSource { boundary, .. }
             | Effect::ArrayRepeat { boundary }
