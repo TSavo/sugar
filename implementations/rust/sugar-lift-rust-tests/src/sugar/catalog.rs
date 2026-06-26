@@ -72,6 +72,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &bool_bitwise::CONSTRAINT_EXPR_SUGAR,
     &matches_macro::CONSTRAINT_EXPR_SUGAR,
     &literal_iterator_quantifier::CONSTRAINT_EXPR_SUGAR,
+    &match_node::CONSTRAINT_EXPR_SUGAR,
     &match_scrutinee::CONSTRAINT_EXPR_SUGAR,
     &regex_match::CONSTRAINT_EXPR_SUGAR,
     &constraint::CFG_MACRO_SUGAR,

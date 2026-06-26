@@ -18042,6 +18042,9 @@ fn panic_locus_pattern_entry(
     pattern: &syn::Pat,
     scope: &TemporalScope,
 ) -> Option<AssertionEntry> {
+    if panic_locus_subject_capability_effect(subject, scope).is_some() {
+        return None;
+    }
     if let Some(entry) = const_macro_path_panic_locus_entry(subject, pattern, scope) {
         return Some(entry);
     }
@@ -18149,12 +18152,25 @@ fn panic_locus_subject_refusal_reason(
     {
         return None;
     }
+    if let Some(effect) = panic_locus_subject_capability_effect(subject, scope) {
+        return Some(format!(
+            "reached assertion surface but panic-locus match scrutinee is not a liftable term: {}",
+            effect.reason()
+        ));
+    }
     let reason = translate_term_in_scope(subject, scope)
         .err()
         .map(|effect| effect.reason())?;
     Some(format!(
         "reached assertion surface but panic-locus match scrutinee is not a liftable term: {reason}"
     ))
+}
+
+fn panic_locus_subject_capability_effect(subject: &Expr, scope: &TemporalScope) -> Option<Effect> {
+    sugar::constraint::relation_source_capability_effect(subject).or_else(|| {
+        let term = translate_term_in_scope(subject, scope).ok()?;
+        sugar::constraint::relation_operand_capability_effect(subject, &term)
+    })
 }
 
 fn panic_locus_match_refusal_reason(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<String> {
