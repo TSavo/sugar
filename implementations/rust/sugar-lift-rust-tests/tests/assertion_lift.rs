@@ -17509,34 +17509,71 @@ fn literal_array_split_mut_destructure_warrants_and_bad_twin_refutes() {
 }
 
 #[test]
-fn unresolved_destructure_trace_is_gap_not_fake_unclassified() {
-    let src = r#"
+fn literal_refcell_map_split_destructure_warrants_and_bad_twin_refutes() {
+    let good = r#"
+        use std::cell::{Ref, RefCell, RefMut};
+
+        #[test]
+        fn ref_map_split_literal_good() {
+            let x = RefCell::new([1, 2]);
+            let (b1, b2) = Ref::map_split(x.borrow(), |slc| slc.split_at(1));
+            assert_eq!(*b1, [1]);
+            assert_eq!(*b2, [2]);
+
+            let y = RefCell::new([1, 2]);
+            let (m1, m2) = RefMut::map_split(y.borrow_mut(), |slc| slc.split_at_mut(1));
+            assert_eq!(*m1, [1]);
+            assert_eq!(*m2, [2]);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/cell/ref_map_split_literal_good.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "literal-backed Ref/RefMut::map_split should trace to split components: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-backed Ref/RefMut::map_split must not clear through refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("destructured source trace unresolved")),
+        "Ref/RefMut::map_split needs a real floor, not an unresolved destructure gap: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decls_not_refuted(&out, "ref_map_split_literal_good");
+
+    let bad = r#"
         use std::cell::{Ref, RefCell};
 
         #[test]
-        fn ref_map_split_trace_gap() {
+        fn ref_map_split_literal_bad() {
             let x = RefCell::new([1, 2]);
             let (b1, _b2) = Ref::map_split(x.borrow(), |slc| slc.split_at(1));
-            assert_eq!(*b1, [1]);
+            assert_eq!(b1.len(), 9);
         }
     "#;
-    let panic = std::panic::catch_unwind(|| {
-        lift_file(&parse(src), "coretests/cell/ref_map_split_trace_gap.rs")
-    })
-    .expect_err("untraced destructure must be a direct gap");
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .unwrap_or("<non-string panic>");
-    assert!(
-        message.contains("destructured source trace unresolved for `b1`"),
-        "gap must name the unresolved destructured binding: {message}"
+    let out = lift_file(&parse(bad), "coretests/cell/ref_map_split_literal_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad map_split twin must lift so z3 can refute the wrong component: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
     );
-    assert!(
-        !message.contains("legacy reason leaf"),
-        "untraced destructure must gap directly, not through ReasonedIncompleteSugar: {message}"
+    assert_eq!(
+        out.assertions_refused, 0,
+        "bad map_split twin must not clear through refusal: {:?}",
+        out.skip_reasons
     );
+    let bad_inv = inv_json(single_warranted_decl(&out));
+    if let Some(sat) = z3_verdict(&bad_inv, "ref_map_split_bad") {
+        assert!(
+            !sat,
+            "wrong Ref::map_split component must be z3-UNSAT after bound_path uses the literal split component: {bad_inv}"
+        );
+    }
 }
 
 #[test]

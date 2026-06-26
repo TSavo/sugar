@@ -9261,6 +9261,9 @@ fn destructure_source_is_known_runtime_inner(
         {
             static_literal_slice_elems(scope, &call.receiver, depth + 1).is_none()
         }
+        Expr::Call(call) if is_refcell_map_split_call(call) => {
+            refcell_map_split_source_elems(scope, call, depth + 1).is_none()
+        }
         Expr::Call(call) if is_bare_runtime_destructure_call(call) => true,
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
@@ -9284,6 +9287,128 @@ fn is_bare_runtime_destructure_call(call: &syn::ExprCall) -> bool {
     )
 }
 
+#[derive(Clone, Copy)]
+enum RefCellMapSplitKind {
+    Shared,
+    Mutable,
+}
+
+fn refcell_map_split_kind(call: &syn::ExprCall) -> Option<RefCellMapSplitKind> {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let mut segments = path.path.segments.iter().rev();
+    let Some(method) = segments.next() else {
+        return None;
+    };
+    if method.ident != "map_split" {
+        return None;
+    }
+    let Some(owner) = segments.next() else {
+        return None;
+    };
+    if call.args.len() != 2 {
+        return None;
+    }
+    match owner.ident.to_string().as_str() {
+        "Ref" => Some(RefCellMapSplitKind::Shared),
+        "RefMut" => Some(RefCellMapSplitKind::Mutable),
+        _ => None,
+    }
+}
+
+fn is_refcell_map_split_call(call: &syn::ExprCall) -> bool {
+    refcell_map_split_kind(call).is_some()
+}
+
+fn resolve_refcell_map_split_call(
+    scope: &TemporalScope,
+    call: &syn::ExprCall,
+    depth: usize,
+) -> Option<Expr> {
+    let kind = refcell_map_split_kind(call)?;
+    let elems = refcell_map_split_source_elems(scope, call, depth + 1)?;
+    let closure = match strip_refs_groups(call.args.iter().nth(1)?) {
+        Expr::Closure(closure) => closure,
+        _ => return None,
+    };
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let param = closure_single_param_ident(&closure.inputs[0])?;
+    let mut bindings = BTreeMap::new();
+    bindings.insert(param, array_expr(elems));
+    let body = substitute_expr(&closure.body, &bindings);
+    let resolved = resolve_destructure_source_expr(scope, &body, depth + 1)?;
+    Some(wrap_refcell_map_split_components(kind, resolved))
+}
+
+fn refcell_map_split_source_elems(
+    scope: &TemporalScope,
+    call: &syn::ExprCall,
+    depth: usize,
+) -> Option<Vec<Expr>> {
+    if !is_refcell_map_split_call(call) {
+        return None;
+    }
+    let source = call.args.first()?;
+    refcell_borrow_literal_elems(scope, source, depth + 1)
+}
+
+fn refcell_borrow_literal_elems(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> Option<Vec<Expr>> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            let init = destructure_binding_expr(scope, &name)?;
+            refcell_borrow_literal_elems(scope, &init, depth + 1)
+        }
+        Expr::MethodCall(call)
+            if matches!(call.method.to_string().as_str(), "borrow" | "borrow_mut")
+                && call.args.is_empty() =>
+        {
+            let name = simple_path_name(&call.receiver)?;
+            let value = scope
+                .temporal_cell_value_expr(&name, sugar::assign_op::CellKind::RefCell)
+                .ok()??;
+            static_literal_slice_elems(scope, &value, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn wrap_refcell_map_split_components(kind: RefCellMapSplitKind, expr: Expr) -> Expr {
+    let Expr::Tuple(tuple) = strip_refs_groups(&expr) else {
+        return expr;
+    };
+    let mut out = tuple.clone();
+    out.elems = tuple
+        .elems
+        .iter()
+        .cloned()
+        .map(|elem| refcell_map_split_component_ref(kind, elem))
+        .collect();
+    Expr::Tuple(out)
+}
+
+fn refcell_map_split_component_ref(kind: RefCellMapSplitKind, elem: Expr) -> Expr {
+    match kind {
+        RefCellMapSplitKind::Shared => {
+            syn::parse2(quote::quote! { & #elem }).expect("generated shared ref parses")
+        }
+        RefCellMapSplitKind::Mutable => {
+            syn::parse2(quote::quote! { &mut #elem }).expect("generated mut ref parses")
+        }
+    }
+}
+
 fn resolve_destructure_source_expr(
     scope: &TemporalScope,
     expr: &Expr,
@@ -9301,6 +9426,9 @@ fn resolve_destructure_source_expr(
         }
         Expr::MethodCall(call) => {
             resolve_known_slice_destructure_method(scope, call).or_else(|| Some(expr.clone()))
+        }
+        Expr::Call(call) => {
+            resolve_refcell_map_split_call(scope, call, depth + 1).or_else(|| Some(expr.clone()))
         }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
@@ -15141,7 +15269,12 @@ fn collect_interior_mut_binding_names_in_stmt(
             let derived_cell = refs.as_ref().is_some_and(|r| !cells.is_disjoint(r));
             let derived_iter =
                 !derived_cell && refs.as_ref().is_some_and(|r| !iters.is_disjoint(r));
-            if is_cell || derived_cell {
+            // `Ref::map_split`/`RefMut::map_split` return borrow views, not cells.
+            let refcell_map_split_view = matches!(
+                strip_refs_groups(&init.expr),
+                Expr::Call(call) if is_refcell_map_split_call(call)
+            );
+            if is_cell || (derived_cell && !refcell_map_split_view) {
                 for name in pat_idents(&local.pat) {
                     cells.insert(name);
                 }
@@ -19795,6 +19928,46 @@ mod lifter_key_tests {
             "inline deref mutation must poison the base local, got {:?}",
             plan.alias_deref_mutated
         );
+    }
+
+    #[test]
+    fn refcell_map_split_destructure_records_literal_components() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+            fn t_refcell_map_split() {
+                let x = std::cell::RefCell::new([1, 2]);
+                let (b1, _b2) = std::cell::Ref::map_split(x.borrow(), |slc| slc.split_at(1));
+            }
+            "#,
+        )
+        .expect("test function parses");
+        let plan = temporal_plan_for_stmts(&f.block.stmts, &BTreeSet::new());
+        let mut scope = TemporalScope::new("tests/test_src.rs::t_refcell_map_split", plan);
+        let Stmt::Local(x_local) = &f.block.stmts[0] else {
+            panic!("expected RefCell local");
+        };
+        record_simple_value_binding(&mut scope, x_local);
+        scope.record_temporal_rewrite_local(x_local);
+        let Stmt::Local(split_local) = &f.block.stmts[1] else {
+            panic!("expected map_split local");
+        };
+        let init = split_local
+            .init
+            .as_ref()
+            .expect("map_split local has initializer");
+        record_destructured_let_bindings(&mut scope, &split_local.pat, &init.expr);
+        let raw_b1 = scope.let_binding("b1").map(token_key);
+        let b1 = scope.stable_let_binding_for_term("b1").map(token_key).unwrap_or_else(|| {
+            panic!(
+                "b1 should have a stable literal component: raw={raw_b1:?}, mut={}, ambiguous={}, interior={}, unresolved={}, runtime={}",
+                scope.is_mut_local("b1"),
+                scope.ambiguous_contains("b1"),
+                scope.plan.interior_mut.contains("b1"),
+                scope.is_unresolved_destructured_local("b1"),
+                scope.is_runtime_destructured_local("b1")
+            )
+        });
+        assert_eq!(b1, "& [1]");
     }
 
     #[test]
