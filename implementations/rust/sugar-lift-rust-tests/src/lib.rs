@@ -18983,7 +18983,7 @@ fn is_full_range_expr(expr: &Expr) -> bool {
 /// Element/inner translation goes through the normal version-aware path, so a
 /// mutable element cannot false-coalesce and a non-liftable inner propagates Err
 /// (stays unclassified, never a false discharge).
-fn is_immutable_value_expr(expr: &Expr) -> bool {
+pub(crate) fn is_immutable_value_expr(expr: &Expr) -> bool {
     match expr {
         Expr::Closure(_) | Expr::Lit(_) | Expr::Array(_) => true,
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => is_immutable_value_expr(&u.expr),
