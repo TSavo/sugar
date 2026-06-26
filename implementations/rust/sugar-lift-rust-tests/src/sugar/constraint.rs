@@ -1103,9 +1103,13 @@ fn inactive_debug_assertion(name: &str, debug_gated: bool, ctx: &SugarCtx) -> Op
             ctx,
             format!("{name}!: cfg(debug_assertions) not active; skipped: {reason}"),
         )),
-        CfgDisposition::Ambiguous(reason) => constraint_gap(format!(
-            "{name}!: cfg(debug_assertions) ambiguous; skipped: {reason}"
-        )),
+        CfgDisposition::Ambiguous(reason) => {
+            let reason = format!("ambiguous cfg: {name}!: cfg(debug_assertions) skipped: {reason}");
+            Some(Outcome::Incomplete(Effect::Configuration {
+                boundary: format!("{name}!: cfg(debug_assertions)"),
+                reason,
+            }))
+        }
     }
 }
 
