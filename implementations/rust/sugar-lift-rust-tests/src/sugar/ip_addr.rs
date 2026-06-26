@@ -13,12 +13,19 @@ use sugar_ir_symbolic::{eq, Term};
 use syn::{Expr, ExprCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{IpAddrFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{IpAddrFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::int_literal::{ExactInt, IntKind};
 use crate::{
     bool_const, const_int, literal_string_value, num, strip_refs_groups, token_key,
-    AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
+    AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
     MAX_MACRO_EXPANSION_DEPTH,
 };
+
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "literal_ip_addr",
+    &["const_path", "path", "call", "method"],
+    recognize_term,
+);
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "constraint_literal_ip_addr_property",
@@ -34,7 +41,7 @@ struct IpAddrPropertySugar {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LiteralIp {
+pub(crate) enum LiteralIp {
     Any(IpAddr),
     V4(Ipv4Addr),
     V6(Ipv6Addr),
@@ -43,10 +50,61 @@ enum LiteralIp {
 enum IpAddrSource {
     Literal(LiteralIp),
     Runtime(String),
+    Ipv4New {
+        octets: Vec<SugarBody<TermFloor>>,
+        boundary: String,
+    },
+    Ipv6New {
+        segments: Vec<SugarBody<TermFloor>>,
+        boundary: String,
+    },
 }
 
 struct IpAddrLiteralSugar {
     source: IpAddrSource,
+}
+
+fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    match strip_refs_groups(expr) {
+        Expr::Call(call) => recognize_ip_constructor_term(call, fcx, token_key(expr)),
+        Expr::Path(path) => resolve_ip_const_path(&path.path).map(|ip| {
+            Box::new(IpAddrLiteralSugar {
+                source: IpAddrSource::Literal(ip),
+            }) as Box<dyn Sugar>
+        }),
+        _ => None,
+    }
+}
+
+fn recognize_ip_constructor_term(
+    call: &ExprCall,
+    fcx: &SugarBuildCtx,
+    boundary: String,
+) -> Option<Box<dyn Sugar>> {
+    let (ty, method) = call_path_type_and_method(call)?;
+    match (ty.as_str(), method.as_str(), call.args.len()) {
+        ("Ipv4Addr", "new", 4) => Some(Box::new(IpAddrLiteralSugar {
+            source: IpAddrSource::Ipv4New {
+                octets: call
+                    .args
+                    .iter()
+                    .map(|arg| SugarBody::term(arg, fcx))
+                    .collect(),
+                boundary,
+            },
+        })),
+        ("Ipv6Addr", "new", 8) => Some(Box::new(IpAddrLiteralSugar {
+            source: IpAddrSource::Ipv6New {
+                segments: call
+                    .args
+                    .iter()
+                    .map(|arg| SugarBody::term(arg, fcx))
+                    .collect(),
+                boundary,
+            },
+        })),
+        _ => None,
+    }
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -60,7 +118,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     Some(Box::new(IpAddrPropertySugar {
         method,
         receiver: SugarBody::from_node(Box::new(IpAddrLiteralSugar {
-            source: resolve_literal_ip(&call.receiver, fcx, 0)
+            source: resolve_literal_ip(&call.receiver, fcx.scope(), 0)
                 .map(IpAddrSource::Literal)
                 .unwrap_or_else(|| IpAddrSource::Runtime(token_key(&call.receiver))),
         })),
@@ -103,14 +161,74 @@ impl Sugar for IpAddrPropertySugar {
 }
 
 impl Sugar for IpAddrLiteralSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        match self.source {
-            IpAddrSource::Literal(ip) => Outcome::Complete(Desugared::Term(ip_term(ip))),
-            IpAddrSource::Runtime(ref boundary) => Outcome::Incomplete(Effect::RuntimeIpAddr {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match &self.source {
+            IpAddrSource::Literal(ip) => Outcome::Complete(Desugared::Term(ip_term(*ip))),
+            IpAddrSource::Runtime(boundary) => Outcome::Incomplete(Effect::RuntimeIpAddr {
                 boundary: boundary.clone(),
             }),
+            IpAddrSource::Ipv4New { octets, boundary } => {
+                let mut values = [0u8; 4];
+                for (slot, body) in values.iter_mut().zip(octets.iter()) {
+                    let value = match reduce_ip_int_arg(body, ctx, boundary) {
+                        Ok(Some(value)) => value,
+                        Ok(None) => {
+                            return Outcome::Incomplete(Effect::RuntimeIpAddr {
+                                boundary: boundary.clone(),
+                            });
+                        }
+                        Err(effect) => return Outcome::Incomplete(effect),
+                    };
+                    *slot = u8::try_from(value).unwrap_or_else(|_| {
+                        panic!("Ipv4Addr::new segment is outside u8 at `{boundary}`")
+                    });
+                }
+                Outcome::Complete(Desugared::Term(ip_term(LiteralIp::V4(Ipv4Addr::new(
+                    values[0], values[1], values[2], values[3],
+                )))))
+            }
+            IpAddrSource::Ipv6New { segments, boundary } => {
+                let mut values = [0u16; 8];
+                for (slot, body) in values.iter_mut().zip(segments.iter()) {
+                    let value = match reduce_ip_int_arg(body, ctx, boundary) {
+                        Ok(Some(value)) => value,
+                        Ok(None) => {
+                            return Outcome::Incomplete(Effect::RuntimeIpAddr {
+                                boundary: boundary.clone(),
+                            });
+                        }
+                        Err(effect) => return Outcome::Incomplete(effect),
+                    };
+                    *slot = u16::try_from(value).unwrap_or_else(|_| {
+                        panic!("Ipv6Addr::new segment is outside u16 at `{boundary}`")
+                    });
+                }
+                Outcome::Complete(Desugared::Term(ip_term(LiteralIp::V6(Ipv6Addr::new(
+                    values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+                    values[7],
+                )))))
+            }
         }
     }
+}
+
+fn reduce_ip_int_arg(
+    body: &SugarBody<TermFloor>,
+    ctx: &SugarCtx,
+    boundary: &str,
+) -> Result<Option<i128>, Effect> {
+    let term = match body.reduce(ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .unwrap_or_else(|| panic!("IP address constructor argument completed as non-term")),
+        Outcome::Incomplete(effect) => return Err(effect),
+    };
+    Ok(crate::const_fold_int_term(&term).or_else(|| {
+        if crate::const_fold_u128_term(&term).is_some() {
+            panic!("IP address constructor argument is u128-wide at `{boundary}`")
+        }
+        None
+    }))
 }
 
 fn is_supported_property(method: &str) -> bool {
@@ -134,34 +252,41 @@ fn is_supported_property(method: &str) -> bool {
     )
 }
 
-fn resolve_literal_ip(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<LiteralIp> {
+fn call_path_type_and_method(call: &ExprCall) -> Option<(String, String)> {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    path_type_and_method(&path.path)
+}
+
+fn resolve_literal_ip(expr: &Expr, scope: &TemporalScope, depth: usize) -> Option<LiteralIp> {
     match strip_refs_groups(expr) {
         Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
-            resolve_literal_ip(&call.receiver, fcx, depth)
+            resolve_literal_ip(&call.receiver, scope, depth)
         }
         Expr::MethodCall(call) if call.method == "expect" && call.args.len() == 1 => {
-            resolve_literal_ip(&call.receiver, fcx, depth)
+            resolve_literal_ip(&call.receiver, scope, depth)
         }
-        Expr::Call(call) => resolve_ip_call(call, fcx, depth),
+        Expr::Call(call) => resolve_ip_call(call, scope, depth),
         Expr::Macro(expr_macro) => {
             if depth >= MAX_MACRO_EXPANSION_DEPTH {
                 return None;
             }
             let name = expr_macro.mac.path.segments.last()?.ident.to_string();
-            let rules = fcx.scope().macro_registry().lookup(&name)?;
+            let rules = scope.macro_registry().lookup(&name)?;
             let expanded =
                 crate::macro_expand::expand(&rules, expr_macro.mac.tokens.clone()).ok()?;
             let parsed: Expr = syn::parse2(expanded).ok()?;
-            resolve_literal_ip(&parsed, fcx, depth + 1)
+            resolve_literal_ip(&parsed, scope, depth + 1)
         }
         Expr::Block(block) => match block.block.stmts.as_slice() {
-            [syn::Stmt::Expr(tail, None)] => resolve_literal_ip(tail, fcx, depth),
+            [syn::Stmt::Expr(tail, None)] => resolve_literal_ip(tail, scope, depth),
             _ => None,
         },
         Expr::Path(path) => resolve_ip_const_path(&path.path),
         Expr::Lit(_) | Expr::Array(_) | Expr::Tuple(_) => None,
-        Expr::Paren(paren) => resolve_literal_ip(&paren.expr, fcx, depth),
-        Expr::Group(group) => resolve_literal_ip(&group.expr, fcx, depth),
+        Expr::Paren(paren) => resolve_literal_ip(&paren.expr, scope, depth),
+        Expr::Group(group) => resolve_literal_ip(&group.expr, scope, depth),
         _ => None,
     }
 }
@@ -186,7 +311,7 @@ fn resolve_ip_const_path(path: &syn::Path) -> Option<LiteralIp> {
     }
 }
 
-fn resolve_ip_call(call: &ExprCall, fcx: &SugarBuildCtx, depth: usize) -> Option<LiteralIp> {
+fn resolve_ip_call(call: &ExprCall, scope: &TemporalScope, depth: usize) -> Option<LiteralIp> {
     let Expr::Path(path) = strip_refs_groups(&call.func) else {
         return None;
     };
@@ -229,7 +354,7 @@ fn resolve_ip_call(call: &ExprCall, fcx: &SugarBuildCtx, depth: usize) -> Option
                 segments[7],
             )))
         }
-        ("IpAddr", "from", 1) => match resolve_literal_ip(call.args.first()?, fcx, depth)? {
+        ("IpAddr", "from", 1) => match resolve_literal_ip(call.args.first()?, scope, depth)? {
             LiteralIp::V4(addr) => Some(LiteralIp::Any(IpAddr::V4(addr))),
             LiteralIp::V6(addr) => Some(LiteralIp::Any(IpAddr::V6(addr))),
             any @ LiteralIp::Any(_) => Some(any),
@@ -273,6 +398,33 @@ fn ip_term(ip: LiteralIp) -> Rc<Term> {
                 .collect(),
         }),
     }
+}
+
+pub(crate) fn literal_ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
+    ip_from_term(term)
+}
+
+pub(crate) fn primitive_int_from_literal_ip(ip: LiteralIp, dst: IntKind, site: &str) -> Rc<Term> {
+    let value = match ip {
+        LiteralIp::V4(addr) if dst.name == "u32" => u128::from(u32::from_be_bytes(addr.octets())),
+        LiteralIp::V6(addr) if dst.name == "u128" => u128::from_be_bytes(addr.octets()),
+        _ => {
+            panic!(
+                "primitive From `{}` is not implemented for `{}` at `{}`",
+                dst.name,
+                ip.source_type_name(),
+                site
+            )
+        }
+    };
+    ExactInt::Unsigned(value)
+        .term_for_kind(dst)
+        .unwrap_or_else(|| {
+            panic!(
+                "IP address floor value did not fit primitive From `{}` at `{}`",
+                dst.name, site
+            )
+        })
 }
 
 fn ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
@@ -331,6 +483,16 @@ fn ip_from_term(term: &Rc<Term>) -> Option<LiteralIp> {
             )))
         }
         _ => None,
+    }
+}
+
+impl LiteralIp {
+    fn source_type_name(self) -> &'static str {
+        match self {
+            LiteralIp::Any(_) => "IpAddr",
+            LiteralIp::V4(_) => "Ipv4Addr",
+            LiteralIp::V6(_) => "Ipv6Addr",
+        }
     }
 }
 
@@ -582,5 +744,19 @@ mod tests {
         let ip = LiteralIp::Any(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
         assert_eq!(ip_from_term(&ip_term(ip)), Some(ip));
+    }
+
+    #[test]
+    fn ip_floor_owns_ipv6_to_u128_from_value() {
+        let ip = LiteralIp::V6(Ipv6Addr::new(
+            0x1122, 0x3344, 0x5566, 0x7788, 0x99aa, 0xbbcc, 0xddee, 0xff11,
+        ));
+        let kind = crate::sugar::int_literal::primitive_int_kind("u128").unwrap();
+        let term = primitive_int_from_literal_ip(ip, kind, "test");
+
+        assert_eq!(
+            crate::const_fold_u128_term(&term),
+            Some(0x112233445566778899aabbccddeeff11u128)
+        );
     }
 }
