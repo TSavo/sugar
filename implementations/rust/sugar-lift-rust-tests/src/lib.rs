@@ -16597,6 +16597,13 @@ fn lower_assert_eq(
         .map_err(|effect| effect.reason())?;
     let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)
         .map_err(|effect| effect.reason())?;
+    if let Some(effect) = sugar::constraint::relation_source_capability_effect(lhs_expr)
+        .or_else(|| sugar::constraint::relation_source_capability_effect(rhs_expr))
+        .or_else(|| sugar::constraint::relation_operand_capability_effect(lhs_expr, &lhs))
+        .or_else(|| sugar::constraint::relation_operand_capability_effect(rhs_expr, &rhs))
+    {
+        return Err(format!("assert_eq!: {}", effect.reason()));
+    }
     Ok(assertion_entry_from_eq(lhs, rhs, scope))
 }
 
@@ -16622,6 +16629,13 @@ fn lower_assert_ne(
         .map_err(|effect| effect.reason())?;
     let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)
         .map_err(|effect| effect.reason())?;
+    if let Some(effect) = sugar::constraint::relation_source_capability_effect(lhs_expr)
+        .or_else(|| sugar::constraint::relation_source_capability_effect(rhs_expr))
+        .or_else(|| sugar::constraint::relation_operand_capability_effect(lhs_expr, &lhs))
+        .or_else(|| sugar::constraint::relation_operand_capability_effect(rhs_expr, &rhs))
+    {
+        return Err(format!("assert_ne!: {}", effect.reason()));
+    }
     Ok(assertion_entry_from_relation(
         lhs,
         rhs,
