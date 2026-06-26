@@ -29,8 +29,11 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::SugarBuildCtx;
-use crate::{expr_is_runtime_call_result, token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::{expr_is_runtime_call_result, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("match_scrutinee_term", recognize_term);
 
 pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::match_scrutinee_verdict(
@@ -44,6 +47,19 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize_verdict,
     );
 
+fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Match(m) = expr else {
+        return None;
+    };
+    if !expr_resolves_runtime_call_result(&m.expr, fcx, 0) {
+        return None;
+    }
+    Some(Box::new(MatchScrutineeTermSugar {
+        boundary: token_key(expr),
+        scrutinee: SugarBody::term(&m.expr, fcx),
+    }))
+}
+
 /// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
 /// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`.
 pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -56,6 +72,11 @@ pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box
 pub(crate) struct MatchScrutineeSugar {
     /// Byte-identical to the old predicate's `token_key(expr)` boundary.
     boundary: String,
+}
+
+pub(crate) struct MatchScrutineeTermSugar {
+    boundary: String,
+    scrutinee: SugarBody<TermFloor>,
 }
 
 impl MatchScrutineeSugar {
@@ -91,6 +112,23 @@ impl Sugar for MatchScrutineeSugar {
     }
 }
 
+impl Sugar for MatchScrutineeTermSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match self.scrutinee.reduce(ctx) {
+            Outcome::Complete(Desugared::Term(_)) => Outcome::Incomplete(
+                MatchScrutineeSugar {
+                    boundary: self.boundary.clone(),
+                }
+                .runtime_scrutinee_effect(),
+            ),
+            Outcome::Complete(_) => {
+                panic!("match_scrutinee_term scrutinee reduced to a non-term floor")
+            }
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
+    }
+}
+
 /// Build (`new` + compose, NO degeneracy opinion) a `MatchScrutineeSugar` from an expr.
 /// Recognizes the construct: an `Expr::Match` whose SCRUTINEE is a RUNTIME call result (a
 /// method/free-fn call, looking through parens/groups/references -- reusing the shared
@@ -109,4 +147,31 @@ pub(crate) fn decompose_match_scrutinee(expr: &Expr) -> Option<MatchScrutineeSug
     Some(MatchScrutineeSugar {
         boundary: token_key(expr),
     })
+}
+
+fn expr_resolves_runtime_call_result(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if expr_is_runtime_call_result(expr) {
+        return true;
+    }
+    match expr {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .is_some_and(|init| expr_resolves_runtime_call_result(init, fcx, depth + 1))
+        }
+        Expr::Paren(paren) => expr_resolves_runtime_call_result(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => expr_resolves_runtime_call_result(&group.expr, fcx, depth + 1),
+        Expr::Reference(reference) => {
+            expr_resolves_runtime_call_result(&reference.expr, fcx, depth + 1)
+        }
+        _ => false,
+    }
 }
