@@ -416,7 +416,7 @@ fn elem_term(elem: &DesugaredElem) -> Rc<Term> {
 }
 
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
-    match value {
+    crate::const_val_term(value).or_else(|| match value {
         ConstVal::Int(n) => Some(num(*n)),
         ConstVal::PrimitiveInt { raw, kind } => primitive_int_term(*raw, *kind),
         ConstVal::UInt128(n) => Some(u128_term(*n)),
@@ -445,7 +445,8 @@ fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
                 .collect::<Option<Vec<_>>>()?;
             Some(literal_vec_term(&terms))
         }
-    }
+        _ => None,
+    })
 }
 
 pub(crate) fn literal_vec_term(elems: &[Rc<Term>]) -> Rc<Term> {

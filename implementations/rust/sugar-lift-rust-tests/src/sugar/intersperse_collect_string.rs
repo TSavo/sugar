@@ -174,6 +174,7 @@ fn const_value_to_string(value: &ConstVal) -> Option<String> {
         ConstVal::UnitPath(path) => path.clone(),
         ConstVal::Tuple(_) => return None,
         ConstVal::Array(_) => return None,
+        ConstVal::Struct { .. } => return None,
     })
 }
 

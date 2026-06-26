@@ -6614,23 +6614,31 @@ fn resolve_adaptor_closure_arg<'a>(
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor
 /// closure (`.filter`/`.map`/`.skip_while`/...). DELIBERATELY NARROW: only the value
 /// kinds whose Rust semantics we can replicate with certainty -- integer, bool, char,
-/// byte (an int), unit-path value constructors, and tuples thereof. NO float
-/// (equality edge cases / NaN), NO string (allocation / encoding), NO arbitrary
-/// struct with fields. A wrong DIG is a fake-discharge, so the evaluator is
-/// exact-or-None everywhere: the instant an expression is outside this closed set,
-/// `const_eval` returns None and the whole defold bails.
+/// byte (an int), unit-path value constructors, tuples thereof, and literal struct
+/// constructors whose fields are also in this closed set. NO float (equality edge cases
+/// / NaN), NO string (allocation / encoding), NO runtime struct update. A wrong DIG is
+/// a fake-discharge, so the evaluator is exact-or-None everywhere: the instant an
+/// expression is outside this closed set, `const_eval` returns None and the whole defold
+/// bails.
 #[derive(Clone, Debug, PartialEq)]
 enum ConstVal {
     // i128 carrier -- same widening as the lifted-term Int const: a wide
     // literal const-folds to its EXACT integer value, never a truncation.
     Int(i128),
-    PrimitiveInt { raw: u128, kind: PrimitiveIntKind },
+    PrimitiveInt {
+        raw: u128,
+        kind: PrimitiveIntKind,
+    },
     UInt128(u128),
     Bool(bool),
     Char(char),
     UnitPath(String),
     Array(Vec<ConstVal>),
     Tuple(Vec<ConstVal>),
+    Struct {
+        name: String,
+        fields: Vec<(String, ConstVal)>,
+    },
 }
 
 impl ConstVal {
@@ -6657,6 +6665,18 @@ impl ConstVal {
                     .map(ConstVal::to_expr)
                     .collect::<Option<Vec<_>>>()?;
                 return Some(syn::parse_quote!((#(#elems),*)));
+            }
+            ConstVal::Struct { name, fields } => {
+                let path = syn::parse_str::<syn::Path>(name).ok()?;
+                let mut parsed_fields = Vec::with_capacity(fields.len());
+                for (field, value) in fields {
+                    let ident = syn::parse_str::<syn::Ident>(field).ok()?;
+                    let expr = value.to_expr()?;
+                    parsed_fields.push((ident, expr));
+                }
+                let field_idents = parsed_fields.iter().map(|(ident, _)| ident);
+                let field_exprs = parsed_fields.iter().map(|(_, expr)| expr);
+                return Some(syn::parse_quote!(#path { #(#field_idents: #field_exprs),* }));
             }
         };
         syn::parse_str::<Expr>(&s).ok()
@@ -6797,6 +6817,19 @@ pub(crate) fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
         ConstVal::UInt128(n) => Some(u128_term(*n)),
         ConstVal::Bool(b) => Some(bool_const(*b)),
         ConstVal::Char(c) => Some(str_const(c.to_string())),
+        ConstVal::Struct { name, fields } => {
+            let mut args = Vec::with_capacity(fields.len());
+            for (field, value) in fields {
+                args.push(Rc::new(Term::Ctor {
+                    name: format!("field:{field}"),
+                    args: vec![const_val_term(value)?],
+                }));
+            }
+            Some(Rc::new(Term::Ctor {
+                name: format!("struct:{name}"),
+                args,
+            }))
+        }
         _ => None,
     }
 }
@@ -6882,6 +6915,20 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 vals.push(const_eval(e, env)?);
             }
             Some(ConstVal::Tuple(vals))
+        }
+        Expr::Struct(s) if s.rest.is_none() => {
+            let mut fields = Vec::with_capacity(s.fields.len());
+            for field in &s.fields {
+                let syn::Member::Named(ident) = &field.member else {
+                    return None;
+                };
+                fields.push((ident.to_string(), const_eval(&field.expr, env)?));
+            }
+            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            Some(ConstVal::Struct {
+                name: path_to_variant_string(&s.path),
+                fields,
+            })
         }
         Expr::MethodCall(call) if call.args.len() == 1 => {
             let receiver = const_eval(&call.receiver, env)?;
@@ -7396,6 +7443,16 @@ fn const_eq(l: &ConstVal, r: &ConstVal) -> Option<bool> {
         (ConstVal::Char(a), ConstVal::Char(b)) => Some(a == b),
         (ConstVal::UnitPath(a), ConstVal::UnitPath(b)) => Some(a == b),
         (ConstVal::Tuple(a), ConstVal::Tuple(b)) => Some(a == b),
+        (
+            ConstVal::Struct {
+                name: name_a,
+                fields: fields_a,
+            },
+            ConstVal::Struct {
+                name: name_b,
+                fields: fields_b,
+            },
+        ) => Some(name_a == name_b && fields_a == fields_b),
         _ => None,
     }
 }

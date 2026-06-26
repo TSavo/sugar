@@ -338,6 +338,7 @@ fn value_term(value: &ConstVal) -> Option<Rc<Term>> {
         ConstVal::UnitPath(path) => Some(make_var(unit_path_literal_name(path))),
         ConstVal::Tuple(_) => None,
         ConstVal::Array(_) => None,
+        ConstVal::Struct { .. } => None,
     }
 }
 
