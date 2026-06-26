@@ -2,10 +2,11 @@
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{make_var, Term};
 
 use crate::sugar::term_dispatch::literal_array_term_from_terms;
-use crate::{const_val_term, ConstVal, Desugared, DesugaredElem};
+use crate::sugar::unit_path::unit_path_literal_name;
+use crate::{canonical_term_sig, const_val_term, token_key, ConstVal, Desugared, DesugaredElem};
 
 /// Dispatch a completed composite floor by whether it is a finite sequence.
 pub(crate) trait SequenceFloorVisitor {
@@ -124,6 +125,39 @@ fn desugared_elem_from_const(value: &ConstVal) -> Option<DesugaredElem> {
     Some(DesugaredElem {
         expr: value.to_expr()?,
         value: Some(value.clone()),
+    })
+}
+
+pub(crate) fn sequence_elem_term_floor(elem: &DesugaredElem, family: &str) -> Rc<Term> {
+    elem.value
+        .as_ref()
+        .and_then(sequence_value_term_floor)
+        .unwrap_or_else(|| make_var(format!("opaque:{family}-elem:{}", token_key(&elem.expr))))
+}
+
+pub(crate) fn sequence_value_term_floor(value: &ConstVal) -> Option<Rc<Term>> {
+    const_val_term(value).or_else(|| match value {
+        ConstVal::UnitPath(path) => Some(make_var(unit_path_literal_name(path))),
+        ConstVal::Tuple(parts) => {
+            let terms = parts
+                .iter()
+                .map(sequence_value_term_floor)
+                .collect::<Option<Vec<_>>>()?;
+            let inner = terms
+                .iter()
+                .map(|term| canonical_term_sig(term))
+                .collect::<Vec<_>>()
+                .join(",");
+            Some(make_var(format!("literal:Tuple({inner})")))
+        }
+        ConstVal::Array(parts) => {
+            let terms = parts
+                .iter()
+                .map(sequence_value_term_floor)
+                .collect::<Option<Vec<_>>>()?;
+            Some(literal_array_term_from_terms(&terms))
+        }
+        _ => None,
     })
 }
 
