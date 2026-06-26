@@ -206,6 +206,10 @@ fn recognized_receiver_is_static_sequence(
     {
         return true;
     }
+    if matches!(terminal, Terminal::Any(_) | Terminal::All(_)) && has_composite(&call.receiver, fcx)
+    {
+        return true;
+    }
     // Bare-path `next`/`next_back` still belong to the cursor replay lane when
     // the receiver is literal-backed. `try_fold` consumes a cursor without
     // modeling the residual state here, so a direct local receiver must fall

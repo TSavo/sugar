@@ -7,6 +7,7 @@
 use syn::{Expr, ExprCall};
 
 use crate::sugar::claim::ExprSugarClaim;
+use crate::sugar::collection_literal::collection_literal_array;
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
 use crate::{simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -17,13 +18,16 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     if let Some(binding) = recognize_mutable_source_binding(expr, fcx) {
         return Some(binding);
     }
+    if collection_literal_array(expr).is_some() {
+        return None;
+    }
     let Expr::Call(call) = expr else {
         return None;
     };
     runtime_iterator_source(call).then(|| {
         Box::new(RuntimeIteratorSourceSugar {
             boundary: token_key(expr),
-            producer: producer_name(call).unwrap_or("iterator source").to_string(),
+            producer: producer_name(call).unwrap_or_else(|| "iterator source".to_string()),
         }) as Box<dyn Sugar>
     })
 }
@@ -54,9 +58,9 @@ impl Sugar for RuntimeIteratorSourceSugar {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
             boundary: self.boundary.clone(),
             reason: format!(
-                "unknown iterator consumption for `{}` via `{}`: runtime iterator source state \
-                 is produced by a generator/closure, so there is no single timeless source \
-                 sequence to read at the assertion; refused",
+                "unknown iterator consumption for `{}` via `{}`: OPAQUE runtime iterator source \
+                 state is produced by a generator/closure/call, so there is no single timeless \
+                 source sequence to read at the assertion; refused",
                 self.boundary, self.producer
             ),
         })
@@ -78,14 +82,17 @@ fn recognize_mutable_source_binding(expr: &Expr, fcx: &SugarBuildCtx) -> Option<
 }
 
 fn runtime_iterator_source_expr(expr: &Expr) -> bool {
+    if collection_literal_array(expr).is_some() {
+        return false;
+    }
     matches!(expr, Expr::Call(call) if runtime_iterator_source(call))
 }
 
 fn runtime_iterator_source(call: &ExprCall) -> bool {
-    call.args.len() == 2 && producer_name(call) == Some("successors")
+    producer_name(call).is_some()
 }
 
-fn producer_name(call: &ExprCall) -> Option<&'static str> {
+fn producer_name(call: &ExprCall) -> Option<String> {
     let Expr::Path(path) = call.func.as_ref() else {
         return None;
     };
@@ -94,9 +101,11 @@ fn producer_name(call: &ExprCall) -> Option<&'static str> {
     }
     let mut segments = path.path.segments.iter().rev();
     let last = segments.next()?;
-    if last.ident != "successors" {
-        return None;
+    if last.ident == "successors"
+        && call.args.len() == 2
+        && segments.next().is_some_and(|parent| parent.ident == "iter")
+    {
+        return Some("successors".to_string());
     }
-    let parent = segments.next()?;
-    (parent.ident == "iter").then_some("successors")
+    Some(last.ident.to_string())
 }
