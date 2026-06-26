@@ -17,7 +17,7 @@ use crate::sugar::float_floor;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
-    literal_char_predicate_atom, literal_string_value, parse_macro_args,
+    literal_char_predicate_atom, literal_string_value, parse_macro_args, strip_refs_groups,
     sugar_ctx_with_factory_audits, token_key, AssertionEntry, AssertionFactKind, CfgDisposition,
     CfgPredicate, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome,
     ReductionCtx, RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
@@ -580,7 +580,7 @@ impl Sugar for BoolExprSugar {
             }
             BoolExprKind::PredicateTerm {
                 term,
-                expr: _,
+                expr,
                 asserted,
             } => {
                 let term = match term_payload(term, ctx) {
@@ -593,7 +593,7 @@ impl Sugar for BoolExprSugar {
                     RelationOp::Eq,
                     ctx.scope,
                 );
-                let kind = if predicate_term_is_claim_bearing(term.as_ref()) {
+                let kind = if predicate_term_is_claim_bearing(term.as_ref(), expr) {
                     AssertionFactKind::Warranted
                 } else {
                     AssertionFactKind::Support
@@ -610,8 +610,18 @@ impl Sugar for BoolExprSugar {
     }
 }
 
-fn predicate_term_is_claim_bearing(term: &Term) -> bool {
-    term_bool(term).is_some()
+fn predicate_term_is_claim_bearing(term: &Term, expr: &Expr) -> bool {
+    if term_bool(term).is_some() {
+        return true;
+    }
+    !predicate_term_is_unreduced_iterator_quantifier(expr)
+}
+
+fn predicate_term_is_unreduced_iterator_quantifier(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    matches!(call.method.to_string().as_str(), "all" | "any")
 }
 
 fn constraints_from_payload(payload: ConstraintPayload) -> Outcome {
@@ -1171,7 +1181,24 @@ fn relation_constraint_from_bodies(
         Ok(term) => term,
         Err(outcome) => return outcome,
     };
-    constraint_from_entry(assertion_entry_from_relation(lhs, rhs, op, ctx.scope))
+    let kind = if relation_side_is_unreduced_iterator_quantifier(lhs.as_ref(), lhs_expr)
+        || relation_side_is_unreduced_iterator_quantifier(rhs.as_ref(), rhs_expr)
+    {
+        AssertionFactKind::Support
+    } else {
+        AssertionFactKind::Warranted
+    };
+    let entry = assertion_entry_from_relation(lhs, rhs, op, ctx.scope);
+    Outcome::Complete(Desugared::Constraints {
+        atom: entry.atom,
+        n: 1,
+        kind,
+        warrant: Warrant { name: entry.name },
+    })
+}
+
+fn relation_side_is_unreduced_iterator_quantifier(term: &Term, expr: &Expr) -> bool {
+    term_bool(term).is_none() && predicate_term_is_unreduced_iterator_quantifier(expr)
 }
 
 fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {

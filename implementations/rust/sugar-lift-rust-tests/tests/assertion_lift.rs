@@ -17801,10 +17801,9 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
 #[test]
 fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.any(..)` over a RUNTIME receiver is NOT a
-    // written literal -> the syntactic-literal gate in `iter_terminal` declines (the
-    // inner Seq desugar returns Incomplete), so the reduction never grounds a bool. The
-    // closure-adaptor provenance path then NAMES it bin-2 (an OPAQUE collection) and
-    // refuses -- no grounded bool over a runtime domain, no fake-complete.
+    // written literal. `iter_terminal` owns the method shape, reduces its Composite
+    // receiver, and bubbles the runtime-source OPAQUE/bin-2 effect unchanged -- no
+    // grounded bool over a runtime domain, no fake-complete, no parent-side rewording.
     let src = "fn make_v() -> Vec<i32> { vec![1, 2, 3] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().any(|x| *x > 2), true); }\n";
     let out = lift_file(&parse(src), "tests/iter_any_runtime.rs");
     assert!(
@@ -17822,8 +17821,8 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
     assert!(
         out.skip_reasons
             .iter()
-            .any(|r| r.contains(".any(") && r.contains("OPAQUE")),
-        "the runtime `.any()` must be named bin-2 (opaque collection): {:?}",
+            .any(|r| r.contains("unknown iterator consumption") && r.contains("OPAQUE")),
+        "the runtime `.any()` must bubble the source-owned bin-2 effect: {:?}",
         out.skip_reasons
     );
 }
