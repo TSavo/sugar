@@ -13,11 +13,14 @@ use syn::{Expr, Pat, Type};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
-use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
+use crate::sugar::term_dispatch::{
+    literal_array_term_from_terms, CurryOccurrence, CurryVisitor, DesugaredFloorAccept,
+};
+use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
-    const_val_term, curry_param_name, curry_param_term, strip_refs_groups, token_key, Desugared,
-    DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    const_val_term, curry_param_name, curry_param_term, strip_refs_groups, token_key, ConstVal,
+    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -191,7 +194,7 @@ impl MappedSequence {
                 .map(|elem| {
                     elem.value
                         .as_ref()
-                        .and_then(const_val_term)
+                        .and_then(map_value_term)
                         .unwrap_or_else(|| map_gap("literal map value did not reify to a term"))
                 })
                 .collect(),
@@ -348,8 +351,34 @@ fn pat_single_name(pat: &Pat) -> Option<String> {
 fn elem_term_floor(elem: &DesugaredElem) -> Rc<Term> {
     elem.value
         .as_ref()
-        .and_then(const_val_term)
+        .and_then(map_value_term)
         .unwrap_or_else(|| make_var(format!("opaque:map-elem:{}", token_key(&elem.expr))))
+}
+
+fn map_value_term(value: &ConstVal) -> Option<Rc<Term>> {
+    const_val_term(value).or_else(|| match value {
+        ConstVal::UnitPath(path) => Some(make_var(unit_path_literal_name(path))),
+        ConstVal::Tuple(parts) => {
+            let terms = parts
+                .iter()
+                .map(map_value_term)
+                .collect::<Option<Vec<_>>>()?;
+            let inner = terms
+                .iter()
+                .map(|term| canonical_term_sig(term))
+                .collect::<Vec<_>>()
+                .join(",");
+            Some(make_var(format!("literal:Tuple({inner})")))
+        }
+        ConstVal::Array(parts) => {
+            let terms = parts
+                .iter()
+                .map(map_value_term)
+                .collect::<Option<Vec<_>>>()?;
+            Some(literal_array_term_from_terms(&terms))
+        }
+        _ => None,
+    })
 }
 
 fn map_gap(reason: &str) -> ! {
