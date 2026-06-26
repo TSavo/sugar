@@ -22297,6 +22297,24 @@ fn t() {
     }
 
     #[test]
+    #[should_panic(
+        expected = "function_map construction gap: mapper `checked` contains assertions"
+    )]
+    fn function_map_visible_path_with_unbuildable_body_panics() {
+        let src = r#"
+            #[test]
+            fn function_map_unbuildable_body() {
+                fn checked(x: usize) -> usize {
+                    assert!(x > 0);
+                    x + 1
+                }
+                assert_eq!([1usize].map(checked), [2usize]);
+            }
+        "#;
+        let _ = lift_src(src);
+    }
+
+    #[test]
     fn closure_map_bound_literal_array_lifts_as_term() {
         let src = r#"
             #[test]
