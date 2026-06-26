@@ -2331,6 +2331,21 @@ fn render_universe_warrant_breakdown(
         .first()
         .map(|warrant| source_memento_context_key(warrant))
         .unwrap_or_else(|| "<unknown>".to_string());
+    let factory_predicates = universe_factory_predicate_rows(factory_walk, source_lookup, &context);
+    if let Some(source_walk) = universe_source_walk_lines(source_lookup, warrants) {
+        render_universe_source_walk(
+            out,
+            &source_walk,
+            boundaries,
+            &context,
+            source_lookup,
+            warrants,
+            predicates,
+            &factory_predicates,
+        );
+        return;
+    }
+
     let mut items = Vec::new();
     for boundary in boundaries
         .iter()
@@ -2338,7 +2353,6 @@ fn render_universe_warrant_breakdown(
     {
         items.push(UniverseVisualItem::Boundary(boundary));
     }
-    let factory_predicates = universe_factory_predicate_rows(factory_walk, source_lookup, &context);
     if factory_predicates.is_empty() {
         for (index, warrant) in warrants.iter().enumerate() {
             let predicate = predicates
@@ -2399,6 +2413,173 @@ fn render_universe_warrant_breakdown(
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct VisualSourceWalkLine {
+    line: u64,
+    source: String,
+}
+
+fn render_universe_source_walk(
+    out: &mut String,
+    source_walk: &[VisualSourceWalkLine],
+    boundaries: &[VisualBoundaryRow],
+    context: &str,
+    source_lookup: VisualSourceLookup<'_>,
+    warrants: &[&Value],
+    predicates: &[String],
+    factory_predicates: &[UniverseFactoryPredicateRow],
+) {
+    let mut predicate_by_line: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    if factory_predicates.is_empty() {
+        for (index, warrant) in warrants.iter().enumerate() {
+            let line = warrant
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or_default()
+                .0;
+            if line == 0 {
+                continue;
+            }
+            let predicate = predicates
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| "<predicate unavailable>".to_string());
+            predicate_by_line.entry(line).or_default().push(predicate);
+        }
+    } else {
+        for predicate in factory_predicates {
+            let line = predicate.sort_key.0;
+            if line == 0 {
+                continue;
+            }
+            predicate_by_line
+                .entry(line)
+                .or_default()
+                .push(predicate.predicate.clone());
+        }
+    }
+
+    let mut boundary_by_line: BTreeMap<u64, Vec<&VisualBoundaryRow>> = BTreeMap::new();
+    for boundary in boundaries
+        .iter()
+        .filter(|boundary| boundary.context == context)
+    {
+        let line = boundary.sort_key.0;
+        if line == 0 {
+            continue;
+        }
+        boundary_by_line.entry(line).or_default().push(boundary);
+    }
+
+    let mut red = false;
+    let mut rendered_lines = BTreeSet::new();
+    for line in source_walk {
+        rendered_lines.insert(line.line);
+        if let Some(boundary_rows) = boundary_by_line.get(&line.line) {
+            if let Some(boundary) = boundary_rows.first() {
+                red = true;
+                render_visual_source_annotation(
+                    out,
+                    &line.source,
+                    VisualTone::Red,
+                    &boundary.label,
+                );
+                continue;
+            }
+        }
+        let tone = if red {
+            VisualTone::Red
+        } else {
+            VisualTone::Green
+        };
+        let status = if red { "RED" } else { "GREEN" };
+        let annotation = if red {
+            status.to_string()
+        } else if let Some(predicates) = predicate_by_line.get(&line.line) {
+            format!("{status} ⊢ {}", predicates.join(" ∧ "))
+        } else {
+            status.to_string()
+        };
+        render_visual_source_annotation(out, &line.source, tone, &annotation);
+    }
+
+    for predicate in factory_predicates
+        .iter()
+        .filter(|predicate| !rendered_lines.contains(&predicate.sort_key.0))
+    {
+        render_visual_source_annotation(
+            out,
+            &predicate.source,
+            VisualTone::Green,
+            &format!("GREEN ⊢ {}", predicate.predicate),
+        );
+    }
+
+    if factory_predicates.is_empty() {
+        for (index, warrant) in warrants.iter().enumerate() {
+            let line = warrant
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or_default()
+                .0;
+            if rendered_lines.contains(&line) {
+                continue;
+            }
+            let predicate = predicates
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| "<predicate unavailable>".to_string());
+            render_visual_source_annotation(
+                out,
+                &resolve_source_memento_visual_source(source_lookup, warrant),
+                VisualTone::Green,
+                &format!("GREEN ⊢ {predicate}"),
+            );
+        }
+    }
+}
+
+fn universe_source_walk_lines(
+    source_lookup: VisualSourceLookup<'_>,
+    warrants: &[&Value],
+) -> Option<Vec<VisualSourceWalkLine>> {
+    let warrant = warrants.iter().copied().max_by_key(|warrant| {
+        warrant
+            .get("span")
+            .map(source_span_sort_key)
+            .map(|(start_line, _, end_line, _)| end_line.saturating_sub(start_line))
+            .unwrap_or(0)
+    })?;
+    resolve_source_memento_visual_lines(source_lookup, warrant).ok()
+}
+
+fn resolve_source_memento_visual_lines(
+    source_lookup: VisualSourceLookup<'_>,
+    memento_value: &Value,
+) -> Result<Vec<VisualSourceWalkLine>, String> {
+    let project_root = source_lookup
+        .project_root
+        .ok_or_else(|| "missing project root".to_string())?;
+    if let Some(routed) = routed_source_memento(project_root, source_lookup.routes, memento_value) {
+        invoke_source_oracle_route(
+            project_root,
+            &routed.route,
+            &routed.workspace_root,
+            &routed.memento,
+        )?;
+        let memento = source_memento_from_report_json(&routed.memento)
+            .ok_or_else(|| "invalid source memento shape".to_string())?;
+        return source_lines_for_memento_with_numbers(&routed.workspace_root, &memento)
+            .ok_or_else(|| "source memento lines not found".to_string());
+    }
+    let memento = source_memento_from_report_json(memento_value)
+        .ok_or_else(|| "invalid source memento shape".to_string())?;
+    sugar_walk::source_oracle::resolve_source_memento(project_root, &memento)
+        .map_err(|refusal| refusal.reason)?;
+    source_lines_for_memento_with_numbers(project_root, &memento)
+        .ok_or_else(|| "source memento lines not found".to_string())
 }
 
 fn render_visual_source_annotation(
@@ -2826,12 +3007,37 @@ fn source_lines_for_memento(
     root: &Path,
     memento: &sugar_walk::source_oracle::SourceMemento,
 ) -> Option<String> {
+    let lines = source_lines_for_memento_with_numbers(root, memento)?;
+    Some(
+        lines
+            .into_iter()
+            .map(|line| line.source)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string(),
+    )
+}
+
+fn source_lines_for_memento_with_numbers(
+    root: &Path,
+    memento: &sugar_walk::source_oracle::SourceMemento,
+) -> Option<Vec<VisualSourceWalkLine>> {
     let source = std::fs::read_to_string(root.join(&memento.file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
     let start = memento.span.start_line.checked_sub(1)?;
     let end = memento.span.end_line.max(memento.span.start_line);
     let selected = lines.get(start..end)?;
-    Some(selected.join("\n").trim().to_string())
+    Some(
+        selected
+            .iter()
+            .enumerate()
+            .map(|(offset, source)| VisualSourceWalkLine {
+                line: (start + offset + 1) as u64,
+                source: source.trim_end().to_string(),
+            })
+            .collect(),
+    )
 }
 
 fn factory_walk_context_key(row: &Value, file: &str) -> String {
@@ -7323,21 +7529,30 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             !visual.contains("boundTerm") && !visual.contains("\"kind\""),
             "visual FOL must be human-readable symbols, not serialized ProofIR JSON:\n{visual}"
         );
+        let universe_visual = visual.split("factory visual:").next().unwrap_or(&visual);
         assert!(
-            visual.contains(
-                "\u{1b}[32mlet rem = bytes_len % 3;\u{1b}[0m  GREEN ⊢ rem = (bytes_len % 3)"
-            ),
-            "{visual}"
+            universe_visual.contains("\u{1b}[32mfn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {\u{1b}[0m  GREEN"),
+            "function universe projection must walk the whole function source:\n{visual}"
         );
         assert!(
-            visual.contains(
-                "\u{1b}[32mlet encoded_rem = rem + 1;\u{1b}[0m  GREEN ⊢ encoded_rem = (rem + 1)"
+            universe_visual.contains(
+                "\u{1b}[32m    let rem = bytes_len % 3;\u{1b}[0m  GREEN ⊢ rem = (bytes_len % 3)"
             ),
-            "{visual}"
+            "factory-emitted predicates must stay pinned to their source statement lines:\n{visual}"
         );
         assert!(
-            !visual.contains("fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize>"),
-            "function universe projection must use factory-emitted line pins instead of the whole-function source warrant:\n{visual}"
+            universe_visual.contains(
+                "\u{1b}[32m    let encoded_rem = rem + 1;\u{1b}[0m  GREEN ⊢ encoded_rem = (rem + 1)"
+            ),
+            "factory-emitted predicates must stay pinned to their source statement lines:\n{visual}"
+        );
+        assert!(
+            universe_visual.contains("\u{1b}[32m    Some(encoded_rem)\u{1b}[0m  GREEN"),
+            "function universe projection must include source lines with no emitted predicate:\n{visual}"
+        );
+        assert!(
+            universe_visual.contains("\u{1b}[32m}\u{1b}[0m  GREEN"),
+            "function universe projection must walk through the closing brace:\n{visual}"
         );
     }
 
@@ -7466,12 +7681,32 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "visual FOL must not leak serialized ProofIR JSON:\n{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32mif rem > 0 {\u{1b}[0m  GREEN ⊢ result = if rem > 0 then Some(4) else Some(0)"),
-            "source line must carry its emitted predicate inline:\n{visual}"
+            visual.contains("\u{1b}[32mfn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {\u{1b}[0m  GREEN"),
+            "universe visual must walk the whole warranted function source from its signature:\n{visual}"
         );
         assert!(
-            !visual.contains("if padding {"),
-            "visual report must not collapse a multi-line source block into one predicate row:\n{visual}"
+            visual.contains("\u{1b}[32m    if rem > 0 {\u{1b}[0m  GREEN ⊢ result = if rem > 0 then Some(4) else Some(0)"),
+            "the predicate emitted by the whole if expression should land on the if line:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32m        if padding {\u{1b}[0m  GREEN"),
+            "universe visual must keep walking nested source lines even when they emit no predicate:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32m            Some(4)\u{1b}[0m  GREEN"),
+            "universe visual must show branch source, not only predicate-bearing rows:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32m        } else {\u{1b}[0m  GREEN"),
+            "universe visual must preserve else lines in the source walk:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32m        Some(0)\u{1b}[0m  GREEN"),
+            "universe visual must show the else branch source:\n{visual}"
+        );
+        assert!(
+            visual.contains("\u{1b}[32m}\u{1b}[0m  GREEN"),
+            "universe visual must walk through the closing brace of the warranted function:\n{visual}"
         );
     }
 
