@@ -139,6 +139,20 @@ If the router needs behavior, write the sugar or add the floor visitor. Do not
 hide behavior in the router. Do not turn non-recognition into a fake effect.
 Do not special-case source syntax in `lib` when a small sugar can own it.
 
+## Builtin Macros Are Sugars
+
+Compiler/std builtin macros such as `format!`, `format_args!`, `concat!`,
+`cfg!`, `file!`, `vec!`, `write!`, and `writeln!` are source shapes owned by
+dedicated sugars. They must be claimed before the generic macro fallback.
+
+The generic macro fallback expands only visible source `macro_rules!`
+definitions. A builtin macro with no visible `macro_rules!` source is a
+construction gap and must panic until its sugar exists.
+
+Builtin macro sugars construct typed children, compose those children, and
+bubble child effects unchanged. They do not invent effects because the macro
+body is not visible.
+
 ## Panic On Every Non-Effect Gap
 
 Any path that is not `Complete` and is not `Incomplete` because of a real
@@ -163,6 +177,7 @@ later from `desugar`.
 - Do not use `RuntimeArgument` as an unsupported bucket.
 - Do not inspect completed floors by shape unless this module owns that floor.
 - Do not reopen the factory from `desugar` for child bodies.
+- Do not route compiler/std builtin macros through generic macro fallback.
 - Do not make a broad sugar clever when a tiny sugar or floor visitor would do.
 - Do not move behavior into `lib` merely because it is convenient from a call
   site.
