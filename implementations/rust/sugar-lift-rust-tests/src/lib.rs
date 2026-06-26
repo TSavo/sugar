@@ -33,6 +33,7 @@ pub mod sugar {
     pub mod aggregate_term;
     pub mod array_repeat;
     pub mod array_term;
+    pub mod array_try_from;
     pub mod assign_op;
     pub mod atomic_load;
     pub mod await_term;
@@ -3469,6 +3470,30 @@ impl LayoutTypeRegistry {
         items.join("\n")
     }
 
+    pub(crate) fn array_len_for_type(&self, ty: &Type) -> Option<usize> {
+        self.array_len_for_type_inner(ty, 0)
+    }
+
+    fn array_len_for_type_inner(&self, ty: &Type, depth: usize) -> Option<usize> {
+        const MAX_DEPTH: usize = 8;
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        match ty {
+            Type::Array(array) => usize::try_from(const_int(&array.len)?).ok(),
+            Type::Reference(reference) => self.array_len_for_type_inner(&reference.elem, depth + 1),
+            Type::Path(path) if path.qself.is_none() && path.path.segments.len() == 1 => {
+                let name = path.path.segments.first()?.ident.to_string();
+                let item = self.items.get(&name)?;
+                let Item::Type(alias) = item.as_ref() else {
+                    return None;
+                };
+                self.array_len_for_type_inner(&alias.ty, depth + 1)
+            }
+            _ => None,
+        }
+    }
+
     fn collect_type_prelude(
         &self,
         ty: &Type,
@@ -4805,6 +4830,10 @@ impl TemporalScope {
 
     pub(crate) fn offset_prelude_for_type(&self, ty: &Type) -> String {
         self.layout_type_registry.offset_prelude_for_type(ty)
+    }
+
+    pub(crate) fn array_len_for_type(&self, ty: &Type) -> Option<usize> {
+        self.layout_type_registry.array_len_for_type(ty)
     }
 
     /// Record the in-source const registry visible at this scope.

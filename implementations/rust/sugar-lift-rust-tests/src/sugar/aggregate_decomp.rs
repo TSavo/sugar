@@ -229,6 +229,7 @@ fn aggregate_body(expr: &Expr, fcx: &SugarBuildCtx, seen: &mut BTreeSet<String>)
             }
         }
         Expr::Index(index) if is_full_range(&index.index) => aggregate_body(&index.expr, fcx, seen),
+        Expr::Reference(reference) => aggregate_body(&reference.expr, fcx, seen),
         Expr::Cast(cast) => aggregate_body(&cast.expr, fcx, seen),
         Expr::MethodCall(call)
             if call.method == "collect"
@@ -450,6 +451,16 @@ fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Out
         Term::Const { .. } => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { name } if name.starts_with("literal:") => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { .. } => Ok(None),
+        Term::Ctor { name, args } if name == "literal:Array" => {
+            let mut out = Vec::new();
+            for arg in args {
+                let Some(parts) = grounded_term_components(Rc::clone(arg))? else {
+                    return Ok(None);
+                };
+                out.extend(parts);
+            }
+            Ok(Some(out))
+        }
         Term::Ctor { name, args } if text_structural_ctor(name) => {
             let mut out = Vec::with_capacity(args.len() + 1);
             out.push(str_const(format!("ctor:{name}:{}", args.len())));

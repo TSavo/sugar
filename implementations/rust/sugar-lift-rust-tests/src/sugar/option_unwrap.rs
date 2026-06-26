@@ -135,6 +135,7 @@ pub(crate) fn receiver_resolves_monadic_source(
     }
     if is_known_monadic_source(expr)
         || try_from_receiver_folds_scoped(expr, fcx)
+        || crate::sugar::array_try_from::folds_to_result(expr, fcx)
         || crate::sugar::iter_terminal::recognizes_monadic_terminal(expr, fcx)
     {
         return true;
@@ -147,7 +148,12 @@ pub(crate) fn receiver_resolves_monadic_source(
             if fcx.resolving_bound_path(&name) {
                 return false;
             }
-            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+            let Some(init) = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+            else {
                 return false;
             };
             let child_fcx = fcx.with_bound_path(&name);
