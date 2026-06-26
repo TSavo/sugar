@@ -14,7 +14,7 @@ use crate::sugar::factory::{
 use crate::sugar::format::{
     is_format_macro_shape, literal_format_capture_names, parse_args, render_format_values,
 };
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, token_key, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -43,6 +43,7 @@ struct FormatMacroTermSugar {
 }
 
 struct FormatMacroStringSugar {
+    source_memento: String,
     fmt: SugarBody<FormatTemplateFloor>,
     positional: Vec<SugarBody<FormatValueFloor>>,
     explicit_named: BTreeMap<String, SugarBody<FormatValueFloor>>,
@@ -76,6 +77,7 @@ fn build_format_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Result<FormatMacroStr
     let captures = capture_bodies(fmt_expr, fcx, &explicit_named)?;
 
     Ok(FormatMacroStringSugar {
+        source_memento: token_key(expr),
         fmt: SugarBody::format_template(fmt_expr, fcx),
         positional,
         explicit_named,
@@ -191,6 +193,7 @@ impl Sugar for FormatMacroStringSugar {
             &positional,
             &explicit_named,
             &captures,
+            &self.source_memento,
         )))
     }
 }

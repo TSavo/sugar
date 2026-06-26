@@ -309,6 +309,7 @@ mod tests {
             &[crate::sugar::format::FmtValue::CStr(bytes)],
             &Default::default(),
             &Default::default(),
+            "literal_cstr_floor_composes_into_debug_format_value",
         );
 
         assert_eq!(out, "\"hi\"");
@@ -327,6 +328,7 @@ mod tests {
             &[crate::sugar::format::FmtValue::CStr(bytes)],
             &Default::default(),
             &Default::default(),
+            "literal_cstr_display_format_panics_as_compiler_impossible",
         );
     }
 }
