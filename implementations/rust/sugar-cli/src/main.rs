@@ -43,7 +43,6 @@ mod component_plan;
 mod doctor;
 mod doctor_oracle;
 pub mod floor_runtime_check;
-mod kit_declaration;
 mod kit_dispatch;
 mod lift_plugin;
 pub mod panic_annotations_runtime;

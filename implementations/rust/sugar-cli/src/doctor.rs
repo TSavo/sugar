@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ValueEnum;
 use serde_json::{json, Value};
@@ -51,7 +51,6 @@ use crate::project_config::{read_project_config, PluginEntry};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
     Pass,
-    Skip,
     Warn,
     Fail,
 }
@@ -60,7 +59,6 @@ impl CheckStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             CheckStatus::Pass => "pass",
-            CheckStatus::Skip => "skip",
             CheckStatus::Warn => "warn",
             CheckStatus::Fail => "fail",
         }
@@ -154,19 +152,6 @@ impl DoctorCheck {
         evidence: Value,
     ) -> Self {
         Self::with_status(name, CheckStatus::Pass, detail, evidence)
-    }
-    fn skip_with_evidence(
-        name: impl Into<String>,
-        detail: impl Into<String>,
-        evidence: Value,
-    ) -> Self {
-        Self::with_status_and_severity(
-            name,
-            CheckStatus::Skip,
-            CheckSeverity::Advisory,
-            detail,
-            evidence,
-        )
     }
     fn warn_with_evidence(
         name: impl Into<String>,
@@ -1959,18 +1944,6 @@ mod tests {
                 initialize_response, declaration_response
             ),
         );
-    }
-
-    fn write_declaration_kit(kit: &Path, plugin_name: &str) {
-        write_declaration_kit_with_surface(kit, "rust-fn-contracts", plugin_name);
-    }
-
-    fn write_declaration_kit_with_surface(kit: &Path, surface: &str, plugin_name: &str) {
-        write_kit(
-            kit,
-            &format!("[[plugins]]\nname = \"test\"\nkind = \"lift\"\nsurface = \"{surface}\"\n"),
-        );
-        write_manifest(kit, "lift", surface, &format!("\"./{plugin_name}\""), ".");
     }
 
     #[derive(Debug, Clone)]

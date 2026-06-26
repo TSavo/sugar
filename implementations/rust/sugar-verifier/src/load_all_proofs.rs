@@ -21,14 +21,17 @@
 // Both shapes coexist; the catalog cut elsewhere bumps the per-memento
 // `schemaVersion` from "1" to "2".
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use tracing::{debug, info, warn};
 
-use crate::cbor_decode::decode;
-use crate::types::{memento_body, memento_kind, EffectSiteAnnotation, LoadError, MementoPool};
+use crate::cbor_decode::{decode, CborValue};
+use crate::types::{
+    memento_body, memento_body_field, memento_kind, EffectSiteAnnotation, LoadError, MementoPool,
+};
 
 const HASH_TAG_PREFIX: &str = "blake3-512:";
 const SIG_TAG_PREFIX: &str = "ed25519:";
@@ -214,6 +217,21 @@ fn load_catalog_bytes(
     let catalog = decode(bytes)?;
     let m_root = catalog.as_map().ok_or("catalog is not a map")?.clone();
 
+    load_catalog_cid_map(
+        &source_label,
+        &m_root,
+        "atoms",
+        &mut pool.atoms,
+        &mut pool.load_errors,
+    );
+    load_catalog_cid_map(
+        &source_label,
+        &m_root,
+        "body",
+        &mut pool.body,
+        &mut pool.load_errors,
+    );
+
     let members = m_root
         .get("members")
         .ok_or("catalog has no `members` map")?;
@@ -278,6 +296,29 @@ fn load_catalog_bytes(
                 reason: format!("rule 2: member {cid} derives to {derived}"),
             });
             continue;
+        }
+        if memento_kind(&env) == Some("contract") {
+            let Some(body_cid) = memento_body_field(&env, "bodyCid")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            else {
+                pool.load_errors.push(LoadError {
+                    proof_path: source_label.clone(),
+                    reason: format!(
+                        "contract {cid}: missing bodyCid; legacy inline contract bodies are not a valid .proof graph"
+                    ),
+                });
+                continue;
+            };
+            if !pool.body.contains_key(body_cid) {
+                pool.load_errors.push(LoadError {
+                    proof_path: source_label.clone(),
+                    reason: format!(
+                        "contract {cid}: bodyCid {body_cid} is not present in catalog `body` map"
+                    ),
+                });
+                continue;
+            }
         }
         // Index for handshake. The memento IS the verification;
         // inserting it into the pool IS caching the verification result.
@@ -354,6 +395,54 @@ fn load_catalog_bytes(
         }
     }
     Ok(())
+}
+
+fn load_catalog_cid_map(
+    source_label: &str,
+    root: &BTreeMap<String, CborValue>,
+    section: &str,
+    out: &mut BTreeMap<String, Vec<u8>>,
+    load_errors: &mut Vec<LoadError>,
+) {
+    let Some(value) = root.get(section) else {
+        return;
+    };
+    let Some(map) = value.as_map() else {
+        load_errors.push(LoadError {
+            proof_path: source_label.to_string(),
+            reason: format!("catalog `{section}` is not a map"),
+        });
+        return;
+    };
+    for (cid, val) in map {
+        if !cid.starts_with(HASH_TAG_PREFIX) {
+            load_errors.push(LoadError {
+                proof_path: source_label.to_string(),
+                reason: format!(
+                    "{section} {cid}: unsupported hash tag; catalog graph maps require `{HASH_TAG_PREFIX}`"
+                ),
+            });
+            continue;
+        }
+        let Some(bytes) = val.as_bstr() else {
+            load_errors.push(LoadError {
+                proof_path: source_label.to_string(),
+                reason: format!("{section} {cid}: value is not bstr"),
+            });
+            continue;
+        };
+        let derived = blake3_512_of(bytes);
+        if derived != *cid {
+            load_errors.push(LoadError {
+                proof_path: source_label.to_string(),
+                reason: format!(
+                    "{section} {cid}: graph entry derives to {derived}; graph leaves must be flat CID-addressed bytes"
+                ),
+            });
+            continue;
+        }
+        out.entry(cid.clone()).or_insert_with(|| bytes.to_vec());
+    }
 }
 
 fn index_effect_site_annotation(
@@ -564,9 +653,10 @@ fn json_to_value(j: &Json) -> std::sync::Arc<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use sugar_claim_envelope::{mint_effect_site_annotation, MintEffectSiteAnnotationArgs};
-    use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput};
+    use sugar_proof_envelope::{
+        build_proof_envelope, EffectSiteAnnotationMemento, ProofEnvelopeInput, ProofGraph,
+    };
 
     const PANIC_EFFECT: &str = "panic-freedom";
 
@@ -596,16 +686,19 @@ mod tests {
     }
 
     fn proof_bytes(members: Vec<sugar_claim_envelope::MintedEnvelope>) -> ProofBytes {
-        let mut member_map = BTreeMap::new();
+        let mut graph = ProofGraph::new();
         for member in members {
-            member_map.insert(member.cid, member.canonical_bytes);
+            let cid = member.cid.clone();
+            let memento = EffectSiteAnnotationMemento::new(member.canonical_bytes);
+            assert_eq!(memento.cid().as_str(), cid);
+            graph.push_effect_site_annotation(memento);
         }
         let proof = build_proof_envelope(&ProofEnvelopeInput {
             name: "annotation-test".to_string(),
             version: "1.0.0".to_string(),
             binary_cid: None,
             metadata: None,
-            members: member_map,
+            graph,
             signer_cid: "test-signer".to_string(),
             signer_seed: [0x24; 32],
             declared_at: "2026-06-01T00:00:00Z".to_string(),

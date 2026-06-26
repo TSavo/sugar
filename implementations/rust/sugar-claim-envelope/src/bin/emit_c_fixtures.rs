@@ -9,14 +9,13 @@
 //   3. mint_contract canonical_bytes (hex) + attestation CID for the standard fixture
 //   4. proof envelope bytes (hex) + CID for the standard fixture
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use sugar_canonicalizer::Value;
 use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed,
-    Ed25519Seed, ProofEnvelopeInput,
+    ClaimContractMemento, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
 
 const SEED: Ed25519Seed = [0x42u8; 32];
@@ -106,14 +105,16 @@ fn main() {
     println!("{}", m.canonical_bytes.len());
 
     // --- 5. proof envelope with the contract as sole member ---
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    members.insert(m.cid.clone(), m.canonical_bytes.clone());
+    let contract_memento = ClaimContractMemento::new(m.canonical_bytes.clone());
+    assert_eq!(contract_memento.cid().as_str(), m.cid);
+    let mut graph = ProofGraph::new();
+    graph.push_claim_contract(contract_memento);
     let proof_input = ProofEnvelopeInput {
         name: "@sugar/c-test".into(),
         version: "0.0.1".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid: pubkey_str.clone(),
         signer_seed: SEED,
         declared_at: PRODUCED_AT.into(),

@@ -18,16 +18,16 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use clap::Parser;
-use libsugar::core::emit_obligation::{
-    build_bridge_body, build_implication_contract_body, member_envelope_canonical,
-};
+use libsugar::core::emit_obligation::{build_implication_contract_body, canonical_value_of_json};
 use owo_colors::OwoColorize;
 use serde_json::{json, Value};
+use sugar_claim_envelope::{mint_bridge, MintBridgeArgs};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, BridgeMemento, ContractBody,
+    ContractMemento, ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
@@ -373,7 +373,8 @@ fn emit_bridge_envelope(
     target_language: &str,
 ) -> Result<Option<std::path::PathBuf>, String> {
     let proof_dir = project_root.join(".sugar").join("recognize");
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut proof_graph = ProofGraph::new();
+    let mut proof_member_cids: BTreeSet<String> = BTreeSet::new();
     // First pass: mint each tag's implication contract so we know its
     // CID. Build a map from function_name -> recognize-contract CID for
     // bridge fallback resolution.
@@ -381,8 +382,31 @@ fn emit_bridge_envelope(
         std::collections::HashMap::new();
     for tag in tags {
         if let Some(body) = recognize_implication_body(tag) {
-            let (cid, bytes) = member_envelope_canonical("contract", &body)?;
-            members.entry(cid.clone()).or_insert(bytes);
+            let Some(contract_name) = body
+                .get("contractName")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let Some(post) = body.get("post") else {
+                continue;
+            };
+
+            let post_atom = FlatAtom::new(canonical_value_of_json(post)?);
+            let post_memento = proof_graph.register_atom(post_atom);
+            let body = proof_graph.register_body(ContractBody::new(&post_memento));
+            let contract = ContractMemento::new_at(
+                contract_name,
+                &body,
+                RECOGNIZE_BRIDGE_SIGNER_SEED,
+                RECOGNIZE_BRIDGE_DECLARED_AT,
+            );
+            proof_graph.register_atom(contract.metadata().atom().clone());
+            let cid = contract.cid().as_str().to_string();
+            if proof_member_cids.insert(cid.clone()) {
+                proof_graph.register_contract(contract);
+            }
             if let Some(fn_name) = tag.get("function_name").and_then(|v| v.as_str()) {
                 sibling_contract_by_function.insert(fn_name.to_string(), cid);
             }
@@ -419,12 +443,35 @@ fn emit_bridge_envelope(
         let Some(target_cid) = target_cid else {
             continue;
         };
-        let body =
-            recognize_bridge_body_with_target(tag, target_language, &target_cid, target_proof_cid);
-        let (cid, bytes) = member_envelope_canonical("bridge", &body)?;
-        members.entry(cid).or_insert(bytes);
+        let library_tag = tag
+            .get("library_tag")
+            .and_then(|v| v.as_str())
+            .unwrap_or(target_language);
+        let minted_bridge = mint_bridge(&MintBridgeArgs {
+            produced_by: "sugar-recognize".to_string(),
+            produced_at: RECOGNIZE_BRIDGE_DECLARED_AT.to_string(),
+            source_symbol: function_name.to_string(),
+            source_layer: target_language.to_string(),
+            target_contract: ContractMementoRef::new(target_cid),
+            target_layer: library_tag.to_string(),
+            ir_arg_sorts: Vec::new(),
+            ir_return_sort: String::new(),
+            notes: "recognize-emitted bridge".to_string(),
+            signer_seed: RECOGNIZE_BRIDGE_SIGNER_SEED,
+            target_proof_cid: target_proof_cid.map(str::to_string),
+            callsite: None,
+        });
+        let bridge = BridgeMemento::new(minted_bridge.canonical_bytes);
+        assert_eq!(
+            bridge.cid().as_str(),
+            minted_bridge.cid,
+            "mint_bridge returned a CID that disagrees with BridgeMemento"
+        );
+        if proof_member_cids.insert(bridge.cid().as_str().to_string()) {
+            proof_graph.push_bridge(bridge);
+        }
     }
-    if members.is_empty() {
+    if proof_member_cids.is_empty() {
         return Ok(None);
     }
     std::fs::create_dir_all(&proof_dir)
@@ -435,7 +482,7 @@ fn emit_bridge_envelope(
         version: "0.1.0".to_string(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph: proof_graph,
         signer_cid: signer,
         signer_seed: RECOGNIZE_BRIDGE_SIGNER_SEED,
         declared_at: RECOGNIZE_BRIDGE_DECLARED_AT.to_string(),
@@ -444,46 +491,6 @@ fn emit_bridge_envelope(
     std::fs::write(&path, &proof.bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(Some(path))
 }
-
-/// Variant of recognize_bridge_body that takes an explicit
-/// targetContractCid. Delegates to libsugar's shared
-/// `build_bridge_body` so cmd_materialize and the rust-tests lifter
-/// produce byte-identical bridge bodies for the same inputs (#1579).
-fn recognize_bridge_body_with_target(
-    tag: &Value,
-    target_language: &str,
-    target_cid: &str,
-    target_proof_cid: Option<&str>,
-) -> Value {
-    let function_name = tag
-        .get("function_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let library_tag = tag
-        .get("library_tag")
-        .and_then(|v| v.as_str())
-        .unwrap_or(target_language);
-    let mut body = build_bridge_body(
-        "recognize",
-        function_name,
-        target_language,
-        library_tag,
-        target_cid,
-    );
-    if let Some(target_proof_cid) = target_proof_cid {
-        if let Value::Object(map) = &mut body {
-            map.insert(
-                "targetProofCid".to_string(),
-                Value::String(target_proof_cid.to_string()),
-            );
-        }
-    }
-    body
-}
-
-// flat_member_canonical + canonical_value_of_json were moved to
-// libsugar::core::emit_obligation as member_envelope_canonical +
-// canonical_value_of_json (#1579). cmd_recognize now imports them.
 
 /// Manifest discovery: project-local then user-global. Mirrors lift_plugin's
 /// `find_manifest` (which is module-private). Kept local here so recognize

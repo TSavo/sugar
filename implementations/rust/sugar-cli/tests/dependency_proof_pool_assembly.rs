@@ -5,15 +5,19 @@
 // union those files into the verifier pool without teaching the substrate cargo,
 // npm, classpath, sys.path, or any other platform graph.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_claim_envelope::{
+    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
+};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
+    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::{Runner, RunnerConfig};
 
@@ -65,36 +69,38 @@ fn var(name: &str) -> Json {
     json!({"kind": "var", "name": name})
 }
 
-fn flat_member(mut env: Json) -> (String, Vec<u8>) {
-    if let Json::Object(map) = &mut env {
-        map.remove("cid");
-        map.remove("producerSignature");
+fn json_to_cvalue(j: &Json) -> Arc<CValue> {
+    match j {
+        Json::Null => CValue::null(),
+        Json::Bool(b) => CValue::boolean(*b),
+        Json::Number(n) => CValue::integer(i128::from(n.as_i64().unwrap_or(0))),
+        Json::String(s) => CValue::string(s.clone()),
+        Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
+        Json::Object(map) => CValue::object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), json_to_cvalue(v)))
+                .collect::<Vec<_>>(),
+        ),
     }
-    let canonical = json_to_canonical_jcs(&env);
-    let cid = blake3_512_of(canonical.as_bytes());
-    (cid, canonical.into_bytes())
 }
 
-fn json_to_canonical_jcs(j: &Json) -> String {
-    fn to_cv(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
-        use sugar_canonicalizer::Value as CV;
-        match j {
-            Json::Null => CV::null(),
-            Json::Bool(b) => CV::boolean(*b),
-            Json::Number(n) => CV::integer(i128::from(n.as_i64().unwrap_or(0))),
-            Json::String(s) => CV::string(s.clone()),
-            Json::Array(items) => CV::array(items.iter().map(to_cv).collect()),
-            Json::Object(map) => CV::object(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), to_cv(v)))
-                    .collect::<Vec<_>>(),
-            ),
-        }
-    }
-    encode_jcs(&to_cv(j))
+fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = ClaimContractMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_claim_contract(memento);
+    cid
 }
 
-fn write_proof(dir: &Path, name: &str, members: BTreeMap<String, Vec<u8>>) -> String {
+fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = BridgeMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_bridge(memento);
+    cid
+}
+
+fn write_proof(dir: &Path, name: &str, graph: ProofGraph) -> String {
     fs::create_dir_all(dir).expect("mkdir proof dir");
     let signer_seed: Ed25519Seed = [0x51u8; 32];
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);
@@ -104,7 +110,7 @@ fn write_proof(dir: &Path, name: &str, members: BTreeMap<String, Vec<u8>>) -> St
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: "2026-05-27T00:00:00.000Z".into(),
@@ -115,25 +121,40 @@ fn write_proof(dir: &Path, name: &str, members: BTreeMap<String, Vec<u8>>) -> St
 }
 
 fn publish_vendor_positive_contract(vendor_dir: &Path) -> (String, String, PathBuf, Vec<u8>) {
-    let target_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "must_be_positive",
-                "formals": ["x"],
-                "formalSorts": [int_sort()],
-                "pre": {
-                    "kind": "atomic",
-                    "name": ">=",
-                    "args": [var("x"), int_const(0)]
-                }
-            }
-        }
-    });
-    let (target_cid, target_bytes) = flat_member(target_env);
-    let mut members = BTreeMap::new();
-    members.insert(target_cid.clone(), target_bytes);
-    let bundle_cid = write_proof(vendor_dir, "@vendor/must-be-positive", members);
+    let signer_seed: Ed25519Seed = [0x51u8; 32];
+    let mut graph = ProofGraph::new();
+    let target = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: vec!["x".into()],
+        emit_empty_formals: false,
+        formal_sorts: vec![json_to_cvalue(&int_sort())],
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "must_be_positive".into(),
+        pre: Some(json_to_cvalue(&json!({
+            "kind": "atomic",
+            "name": ">=",
+            "args": [var("x"), int_const(0)]
+        }))),
+        post: None,
+        inv: None,
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: "2026-05-27T00:00:00.000Z".into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint vendor contract");
+    let target_cid = push_claim_contract(&mut graph, target);
+    let bundle_cid = write_proof(vendor_dir, "@vendor/must-be-positive", graph);
     let proof_path = fs::read_dir(vendor_dir)
         .expect("read vendor proofs")
         .flatten()
@@ -145,41 +166,60 @@ fn publish_vendor_positive_contract(vendor_dir: &Path) -> (String, String, PathB
 }
 
 fn publish_user_bridge(project_dir: &Path, target_cid: &str, target_bundle_cid: &str) {
-    let source_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "user_calls_vendor",
-                "inv": {
-                    "kind": "atomic",
-                    "name": "observed",
-                    "args": [{
-                        "kind": "ctor",
-                        "name": "must_be_positive",
-                        "args": [int_const(-1)]
-                    }]
-                }
-            }
-        }
+    let signer_seed: Ed25519Seed = [0x51u8; 32];
+    let produced_at = "2026-05-27T00:00:00.000Z";
+    let mut graph = ProofGraph::new();
+    let source = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: Vec::new(),
+        emit_empty_formals: false,
+        formal_sorts: Vec::new(),
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "user_calls_vendor".into(),
+        pre: None,
+        post: None,
+        inv: Some(json_to_cvalue(&json!({
+            "kind": "atomic",
+            "name": "observed",
+            "args": [{
+                "kind": "ctor",
+                "name": "must_be_positive",
+                "args": [int_const(-1)]
+            }]
+        }))),
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint source contract");
+    push_claim_contract(&mut graph, source);
+    let bridge = mint_bridge(&MintBridgeArgs {
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        source_symbol: "must_be_positive".into(),
+        source_layer: "rust".into(),
+        target_contract: ContractMementoRef::new(target_cid.to_string()),
+        target_layer: "rust-kit".into(),
+        ir_arg_sorts: vec!["Int".into()],
+        ir_return_sort: "Bool".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: Some(target_bundle_cid.to_string()),
+        callsite: None,
     });
-    let (source_cid, source_bytes) = flat_member(source_env);
-    let bridge_env = json!({
-        "evidence": {
-            "kind": "bridge",
-            "body": {
-                "sourceSymbol": "must_be_positive",
-                "sourceLayer": "rust",
-                "targetContractCid": target_cid,
-                "targetProofCid": target_bundle_cid,
-                "targetLayer": "rust-kit"
-            }
-        }
-    });
-    let (bridge_cid, bridge_bytes) = flat_member(bridge_env);
-    let mut members = BTreeMap::new();
-    members.insert(source_cid, source_bytes);
-    members.insert(bridge_cid, bridge_bytes);
-    write_proof(&project_dir.join(".sugar"), "@user/local-bridge", members);
+    push_bridge(&mut graph, bridge);
+    write_proof(&project_dir.join(".sugar"), "@user/local-bridge", graph);
 }
 
 fn publish_contradictory_implication_project() -> PathBuf {
@@ -188,94 +228,146 @@ fn publish_contradictory_implication_project() -> PathBuf {
     fs::create_dir_all(&proof_dir).expect("mkdir proof dir");
     install_smt_compiler_manifest(&project);
 
-    let producer_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "produce_zero",
-                "post": {
-                    "kind": "atomic",
-                    "name": "=",
-                    "args": [var("result"), int_const(0)]
-                }
-            }
-        }
-    });
-    let (producer_cid, producer_bytes) = flat_member(producer_env);
+    let signer_seed: Ed25519Seed = [0x51u8; 32];
+    let produced_at = "2026-05-27T00:00:00.000Z";
+    let mut graph = ProofGraph::new();
+    let producer = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: Vec::new(),
+        emit_empty_formals: false,
+        formal_sorts: Vec::new(),
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "produce_zero".into(),
+        pre: None,
+        post: Some(json_to_cvalue(&json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [var("result"), int_const(0)]
+        }))),
+        inv: None,
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint producer contract");
+    let producer_cid = push_claim_contract(&mut graph, producer);
 
-    let consumer_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "requires_positive",
-                "formals": ["x"],
-                "formalSorts": [int_sort()],
-                "pre": {
-                    "kind": "atomic",
-                    "name": ">",
-                    "args": [var("x"), int_const(0)]
-                }
-            }
-        }
-    });
-    let (consumer_cid, consumer_bytes) = flat_member(consumer_env);
+    let consumer = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: vec!["x".into()],
+        emit_empty_formals: false,
+        formal_sorts: vec![json_to_cvalue(&int_sort())],
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "requires_positive".into(),
+        pre: Some(json_to_cvalue(&json!({
+            "kind": "atomic",
+            "name": ">",
+            "args": [var("x"), int_const(0)]
+        }))),
+        post: None,
+        inv: None,
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint consumer contract");
+    let consumer_cid = push_claim_contract(&mut graph, consumer);
 
-    let source_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "contradictory_callsite",
-                "inv": {
-                    "kind": "atomic",
-                    "name": "observed",
-                    "args": [{
-                        "kind": "ctor",
-                        "name": "requires_positive",
-                        "args": [{
-                            "kind": "ctor",
-                            "name": "produce_zero",
-                            "args": []
-                        }]
-                    }]
-                }
-            }
-        }
-    });
-    let (source_cid, source_bytes) = flat_member(source_env);
+    let source = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: Vec::new(),
+        emit_empty_formals: false,
+        formal_sorts: Vec::new(),
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "contradictory_callsite".into(),
+        pre: None,
+        post: None,
+        inv: Some(json_to_cvalue(&json!({
+            "kind": "atomic",
+            "name": "observed",
+            "args": [{
+                "kind": "ctor",
+                "name": "requires_positive",
+                "args": [{
+                    "kind": "ctor",
+                    "name": "produce_zero",
+                    "args": []
+                }]
+            }]
+        }))),
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint source contract");
+    push_claim_contract(&mut graph, source);
 
-    let producer_bridge_env = json!({
-        "evidence": {
-            "kind": "bridge",
-            "body": {
-                "sourceSymbol": "produce_zero",
-                "sourceLayer": "rust",
-                "targetContractCid": producer_cid,
-                "targetLayer": "rust-tests"
-            }
-        }
+    let producer_bridge = mint_bridge(&MintBridgeArgs {
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        source_symbol: "produce_zero".into(),
+        source_layer: "rust".into(),
+        target_contract: ContractMementoRef::new(producer_cid),
+        target_layer: "rust-tests".into(),
+        ir_arg_sorts: Vec::new(),
+        ir_return_sort: "Int".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: None,
+        callsite: None,
     });
-    let (producer_bridge_cid, producer_bridge_bytes) = flat_member(producer_bridge_env);
+    push_bridge(&mut graph, producer_bridge);
 
-    let consumer_bridge_env = json!({
-        "evidence": {
-            "kind": "bridge",
-            "body": {
-                "sourceSymbol": "requires_positive",
-                "sourceLayer": "rust",
-                "targetContractCid": consumer_cid,
-                "targetLayer": "rust-tests"
-            }
-        }
+    let consumer_bridge = mint_bridge(&MintBridgeArgs {
+        produced_by: "test".into(),
+        produced_at: produced_at.into(),
+        source_symbol: "requires_positive".into(),
+        source_layer: "rust".into(),
+        target_contract: ContractMementoRef::new(consumer_cid),
+        target_layer: "rust-tests".into(),
+        ir_arg_sorts: vec!["Int".into()],
+        ir_return_sort: "Bool".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: None,
+        callsite: None,
     });
-    let (consumer_bridge_cid, consumer_bridge_bytes) = flat_member(consumer_bridge_env);
+    push_bridge(&mut graph, consumer_bridge);
 
-    let mut members = BTreeMap::new();
-    members.insert(producer_cid, producer_bytes);
-    members.insert(consumer_cid, consumer_bytes);
-    members.insert(source_cid, source_bytes);
-    members.insert(producer_bridge_cid, producer_bridge_bytes);
-    members.insert(consumer_bridge_cid, consumer_bridge_bytes);
-    write_proof(&proof_dir, "@test/contradictory-implication", members);
+    write_proof(&proof_dir, "@test/contradictory-implication", graph);
     project
 }
 

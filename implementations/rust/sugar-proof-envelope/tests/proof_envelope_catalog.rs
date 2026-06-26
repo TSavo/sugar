@@ -4,32 +4,38 @@
 //   - filename CID matches BLAKE3-512 of the catalog bytes (trust-root)
 //   - CID is "blake3-512:" + 128 hex chars
 //   - Same input -> same bytes (deterministic across runs)
-//   - Map head reflects 7 keys: kind, name, version, members, signer,
-//     declaredAt, signature
-//   - members map keys are CBOR-text-string-encoded and contain member
+//   - Map head reflects 9 keys: atoms, body, kind, name, version, members,
+//     signer, declaredAt, signature
+//   - CID maps keys are CBOR-text-string-encoded and contain graph/member
 //     bytes as a CBOR byte string
 
-use std::collections::BTreeMap;
-
 use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput};
+use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph, SourceMemento};
+
+fn source_memento(label: &str) -> SourceMemento {
+    SourceMemento::new(
+        format!(
+            r#"{{"body":{{"kind":"source-memento","label":"{label}","source_cid":"blake3-512:{label}"}},"header":{{"kind":"source-memento","sourceCid":"blake3-512:{label}"}},"schemaVersion":"1"}}"#
+        )
+        .into_bytes(),
+    )
+}
+
+fn graph_with_sources(labels: &[&str]) -> ProofGraph {
+    let mut graph = ProofGraph::new();
+    for label in labels {
+        graph.push_source(source_memento(label));
+    }
+    graph
+}
 
 fn fixture_input() -> ProofEnvelopeInput {
-    let mut members = BTreeMap::new();
-    members.insert(
-        "blake3-512:aa".to_string(),
-        b"{\"hello\":\"world\"}".to_vec(),
-    );
-    members.insert(
-        "blake3-512:bb".to_string(),
-        b"{\"goodbye\":\"world\"}".to_vec(),
-    );
     ProofEnvelopeInput {
         name: "@test/cat".to_string(),
         version: "1.0.0".to_string(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph: graph_with_sources(&["aa", "bb"]),
         signer_cid: "blake3-512:cc".to_string(),
         signer_seed: [0x42u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".to_string(),
@@ -76,30 +82,21 @@ fn same_input_produces_identical_bytes() {
 
 #[test]
 fn member_insertion_order_does_not_matter() {
-    // Members go in via BTreeMap (already sorted). Building two
-    // ProofEnvelopeInputs with members inserted in different orders
-    // must yield identical bytes (BTreeMap normalizes order).
-    let mut m1 = BTreeMap::new();
-    m1.insert("blake3-512:bb".to_string(), b"second".to_vec());
-    m1.insert("blake3-512:aa".to_string(), b"first".to_vec());
-
-    let mut m2 = BTreeMap::new();
-    m2.insert("blake3-512:aa".to_string(), b"first".to_vec());
-    m2.insert("blake3-512:bb".to_string(), b"second".to_vec());
-
-    let mk = |members: BTreeMap<String, Vec<u8>>| ProofEnvelopeInput {
+    // Typed mementos can be pushed in any order. The graph lowers to sorted CID
+    // maps at the serialization edge, so the catalog bytes stay deterministic.
+    let mk = |graph: ProofGraph| ProofEnvelopeInput {
         name: "x".into(),
         version: "1".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
     };
     assert_eq!(
-        build_proof_envelope(&mk(m1)).bytes,
-        build_proof_envelope(&mk(m2)).bytes
+        build_proof_envelope(&mk(graph_with_sources(&["bb", "aa"]))).bytes,
+        build_proof_envelope(&mk(graph_with_sources(&["aa", "bb"]))).bytes
     );
 }
 
@@ -108,11 +105,11 @@ fn member_insertion_order_does_not_matter() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn signed_catalog_map_head_is_seven_keys() {
+fn signed_catalog_map_head_is_nine_keys() {
     let input = fixture_input();
     let out = build_proof_envelope(&input);
-    // 7-key map head: major 5 (0xA0) + count 7 = 0xA7.
-    assert_eq!(out.bytes[0], 0xA7);
+    // 9-key map head: major 5 (0xA0) + count 9 = 0xA9.
+    assert_eq!(out.bytes[0], 0xA9);
 }
 
 #[test]
@@ -122,13 +119,13 @@ fn empty_members_still_produces_valid_envelope() {
         version: "1".into(),
         binary_cid: None,
         metadata: None,
-        members: BTreeMap::new(),
+        graph: ProofGraph::new(),
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
     };
     let out = build_proof_envelope(&input);
-    assert_eq!(out.bytes[0], 0xA7);
+    assert_eq!(out.bytes[0], 0xA9);
     assert!(out.cid.starts_with("blake3-512:"));
 }
 
@@ -159,8 +156,7 @@ fn changing_version_changes_cid() {
 #[test]
 fn changing_members_changes_cid() {
     let mut b = fixture_input();
-    b.members
-        .insert("blake3-512:dd".into(), b"different".to_vec());
+    b.graph.push_source(source_memento("dd"));
     assert_ne!(
         build_proof_envelope(&fixture_input()).cid,
         build_proof_envelope(&b).cid
@@ -205,28 +201,21 @@ fn changing_declared_at_changes_cid() {
 
 #[test]
 fn catalog_member_filename_rule_matches_blake3_of_value_bytes() {
-    // The .proof grammar says: a member whose CID is in the catalog map
-    // has, as its CBOR value, a byte string equal to that member's
-    // canonical bytes. We don't decode the CBOR here; we check the
-    // implication: rebuilding with a different value for the same CID
-    // must change the catalog CID.
-    let mut a_members = BTreeMap::new();
-    a_members.insert("blake3-512:aa".into(), b"original".to_vec());
-    let mut b_members = BTreeMap::new();
-    b_members.insert("blake3-512:aa".into(), b"tampered".to_vec());
-
-    let mk = |members: BTreeMap<String, Vec<u8>>| ProofEnvelopeInput {
+    // Typed member wrappers derive their member CID from the memento bytes.
+    // Changing the memento bytes changes the graph edge and therefore the
+    // catalog CID.
+    let mk = |graph: ProofGraph| ProofEnvelopeInput {
         name: "x".into(),
         version: "1".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid: "blake3-512:cc".into(),
         signer_seed: [0u8; 32],
         declared_at: "2026-04-30T00:00:00.000Z".into(),
     };
     assert_ne!(
-        build_proof_envelope(&mk(a_members)).cid,
-        build_proof_envelope(&mk(b_members)).cid
+        build_proof_envelope(&mk(graph_with_sources(&["aa"]))).cid,
+        build_proof_envelope(&mk(graph_with_sources(&["bb"]))).cid
     );
 }

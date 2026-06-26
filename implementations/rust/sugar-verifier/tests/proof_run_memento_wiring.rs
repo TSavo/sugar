@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_types::{ProofRunMemento, StageReceipt};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::cbor_decode::decode;
 use sugar_verifier::load_all_proofs;
@@ -32,7 +32,7 @@ fn write_empty_fixture_proof(project_root: &Path) -> String {
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members: BTreeMap::new(),
+        graph: ProofGraph::new(),
         signer_cid,
         signer_seed,
         declared_at: "2026-05-13T00:00:00.000Z".into(),

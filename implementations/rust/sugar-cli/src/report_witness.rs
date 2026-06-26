@@ -15,7 +15,7 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
-    ProofEnvelopeInput,
+    ProofEnvelopeInput, ProofGraph, WitnessMemento,
 };
 
 #[derive(Debug, Clone)]
@@ -193,8 +193,14 @@ pub(crate) fn mint_json_witness_with_options(
     }
     let witness_pointer_bytes = encode_jcs(&json_to_cvalue(&witness_pointer));
     let witness_pointer_cid = blake3_512_of(witness_pointer_bytes.as_bytes());
-    let mut members = BTreeMap::new();
-    members.insert(witness_pointer_cid, witness_pointer_bytes.into_bytes());
+    let witness_memento = WitnessMemento::new(witness_pointer_bytes.into_bytes());
+    assert_eq!(
+        witness_memento.cid().as_str(),
+        witness_pointer_cid,
+        "witness pointer CID disagrees with WitnessMemento"
+    );
+    let mut graph = ProofGraph::new();
+    graph.push_witness(witness_memento);
     let mut metadata = BTreeMap::new();
     metadata.insert("sugar.witness.name".into(), name.to_string());
     metadata.insert("sugar.witness.claimKind".into(), claim_kind.to_string());
@@ -210,7 +216,7 @@ pub(crate) fn mint_json_witness_with_options(
         version: "0.1.0".into(),
         binary_cid: None,
         metadata: Some(metadata),
-        members,
+        graph,
         signer_cid: ed25519_pubkey_string(&signer_seed),
         signer_seed,
         declared_at: produced_at,

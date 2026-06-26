@@ -3,7 +3,6 @@
 // Proof-file conformance tests. These are the first dogfood target:
 // `.proof` bytes -> proof-file-format conformance report.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -11,7 +10,8 @@ use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, Ed25519Seed,
+    ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::proof_conformance::{
     validate_proof_file, PFCP_R1_FILENAME_CID, PFCP_R9_CATALOG_SIGNATURE,
@@ -61,15 +61,17 @@ fn fixture_proof_bytes() -> (String, Vec<u8>) {
         signer_seed,
     })
     .expect("mint member");
-    let mut members = BTreeMap::new();
-    members.insert(member.cid, member.canonical_bytes);
+    let contract = ClaimContractMemento::new(member.canonical_bytes);
+    assert_eq!(contract.cid().as_str(), member.cid);
+    let mut graph = ProofGraph::new();
+    graph.push_claim_contract(contract);
 
     let input = ProofEnvelopeInput {
         name: "@test/proof-conformance".into(),
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid: ed25519_pubkey_string(&signer_seed),
         signer_seed,
         declared_at: declared_at.into(),

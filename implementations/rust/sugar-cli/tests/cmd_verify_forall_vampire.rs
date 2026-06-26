@@ -5,15 +5,16 @@
 // routed through verify to Vampire, with GOOD/BAD verdicts read from
 // the JSON receipt shape.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_canonicalizer::{blake3_512_of, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, ContractBody, ContractMemento, Ed25519Seed,
+    FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
 fn unique_dir(suffix: &str) -> PathBuf {
@@ -48,33 +49,19 @@ dialects = ["smt-lib-v2.6"]
     .expect("write ir compiler manifest");
 }
 
-fn json_to_canonical_jcs(j: &Json) -> String {
-    fn to_cv(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
-        use sugar_canonicalizer::Value as CV;
-        match j {
-            Json::Null => CV::null(),
-            Json::Bool(b) => CV::boolean(*b),
-            Json::Number(n) => CV::integer(i128::from(n.as_i64().unwrap_or(0))),
-            Json::String(s) => CV::string(s.clone()),
-            Json::Array(items) => CV::array(items.iter().map(to_cv).collect()),
-            Json::Object(map) => CV::object(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), to_cv(v)))
-                    .collect::<Vec<_>>(),
-            ),
-        }
+fn json_to_canonical_value(j: &Json) -> Arc<CValue> {
+    match j {
+        Json::Null => CValue::null(),
+        Json::Bool(b) => CValue::boolean(*b),
+        Json::Number(n) => CValue::integer(i128::from(n.as_i64().unwrap_or(0))),
+        Json::String(s) => CValue::string(s.clone()),
+        Json::Array(items) => CValue::array(items.iter().map(json_to_canonical_value).collect()),
+        Json::Object(map) => CValue::object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), json_to_canonical_value(v)))
+                .collect::<Vec<_>>(),
+        ),
     }
-    encode_jcs(&to_cv(j))
-}
-
-fn flat_member(mut env: Json) -> (String, Vec<u8>) {
-    if let Json::Object(map) = &mut env {
-        map.remove("cid");
-        map.remove("producerSignature");
-    }
-    let canonical = json_to_canonical_jcs(&env);
-    let cid = blake3_512_of(canonical.as_bytes());
-    (cid, canonical.into_bytes())
 }
 
 fn solver_available(binary: &str) -> bool {
@@ -191,34 +178,30 @@ version = "5.x"
     )
     .expect("write solver config");
 
-    let good_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "forall_vampire_good_right_identity",
-                "invVerification": "obligation",
-                "inv": good_group_right_identity_obligation()
-            }
-        }
-    });
-    let bad_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "forall_vampire_bad_false_universal",
-                "invVerification": "obligation",
-                "inv": bad_false_universal_obligation()
-            }
-        }
-    });
-
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let (good_cid, good_bytes) = flat_member(good_env);
-    let (bad_cid, bad_bytes) = flat_member(bad_env);
-    members.insert(good_cid, good_bytes);
-    members.insert(bad_cid, bad_bytes);
-
     let signer_seed: Ed25519Seed = [0x42u8; 32];
+    let mut graph = ProofGraph::new();
+    let metadata = graph.register_atom(FlatAtom::empty_metadata());
+    for (name, inv) in [
+        (
+            "forall_vampire_good_right_identity",
+            good_group_right_identity_obligation(),
+        ),
+        (
+            "forall_vampire_bad_false_universal",
+            bad_false_universal_obligation(),
+        ),
+    ] {
+        let inv = graph.register_atom(FlatAtom::new(json_to_canonical_value(&inv)));
+        let body = graph.register_body(ContractBody::new_inv(&inv));
+        graph.register_contract(ContractMemento::new_with_metadata_at(
+            name,
+            &body,
+            &metadata,
+            signer_seed,
+            "2026-06-09T00:00:00.000Z",
+        ));
+    }
+
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);
     let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
     let built = build_proof_envelope(&ProofEnvelopeInput {
@@ -226,7 +209,7 @@ version = "5.x"
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: "2026-06-09T00:00:00.000Z".into(),

@@ -31,7 +31,6 @@
 // Usage:
 //   cargo run --release --example cross_lang_consume <path-to-peer.proof>
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -41,7 +40,8 @@ use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{begin_collecting, eq, finish, must, num, parse_int, reset_collector};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, Ed25519Seed,
+    ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::{Runner, RunnerConfig};
 
@@ -123,7 +123,7 @@ fn run() -> Result<(), String> {
     let declared_at = "2026-04-30T15:30:00.000Z";
     let produced_by = "rust-consumer@1";
 
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
     for d in &decls {
         let args = MintContractArgs {
             evidence_term: None,
@@ -152,7 +152,9 @@ fn run() -> Result<(), String> {
         };
         let minted = mint_contract(&args).map_err(|e| format!("mint_contract({}): {e}", d.name))?;
         println!("  contract minted: {} -> CID {}", d.name, minted.cid);
-        members.insert(minted.cid, minted.canonical_bytes);
+        let memento = ClaimContractMemento::new(minted.canonical_bytes);
+        assert_eq!(memento.cid().as_str(), minted.cid);
+        graph.push_claim_contract(memento);
     }
 
     // ---- 4. Bundle the consumer's .proof file ----
@@ -164,7 +166,7 @@ fn run() -> Result<(), String> {
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed: catalog_seed,
         declared_at: declared_at.into(),

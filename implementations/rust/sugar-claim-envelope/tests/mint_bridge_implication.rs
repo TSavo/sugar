@@ -16,7 +16,7 @@
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_claim_envelope::{mint_bridge, mint_implication, MintBridgeArgs, MintImplicationArgs};
-use sugar_proof_envelope::Ed25519Seed;
+use sugar_proof_envelope::{ContractMementoRef, Ed25519Seed};
 
 fn seed() -> Ed25519Seed {
     [0x42u8; 32]
@@ -36,7 +36,7 @@ fn bridge_args() -> MintBridgeArgs {
         produced_at: "2026-04-30T00:00:00.000Z".into(),
         source_symbol: "parseInt".into(),
         source_layer: "ts".into(),
-        target_contract_cid: "blake3-512:cccc".into(),
+        target_contract: ContractMementoRef::new("blake3-512:cccc"),
         target_layer: "rust-kit".into(),
         ir_arg_sorts: vec!["String".into()],
         ir_return_sort: "Int".into(),
@@ -201,9 +201,9 @@ fn impl_args() -> MintImplicationArgs {
         produced_at: "2026-04-30T00:00:00.000Z".into(),
         antecedent_hash: "blake3-512:aaa".into(),
         consequent_hash: "blake3-512:ccc".into(),
-        antecedent_cid: "blake3-512:zzz".into(),
-        consequent_cid: "blake3-512:bbb".into(),
-        additional_input_cids: Vec::new(),
+        antecedent: ContractMementoRef::new("blake3-512:zzz"),
+        consequent: ContractMementoRef::new("blake3-512:bbb"),
+        additional_inputs: Vec::new(),
         antecedent_slot: "pre".into(),
         consequent_slot: "post".into(),
         prover: "z3@4.13".into(),

@@ -11,9 +11,9 @@
 //   4. BLAKE3-512 the final bytes; the full self-identifying string
 //      `"blake3-512:<128 hex>"` IS the catalog CID.
 //
-// The `members` map key is the embedded envelope's own CID, and the
-// value is its canonical bytes (JCS-JSON for memento envelopes per
-// the memento envelope grammar) wrapped as a CBOR byte string.
+// `atoms`, `body`, and `members` are separate CID maps. Atoms are the single
+// location for leaf bytes. Body entries compose atoms or other bodies by CID.
+// Members are signed envelopes that name, bind, locate, and witness bodies.
 
 use std::collections::BTreeMap;
 
@@ -22,6 +22,7 @@ use sugar_canonicalizer::blake3_512_of;
 use crate::cbor::{
     cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr, cbor_encode_uint, CborMajor,
 };
+use crate::proof_graph::ProofGraph;
 use crate::sign::{ed25519_sign_with_seed, Ed25519Seed};
 
 #[derive(Debug, Clone)]
@@ -36,10 +37,9 @@ pub struct ProofEnvelopeInput {
     /// Included in the signed payload (tamper-evident) but explicitly
     /// NON-NORMATIVE: verifiers MUST NOT use metadata for logic.
     pub metadata: Option<BTreeMap<String, String>>,
-    /// Map from member CID (full self-identifying string form,
-    /// e.g. `"blake3-512:abc..."`) to that member's canonical bytes
-    /// (JCS-JSON bytes for memento envelopes).
-    pub members: BTreeMap<String, Vec<u8>>,
+    /// Typed proof graph. Callers construct mementos and bodies; the graph
+    /// lowers them to catalog CID maps at the serialization edge.
+    pub graph: ProofGraph,
     /// Identity carried into the envelope's `signer` field. Two valid
     /// shapes per the memento-envelope grammar:
     ///   1. `blake3-512:<hex>` - CID resolving to a pubkey memento
@@ -121,11 +121,16 @@ fn emit_sorted_map(out: &mut Vec<u8>, pairs: &mut [CborPair]) {
 }
 
 fn body_pairs_unsigned(input: &ProofEnvelopeInput) -> Vec<CborPair> {
+    let atoms = input.graph.atoms_map();
+    let body = input.graph.body_map();
+    let members = input.graph.members_map();
     let mut pairs = vec![
+        make_members_pair("atoms", &atoms),
+        make_members_pair("body", &body),
         make_string_pair("kind", "catalog"),
         make_string_pair("name", &input.name),
         make_string_pair("version", &input.version),
-        make_members_pair("members", &input.members),
+        make_members_pair("members", &members),
         make_string_pair("signer", &input.signer_cid),
         make_string_pair("declaredAt", &input.declared_at),
     ];
@@ -174,28 +179,28 @@ pub fn build_proof_envelope(input: &ProofEnvelopeInput) -> ProofEnvelopeOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proof_graph::SourceMemento;
 
     #[test]
     fn build_minimal_proof_round_trips() {
-        let mut members = BTreeMap::new();
-        members.insert(
-            "blake3-512:aa".to_string(),
-            b"{\"hello\":\"world\"}".to_vec(),
-        );
+        let mut graph = ProofGraph::new();
+        graph.push_source(SourceMemento::new(
+            br#"{"body":{"kind":"source-memento"},"header":{"kind":"source-memento"},"schemaVersion":"1"}"#.to_vec(),
+        ));
         let input = ProofEnvelopeInput {
             name: "@x/y".to_string(),
             version: "0.0.1".to_string(),
             binary_cid: None,
             metadata: None,
-            members,
+            graph,
             signer_cid: "blake3-512:bb".to_string(),
             signer_seed: [0x11; 32],
             declared_at: "2026-04-30T00:00:00.000Z".to_string(),
         };
         let out = build_proof_envelope(&input);
         assert!(out.cid.starts_with("blake3-512:"));
-        // First byte is map head with 7 entries (kind, name, version, members,
-        // signer, declaredAt, signature) = 0xa7.
-        assert_eq!(out.bytes[0], 0xa7);
+        // First byte is map head with 9 entries (atoms, body, kind, name,
+        // version, members, signer, declaredAt, signature) = 0xa9.
+        assert_eq!(out.bytes[0], 0xa9);
     }
 }

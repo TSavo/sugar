@@ -935,6 +935,15 @@ pub fn resolve_source_memento(
             memento.span.start_line
         ),
     })?;
+    let source_name_change = memento
+        .source_function_name()
+        .filter(|wanted| !source_fn_matches_name(&source_fn, wanted))
+        .map(|wanted| {
+            format!(
+                "source name changed from `{wanted}` to `{}` at pinned locus; ",
+                source_fn.full_name
+            )
+        });
 
     let source_index = SourceTextIndex::new(&src);
     let whole_fragment = source_index.source_fragment_of(
@@ -1005,7 +1014,8 @@ pub fn resolve_source_memento(
     if !memento.source_cid.is_empty() && recomputed_source_cid != memento.source_cid {
         return Err(SourceOracleRefusal {
             reason: format!(
-                "source CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_source_cid} -- the source drifted from the proof",
+                "{}source CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_source_cid} -- the source drifted from the proof",
+                source_name_change.as_deref().unwrap_or(""),
                 memento.source_function_name().unwrap_or("<any>"),
                 memento.file,
                 memento.source_cid
@@ -1015,10 +1025,20 @@ pub fn resolve_source_memento(
     if !memento.template_cid.is_empty() && recomputed_template_cid != memento.template_cid {
         return Err(SourceOracleRefusal {
             reason: format!(
-                "template CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_template_cid} -- the AST drifted from the proof",
+                "{}template CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_template_cid} -- the AST drifted from the proof",
+                source_name_change.as_deref().unwrap_or(""),
                 memento.source_function_name().unwrap_or("<any>"),
                 memento.file,
                 memento.template_cid
+            ),
+        });
+    }
+
+    if let Some(reason) = source_name_change {
+        return Err(SourceOracleRefusal {
+            reason: format!(
+                "{reason}source function name drifted from the proof in `{}`",
+                memento.file
             ),
         });
     }
@@ -1036,6 +1056,12 @@ fn source_span_eq(a: &SrcSpan, b: &SrcSpan) -> bool {
         && a.start_col == b.start_col
         && a.end_line == b.end_line
         && a.end_col == b.end_col
+}
+
+fn source_fn_matches_name(source_fn: &SourceFnRef<'_>, wanted: &str) -> bool {
+    source_fn.full_name == wanted
+        || source_fn.leaf_name == wanted
+        || source_fn.full_name.ends_with(&format!("::{wanted}"))
 }
 
 #[derive(Clone)]

@@ -9,10 +9,11 @@
 //!               extracted from each revision's tree and diffed. This is the
 //!               behavioral-VCS hat: "when did this last change what it does."
 //!
-//! Each proof set lifts to a `{contract-name -> CID}` table (`name_to_cid`). The
-//! CID is the name-stripped, content-addressed identity of the contract's
-//! pre/post: its *behavior*. The verdict is driven by the CID SET, not the name
-//! set, because names are sugar. We invert each table to `CID -> {names}`:
+//! Each proof set lifts to a `{contract-name -> body CID}` table. The
+//! body CID is a pointer carried by the contract memento in the `.proof`
+//! file, not a diff-time guess rebuilt by stripping fields out of an envelope.
+//! The verdict is driven by the CID SET, not the name set, because names are
+//! sugar. We invert each table to `CID -> {names}`:
 //!
 //!   held      a CID present both sides under the same name(s)
 //!   renamed   a CID present both sides, name(s) changed (a pure rename)
@@ -20,7 +21,7 @@
 //!   lost      a CID only in BEFORE (behavior actually gone, breaking)
 //!
 //! Exit nonzero iff a behavior is lost. A pure rename, an implementation rewrite,
-//! a reformat of the world: as long as no behavior-CID appears or disappears,
+//! a reformat of the world: as long as no body pointer appears or disappears,
 //! the delta is none and the gate stays green. That one exit code makes the same
 //! binary a CI gate, a pre-publish hook, and an install-time supply-chain hook.
 
@@ -91,6 +92,10 @@ fn invert(t: &Table) -> ByCid {
         m.entry(cid.clone()).or_default().insert(name.clone());
     }
     m
+}
+
+fn diff_table(pool: &MementoPool) -> &Table {
+    &pool.name_to_body_cid
 }
 
 /// The behavior delta between two proof sets, keyed by CID.
@@ -606,7 +611,7 @@ pub fn run(args: DiffArgs) -> u8 {
 
     let markdown = args.format == DiffFormat::Markdown;
 
-    let s = summarize(&before.name_to_cid, &after.name_to_cid);
+    let s = summarize(diff_table(&before), diff_table(&after));
     if !markdown {
         for line in &s.lines {
             println!("{line}");
@@ -1267,72 +1272,98 @@ mod tests {
     // are committed under the example trees and those don't populate
     // `name_to_cid` — the table the cross-ref diff actually compares. ---
 
-    /// Mint a real, signed, contract-bearing `.proof` catalog naming a single
-    /// contract and drop it in `dir`. The filename is the catalog CID with the
-    /// `blake3-512:` tag stripped — `<hex>.proof` — which is the Windows-safe
-    /// convention (a `:` in the stem is an illegal path character there, and
-    /// the loader recomputes the trust root from the bytes regardless).
-    fn write_contract_proof(dir: &Path, contract_name: &str) {
+    fn write_graph_contract_proof(
+        dir: &Path,
+        contracts: Vec<sugar_proof_envelope::ContractMemento>,
+    ) {
         use sugar_canonicalizer::blake3_512_of;
-        use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
-        use sugar_ir_symbolic::serialize::formula_to_value;
-        use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
         use sugar_proof_envelope::{
             build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
         };
 
-        reset_collector();
-        must(contract_name, forall(Int(), |n| gt(n, num(0))));
-        let decls = sugar_ir_symbolic::finish();
         let signer_seed: Ed25519Seed = [0x42u8; 32];
-        let declared_at = "2026-04-30T00:00:00.000Z";
-        let produced_by = "rust-test@1.0";
-        let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-        for d in &decls {
-            let args = MintContractArgs {
-                evidence_term: None,
-                formals: Vec::new(),
-                emit_empty_formals: false,
-                formal_sorts: Vec::new(),
-                library: None,
-                body_discharge_eligible: true,
-                body_discharge_refusal_reason: None,
-                panic_loci: Vec::new(),
-                class_shapes: Vec::new(),
-                source_warrants: Vec::new(),
-                contract_name: d.name.clone(),
-                pre: d.pre.as_deref().map(formula_to_value),
-                post: d.post.as_deref().map(formula_to_value),
-                inv: d.inv.as_deref().map(formula_to_value),
-                out_binding: d.out_binding.clone(),
-                produced_by: produced_by.into(),
-                produced_at: declared_at.into(),
-                input_cids: vec![],
-                authoring: Authoring::KitAuthor {
-                    author: produced_by.into(),
-                    note: None,
-                },
-                signer_seed,
-            };
-            let m = mint_contract(&args).expect("mint_contract");
-            members.insert(m.cid.clone(), m.canonical_bytes);
+        let signer_cid = blake3_512_of(ed25519_pubkey_string(&signer_seed).as_bytes());
+        let mut graph = sugar_proof_envelope::ProofGraph::new();
+        for contract in contracts {
+            for atom in contract.body().atoms() {
+                graph.register_atom(atom.clone());
+            }
+            graph.register_atom(contract.metadata().atom().clone());
+            graph.register_body(contract.body().clone());
+            graph.register_contract(contract);
         }
-        let signer_pubkey = ed25519_pubkey_string(&signer_seed);
-        let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
         let built = build_proof_envelope(&ProofEnvelopeInput {
-            name: "@test/diff-git".into(),
+            name: "@test/diff-graph".into(),
             version: "1.0.0".into(),
             binary_cid: None,
             metadata: None,
-            members,
+            graph,
             signer_cid,
             signer_seed,
-            declared_at: declared_at.into(),
+            declared_at: "2026-04-30T00:00:00.000Z".into(),
         });
         let hex = built.cid.strip_prefix("blake3-512:").unwrap_or(&built.cid);
         assert!(!hex.contains(':'), "proof filename stem must be colon-free");
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
+    }
+
+    #[test]
+    fn real_proof_rename_is_migration_not_behavior_delta() {
+        let tmp = std::env::temp_dir().join(format!(
+            "sugar-diff-real-rename-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let before_dir = tmp.join("before");
+        let after_dir = tmp.join("after");
+        use sugar_proof_envelope::{AtomMemento, ContractBody, ContractMemento, FlatAtom};
+        let atom = FlatAtom::result_eq_int(7);
+        let atom_bytes = atom.bytes().to_vec();
+        let atom_cid = atom.cid().as_str().to_string();
+        let atom_memento = AtomMemento::new(&atom);
+        let body = ContractBody::new(&atom_memento);
+        let body_bytes = body.bytes().to_vec();
+        let body_cid = body.cid().as_str().to_string();
+        let before_contract = ContractMemento::new("src/lib.rs::diff::old_name", &body, [0x42; 32]);
+        let after_contract = ContractMemento::new("src/lib.rs::diff::new_name", &body, [0x42; 32]);
+        write_graph_contract_proof(&before_dir, vec![before_contract]);
+        write_graph_contract_proof(&after_dir, vec![after_contract]);
+
+        let before = load_all_proofs::run(&before_dir);
+        let after = load_all_proofs::run(&after_dir);
+        assert!(
+            before.load_errors.is_empty() && after.load_errors.is_empty(),
+            "before={:?} after={:?}",
+            before.load_errors,
+            after.load_errors
+        );
+        assert_eq!(
+            before.name_to_body_cid.get("src/lib.rs::diff::old_name"),
+            Some(&body_cid),
+            "diff must read the contract memento's typed bodyCid pointer"
+        );
+        assert_eq!(
+            after.name_to_body_cid.get("src/lib.rs::diff::new_name"),
+            Some(&body_cid),
+            "a rename preserves behavior when the contract body pointer is unchanged"
+        );
+        assert_eq!(before.atoms.get(&atom_cid), Some(&atom_bytes));
+        assert_eq!(before.body.get(&body_cid), Some(&body_bytes));
+
+        let s = summarize(diff_table(&before), diff_table(&after));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        assert_eq!(
+            (s.renamed, s.new_behaviors, s.lost_behaviors, s.held),
+            (1, 0, 0, 0),
+            "a real loaded proof with the same contract under a new name is a migration, not a behavior delta: {s:?}"
+        );
+        assert!(!s.breaking());
+        assert_eq!(s.bump(), "none");
     }
 
     #[test]
@@ -1352,14 +1383,35 @@ mod tests {
         git(&["config", "user.name", "t"]);
 
         // commit 1: proj names contract `alpha`.
-        write_contract_proof(&tmp.join("proj"), "src/lib.rs::diff::alpha");
+        use sugar_proof_envelope::{AtomMemento, ContractBody, ContractMemento, FlatAtom};
+        let alpha_atom = FlatAtom::result_eq_int(0);
+        let alpha_memento = AtomMemento::new(&alpha_atom);
+        let alpha_body = ContractBody::new(&alpha_memento);
+        write_graph_contract_proof(
+            &tmp.join("proj"),
+            vec![ContractMemento::new(
+                "src/lib.rs::diff::alpha",
+                &alpha_body,
+                [0x42; 32],
+            )],
+        );
         git(&["add", "-Af"]);
         git(&["commit", "-qm", "c1"]);
 
         // commit 2: proj names contract `beta` — a disjoint contract set, so
         // `alpha`'s CID is lost and `beta`'s CID is new across the two refs.
         std::fs::remove_dir_all(tmp.join("proj")).unwrap();
-        write_contract_proof(&tmp.join("proj"), "src/lib.rs::diff::beta");
+        let beta_atom = FlatAtom::result_eq_int(1);
+        let beta_memento = AtomMemento::new(&beta_atom);
+        let beta_body = ContractBody::new(&beta_memento);
+        write_graph_contract_proof(
+            &tmp.join("proj"),
+            vec![ContractMemento::new(
+                "src/lib.rs::diff::beta",
+                &beta_body,
+                [0x42; 32],
+            )],
+        );
         git(&["add", "-Af"]);
         git(&["commit", "-qm", "c2"]);
 
@@ -1372,7 +1424,7 @@ mod tests {
             before.load_errors,
             after.load_errors
         );
-        let s = summarize(&before.name_to_cid, &after.name_to_cid);
+        let s = summarize(diff_table(&before), diff_table(&after));
         let _ = std::fs::remove_dir_all(&tmp);
 
         // the two proof sets denote different behaviors, so the cross-ref diff
