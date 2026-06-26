@@ -27,22 +27,28 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("function_map_term", recognize_term);
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_function_map(expr, fcx, SequenceKind::Any).and_then(|(receiver, func)| {
-        let body = FunctionMapBody::build(func, fcx)?;
-        Some(Box::new(FunctionMapCallSugar {
+    recognize_function_map(expr, fcx, SequenceKind::Any).map(|(receiver, func)| {
+        let body = build_function_map_body_or_gap(func, fcx);
+        Box::new(FunctionMapCallSugar {
             inner: SugarBody::composite(&receiver, fcx),
             body,
-        }) as Box<dyn Sugar>)
+        }) as Box<dyn Sugar>
     })
 }
 
 pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).and_then(|(receiver, func)| {
-        let body = FunctionMapBody::build(func, fcx)?;
-        Some(Box::new(FunctionMapTermSugar {
+    recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).map(|(receiver, func)| {
+        let body = build_function_map_body_or_gap(func, fcx);
+        Box::new(FunctionMapTermSugar {
             inner: SugarBody::composite(&receiver, fcx),
             body,
-        }) as Box<dyn Sugar>)
+        }) as Box<dyn Sugar>
+    })
+}
+
+fn build_function_map_body_or_gap(func: Expr, fcx: &SugarBuildCtx) -> FunctionMapBody {
+    FunctionMapBody::build_result(func, fcx).unwrap_or_else(|reason| {
+        panic!("function_map construction gap: {reason}");
     })
 }
 
@@ -89,10 +95,6 @@ pub(crate) struct FunctionMapBody {
 }
 
 impl FunctionMapBody {
-    pub(crate) fn build(func: Expr, fcx: &SugarBuildCtx) -> Option<Self> {
-        Self::build_result(func, fcx).ok()
-    }
-
     pub(crate) fn build_result(func: Expr, fcx: &SugarBuildCtx) -> Result<Self, String> {
         let name = simple_fn_name(&func).ok_or_else(|| {
             format!(
