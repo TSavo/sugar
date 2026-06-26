@@ -5880,6 +5880,15 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
     if let Some(n) = term_as_int(term) {
         return Some(n);
     }
+    if let Term::Ctor { name, args } = term.as_ref() {
+        if crate::sugar::primitive_int::is_deferred_primitive_method_name(name) {
+            if let Some(folded) =
+                crate::sugar::primitive_int::try_eval_deferred_primitive_method(name, args)
+            {
+                return const_fold_int_term(&folded);
+            }
+        }
+    }
     match term.as_ref() {
         Term::Ctor { name, args } if args.len() == 2 => {
             let a = const_fold_int_term(&args[0])?;
@@ -5956,6 +5965,15 @@ pub(crate) fn u128_expr(value: u128) -> Option<Expr> {
 pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
     if let Some(value) = term_as_u128(term) {
         return Some(value);
+    }
+    if let Term::Ctor { name, args } = term.as_ref() {
+        if crate::sugar::primitive_int::is_deferred_primitive_method_name(name) {
+            if let Some(folded) =
+                crate::sugar::primitive_int::try_eval_deferred_primitive_method(name, args)
+            {
+                return const_fold_u128_term(&folded);
+            }
+        }
     }
     match term.as_ref() {
         Term::Ctor { name, args } if name == RUST_U128_CTOR && args.len() == 2 => {

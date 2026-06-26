@@ -13,9 +13,11 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, PowVisitor};
-use crate::sugar::primitive_int::{deferred_primitive_method_term, integer_receiver_can_ground};
+use crate::sugar::primitive_int::{
+    deferred_primitive_method_term, integer_receiver_can_ground, is_deferred_primitive_term,
+};
 use crate::{
-    const_fold_int_term, const_fold_u128_term, strip_refs_groups, term_contains_curry_param,
+    const_fold_int_term, const_fold_u128_term, num, strip_refs_groups, term_contains_curry_param,
     Desugared, Outcome, Sugar, SugarCtx,
 };
 
@@ -55,7 +57,10 @@ impl Sugar for IntPowSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        if term_contains_curry_param(&receiver) || term_contains_curry_param(&exponent) {
+        if term_contains_curry_param(&receiver)
+            || term_contains_curry_param(&exponent)
+            || is_deferred_primitive_term(&receiver)
+        {
             return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
                 "pow",
                 receiver,
@@ -65,9 +70,11 @@ impl Sugar for IntPowSugar {
         let Some(exponent) = const_fold_int_term(&exponent)
             .or_else(|| const_fold_u128_term(&exponent).and_then(|n| i128::try_from(n).ok()))
         else {
-            panic!(
-                "int pow exponent did not reduce to an integer literal; write the owning Sugar before Outcome"
-            );
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                "pow",
+                receiver,
+                vec![exponent],
+            )));
         };
         if exponent < 0 {
             panic!("int pow exponent is negative; Rust pow exponents must be unsigned");
@@ -75,9 +82,11 @@ impl Sugar for IntPowSugar {
         let exponent =
             u32::try_from(exponent).unwrap_or_else(|_| panic!("int pow exponent does not fit u32"));
         let Some(floor) = numeric_floor_from_term(&receiver) else {
-            panic!(
-                "int pow receiver did not reduce to a numeric floor; write the owning Sugar before Outcome"
-            );
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                "pow",
+                receiver,
+                vec![num(i128::from(exponent))],
+            )));
         };
         let Some(result) = floor.accept(PowVisitor { exponent }) else {
             panic!(

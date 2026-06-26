@@ -15,6 +15,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, IsqrtVisitor, NumericSqrt};
 use crate::sugar::monadic::{none_term, some_term};
+use crate::sugar::primitive_int::deferred_primitive_method_term;
 use crate::{const_fold_int_term, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -45,6 +46,15 @@ enum Kind {
     CheckedSqrt,
 }
 
+impl Kind {
+    fn method_name(self) -> &'static str {
+        match self {
+            Kind::Sqrt => "isqrt",
+            Kind::CheckedSqrt => "checked_isqrt",
+        }
+    }
+}
+
 struct IntSqrtSugar {
     kind: Kind,
     site: String,
@@ -58,9 +68,11 @@ impl Sugar for IntSqrtSugar {
             Err(outcome) => return outcome,
         };
         let Some(floor) = numeric_floor_from_term(&receiver) else {
-            panic!(
-                "int sqrt receiver did not reduce to a numeric floor; write the owning Sugar before Outcome"
-            );
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                self.kind.method_name(),
+                receiver,
+                Vec::new(),
+            )));
         };
         let Some(result) = floor.accept(IsqrtVisitor) else {
             panic!(

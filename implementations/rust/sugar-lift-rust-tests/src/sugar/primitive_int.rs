@@ -14,7 +14,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind as int_literal_kind, typed_int_term, ExactInt,
-    IntKind, NumericFloor, PowVisitor, WrappingNegVisitor,
+    IntKind, IsqrtVisitor, NumericFloor, NumericSqrt, PowVisitor, WrappingNegVisitor,
 };
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
@@ -34,7 +34,7 @@ pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new
     recognize_tuple_producer,
 );
 
-const DEFERRED_PRIMITIVE_METHOD_PREFIX: &str = "method:";
+const DEFERRED_PRIMITIVE_METHOD_PREFIX: &str = "primitive-int:";
 
 pub(crate) fn deferred_primitive_method_term(
     method: &str,
@@ -54,7 +54,9 @@ pub(crate) fn is_deferred_primitive_method_name(name: &str) -> bool {
     matches!(
         name.strip_prefix(DEFERRED_PRIMITIVE_METHOD_PREFIX),
         Some(
-            "wrapping_neg"
+            "isqrt"
+                | "checked_isqrt"
+                | "wrapping_neg"
                 | "pow"
                 | "abs"
                 | "signum"
@@ -76,6 +78,16 @@ pub(crate) fn try_eval_deferred_primitive_method(
 ) -> Option<Rc<Term>> {
     let method = name.strip_prefix(DEFERRED_PRIMITIVE_METHOD_PREFIX)?;
     match (method, args) {
+        ("isqrt", [receiver]) => match numeric_floor_from_term(receiver)?.accept(IsqrtVisitor)? {
+            NumericSqrt::Root(root) => root.term(),
+            NumericSqrt::Negative => None,
+        },
+        ("checked_isqrt", [receiver]) => {
+            match numeric_floor_from_term(receiver)?.accept(IsqrtVisitor)? {
+                NumericSqrt::Root(root) => root.term().map(some_term),
+                NumericSqrt::Negative => Some(none_term()),
+            }
+        }
         ("wrapping_neg", [receiver]) => numeric_floor_from_term(receiver)?
             .accept(WrappingNegVisitor)?
             .term(),
@@ -317,7 +329,9 @@ pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, dept
                 .scope()
                 .stable_term_binding_for_term(&name)
                 .is_some_and(|term| {
-                    term_contains_curry_param(&term) || numeric_floor_from_term(&term).is_some()
+                    term_contains_curry_param(&term)
+                        || numeric_floor_from_term(&term).is_some()
+                        || is_deferred_primitive_term(&term)
                 })
             {
                 return true;
@@ -335,6 +349,11 @@ pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, dept
         Expr::Paren(paren) => integer_receiver_can_ground(&paren.expr, fcx, depth + 1),
         Expr::Group(group) => integer_receiver_can_ground(&group.expr, fcx, depth + 1),
         Expr::Reference(reference) => integer_receiver_can_ground(&reference.expr, fcx, depth + 1),
+        Expr::MethodCall(call)
+            if call.args.is_empty() && call.method.to_string().as_str() == "isqrt" =>
+        {
+            true
+        }
         Expr::MethodCall(call)
             if matches!(
                 call.method.to_string().as_str(),
@@ -381,6 +400,13 @@ pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, dept
         }
         _ => false,
     }
+}
+
+pub(crate) fn is_deferred_primitive_term(term: &Rc<Term>) -> bool {
+    matches!(
+        term.as_ref(),
+        Term::Ctor { name, .. } if is_deferred_primitive_method_name(name)
+    )
 }
 
 fn numeric_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
