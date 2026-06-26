@@ -8,17 +8,17 @@
 // outermost-call recognizer; `peel_fold_adaptors` carries the same `FlatMapSugar` when
 // `.flat_map(..)` sits inside a longer adaptor chain.
 //
-// EXACT-OR-REFUSE: an opaque element (no const value), a closure body that is neither an
-// array literal nor a both-ends-bounded range, or any sub-element outside the certain
-// const set bails (`None` -> refuse, NEVER a guessed sub-sequence) -- the same discipline
-// as `map`/`flatten`. (A range whose start >= end yields the empty sub-sequence, a
-// legitimate flat_map drop.)
+// EXACT-OR-REFUSE: an opaque element (no const value), an unbounded literal range, a
+// runtime literal-domain bound, or an over-cap finite domain refuses with a named
+// terminal literal-domain reason. Shapes the evaluator does not own are gaps and must
+// stay loud. A range whose start >= end yields the empty sub-sequence, a legitimate
+// flat_map drop.
 
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    const_eval_flat_map_closure, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
-    SUGAR_SEQ_CAP,
+    const_eval_flat_map_closure, ConstVal, Desugared, DesugaredElem, Effect, FlatMapClosureEval,
+    Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 use syn::Expr;
 
@@ -66,7 +66,7 @@ impl FlatMapClosure {
         Self { expr }
     }
 
-    fn eval(&self, value: &ConstVal) -> Option<Vec<ConstVal>> {
+    fn eval(&self, value: &ConstVal) -> FlatMapClosureEval {
         const_eval_flat_map_closure(&self.expr, value)
     }
 }
@@ -98,19 +98,25 @@ fn reduce_flat_map(
     let mut out = Vec::new();
     for elem in seq {
         // An opaque element (no const value) cannot drive the closure.
-        let value = elem
-            .value
-            .as_ref()
-            .unwrap_or_else(|| flat_map_gap("flat_map element was not literal"));
-        let sub = mapper.eval(value).unwrap_or_else(|| {
-            flat_map_gap("flat_map closure did not reduce to a finite sequence")
-        });
-        let total = out
-            .len()
-            .checked_add(sub.len())
-            .unwrap_or_else(|| flat_map_gap("flat_map sequence length overflowed"));
+        let Some(value) = elem.value.as_ref() else {
+            return flat_map_literal_domain(
+                "literal array element is not text-determined -- flat_map input element is not constructible from source literals; refused",
+            );
+        };
+        let sub = match mapper.eval(value) {
+            FlatMapClosureEval::Finite(sub) => sub,
+            FlatMapClosureEval::LiteralDomain(reason) => return flat_map_literal_domain(reason),
+            FlatMapClosureEval::Gap => {
+                flat_map_gap("flat_map closure did not reduce to a finite sequence")
+            }
+        };
+        let Some(total) = out.len().checked_add(sub.len()) else {
+            flat_map_gap("flat_map literal sequence length overflowed");
+        };
         if total > SUGAR_SEQ_CAP as usize {
-            flat_map_gap("flat_map sequence exceeded sugar cap");
+            return flat_map_literal_domain(
+                "literal domain exceeds SUGAR_SEQ_CAP -- flat_map concatenated sequence is finite but over-cap; refused",
+            );
         }
         for v in sub {
             out.push(DesugaredElem {
@@ -126,4 +132,11 @@ fn reduce_flat_map(
 
 fn flat_map_gap(reason: &str) -> ! {
     panic!("flat_map did not reach a lawful floor: {reason}")
+}
+
+fn flat_map_literal_domain(reason: &str) -> Outcome {
+    Outcome::Incomplete(Effect::LiteralDomain {
+        boundary: "flat_map".to_string(),
+        reason: reason.to_string(),
+    })
 }

@@ -213,7 +213,8 @@ fn literal_iter_call_name(call: &ExprCall) -> Option<String> {
 }
 
 pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
-    crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)?
+    crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)
+        .ok()?
         .into_iter()
         .map(|value| {
             let expr = value.to_expr()?;
