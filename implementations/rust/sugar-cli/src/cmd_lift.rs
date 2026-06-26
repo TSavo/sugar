@@ -2201,6 +2201,7 @@ const ANSI_RESET: &str = "\u{1b}[0m";
 
 #[derive(Clone, Copy)]
 enum VisualTone {
+    Plain,
     Green,
     Red,
 }
@@ -2223,6 +2224,14 @@ struct VisualBoundaryRow {
     sort_key: (u64, u64, u64, u64),
     source: String,
     label: String,
+    reason: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UniverseVisualMode {
+    Fact,
+    BodyComplete,
+    BodyIncomplete,
 }
 
 fn render_report_visual(
@@ -2282,12 +2291,38 @@ fn render_universe_visual_report(
     for contract in &report.contracts {
         let name = contract_value_name(contract).unwrap_or("<unknown contract>");
         let predicates = contract_predicate_rows(contract);
+        let fact_universe = contract_inv_is_observed_fact(contract);
+        let warrants = contract_visual_warrants(report, contract);
+        let context = warrants
+            .first()
+            .map(|warrant| source_memento_context_key(warrant));
+        let incomplete_boundary = context.as_deref().and_then(|context| {
+            boundaries
+                .iter()
+                .find(|boundary| boundary.context == context)
+        });
+        let mode = if fact_universe {
+            UniverseVisualMode::Fact
+        } else if incomplete_boundary.is_some() {
+            UniverseVisualMode::BodyIncomplete
+        } else {
+            UniverseVisualMode::BodyComplete
+        };
         out.push_str(&format!("  universe {name}\n"));
-        out.push_str(&format!(
-            "    FOL: {}\n",
-            format_contract_visual_fol(contract)
-        ));
-        let warrants = contract_source_warrants(contract);
+        match mode {
+            UniverseVisualMode::BodyIncomplete => {
+                let reason = incomplete_boundary
+                    .and_then(|boundary| boundary.reason.as_deref())
+                    .unwrap_or("effect");
+                out.push_str(&format!("    incomplete: {reason}\n"));
+            }
+            UniverseVisualMode::Fact | UniverseVisualMode::BodyComplete => {
+                out.push_str(&format!(
+                    "    FOL: {}\n",
+                    format_contract_visual_fol(contract)
+                ));
+            }
+        }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
             continue;
@@ -2299,6 +2334,7 @@ fn render_universe_visual_report(
             &report.factory_walk,
             &warrants,
             &predicates,
+            mode,
         );
     }
     out
@@ -2326,12 +2362,17 @@ fn render_universe_warrant_breakdown(
     factory_walk: &[Value],
     warrants: &[&Value],
     predicates: &[String],
+    mode: UniverseVisualMode,
 ) {
     let context = warrants
         .first()
         .map(|warrant| source_memento_context_key(warrant))
         .unwrap_or_else(|| "<unknown>".to_string());
-    let factory_predicates = universe_factory_predicate_rows(factory_walk, source_lookup, &context);
+    let factory_predicates = if mode == UniverseVisualMode::BodyIncomplete {
+        Vec::new()
+    } else {
+        universe_factory_predicate_rows(factory_walk, source_lookup, &context)
+    };
     if let Some(source_walk) = universe_source_walk_lines(source_lookup, warrants) {
         render_universe_source_walk(
             out,
@@ -2342,18 +2383,23 @@ fn render_universe_warrant_breakdown(
             warrants,
             predicates,
             &factory_predicates,
+            mode,
         );
         return;
     }
 
     let mut items = Vec::new();
-    for boundary in boundaries
-        .iter()
-        .filter(|boundary| boundary.context == context)
-    {
-        items.push(UniverseVisualItem::Boundary(boundary));
+    if mode == UniverseVisualMode::BodyIncomplete {
+        for boundary in boundaries
+            .iter()
+            .filter(|boundary| boundary.context == context)
+        {
+            items.push(UniverseVisualItem::Boundary(boundary));
+        }
     }
-    if factory_predicates.is_empty() {
+    if mode == UniverseVisualMode::BodyIncomplete {
+        // Red body universes are effect traces, not proof traces.
+    } else if factory_predicates.is_empty() {
         for (index, warrant) in warrants.iter().enumerate() {
             let predicate = predicates
                 .get(index)
@@ -2398,16 +2444,22 @@ fn render_universe_warrant_breakdown(
             UniverseVisualItem::Predicate {
                 source, predicate, ..
             } => {
-                let tone = if red {
-                    VisualTone::Red
-                } else {
-                    VisualTone::Green
-                };
-                let status = if red { "RED" } else { "GREEN" };
-                let annotation = if red {
-                    status.to_string()
-                } else {
-                    format!("{status} ⊢ {predicate}")
+                let (tone, annotation) = match mode {
+                    UniverseVisualMode::Fact => (VisualTone::Plain, format!("FACT ⊢ {predicate}")),
+                    UniverseVisualMode::BodyComplete | UniverseVisualMode::BodyIncomplete => {
+                        let tone = if red {
+                            VisualTone::Red
+                        } else {
+                            VisualTone::Green
+                        };
+                        let status = if red { "RED" } else { "GREEN" };
+                        let annotation = if red {
+                            status.to_string()
+                        } else {
+                            format!("{status} ⊢ {predicate}")
+                        };
+                        (tone, annotation)
+                    }
                 };
                 render_visual_source_annotation(out, &source, tone, &annotation);
             }
@@ -2430,9 +2482,12 @@ fn render_universe_source_walk(
     warrants: &[&Value],
     predicates: &[String],
     factory_predicates: &[UniverseFactoryPredicateRow],
+    mode: UniverseVisualMode,
 ) {
     let mut predicate_by_line: BTreeMap<u64, Vec<String>> = BTreeMap::new();
-    if factory_predicates.is_empty() {
+    if mode == UniverseVisualMode::BodyIncomplete {
+        // Incomplete body universes emit no predicates anywhere.
+    } else if factory_predicates.is_empty() {
         for (index, warrant) in warrants.iter().enumerate() {
             let line = warrant
                 .get("span")
@@ -2462,21 +2517,48 @@ fn render_universe_source_walk(
     }
 
     let mut boundary_by_line: BTreeMap<u64, Vec<&VisualBoundaryRow>> = BTreeMap::new();
-    for boundary in boundaries
-        .iter()
-        .filter(|boundary| boundary.context == context)
-    {
-        let line = boundary.sort_key.0;
-        if line == 0 {
-            continue;
+    if mode == UniverseVisualMode::BodyIncomplete {
+        for boundary in boundaries
+            .iter()
+            .filter(|boundary| boundary.context == context)
+        {
+            let line = boundary.sort_key.0;
+            if line == 0 {
+                continue;
+            }
+            boundary_by_line.entry(line).or_default().push(boundary);
         }
-        boundary_by_line.entry(line).or_default().push(boundary);
     }
 
     let mut red = false;
     let mut rendered_lines = BTreeSet::new();
     for line in source_walk {
         rendered_lines.insert(line.line);
+        if mode == UniverseVisualMode::BodyIncomplete {
+            if let Some(boundary_rows) = boundary_by_line.get(&line.line) {
+                if let Some(boundary) = boundary_rows.first() {
+                    red = true;
+                    render_visual_source_annotation(
+                        out,
+                        &line.source,
+                        VisualTone::Red,
+                        &boundary.label,
+                    );
+                    continue;
+                }
+            }
+        }
+        match mode {
+            UniverseVisualMode::Fact => {
+                let annotation = predicate_by_line
+                    .get(&line.line)
+                    .map(|predicates| format!("FACT ⊢ {}", predicates.join(" ∧ ")))
+                    .unwrap_or_default();
+                render_visual_source_annotation(out, &line.source, VisualTone::Plain, &annotation);
+                continue;
+            }
+            UniverseVisualMode::BodyComplete | UniverseVisualMode::BodyIncomplete => {}
+        }
         if let Some(boundary_rows) = boundary_by_line.get(&line.line) {
             if let Some(boundary) = boundary_rows.first() {
                 red = true;
@@ -2509,15 +2591,18 @@ fn render_universe_source_walk(
         .iter()
         .filter(|predicate| !rendered_lines.contains(&predicate.sort_key.0))
     {
-        render_visual_source_annotation(
-            out,
-            &predicate.source,
-            VisualTone::Green,
-            &format!("GREEN ⊢ {}", predicate.predicate),
-        );
+        let (tone, annotation) = if mode == UniverseVisualMode::Fact {
+            (VisualTone::Plain, format!("FACT ⊢ {}", predicate.predicate))
+        } else {
+            (
+                VisualTone::Green,
+                format!("GREEN ⊢ {}", predicate.predicate),
+            )
+        };
+        render_visual_source_annotation(out, &predicate.source, tone, &annotation);
     }
 
-    if factory_predicates.is_empty() {
+    if factory_predicates.is_empty() && mode != UniverseVisualMode::BodyIncomplete {
         for (index, warrant) in warrants.iter().enumerate() {
             let line = warrant
                 .get("span")
@@ -2531,11 +2616,16 @@ fn render_universe_source_walk(
                 .get(index)
                 .cloned()
                 .unwrap_or_else(|| "<predicate unavailable>".to_string());
+            let (tone, annotation) = if mode == UniverseVisualMode::Fact {
+                (VisualTone::Plain, format!("FACT ⊢ {predicate}"))
+            } else {
+                (VisualTone::Green, format!("GREEN ⊢ {predicate}"))
+            };
             render_visual_source_annotation(
                 out,
                 &resolve_source_memento_visual_source(source_lookup, warrant),
-                VisualTone::Green,
-                &format!("GREEN ⊢ {predicate}"),
+                tone,
+                &annotation,
             );
         }
     }
@@ -2589,6 +2679,10 @@ fn render_visual_source_annotation(
     annotation: &str,
 ) {
     let first = source.lines().next().unwrap_or("");
+    if annotation.is_empty() {
+        out.push_str(&format!("    {}\n", ansi_paint(first, tone)));
+        return;
+    }
     if first.is_empty() {
         out.push_str(&format!("    {}  {annotation}\n", ansi_paint("", tone)));
         return;
@@ -2677,6 +2771,11 @@ fn visual_boundary_rows(
                 .unwrap_or_default(),
             source: resolve_source_memento_visual_source(source_lookup, memento),
             label,
+            reason: row
+                .get("reason")
+                .and_then(Value::as_str)
+                .filter(|reason| !reason.is_empty())
+                .map(ToOwned::to_owned),
         });
     }
     rows
@@ -2757,7 +2856,11 @@ fn visual_factory_walk_rows(
 }
 
 fn ansi_paint(source: &str, tone: VisualTone) -> String {
+    if matches!(tone, VisualTone::Plain) {
+        return source.to_string();
+    }
     let color = match tone {
+        VisualTone::Plain => unreachable!("plain tone returned before ANSI selection"),
         VisualTone::Green => ANSI_GREEN,
         VisualTone::Red => ANSI_RED,
     };
@@ -3079,6 +3182,20 @@ fn contract_source_warrants(contract: &Value) -> Vec<&Value> {
         .and_then(Value::as_array)
         .map(|warrants| warrants.iter().collect())
         .unwrap_or_default()
+}
+
+fn contract_visual_warrants<'a>(
+    report: &'a LiftSourceReport,
+    contract: &'a Value,
+) -> Vec<&'a Value> {
+    if contract_inv_is_observed_fact(contract) {
+        if let Some(name) = contract_value_name(contract) {
+            if let Some(memento) = source_memento_for_contract(report, name) {
+                return vec![memento];
+            }
+        }
+    }
+    contract_source_warrants(contract)
 }
 
 fn contract_predicate_rows(contract: &Value) -> Vec<String> {
@@ -7205,17 +7322,17 @@ fn sample() {
     }
 
     #[test]
-    fn visual_report_projects_universe_warrants_through_green_until_red_state() {
+    fn visual_report_shows_whole_unit_test_with_inv_inline_at_assertion() {
         let root = tempfile::tempdir().expect("tempdir");
         let source_dir = root.path().join("src");
         std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
         std::fs::write(
             source_dir.join("lib.rs"),
             r#"
+#[test]
 fn sample() {
-    assert_eq!(1, 1);
-    assert_eq!(2, 2);
-    let z = runtime();
+    let setup = 1;
+    assert_eq!(setup, 1);
     assert_eq!(10, 10);
 }
 "#,
@@ -7226,6 +7343,13 @@ fn sample() {
         let syn::Item::Fn(item) = &source.items[0] else {
             panic!("expected function");
         };
+        let function_memento = sugar_walk::source_oracle::source_memento_of_named_item_fn(
+            "src/lib.rs",
+            &source_text,
+            "sample",
+            item,
+        )
+        .to_json();
         let memento_for_stmt = |stmt_index: usize| {
             let stmt = &item.block.stmts[stmt_index];
             sugar_walk::source_oracle::source_memento_of_statement_span(
@@ -7239,38 +7363,41 @@ fn sample() {
             .expect("statement memento")
             .to_json()
         };
-        let first_assert = memento_for_stmt(0);
-        let second_assert = memento_for_stmt(1);
-        let effect_site = memento_for_stmt(2);
-        let downstream_assert = memento_for_stmt(3);
+        let first_assert = memento_for_stmt(1);
+        let second_assert = memento_for_stmt(2);
+        let first_formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "var", "name": "setup"},
+                {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+            ]
+        });
+        let second_formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "const", "value": 10, "sort": {"name": "Int"}},
+                {"kind": "const", "value": 10, "sort": {"name": "Int"}}
+            ]
+        });
         let response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
                 {
                     "kind": "contract",
-                    "name": "src/lib.rs::sample",
+                    "name": "src/lib.rs::tests::sample",
                     "outBinding": "out",
                     "inv": {
                         "kind": "and",
                         "operands": [
-                            { "kind": "atomic", "name": "=", "args": [
-                                {"kind": "const", "value": 1, "sort": {"name": "Int"}},
-                                {"kind": "const", "value": 1, "sort": {"name": "Int"}}
-                            ]},
-                            { "kind": "atomic", "name": "=", "args": [
-                                {"kind": "const", "value": 2, "sort": {"name": "Int"}},
-                                {"kind": "const", "value": 2, "sort": {"name": "Int"}}
-                            ]},
-                            { "kind": "atomic", "name": "=", "args": [
-                                {"kind": "const", "value": 10, "sort": {"name": "Int"}},
-                                {"kind": "const", "value": 10, "sort": {"name": "Int"}}
-                            ]}
+                            first_formula.clone(),
+                            second_formula.clone()
                         ]
                     },
                     "sourceWarrants": [
                         first_assert.clone(),
-                        second_assert.clone(),
-                        downstream_assert.clone()
+                        second_assert.clone()
                     ]
                 }
             ],
@@ -7284,12 +7411,12 @@ fn sample() {
             },
             "sourceAudits": [],
             "factoryAudits": [],
-            "sourceMementos": [],
+            "sourceMementos": [function_memento],
             "factoryAuditSummary": {
-                "emittedRows": 4,
+                "emittedRows": 2,
                 "statusCounts": {
-                    "warranted": 3,
-                    "refused": 1,
+                    "warranted": 2,
+                    "refused": 0,
                     "support": 0,
                     "unresolved": 0
                 },
@@ -7304,41 +7431,20 @@ fn sample() {
                         "status": "warranted",
                         "verdict": "complete",
                         "output": "constraints",
-                        "sourceMemento": first_assert
-                    },
-                    {
-                        "file": "src/lib.rs",
-                        "line": 4,
-                        "requested_role": "AssertionSurface",
-                        "ast_kind": "expr",
-                        "selected": "assertion_surface_relation_macro",
-                        "status": "warranted",
-                        "verdict": "complete",
-                        "output": "constraints",
-                        "sourceMemento": second_assert
+                        "sourceMemento": first_assert,
+                        "emittedFormula": first_formula
                     },
                     {
                         "file": "src/lib.rs",
                         "line": 5,
-                        "requested_role": "Term",
-                        "ast_kind": "expr",
-                        "selected": "runtime_call",
-                        "status": "refused",
-                        "verdict": "incomplete",
-                        "output": "effect",
-                        "reason": "runtime boundary: pointer identity",
-                        "sourceMemento": effect_site
-                    },
-                    {
-                        "file": "src/lib.rs",
-                        "line": 6,
                         "requested_role": "AssertionSurface",
                         "ast_kind": "expr",
                         "selected": "assertion_surface_relation_macro",
                         "status": "warranted",
                         "verdict": "complete",
                         "output": "constraints",
-                        "sourceMemento": downstream_assert
+                        "sourceMemento": second_assert,
+                        "emittedFormula": second_formula
                     }
                 ]
             }
@@ -7349,36 +7455,166 @@ fn sample() {
         let visual = render_visual_source_report(&report);
 
         assert!(visual.contains("universe visual:"), "{visual}");
-        assert!(visual.contains("  universe src/lib.rs::sample"), "{visual}");
         assert!(
-            visual.contains("    FOL: src/lib.rs::sample ⊢ 1 = 1 ∧ 2 = 2 ∧ 10 = 10"),
+            visual.contains("  universe src/lib.rs::tests::sample"),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32massert_eq!(1, 1);\u{1b}[0m  GREEN ⊢ 1 = 1"),
+            visual.contains("    FOL: src/lib.rs::tests::sample ⊢ setup = 1 ∧ 10 = 10"),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32massert_eq!(2, 2);\u{1b}[0m  GREEN ⊢ 2 = 2"),
+            visual.contains("    fn sample() {"),
+            "unit-test visual must walk the whole test function:\n{visual}"
+        );
+        assert!(
+            visual.contains("        let setup = 1;"),
+            "unit-test setup lines remain visible without predicates:\n{visual}"
+        );
+        assert!(
+            visual.contains("        assert_eq!(setup, 1);  FACT ⊢ setup = 1"),
+            "unit-test invariant must be pinned inline at its assertion:\n{visual}"
+        );
+        assert!(
+            visual.contains("        assert_eq!(10, 10);  FACT ⊢ 10 = 10"),
+            "unit-test invariant must be pinned inline at its assertion:\n{visual}"
+        );
+        assert!(
+            visual.contains("    }"),
+            "unit-test visual must walk through the closing brace:\n{visual}"
+        );
+        let universe_visual = visual.split("factory visual:").next().unwrap_or(&visual);
+        assert!(
+            !universe_visual.contains("GREEN") && !universe_visual.contains("RED"),
+            "unit-test fact view must not use body green/red status:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_shows_incomplete_function_body_as_effect_trace_without_predicates() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("lib.rs"),
+            r#"
+fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
+    debug_assert_eq!(1, 1);
+    let b64_bytes_written = engine.internal_encode(input, output);
+    let padding_bytes = 0;
+}
+"#,
+        )
+        .expect("write source");
+        let source_text = std::fs::read_to_string(source_dir.join("lib.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&source_text).expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let function_memento = sugar_walk::source_oracle::source_memento_of_named_item_fn(
+            "src/lib.rs",
+            &source_text,
+            "encode_with_padding",
+            item,
+        )
+        .to_json();
+        let effect_site = sugar_walk::source_oracle::source_memento_of_statement_span(
+            "src/lib.rs",
+            &source_text,
+            item.block.stmts[1].span(),
+            "encode_with_padding",
+            &item.sig,
+            &item.block,
+        )
+        .expect("effect statement memento")
+        .to_json();
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "encode_with_padding",
+                    "outBinding": "result",
+                    "post": {"kind": "atomic", "name": "true", "args": []},
+                    "sourceWarrants": [function_memento]
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAudits": [],
+            "sourceMementos": [],
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 0,
+                    "refused": 1,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "src/lib.rs",
+                        "line": 4,
+                        "requested_role": "FunctionBodyConstraint",
+                        "ast_kind": "stmt",
+                        "selected": "function_body_runtime_call",
+                        "status": "refused",
+                        "verdict": "incomplete",
+                        "output": "effect",
+                        "reason": "runtime boundary: internal_encode writes output",
+                        "sourceMemento": effect_site
+                    }
+                ]
+            }
+        });
+        let mut report = source_report_from_lift_response(&response, None).expect("source report");
+        report.project_root = Some(root.path().to_path_buf());
+
+        let visual = render_visual_source_report(&report);
+        let universe_visual = visual.split("factory visual:").next().unwrap_or(&visual);
+
+        assert!(
+            universe_visual.contains("  universe encode_with_padding"),
             "{visual}"
         );
         assert!(
-            visual.contains(
-                "\u{1b}[31mlet z = runtime();\u{1b}[0m  RED HERE effect: runtime boundary: pointer identity"
+            universe_visual
+                .contains("    incomplete: runtime boundary: internal_encode writes output"),
+            "red function universes must report the effect instead of a theorem:\n{visual}"
+        );
+        assert!(
+            !universe_visual.contains("FOL: encode_with_padding ⊢"),
+            "incomplete function universes must not render a FOL predicate:\n{visual}"
+        );
+        assert!(
+            !universe_visual.contains("⊢"),
+            "incomplete function universes emit no predicates anywhere:\n{visual}"
+        );
+        assert!(
+            universe_visual.contains("\u{1b}[32mfn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {\u{1b}[0m  GREEN"),
+            "function body visual must walk the whole source before the effect:\n{visual}"
+        );
+        assert!(
+            universe_visual.contains("\u{1b}[32m    debug_assert_eq!(1, 1);\u{1b}[0m  GREEN"),
+            "pre-effect body lines are green but predicate-free:\n{visual}"
+        );
+        assert!(
+            universe_visual.contains(
+                "\u{1b}[31m    let b64_bytes_written = engine.internal_encode(input, output);\u{1b}[0m  RED HERE effect: runtime boundary: internal_encode writes output"
             ),
-            "{visual}"
+            "first incomplete factory effect is the RED HERE line:\n{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED"),
-            "{visual}"
-        );
-        assert!(
-            !visual.contains("\u{1b}[31massert_eq!(10, 10);\u{1b}[0m  RED ⊢ 10 = 10"),
-            "red rows are effect-shadowed unknowns; move the predicate before RED HERE or do not print it:\n{visual}"
-        );
-        assert!(
-            !visual.contains("RED ⊢"),
-            "red source rows are unknown and must not render predicates:\n{visual}"
+            universe_visual.contains("\u{1b}[31m    let padding_bytes = 0;\u{1b}[0m  RED"),
+            "after the effect, later source remains red and unknowable:\n{visual}"
         );
     }
 
