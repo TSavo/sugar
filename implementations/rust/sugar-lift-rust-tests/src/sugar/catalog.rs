@@ -574,6 +574,21 @@ mod tests {
     }
 
     #[test]
+    fn opaque_runtime_iterator_source_is_composite_fallback() {
+        let range_new: Expr = syn::parse_str("RangeInclusive::new(1usize, 5usize)").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&range_new, SugarRole::Composite),
+            Some("range_construct")
+        );
+
+        let opaque_call: Expr = syn::parse_str("opaque([1i32, 2, 3])").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&opaque_call, SugarRole::Composite),
+            Some("runtime_iterator_source")
+        );
+    }
+
+    #[test]
     fn bound_literal_tuple_has_tuple_producer_candidate() {
         let expr: Expr = syn::parse_str("pair").unwrap();
         let mut let_inits = BTreeMap::new();

@@ -6,13 +6,17 @@
 
 use syn::{Expr, ExprCall};
 
-use crate::sugar::claim::ExprSugarClaim;
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collection_literal::collection_literal_array;
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
 use crate::{simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite("runtime_iterator_source", recognize_composite);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
+    "runtime_iterator_source",
+    SugarRole::Composite,
+    &[],
+    recognize_composite,
+);
 
 fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(binding) = recognize_mutable_source_binding(expr, fcx) {
