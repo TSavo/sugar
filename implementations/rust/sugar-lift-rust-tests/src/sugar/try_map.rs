@@ -191,7 +191,7 @@ fn literal_array_term_from_values(values: &[ConstVal]) -> Option<Rc<Term>> {
 }
 
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
-    match value {
+    crate::const_val_term(value).or_else(|| match value {
         ConstVal::Int(n) => Some(num(*n)),
         ConstVal::PrimitiveInt { raw, kind } => primitive_int_term(*raw, *kind),
         ConstVal::UInt128(n) => Some(u128_term(*n)),
@@ -214,7 +214,8 @@ fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
             Some(make_var(format!("literal:Tuple({inner})")))
         }
         ConstVal::Array(parts) => literal_array_term_from_values(parts),
-    }
+        _ => None,
+    })
 }
 
 fn eval_option_function(
