@@ -156,6 +156,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &source_location::EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &match_node::TERM_EXPR_SUGAR,
+    &match_scrutinee::TERM_EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
     &raw_addr_term::EXPR_SUGAR,
@@ -1962,6 +1963,42 @@ mod tests {
         let names = candidate_names_for_role(&expr, SugarRole::MatchScrutineeVerdict);
 
         assert_eq!(names, vec!["match_scrutinee"]);
+    }
+
+    #[test]
+    fn runtime_match_scrutinee_term_is_a_catalog_claim() {
+        let init: Expr = syn::parse_str("std::env::args().count()").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("r".to_string(), init);
+        let expr: Expr = syn::parse_str("match r { 0 => 1u32, _ => 2u32 }").unwrap();
+        let names = candidate_names_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits);
+
+        assert_eq!(names, vec!["match_scrutinee_term"]);
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(&expr, SugarRole::Term, &let_inits),
+            Some("match_scrutinee_term")
+        );
+    }
+
+    #[test]
+    fn match_value_term_beats_runtime_scrutinee_term_for_divergent_arm_value() {
+        let expr: Expr =
+            syn::parse_str("match make_result() { Ok(v) => v, Err(e) => panic!(\"{e:?}\") }")
+                .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"match_value_term"),
+            "value match must keep its precise value owner: {names:?}"
+        );
+        assert!(
+            names.contains(&"match_scrutinee_term"),
+            "runtime scrutinee candidate should also be visible for ordering: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("match_value_term")
+        );
     }
 
     #[test]
