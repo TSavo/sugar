@@ -15,8 +15,9 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
     from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
 };
+use crate::sugar::ip_addr::{primitive_int_from_literal_ip, LiteralIp};
 use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
-use crate::{strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("from_bool", recognize);
@@ -115,6 +116,12 @@ impl ScalarFloorVisitor for PrimitiveFromVisitor<'_> {
                 )
             });
         Outcome::Complete(Desugared::Term(term))
+    }
+
+    fn visit_ip(self, _term: &Rc<Term>, ip: LiteralIp) -> Self::Output {
+        Outcome::Complete(Desugared::Term(primitive_int_from_literal_ip(
+            ip, self.dst, self.site,
+        )))
     }
 
     fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {

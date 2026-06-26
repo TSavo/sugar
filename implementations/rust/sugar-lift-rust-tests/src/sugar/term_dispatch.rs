@@ -8,6 +8,7 @@ use syn::{Expr, Item};
 use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audits;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
+use crate::sugar::ip_addr::{literal_ip_from_term, LiteralIp};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::sugar::primitive_int::{
     is_deferred_primitive_method_name, try_eval_deferred_primitive_method,
@@ -220,6 +221,13 @@ pub(crate) trait ScalarFloorVisitor {
     fn visit_numeric(self, floor: NumericFloor) -> Self::Output;
     fn visit_bool(self, value: bool) -> Self::Output;
     fn visit_char(self, value: char) -> Self::Output;
+    fn visit_ip(self, term: &Rc<Term>, ip: LiteralIp) -> Self::Output
+    where
+        Self: Sized,
+    {
+        let _ = ip;
+        self.visit_runtime(term)
+    }
     fn visit_runtime(self, term: &Rc<Term>) -> Self::Output;
 }
 
@@ -231,6 +239,9 @@ impl ScalarFloorAccept for Rc<Term> {
     fn accept_scalar_floor<V: ScalarFloorVisitor>(&self, visitor: V) -> V::Output {
         if let Some(floor) = numeric_floor_from_term(self) {
             return visitor.visit_numeric(floor);
+        }
+        if let Some(ip) = literal_ip_from_term(self) {
+            return visitor.visit_ip(self, ip);
         }
         match self.as_ref() {
             Term::Const {
