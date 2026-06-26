@@ -9570,7 +9570,8 @@ fn t() {
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "a runtime sliced domain + wildcard param must bail"
+        "a runtime sliced domain + wildcard param must bail; facts: {:?}; decls: {:?}; skips: {:?}",
+        out.assertion_facts, out.decls, out.skip_reasons
     );
 }
 
@@ -9588,7 +9589,8 @@ fn t() {
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "an opaque runtime collection must bail, not unroll"
+        "an opaque runtime collection must bail, not unroll; facts: {:?}; decls: {:?}; skips: {:?}",
+        out.assertion_facts, out.decls, out.skip_reasons
     );
 }
 
