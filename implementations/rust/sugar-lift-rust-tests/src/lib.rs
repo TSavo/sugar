@@ -7466,19 +7466,36 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
 /// to be an array literal, and `const_eval`s each array element with the SAME exact floor.
 /// Exact-or-None: a non-array body, or any sub-element outside the certain const set,
 /// returns `None` -- the whole flat_map then refuses, never a guessed sub-sequence.
+pub(crate) enum FlatMapClosureEval {
+    Finite(Vec<ConstVal>),
+    LiteralDomain(&'static str),
+    Gap,
+}
+
+const FLAT_MAP_LITERAL_ARRAY_ELEMENT_RUNTIME: &str =
+    "literal array element is not text-determined -- flat_map sub-sequence is not constructible from source literals; refused";
+const FLAT_MAP_LITERAL_RANGE_UNBOUNDED: &str =
+    "literal range is unbounded -- flat_map closure has no finite literal sub-sequence; refused";
+const FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME: &str =
+    "literal range bound is not text-determined -- flat_map closure is not a finite construction from source literals; refused";
+const FLAT_MAP_LITERAL_DOMAIN_OVER_CAP: &str =
+    "literal domain exceeds SUGAR_SEQ_CAP -- flat_map sub-sequence is finite but over-cap; refused";
+
 pub(crate) fn const_eval_flat_map_closure(
     closure: &syn::ExprClosure,
     arg: &ConstVal,
-) -> Option<Vec<ConstVal>> {
+) -> FlatMapClosureEval {
     if closure.inputs.len() != 1 {
-        return None;
+        return FlatMapClosureEval::Gap;
     }
     let mut env = BTreeMap::new();
-    bind_const_closure_arg(&closure.inputs[0], arg, &mut env)?;
+    if bind_const_closure_arg(&closure.inputs[0], arg, &mut env).is_none() {
+        return FlatMapClosureEval::Gap;
+    }
     let body: &Expr = match &*closure.body {
         Expr::Block(b) => match b.block.stmts.as_slice() {
             [Stmt::Expr(e, None)] => e,
-            _ => return None,
+            _ => return FlatMapClosureEval::Gap,
         },
         other => other,
     };
@@ -7486,9 +7503,14 @@ pub(crate) fn const_eval_flat_map_closure(
         Expr::Array(array) => {
             let mut out = Vec::with_capacity(array.elems.len());
             for elem in &array.elems {
-                out.push(const_eval(elem, &env)?);
+                let Some(value) = const_eval(elem, &env) else {
+                    return FlatMapClosureEval::LiteralDomain(
+                        FLAT_MAP_LITERAL_ARRAY_ELEMENT_RUNTIME,
+                    );
+                };
+                out.push(value);
             }
-            Some(out)
+            FlatMapClosureEval::Finite(out)
         }
         // A closure mapping each element to a finite literal RANGE (`|&n| 0..n` /
         // `0..=n`): both bounds must const-fold (in the element's env) to integers, and
@@ -7497,27 +7519,48 @@ pub(crate) fn const_eval_flat_map_closure(
         // drop, not a refusal. EXACT-OR-REFUSE: a half-open/unbounded range or a
         // non-const / non-integer bound bails (`None`), never a guessed sequence.
         Expr::Range(range) => {
-            let (Some(start_expr), Some(end_expr)) = (&range.start, &range.end) else {
-                return None;
+            let Some(start_expr) = &range.start else {
+                return FlatMapClosureEval::Gap;
             };
-            let start = const_eval(start_expr, &env)?.as_int()?;
-            let end = const_eval(end_expr, &env)?.as_int()?;
+            let Some(end_expr) = &range.end else {
+                return FlatMapClosureEval::LiteralDomain(FLAT_MAP_LITERAL_RANGE_UNBOUNDED);
+            };
+            let Some(start) = const_eval(start_expr, &env).and_then(|value| value.as_int()) else {
+                return FlatMapClosureEval::LiteralDomain(FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME);
+            };
+            let Some(end) = const_eval(end_expr, &env).and_then(|value| value.as_int()) else {
+                return FlatMapClosureEval::LiteralDomain(FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME);
+            };
             let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
-            let last = if inclusive { end } else { end.checked_sub(1)? };
+            let Some(last) = (if inclusive {
+                Some(end)
+            } else {
+                end.checked_sub(1)
+            }) else {
+                return FlatMapClosureEval::Gap;
+            };
             if last < start {
-                return Some(Vec::new());
+                return FlatMapClosureEval::Finite(Vec::new());
             }
-            let len = last.checked_sub(start)?.checked_add(1)?;
+            let Some(len) = last
+                .checked_sub(start)
+                .and_then(|value| value.checked_add(1))
+            else {
+                return FlatMapClosureEval::Gap;
+            };
             if len > SUGAR_SEQ_CAP as i128 {
-                return None;
+                return FlatMapClosureEval::LiteralDomain(FLAT_MAP_LITERAL_DOMAIN_OVER_CAP);
             }
             let mut out = Vec::with_capacity(len as usize);
             let mut k = start;
             while k <= last {
                 out.push(ConstVal::Int(k));
-                k = k.checked_add(1)?;
+                let Some(next) = k.checked_add(1) else {
+                    return FlatMapClosureEval::Gap;
+                };
+                k = next;
             }
-            Some(out)
+            FlatMapClosureEval::Finite(out)
         }
         // A closure mapping each element to a finite range-ADAPTER CHAIN: a range base
         // (`a..b` / `a..=b` / `a..`) wrapped in any nesting of `.step_by(s)` (`s >= 1`)
@@ -7526,9 +7569,22 @@ pub(crate) fn const_eval_flat_map_closure(
         // to its EXACT element sub-sequence. EXACT-OR-REFUSE: an unbounded base with no
         // `.take`, a non-const / non-integer bound / step / take, or `step_by(0)` (a Rust
         // panic) bails (`None`), never a guessed sub-sequence.
-        method_call @ Expr::MethodCall(_) => const_eval_finite_int_iter(method_call, &env, None),
-        _ => None,
+        method_call @ Expr::MethodCall(_) => {
+            match const_eval_finite_int_iter(method_call, &env, None) {
+                Ok(out) => FlatMapClosureEval::Finite(out),
+                Err(FlatMapIterEval::LiteralDomain(reason)) => {
+                    FlatMapClosureEval::LiteralDomain(reason)
+                }
+                Err(FlatMapIterEval::Gap) => FlatMapClosureEval::Gap,
+            }
+        }
+        _ => FlatMapClosureEval::Gap,
     }
+}
+
+enum FlatMapIterEval {
+    LiteralDomain(&'static str),
+    Gap,
 }
 
 /// Evaluate a finite, const-determinable INTEGER iterator EXPR to its exact element
@@ -7545,25 +7601,39 @@ fn const_eval_finite_int_iter(
     expr: &Expr,
     env: &BTreeMap<String, ConstVal>,
     limit: Option<usize>,
-) -> Option<Vec<ConstVal>> {
+) -> Result<Vec<ConstVal>, FlatMapIterEval> {
     match strip_refs_groups(expr) {
         Expr::Array(array) => {
             let mut out = Vec::with_capacity(array.elems.len());
             for elem in &array.elems {
-                out.push(const_eval(elem, env)?);
+                let Some(value) = const_eval(elem, env) else {
+                    return Err(FlatMapIterEval::LiteralDomain(
+                        FLAT_MAP_LITERAL_ARRAY_ELEMENT_RUNTIME,
+                    ));
+                };
+                out.push(value);
             }
             if let Some(k) = limit {
                 out.truncate(k);
             }
-            Some(out)
+            Ok(out)
         }
         Expr::Range(range) => enumerate_int_range_prefix(range, env, limit),
         Expr::MethodCall(call) => {
             let recv = &call.receiver;
             match call.method.to_string().as_str() {
                 "take" if call.args.len() == 1 => {
-                    let n = const_eval(&call.args[0], env)?.as_int()?;
-                    let n = usize::try_from(n).ok()?;
+                    let Some(n) = const_eval(&call.args[0], env).and_then(|value| value.as_int())
+                    else {
+                        return Err(FlatMapIterEval::LiteralDomain(
+                            FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+                        ));
+                    };
+                    let Ok(n) = usize::try_from(n) else {
+                        return Err(FlatMapIterEval::LiteralDomain(
+                            FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+                        ));
+                    };
                     let combined = match limit {
                         Some(k) => k.min(n),
                         None => n,
@@ -7571,17 +7641,32 @@ fn const_eval_finite_int_iter(
                     const_eval_finite_int_iter(recv, env, Some(combined))
                 }
                 "step_by" if call.args.len() == 1 => {
-                    let s = const_eval(&call.args[0], env)?.as_int()?;
-                    let s = usize::try_from(s).ok()?;
+                    let Some(s) = const_eval(&call.args[0], env).and_then(|value| value.as_int())
+                    else {
+                        return Err(FlatMapIterEval::LiteralDomain(
+                            FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+                        ));
+                    };
+                    let Ok(s) = usize::try_from(s) else {
+                        return Err(FlatMapIterEval::LiteralDomain(
+                            FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+                        ));
+                    };
                     if s == 0 {
-                        return None; // `step_by(0)` panics in Rust -- refuse, never guess.
+                        return Err(FlatMapIterEval::Gap);
                     }
                     // To yield `k` stepped elements we need the base's first
                     // `(k - 1) * s + 1` elements (indices 0, s, 2s, ...). An unbounded
                     // base with no outer limit cannot be finitized here -> None.
                     let base_limit = match limit {
                         Some(0) => Some(0),
-                        Some(k) => Some((k - 1).checked_mul(s)?.checked_add(1)?),
+                        Some(k) => {
+                            let Some(base) = (k - 1).checked_mul(s).and_then(|v| v.checked_add(1))
+                            else {
+                                return Err(FlatMapIterEval::Gap);
+                            };
+                            Some(base)
+                        }
                         None => None,
                     };
                     let base = const_eval_finite_int_iter(recv, env, base_limit)?;
@@ -7589,12 +7674,12 @@ fn const_eval_finite_int_iter(
                     if let Some(k) = limit {
                         out.truncate(k);
                     }
-                    Some(out)
+                    Ok(out)
                 }
-                _ => None,
+                _ => Err(FlatMapIterEval::Gap),
             }
         }
-        _ => None,
+        _ => Err(FlatMapIterEval::Gap),
     }
 }
 
@@ -7607,35 +7692,74 @@ fn enumerate_int_range_prefix(
     range: &syn::ExprRange,
     env: &BTreeMap<String, ConstVal>,
     limit: Option<usize>,
-) -> Option<Vec<ConstVal>> {
-    let start = const_eval(range.start.as_deref()?, env)?.as_int()?;
+) -> Result<Vec<ConstVal>, FlatMapIterEval> {
+    let Some(start_expr) = range.start.as_deref() else {
+        return Err(FlatMapIterEval::Gap);
+    };
+    let Some(start) = const_eval(start_expr, env).and_then(|value| value.as_int()) else {
+        return Err(FlatMapIterEval::LiteralDomain(
+            FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+        ));
+    };
     let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
     let count: usize = match &range.end {
         Some(end_expr) => {
-            let end = const_eval(end_expr, env)?.as_int()?;
-            let last = if inclusive { end } else { end.checked_sub(1)? };
+            let Some(end) = const_eval(end_expr, env).and_then(|value| value.as_int()) else {
+                return Err(FlatMapIterEval::LiteralDomain(
+                    FLAT_MAP_LITERAL_RANGE_BOUND_RUNTIME,
+                ));
+            };
+            let Some(last) = (if inclusive {
+                Some(end)
+            } else {
+                end.checked_sub(1)
+            }) else {
+                return Err(FlatMapIterEval::Gap);
+            };
             if last < start {
-                return Some(Vec::new());
+                return Ok(Vec::new());
             }
-            let len = usize::try_from(last.checked_sub(start)?.checked_add(1)?).ok()?;
+            let Some(len) = last
+                .checked_sub(start)
+                .and_then(|value| value.checked_add(1))
+            else {
+                return Err(FlatMapIterEval::Gap);
+            };
+            let Ok(len) = usize::try_from(len) else {
+                return Err(FlatMapIterEval::LiteralDomain(
+                    FLAT_MAP_LITERAL_DOMAIN_OVER_CAP,
+                ));
+            };
             match limit {
                 Some(k) => k.min(len),
                 None => len,
             }
         }
         // Unbounded `a..`: finite only when an outer `.take` supplies the bound.
-        None => limit?,
+        None => match limit {
+            Some(limit) => limit,
+            None => {
+                return Err(FlatMapIterEval::LiteralDomain(
+                    FLAT_MAP_LITERAL_RANGE_UNBOUNDED,
+                ))
+            }
+        },
     };
     if count > SUGAR_SEQ_CAP as usize {
-        return None;
+        return Err(FlatMapIterEval::LiteralDomain(
+            FLAT_MAP_LITERAL_DOMAIN_OVER_CAP,
+        ));
     }
     let mut out = Vec::with_capacity(count);
     let mut k = start;
     for _ in 0..count {
         out.push(ConstVal::Int(k));
-        k = k.checked_add(1)?;
+        let Some(next) = k.checked_add(1) else {
+            return Err(FlatMapIterEval::Gap);
+        };
+        k = next;
     }
-    Some(out)
+    Ok(out)
 }
 
 /// Evaluate a unary closure with the same exact floor as `const_eval_unary_closure`,
