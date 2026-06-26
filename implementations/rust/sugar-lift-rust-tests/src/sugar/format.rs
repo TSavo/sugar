@@ -1141,10 +1141,15 @@ pub(crate) fn render_format_values(
     positional: &[FmtValue],
     explicit_named: &BTreeMap<String, FmtValue>,
     captures: &BTreeMap<String, FmtValue>,
+    source_memento: &str,
 ) -> String {
+    let context = || format!("template={fmt:?}; source_memento={source_memento}");
     let pieces = match parse_fmt_pieces(fmt) {
         Some(p) => p,
-        None => panic!("compiled format template did not parse; fix format template sugar"),
+        None => panic!(
+            "compiled format template did not parse; fix format template sugar: {}",
+            context()
+        ),
     };
     let mut next_positional = 0usize;
     let mut out = String::new();
@@ -1165,15 +1170,19 @@ pub(crate) fn render_format_values(
                 };
                 let Some(value) = value else {
                     panic!(
-                        "compiled format template referenced an argument the factory did not build"
+                        "compiled format template referenced an argument the factory did not build: {}",
+                        context()
                     );
                 };
                 match value.render(&spec) {
                     Ok(Some(s)) => out.push_str(&s),
                     Ok(None) => panic!(
-                        "completed format value did not render; implement double dispatch for this formatter"
+                        "completed format value did not render; implement double dispatch for this formatter: {}",
+                        context()
                     ),
-                    Err(reason) => panic!("completed format value failed to render: {reason}"),
+                    Err(reason) => {
+                        panic!("completed format value failed to render: {reason}: {}", context())
+                    }
                 }
             }
         }
@@ -2676,6 +2685,41 @@ mod tests {
         } else {
             Ok(None)
         }
+    }
+
+    fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+        if let Some(text) = payload.downcast_ref::<String>() {
+            text.clone()
+        } else if let Some(text) = payload.downcast_ref::<&'static str>() {
+            text.to_string()
+        } else {
+            "<non-string panic>".to_string()
+        }
+    }
+
+    #[test]
+    fn render_format_values_parse_panic_names_template_and_source_memento() {
+        let panic = std::panic::catch_unwind(|| {
+            let _ = render_format_values(
+                "{: >3}",
+                &[],
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                "format!(\"{: >3}\", 'a')",
+            );
+        })
+        .expect_err("parse-rejected compiled format template should panic");
+        let message = panic_text(panic.as_ref());
+
+        assert!(
+            message.contains("compiled format template did not parse"),
+            "{message}"
+        );
+        assert!(message.contains("template=\"{: >3}\""), "{message}");
+        assert!(
+            message.contains("source_memento=format!(\"{: >3}\", 'a')"),
+            "{message}"
+        );
     }
 
     #[test]
