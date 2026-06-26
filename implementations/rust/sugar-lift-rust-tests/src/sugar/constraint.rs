@@ -587,16 +587,31 @@ impl Sugar for BoolExprSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
-                constraint_from_entry(assertion_entry_from_relation(
-                    term,
+                let entry = assertion_entry_from_relation(
+                    term.clone(),
                     bool_const(*asserted),
                     RelationOp::Eq,
                     ctx.scope,
-                ))
+                );
+                let kind = if predicate_term_is_claim_bearing(term.as_ref()) {
+                    AssertionFactKind::Warranted
+                } else {
+                    AssertionFactKind::Support
+                };
+                Outcome::Complete(Desugared::Constraints {
+                    atom: entry.atom,
+                    n: 1,
+                    kind,
+                    warrant: Warrant { name: entry.name },
+                })
             }
             BoolExprKind::Wrapper(inner) => inner.reduce(ctx),
         }
     }
+}
+
+fn predicate_term_is_claim_bearing(term: &Term) -> bool {
+    term_bool(term).is_some()
 }
 
 fn constraints_from_payload(payload: ConstraintPayload) -> Outcome {
