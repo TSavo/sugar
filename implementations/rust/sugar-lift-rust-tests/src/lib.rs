@@ -6401,20 +6401,45 @@ fn peel_fold_adaptors_inner<'a>(
                             })
                         })
                     }
-                    ("skip_while", 1) => {
-                        let pred = m.args[0].clone();
-                        Box::new(move |inner, fcx| {
-                            Box::new(sugar::skip_while::SkipWhileSugar {
-                                inner: sugar::factory::SugarBody::from_node(inner),
-                                pred: sugar::skip_while::SkipWhilePredicate::build(&pred, fcx)
-                                    .unwrap_or_else(|| {
+                    ("skip_while", 1) => match &m.args[0] {
+                        Expr::Closure(_) => {
+                            let pred = m.args[0].clone();
+                            Box::new(move |inner, fcx| {
+                                Box::new(sugar::skip_while::SkipWhileSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    pred: sugar::skip_while::SkipWhilePredicate::build_result(
+                                        &pred, fcx,
+                                    )
+                                    .unwrap_or_else(|reason| {
                                         panic!(
-                                            "skip_while wrapper could not construct predicate body"
+                                            "skip_while wrapper could not construct predicate body: {reason}"
                                         )
                                     }),
+                                })
                             })
-                        })
-                    }
+                        }
+                        func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
+                            let pred = strip_refs_groups(func).clone();
+                            let name = simple_path_name(&pred)?;
+                            if !scope.is_some_and(|scope| scope.has_visible_fn(&name)) {
+                                return None;
+                            }
+                            Box::new(move |inner, fcx| {
+                                Box::new(sugar::skip_while::SkipWhileSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    pred: sugar::skip_while::SkipWhilePredicate::build_result(
+                                        &pred, fcx,
+                                    )
+                                    .unwrap_or_else(|reason| {
+                                        panic!(
+                                            "skip_while wrapper could not construct predicate body: {reason}"
+                                        )
+                                    }),
+                                })
+                            })
+                        }
+                        _ => return None,
+                    },
                     ("take_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();

@@ -60,6 +60,11 @@ pub(crate) fn is_deferred_primitive_method_name(name: &str) -> bool {
                 | "pow"
                 | "abs"
                 | "signum"
+                | "checked_add"
+                | "checked_sub"
+                | "checked_mul"
+                | "checked_div"
+                | "checked_pow"
                 | "wrapping_add"
                 | "wrapping_sub"
                 | "wrapping_mul"
@@ -113,6 +118,41 @@ pub(crate) fn try_eval_deferred_primitive_method(
             integer_kind_from_term(receiver),
         )
         .map(num),
+        ("checked_add", [receiver, rhs]) => checked_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            CheckedOp::Add,
+            integer_kind_from_term(receiver),
+        ),
+        ("checked_sub", [receiver, rhs]) => checked_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            CheckedOp::Sub,
+            integer_kind_from_term(receiver),
+        ),
+        ("checked_mul", [receiver, rhs]) => checked_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            CheckedOp::Mul,
+            integer_kind_from_term(receiver),
+        ),
+        ("checked_div", [receiver, rhs]) => checked_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            CheckedOp::Div,
+            integer_kind_from_term(receiver),
+        ),
+        ("checked_pow", [receiver, rhs]) => checked_int_op_term(
+            folded_int_term(receiver),
+            folded_u128_term(receiver),
+            rhs,
+            CheckedOp::Pow,
+            integer_kind_from_term(receiver),
+        ),
         ("wrapping_add", [receiver, rhs]) => wrapping_int_op_term(
             folded_int_term(receiver),
             folded_u128_term(receiver),
@@ -861,6 +901,13 @@ impl Sugar for PrimitiveIntSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
+                if term_contains_curry_param(&receiver) || term_contains_curry_param(&rhs) {
+                    return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                        &self.method,
+                        receiver,
+                        vec![rhs],
+                    )));
+                }
                 if lhs_u128.is_some() || const_fold_u128_term(&rhs).is_some() {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
@@ -1098,6 +1145,31 @@ impl Sugar for PrimitiveIntSugar {
             }
         }
     }
+}
+
+fn checked_int_op_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    rhs: &Rc<Term>,
+    op: CheckedOp,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    if lhs_u128.is_some() || const_fold_u128_term(rhs).is_some() {
+        let lhs = lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))?;
+        let rhs = const_fold_u128_term(rhs)
+            .or_else(|| const_fold_int_term(rhs).and_then(|n| u128::try_from(n).ok()))?;
+        return Some(match checked_u128(lhs, rhs, op) {
+            Some(value) => some_term(u128_term(value)),
+            None => none_term(),
+        });
+    }
+
+    let lhs = lhs_i128?;
+    let rhs = const_fold_int_term(rhs)?;
+    Some(match checked_int_op(lhs, rhs, op, kind) {
+        Some(value) => some_term(num(value)),
+        None => none_term(),
+    })
 }
 
 fn checked_u128(lhs: u128, rhs: u128, op: CheckedOp) -> Option<u128> {
