@@ -33,13 +33,14 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         "intersperse_with" => true,
         _ => return None,
     };
-    method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()).then(|| {
-        Box::new(IntersperseCallSugar {
-            inner: SugarBody::composite(&call.receiver, fcx),
-            separator: IntersperseSeparator::new(call.args[0].clone()),
-            with,
-        }) as Box<dyn Sugar>
-    })
+    Some(Box::new(IntersperseCallSugar {
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
+        separator: IntersperseSeparator::new(call.args[0].clone()),
+        with,
+    }))
 }
 
 struct IntersperseCallSugar {

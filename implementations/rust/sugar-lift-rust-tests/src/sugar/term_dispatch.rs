@@ -9,6 +9,9 @@ use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audi
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
+use crate::sugar::primitive_int::{
+    is_deferred_primitive_method_name, try_eval_deferred_primitive_method,
+};
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
     scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, Effect,
@@ -398,6 +401,18 @@ fn curry_term(
 ) -> Rc<Term> {
     match term.as_ref() {
         Term::Var { name } if name == param => Rc::clone(arg),
+        Term::Ctor { name, args } if is_deferred_primitive_method_name(name) => {
+            let curried_args = args
+                .iter()
+                .map(|child| curry_term(child, param, arg, occurrence))
+                .collect::<Vec<_>>();
+            try_eval_deferred_primitive_method(name, &curried_args).unwrap_or_else(|| {
+                Rc::new(Term::Ctor {
+                    name: name.clone(),
+                    args: curried_args,
+                })
+            })
+        }
         Term::Ctor { name, args } if runtime_occurrence_ctor(name) => {
             let curried = Rc::new(Term::Ctor {
                 name: name.clone(),

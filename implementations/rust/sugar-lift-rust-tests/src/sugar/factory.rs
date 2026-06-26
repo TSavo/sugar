@@ -327,6 +327,22 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
         }
     }
 
+    pub(crate) fn with_scope<'s>(&self, scope: &'s TemporalScope) -> SugarBuildCtx<'s, 'e>
+    where
+        'a: 's,
+    {
+        SugarBuildCtx {
+            scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack: self.const_path_stack.clone(),
+            macro_depth: self.macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
+        }
+    }
+
     pub(crate) fn resolving_bound_path(&self, name: &str) -> bool {
         self.bound_path_stack.iter().any(|current| current == name)
     }

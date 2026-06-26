@@ -16,8 +16,8 @@ use crate::sugar::method_family;
 use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
 use crate::{
     canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
-    const_val_term, strip_refs_groups, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar,
-    SugarCtx,
+    const_val_term, curry_param_name, curry_param_term, strip_refs_groups, token_key, Desugared,
+    DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -79,7 +79,7 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 
 pub(crate) struct MapClosure {
     expr: syn::ExprClosure,
-    param: String,
+    curry_param: String,
     body: SugarBody<TermFloor>,
     u128_shift_hint: bool,
 }
@@ -91,10 +91,15 @@ impl MapClosure {
         u128_shift_hint: bool,
     ) -> Option<Self> {
         let param = closure_single_param_name(&expr)?;
-        let body = SugarBody::<TermFloor>::term(expr.body.as_ref(), fcx);
+        let curry_param = curry_param_name(&param);
+        let body_scope = fcx
+            .scope()
+            .fork_with_stable_term_binding(&param, curry_param_term(&param));
+        let body_fcx = fcx.with_scope(&body_scope);
+        let body = SugarBody::<TermFloor>::term(expr.body.as_ref(), &body_fcx);
         Some(Self {
             expr,
-            param,
+            curry_param,
             body,
             u128_shift_hint,
         })
@@ -166,6 +171,11 @@ enum MappedSequence {
     Terms(Vec<Rc<Term>>),
 }
 
+enum MapReceiverSequence {
+    Values(Vec<DesugaredElem>),
+    Terms(Vec<Rc<Term>>),
+}
+
 impl MappedSequence {
     fn into_desugared(self) -> Desugared {
         match self {
@@ -206,37 +216,59 @@ fn reduce_map_body(
     ctx: &SugarCtx,
 ) -> Result<MappedSequence, Outcome> {
     let seq = match inner.reduce(ctx) {
-        Outcome::Complete(d) => d
-            .into_seq()
-            .unwrap_or_else(|| map_gap("map receiver reduced to non-sequence")),
+        Outcome::Complete(Desugared::Seq(seq)) => MapReceiverSequence::Values(seq),
+        Outcome::Complete(Desugared::TermSeq(terms)) => MapReceiverSequence::Terms(terms),
+        Outcome::Complete(_) => map_gap("map receiver reduced to non-sequence"),
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
     reduce_map_sequence(seq, mapper, ctx)
 }
 
 fn reduce_map_sequence(
-    seq: Vec<DesugaredElem>,
+    seq: MapReceiverSequence,
     mapper: &MapClosure,
     ctx: &SugarCtx,
 ) -> Result<MappedSequence, Outcome> {
-    if let Some(values) = reduce_map_sequence_to_values(&seq, mapper) {
-        tracing::debug!(
-            target: "sugar_lift_rust_tests::sugar::map",
-            len = values.len(),
-            "literal closure map reduced to value sequence"
-        );
-        return Ok(MappedSequence::Values(values));
+    match seq {
+        MapReceiverSequence::Values(seq) => {
+            if let Some(values) = reduce_map_sequence_to_values(&seq, mapper) {
+                tracing::debug!(
+                    target: "sugar_lift_rust_tests::sugar::map",
+                    len = values.len(),
+                    "literal closure map reduced to value sequence"
+                );
+                return Ok(MappedSequence::Values(values));
+            }
+            let mut out = Vec::with_capacity(seq.len());
+            for (idx, elem) in seq.into_iter().enumerate() {
+                out.push(curry_map_body_for_elem(mapper, &elem, idx, ctx)?);
+            }
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::sugar::map",
+                len = out.len(),
+                "literal closure map curried body terms"
+            );
+            Ok(MappedSequence::Terms(out))
+        }
+        MapReceiverSequence::Terms(terms) => {
+            let mut out = Vec::with_capacity(terms.len());
+            for (idx, term) in terms.into_iter().enumerate() {
+                out.push(curry_map_body_for_term(
+                    mapper,
+                    &term,
+                    idx,
+                    ctx,
+                    canonical_term_sig(&term),
+                )?);
+            }
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::sugar::map",
+                len = out.len(),
+                "term sequence map curried body terms"
+            );
+            Ok(MappedSequence::Terms(out))
+        }
     }
-    let mut out = Vec::with_capacity(seq.len());
-    for (idx, elem) in seq.into_iter().enumerate() {
-        out.push(curry_map_body_for_elem(mapper, &elem, idx, ctx)?);
-    }
-    tracing::debug!(
-        target: "sugar_lift_rust_tests::sugar::map",
-        len = out.len(),
-        "literal closure map curried body terms"
-    );
-    Ok(MappedSequence::Terms(out))
 }
 
 fn reduce_map_sequence_to_values(
@@ -263,10 +295,20 @@ fn curry_map_body_for_elem(
     ctx: &SugarCtx,
 ) -> Result<Rc<Term>, Outcome> {
     let elem_term = elem_term_floor(elem);
+    curry_map_body_for_term(mapper, &elem_term, ordinal, ctx, token_key(&elem.expr))
+}
+
+fn curry_map_body_for_term(
+    mapper: &MapClosure,
+    elem_term: &Rc<Term>,
+    ordinal: usize,
+    ctx: &SugarCtx,
+    elem_label: String,
+) -> Result<Rc<Term>, Outcome> {
     let curried_floor = match mapper.body.reduce(ctx) {
         Outcome::Complete(d) => d.accept_desugared_floor(CurryVisitor {
-            param: &mapper.param,
-            arg: &elem_term,
+            param: &mapper.curry_param,
+            arg: elem_term,
             occurrence: CurryOccurrence {
                 family: "map",
                 ordinal,
@@ -279,7 +321,7 @@ fn curry_map_body_for_elem(
         .unwrap_or_else(|| map_gap("map closure body reduced to non-Term floor"));
     tracing::trace!(
         target: "sugar_lift_rust_tests::sugar::map",
-        elem = %crate::token_key(&elem.expr),
+        elem = %elem_label,
         term = %canonical_term_sig(&curried),
         "map closure body curried through term dispatch"
     );

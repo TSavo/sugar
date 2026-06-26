@@ -151,8 +151,7 @@ impl CollectPlan {
     fn reduce(&self, ctx: &SugarCtx) -> Result<Option<Rc<Term>>, Effect> {
         match self {
             CollectPlan::PlainVec { base } => {
-                let seq = sequence_from_body(base, ctx)?;
-                let collected = seq.iter().map(elem_term).collect::<Vec<_>>();
+                let collected = terms_from_body(base, ctx)?;
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::collect",
                     len = collected.len(),
@@ -245,6 +244,20 @@ fn sequence_from_body(
         Outcome::Complete(d) => Ok(d.into_seq().unwrap_or_else(|| {
             collect_gap("recognized collect receiver reduced to a non-sequence floor")
         })),
+        Outcome::Incomplete(effect) => Err(effect),
+    }
+}
+
+fn terms_from_body(
+    body: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Vec<Rc<Term>>, Effect> {
+    match body.reduce(ctx) {
+        Outcome::Complete(Desugared::Seq(seq)) => Ok(seq.iter().map(elem_term).collect()),
+        Outcome::Complete(Desugared::TermSeq(terms)) => Ok(terms),
+        Outcome::Complete(_) => {
+            collect_gap("recognized collect receiver reduced to a non-sequence floor")
+        }
         Outcome::Incomplete(effect) => Err(effect),
     }
 }
