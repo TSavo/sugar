@@ -11190,6 +11190,42 @@ fn fmt_distinct() {
 }
 
 #[test]
+fn pointer_format_refuses_runtime_address_identity_with_literal_twin() {
+    // `{:p}` prints an address identity, not a source literal. The pointer-format
+    // site must refuse by name, while the ordinary literal format twin still warrants.
+    let src = r#"
+#[test]
+fn fmt_pointer() {
+    let s = "";
+    assert_eq!(format!("{s:p}"), "0x0");
+    assert_eq!(format!("{}", s), "");
+}
+"#;
+    let out = lift_file(&parse(src), "tests/fmt.rs");
+    assert!(
+        !warranted_decls(&out).is_empty(),
+        "ordinary literal format twin must still warrant: {:?}",
+        out.factory_audits
+    );
+    assert_factory_refusal_for_site(
+        &out,
+        "format_macro",
+        "format ! (\"{s:p}\")",
+        "format pointer address",
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            audit.reason.as_deref().is_none_or(|reason| {
+                sugar_lift_rust_tests::refusal_disposition(reason)
+                    != sugar_lift_rust_tests::Disposition::Unclassified
+            })
+        }),
+        "pointer format refusal must be terminal-classified: {:?}",
+        out.factory_audits
+    );
+}
+
+#[test]
 fn vec_lifts_as_macro_term() {
     // Generality: the arm is not format-specific; any macro in term position lifts.
     let src = r#"

@@ -633,6 +633,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // format macro itself only composes children; the format-value floor owns this
         // boundary when no literal `Display`/`Debug` value exists to render.
         || reason.contains("runtime format argument")
+        // TERMINAL: pointer formatting renders runtime address identity. Even when the
+        // pointee/receiver is a literal-backed value, the `{:p}` output is not a source
+        // literal floor; format sugar must refuse by name instead of forging an address.
+        || reason.contains("format pointer address")
         // TERMINAL: value-consuming Option/Result adaptors need a literal payload floor once
         // the Some/Ok/Err branch is known. Presence predicates complete without inspecting
         // the payload; `map`/`and_then`/`unwrap_or` cannot fabricate a runtime payload value.
@@ -17181,15 +17185,29 @@ fn substitute_macro_tokens(
     mac: &syn::Macro,
     binds: &ExprBindings,
 ) -> Option<proc_macro2::TokenStream> {
-    substitute_macro_arg_tokens(mac.tokens.clone(), binds)
+    let format_like = mac.path.segments.last().is_some_and(|segment| {
+        matches!(segment.ident.to_string().as_str(), "format" | "format_args")
+    });
+    substitute_macro_arg_tokens_inner(mac.tokens.clone(), binds, format_like)
 }
 
 fn substitute_macro_arg_tokens(
     tokens: proc_macro2::TokenStream,
     binds: &ExprBindings,
 ) -> Option<proc_macro2::TokenStream> {
+    substitute_macro_arg_tokens_inner(tokens, binds, false)
+}
+
+fn substitute_macro_arg_tokens_inner(
+    tokens: proc_macro2::TokenStream,
+    binds: &ExprBindings,
+    format_like: bool,
+) -> Option<proc_macro2::TokenStream> {
     let args = parse_macro_args(tokens).ok()?;
-    let subst = substitute_exprs_with_closure_captures(&args.exprs, binds);
+    let mut subst = substitute_exprs_with_closure_captures(&args.exprs, binds);
+    if format_like {
+        append_explicit_format_captures(&mut subst, binds);
+    }
     let mut ts = proc_macro2::TokenStream::new();
     for (i, e) in subst.iter().enumerate() {
         if i > 0 {
@@ -17198,6 +17216,41 @@ fn substitute_macro_arg_tokens(
         ts.extend(quote::quote!(#e));
     }
     Some(ts)
+}
+
+fn append_explicit_format_captures(args: &mut Vec<Expr>, binds: &ExprBindings) {
+    let Some(fmt_expr) = args.first() else {
+        return;
+    };
+    let Some(captures) = sugar::format::literal_format_capture_names(fmt_expr) else {
+        return;
+    };
+    let mut explicit: BTreeSet<String> = args
+        .iter()
+        .skip(1)
+        .filter_map(explicit_named_format_arg_name)
+        .collect();
+    for name in captures {
+        if !explicit.insert(name.clone()) {
+            continue;
+        }
+        let Some(bound) = binds.get(&name) else {
+            continue;
+        };
+        let ident = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
+        let rhs = bound.clone();
+        args.push(syn::parse_quote! { #ident = #rhs });
+    }
+}
+
+fn explicit_named_format_arg_name(expr: &Expr) -> Option<String> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    let Expr::Path(path) = assign.left.as_ref() else {
+        return None;
+    };
+    path.path.get_ident().map(|ident| ident.to_string())
 }
 
 fn stable_macro_arg_bindings(scope: &TemporalScope) -> ExprBindings {
@@ -24232,6 +24285,7 @@ fn t() {
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
             "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused",
             "runtime format argument `runtime_var`, not literal-determined; refused",
+            "format pointer address `template=\"{s:p}\"; source_memento=format ! (\"{s:p}\")` is runtime address identity; refused",
             "Unicode string case mapping is not modeled for non-ASCII receivers; refused",
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",

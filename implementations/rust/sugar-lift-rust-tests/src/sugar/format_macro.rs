@@ -188,12 +188,15 @@ impl Sugar for FormatMacroStringSugar {
             }
         }
 
-        Outcome::Complete(Desugared::LiteralString(render_format_values(
+        match render_format_values(
             &fmt,
             &positional,
             &explicit_named,
             &captures,
             &self.source_memento,
-        )))
+        ) {
+            FloorRead::Complete(value) => Outcome::Complete(Desugared::LiteralString(value)),
+            FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
 }

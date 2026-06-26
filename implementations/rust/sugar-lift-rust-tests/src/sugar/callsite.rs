@@ -154,8 +154,21 @@ fn callsite_child_identity_term(expr: &Expr, scope: &crate::TemporalScope) -> Rc
 }
 
 fn source_less_format_args_builtin(expr: &Expr, ctx: &SugarCtx) -> bool {
-    crate::sugar::format::is_format_args_macro_shape(expr)
-        && ctx.scope.macro_registry().lookup("format_args").is_none()
+    if ctx.scope.macro_registry().lookup("format_args").is_some() {
+        return false;
+    }
+    if crate::sugar::format::is_format_args_macro_shape(expr) {
+        return true;
+    }
+    let Expr::Path(path) = crate::strip_refs_groups(expr) else {
+        return false;
+    };
+    let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+        return false;
+    };
+    ctx.scope
+        .stable_let_binding_for_term(&name)
+        .is_some_and(crate::sugar::format::is_format_args_macro_shape)
 }
 
 /// A call-site inlining opportunity, decomposed from a bare call statement. The
@@ -894,6 +907,101 @@ mod tests {
                 .iter()
                 .any(|r| matches!(refusal_disposition(r), Disposition::Refused)),
             "a resolved runtime-body nested helper must be terminal-REFUSED (named effect): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn bound_format_args_to_string_uses_format_value_floor() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                let a = format_args!("hello {}", "there");
+                assert_eq!(a.to_string(), "hello there");
+            }
+            "#,
+        );
+
+        assert!(
+            discharged(&out) >= 1,
+            "bound format_args!.to_string() should discharge through the format-value floor: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("macro `format_args`")),
+            "format_args! must not reach generic macro fallback: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn shadowed_format_args_capture_uses_previous_binding_floor() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                let a = format_args!("hello");
+                let a = format_args!("hello {a}");
+                let a = format_args!("hello {a:1}");
+                let a = format_args!("hello {a} {a:?}");
+                assert_eq!(a.to_string(), "hello hello hello hello hello hello hello");
+            }
+            "#,
+        );
+
+        assert!(
+            discharged(&out) >= 1,
+            "shadowed format_args! captures should dispatch through the previous binding floor: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("self-referential")),
+            "format_args! capture shadowing must not be treated as self-reference: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn write_fmt_format_args_refuses_as_fmt_write_not_macro_gap() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                use core::fmt::Write;
+
+                struct Buf(String);
+
+                impl Write for Buf {
+                    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                        self.0.write_str(s)
+                    }
+                }
+
+                let mut buf = Buf(String::new());
+                buf.write_fmt(format_args!("a")).unwrap();
+                assert_eq!(buf.0, "a");
+            }
+            "#,
+        );
+
+        assert!(
+            out.skip_reasons.iter().any(|reason| {
+                reason.contains("mutable-local state machine driven by fmt-write")
+                    || reason.contains("temporally unstable mutating method read")
+            }),
+            "write_fmt(format_args!(...)) should be owned by a writer mutation effect, not macro fallback: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("macro `format_args`")),
+            "format_args! must not reach generic macro fallback: {:?}",
             out.skip_reasons
         );
     }

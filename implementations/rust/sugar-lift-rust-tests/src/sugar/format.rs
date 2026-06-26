@@ -22,14 +22,15 @@
 // that typed child floor, it is a factory gap and panics instead of inventing an effect.
 // The format-string operand MUST be a literal/template floor.
 //
-// REFUSE BY NAME, NEVER GUESS. A format spec we do not FAITHFULLY reproduce
-// (`{:p}` pointer, an unhandled fill/align/width/sign/precision combination) does not
-// complete; it takes the factory gap path. We only complete a spec we render through a
-// STATICALLY-WRITTEN real `format!` call (we cannot pass a runtime spec string to
-// `format!`, whose first arg must be a compile-time literal; so each supported spec is
-// one written arm calling the real macro). `f16`/`f128` are unstable and unformattable on
-// the stable toolchain the lifter ships; until a typed owner exists, reaching that path
-// is a factory gap, not a runtime-argument effect.
+// REFUSE BY NAME, NEVER GUESS. A format spec we do not FAITHFULLY reproduce (an
+// unhandled fill/align/width/sign/precision combination) does not complete; it takes the
+// factory gap path. Pointer formatting (`{:p}`) is parsed but refused by a named
+// `FormatArgument` effect because the rendered value is runtime address identity. We
+// only complete a spec we render through a STATICALLY-WRITTEN real `format!` call (we
+// cannot pass a runtime spec string to `format!`, whose first arg must be a compile-time
+// literal; so each supported spec is one written arm calling the real macro). `f16`/`f128`
+// are unstable and unformattable on the stable toolchain the lifter ships; until a typed
+// owner exists, reaching that path is a factory gap, not a runtime-argument effect.
 
 use std::collections::BTreeMap;
 use std::ffi::CStr;
@@ -38,16 +39,16 @@ use std::rc::Rc;
 use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
-use crate::canonical_term_sig;
 use crate::sugar::cstr::{CStrBytes, LiteralCStrVisitor};
 use crate::sugar::factory::{
-    FloorRead, FormatValueFloor, LiteralCStrFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
-    TermFloor,
+    FloorRead, FormatTemplateFloor, FormatValueFloor, LiteralCStrFloor, LiteralStringFloor,
+    SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::int_literal::{
     numeric_floor_from_term, ExactInt, IntKind as NumericIntKind, NumericFloor,
 };
 use crate::sugar::monadic::OPT_SOME;
+use crate::{canonical_term_sig, token_key};
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{ConstValue, Term};
 
@@ -142,10 +143,10 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
         }
         Expr::Lit(ExprLit { lit, .. }) => match reconstruct_lit(lit) {
             Ok(Some(value)) => FormatValueBody::Literal(value),
-            Ok(None) => FormatValueBody::Unconstructible(
-                "format argument literal is not supported; write more Sugar for this AST"
-                    .to_string(),
-            ),
+            Ok(None) => FormatValueBody::Unconstructible(format!(
+                "format argument literal is not supported: {}; write more Sugar for this AST",
+                token_key(strip_refs_groups(expr))
+            )),
             Err(reason) => FormatValueBody::Terminal(reason),
         },
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
@@ -155,6 +156,10 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
             op: b.op.clone(),
             left: SugarBody::format_value(&b.left, fcx),
             right: SugarBody::format_value(&b.right, fcx),
+        },
+        Expr::Macro(m) if macro_is(m, "format_args") => match build_format_args_value(expr, fcx) {
+            Ok(body) => FormatValueBody::FormatArgs(body),
+            Err(reason) => FormatValueBody::Unconstructible(reason),
         },
         Expr::Path(path) if path.qself.is_none() => match path.path.get_ident() {
             Some(ident) => {
@@ -384,8 +389,116 @@ enum FormatValueBody {
         left: SugarBody<FormatValueFloor>,
         right: SugarBody<FormatValueFloor>,
     },
+    FormatArgs(FormatArgsValueBody),
     Terminal(String),
     Unconstructible(String),
+}
+
+struct FormatArgsValueBody {
+    source_memento: String,
+    fmt: SugarBody<FormatTemplateFloor>,
+    positional: Vec<SugarBody<FormatValueFloor>>,
+    explicit_named: BTreeMap<String, SugarBody<FormatValueFloor>>,
+    captures: BTreeMap<String, SugarBody<FormatValueFloor>>,
+}
+
+fn build_format_args_value(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+) -> Result<FormatArgsValueBody, String> {
+    let Expr::Macro(mac) = strip_refs_groups(expr) else {
+        return Err(
+            "format_args value recognizer received a non-macro site; write more Sugar for this AST"
+                .to_string(),
+        );
+    };
+    let args = parse_args(&mac.mac.tokens).ok_or_else(|| {
+        "format_args macro arguments did not parse; write more Sugar for this AST".to_string()
+    })?;
+    let Some((fmt_expr, rest)) = args.split_first() else {
+        return Err(
+            "format_args macro has no format string; write more Sugar for this AST".to_string(),
+        );
+    };
+
+    let mut positional = Vec::new();
+    let mut explicit_named = BTreeMap::new();
+    for arg in rest {
+        if let Some((name, value)) = explicit_named_format_arg(arg) {
+            explicit_named.insert(name, SugarBody::format_value(value, fcx));
+        } else {
+            positional.push(SugarBody::format_value(arg, fcx));
+        }
+    }
+
+    let captures = format_capture_bodies(fmt_expr, fcx, &explicit_named)?;
+
+    Ok(FormatArgsValueBody {
+        source_memento: token_key(expr),
+        fmt: SugarBody::format_template(fmt_expr, fcx),
+        positional,
+        explicit_named,
+        captures,
+    })
+}
+
+fn format_capture_bodies(
+    fmt_expr: &Expr,
+    fcx: &SugarBuildCtx,
+    explicit_named: &BTreeMap<String, SugarBody<FormatValueFloor>>,
+) -> Result<BTreeMap<String, SugarBody<FormatValueFloor>>, String> {
+    match literal_format_capture_names(fmt_expr) {
+        Some(names) => names
+            .into_iter()
+            .filter(|name| !explicit_named.contains_key(name))
+            .map(|name| {
+                let body = match fcx.scope().stable_let_binding_for_term(&name) {
+                    Some(init) if !fcx.resolving_bound_path(&name) => {
+                        let child_fcx = fcx.with_bound_path(&name);
+                        SugarBody::format_value(init, &child_fcx)
+                    }
+                    Some(_) => {
+                        return Err(format!(
+                            "format_args capture `{name}` is self-referential; write more Sugar for this AST"
+                        ));
+                    }
+                    None => {
+                        let captured: Expr = syn::parse_str(&name).unwrap_or_else(|err| {
+                            panic!("format_args capture `{name}` was not an expression path: {err}")
+                        });
+                        SugarBody::format_value(&captured, fcx)
+                    }
+                };
+                Ok((name, body))
+            })
+            .collect(),
+        None => Ok(fcx
+            .scope()
+            .let_bindings_iter()
+            .filter_map(|(name, _)| {
+                if explicit_named.contains_key(name) {
+                    return None;
+                }
+                let init = fcx.scope().stable_let_binding_for_term(name)?;
+                if fcx.resolving_bound_path(name) {
+                    return None;
+                }
+                let child_fcx = fcx.with_bound_path(name);
+                Some((name.clone(), SugarBody::format_value(init, &child_fcx)))
+            })
+            .collect()),
+    }
+}
+
+fn explicit_named_format_arg(expr: &Expr) -> Option<(String, &Expr)> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    let Expr::Path(path) = assign.left.as_ref() else {
+        return None;
+    };
+    let ident = path.path.get_ident()?;
+    Some((ident.to_string(), assign.right.as_ref()))
 }
 
 impl Sugar for FormatValueBody {
@@ -470,12 +583,67 @@ impl Sugar for FormatValueBody {
                 };
                 Outcome::Complete(Desugared::FormatValue(folded))
             }
+            FormatValueBody::FormatArgs(body) => body.desugar(ctx),
             FormatValueBody::Terminal(reason) => panic!("{reason}"),
             FormatValueBody::Unconstructible(reason) => {
                 panic!("{reason}");
             }
         }
     }
+}
+
+impl Sugar for FormatArgsValueBody {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let fmt = match self.fmt.reduce_format_template(ctx) {
+            FloorRead::Complete(value) => value,
+            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+
+        let mut positional = Vec::new();
+        for body in &self.positional {
+            match body.reduce_format_value(ctx) {
+                FloorRead::Complete(value) => positional.push(value),
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+            }
+        }
+
+        let mut explicit_named = BTreeMap::new();
+        for (name, body) in &self.explicit_named {
+            match body.reduce_format_value(ctx) {
+                FloorRead::Complete(value) => {
+                    explicit_named.insert(name.clone(), value);
+                }
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+            }
+        }
+
+        let mut captures = BTreeMap::new();
+        for (name, body) in &self.captures {
+            match body.reduce_format_value(ctx) {
+                FloorRead::Complete(value) => {
+                    captures.insert(name.clone(), value);
+                }
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+            }
+        }
+
+        match render_format_values(
+            &fmt,
+            &positional,
+            &explicit_named,
+            &captures,
+            &self.source_memento,
+        ) {
+            FloorRead::Complete(value) => {
+                Outcome::Complete(Desugared::FormatValue(FmtValue::FormatArgsText(value)))
+            }
+            FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
+    }
+}
+
+pub(crate) fn display_format_value_floor(value: &FmtValue) -> Result<Option<String>, String> {
+    value.render(&Spec::display())
 }
 
 pub(crate) fn literal_string_floor_from_outcome(reduction: Outcome) -> FloorRead<String> {
@@ -645,8 +813,10 @@ pub(crate) enum FmtValue {
     F64(f64),
     Char(char),
     Str(String),
+    ByteStr(Vec<u8>),
     CStr(CStrBytes),
     Bool(bool),
+    FormatArgsText(String),
     DebugText(String),
 }
 
@@ -658,8 +828,10 @@ trait FormatLiteralVisitor {
     fn visit_f64(self, value: f64) -> Self::Output;
     fn visit_char(self, value: char) -> Self::Output;
     fn visit_string(self, value: &str) -> Self::Output;
+    fn visit_byte_string(self, value: &[u8]) -> Self::Output;
     fn visit_cstr(self, value: &CStrBytes) -> Self::Output;
     fn visit_bool(self, value: bool) -> Self::Output;
+    fn visit_format_args_text(self, value: &str) -> Self::Output;
     fn visit_debug_text(self, value: &str) -> Self::Output;
 }
 
@@ -671,8 +843,10 @@ impl FmtValue {
             FmtValue::F64(value) => visitor.visit_f64(*value),
             FmtValue::Char(value) => visitor.visit_char(*value),
             FmtValue::Str(value) => visitor.visit_string(value),
+            FmtValue::ByteStr(value) => visitor.visit_byte_string(value),
             FmtValue::CStr(value) => visitor.visit_cstr(value),
             FmtValue::Bool(value) => visitor.visit_bool(*value),
+            FmtValue::FormatArgsText(value) => visitor.visit_format_args_text(value),
             FmtValue::DebugText(value) => visitor.visit_debug_text(value),
         }
     }
@@ -704,6 +878,13 @@ fn format_arithmetic_effect(reason: &str) -> Effect {
     Effect::FormatArgument {
         boundary: "format integer arithmetic".to_string(),
         reason: reason.to_string(),
+    }
+}
+
+fn format_pointer_effect(boundary: &str) -> Effect {
+    Effect::FormatArgument {
+        boundary: boundary.to_string(),
+        reason: format!("format pointer address `{boundary}` is runtime address identity; refused"),
     }
 }
 
@@ -805,6 +986,10 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
         Ok(render_str(value, self.spec))
     }
 
+    fn visit_byte_string(self, value: &[u8]) -> Self::Output {
+        Ok(render_byte_str(value, self.spec))
+    }
+
     fn visit_cstr(self, value: &CStrBytes) -> Self::Output {
         value.accept_literal_cstr(RenderCStrVisitor { spec: self.spec })
     }
@@ -813,9 +998,23 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
         Ok(render_bool(value, self.spec))
     }
 
+    fn visit_format_args_text(self, value: &str) -> Self::Output {
+        if matches!(self.spec.kind, Kind::Display | Kind::Debug)
+            && !self.spec.plus
+            && self.spec.zero_width.is_none()
+            && self.spec.precision.is_none()
+            && (self.spec.kind == Kind::Debug || !self.spec.alternate)
+        {
+            Ok(Some(value.to_string()))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn visit_debug_text(self, value: &str) -> Self::Output {
         if self.spec.kind == Kind::Debug
             && !self.spec.plus
+            && self.spec.width.is_none()
             && self.spec.zero_width.is_none()
             && self.spec.precision.is_none()
         {
@@ -1142,7 +1341,7 @@ pub(crate) fn render_format_values(
     explicit_named: &BTreeMap<String, FmtValue>,
     captures: &BTreeMap<String, FmtValue>,
     source_memento: &str,
-) -> String {
+) -> FloorRead<String> {
     let context = || format!("template={fmt:?}; source_memento={source_memento}");
     let pieces = match parse_fmt_pieces(fmt) {
         Some(p) => p,
@@ -1176,18 +1375,26 @@ pub(crate) fn render_format_values(
                 };
                 match value.render(&spec) {
                     Ok(Some(s)) => out.push_str(&s),
-                    Ok(None) => panic!(
-                        "completed format value did not render; implement double dispatch for this formatter: {}",
-                        context()
-                    ),
+                    Ok(None) if spec.kind == Kind::Pointer => {
+                        return FloorRead::Incomplete(format_pointer_effect(&context()));
+                    }
+                    Ok(None) => {
+                        panic!(
+                            "completed format value did not render; implement double dispatch for this formatter: {}",
+                            context()
+                        );
+                    }
                     Err(reason) => {
-                        panic!("completed format value failed to render: {reason}: {}", context())
+                        panic!(
+                            "completed format value failed to render: {reason}: {}",
+                            context()
+                        )
                     }
                 }
             }
         }
     }
-    out
+    FloorRead::Complete(out)
 }
 
 /// Find an explicit `name = <expr>` trailing format argument.
@@ -1295,24 +1502,31 @@ fn is_ident(s: &str) -> bool {
 // We support the closed set of specs the corpus uses that we can render through a
 // STATICALLY-WRITTEN real `format!` call: the trait kind (Display / Debug / lower-hex /
 // upper-hex / binary / octal / lower-exp / upper-exp), an optional `+` sign, optional
-// `0`-pad-to-width, and optional `.N` precision. A width WITHOUT zero-pad (alignment /
-// fill — `{:>9}`, `{:^9}`) and the pointer kind `{:p}` are NOT reproduced here -> bail.
+// `#` alternate debug, optional `+` sign, optional `0`-pad-to-width, optional bare
+// width, and optional `.N` precision. Bare width is only rendered by value floors that
+// explicitly own it; pointer formatting parses and bubbles a named runtime-address
+// effect; alignment / fill (`{:>9}`, `{:^9}`) are NOT reproduced here -> bail.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Display,
     Debug,
     LowerHex,
+    LowerHexDebug,
     UpperHex,
+    UpperHexDebug,
     Binary,
     Octal,
     LowerExp,
     UpperExp,
+    Pointer,
 }
 
 struct Spec {
     kind: Kind,
+    alternate: bool,
     plus: bool,
+    width: Option<usize>,
     zero_width: Option<usize>,
     precision: Option<usize>,
 }
@@ -1321,18 +1535,22 @@ impl Spec {
     fn display() -> Spec {
         Spec {
             kind: Kind::Display,
+            alternate: false,
             plus: false,
+            width: None,
             zero_width: None,
             precision: None,
         }
     }
 
     /// Parse a format SPEC (the part after `:`). Returns `None` for any spec feature we
-    /// do NOT faithfully reproduce (fill/align, non-zero width, pointer, `#`
-    /// alternate, `$`/`*` dynamic width, etc.) — refuse by NOT digging, never guess.
+    /// do NOT faithfully reproduce (fill/align, `$`/`*` dynamic width, etc.) — refuse by
+    /// NOT digging, never guess.
     fn parse(spec: &str) -> Option<Spec> {
         let mut s = spec;
+        let mut alternate = false;
         let mut plus = false;
+        let mut width = None;
         let mut zero_width = None;
         let mut precision = None;
 
@@ -1357,13 +1575,15 @@ impl Spec {
             return None;
         }
 
-        // `#` alternate — not reproduced here (e.g. `{:#?}`, `{:#x}`). Bail.
-        if s.starts_with('#') {
-            return None;
+        // [#] alternate — supported only where the owning floor below can delegate to
+        // Rust's real formatter. Unsupported combinations still return None later.
+        if let Some(rest) = s.strip_prefix('#') {
+            alternate = true;
+            s = rest;
         }
 
-        // [0][width] — we ONLY reproduce a `0`-padded fixed width. A bare width (no
-        // leading 0) is an alignment we do not reproduce -> bail.
+        // [0][width] — `0`-padded fixed width gets its own field. Bare width is accepted
+        // structurally and then rendered only by floors that explicitly own it.
         if let Some(rest) = s.strip_prefix('0') {
             // parse the width digits
             let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -1375,9 +1595,12 @@ impl Spec {
                 // continue (rare). Effectively a no-op.
                 s = rest;
             }
-        } else if s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            // a bare width (alignment to a min width) — not reproduced -> bail.
-            return None;
+        } else {
+            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() {
+                width = Some(digits.parse().ok()?);
+                s = &s[digits.len()..];
+            }
         }
 
         // [.precision]
@@ -1396,18 +1619,23 @@ impl Spec {
             "" => Kind::Display,
             "?" => Kind::Debug,
             "x" => Kind::LowerHex,
+            "x?" => Kind::LowerHexDebug,
             "X" => Kind::UpperHex,
+            "X?" => Kind::UpperHexDebug,
             "b" => Kind::Binary,
             "o" => Kind::Octal,
             "e" => Kind::LowerExp,
             "E" => Kind::UpperExp,
-            // `p` pointer / `x?`/`X?` hex-debug / anything else -> not reproduced.
+            "p" => Kind::Pointer,
+            // Anything else -> not reproduced.
             _ => return None,
         };
 
         Some(Spec {
             kind,
+            alternate,
             plus,
+            width,
             zero_width,
             precision,
         })
@@ -1448,7 +1676,10 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
     let unsigned = is_unsigned(suffix);
     // Render the body via the real formatter, honoring sign for Display/Debug.
     let body = match spec.kind {
-        Kind::Display | Kind::Debug => {
+        Kind::Display => {
+            if spec.alternate {
+                return None;
+            }
             if spec.precision.is_some() {
                 return None; // precision on an integer Display — bail (no faithful arm)
             }
@@ -1458,22 +1689,41 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
                 format!("{value}")
             }
         }
+        Kind::Debug => {
+            if spec.precision.is_some() {
+                return None;
+            }
+            match (spec.alternate, spec.plus) {
+                (false, false) => format!("{value:?}"),
+                (false, true) => format!("{value:+?}"),
+                (true, false) => format!("{value:#?}"),
+                (true, true) => return None,
+            }
+        }
         // Radix formats operate on the value's BITS at its width. We reconstruct the
         // unsigned bit pattern at the declared width so `{:x}` of `-1i8` == "ff" etc.
-        Kind::LowerHex | Kind::UpperHex | Kind::Binary | Kind::Octal => {
-            if spec.precision.is_some() || spec.plus {
+        Kind::LowerHex
+        | Kind::LowerHexDebug
+        | Kind::UpperHex
+        | Kind::UpperHexDebug
+        | Kind::Binary
+        | Kind::Octal => {
+            if spec.precision.is_some() || spec.plus || spec.alternate {
                 return None;
             }
             let bits = bits_at_width(value, suffix)?;
             match spec.kind {
-                Kind::LowerHex => format!("{bits:x}"),
-                Kind::UpperHex => format!("{bits:X}"),
+                Kind::LowerHex | Kind::LowerHexDebug => format!("{bits:x}"),
+                Kind::UpperHex | Kind::UpperHexDebug => format!("{bits:X}"),
                 Kind::Binary => format!("{bits:b}"),
                 Kind::Octal => format!("{bits:o}"),
                 _ => unreachable!(),
             }
         }
         Kind::LowerExp | Kind::UpperExp => {
+            if spec.alternate {
+                return None;
+            }
             // integer exp: rust formats the integer in exponential. Only support the
             // unsuffixed/standard widths via i128/u128 real format.
             let prec = spec.precision;
@@ -1500,10 +1750,12 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
             }
             b
         }
+        Kind::Pointer => return None,
     };
-    Some(match spec.zero_width {
-        Some(w) => zero_pad(body, w),
-        None => body,
+    Some(match (spec.zero_width, spec.width) {
+        (Some(w), _) => zero_pad(body, w),
+        (None, Some(w)) => format!("{body:>w$}"),
+        (None, None) => body,
     })
 }
 
@@ -1538,101 +1790,136 @@ fn render_float_f64(x: f64, spec: &Spec) -> Option<String> {
     // a decimal point (`0.0`, `-3.0`) and switches to exponential outside [1e-4, 1e16)
     // (`1e16`, `9e-5`), while Display does not. Each dispatches to its OWN real `format!`;
     // collapsing them (rendering Debug via Display) is a fake string -> false refutation.
-    let body = match (spec.kind, spec.precision, spec.plus) {
-        (Kind::Display, None, false) => format!("{x}"),
-        (Kind::Display, None, true) => format!("{x:+}"),
-        (Kind::Display, Some(p), false) => format!("{x:.p$}"),
-        (Kind::Display, Some(p), true) => format!("{x:+.p$}"),
-        (Kind::Debug, None, false) => format!("{x:?}"),
-        (Kind::Debug, None, true) => format!("{x:+?}"),
-        (Kind::Debug, Some(p), false) => format!("{x:.p$?}"),
-        (Kind::Debug, Some(p), true) => format!("{x:+.p$?}"),
-        (Kind::LowerExp, None, false) => format!("{x:e}"),
-        (Kind::LowerExp, Some(p), false) => format!("{x:.p$e}"),
-        (Kind::UpperExp, None, false) => format!("{x:E}"),
-        (Kind::UpperExp, Some(p), false) => format!("{x:.p$E}"),
-        (Kind::LowerExp, None, true) => format!("{x:+e}"),
-        (Kind::LowerExp, Some(p), true) => format!("{x:+.p$e}"),
-        (Kind::UpperExp, None, true) => format!("{x:+E}"),
-        (Kind::UpperExp, Some(p), true) => format!("{x:+.p$E}"),
+    let body = match (spec.kind, spec.precision, spec.plus, spec.alternate) {
+        (Kind::Display, None, false, false) => format!("{x}"),
+        (Kind::Display, None, true, false) => format!("{x:+}"),
+        (Kind::Display, Some(p), false, false) => format!("{x:.p$}"),
+        (Kind::Display, Some(p), true, false) => format!("{x:+.p$}"),
+        (Kind::Debug, None, false, false) => format!("{x:?}"),
+        (Kind::Debug, None, true, false) => format!("{x:+?}"),
+        (Kind::Debug, Some(p), false, false) => format!("{x:.p$?}"),
+        (Kind::Debug, Some(p), true, false) => format!("{x:+.p$?}"),
+        (Kind::Debug, None, false, true) => format!("{x:#?}"),
+        (Kind::LowerExp, None, false, false) => format!("{x:e}"),
+        (Kind::LowerExp, Some(p), false, false) => format!("{x:.p$e}"),
+        (Kind::UpperExp, None, false, false) => format!("{x:E}"),
+        (Kind::UpperExp, Some(p), false, false) => format!("{x:.p$E}"),
+        (Kind::LowerExp, None, true, false) => format!("{x:+e}"),
+        (Kind::LowerExp, Some(p), true, false) => format!("{x:+.p$e}"),
+        (Kind::UpperExp, None, true, false) => format!("{x:+E}"),
+        (Kind::UpperExp, Some(p), true, false) => format!("{x:+.p$E}"),
         // radix on a float is a type error in rust — bail.
         _ => return None,
     };
-    Some(match spec.zero_width {
-        Some(w) => zero_pad(body, w),
-        None => body,
+    Some(match (spec.zero_width, spec.width) {
+        (Some(w), _) => zero_pad(body, w),
+        (None, Some(w)) => format!("{body:>w$}"),
+        (None, None) => body,
     })
 }
 
 fn render_float_f32(x: f32, spec: &Spec) -> Option<String> {
     // See `render_float_f64`: Display and Debug differ for floats; render each through
     // its own real `format!`, never collapse Debug onto Display.
-    let body = match (spec.kind, spec.precision, spec.plus) {
-        (Kind::Display, None, false) => format!("{x}"),
-        (Kind::Display, None, true) => format!("{x:+}"),
-        (Kind::Display, Some(p), false) => format!("{x:.p$}"),
-        (Kind::Display, Some(p), true) => format!("{x:+.p$}"),
-        (Kind::Debug, None, false) => format!("{x:?}"),
-        (Kind::Debug, None, true) => format!("{x:+?}"),
-        (Kind::Debug, Some(p), false) => format!("{x:.p$?}"),
-        (Kind::Debug, Some(p), true) => format!("{x:+.p$?}"),
-        (Kind::LowerExp, None, false) => format!("{x:e}"),
-        (Kind::LowerExp, Some(p), false) => format!("{x:.p$e}"),
-        (Kind::UpperExp, None, false) => format!("{x:E}"),
-        (Kind::UpperExp, Some(p), false) => format!("{x:.p$E}"),
-        (Kind::LowerExp, None, true) => format!("{x:+e}"),
-        (Kind::LowerExp, Some(p), true) => format!("{x:+.p$e}"),
-        (Kind::UpperExp, None, true) => format!("{x:+E}"),
-        (Kind::UpperExp, Some(p), true) => format!("{x:+.p$E}"),
+    let body = match (spec.kind, spec.precision, spec.plus, spec.alternate) {
+        (Kind::Display, None, false, false) => format!("{x}"),
+        (Kind::Display, None, true, false) => format!("{x:+}"),
+        (Kind::Display, Some(p), false, false) => format!("{x:.p$}"),
+        (Kind::Display, Some(p), true, false) => format!("{x:+.p$}"),
+        (Kind::Debug, None, false, false) => format!("{x:?}"),
+        (Kind::Debug, None, true, false) => format!("{x:+?}"),
+        (Kind::Debug, Some(p), false, false) => format!("{x:.p$?}"),
+        (Kind::Debug, Some(p), true, false) => format!("{x:+.p$?}"),
+        (Kind::Debug, None, false, true) => format!("{x:#?}"),
+        (Kind::LowerExp, None, false, false) => format!("{x:e}"),
+        (Kind::LowerExp, Some(p), false, false) => format!("{x:.p$e}"),
+        (Kind::UpperExp, None, false, false) => format!("{x:E}"),
+        (Kind::UpperExp, Some(p), false, false) => format!("{x:.p$E}"),
+        (Kind::LowerExp, None, true, false) => format!("{x:+e}"),
+        (Kind::LowerExp, Some(p), true, false) => format!("{x:+.p$e}"),
+        (Kind::UpperExp, None, true, false) => format!("{x:+E}"),
+        (Kind::UpperExp, Some(p), true, false) => format!("{x:+.p$E}"),
         _ => return None,
     };
-    Some(match spec.zero_width {
-        Some(w) => zero_pad(body, w),
-        None => body,
+    Some(match (spec.zero_width, spec.width) {
+        (Some(w), _) => zero_pad(body, w),
+        (None, Some(w)) => format!("{body:>w$}"),
+        (None, None) => body,
     })
 }
 
 fn render_char(c: char, spec: &Spec) -> Option<String> {
-    let body = match (spec.kind, spec.precision) {
-        (Kind::Display, None) => format!("{c}"),
-        (Kind::Debug, None) => format!("{c:?}"),
-        // A char in a radix prints its code point. The corpus does not do this; bail to
-        // be safe rather than guess width semantics.
-        _ => return None,
-    };
-    if spec.plus {
+    if spec.plus || spec.zero_width.is_some() {
         return None;
     }
-    Some(match spec.zero_width {
-        Some(w) => zero_pad(body, w),
-        None => body,
-    })
+    match (spec.kind, spec.precision, spec.alternate, spec.width) {
+        (Kind::Display, None, false, None) => Some(format!("{c}")),
+        (Kind::Display, None, false, Some(w)) => Some(format!("{c:w$}")),
+        (Kind::Debug, None, false, None) => Some(format!("{c:?}")),
+        (Kind::Debug, None, false, Some(w)) => Some(format!("{c:w$?}")),
+        (Kind::Debug, None, true, None) => Some(format!("{c:#?}")),
+        // A char in a radix prints its code point. The corpus does not do this; bail to
+        // be safe rather than guess width semantics.
+        _ => None,
+    }
 }
 
 fn render_str(s: &str, spec: &Spec) -> Option<String> {
     if spec.plus || spec.zero_width.is_some() {
         return None; // sign/zero-pad meaningless for &str
     }
-    let mut body = match spec.kind {
-        Kind::Display => s.to_string(),
-        Kind::Debug => format!("{s:?}"),
-        _ => return None,
-    };
-    // `{:.N}` on a &str truncates to N chars.
-    if let Some(p) = spec.precision {
-        if spec.kind == Kind::Display {
+    match (spec.kind, spec.alternate, spec.precision, spec.width) {
+        (Kind::Display, false, None, None) => Some(s.to_string()),
+        (Kind::Display, false, None, Some(w)) => Some(format!("{s:w$}")),
+        (Kind::Display, false, Some(p), width) => {
             let truncated: String = s.chars().take(p).collect();
-            body = truncated;
-        } else {
-            return None;
+            Some(match width {
+                Some(w) => format!("{truncated:<w$}"),
+                None => truncated,
+            })
         }
+        (Kind::Debug, false, None, None) => Some(format!("{s:?}")),
+        (Kind::Debug, false, None, Some(w)) => Some(format!("{s:w$?}")),
+        (Kind::Debug, true, None, None) => Some(format!("{s:#?}")),
+        _ => None,
     }
-    Some(body)
+}
+
+fn render_byte_str(bytes: &[u8], spec: &Spec) -> Option<String> {
+    if spec.plus || spec.alternate || spec.precision.is_some() {
+        return None;
+    }
+    match spec.kind {
+        Kind::Debug | Kind::LowerHexDebug | Kind::UpperHexDebug => {
+            let mut rendered = Vec::with_capacity(bytes.len());
+            for byte in bytes {
+                rendered.push(render_byte_str_element(*byte, spec)?);
+            }
+            Some(format!("[{}]", rendered.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+fn render_byte_str_element(byte: u8, spec: &Spec) -> Option<String> {
+    Some(match (spec.kind, spec.zero_width, spec.width) {
+        (Kind::Debug, Some(w), _) => format!("{byte:0w$?}"),
+        (Kind::Debug, None, Some(w)) => format!("{byte:w$?}"),
+        (Kind::Debug, None, None) => format!("{byte:?}"),
+        (Kind::LowerHexDebug, Some(w), _) => format!("{byte:0w$x}"),
+        (Kind::LowerHexDebug, None, Some(w)) => format!("{byte:w$x}"),
+        (Kind::LowerHexDebug, None, None) => format!("{byte:x}"),
+        (Kind::UpperHexDebug, Some(w), _) => format!("{byte:0w$X}"),
+        (Kind::UpperHexDebug, None, Some(w)) => format!("{byte:w$X}"),
+        (Kind::UpperHexDebug, None, None) => format!("{byte:X}"),
+        _ => return None,
+    })
 }
 
 fn render_cstr(bytes: &CStrBytes, spec: &Spec) -> String {
     if spec.kind != Kind::Debug
         || spec.plus
+        || spec.width.is_some()
         || spec.zero_width.is_some()
         || spec.precision.is_some()
     {
@@ -1640,18 +1927,27 @@ fn render_cstr(bytes: &CStrBytes, spec: &Spec) -> String {
     }
     let value = CStr::from_bytes_with_nul(bytes.with_nul())
         .unwrap_or_else(|_| panic!("LiteralCStrFloor carried invalid C string bytes"));
-    format!("{value:?}")
+    if spec.alternate {
+        format!("{value:#?}")
+    } else {
+        format!("{value:?}")
+    }
 }
 
 fn render_bool(b: bool, spec: &Spec) -> Option<String> {
     if spec.plus || spec.zero_width.is_some() || spec.precision.is_some() {
         return None;
     }
-    match spec.kind {
-        Kind::Display => Some(format!("{b}")),
-        Kind::Debug => Some(format!("{b:?}")),
-        _ => None,
-    }
+    let body = match (spec.kind, spec.alternate) {
+        (Kind::Display, false) => format!("{b}"),
+        (Kind::Debug, false) => format!("{b:?}"),
+        (Kind::Debug, true) => format!("{b:#?}"),
+        _ => return None,
+    };
+    Some(match spec.width {
+        Some(w) => format!("{body:<w$}"),
+        None => body,
+    })
 }
 
 // ── Reconstruct a typed literal value from the source AST ─────────────────────────
@@ -1912,6 +2208,7 @@ fn reconstruct_lit(lit: &Lit) -> Result<Option<FmtValue>, String> {
         },
         Lit::Char(c) => Ok(Some(FmtValue::Char(c.value()))),
         Lit::Str(s) => Ok(Some(FmtValue::Str(s.value()))),
+        Lit::ByteStr(bytes) => Ok(Some(FmtValue::ByteStr(bytes.value()))),
         Lit::Bool(b) => Ok(Some(FmtValue::Bool(b.value))),
         // a byte literal `b'0'` is a u8.
         Lit::Byte(b) => Ok(Some(FmtValue::Int {
@@ -2661,6 +2958,11 @@ mod tests {
     use super::*;
     use sugar_ir_symbolic::num;
 
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+
     fn parse(src: &str) -> Expr {
         syn::parse_str(src).expect("expr parses")
     }
@@ -2841,6 +3143,25 @@ mod tests {
         );
     }
     #[test]
+    fn bare_width_and_sign_padding_int() {
+        assert_eq!(
+            resolve(r#"format!("{:+5}", 1)"#).unwrap().as_deref(),
+            Some("   +1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:+5}", -1)"#).unwrap().as_deref(),
+            Some("   -1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:+05}", 1)"#).unwrap().as_deref(),
+            Some("+0001")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:+05}", -1)"#).unwrap().as_deref(),
+            Some("-0001")
+        );
+    }
+    #[test]
     fn display_float_and_precision() {
         assert_eq!(
             resolve(r#"format!("{}", 3.14)"#).unwrap().as_deref(),
@@ -2872,6 +3193,21 @@ mod tests {
         assert_eq!(
             resolve(r#"format!("{}", true)"#).unwrap().as_deref(),
             Some("true")
+        );
+    }
+    #[test]
+    fn byte_string_hex_debug_dispatches_on_byte_floor() {
+        assert_eq!(
+            resolve(r#"format!("{:02x?}", b"Foo\0")"#)
+                .unwrap()
+                .as_deref(),
+            Some("[46, 6f, 6f, 00]")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:02X?}", b"Foo\0")"#)
+                .unwrap()
+                .as_deref(),
+            Some("[46, 6F, 6F, 00]")
         );
     }
     #[test]
@@ -2950,16 +3286,97 @@ mod tests {
         assert_eq!(resolve(r#"format!("{:p}", &x)"#).unwrap(), None);
     }
     #[test]
-    fn bails_on_alignment_width() {
-        // a bare width / fill+align is an alignment we do NOT reproduce -> bail.
+    fn bails_on_fill_alignment_width() {
+        // Fill+align is an alignment we do NOT reproduce -> bail.
         assert_eq!(resolve(r#"format!("{:>9}", 1)"#).unwrap(), None);
-        assert_eq!(resolve(r#"format!("{:9}", 1)"#).unwrap(), None);
         assert_eq!(resolve(r#"format!("{:^9?}", 1)"#).unwrap(), None);
     }
     #[test]
-    fn bails_on_alternate() {
-        assert_eq!(resolve(r#"format!("{:#?}", 1)"#).unwrap(), None);
+    fn alternate_debug_delegates_to_literal_floors() {
+        assert_eq!(
+            resolve(r#"format!("{:#?}", 1)"#).unwrap().as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:#?}", "hi")"#).unwrap().as_deref(),
+            Some("\"hi\"")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:#?}", true)"#).unwrap().as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:#?}", 'x')"#).unwrap().as_deref(),
+            Some("'x'")
+        );
+    }
+
+    #[test]
+    fn bails_on_unsupported_alternate_radix() {
         assert_eq!(resolve(r#"format!("{:#x}", 255u32)"#).unwrap(), None);
+    }
+
+    #[test]
+    fn format_args_macro_reduces_to_debug_text_format_value() {
+        let expr = parse(r#"format_args!("{}/{}", 10, 20)"#);
+        let scope = TemporalScope::new("format-args-value-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = build_format_value_body(&expr, &fcx);
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+
+        let Outcome::Complete(Desugared::FormatValue(value)) = node.desugar(&ctx) else {
+            panic!("format_args! should complete as a format value floor");
+        };
+
+        assert_eq!(
+            value.render(&Spec::parse("?").unwrap()).unwrap().as_deref(),
+            Some("10/20")
+        );
+    }
+
+    #[test]
+    fn format_args_text_dispatches_bare_width_on_its_floor() {
+        let mut captures = BTreeMap::new();
+        captures.insert(
+            "a".to_string(),
+            FmtValue::FormatArgsText("hello".to_string()),
+        );
+
+        match render_format_values(
+            "hello {a:1}",
+            &[],
+            &BTreeMap::new(),
+            &captures,
+            r#"format_args!("hello {a:1}")"#,
+        ) {
+            FloorRead::Complete(value) => assert_eq!(value, "hello hello"),
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
+    }
+
+    #[test]
+    fn pointer_format_bubbles_format_argument_effect() {
+        let mut captures = BTreeMap::new();
+        captures.insert("s".to_string(), FmtValue::Str(String::new()));
+
+        match render_format_values(
+            "{s:p}",
+            &[],
+            &BTreeMap::new(),
+            &captures,
+            r#"format!("{s:p}")"#,
+        ) {
+            FloorRead::Complete(value) => panic!("pointer format should not complete: {value}"),
+            FloorRead::Incomplete(Effect::FormatArgument { reason, .. }) => {
+                assert!(reason.contains("runtime address identity"), "{reason}");
+            }
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
     }
 
     // ── FOLD: closed integer arithmetic over literal operands ──
