@@ -54,20 +54,41 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 
 struct ResultInspectSugar {
     receiver: SugarBody<TermFloor>,
-    callback: Expr,
+    callback: ResultInspectCallback,
 }
 
 impl ResultInspectSugar {
     fn new(receiver: SugarBody<TermFloor>, callback: Expr) -> Box<dyn Sugar> {
-        Box::new(Self { receiver, callback })
+        Box::new(Self {
+            receiver,
+            callback: ResultInspectCallback::new(callback),
+        })
+    }
+}
+
+struct ResultInspectCallback {
+    callback_source: Expr,
+}
+
+impl ResultInspectCallback {
+    fn new(callback_source: Expr) -> Self {
+        Self { callback_source }
+    }
+
+    fn is_noop(&self, ctx: &SugarCtx) -> bool {
+        callback_is_noop(&self.callback_source, ctx)
+    }
+
+    fn boundary(&self) -> String {
+        self.callback_source.to_token_stream().to_string()
     }
 }
 
 impl Sugar for ResultInspectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if !callback_is_noop(&self.callback, ctx) {
+        if !self.callback.is_noop(ctx) {
             return Outcome::Incomplete(Effect::ResultInspectCallback {
-                boundary: self.callback.to_token_stream().to_string(),
+                boundary: self.callback.boundary(),
             });
         }
         let receiver = match self.receiver.reduce(ctx) {
