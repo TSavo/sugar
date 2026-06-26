@@ -1185,6 +1185,18 @@ fn relation_constraint_from_bodies(
         Ok(term) => term,
         Err(outcome) => return outcome,
     };
+    if let Some(effect) = relation_source_capability_effect(lhs_expr) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = relation_source_capability_effect(rhs_expr) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = relation_operand_capability_effect(lhs_expr, &lhs) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = relation_operand_capability_effect(rhs_expr, &rhs) {
+        return Outcome::Incomplete(effect);
+    }
     let kind = if relation_side_is_unreduced_iterator_quantifier(lhs.as_ref(), lhs_expr)
         || relation_side_is_unreduced_iterator_quantifier(rhs.as_ref(), rhs_expr)
     {
@@ -1203,6 +1215,58 @@ fn relation_constraint_from_bodies(
 
 fn relation_side_is_unreduced_iterator_quantifier(term: &Term, expr: &Expr) -> bool {
     term_bool(term).is_none() && predicate_term_is_unreduced_iterator_quantifier(expr)
+}
+
+pub(crate) fn relation_source_capability_effect(expr: &Expr) -> Option<Effect> {
+    relation_source_capability_kind(expr).map(|kind| Effect::RepresentationCast {
+        boundary: token_key(expr),
+        kind: kind.to_string(),
+    })
+}
+
+fn relation_source_capability_kind(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::Reference(reference) if reference.mutability.is_some() => Some("a `&mut` borrow"),
+        Expr::Reference(reference) => relation_source_capability_kind(&reference.expr),
+        Expr::RawAddr(_) => Some("a raw pointer (`&raw const`/`&raw mut`)"),
+        Expr::Unsafe(unsafe_expr) => {
+            expression_only_tail(&unsafe_expr.block).and_then(relation_source_capability_kind)
+        }
+        Expr::Block(block) => {
+            expression_only_tail(&block.block).and_then(relation_source_capability_kind)
+        }
+        Expr::Paren(paren) => relation_source_capability_kind(&paren.expr),
+        Expr::Group(group) => relation_source_capability_kind(&group.expr),
+        _ => None,
+    }
+}
+
+fn expression_only_tail(block: &syn::Block) -> Option<&Expr> {
+    match block.stmts.as_slice() {
+        [syn::Stmt::Expr(expr, None)] => Some(expr),
+        _ => None,
+    }
+}
+
+pub(crate) fn relation_operand_capability_effect(expr: &Expr, term: &Rc<Term>) -> Option<Effect> {
+    relation_operand_capability_kind(term).map(|kind| Effect::RepresentationCast {
+        boundary: token_key(expr),
+        kind: kind.to_string(),
+    })
+}
+
+fn relation_operand_capability_kind(term: &Rc<Term>) -> Option<&'static str> {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return None;
+    };
+    match name.as_str() {
+        "ref_mut" => Some("a `&mut` borrow"),
+        "raw_addr_const" | "raw_addr_mut" => Some("a raw pointer (`&raw const`/`&raw mut`)"),
+        // Shared borrows are value-transparent for relations; keep looking through them so
+        // `&&mut x` cannot smuggle mutable-reference identity into a relational warrant.
+        "ref" if args.len() == 1 => relation_operand_capability_kind(&args[0]),
+        _ => args.iter().find_map(relation_operand_capability_kind),
+    }
 }
 
 fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
@@ -1416,6 +1480,48 @@ mod tests {
         assert_eq!(variant_name, "variant_of");
         assert_eq!(variant_args.len(), 1);
         assert_str_term(args[1].as_ref(), "variant::Poll::Ready");
+    }
+
+    #[test]
+    fn assertion_surface_refuses_unsafe_mut_ref_operand() {
+        let lhs: Expr =
+            syn::parse_str("unsafe { &mut *cell.get() }").expect("parse unsafe mut-ref operand");
+        assert!(
+            relation_source_capability_effect(&lhs).is_some(),
+            "unsafe mut-ref operand must be recognized as a relation capability"
+        );
+        let expr: Expr = syn::parse_str("assert_eq!(unsafe { &mut *cell.get() }, comp)")
+            .expect("parse unsafe mut-ref relation surface");
+        let Expr::Macro(expr_macro) = &expr else {
+            panic!("expected macro expr");
+        };
+        let args = parse_macro_args(expr_macro.mac.tokens.clone()).expect("parse assert_eq args");
+        assert!(
+            relation_source_capability_effect(&args.exprs[0]).is_some(),
+            "parsed lhs must be a mutable-reference capability: {}",
+            token_key(&args.exprs[0])
+        );
+        let scope = TemporalScope::new("unsafe-mut-ref-surface-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let reducer = ReductionCtx::from_items_with_imports(&[], scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome = crate::sugar::factory::build_assertion_surface(&expr, &fcx).desugar(&ctx);
+
+        let Outcome::Incomplete(effect) = outcome else {
+            panic!("unsafe `&mut *p` relation operand must refuse");
+        };
+        assert!(
+            effect
+                .reason()
+                .contains("effectful / raw-pointer / mutable-reference term"),
+            "expected mutable-reference terminal, got {}",
+            effect.reason()
+        );
     }
 
     #[test]

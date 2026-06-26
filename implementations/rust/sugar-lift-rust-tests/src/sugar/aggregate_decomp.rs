@@ -14,6 +14,9 @@ use sugar_ir_symbolic::{and_, atomic_, num, str_const, Term};
 use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
+use crate::sugar::constraint::{
+    relation_operand_capability_effect, relation_source_capability_effect,
+};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
@@ -50,6 +53,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         rhs: aggregate_body(&rhs, fcx, &mut BTreeSet::new()),
         lhs_term: SugarBody::term(&lhs, fcx),
         rhs_term: SugarBody::term(&rhs, fcx),
+        lhs_expr: lhs,
+        rhs_expr: rhs,
         op,
     }))
 }
@@ -142,17 +147,32 @@ struct AggregateDecompSugar {
     rhs: AggregateBody,
     lhs_term: SugarBody<TermFloor>,
     rhs_term: SugarBody<TermFloor>,
+    lhs_expr: Expr,
+    rhs_expr: Expr,
     op: RelationOp,
 }
 
 impl Sugar for AggregateDecompSugar {
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(effect) = relation_source_capability_effect(&self.lhs_expr) {
+            return Outcome::Incomplete(effect);
+        }
+        if let Some(effect) = relation_source_capability_effect(&self.rhs_expr) {
+            return Outcome::Incomplete(effect);
+        }
         let lhs = aggregate_components(&self.lhs, ctx);
         let rhs = aggregate_components(&self.rhs, ctx);
         match (lhs, rhs) {
             (Ok(Some(lhs)), Ok(Some(rhs))) => decompose_eq(lhs, rhs, ctx),
             (Err(outcome), _) | (_, Err(outcome)) => outcome,
-            _ => fallback_relation(&self.lhs_term, &self.rhs_term, self.op, ctx),
+            _ => fallback_relation(
+                &self.lhs_term,
+                &self.rhs_term,
+                &self.lhs_expr,
+                &self.rhs_expr,
+                self.op,
+                ctx,
+            ),
         }
     }
 
@@ -507,6 +527,8 @@ fn structural_ctor_term_name(func: &Expr) -> Option<&'static str> {
 fn fallback_relation(
     lhs: &SugarBody<TermFloor>,
     rhs: &SugarBody<TermFloor>,
+    lhs_expr: &Expr,
+    rhs_expr: &Expr,
     op: RelationOp,
     ctx: &SugarCtx,
 ) -> Outcome {
@@ -518,6 +540,12 @@ fn fallback_relation(
         Ok(term) => term,
         Err(outcome) => return outcome,
     };
+    if let Some(effect) = relation_operand_capability_effect(lhs_expr, &lhs) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = relation_operand_capability_effect(rhs_expr, &rhs) {
+        return Outcome::Incomplete(effect);
+    }
     let entry = crate::assertion_entry_from_relation(lhs, rhs, op, ctx.scope);
     Outcome::Complete(Desugared::Constraints {
         atom: entry.atom,
