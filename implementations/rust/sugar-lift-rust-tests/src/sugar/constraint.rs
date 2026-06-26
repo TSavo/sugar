@@ -16,11 +16,11 @@ use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor
 use crate::sugar::float_floor;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
-    callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
-    literal_char_predicate_atom, literal_string_value, parse_macro_args, strip_refs_groups,
-    sugar_ctx_with_factory_audits, token_key, AssertionEntry, AssertionFactKind, CfgDisposition,
-    CfgPredicate, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome,
-    ReductionCtx, RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
+    callsite_assertion_name, const_fold_int_term, const_fold_u128_term, is_immutable_value_expr,
+    is_literal_identity_term, literal_char_predicate_atom, literal_string_value, parse_macro_args,
+    strip_refs_groups, sugar_ctx_with_factory_audits, token_key, AssertionEntry, AssertionFactKind,
+    CfgDisposition, CfgPredicate, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions,
+    Outcome, ReductionCtx, RelationOp, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
@@ -1226,7 +1226,11 @@ pub(crate) fn relation_source_capability_effect(expr: &Expr) -> Option<Effect> {
 
 fn relation_source_capability_kind(expr: &Expr) -> Option<&'static str> {
     match expr {
-        Expr::Reference(reference) if reference.mutability.is_some() => Some("a `&mut` borrow"),
+        Expr::Reference(reference)
+            if reference.mutability.is_some() && !is_immutable_value_expr(&reference.expr) =>
+        {
+            Some("a `&mut` borrow")
+        }
         Expr::Reference(reference) => relation_source_capability_kind(&reference.expr),
         Expr::RawAddr(_) => Some("a raw pointer (`&raw const`/`&raw mut`)"),
         Expr::Unsafe(unsafe_expr) => {
@@ -1260,6 +1264,7 @@ fn relation_operand_capability_kind(term: &Rc<Term>) -> Option<&'static str> {
         return None;
     };
     match name.as_str() {
+        "ref_mut" if args.len() == 1 && is_literal_identity_term(&args[0]) => None,
         "ref_mut" => Some("a `&mut` borrow"),
         "raw_addr_const" | "raw_addr_mut" => Some("a raw pointer (`&raw const`/`&raw mut`)"),
         // Shared borrows are value-transparent for relations; keep looking through them so
