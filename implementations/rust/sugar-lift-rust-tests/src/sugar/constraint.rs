@@ -1265,7 +1265,7 @@ fn relation_operand_capability_kind(term: &Rc<Term>) -> Option<&'static str> {
         // Shared borrows are value-transparent for relations; keep looking through them so
         // `&&mut x` cannot smuggle mutable-reference identity into a relational warrant.
         "ref" if args.len() == 1 => relation_operand_capability_kind(&args[0]),
-        _ => args.iter().find_map(relation_operand_capability_kind),
+        _ => None,
     }
 }
 
@@ -1376,6 +1376,36 @@ fn constraint_gap(reason: impl Into<String>) -> ! {
 mod tests {
     use super::*;
     use crate::{FloatWidthScope, TemporalPlan, TemporalScope};
+
+    #[test]
+    fn relation_capability_operand_check_only_classifies_the_compared_value() {
+        let expr: Expr = syn::parse_str("value").expect("parse relation operand provenance");
+        let pinned = num(1);
+        let direct_mut_ref = Rc::new(Term::Ctor {
+            name: "ref_mut".to_string(),
+            args: vec![Rc::clone(&pinned)],
+        });
+        assert!(
+            relation_operand_capability_effect(&expr, &direct_mut_ref).is_some(),
+            "a compared mutable-reference value is not timeless"
+        );
+        let shared_wrapped_mut_ref = Rc::new(Term::Ctor {
+            name: "ref".to_string(),
+            args: vec![Rc::clone(&direct_mut_ref)],
+        });
+        assert!(
+            relation_operand_capability_effect(&expr, &shared_wrapped_mut_ref).is_some(),
+            "a shared reference wrapper must not launder mutable-reference identity"
+        );
+        let value_from_mut_ref_argument = Rc::new(Term::Ctor {
+            name: "method:get_unchecked_mut".to_string(),
+            args: vec![direct_mut_ref],
+        });
+        assert!(
+            relation_operand_capability_effect(&expr, &value_from_mut_ref_argument).is_none(),
+            "method arguments are child computation, not the relation value's capability"
+        );
+    }
 
     #[test]
     fn bool_assertion_entry_delegates_binary_payload_to_constraint_floor() {
