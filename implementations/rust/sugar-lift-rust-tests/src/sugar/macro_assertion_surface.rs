@@ -5,12 +5,15 @@
 // through the factory as typed assertion-surface children. This sugar owns no
 // runtime effect of its own; child effects propagate, and construction gaps panic.
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::{and_, Formula};
 use syn::{Expr, Stmt};
 
 use crate::sugar::factory::{AssertionSurfaceFloor, SugarBody, SugarBuildCtx};
 use crate::{
-    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant, MAX_MACRO_EXPANSION_DEPTH,
+    let_simple_value_binding, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    MAX_MACRO_EXPANSION_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -78,7 +81,17 @@ fn build_macro_assertion_surface(
     } else {
         block
     };
-    let child_fcx = fcx.with_macro_depth(fcx.macro_depth() + 1);
+    let expansion_let_inits = expansion_simple_let_inits(&block.stmts);
+    let mut child_let_inits: BTreeMap<String, &Expr> = fcx
+        .let_inits()
+        .iter()
+        .map(|(name, expr)| (name.clone(), *expr))
+        .collect();
+    for (name, expr) in &expansion_let_inits {
+        child_let_inits.insert(name.clone(), expr);
+    }
+    let child_fcx_base = SugarBuildCtx::new(fcx.scope(), fcx.options(), &child_let_inits);
+    let child_fcx = child_fcx_base.with_macro_depth(fcx.macro_depth() + 1);
     let mut surface_exprs = Vec::new();
     collect_assertion_surfaces_from_stmts(&block.stmts, &child_fcx, &mut surface_exprs);
     if surface_exprs.is_empty() {
@@ -90,6 +103,20 @@ fn build_macro_assertion_surface(
             .map(|expr| SugarBody::assertion_surface(&expr, &child_fcx))
             .collect(),
     ))
+}
+
+fn expansion_simple_let_inits(stmts: &[Stmt]) -> BTreeMap<String, Expr> {
+    stmts
+        .iter()
+        .filter_map(|stmt| {
+            let Stmt::Local(local) = stmt else {
+                return None;
+            };
+            let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
+            let name = let_simple_value_binding(&local.pat)?;
+            Some((name, (*init.expr).clone()))
+        })
+        .collect()
 }
 
 pub(crate) fn collect_assertion_surfaces_from_stmts(
