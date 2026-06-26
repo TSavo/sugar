@@ -8,13 +8,13 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprArray, ExprRange, Pat, Stmt};
+use syn::{Expr, ExprRange, Pat, Stmt};
 use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    const_eval, const_int, strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
-    TemporalScope, SUGAR_SEQ_CAP,
+    const_eval, const_int, repeat_count_in_scope, repeat_count_literal, strip_refs_groups,
+    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -28,22 +28,20 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return None;
     };
-    let array = resolve_literal_array(&index.expr, fcx.let_inits(), Some(fcx.scope()), 0)?;
-    let (start, end) = slice_bounds(&index.index, array.elems.len())?;
+    let elems = resolve_literal_elems(&index.expr, fcx.let_inits(), Some(fcx.scope()), 0)?;
+    let (start, end) = slice_bounds(&index.index, elems.len())?;
     debug!(
         target: "sugar_lift_rust_tests::sugar::literal_slice",
         start,
         end,
-        len = array.elems.len(),
+        len = elems.len(),
         "recognized literal slice"
     );
     Some(Box::new(LiteralSliceSugar {
-        elems: array
-            .elems
-            .iter()
+        elems: elems
+            .into_iter()
             .skip(start)
             .take(end - start)
-            .cloned()
             .map(|expr| DesugaredElem {
                 value: const_eval(&expr, &BTreeMap::new()),
                 expr,
@@ -75,8 +73,8 @@ fn is_literal_slice_base_inner<'a>(
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return false;
     };
-    resolve_literal_array(&index.expr, let_inits, scope, 0)
-        .and_then(|array| slice_bounds(&index.index, array.elems.len()))
+    resolve_literal_elems(&index.expr, let_inits, scope, 0)
+        .and_then(|elems| slice_bounds(&index.index, elems.len()))
         .is_some()
 }
 
@@ -103,8 +101,8 @@ fn literal_slice_len_inner<'a>(
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return None;
     };
-    let array = resolve_literal_array(&index.expr, let_inits, scope, 0)?;
-    let (start, end) = slice_bounds(&index.index, array.elems.len())?;
+    let elems = resolve_literal_elems(&index.expr, let_inits, scope, 0)?;
+    let (start, end) = slice_bounds(&index.index, elems.len())?;
     Some(end - start)
 }
 
@@ -118,25 +116,35 @@ impl Sugar for LiteralSliceSugar {
     }
 }
 
-fn resolve_literal_array<'a>(
+fn resolve_literal_elems<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: Option<&'a TemporalScope>,
     depth: usize,
-) -> Option<&'a ExprArray> {
+) -> Option<Vec<Expr>> {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH {
         return None;
     }
     match strip_refs_groups(expr) {
-        Expr::Array(array) => Some(array),
+        Expr::Array(array) => Some(array.elems.iter().cloned().collect()),
+        Expr::Repeat(repeat) => {
+            let count = match scope {
+                Some(scope) => repeat_count_in_scope(&repeat.len, scope),
+                None => repeat_count_literal(&repeat.len),
+            }?;
+            if count > SUGAR_SEQ_CAP as usize {
+                return None;
+            }
+            Some((0..count).map(|_| (*repeat.expr).clone()).collect())
+        }
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             let init = let_inits
                 .get(&name)
                 .copied()
                 .or_else(|| scope.and_then(|scope| scope.stable_let_binding_for_term(&name)))?;
-            resolve_literal_array(init, let_inits, scope, depth + 1)
+            resolve_literal_elems(init, let_inits, scope, depth + 1)
         }
         _ => None,
     }

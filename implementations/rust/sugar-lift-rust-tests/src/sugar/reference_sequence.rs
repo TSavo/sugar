@@ -35,8 +35,11 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     // `&mut runtime`), so the factory falls through for anything that is not a finite
     // literal sequence -- no new domain is admitted.
     let source = match expr {
-        Expr::Reference(_) => expr,
-        Expr::Cast(cast) if matches!(cast.expr.as_ref(), Expr::Reference(_)) => &cast.expr,
+        Expr::Reference(reference) => reference.expr.as_ref(),
+        Expr::Cast(cast) => match cast.expr.as_ref() {
+            Expr::Reference(reference) => reference.expr.as_ref(),
+            _ => return None,
+        },
         _ => return None,
     };
     build_literal_sequence_composite(source, fcx)
