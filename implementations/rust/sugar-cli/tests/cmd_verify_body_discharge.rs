@@ -23,15 +23,19 @@
 //
 // Requires `z3` on PATH; skips the solver-dependent asserts otherwise.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_claim_envelope::{
+    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
+};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
+    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
 
 fn unique_dir(suffix: &str) -> PathBuf {
@@ -66,35 +70,53 @@ dialects = ["smt-lib-v2.6"]
     .expect("write ir compiler manifest");
 }
 
-/// Compute the v1.1-flat member CID + canonical bytes, exactly as
-/// `sugar-verifier::load_all_proofs` re-derives it.
-fn flat_member(mut env: Json) -> (String, Vec<u8>) {
-    if let Json::Object(map) = &mut env {
-        map.remove("cid");
-        map.remove("producerSignature");
+fn json_to_cvalue(j: &Json) -> Arc<CValue> {
+    match j {
+        Json::Null => CValue::null(),
+        Json::Bool(b) => CValue::boolean(*b),
+        Json::Number(n) => CValue::integer(i128::from(n.as_i64().unwrap_or(0))),
+        Json::String(s) => CValue::string(s.clone()),
+        Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
+        Json::Object(map) => CValue::object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), json_to_cvalue(v)))
+                .collect::<Vec<_>>(),
+        ),
     }
-    let canonical = json_to_canonical_jcs(&env);
-    let cid = blake3_512_of(canonical.as_bytes());
-    (cid, canonical.into_bytes())
 }
 
-fn json_to_canonical_jcs(j: &Json) -> String {
-    fn to_cv(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
-        use sugar_canonicalizer::Value as CV;
-        match j {
-            Json::Null => CV::null(),
-            Json::Bool(b) => CV::boolean(*b),
-            Json::Number(n) => CV::integer(i128::from(n.as_i64().unwrap_or(0))),
-            Json::String(s) => CV::string(s.clone()),
-            Json::Array(items) => CV::array(items.iter().map(to_cv).collect()),
-            Json::Object(map) => CV::object(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), to_cv(v)))
-                    .collect::<Vec<_>>(),
-            ),
-        }
-    }
-    encode_jcs(&to_cv(j))
+fn string_array(value: &Json) -> Vec<String> {
+    value
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|item| item.as_str().expect("string").to_string())
+        .collect()
+}
+
+fn cvalue_array(value: &Json) -> Vec<Arc<CValue>> {
+    value
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(json_to_cvalue)
+        .collect()
+}
+
+fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = ClaimContractMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_claim_contract(memento);
+    cid
+}
+
+fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = BridgeMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_bridge(memento);
+    cid
 }
 
 /// An Int constant IR term.
@@ -180,52 +202,86 @@ fn publish_double_project_with_formals(
     let signer_seed: Ed25519Seed = [0x42u8; 32];
     let declared_at = "2026-05-23T00:00:00.000Z";
 
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
+    let formals_vec = string_array(&formals);
+    let formal_sorts_vec = cvalue_array(&formal_sorts);
 
     // The body-derived op-contract for `double`: carries `formals` (so it is
     // body-bearing) and the supplied `post`; NO `pre`.
-    let target_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "double",
-                "formals": formals,
-                "formalSorts": formal_sorts,
-                "post": post
-            }
-        }
-    });
-    let (target_cid, target_bytes) = flat_member(target_env);
-    members.insert(target_cid.clone(), target_bytes);
+    let target_contract = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: formals_vec.clone(),
+        emit_empty_formals: formals_vec.is_empty(),
+        formal_sorts: formal_sorts_vec,
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "double".into(),
+        pre: None,
+        post: Some(json_to_cvalue(&post)),
+        inv: None,
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: declared_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint target contract");
+    let target_cid = push_claim_contract(&mut graph, target_contract);
 
     // The harvested test assertion in the source contract's `inv` slot
     // (one bridged callsite). The default is `=(double(3), 6)`.
-    let source_env = json!({
-        "evidence": {
-            "kind": "contract",
-            "body": {
-                "contractName": "double_test",
-                "inv": inv
-            }
-        }
-    });
-    let (source_cid, source_bytes) = flat_member(source_env);
-    members.insert(source_cid, source_bytes);
+    let source_contract = mint_contract(&MintContractArgs {
+        evidence_term: None,
+        formals: Vec::new(),
+        emit_empty_formals: false,
+        formal_sorts: Vec::new(),
+        library: None,
+        body_discharge_eligible: true,
+        body_discharge_refusal_reason: None,
+        panic_loci: Vec::new(),
+        class_shapes: Vec::new(),
+        source_warrants: Vec::new(),
+        contract_name: "double_test".into(),
+        pre: None,
+        post: None,
+        inv: Some(json_to_cvalue(&inv)),
+        out_binding: "result".into(),
+        produced_by: "test".into(),
+        produced_at: declared_at.into(),
+        input_cids: Vec::new(),
+        authoring: Authoring::KitAuthor {
+            author: "test".into(),
+            note: None,
+        },
+        signer_seed,
+    })
+    .expect("mint source contract");
+    push_claim_contract(&mut graph, source_contract);
 
     // The bridge: double (sourceSymbol) -> the body-derived contract.
-    let bridge_env = json!({
-        "evidence": {
-            "kind": "bridge",
-            "body": {
-                "sourceSymbol": "double",
-                "sourceLayer": "rust",
-                "targetContractCid": target_cid,
-                "targetLayer": "rust-kit"
-            }
-        }
+    let bridge = mint_bridge(&MintBridgeArgs {
+        produced_by: "test".into(),
+        produced_at: declared_at.into(),
+        source_symbol: "double".into(),
+        source_layer: "rust".into(),
+        target_contract: ContractMementoRef::new(target_cid),
+        target_layer: "rust-kit".into(),
+        ir_arg_sorts: vec!["Int".into()],
+        ir_return_sort: "Int".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: None,
+        callsite: None,
     });
-    let (bridge_cid, bridge_bytes) = flat_member(bridge_env);
-    members.insert(bridge_cid, bridge_bytes);
+    push_bridge(&mut graph, bridge);
 
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);
     let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
@@ -234,7 +290,7 @@ fn publish_double_project_with_formals(
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),

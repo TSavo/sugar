@@ -9805,10 +9805,14 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use sugar_claim_envelope::{
+        mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
+    };
     use sugar_ir_types::Sort;
     use sugar_proof_envelope::{
-        build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed,
-        ProofEnvelopeInput,
+        build_proof_envelope, ed25519_pubkey_string, proof_filename, BridgeMemento,
+        ClaimContractMemento, ContractMementoRef, Ed25519Seed, LibrarySugarBindingMemento,
+        ProofEnvelopeInput, ProofGraph,
     };
 
     // ---- Source Oracle + materialize (#1359) --------------------------------
@@ -9934,12 +9938,34 @@ mod tests {
     }
 
     #[test]
+    fn source_oracle_same_locus_replacement_reports_name_and_source_drift() {
+        let dir = unique_tmp("replacement");
+        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let memento = mint_memento_for(&dir, "rev", src);
+        // Same locus, different function. That is a name axis change plus source
+        // drift, not "gone": the oracle can still see the replacement.
+        fs::write(dir.join("src/lib.rs"), "pub fn other() -> u32 { 0 }\n").unwrap();
+        let err = resolve_source_memento(&dir, &memento).expect_err("replacement must refuse");
+        assert!(
+            err.reason.contains("source name changed"),
+            "same-locus replacement must name the name axis, got: {}",
+            err.reason
+        );
+        assert!(
+            err.reason.contains("source CID misaligned"),
+            "replacement must still name the byte/source axis, got: {}",
+            err.reason
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn source_oracle_refuses_when_function_absent() {
         let dir = unique_tmp("absent");
         let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
-        // Replace with a file that has no `rev`.
-        fs::write(dir.join("src/lib.rs"), "pub fn other() -> u32 { 0 }\n").unwrap();
+        // Gone means no function exists at the pinned name or locus.
+        fs::write(dir.join("src/lib.rs"), "pub struct Other;\n").unwrap();
         let err = resolve_source_memento(&dir, &memento).expect_err("absent fn must refuse");
         assert!(err.reason.contains("not found"), "got: {}", err.reason);
         fs::remove_dir_all(&dir).ok();
@@ -12298,18 +12324,23 @@ reason = "scope discipline probe"
         proof_name: &str,
     ) -> String {
         sugar_entry["contract_cid"] = Value::String(contract_cid.to_string());
-        let member = json!({ "body": sugar_entry });
+        let member = json!({
+            "body": sugar_entry,
+            "header": {"kind": "library-sugar-binding-entry"},
+        });
         let member_bytes = serde_json::to_vec(&member).expect("member json");
         let member_cid = blake3_512_of(&member_bytes);
-        let mut members = BTreeMap::new();
-        members.insert(member_cid, member_bytes);
+        let memento = LibrarySugarBindingMemento::new(member_bytes);
+        assert_eq!(memento.cid().as_str(), member_cid);
+        let mut graph = ProofGraph::new();
+        graph.push_library_sugar_binding(memento);
         let signer_seed: Ed25519Seed = [0x91; 32];
         let proof = build_proof_envelope(&ProofEnvelopeInput {
             name: proof_name.to_string(),
             version: "0.1.0".to_string(),
             binary_cid: None,
             metadata: None,
-            members,
+            graph,
             signer_cid: ed25519_pubkey_string(&signer_seed),
             signer_seed,
             declared_at: "2026-05-31T00:00:00.000Z".to_string(),
@@ -12326,57 +12357,93 @@ reason = "scope discipline probe"
         source_symbol: &str,
         formals: Value,
     ) -> (String, String) {
-        let contract_member = json!({
-            "header": {
-                "kind": "contract",
-                "name": contract_name,
-                "outBinding": "out",
-                "post": {
-                    "kind": "atomic",
-                    "name": "=",
-                    "args": [
-                        {"kind": "var", "name": "out"},
-                        {"kind": "ctor", "name": "vendor:pattern", "args": []}
-                    ]
-                },
-                "formals": formals,
-                "formalSorts": [{"kind": "primitive", "name": "string"}],
-                "verdict": "holds"
-            },
-            "metadata": {
-                "library": library,
-                "postHash": "test-post-hash"
-            }
-        });
-        let contract_bytes = serde_json::to_vec(&contract_member).expect("contract member json");
-        let contract_cid = blake3_512_of(&contract_bytes);
-
-        let bridge_member = json!({
-            "header": {
-                "kind": "bridge",
-                "sourceLayer": "source",
-                "sourceSymbol": source_symbol,
-                "targetLayer": "kit",
-                "targetContractCid": contract_cid,
-                "verdict": "holds"
-            },
-            "metadata": {
-                "notes": "test self-pinned Rust vendor function bridge"
-            }
-        });
-        let bridge_bytes = serde_json::to_vec(&bridge_member).expect("bridge member json");
-        let bridge_cid = blake3_512_of(&bridge_bytes);
-
-        let mut members = BTreeMap::new();
-        members.insert(contract_cid.clone(), contract_bytes);
-        members.insert(bridge_cid, bridge_bytes);
         let signer_seed: Ed25519Seed = [0x92; 32];
+        let formals_vec: Vec<String> = formals
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let contract = mint_contract(&MintContractArgs {
+            evidence_term: None,
+            contract_name: contract_name.to_string(),
+            pre: None,
+            post: Some(CValue::object([
+                ("kind", CValue::string("atomic")),
+                ("name", CValue::string("=")),
+                (
+                    "args",
+                    CValue::array(vec![
+                        CValue::object([
+                            ("kind", CValue::string("var")),
+                            ("name", CValue::string("out")),
+                        ]),
+                        CValue::object([
+                            ("kind", CValue::string("ctor")),
+                            ("name", CValue::string("vendor:pattern")),
+                            ("args", CValue::array(Vec::new())),
+                        ]),
+                    ]),
+                ),
+            ])),
+            inv: None,
+            out_binding: "out".to_string(),
+            produced_by: "walk-rpc-test".to_string(),
+            produced_at: "2026-06-18T00:00:00.000Z".to_string(),
+            input_cids: Vec::new(),
+            authoring: Authoring::KitAuthor {
+                author: "walk-rpc-test".to_string(),
+                note: None,
+            },
+            signer_seed,
+            formals: formals_vec,
+            emit_empty_formals: formals.as_array().is_some(),
+            formal_sorts: vec![CValue::object([
+                ("kind", CValue::string("primitive")),
+                ("name", CValue::string("String")),
+            ])],
+            library: Some(library.to_string()),
+            body_discharge_eligible: true,
+            body_discharge_refusal_reason: None,
+            panic_loci: Vec::new(),
+            class_shapes: Vec::new(),
+            source_warrants: Vec::new(),
+        })
+        .expect("mint vendor function contract");
+        let contract_cid = contract.cid.clone();
+        let contract_memento = ClaimContractMemento::new(contract.canonical_bytes);
+        assert_eq!(contract_memento.cid().as_str(), contract_cid);
+
+        let bridge = mint_bridge(&MintBridgeArgs {
+            produced_by: "walk-rpc-test".to_string(),
+            produced_at: "2026-06-18T00:00:00.000Z".to_string(),
+            source_symbol: source_symbol.to_string(),
+            source_layer: "source".to_string(),
+            target_contract: ContractMementoRef::new(contract_cid.clone()),
+            target_layer: "kit".to_string(),
+            ir_arg_sorts: Vec::new(),
+            ir_return_sort: String::new(),
+            notes: "test self-pinned Rust vendor function bridge".to_string(),
+            signer_seed,
+            target_proof_cid: None,
+            callsite: None,
+        });
+        let bridge_cid = bridge.cid.clone();
+        let bridge_memento = BridgeMemento::new(bridge.canonical_bytes);
+        assert_eq!(bridge_memento.cid().as_str(), bridge_cid);
+
+        let mut graph = ProofGraph::new();
+        graph.push_claim_contract(contract_memento);
+        graph.push_bridge(bridge_memento);
         let proof = build_proof_envelope(&ProofEnvelopeInput {
             name: "rust-vendor-function-contract".to_string(),
             version: "0.1.0".to_string(),
             binary_cid: None,
             metadata: None,
-            members,
+            graph,
             signer_cid: ed25519_pubkey_string(&signer_seed),
             signer_seed,
             declared_at: "2026-06-18T00:00:00.000Z".to_string(),

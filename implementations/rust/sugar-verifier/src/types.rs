@@ -91,6 +91,13 @@ pub fn memento_body_field<'a>(envelope: &'a Json, field: &str) -> Option<&'a Jso
     }
 }
 
+fn contract_body_pointer(envelope: &Json) -> Option<String> {
+    memento_body_field(envelope, "bodyCid")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadError {
     pub proof_path: String,
@@ -117,6 +124,16 @@ pub struct MementoPool {
     /// The memento IS the verification. To verify something is to find
     /// its memento in this map.
     pub mementos: BTreeMap<String, Json>,
+    /// Atom CID -> flat atom bytes from the proof catalog.
+    ///
+    /// Leaves live here exactly once. Body graphs and mementos point to these
+    /// CIDs instead of embedding semantic leaves inline.
+    pub atoms: BTreeMap<String, Vec<u8>>,
+    /// Body/composition CID -> pointer-only body bytes from the proof catalog.
+    ///
+    /// Contract mementos name, bind, and locate a body by `bodyCid`; the body
+    /// map stores the composition graph that bottoms out in `atoms`.
+    pub body: BTreeMap<String, Vec<u8>>,
     /// Formula CID -> memento CID. Index for fast formula lookup.
     /// The hash IS the boundary: systems don't exchange formulas,
     /// they exchange hashes. This index lets us find the memento
@@ -177,6 +194,12 @@ pub struct MementoPool {
     pub cid_to_name: BTreeMap<String, String>,
     /// Contract name -> CID (reverse index)
     pub name_to_cid: BTreeMap<String, String>,
+    /// Contract name -> body CID pointer carried by the contract memento.
+    ///
+    /// `name_to_cid` keeps the resolver-facing memento/member identity. This
+    /// table follows the memento's body pointer so semantic diff can compare
+    /// composed pointer graphs without deriving them sideways from the envelope.
+    pub name_to_body_cid: BTreeMap<String, String>,
 
     // ---- Opacity discharge indexes (issue #384 B.5) ----
     //
@@ -398,6 +421,8 @@ impl MementoPool {
 
             if let Some(n) = name {
                 let n = n.to_string();
+                let body_cid = env_for_name.and_then(contract_body_pointer);
+
                 // Detect collisions: same contract name, different CIDs.
                 // When two surfaces in the same proof emit a contract with the
                 // same name (e.g. rust-bind emits a post-only `option_unwrap`
@@ -422,7 +447,10 @@ impl MementoPool {
                             // Upgrade: pre-bearing newcomer beats post-only incumbent.
                             self.cid_to_name.remove(&existing);
                             self.cid_to_name.insert(memento_cid.clone(), n.clone());
-                            self.name_to_cid.insert(n, memento_cid.clone());
+                            self.name_to_cid.insert(n.clone(), memento_cid.clone());
+                            if let Some(body_cid) = body_cid {
+                                self.name_to_body_cid.insert(n, body_cid);
+                            }
                         } else if !new_has_pre && existing_has_pre {
                             // Incumbent is already pre-bearing; silently drop the new post-only.
                         } else if is_euf_inv_only_conjoin_duplicate(&n, existing_env, new_env) {
@@ -443,7 +471,10 @@ impl MementoPool {
                     }
                 } else {
                     self.cid_to_name.insert(memento_cid.clone(), n.clone());
-                    self.name_to_cid.insert(n, memento_cid.clone());
+                    self.name_to_cid.insert(n.clone(), memento_cid.clone());
+                    if let Some(body_cid) = body_cid {
+                        self.name_to_body_cid.insert(n, body_cid);
+                    }
                 }
             }
         }
@@ -605,6 +636,12 @@ impl MementoPool {
     /// must not silently overwrite earlier-loaded resolutions; surface
     /// collisions via `load_errors` so the verifier reports them.
     pub fn merge(&mut self, other: Self) {
+        for (cid, bytes) in other.atoms {
+            self.atoms.entry(cid).or_insert(bytes);
+        }
+        for (cid, bytes) in other.body {
+            self.body.entry(cid).or_insert(bytes);
+        }
         for (cid, env) in other.mementos {
             self.mementos.entry(cid).or_insert(env);
         }
@@ -672,6 +709,9 @@ impl MementoPool {
             } else {
                 self.name_to_cid.insert(k, v);
             }
+        }
+        for (k, v) in other.name_to_body_cid {
+            self.name_to_body_cid.entry(k).or_insert(v);
         }
         // Opacity discharge indexes: first-insertion wins (same policy as
         // other single-valued indexes). Collisions on these keys mean two

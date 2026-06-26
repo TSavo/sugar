@@ -946,24 +946,24 @@ fn write_proof_run_bundle(
     memento: &sugar_ir_types::ProofRunMemento,
     stages: &[sugar_ir_types::StageReceipt],
 ) -> Result<(String, PathBuf), ProofRunArtifactError> {
-    use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput};
+    use sugar_proof_envelope::{
+        build_proof_envelope, ProofEnvelopeInput, ProofGraph, ProofRunMemento, StageReceiptMemento,
+    };
 
-    let mut members = BTreeMap::new();
-    members.insert(
-        memento.header.cid.clone(),
+    let mut graph = ProofGraph::new();
+    graph.push_proof_run(ProofRunMemento::new(
         memento
             .to_jcs_string()
             .map_err(|e| ProofRunArtifactError::Build(e.to_string()))?
             .into_bytes(),
-    );
+    ));
     for stage in stages {
-        members.insert(
-            stage.header.cid.clone(),
+        graph.push_stage_receipt(StageReceiptMemento::new(
             stage
                 .to_jcs_string()
                 .map_err(|e| ProofRunArtifactError::Build(e.to_string()))?
                 .into_bytes(),
-        );
+        ));
     }
 
     let signer = sugar_proof_envelope::ed25519_pubkey_string(&RUN_SIGNER_SEED);
@@ -973,7 +973,7 @@ fn write_proof_run_bundle(
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed: RUN_SIGNER_SEED,
         declared_at: iso_now(),
@@ -1882,7 +1882,8 @@ fn mint_and_cache(
 ) -> Result<(String, Json), Box<dyn std::error::Error>> {
     use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
     use sugar_proof_envelope::{
-        build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, ProofEnvelopeInput,
+        build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, ImplicationMemento,
+        ProofEnvelopeInput, ProofGraph,
     };
 
     std::fs::create_dir_all(cache_dir)?;
@@ -1987,8 +1988,6 @@ fn mint_and_cache(
     ]);
     let final_canonical = encode_jcs(&memento).into_bytes();
 
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    members.insert(cid.clone(), final_canonical.clone());
     let signer_cid = blake3_512_of(pubkey.as_bytes());
     // Encode prover_tag into the filename to disambiguate per-solver
     // mementos for the same (antecedent, consequent) pair.
@@ -2005,7 +2004,17 @@ fn mint_and_cache(
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph: {
+            let memento = ImplicationMemento::new(final_canonical.clone());
+            assert_eq!(
+                memento.cid().as_str(),
+                cid,
+                "implication cache memento CID disagrees with its envelope identity"
+            );
+            let mut graph = ProofGraph::new();
+            graph.push_implication(memento);
+            graph
+        },
         signer_cid,
         signer_seed: *seed,
         declared_at: now.into(),

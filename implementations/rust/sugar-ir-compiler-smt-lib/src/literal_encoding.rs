@@ -321,29 +321,29 @@ impl LiteralConstants {
     }
 }
 
-/// True iff this atom is emitted through the z3 STRING-THEORY path (real
-/// `String`-sorted operands, real `"..."` literals) instead of the legacy
-/// opaque-Int regime.
-///
-/// Two cases:
-///   1. A named string-theory predicate (`contains`, `str.chars-in-set`, ...).
-///   2. STRING-ROUTED EQUALITY: `=` whose one side is a String-sorted string
-///      const and whose other side is a non-`None` ctor (a `callresult_*`
-///      subject) or another string const. This is the G1 conjoin shape: the
-///      universe row `str.chars-in-set(call, set)` forces the subject term to
-///      the SMT `String` sort, so the sworn equality over the SAME subject
-///      must also live in string theory or the two rows are ill-sorted
-///      against each other and z3 errors instead of refuting.
-///
-/// DELIBERATE EXCLUSIONS (the legacy Python regime is preserved bit-for-bit):
-///   - `=` over a free VAR (`r == "a"`) stays opaque-Int: the Python kit's
-///     cross-type consistency (`r == "a" ∧ r == 1` -> UNSAT via distinctness)
-///     depends on every literal living in the Int universe.
-///   - `=` against the `None` ctor stays opaque-Int: `None != "x"` is enforced
-///     by the distinctness axiom, which string theory cannot express over an
-///     uninterpreted String const (it would freely model `None == "x"`).
-///   - `=` between a string const and an int/bool const stays opaque-Int
-///     (cross-type distinctness is Python-semantics-critical).
+// True iff this atom is emitted through the z3 STRING-THEORY path (real
+// `String`-sorted operands, real `"..."` literals) instead of the legacy
+// opaque-Int regime.
+//
+// Two cases:
+//   1. A named string-theory predicate (`contains`, `str.chars-in-set`, ...).
+//   2. STRING-ROUTED EQUALITY: `=` whose one side is a String-sorted string
+//      const and whose other side is a non-`None` ctor (a `callresult_*`
+//      subject) or another string const. This is the G1 conjoin shape: the
+//      universe row `str.chars-in-set(call, set)` forces the subject term to
+//      the SMT `String` sort, so the sworn equality over the SAME subject
+//      must also live in string theory or the two rows are ill-sorted
+//      against each other and z3 errors instead of refuting.
+//
+// DELIBERATE EXCLUSIONS (the legacy Python regime is preserved bit-for-bit):
+//   - `=` over a free VAR (`r == "a"`) stays opaque-Int: the Python kit's
+//     cross-type consistency (`r == "a" ∧ r == 1` -> UNSAT via distinctness)
+//     depends on every literal living in the Int universe.
+//   - `=` against the `None` ctor stays opaque-Int: `None != "x"` is enforced
+//     by the distinctness axiom, which string theory cannot express over an
+//     uninterpreted String const (it would freely model `None == "x"`).
+//   - `=` between a string const and an int/bool const stays opaque-Int
+//     (cross-type distinctness is Python-semantics-critical).
 thread_local! {
     // Ctor subjects that appear in a string-theory PREDICATE atom (chars-in-set,
     // contains, prefix-of, ...) -- i.e. genuinely forced to the String sort.

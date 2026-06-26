@@ -865,6 +865,7 @@ checksum = "aaaa"
         let (cid_a, n_a) = dependency_vectors_cid_of_text(LOCK_A).expect("parse");
         let (cid_b, n_b) = dependency_vectors_cid_of_text(reordered).expect("parse");
         assert_eq!(n_a, 3);
+        assert_eq!(n_b, 3);
         assert_eq!(cid_a, cid_b, "package order must not change the CID");
         assert!(cid_a.starts_with("blake3-512:"));
     }

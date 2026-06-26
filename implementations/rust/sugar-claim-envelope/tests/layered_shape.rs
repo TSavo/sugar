@@ -30,7 +30,9 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_claim_envelope::{
     mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
 };
-use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_verify_string, Ed25519Seed};
+use sugar_proof_envelope::{
+    ed25519_pubkey_string, ed25519_verify_string, ContractMementoRef, Ed25519Seed,
+};
 
 fn seed() -> Ed25519Seed {
     [0x42u8; 32]
@@ -313,9 +315,9 @@ fn bridge_memento_has_layered_shape() {
         produced_at: "2026-04-30T00:00:00.000Z".into(),
         source_symbol: "foo".into(),
         source_layer: "rust".into(),
-        target_contract_cid:
-            "blake3-512:0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0c0"
-                .into(),
+        target_contract: ContractMementoRef::new(
+            "blake3-512:0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0c0",
+        ),
         target_layer: "ir".into(),
         ir_arg_sorts: vec!["Int".into()],
         ir_return_sort: "Int".into(),

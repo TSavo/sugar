@@ -98,7 +98,6 @@ fn print_human(report: &DoctorReport) {
     println!();
 
     let mut passes = 0usize;
-    let mut skips = 0usize;
     let mut warns = 0usize;
     let mut fails = 0usize;
 
@@ -110,10 +109,6 @@ fn print_human(report: &DoctorReport) {
                     "pass".green().bold().to_string(),
                     check.name.green().to_string(),
                 )
-            }
-            CheckStatus::Skip => {
-                skips += 1;
-                ("skip".dimmed().to_string(), check.name.dimmed().to_string())
             }
             CheckStatus::Warn => {
                 warns += 1;
@@ -139,19 +134,17 @@ fn print_human(report: &DoctorReport) {
     println!();
     if report.ok {
         println!(
-            "{}: {} passed, {} skipped, {} warned, {} failed",
+            "{}: {} passed, {} warned, {} failed",
             "ok".green().bold(),
             passes,
-            skips,
             warns,
             fails
         );
     } else {
         println!(
-            "{}: {} passed, {} skipped, {} warned, {} failed",
+            "{}: {} passed, {} warned, {} failed",
             "FAIL".red().bold(),
             passes,
-            skips,
             warns,
             fails
         );

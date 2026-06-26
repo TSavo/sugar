@@ -35,7 +35,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed};
+use sugar_proof_envelope::{
+    ed25519_pubkey_string, ed25519_sign_string, AuthorityMementoRef, ContractMementoRef,
+    Ed25519Seed,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClaimEnvelopeError {
@@ -665,7 +668,7 @@ pub struct MintAuthorityArgs {
     pub key: String,
     pub scope_kind: String,
     pub scope: String,
-    pub parent_authority_cid: Option<String>,
+    pub parent_authority: Option<AuthorityMementoRef>,
     pub produced_by: String,
     pub produced_at: String,
     pub signer_seed: Ed25519Seed,
@@ -678,8 +681,8 @@ fn authority_content_cid(args: &MintAuthorityArgs) -> String {
         ("scopeKind".into(), Value::string(args.scope_kind.clone())),
         ("scope".into(), Value::string(args.scope.clone())),
     ];
-    if let Some(parent) = &args.parent_authority_cid {
-        kvs.push(("parentAuthorityCid".into(), Value::string(parent.clone())));
+    if let Some(parent) = &args.parent_authority {
+        kvs.push(("parentAuthorityCid".into(), Value::string(parent.as_str())));
     }
     hash_value(&Arc::new(Value::Object(kvs)))
 }
@@ -703,8 +706,8 @@ pub fn mint_authority(args: &MintAuthorityArgs) -> Result<MintedEnvelope, ClaimE
 
     let header_cid = authority_content_cid(args);
     let mut input_cids = Vec::new();
-    if let Some(parent) = &args.parent_authority_cid {
-        input_cids.push(parent.clone());
+    if let Some(parent) = &args.parent_authority {
+        input_cids.push(parent.as_str().to_string());
     }
     input_cids.sort();
     let input_arr: Vec<Arc<Value>> = input_cids.into_iter().map(Value::string).collect();
@@ -714,8 +717,8 @@ pub fn mint_authority(args: &MintAuthorityArgs) -> Result<MintedEnvelope, ClaimE
         ("scopeKind".into(), Value::string(args.scope_kind.clone())),
         ("scope".into(), Value::string(args.scope.clone())),
     ];
-    if let Some(parent) = &args.parent_authority_cid {
-        kind_specific.push(("parentAuthorityCid".into(), Value::string(parent.clone())));
+    if let Some(parent) = &args.parent_authority {
+        kind_specific.push(("parentAuthorityCid".into(), Value::string(parent.as_str())));
     }
     kind_specific.push(("verdict".into(), Value::string("holds")));
     kind_specific.push(("inputCids".into(), Value::array(input_arr)));
@@ -1148,7 +1151,7 @@ pub struct MintBridgeArgs {
     pub produced_at: String,
     pub source_symbol: String,
     pub source_layer: String,
-    pub target_contract_cid: String,
+    pub target_contract: ContractMementoRef,
     pub target_layer: String,
     pub ir_arg_sorts: Vec<String>,
     pub ir_return_sort: String,
@@ -1184,6 +1187,7 @@ pub struct BridgeCallsite {
 
 /// Compute the content CID of a bridge declaration (signer-independent).
 fn bridge_content_cid(args: &MintBridgeArgs) -> String {
+    let target_contract_cid = args.target_contract.cid().as_str();
     let arg_sorts: Vec<Arc<Value>> = args
         .ir_arg_sorts
         .iter()
@@ -1192,10 +1196,7 @@ fn bridge_content_cid(args: &MintBridgeArgs) -> String {
     let mut fields: Vec<(&str, Arc<Value>)> = vec![
         ("sourceSymbol", Value::string(args.source_symbol.clone())),
         ("sourceLayer", Value::string(args.source_layer.clone())),
-        (
-            "targetContractCid",
-            Value::string(args.target_contract_cid.clone()),
-        ),
+        ("targetContractCid", Value::string(target_contract_cid)),
         ("targetLayer", Value::string(args.target_layer.clone())),
         ("irArgSorts", Value::array(arg_sorts)),
         ("irReturnSort", Value::string(args.ir_return_sort.clone())),
@@ -1212,6 +1213,7 @@ fn bridge_content_cid(args: &MintBridgeArgs) -> String {
 }
 
 pub fn mint_bridge(args: &MintBridgeArgs) -> MintedEnvelope {
+    let target_contract_cid = args.target_contract.cid().as_str();
     let arg_sorts: Vec<Arc<Value>> = args
         .ir_arg_sorts
         .iter()
@@ -1240,7 +1242,7 @@ pub fn mint_bridge(args: &MintBridgeArgs) -> MintedEnvelope {
         ),
         (
             "targetContractCid".into(),
-            Value::string(args.target_contract_cid.clone()),
+            Value::string(target_contract_cid),
         ),
         (
             "targetLayer".into(),
@@ -1256,7 +1258,7 @@ pub fn mint_bridge(args: &MintBridgeArgs) -> MintedEnvelope {
         ("propertyHash".into(), Value::string(property_hash)),
         (
             "inputCids".into(),
-            Value::array(vec![Value::string(args.target_contract_cid.clone())]),
+            Value::array(vec![Value::string(target_contract_cid)]),
         ),
     ];
     // Forward pin into the body so the verifier (enumerate_callsites ->
@@ -1314,9 +1316,9 @@ pub struct MintImplicationArgs {
     pub produced_at: String,
     pub antecedent_hash: String,
     pub consequent_hash: String,
-    pub antecedent_cid: String,
-    pub consequent_cid: String,
-    pub additional_input_cids: Vec<String>,
+    pub antecedent: ContractMementoRef,
+    pub consequent: ContractMementoRef,
+    pub additional_inputs: Vec<AuthorityMementoRef>,
     pub antecedent_slot: String,
     pub consequent_slot: String,
     pub prover: String,
@@ -1327,6 +1329,8 @@ pub struct MintImplicationArgs {
 }
 
 fn implication_content_cid(args: &MintImplicationArgs) -> String {
+    let antecedent_cid = args.antecedent.cid().as_str();
+    let consequent_cid = args.consequent.cid().as_str();
     let v = Value::object([
         (
             "antecedentHash",
@@ -1336,8 +1340,8 @@ fn implication_content_cid(args: &MintImplicationArgs) -> String {
             "consequentHash",
             Value::string(args.consequent_hash.clone()),
         ),
-        ("antecedentCid", Value::string(args.antecedent_cid.clone())),
-        ("consequentCid", Value::string(args.consequent_cid.clone())),
+        ("antecedentCid", Value::string(antecedent_cid)),
+        ("consequentCid", Value::string(consequent_cid)),
         (
             "antecedentSlot",
             Value::string(args.antecedent_slot.clone()),
@@ -1351,6 +1355,8 @@ fn implication_content_cid(args: &MintImplicationArgs) -> String {
 }
 
 pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
+    let antecedent_cid = args.antecedent.cid().as_str();
+    let consequent_cid = args.consequent.cid().as_str();
     // DERIVED per spec:
     //   bindingHash  = hash(canonical({antecedentHash, consequentHash}))
     //   propertyHash = hash("implication:" || antecedentHash || ":" || consequentHash)
@@ -1371,8 +1377,12 @@ pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
     ));
 
     let header_cid = implication_content_cid(args);
-    let mut input_cids = vec![args.antecedent_cid.clone(), args.consequent_cid.clone()];
-    input_cids.extend(args.additional_input_cids.iter().cloned());
+    let mut input_cids = vec![antecedent_cid.to_string(), consequent_cid.to_string()];
+    input_cids.extend(
+        args.additional_inputs
+            .iter()
+            .map(|input| input.as_str().to_string()),
+    );
     input_cids.sort();
     let input_arr: Vec<Arc<Value>> = input_cids.into_iter().map(Value::string).collect();
 
@@ -1385,14 +1395,8 @@ pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
             "consequentHash".into(),
             Value::string(args.consequent_hash.clone()),
         ),
-        (
-            "antecedentCid".into(),
-            Value::string(args.antecedent_cid.clone()),
-        ),
-        (
-            "consequentCid".into(),
-            Value::string(args.consequent_cid.clone()),
-        ),
+        ("antecedentCid".into(), Value::string(antecedent_cid)),
+        ("consequentCid".into(), Value::string(consequent_cid)),
         (
             "antecedentSlot".into(),
             Value::string(args.antecedent_slot.clone()),
@@ -1958,7 +1962,7 @@ mod tests {
             key: authority_key.clone(),
             scope_kind: "contract".into(),
             scope: "checked_add_u8.postcondition".into(),
-            parent_authority_cid: Some("blake3-512:parent".into()),
+            parent_authority: Some(AuthorityMementoRef::new("blake3-512:parent")),
             produced_by: "test".into(),
             produced_at: "2026-05-08T00:00:00.000Z".into(),
             signer_seed: dummy_seed(),

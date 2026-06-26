@@ -32,7 +32,7 @@
 // failing the substrate pipeline. Any other spawn failure (wrong
 // permissions, exit > 0) is a hard error.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,7 +55,10 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, AuthorityMemento,
+    AuthorityMementoRef, BridgeMemento, ClaimContractMemento, ContractMementoRef, Ed25519Seed,
+    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
+    SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -2232,7 +2235,7 @@ fn mint_bridge_from_decl(
         produced_at: produced_at.to_string(),
         source_symbol: source_symbol.to_string(),
         source_layer: source_layer.to_string(),
-        target_contract_cid: target_contract_cid.to_string(),
+        target_contract: ContractMementoRef::new(target_contract_cid.to_string()),
         target_layer: target_layer.to_string(),
         ir_arg_sorts: vec![],
         ir_return_sort: String::new(),
@@ -2356,7 +2359,23 @@ fn mint_ir_document_with_source_and_plan_mementos(
         }
     }
 
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut proof_graph = ProofGraph::new();
+    let mut proof_member_cids: BTreeSet<String> = BTreeSet::new();
+    macro_rules! push_graph_memento {
+        ($type:ident, $push:ident, $expected_cid:expr, $bytes:expr) => {{
+            let expected_cid = $expected_cid.to_string();
+            let memento = $type::new($bytes);
+            assert_eq!(
+                memento.cid().as_str(),
+                expected_cid,
+                "{} CID disagrees with its typed memento identity",
+                stringify!($type)
+            );
+            if proof_member_cids.insert(memento.cid().as_str().to_string()) {
+                proof_graph.$push(memento);
+            }
+        }};
+    }
     let mut authorities_by_id: BTreeMap<String, AuthorityRef> = BTreeMap::new();
     let mut proof_authority: Option<AuthorityRef> = None;
     // Contracts indexed by their CONTENT CID, never by name. Two distinct
@@ -2388,14 +2407,14 @@ fn mint_ir_document_with_source_and_plan_mementos(
     if let Some(source_mementos) = source_mementos {
         for source_memento in source_mementos {
             let (cid, bytes) = mint_source_memento(source_memento, None)?;
-            members.entry(cid).or_insert(bytes);
+            push_graph_memento!(SourceMemento, push_source, cid.as_str(), bytes);
         }
     }
 
     if let Some(plan_mementos) = plan_mementos {
         for plan_memento in plan_mementos {
             let (cid, bytes) = mint_plan_memento(plan_memento)?;
-            members.entry(cid).or_insert(bytes);
+            push_graph_memento!(PlanMemento, push_plan, cid.as_str(), bytes);
         }
     }
 
@@ -2416,14 +2435,15 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 })?),
                 None => None,
             };
-            let parent_authority_cid = parent.map(|parent| parent.cid.clone());
+            let parent_authority =
+                parent.map(|parent| AuthorityMementoRef::new(parent.cid.clone()));
             let signer_seed = parent.map(|parent| parent.seed).unwrap_or(seed);
             let args = MintAuthorityArgs {
                 principal: principal.to_string(),
                 key: key.clone(),
                 scope_kind: scope_kind.to_string(),
                 scope: scope.to_string(),
-                parent_authority_cid,
+                parent_authority,
                 produced_by: "sugar-cli".to_string(),
                 produced_at: produced_at.clone(),
                 signer_seed,
@@ -2444,9 +2464,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
             {
                 return Err(format!("duplicate authority `{id}`"));
             }
-            members
-                .entry(minted.cid.clone())
-                .or_insert(minted.canonical_bytes);
+            push_graph_memento!(
+                AuthorityMemento,
+                push_authority,
+                minted.cid.as_str(),
+                minted.canonical_bytes
+            );
         }
     }
 
@@ -2713,7 +2736,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
             Some(Value::Array(arr)) => {
                 for source_memento in arr {
                     let (cid, bytes) = mint_source_memento(source_memento, Some(&name))?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(SourceMemento, push_source, cid.as_str(), bytes);
                 }
             }
             Some(value) => {
@@ -2857,7 +2880,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 produced_at: produced_at.clone(),
                 source_symbol,
                 source_layer: "source".to_string(),
-                target_contract_cid: m.cid.clone(),
+                target_contract: ContractMementoRef::new(m.cid.clone()),
                 target_layer: "kit".to_string(),
                 ir_arg_sorts: vec![],
                 ir_return_sort: String::new(),
@@ -2872,9 +2895,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 // site: no call-site provenance to carry.
                 callsite: None,
             });
-            members
-                .entry(bridge.cid.clone())
-                .or_insert(bridge.canonical_bytes);
+            push_graph_memento!(
+                BridgeMemento,
+                push_bridge,
+                bridge.cid.as_str(),
+                bridge.canonical_bytes
+            );
         }
 
         // Index by CONTENT CID. A re-emission of a byte-identical contract
@@ -2903,7 +2929,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
             name_cids.push(m.cid.clone());
         }
 
-        members.entry(m.cid.clone()).or_insert(m.canonical_bytes);
+        push_graph_memento!(
+            ClaimContractMemento,
+            push_claim_contract,
+            m.cid.as_str(),
+            m.canonical_bytes
+        );
     }
 
     // #1358 / #1355: stamp the project's platform_profile onto each
@@ -2918,16 +2949,21 @@ fn mint_ir_document_with_source_and_plan_mementos(
             match decl.get("kind").and_then(|v| v.as_str()) {
                 Some("library-sugar-binding-entry") => {
                     let (cid, bytes) = mint_library_sugar_binding_entry(decl)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(
+                        LibrarySugarBindingMemento,
+                        push_library_sugar_binding,
+                        cid.as_str(),
+                        bytes
+                    );
                 }
                 Some("witness-memento") => {
                     let (cid, bytes) = mint_witness_memento(decl)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(WitnessMemento, push_witness, cid.as_str(), bytes);
                 }
                 Some("bridge") => {
                     let (cid, bytes) =
                         mint_bridge_from_decl(decl, &produced_at, default_signer_seed)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
                 }
                 _ => {}
             }
@@ -2937,23 +2973,28 @@ fn mint_ir_document_with_source_and_plan_mementos(
             match decl.get("kind").and_then(|v| v.as_str()) {
                 Some("library-sugar-binding-entry") => {
                     let (cid, bytes) = mint_library_sugar_binding_entry(decl)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(
+                        LibrarySugarBindingMemento,
+                        push_library_sugar_binding,
+                        cid.as_str(),
+                        bytes
+                    );
                 }
                 Some("witness-memento") => {
                     let (cid, bytes) = mint_witness_memento(decl)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(WitnessMemento, push_witness, cid.as_str(), bytes);
                 }
                 Some("bridge") => {
                     let (cid, bytes) =
                         mint_bridge_from_decl(decl, &produced_at, default_signer_seed)?;
-                    members.entry(cid).or_insert(bytes);
+                    push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
                 }
                 _ => {}
             }
         }
     }
 
-    if members.is_empty() {
+    if proof_member_cids.is_empty() {
         return Err("no contracts to mint".to_string());
     }
 
@@ -3013,8 +3054,8 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     })
                 })
                 .transpose()?;
-            let additional_input_cids = authority
-                .map(|authority| vec![authority.cid.clone()])
+            let additional_inputs = authority
+                .map(|authority| vec![AuthorityMementoRef::new(authority.cid.clone())])
                 .unwrap_or_default();
             let signer_seed = authority
                 .map(|authority| authority.seed)
@@ -3028,9 +3069,9 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 produced_at: produced_at.clone(),
                 antecedent_hash: antecedent_hash.to_string(),
                 consequent_hash: consequent_hash.to_string(),
-                antecedent_cid: antecedent.attestation_cid.clone(),
-                consequent_cid: consequent.attestation_cid.clone(),
-                additional_input_cids,
+                antecedent: ContractMementoRef::new(antecedent.attestation_cid.clone()),
+                consequent: ContractMementoRef::new(consequent.attestation_cid.clone()),
+                additional_inputs,
                 antecedent_slot: antecedent_slot.to_string(),
                 consequent_slot: consequent_slot.to_string(),
                 prover: optional_str(implication, "prover")
@@ -3051,7 +3092,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
             };
 
             let m = mint_implication(&args);
-            members.entry(m.cid.clone()).or_insert(m.canonical_bytes);
+            push_graph_memento!(
+                ImplicationMemento,
+                push_implication,
+                m.cid.as_str(),
+                m.canonical_bytes
+            );
         }
     }
 
@@ -3138,7 +3184,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         version: "1.0.0".to_string(),
         binary_cid: None,
         metadata,
-        members,
+        graph: proof_graph,
         signer_cid: proof_signer,
         signer_seed: proof_signer_seed,
         declared_at: produced_at,
@@ -5423,17 +5469,17 @@ mod tests {
                 }),
             );
 
-        let mut members = BTreeMap::new();
-        members.insert(
-            contract.cid,
-            serde_json::to_vec(&env).expect("serialize mutated memento"),
-        );
+        let contract_bytes = serde_json::to_vec(&env).expect("serialize mutated memento");
+        let contract_memento = ClaimContractMemento::new(contract_bytes);
+        assert_eq!(contract_memento.cid().as_str(), contract.cid);
+        let mut graph = ProofGraph::new();
+        graph.push_claim_contract(contract_memento);
         let proof = build_proof_envelope(&ProofEnvelopeInput {
             name: "dependency-policy-fixture".to_string(),
             version: "1.0.0".to_string(),
             binary_cid: None,
             metadata: None,
-            members,
+            graph,
             signer_cid: ed25519_pubkey_string(&signer_seed),
             signer_seed,
             declared_at: produced_at,

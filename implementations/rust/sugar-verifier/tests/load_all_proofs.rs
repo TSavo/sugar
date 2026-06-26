@@ -11,18 +11,18 @@
 //   - happy path: a Rust-kit-published .proof loads cleanly, indexes
 //     mementos by CID and bridges by sourceSymbol
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sugar_canonicalizer::blake3_512_of;
+use sugar_canonicalizer::{blake3_512_of, Value as CValue};
 use sugar_claim_envelope::{
-    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
+    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
 };
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento, ContractBody,
+    ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::load_all_proofs;
 
@@ -37,6 +37,22 @@ fn make_unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = ClaimContractMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_claim_contract(memento);
+    cid
+}
+
+fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
+    let cid = minted.cid.clone();
+    let memento = BridgeMemento::new(minted.canonical_bytes);
+    assert_eq!(memento.cid().as_str(), cid);
+    graph.push_bridge(memento);
+    cid
+}
+
 fn publish_parseint_proof(dir: &Path) -> String {
     // Publish a real parseInt .proof via the Rust kit, return its CID.
     reset_collector();
@@ -45,7 +61,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
     let signer_seed: Ed25519Seed = [0x42u8; 32];
     let declared_at = "2026-04-30T00:00:00.000Z";
     let produced_by = "rust-test@1.0";
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
     let mut name_to_cid = std::collections::HashMap::<String, String>::new();
     for d in &decls {
         let args = MintContractArgs {
@@ -74,15 +90,15 @@ fn publish_parseint_proof(dir: &Path) -> String {
             signer_seed,
         };
         let m = mint_contract(&args).expect("mint_contract");
-        members.insert(m.cid.clone(), m.canonical_bytes);
-        name_to_cid.insert(d.name.clone(), m.cid);
+        let cid = push_claim_contract(&mut graph, m);
+        name_to_cid.insert(d.name.clone(), cid);
     }
     let bridge_args = MintBridgeArgs {
         produced_by: produced_by.into(),
         produced_at: declared_at.into(),
         source_symbol: "parseInt".into(),
         source_layer: "ts".into(),
-        target_contract_cid: name_to_cid["parseInt"].clone(),
+        target_contract: ContractMementoRef::new(name_to_cid["parseInt"].clone()),
         target_layer: "rust-kit".into(),
         ir_arg_sorts: vec!["String".into()],
         ir_return_sort: "Int".into(),
@@ -92,7 +108,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
         callsite: None,
     };
     let bridge = mint_bridge(&bridge_args);
-    members.insert(bridge.cid.clone(), bridge.canonical_bytes);
+    push_bridge(&mut graph, bridge);
 
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);
     let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
@@ -101,7 +117,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),
@@ -140,6 +156,50 @@ fn empty_dir_returns_empty_pool() {
     assert_eq!(pool.mementos.len(), 0);
     assert_eq!(pool.bridges_by_symbol.len(), 0);
     assert_eq!(pool.load_errors.len(), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn catalog_graph_sections_load_flat_atoms_and_pointer_bodies_by_cid() {
+    let dir = make_unique_dir("catalog-graph-sections");
+    let signer_seed: Ed25519Seed = [0x42u8; 32];
+    let mut graph = ProofGraph::new();
+    let atom = FlatAtom::new(CValue::object([
+        ("kind", CValue::string("atom")),
+        ("predicate", CValue::string("result = x")),
+    ]));
+    let atom_cid = atom.cid().as_str().to_string();
+    let atom_bytes = atom.bytes().to_vec();
+    let atom_memento = graph.register_atom(atom);
+    let body = graph.register_body(ContractBody::new(&atom_memento));
+    let body_cid = body.cid().as_str().to_string();
+    let body_bytes = body.bytes().to_vec();
+    let signer_cid = blake3_512_of(ed25519_pubkey_string(&signer_seed).as_bytes());
+    let built = build_proof_envelope(&ProofEnvelopeInput {
+        name: "@test/catalog-graph".into(),
+        version: "1.0.0".into(),
+        binary_cid: None,
+        metadata: None,
+        graph,
+        signer_cid,
+        signer_seed,
+        declared_at: "2026-04-30T00:00:00.000Z".into(),
+    });
+    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write");
+
+    let pool = load_all_proofs::run(&dir);
+    assert_eq!(pool.load_errors.len(), 0, "{:?}", pool.load_errors);
+    assert_eq!(
+        pool.atoms.get(&atom_cid),
+        Some(&atom_bytes),
+        "flat atom bytes must live in the catalog `atoms` map under their CID"
+    );
+    assert_eq!(
+        pool.body.get(&body_cid),
+        Some(&body_bytes),
+        "contract bodies must be pointer-only graph entries under their body CID"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -327,7 +387,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
     let decls = sugar_ir_symbolic::finish();
     let signer_seed: Ed25519Seed = [0x99u8; 32];
     let declared_at = "2026-04-30T01:00:00.000Z";
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
     for d in &decls {
         let args = MintContractArgs {
             evidence_term: None,
@@ -355,7 +415,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
             signer_seed,
         };
         let m = mint_contract(&args).expect("mint");
-        members.insert(m.cid, m.canonical_bytes);
+        push_claim_contract(&mut graph, m);
     }
     let signer_cid = blake3_512_of(ed25519_pubkey_string(&signer_seed).as_bytes());
     let built = build_proof_envelope(&ProofEnvelopeInput {
@@ -363,7 +423,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),

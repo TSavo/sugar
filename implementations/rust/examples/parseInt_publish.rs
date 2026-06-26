@@ -14,7 +14,6 @@
 //   5. Write <hex>.proof to the directory passed as argv[1].
 //   6. Print the full self-identifying CID to stdout.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -25,7 +24,8 @@ use sugar_claim_envelope::{
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{begin_collecting, finish, forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
+    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
 
 fn main() -> ExitCode {
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     let declared_at = "2026-04-30T12:00:00.000Z";
     let produced_by = "rust-kit@1.0";
 
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
     let mut contract_name_to_cid = std::collections::HashMap::<String, String>::new();
 
     for d in &contract_decls {
@@ -92,8 +92,10 @@ fn main() -> ExitCode {
             }
         };
         println!("  contract minted: {} -> CID {}", d.name, minted.cid);
-        members.insert(minted.cid.clone(), minted.canonical_bytes);
+        let memento = ClaimContractMemento::new(minted.canonical_bytes);
+        assert_eq!(memento.cid().as_str(), minted.cid);
         contract_name_to_cid.insert(d.name.clone(), minted.cid);
+        graph.push_claim_contract(memento);
     }
 
     // ----- 3. Mint the bridge: parseInt (TS surface) -> contract memento -----
@@ -109,7 +111,7 @@ fn main() -> ExitCode {
         produced_at: declared_at.into(),
         source_symbol: "parseInt".into(),
         source_layer: "ts".into(),
-        target_contract_cid: parseint_target_cid,
+        target_contract: ContractMementoRef::new(parseint_target_cid),
         target_layer: "rust-kit".into(),
         ir_arg_sorts: vec!["String".into()],
         ir_return_sort: "Int".into(),
@@ -120,7 +122,9 @@ fn main() -> ExitCode {
     };
     let minted_bridge = mint_bridge(&bridge_args);
     println!("  bridge   minted: parseInt -> CID {}", minted_bridge.cid);
-    members.insert(minted_bridge.cid.clone(), minted_bridge.canonical_bytes);
+    let bridge_memento = BridgeMemento::new(minted_bridge.canonical_bytes);
+    assert_eq!(bridge_memento.cid().as_str(), minted_bridge.cid);
+    graph.push_bridge(bridge_memento);
 
     // ----- 4. Bundle into a .proof catalog -----
     // Compute a real signer CID: hash the producer's public key bytes
@@ -134,7 +138,7 @@ fn main() -> ExitCode {
         version: "1.0.0".into(),
         binary_cid: None,
         metadata: None,
-        members,
+        graph,
         signer_cid,
         signer_seed,
         declared_at: declared_at.into(),

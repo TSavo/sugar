@@ -38,7 +38,7 @@
 //   `sugar-lift` bin for direct invocation.
 
 use base64::Engine;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -50,7 +50,8 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_symbolic::{serialize::formula_to_value, ContractDecl, Formula};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, ClaimContractMemento, Ed25519Seed,
+    ProofEnvelopeInput, ProofGraph,
 };
 
 pub mod call_edges;
@@ -537,7 +538,8 @@ fn push_unique_operand(operands: &mut Vec<Rc<Formula>>, candidate: Rc<Formula>) 
 /// one memento; the residual same-name guard below is then a defensive
 /// tripwire that should never fire.
 pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutput, LiftMintError> {
-    let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut graph = ProofGraph::new();
+    let mut emitted_member_cids: BTreeSet<String> = BTreeSet::new();
     let mut contract_cids: BTreeMap<String, String> = BTreeMap::new();
     // Signer-independent content CIDs for contractSetCid computation (spec #94).
     let mut content_cids: Vec<String> = Vec::new();
@@ -596,10 +598,17 @@ pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutp
         contract_cids.insert(d.name.clone(), m.cid.clone());
         // If the CID itself already exists (different name, same IR),
         // members map collapses on insert; count as dedup.
-        if members.contains_key(&m.cid) {
+        if emitted_member_cids.contains(&m.cid) {
             deduplicated += 1;
         } else {
-            members.insert(m.cid, m.canonical_bytes);
+            let memento = ClaimContractMemento::new(m.canonical_bytes);
+            assert_eq!(
+                memento.cid().as_str(),
+                m.cid,
+                "mint_contract returned a contract CID that disagrees with ClaimContractMemento"
+            );
+            emitted_member_cids.insert(memento.cid().as_str().to_string());
+            graph.push_claim_contract(memento);
         }
     }
 
@@ -613,7 +622,7 @@ pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutp
         version: opts.catalog_version.clone(),
         binary_cid: None,
         metadata: None,
-        members: members.clone(),
+        graph,
         signer_cid,
         signer_seed: opts.signer_seed,
         declared_at: opts.produced_at.clone(),
@@ -624,7 +633,7 @@ pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutp
         bytes: built.bytes,
         cid: built.cid,
         contract_set_cid,
-        member_count: members.len(),
+        member_count: emitted_member_cids.len(),
         contract_cids,
         deduplicated,
     })
