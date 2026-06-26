@@ -4782,6 +4782,10 @@ impl TemporalScope {
         self.fn_registry.lookup(name).is_some()
     }
 
+    pub(crate) fn visible_fn(&self, name: &str) -> Option<std::rc::Rc<syn::ItemFn>> {
+        self.fn_registry.lookup(name)
+    }
+
     pub(crate) fn visible_fn_has_noop_body(&self, name: &str) -> bool {
         fn unit_expr(expr: &Expr) -> bool {
             matches!(strip_refs_groups(expr), Expr::Tuple(tuple) if tuple.elems.is_empty())
@@ -6342,10 +6346,22 @@ fn peel_fold_adaptors_inner<'a>(
                         }
                         func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
                             let func = strip_refs_groups(func).clone();
-                            Box::new(move |inner, _fcx| {
+                            let name = simple_path_name(&func)?;
+                            if !scope.is_some_and(|scope| scope.has_visible_fn(&name)) {
+                                return None;
+                            }
+                            Box::new(move |inner, fcx| {
                                 Box::new(sugar::function_map::FunctionMapSugar {
                                     inner: sugar::factory::SugarBody::from_node(inner),
-                                    func,
+                                    body: sugar::function_map::FunctionMapBody::build_result(
+                                        func.clone(),
+                                        fcx,
+                                    )
+                                    .unwrap_or_else(|reason| {
+                                        panic!(
+                                            "function_map wrapper could not construct visible function body: {reason}"
+                                        )
+                                    }),
                                 })
                             })
                         }
@@ -22241,6 +22257,42 @@ fn t() {
         assert!(
             dump.contains("literal:Array(i:10,i:12,i:2,i:4)") && !dump.contains("method:map"),
             "function map should materialize the mapped literal array: {dump}"
+        );
+    }
+
+    #[test]
+    fn function_map_over_term_sequence_curries_visible_body() {
+        let src = r#"
+            #[test]
+            fn function_map_term_elem(runtime: usize) {
+                fn incr(x: usize) -> usize {
+                    x + 1
+                }
+                assert_eq!([runtime].map(incr).into_iter().sum::<usize>(), runtime + 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "function_map must ask the sequence element for its term floor and curry the visible function body, not require a rematerializable ConstVal; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "term-sequence function_map should not refuse a pure visible function body: {:?}",
+            out.skip_reasons
+        );
+        let lifted = out
+            .decls
+            .iter()
+            .find(|decl| decl.name == "tests/test_src.rs::function_map_term_elem")
+            .expect("expected lifted assertion contract for function_map_term_elem");
+        let dump = format!("{:?}", lifted.inv);
+        assert!(
+            dump.contains("opaque:function_map-elem:runtime")
+                && !dump.contains("method:map")
+                && !dump.contains("call:incr"),
+            "function_map should curry the element term through the visible body in the lifted assertion: {dump}"
         );
     }
 

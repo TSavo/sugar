@@ -6,7 +6,7 @@
 // verbatim from the `Adaptor::Identity` arm of the former `apply_one_adaptor` match.
 
 use crate::sugar::factory::{CompositeFloor, SugarBody};
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::{Outcome, Sugar, SugarCtx};
 
 /// `iter` / `into_iter` / `cloned` / `copied` / `fuse`: pass the inner element
 /// sequence through unchanged.
@@ -17,10 +17,10 @@ pub(crate) struct IdentitySugar {
 impl Sugar for IdentitySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.inner.reduce(ctx) {
-            Outcome::Complete(d) => Outcome::Complete(Desugared::Seq(
-                d.into_seq()
-                    .unwrap_or_else(|| identity_gap("inner reduced to non-sequence")),
-            )),
+            Outcome::Complete(d @ (crate::Desugared::Seq(_) | crate::Desugared::TermSeq(_))) => {
+                Outcome::Complete(d)
+            }
+            Outcome::Complete(_) => identity_gap("inner reduced to non-sequence"),
             Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
         }
     }
