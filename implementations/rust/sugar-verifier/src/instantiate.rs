@@ -279,10 +279,13 @@ mod strip_outer_forall_tests {
     fn nested_and(depth: usize) -> Json {
         let mut f = json!({"kind":"atomic","name":"p","args":[{"kind":"var","name":"x"}]});
         for _ in 0..depth {
-            f = json!({"kind":"and","operands":[
-                {"kind":"atomic","name":"q","args":[]},
-                f
-            ]});
+            let mut node = serde_json::Map::with_capacity(2);
+            node.insert("kind".to_string(), Json::String("and".to_string()));
+            node.insert(
+                "operands".to_string(),
+                Json::Array(vec![json!({"kind":"atomic","name":"q","args":[]}), f]),
+            );
+            f = Json::Object(node);
         }
         f
     }
@@ -293,43 +296,76 @@ mod strip_outer_forall_tests {
         // old `let out = f.clone()` deep-cloned the subtree at every recursion
         // level). Pre-fix measurements on this exact probe: depth 1000 -> 5.8s,
         // depth 2000 -> 23.2s (3.99x for 2x depth = quadratic). Linear is in the
-        // low-ms range. We substitute over deeply nested formulas up to depth
-        // 8000 and assert the total stays far under a bound that the quadratic
-        // would blow by ~1000x (depth-8000 quadratic alone was ~370s). Big stack
+        // low-ms range. The test also budgets the whole probe wall time: a
+        // performance guard that burns minutes is itself a regression. Big stack
         // because the recursion depth tracks the formula nesting. Run with
         // `-- --nocapture` to print the per-depth timings.
         std::thread::Builder::new()
-            .stack_size(512 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let repl =
                     json!({"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":7});
-                let mut total_us: u128 = 0;
+                let mut total_substitution_us: u128 = 0;
+                let probe_start = std::time::Instant::now();
                 let mut prev: Option<u128> = None;
-                for &depth in &[1000usize, 2000, 4000, 8000] {
-                    // Build OUTSIDE the timed region; only the substitution is
-                    // timed. We do NOT serialize the result here -- correctness of
-                    // substitute_formula is covered by the dedicated semantic
-                    // tests; this guard is purely about asymptotic cost.
-                    let f = nested_and(depth);
-                    let t0 = std::time::Instant::now();
-                    let out = substitute_formula(&f, "x", &repl);
-                    let us = t0.elapsed().as_micros();
-                    assert!(out.is_object(), "substitution must return a formula node");
-                    total_us += us;
-                    let ratio = prev.map(|p| us as f64 / p.max(1) as f64).unwrap_or(0.0);
+                for &depth in &[128usize, 256, 512, 1024] {
+                    let case_start = std::time::Instant::now();
+                    let substitution_us;
+                    {
+                        let f = nested_and(depth);
+                        let t0 = std::time::Instant::now();
+                        let out = substitute_formula(&f, "x", &repl);
+                        substitution_us = t0.elapsed().as_micros();
+                        assert!(out.is_object(), "substitution must return a formula node");
+                    }
+                    let case_us = case_start.elapsed().as_micros();
+                    total_substitution_us += substitution_us;
+                    let ratio = prev
+                        .map(|p| substitution_us as f64 / p.max(1) as f64)
+                        .unwrap_or(0.0);
                     eprintln!(
-                        "[substitute scaling] depth={depth:6} time={us:>10}us ratio_vs_prev={ratio:.2}x"
+                        "[substitute scaling] depth={depth:5} substitution={substitution_us:>8}us \
+                         case_wall={case_us:>8}us ratio_vs_prev={ratio:.2}x"
                     );
-                    prev = Some(us);
+                    prev = Some(substitution_us);
                 }
-                // Sum of SUBSTITUTION time only. Linear: a few ms. Quadratic: the
-                // depth-2000 substitution alone was ~23s pre-fix. 1000ms guard
-                // gives ~2 orders of magnitude headroom over linear -> non-flaky.
-                let total_ms = total_us / 1000;
+                let probe_ms = probe_start.elapsed().as_millis();
+                let substitution_ms = total_substitution_us / 1000;
                 assert!(
-                    total_ms < 1000,
-                    "substitute_formula scaled super-linearly ({total_ms}ms of substitution for \
-                     depths up to 8000) -- the O(N^2) subtree-clone regressed"
+                    substitution_ms < 100,
+                    "substitute_formula scaled super-linearly ({substitution_ms}ms of substitution \
+                     for depths up to 1024) -- the O(N^2) subtree-clone regressed"
+                );
+                assert!(
+                    probe_ms < 500,
+                    "substitute_formula performance guard took {probe_ms}ms wall time; the test \
+                     fixture regressed into benchmark-scale work"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn nested_and_fixture_builds_by_moving_the_prior_subtree() {
+        // This catches the previous test-fixture rake: wrapping the growing
+        // subtree with `json!(..., f)` reserializes/copies the accumulated value
+        // every iteration, so the guard becomes quadratic before substitution
+        // even starts.
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let t0 = std::time::Instant::now();
+                {
+                    let f = nested_and(2048);
+                    assert!(f.is_object(), "fixture must produce a formula node");
+                }
+                let elapsed_ms = t0.elapsed().as_millis();
+                assert!(
+                    elapsed_ms < 250,
+                    "nested_and fixture took {elapsed_ms}ms; build the probe by moving the prior \
+                     subtree, not by reserializing it through json!"
                 );
             })
             .unwrap()
