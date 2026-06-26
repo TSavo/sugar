@@ -852,8 +852,6 @@ fn run_rpc_mode() -> i32 {
     0
 }
 
-const RUST_CONTRACTS_SURFACE: &str = "rust-contracts";
-
 fn kit_declaration_result() -> serde_json::Value {
     serde_json::json!({
         "kit": {
