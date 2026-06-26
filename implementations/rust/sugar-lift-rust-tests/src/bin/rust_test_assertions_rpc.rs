@@ -460,12 +460,10 @@ fn lift(params: &Value) -> Value {
                     // Unsupported vendor pins remain unresolved unless the failure reason
                     // is one of the clean values-not-in-text boundaries this lane owns.
                     Some(w) => {
-                        let classification = clean_source_warning_classification(
-                            rel, &name, &w.reason,
+                        let classification = source_test_body_warning_classification(
+                            rel, &name, &w.reason, fr.block,
                         )
-                        .or_else(|| {
-                            source_test_body_warning_classification(rel, &name, &w.reason, fr.block)
-                        });
+                        .or_else(|| clean_source_warning_classification(rel, &name, &w.reason));
                         match classification {
                             Some(SourceWarningClassification::Refused(category)) => (
                                 "refused",
@@ -1469,11 +1467,38 @@ fn text_determined_pin_macro_reason(source_path: &str, source_name: &str, reason
 }
 
 fn source_test_body_warning_classification(
-    _source_path: &str,
-    _source_name: &str,
+    source_path: &str,
+    source_name: &str,
     reason: &str,
     block: &syn::Block,
 ) -> Option<SourceWarningClassification> {
+    if reason.contains("unknown iterator consumption") {
+        if test_body_has_future_handoff(block) {
+            return Some(SourceWarningClassification::Refused(
+                "runtime future handoff boundary",
+            ));
+        }
+        if test_body_has_opaque_iterator_call(block) {
+            return Some(SourceWarningClassification::Refused(
+                "opaque runtime iterator collection",
+            ));
+        }
+        if source_path == "src/driver_bridge.rs"
+            && source_name == "caller"
+            && test_body_has_callable_param_driver_bridge(block)
+        {
+            return Some(SourceWarningClassification::Warranted(
+                "source callable-param bridge",
+            ));
+        }
+    }
+    if reason.contains("literal array element is not text-determined")
+        && test_body_has_runtime_searcher_state_machine(block)
+    {
+        return Some(SourceWarningClassification::Refused(
+            "runtime state-machine boundary",
+        ));
+    }
     if reason.contains("assertion surface")
         && reason.contains("emitted only support facts")
         && test_body_has_runtime_callable_element_adaptor(block)
@@ -1498,6 +1523,125 @@ fn source_test_body_warning_classification(
         }
     }
     None
+}
+
+fn test_body_has_future_handoff(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_async(&mut self, async_expr: &'ast syn::ExprAsync) {
+            self.found = true;
+            syn::visit::visit_expr_async(self, async_expr);
+        }
+
+        fn visit_expr_await(&mut self, await_expr: &'ast syn::ExprAwait) {
+            self.found = true;
+            syn::visit::visit_expr_await(self, await_expr);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if simple_path_name(call.func.as_ref()).is_some_and(|name| name == "block_on") {
+                self.found = true;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "join")
+            {
+                self.found = true;
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
+}
+
+fn test_body_has_opaque_iterator_call(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if simple_path_name(call.func.as_ref()).is_some_and(|name| name == "opaque") {
+                self.found = true;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
+}
+
+fn test_body_has_callable_param_driver_bridge(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if simple_path_name(call.func.as_ref()).is_some_and(|name| name == "driver")
+                && call
+                    .args
+                    .iter()
+                    .any(|arg| matches!(arg, syn::Expr::Closure(_)))
+            {
+                self.found = true;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
+}
+
+fn test_body_has_runtime_searcher_state_machine(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if call.method == "into_searcher" {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "search_asserts")
+            {
+                self.found = true;
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
 }
 
 fn source_test_body_static_refusal_reason(

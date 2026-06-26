@@ -26096,11 +26096,9 @@ fn type_inferred_parse_literal_twin() {
 "#,
     );
 
-    assert_rpc_source_refused(
-        &doc,
-        "type_inferred_parse_refused",
-        "type-inferred runtime parser boundary",
-    );
+    // The compiler-resolved assertion context fixes the parse target type, so
+    // the literal parse now owns a real value pin instead of a named refusal.
+    assert_rpc_source_warranted(&doc, "type_inferred_parse_refused");
     assert_rpc_source_warranted(&doc, "type_inferred_parse_literal_twin");
 }
 
