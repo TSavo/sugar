@@ -312,7 +312,15 @@ mod tests {
             "literal_cstr_floor_composes_into_debug_format_value",
         );
 
-        assert_eq!(out, "\"hi\"");
+        match out {
+            crate::sugar::factory::FloorRead::Complete(value) => assert_eq!(value, "\"hi\""),
+            crate::sugar::factory::FloorRead::Incomplete(effect) => {
+                panic!(
+                    "literal cstr format should complete, got {}",
+                    effect.reason()
+                )
+            }
+        }
     }
 
     #[test]
