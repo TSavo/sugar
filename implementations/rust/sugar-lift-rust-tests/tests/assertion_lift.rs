@@ -31783,6 +31783,115 @@ fn range_inclusive_start_end_bad_twins_are_unsat() {
 }
 
 #[test]
+fn nested_finite_sequence_loop_delegates_to_replay_floors_not_forall() {
+    let src = r#"
+        #[test]
+        fn nested_finite_domains() {
+            for i in 0..2 {
+                let cases = &[
+                    [i, i + 1],
+                    [i + 2, i + 3],
+                ];
+
+                for case in cases {
+                    for pos in 0..case.len() {
+                        assert_eq!(case[pos], case[pos]);
+                    }
+                }
+            }
+        }
+    "#;
+    let out =
+        std::panic::catch_unwind(|| lift_file(&parse(src), "tests/nested_finite_sequence_loop.rs"))
+            .unwrap_or_else(|panic| {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("<non-string panic>");
+                panic!(
+                    "nested finite sequence loops must be owned by `for_replay` and delegated \
+             to the finite-domain/len/index floors; `forall_loop` must not claim the \
+             outer loop and panic on a nested non-point-wise body: {message}"
+                );
+            });
+    assert_warranted_decl_count(&out, 1);
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("for context") && !reason.contains("bin-1")),
+        "nested finite sequence replay must not fall through to a for-context refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        warranted_decls(&out)
+            .iter()
+            .any(|decl| decl.name.contains("::loop::i")),
+        "the outer finite loop should be replay-owned and named by `for_replay`: {:?}",
+        out.decls
+    );
+}
+
+#[test]
+fn ascii_repeat_cases_nested_loop_requires_collection_length_floor() {
+    let src = r#"
+        #[test]
+        fn ascii_repeat_cases() {
+            fn repeat_concat(b0: u8, b1: u8, l: usize) -> Vec<u8> {
+                use core::iter::repeat;
+                repeat(b0).take(l).chain(repeat(b1).take(l)).collect()
+            }
+
+            let iter = if cfg!(miri) { 0..2 } else { 0..4 };
+
+            for i in iter {
+                let cases = &[
+                    b"a".repeat(i),
+                    b"\x80".repeat(i),
+                    repeat_concat(b'a', 0x80u8, i),
+                ];
+
+                for case in cases {
+                    for pos in 0..=case.len() {
+                        let prefix = &case[pos..];
+                        assert_eq!(prefix.len(), case.len() - pos);
+                    }
+                }
+            }
+        }
+    "#;
+    let cfg = TargetCfg::from_rustc_cfg_facts(["unix", "target_pointer_width=\"64\""])
+        .expect("target cfg parses");
+    let opts = LiftOptions::for_target_cfg(cfg);
+    let out = std::panic::catch_unwind(|| {
+        lift_file_with_options(&parse(src), "tests/ascii_repeat_cases.rs", &opts)
+    })
+    .unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+        panic!(
+            "ascii repeat-case loops must be owned by stronger collection/domain floors: \
+             the outer `for_replay` should delegate `b\"..\".repeat(i)`, helper-built \
+             byte vectors, and `case.len()` to finite collection floors, not let \
+             `forall_loop` claim the outer loop and panic on nested non-point-wise \
+             assertions: {message}"
+        );
+    });
+    assert!(
+        warranted_decls(&out)
+            .iter()
+            .any(|decl| decl.name.contains("::loop::i")),
+        "the outer ascii loop should be replay-owned after collection floors construct \
+         the repeated byte cases: skips={:?}; decls={:?}",
+        out.skip_reasons,
+        out.decls
+    );
+}
+
+#[test]
 fn range_inclusive_start_end_runtime_bounds_do_not_fabricate_literals() {
     let src = r#"
 fn runtime() -> i32 { std::env::args().count() as i32 }

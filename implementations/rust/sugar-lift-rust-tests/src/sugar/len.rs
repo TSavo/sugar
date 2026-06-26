@@ -98,13 +98,13 @@ impl Sugar for LenSugar {
                 });
             }
         }
-        if self.static_len == Some(0) {
+        if let Some(len) = self.static_len {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::len",
-                len = 0usize,
-                "reducing empty literal sequence len"
+                len,
+                "reducing static literal sequence len"
             );
-            return Outcome::Complete(Desugared::Term(num(0)));
+            return Outcome::Complete(Desugared::Term(num(len as i128)));
         }
         let seq = match sequence_from_body(&self.receiver, ctx, "len receiver") {
             Ok(seq) => seq,

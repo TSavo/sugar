@@ -568,7 +568,6 @@ fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt], require_binding: bool)
 
 fn nested_for_loop_has_pointwise_assert_replay_shape(for_loop: &syn::ExprForLoop) -> bool {
     loop_var_bindings(for_loop.pat.as_ref()).is_some()
-        && range_domain_shape(&for_loop.expr)
         && body_has_pointwise_assert_replay_shape(&for_loop.body.stmts, false)
 }
 
@@ -892,7 +891,14 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
 
     fn replay_stmts(&mut self, stmts: &[Stmt]) -> Option<()> {
         for stmt in stmts {
-            self.replay_stmt(stmt)?;
+            if self.replay_stmt(stmt).is_none() {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    stmt = %crate::token_key(stmt),
+                    "replay statement declined"
+                );
+                return None;
+            }
         }
         Some(())
     }
@@ -1266,16 +1272,46 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             Outcome::Complete(Desugared::Constraints {
                 atom,
                 kind: AssertionFactKind::Warranted,
+                warrant,
                 ..
             }) => {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    expr = %crate::token_key(expr),
+                    warrant = ?warrant.name,
+                    "finite replay emitted warranted assertion constraint"
+                );
                 self.atoms.push(atom);
                 Some(())
             }
             Outcome::Incomplete(effect) => {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    expr = %crate::token_key(expr),
+                    effect = ?effect,
+                    "finite replay hit child effect while lowering assertion constraint"
+                );
                 self.terminal_effect = Some(effect);
                 None
             }
-            Outcome::Complete(_) => None,
+            Outcome::Complete(Desugared::Constraints { kind, warrant, .. }) => {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    expr = %crate::token_key(expr),
+                    kind = ?kind,
+                    warrant = ?warrant.name,
+                    "finite replay constraint completed without a warranted assertion"
+                );
+                None
+            }
+            Outcome::Complete(_) => {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::for_replay",
+                    expr = %crate::token_key(expr),
+                    "finite replay assertion expression completed as a non-constraint"
+                );
+                None
+            }
         }
     }
 
@@ -1371,7 +1407,9 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         for (param, arg) in params.into_iter().zip(call.args.iter()) {
             child.bindings.insert(param, self.eval_expr(arg)?);
         }
-        let result = child.eval_value_body(&helper.block);
+        let result = child
+            .eval_value_body(&helper.block)
+            .map(|expr| annotate_vec_collect_return(expr, &helper.sig.output));
         if result.is_none() {
             if let Some(effect) = child.terminal_effect.take() {
                 self.terminal_effect = Some(effect);
@@ -1392,6 +1430,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 Stmt::Macro(stmt_macro) if self.assert_macro_const_true(&stmt_macro.mac)? => {}
                 Stmt::Expr(Expr::Macro(expr_macro), _)
                     if self.assert_macro_const_true(&expr_macro.mac)? => {}
+                Stmt::Item(Item::Use(_)) => {}
                 _ => return None,
             }
         }
@@ -1574,6 +1613,31 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         };
         Some((left, right))
     }
+}
+
+fn annotate_vec_collect_return(expr: Expr, output: &syn::ReturnType) -> Expr {
+    if !return_type_is_vec(output) {
+        return expr;
+    }
+    let Expr::MethodCall(mut call) = expr else {
+        return expr;
+    };
+    if call.method == "collect" && call.args.is_empty() && call.turbofish.is_none() {
+        call.turbofish = Some(syn::parse_quote!(::<Vec<_>>));
+    }
+    Expr::MethodCall(call)
+}
+
+fn return_type_is_vec(output: &syn::ReturnType) -> bool {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    matches!(
+        ty.as_ref(),
+        Type::Path(path)
+            if path.qself.is_none()
+                && path.path.segments.iter().any(|segment| segment.ident == "Vec")
+    )
 }
 
 enum PatternOutcome {
