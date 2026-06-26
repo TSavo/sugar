@@ -8,6 +8,7 @@
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
+use crate::sugar::constraint_runtime_boundary;
 use crate::sugar::method_family;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -1175,6 +1176,11 @@ fn relation_constraint_from_bodies(
     ctx: &SugarCtx,
 ) -> Outcome {
     if let Some(effect) = float_floor::nan_comparison_effect(name, lhs_expr, rhs_expr, ctx) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) =
+        constraint_runtime_boundary::type_inferred_parse_result_effect(name, lhs_expr, rhs_expr)
+    {
         return Outcome::Incomplete(effect);
     }
     let lhs = match term_payload(lhs, ctx) {

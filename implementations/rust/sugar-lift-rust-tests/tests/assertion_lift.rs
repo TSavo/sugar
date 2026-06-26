@@ -8253,8 +8253,30 @@ fn iterator_last_literal_array_bad() {
 }
 
 #[test]
-fn tuple_expected_value_gets_stable_euf_key() {
+fn repeat_take_size_hint_reduces_to_literal_tuple_floor() {
     // Vendor shape: rust-src library/coretests/tests/iter/sources.rs::test_repeat_take.
+    fn term_is_opt_some_int(term: &Term, expected: i128) -> bool {
+        match term {
+            Term::Ctor { name, args } if name == "opt:some" && args.len() == 1 => {
+                const_int_term_value(args[0].as_ref()) == Some(expected)
+            }
+            _ => false,
+        }
+    }
+
+    fn formula_has_opt_some_eq(formula: &Formula, expected: i128) -> bool {
+        match formula {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                term_is_opt_some_int(args[0].as_ref(), expected)
+                    && term_is_opt_some_int(args[1].as_ref(), expected)
+            }
+            Formula::Connective { operands, .. } => operands
+                .iter()
+                .any(|operand| formula_has_opt_some_eq(operand, expected)),
+            _ => false,
+        }
+    }
+
     let src = r#"
 #[test]
 fn repeat_take_size_hint() {
@@ -8272,34 +8294,52 @@ fn repeat_take_size_hint() {
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
     assert_eq!(
-        decl.name,
-        "method:size_hint#euf#c:callresult_method_size_hint_a1(c:method:take(c:call:repeat(i:42),i:3))::assertion"
+        decl.name, "tests/iter/sources.rs::repeat_take_size_hint",
+        "literal repeat().take().size_hint() now reduces to tuple floor, not EUF"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:size_hint");
-                    assert_eq!(args.len(), 1);
-                }
-                other => panic!("expected size_hint lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Var { name } => {
-                    // The tuple's `Some(3)` element grounds to the monadic `opt:some`
-                    // ctor (an Option value over a literal), and a monadic ctor over
-                    // literals is itself a literal identity -- so the tuple stays an
-                    // all-literal `literal:Tuple` aggregate (the EUF key is stable).
-                    assert_eq!(name, "literal:Tuple(i:3,c:opt:some(i:3))");
-                }
-                other => panic!("expected Tuple literal identity, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
+    let mut int_pairs = Vec::new();
+    const_int_eq_pairs(operands[0].as_ref(), &mut int_pairs);
+    assert!(
+        int_pairs.contains(&(3, 3)),
+        "size_hint lower bound should ground to 3 == 3, got {int_pairs:?}"
+    );
+    assert!(
+        formula_has_opt_some_eq(operands[0].as_ref(), 3),
+        "size_hint upper bound should ground to Some(3) == Some(3): {:?}",
+        operands[0]
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "repeat_take_size_hint_good") {
+        assert!(
+            sat,
+            "literal repeat().take().size_hint() == (3, Some(3)) must be SAT"
+        );
+    }
+
+    let bad = r#"
+#[test]
+fn repeat_take_size_hint_bad() {
+    assert_eq!(repeat(42).take(3).size_hint(), (4, Some(4)));
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/iter/sources.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert!(
+        out.warnings.is_empty(),
+        "bad twin should still reach the literal size_hint floor: {:?}",
+        out.warnings
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "repeat_take_size_hint_bad",
+    ) {
+        assert!(
+            !sat,
+            "literal repeat().take().size_hint() == (4, Some(4)) must be UNSAT"
+        );
     }
 }
 

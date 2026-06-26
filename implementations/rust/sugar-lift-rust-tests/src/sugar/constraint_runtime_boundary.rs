@@ -4,19 +4,34 @@
 // reducers, but proven runtime boundaries. The only live owner here is the
 // type-inferred parser result refusal used by assert_eq!/assert_ne! lowering.
 
-use crate::token_key;
+use crate::{token_key, Effect};
 use syn::Expr;
+
+pub(crate) fn type_inferred_parse_result_effect(
+    assertion: &str,
+    lhs: &Expr,
+    rhs: &Expr,
+) -> Option<Effect> {
+    type_inferred_parse_site(lhs, 0)
+        .or_else(|| type_inferred_parse_site(rhs, 0))
+        .map(|site| Effect::TypeInferredParseResult {
+            assertion: assertion.to_string(),
+            boundary: site,
+        })
+}
 
 pub(crate) fn type_inferred_parse_result_reason(lhs: &Expr, rhs: &Expr) -> Option<String> {
     type_inferred_parse_site(lhs, 0)
         .or_else(|| type_inferred_parse_site(rhs, 0))
-        .map(|site| {
-            format!(
-                "unsupported term `{site}`: type-inferred runtime parser result \
-                 (parse result type is supplied by assertion context, not by the call syntax; \
-                 no single constructible timeless value); refused"
-            )
-        })
+        .map(|site| type_inferred_parse_result_site_reason(&site))
+}
+
+pub(crate) fn type_inferred_parse_result_site_reason(site: &str) -> String {
+    format!(
+        "unsupported term `{site}`: type-inferred runtime parser result \
+         (parse result type is supplied by assertion context, not by the call syntax; \
+         no single constructible timeless value); refused"
+    )
 }
 
 fn type_inferred_parse_site(expr: &Expr, depth: usize) -> Option<String> {
