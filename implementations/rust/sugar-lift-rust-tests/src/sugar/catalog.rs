@@ -193,6 +193,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &vec_literal::EXPR_SUGAR,
     &collection_literal::EXPR_SUGAR,
     &literal::EXPR_SUGAR,
+    &statement_future_handoff::COMPOSITE_EXPR_SUGAR,
     &runtime_iterator_source::EXPR_SUGAR,
     &kmerge::EXPR_SUGAR,
     &chain::EXPR_SUGAR,
@@ -585,6 +586,26 @@ mod tests {
         assert_eq!(
             selected_candidate_name_for_role(&opaque_call, SugarRole::Composite),
             Some("runtime_iterator_source")
+        );
+    }
+
+    #[test]
+    fn async_future_handoff_owns_composite_before_runtime_iterator_fallback() {
+        let expr: Expr = syn::parse_str("block_on(async { assert_eq!(1, 1); })").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert!(
+            names.contains(&"statement_future_handoff_composite"),
+            "future handoff should be visible as a Composite effect owner: {names:?}"
+        );
+        assert!(
+            names.contains(&"runtime_iterator_source"),
+            "generic runtime iterator fallback remains visible for opaque call sources: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("statement_future_handoff_composite"),
+            "async future handoff owns the real effect before the opaque call fallback"
         );
     }
 
