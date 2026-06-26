@@ -684,18 +684,18 @@ struct IterTerminalSugar {
 }
 
 struct IterTerminalReceiver {
-    source: Expr,
+    source_expr: Expr,
     body: SugarBody<CompositeFloor>,
 }
 
 impl IterTerminalReceiver {
-    fn new(source: Expr, fcx: &SugarBuildCtx) -> Self {
+    fn new(source_expr: Expr, fcx: &SugarBuildCtx) -> Self {
         let body = SugarBody::from_node(
-            crate::sugar::scan::try_build_scan_inner(&source, fcx)
-                .or_else(|| method_family::build_literal_sequence_composite(&source, fcx))
-                .unwrap_or_else(|| build_composite(&source, fcx)),
+            crate::sugar::scan::try_build_scan_inner(&source_expr, fcx)
+                .or_else(|| method_family::build_literal_sequence_composite(&source_expr, fcx))
+                .unwrap_or_else(|| build_composite(&source_expr, fcx)),
         );
-        Self { source, body }
+        Self { source_expr, body }
     }
 }
 
@@ -739,14 +739,14 @@ impl IterTerminalSugar {
             | Terminal::Position(_)
             | Terminal::AdvanceBy(_) => {
                 method_family::literal_range_sequence_static_len_in_scope(
-                    &self.receiver.source,
+                    &self.receiver.source_expr,
                     let_inits,
                     scope,
                 )
                 .is_some()
                     || (matches!(self.terminal, Terminal::Count)
                         && method_family::literal_collection_adapter_static_len_in_scope(
-                            &self.receiver.source,
+                            &self.receiver.source_expr,
                             let_inits,
                             scope,
                         )
@@ -883,7 +883,7 @@ impl IterTerminalSugar {
             .collect();
         let fcx = desugar_build_ctx(ctx.scope, ctx.options, &let_inits);
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
-        if let Some(name) = simple_path_name(&self.receiver.source) {
+        if let Some(name) = simple_path_name(&self.receiver.source_expr) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
                 return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                     boundary: name,
@@ -903,7 +903,7 @@ impl IterTerminalSugar {
         }
         if matches!(self.terminal, Terminal::Count) {
             if let Some(chunk_expr) =
-                resolve_chunk_window_receiver(&self.receiver.source, &let_inits, ctx.scope, 0)
+                resolve_chunk_window_receiver(&self.receiver.source_expr, &let_inits, ctx.scope, 0)
             {
                 if let Some(static_len) =
                     method_family::literal_collection_adapter_static_len_in_scope(
@@ -938,13 +938,13 @@ impl IterTerminalSugar {
             }
         }
         let static_empty_sequence = method_family::literal_sequence_static_len_in_scope(
-            &self.receiver.source,
+            &self.receiver.source_expr,
             &let_inits,
             ctx.scope,
         ) == Some(0)
             || (matches!(self.terminal, Terminal::Count)
                 && method_family::literal_collection_adapter_static_len_in_scope(
-                    &self.receiver.source,
+                    &self.receiver.source_expr,
                     &let_inits,
                     ctx.scope,
                 )
@@ -969,16 +969,17 @@ impl IterTerminalSugar {
                     Vec::new()
                 }
                 Outcome::Incomplete(effect) if self.can_try_literal_sequence_family() => {
-                    if let Some(candidate) =
-                        method_family::build_literal_sequence_composite(&self.receiver.source, &fcx)
-                    {
+                    if let Some(candidate) = method_family::build_literal_sequence_composite(
+                        &self.receiver.source_expr,
+                        &fcx,
+                    ) {
                         match Self::desugar_seq_candidate(candidate, ctx, allow_empty_sequence) {
                             Ok(Some(seq)) => seq,
                             Ok(None) => {
                                 if let Terminal::Count = self.terminal {
                                     if let Some(static_len) =
                                         method_family::literal_collection_adapter_static_len_in_scope(
-                                            &self.receiver.source,
+                                            &self.receiver.source_expr,
                                             &let_inits,
                                             ctx.scope,
                                         )
@@ -1014,7 +1015,7 @@ impl IterTerminalSugar {
                     } else if let Terminal::Count = self.terminal {
                         if let Some(static_len) =
                             method_family::literal_collection_adapter_static_len_in_scope(
-                                &self.receiver.source,
+                                &self.receiver.source_expr,
                                 &let_inits,
                                 ctx.scope,
                             )

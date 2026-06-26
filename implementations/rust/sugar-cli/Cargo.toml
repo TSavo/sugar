@@ -52,5 +52,6 @@ toml = { workspace = true }
 
 [dev-dependencies]
 sugar-linker = { path = "../sugar-linker" }
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 serial_test = "3"
 tempfile = "3"

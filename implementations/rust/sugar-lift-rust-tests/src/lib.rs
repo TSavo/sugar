@@ -6379,10 +6379,13 @@ fn peel_fold_adaptors_inner<'a>(
                     }
                     ("intersperse", 1) => {
                         let separator = m.args[0].clone();
-                        Box::new(move |inner, _fcx| {
+                        Box::new(move |inner, fcx| {
                             Box::new(sugar::intersperse::IntersperseSugar {
                                 inner: sugar::factory::SugarBody::from_node(inner),
-                                separator: sugar::intersperse::IntersperseSeparator::new(separator),
+                                separator: sugar::intersperse::IntersperseValueSeparator::new(
+                                    separator.clone(),
+                                    fcx,
+                                ),
                             })
                         })
                     }
@@ -6391,7 +6394,9 @@ fn peel_fold_adaptors_inner<'a>(
                         Box::new(move |inner, _fcx| {
                             Box::new(sugar::intersperse::IntersperseWithSugar {
                                 inner: sugar::factory::SugarBody::from_node(inner),
-                                separator: sugar::intersperse::IntersperseSeparator::new(separator),
+                                separator: sugar::intersperse::IntersperseGenerator::new(
+                                    separator.clone(),
+                                ),
                             })
                         })
                     }
