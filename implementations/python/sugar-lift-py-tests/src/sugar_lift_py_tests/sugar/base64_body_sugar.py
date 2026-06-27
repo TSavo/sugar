@@ -42,7 +42,9 @@ class Base64BodySugar:
         )
         if not all(ords):
             return None
-        return_sugar = BitwiseBase64Sugar.from_stmt(function.body[4])
+        return_sugar = BitwiseBase64Sugar.from_site(
+            SourceSite.from_node(function.body[4], "<base64-body>")
+        )
         if return_sugar is None:
             return None
         return cls(
@@ -75,7 +77,7 @@ class Base64BodySugar:
                 ("OrdSugar", "Assign", stmt, "TermValue")
                 for stmt in function.body[1:4]
             ],
-            ("BitwiseBase64Sugar", "Return", self.return_sugar.stmt, "StringValue"),
+            ("BitwiseBase64Sugar", "Return", function.body[4], "StringValue"),
         ]
 
     def constraint_formulas(self, argument: StringValue, output: StringValue) -> list[Formula]:

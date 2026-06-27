@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.bitvector_solver import solve_bitvector_binary
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.sugar_constructors import build_bitwise_op_sugar
 from sugar_lift_py_tests.floor import TermValue
@@ -44,11 +45,9 @@ class BitwiseOpSugar:
         right = _term_value(
             complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right")
         )
-        if self.operator == "&":
-            return Complete(TermValue(left.value & right.value))
-        if self.operator == "<<":
-            return Complete(TermValue(left.value << right.value))
-        raise TypeError(f"write more Sugar for bitwise operator `{self.operator}`")
+        return Complete(
+            TermValue(solve_bitvector_binary(self.operator, left.value, right.value))
+        )
 
 
 def _operator(op: ast.operator) -> str | None:

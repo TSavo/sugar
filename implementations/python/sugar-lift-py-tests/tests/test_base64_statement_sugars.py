@@ -10,6 +10,7 @@ from sugar_lift_py_tests.sugar.alphabet_literal_sugar import (
     AlphabetLiteralSugar,
 )
 from sugar_lift_py_tests.sugar.base64_body_sugar import Base64BodySugar
+from sugar_lift_py_tests.sugar.bitwise_base64_sugar import BitwiseBase64Sugar
 from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
 from sugar_lift_py_tests.sugar.ord_sugar import OrdSugar
 
@@ -96,3 +97,25 @@ def test_base64_body_sugar_is_site_born_without_raw_function_storage() -> None:
     assert complete_value(sugar.apply(StringValue("abc")), owner="body") == StringValue(
         "YWJj"
     )
+
+
+def test_bitwise_base64_sugar_is_site_born_without_raw_return_storage() -> None:
+    fn = ast.parse(ENCODE_BASE64).body[0]
+    assert isinstance(fn, ast.FunctionDef)
+    stmt = fn.body[4]
+
+    sugar = BitwiseBase64Sugar.from_site(SourceSite.from_node(stmt, "base64.py"))
+
+    assert sugar is not None
+    assert not hasattr(sugar, "stmt")
+    assert complete_value(
+        sugar.apply(
+            {
+                "alphabet": BASE64_ALPHABET,
+                "b0": 97,
+                "b1": 98,
+                "b2": 99,
+            }
+        ),
+        owner="bitwise base64",
+    ) == StringValue("YWJj")
