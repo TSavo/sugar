@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import ast
+from dataclasses import dataclass
+
+from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.floor import StringValue, TermValue
+from sugar_lift_py_tests.outcome import Complete, Outcome
+
+
+@dataclass(frozen=True)
+class PrimitiveLiteralSugar:
+    node: ast.Constant
+
+    @classmethod
+    def from_site(cls, site) -> "PrimitiveLiteralSugar | None":
+        if not isinstance(site.node, ast.Constant):
+            return None
+        if not isinstance(site.node.value, (int, str)):
+            return None
+        return cls(site.node)
+
+    def desugar(self) -> Outcome:
+        if isinstance(self.node.value, int):
+            return Complete(TermValue(self.node.value))
+        if isinstance(self.node.value, str):
+            return Complete(StringValue(self.node.value))
+        raise TypeError(
+            f"write more Floor for PrimitiveLiteralSugar value `{type(self.node.value).__name__}`"
+        )
+
+
+def _owns(site) -> bool:
+    return PrimitiveLiteralSugar.from_site(site) is not None
+
+
+def _build(site, _ctx) -> PrimitiveLiteralSugar:
+    sugar = PrimitiveLiteralSugar.from_site(site)
+    if sugar is None:
+        raise TypeError("PrimitiveLiteralSugar claim built a non-primitive literal")
+    return sugar
+
+
+PRIMITIVE_LITERAL_CLAIM = SugarClaim(
+    name="PrimitiveLiteralSugar",
+    role=SugarRole.TERM,
+    owns=_owns,
+    build=_build,
+)

@@ -23,6 +23,11 @@ class SourceSite:
 
     @property
     def observed(self) -> str:
+        if isinstance(self.node, ast.Constant) and isinstance(
+            self.node.value,
+            (int, str, bool, type(None)),
+        ):
+            return "PrimitiveLiteral"
         return type(self.node).__name__
 
     @property
@@ -31,5 +36,7 @@ class SourceSite:
 
     @property
     def suggested_sugar_module(self) -> str:
+        if self.observed == "PrimitiveLiteral":
+            return "sugar_lift_py_tests.sugar.primitive_literal_sugar"
         name = re.sub(r"(?<!^)(?=[A-Z])", "_", self.observed).lower()
         return f"sugar_lift_py_tests.sugar.{name}.{name}_sugar"

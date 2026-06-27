@@ -11,7 +11,15 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
-from sugar_lift_py_tests.factory import FactoryGap, build_next
+from sugar_lift_py_tests.factory import FactoryGap, build_next, build_node
+from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.array_literal_sugar import (
+    ARRAY_LITERAL_CLAIM,
+    ArrayLiteralSugar,
+)
+from sugar_lift_py_tests.sugar.bitwise_op_sugar import BITWISE_OP_CLAIM, BitwiseOpSugar
+from sugar_lift_py_tests.sugar.primitive_literal_sugar import PrimitiveLiteralSugar
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -129,7 +137,7 @@ def test_factory_matches_registered_sugar_for_last_popped_source_site() -> None:
     def owns_name(site) -> bool:
         return isinstance(site.node, ast.Name)
 
-    def build_name(site) -> NameSugar:
+    def build_name(site, _ctx) -> NameSugar:
         return NameSugar(site.node.id)
 
     catalog = SugarCatalog(
@@ -156,3 +164,79 @@ def test_factory_matches_registered_sugar_for_last_popped_source_site() -> None:
         "candidates": ["python.name"],
         "message": "selected Sugar `python.name` for role term at `base64.py:2:15`",
     }
+
+
+def test_array_literal_factory_hits_missing_primitive_literal_leaf_first() -> None:
+    node = ast.parse("[1, 2, 3]", mode="eval").body
+
+    with pytest.raises(FactoryGap) as raised:
+        build_node(
+            node,
+            filename="array.py",
+            role=SugarRole.TERM,
+            catalog=SugarCatalog([ARRAY_LITERAL_CLAIM]),
+        )
+
+    assert raised.value.info == {
+        "owner": "python.factory",
+        "blame": "array.py:1:1",
+        "observed": "PrimitiveLiteral",
+        "requested": "term",
+        "fix": "create sugar_lift_py_tests.sugar.primitive_literal_sugar",
+    }
+
+
+def test_array_literal_factory_requires_primitive_literal_children() -> None:
+    node = ast.parse("[1, 2, 3]", mode="eval").body
+
+    result = build_node(node, filename="array.py", role=SugarRole.TERM)
+
+    assert isinstance(result.sugar, ArrayLiteralSugar)
+    assert all(isinstance(child, PrimitiveLiteralSugar) for child in result.sugar.elements)
+    assert complete_value(result.sugar.desugar(), owner="array literal") == ArrayLiteral(
+        (TermValue(1), TermValue(2), TermValue(3))
+    )
+    with pytest.raises(TypeError, match="ArrayLiteralSugar elements must be PrimitiveLiteralSugar"):
+        ArrayLiteralSugar(node=node, elements=(node,))  # type: ignore[arg-type]
+
+
+def test_bitwise_op_factory_hits_missing_primitive_literal_leaf_first() -> None:
+    node = ast.parse("1 & 3", mode="eval").body
+
+    with pytest.raises(FactoryGap) as raised:
+        build_node(
+            node,
+            filename="bitwise.py",
+            role=SugarRole.TERM,
+            catalog=SugarCatalog([BITWISE_OP_CLAIM]),
+        )
+
+    assert raised.value.info == {
+        "owner": "python.factory",
+        "blame": "bitwise.py:1:0",
+        "observed": "PrimitiveLiteral",
+        "requested": "term",
+        "fix": "create sugar_lift_py_tests.sugar.primitive_literal_sugar",
+    }
+
+
+def test_bitwise_op_factory_requires_factory_built_operands() -> None:
+    and_node = ast.parse("1 & 3", mode="eval").body
+    shift_node = ast.parse("1 << 4", mode="eval").body
+
+    and_result = build_node(and_node, filename="bitwise.py", role=SugarRole.TERM)
+    shift_result = build_node(shift_node, filename="bitwise.py", role=SugarRole.TERM)
+
+    assert isinstance(and_result.sugar, BitwiseOpSugar)
+    assert isinstance(shift_result.sugar, BitwiseOpSugar)
+    assert isinstance(and_result.sugar.left, PrimitiveLiteralSugar)
+    assert isinstance(and_result.sugar.right, PrimitiveLiteralSugar)
+    assert complete_value(and_result.sugar.desugar(), owner="bitwise and") == TermValue(1)
+    assert complete_value(shift_result.sugar.desugar(), owner="bitwise shift") == TermValue(16)
+    with pytest.raises(TypeError, match="BitwiseOpSugar operands must be factory-built term sugar"):
+        BitwiseOpSugar(
+            node=and_node,  # type: ignore[arg-type]
+            operator="&",
+            left=and_node.left,  # type: ignore[arg-type]
+            right=PrimitiveLiteralSugar(and_node.right),  # type: ignore[arg-type]
+        )
