@@ -62,6 +62,9 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = unknown_iterator_consumption_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = consumed_iterator_state_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(hit) = unknown_mutation_refusal(&name, fcx) {
         return Some(hit);
     }
@@ -120,6 +123,10 @@ struct BoundPathTemporalEffectSugar {
     reason: String,
 }
 
+struct BoundPathConsumedIteratorStateSugar {
+    boundary: String,
+}
+
 struct BoundPathRuntimeDestructuredSourceSugar {
     boundary: String,
     reason: String,
@@ -134,6 +141,14 @@ impl Sugar for BoundPathTemporalEffectSugar {
         Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
             boundary: self.boundary.clone(),
             reason: self.reason.clone(),
+        })
+    }
+}
+
+impl Sugar for BoundPathConsumedIteratorStateSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::ConsumedIteratorState {
+            boundary: self.boundary.clone(),
         })
     }
 }
@@ -404,6 +419,16 @@ fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Opti
     fcx.scope()
         .unknown_iterator_consumption_reason(name)
         .map(|reason| temporal_effect(name, reason))
+}
+
+fn consumed_iterator_state_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    (fcx.scope().is_consumed_iterator_local(name)
+        && fcx.scope().temporal_rewrite_expr_for(name).is_none())
+    .then(|| {
+        Box::new(BoundPathConsumedIteratorStateSugar {
+            boundary: name.to_string(),
+        }) as Box<dyn Sugar>
+    })
 }
 
 fn unknown_mutation_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
