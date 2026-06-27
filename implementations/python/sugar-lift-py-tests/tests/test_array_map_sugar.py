@@ -95,11 +95,18 @@ def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path
         "MethodSugar",
         "MapSugar",
     ]
-    assert walk[-1]["sourceMemento"]["kind"] == "source-memento"
-    assert walk[-1]["sourceMemento"]["file"] == "test_array_map.py"
+    map_row = walk[-1]
+    assert map_row["sourceMemento"]["kind"] == "source-memento"
+    assert map_row["sourceMemento"]["file"] == "test_array_map.py"
+    assert map_row["sourceMemento"]["sourceFunctionName"] == "test_array_map_sugar"
+    assert map_row["sourceMemento"]["source_kind"] == "python.ast-stmt"
+    assert map_row["sourceMemento"]["span"]["start_line"] == 2
+    assert map_row["emittedFormula"] == good_contract["inv"]
     assert "source" not in walk[-1]
     assert "term" not in walk[-1]
     assert good_contract["sourceWarrants"][0]["kind"] == "source-memento"
+    assert good_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
+    assert good_contract["sourceWarrants"][0]["span"]["start_line"] == 2
     assert good_contract["name"].endswith("::array-map-sugar")
     assert good_doc["sourceLedger"] == {
         "source_loci": 1,
