@@ -25622,6 +25622,33 @@ fn test_iterator_peekable_mut_if_let_guard() {
 }
 
 #[test]
+fn rpc_source_peekable_runtime_cycle_iter_nth_refuses_named_composite_floor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/peekable_runtime_cycle_iter_nth.rs",
+        r#"
+#[test]
+fn test_iterator_peekable_runtime_cycle_iter_nth() {
+    let data = [0];
+    let mut iter = CycleIter::new(&data).peekable();
+    iter.peek();
+    assert_eq!(iter.nth(0), Some(&0));
+
+    let mut iter = CycleIter::new(&data).peekable();
+    iter.next();
+    assert_eq!(iter.peek(), None);
+    assert_eq!(iter.nth(0), None);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "test_iterator_peekable_runtime_cycle_iter_nth",
+        "unknown iterator consumption",
+    );
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",

@@ -639,6 +639,18 @@ mod tests {
     }
 
     #[test]
+    fn runtime_iterator_source_does_not_peel_reference_wrapped_constructors() {
+        let reference_constructor: Expr = syn::parse_str("&Cell::new(0)").unwrap();
+        let names = candidate_names_for_role(&reference_constructor, SugarRole::Composite);
+
+        assert!(
+            !names.contains(&"runtime_iterator_source"),
+            "a reference is its own source shape; runtime_iterator_source should claim opaque \
+             producers and adaptors over them, not peel through `&Cell::new(...)`: {names:?}"
+        );
+    }
+
+    #[test]
     fn async_future_handoff_owns_composite_before_runtime_iterator_fallback() {
         let expr: Expr = syn::parse_str("block_on(async { assert_eq!(1, 1); })").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Composite);

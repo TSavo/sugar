@@ -4,12 +4,12 @@
 // finite, timeless sequence floor. Adaptors over them should delegate here and
 // bubble the named temporal effect instead of manufacturing effects themselves.
 
-use syn::{Expr, ExprCall};
+use syn::{Expr, ExprCall, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collection_literal::collection_literal_array;
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
-use crate::{simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{const_int, simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "runtime_iterator_source",
@@ -25,15 +25,22 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     if collection_literal_array(expr).is_some() {
         return None;
     }
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    runtime_iterator_source(call).then(|| {
-        Box::new(RuntimeIteratorSourceSugar {
-            boundary: token_key(expr),
-            producer: producer_name(call).unwrap_or_else(|| "iterator source".to_string()),
-        }) as Box<dyn Sugar>
-    })
+    match strip_groups(expr) {
+        Expr::Call(call) => runtime_iterator_source(call).then(|| {
+            Box::new(RuntimeIteratorSourceSugar {
+                boundary: token_key(expr),
+                producer: producer_name(call).unwrap_or_else(|| "iterator source".to_string()),
+            }) as Box<dyn Sugar>
+        }),
+        Expr::MethodCall(call)
+            if runtime_iterator_adaptor(call) && runtime_iterator_source_expr(&call.receiver) =>
+        {
+            Some(Box::new(RuntimeIteratorBindingSugar {
+                source: SugarBody::composite(&call.receiver, fcx),
+            }))
+        }
+        _ => None,
+    }
 }
 
 struct RuntimeIteratorBindingSugar {
@@ -89,11 +96,36 @@ fn runtime_iterator_source_expr(expr: &Expr) -> bool {
     if collection_literal_array(expr).is_some() {
         return false;
     }
-    matches!(expr, Expr::Call(call) if runtime_iterator_source(call))
+    match strip_groups(expr) {
+        Expr::Call(call) => runtime_iterator_source(call),
+        Expr::MethodCall(call) => {
+            runtime_iterator_adaptor(call) && runtime_iterator_source_expr(&call.receiver)
+        }
+        _ => false,
+    }
+}
+
+fn strip_groups(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_groups(&paren.expr),
+        Expr::Group(group) => strip_groups(&group.expr),
+        _ => expr,
+    }
 }
 
 fn runtime_iterator_source(call: &ExprCall) -> bool {
     producer_name(call).is_some()
+}
+
+fn runtime_iterator_adaptor(call: &ExprMethodCall) -> bool {
+    match call.method.to_string().as_str() {
+        "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "rev"
+        | "enumerate" | "flatten" => call.args.is_empty(),
+        "skip" | "take" | "step_by" => call.args.len() == 1 && const_int(&call.args[0]).is_some(),
+        "map" | "filter" | "filter_map" | "skip_while" | "take_while" | "inspect" | "flat_map"
+        | "scan" => call.args.len() == 1,
+        _ => false,
+    }
 }
 
 fn producer_name(call: &ExprCall) -> Option<String> {
