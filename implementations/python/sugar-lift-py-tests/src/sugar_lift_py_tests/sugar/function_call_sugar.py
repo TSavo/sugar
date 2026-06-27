@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.factory import SourceSite
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Outcome, complete_value
@@ -57,7 +58,7 @@ class FunctionCallSugar:
     def factory_steps(self, function: ast.FunctionDef) -> list[tuple[str, str, ast.stmt, str]]:
         if isinstance(self.body, StringLiteralSugar):
             return [("StringLiteralSugar", "Constant", function.body[0], "StringValue")]
-        return self.body.factory_steps()
+        return self.body.factory_steps(function)
 
     def constraint_formulas(self, output: StringValue) -> list[Formula]:
         if isinstance(self.body, StringLiteralSugar):
@@ -73,4 +74,4 @@ def _function_body_sugar(function: ast.FunctionDef) -> FunctionCallBody | None:
         body = function.body[0]
         if isinstance(body, ast.Return) and body.value is not None:
             return string_literal_sugar(body.value)
-    return Base64BodySugar.from_function(function)
+    return Base64BodySugar.from_site(SourceSite.from_node(function, "<function-call-body>"))

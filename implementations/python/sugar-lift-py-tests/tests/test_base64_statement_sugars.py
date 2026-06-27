@@ -9,8 +9,24 @@ from sugar_lift_py_tests.sugar.alphabet_literal_sugar import (
     BASE64_ALPHABET,
     AlphabetLiteralSugar,
 )
+from sugar_lift_py_tests.sugar.base64_body_sugar import Base64BodySugar
 from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
 from sugar_lift_py_tests.sugar.ord_sugar import OrdSugar
+
+
+ENCODE_BASE64 = f'''
+def encodeBase64(value):
+    alphabet = "{BASE64_ALPHABET}"
+    b0 = ord(value[0])
+    b1 = ord(value[1])
+    b2 = ord(value[2])
+    return (
+        alphabet[b0 >> 2]
+        + alphabet[((b0 & 3) << 4) | (b1 >> 4)]
+        + alphabet[((b1 & 15) << 2) | (b2 >> 6)]
+        + alphabet[b2 & 63]
+    )
+'''
 
 
 def test_alphabet_literal_sugar_is_site_born_without_raw_ast_storage() -> None:
@@ -66,3 +82,17 @@ encodeBase64("abc")
     assert not hasattr(sugar, "call")
     assert not hasattr(sugar, "function")
     assert complete_value(sugar.desugar(), owner="call") == StringValue("YWJj")
+
+
+def test_base64_body_sugar_is_site_born_without_raw_function_storage() -> None:
+    fn = ast.parse(ENCODE_BASE64).body[0]
+    assert isinstance(fn, ast.FunctionDef)
+
+    sugar = Base64BodySugar.from_site(SourceSite.from_node(fn, "base64.py"))
+
+    assert sugar is not None
+    assert sugar.parameter == "value"
+    assert not hasattr(sugar, "function")
+    assert complete_value(sugar.apply(StringValue("abc")), owner="body") == StringValue(
+        "YWJj"
+    )
