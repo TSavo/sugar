@@ -20483,6 +20483,50 @@ mod lifter_key_tests {
         }
     }
 
+    #[test]
+    fn consumed_iterator_bound_path_composite_is_named_effect_not_factory_gap() {
+        let mut plan = TemporalPlan::default();
+        plan.consumed_iterator_locals.insert("iter".to_string());
+        let scope = TemporalScope::new("tests/test_src.rs::consumed_iter", plan);
+        let expr: Expr = syn::parse_str("iter").expect("path parses");
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
+        let items = Vec::<syn::Item>::new();
+        let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sugar::factory::build_composite(&expr, &fcx).desugar(&ctx)
+        }))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "a consumed bound iterator local used as a Composite receiver must be owned by \
+                 bound_path as `Incomplete(ConsumedIteratorState)`: add a typed bound-path \
+                 effect sugar for consumed locals with no temporal replay instead of declining \
+                 and falling through to a factory structural gap: {message}"
+            )
+        });
+
+        match outcome {
+            Outcome::Incomplete(Effect::ConsumedIteratorState { boundary }) => {
+                assert_eq!(boundary, "iter");
+            }
+            Outcome::Incomplete(effect) => panic!(
+                "consumed iterator Composite receiver must emit ConsumedIteratorState, got {}",
+                effect.reason()
+            ),
+            Outcome::Complete(_) => panic!("consumed iterator Composite receiver completed"),
+        }
+    }
+
     fn formula_contains_grounded_int_eq(formula: &Formula, lhs: i128, rhs: i128) -> bool {
         match formula {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
