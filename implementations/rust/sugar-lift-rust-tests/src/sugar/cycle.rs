@@ -93,10 +93,9 @@ fn resolve_cycle_call(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<
                 return resolve_cycle_call(&current, fcx, depth + 1);
             }
             if let Some(init) = fcx
-                .let_inits()
-                .get(&name)
-                .copied()
-                .or_else(|| fcx.scope().replayable_let_binding_for_source(&name))
+                .scope()
+                .replayable_let_binding_for_source(&name)
+                .or_else(|| fcx.let_inits().get(&name).copied())
             {
                 return resolve_cycle_call(init, fcx, depth + 1);
             }
