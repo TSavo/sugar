@@ -299,7 +299,11 @@ def _lift_native_list_map_assert(
         post=callable_post,
         source_warrants=[callable_memento],
     )
-    callsite = _callsite_string(memento_file, list_sugar_value.body.call)
+    callsite = _source_locus_string(
+        memento_file,
+        line=list_sugar_value.body.source_line,
+        col=list_sugar_value.body.source_col,
+    )
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
@@ -383,9 +387,17 @@ def _array_literal_sugar(node: ast.AST, ctx: FactoryBuildContext) -> ArrayLitera
 
 
 def _callsite_string(memento_file: str, node: ast.AST) -> str:
+    return _source_locus_string(
+        memento_file,
+        line=getattr(node, "lineno"),
+        col=getattr(node, "col_offset"),
+    )
+
+
+def _source_locus_string(memento_file: str, *, line: int, col: int) -> str:
     return (
         f"{memento_file.replace(os.sep, '/')}:"
-        f"{getattr(node, 'lineno')}:{getattr(node, 'col_offset')}"
+        f"{line}:{col}"
     )
 
 
