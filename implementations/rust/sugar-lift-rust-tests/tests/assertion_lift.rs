@@ -26418,6 +26418,51 @@ fn test_cycle() {
 }
 
 #[test]
+fn rpc_source_traces_enumerate_nth_destructure_bindings_through_sequence_floor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/enumerate_destructure.rs",
+        r#"
+#[test]
+fn test_iterator_enumerate_nth_destructure() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let (i, &x) = xs.iter().enumerate().nth(3).unwrap();
+    assert_eq!(i, x);
+    assert_eq!(i, 3);
+}
+
+#[test]
+fn test_iterator_enumerate_nth_back_destructure() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let (i, &x) = xs.iter().enumerate().nth_back(3).unwrap();
+    assert_eq!(i, x);
+    assert_eq!(i, 2);
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_iterator_enumerate_nth_destructure");
+    assert_rpc_source_warranted(&doc, "test_iterator_enumerate_nth_back_destructure");
+}
+
+#[test]
+fn rpc_source_replays_advance_by_zero_before_next_over_enumerate_cursor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/enumerate_advance_by_replay.rs",
+        r#"
+#[test]
+fn test_iterator_enumerate_advance_by_zero_next() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let mut it = xs.iter().enumerate();
+    assert_eq!(it.advance_by(0), Ok(()));
+    assert_eq!(it.next(), Some((0, &0)));
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_iterator_enumerate_advance_by_zero_next");
+}
+
+#[test]
 fn rpc_source_splits_fresh_literal_try_fold_from_consumed_iterator_refusal() {
     let doc = run_rpc_lift(
         "tests/iter/adapters/cloned.rs",
