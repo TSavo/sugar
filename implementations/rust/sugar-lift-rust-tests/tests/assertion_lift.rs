@@ -4440,6 +4440,22 @@ fn for_slice_pattern_over_inferred_array_chunks_replays_literal_receiver() {
 }
 
 #[test]
+fn rpc_source_array_chunks_next_uses_sequence_floor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/array_chunks_next.rs",
+        r#"
+#[test]
+fn test_iterator_array_chunks_next() {
+    let mut it = (0..11).array_chunks::<4>();
+    assert_eq!(it.next(), Some([0, 1, 2, 3]));
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_iterator_array_chunks_next");
+}
+
+#[test]
 fn bound_array_chunks_iterator_state_refuses_instead_of_composite_gap() {
     let src = r#"
         use std::cell::Cell;
@@ -4486,9 +4502,9 @@ fn bound_array_chunks_iterator_state_refuses_instead_of_composite_gap() {
             && out.skip_reasons.iter().any(|reason| {
                 reason.contains("unknown iterator consumption")
                     && reason.contains("it")
-                    && reason.contains("array_chunks")
+                    && reason.contains("count")
             }),
-        "bound `it` must report unknown iterator consumption for array_chunks drop/Cell \
+        "bound `it` must report unknown iterator consumption for drop/Cell \
          state, not warrant or disappear: refused={}, skips={:?}, audits={:?}",
         out.assertions_refused,
         out.skip_reasons,

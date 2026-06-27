@@ -2177,6 +2177,7 @@ fn trackable_sequence_method(method: &str) -> bool {
             | "zip"
             | "flatten"
             | "flat_map"
+            | "array_chunks"
     )
 }
 
@@ -2184,6 +2185,7 @@ fn trackable_sequence_args(call: &syn::ExprMethodCall) -> bool {
     match call.method.to_string().as_str() {
         "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "enumerate" | "rev"
         | "flatten" => call.args.is_empty(),
+        "array_chunks" => call.args.is_empty() && array_chunks_const_width(call).is_some(),
         "skip" | "take" | "step_by" => {
             call.args.len() == 1 && call.args.first().and_then(const_int).is_some()
         }
@@ -2193,6 +2195,19 @@ fn trackable_sequence_args(call: &syn::ExprMethodCall) -> bool {
         "chain" | "zip" => call.args.len() == 1,
         _ => false,
     }
+}
+
+fn array_chunks_const_width(call: &syn::ExprMethodCall) -> Option<usize> {
+    let args = call.turbofish.as_ref()?;
+    if args.args.len() != 1 {
+        return None;
+    }
+    let syn::GenericArgument::Const(expr) = args.args.first()? else {
+        return None;
+    };
+    usize::try_from(const_int(expr)?)
+        .ok()
+        .filter(|width| *width > 0)
 }
 
 fn untrackable_iterator_state_method(expr: &Expr) -> Option<String> {
