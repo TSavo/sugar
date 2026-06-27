@@ -3,9 +3,12 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import Outcome, complete_value
 
+from .base64_body_sugar import Base64BodySugar
 from .string_literal_sugar import StringLiteralSugar
+
+FunctionCallBody = StringLiteralSugar | Base64BodySugar
 
 
 @dataclass(frozen=True)
@@ -13,7 +16,7 @@ class FunctionCallSugar:
     call: ast.Call
     function: ast.FunctionDef
     argument: StringLiteralSugar
-    return_literal: StringLiteralSugar
+    body: FunctionCallBody
 
     @classmethod
     def from_call(
@@ -33,20 +36,31 @@ class FunctionCallSugar:
         argument = StringLiteralSugar.from_node(node.args[0])
         if argument is None:
             return None
-        if len(function.body) != 1:
-            return None
-        body = function.body[0]
-        if not isinstance(body, ast.Return) or body.value is None:
-            return None
-        return_literal = StringLiteralSugar.from_node(body.value)
-        if return_literal is None:
+        body = _function_body_sugar(function)
+        if body is None:
             return None
         return cls(
             call=node,
             function=function,
             argument=argument,
-            return_literal=return_literal,
+            body=body,
         )
 
     def desugar(self) -> Outcome:
-        return self.return_literal.desugar()
+        if isinstance(self.body, StringLiteralSugar):
+            return self.body.desugar()
+        argument = complete_value(self.argument.desugar(), owner="FunctionCallSugar argument")
+        return self.body.apply(argument)
+
+    def factory_steps(self) -> list[tuple[str, str, ast.stmt, str]]:
+        if isinstance(self.body, StringLiteralSugar):
+            return [("StringLiteralSugar", "Constant", self.function.body[0], "StringValue")]
+        return self.body.factory_steps()
+
+
+def _function_body_sugar(function: ast.FunctionDef) -> FunctionCallBody | None:
+    if len(function.body) == 1:
+        body = function.body[0]
+        if isinstance(body, ast.Return) and body.value is not None:
+            return StringLiteralSugar.from_node(body.value)
+    return Base64BodySugar.from_function(function)

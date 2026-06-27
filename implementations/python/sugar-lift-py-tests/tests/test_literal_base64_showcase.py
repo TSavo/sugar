@@ -51,7 +51,16 @@ def _write_literal_base64_twin(project: Path, expected: str) -> None:
     (project / "test_base64.py").write_text(
         (
             "def encodeBase64(value):\n"
-            '    return "YWJj"\n'
+            '    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"\n'
+            "    b0 = ord(value[0])\n"
+            "    b1 = ord(value[1])\n"
+            "    b2 = ord(value[2])\n"
+            "    return (\n"
+            "        alphabet[b0 >> 2]\n"
+            "        + alphabet[((b0 & 3) << 4) | (b1 >> 4)]\n"
+            "        + alphabet[((b1 & 15) << 2) | (b2 >> 6)]\n"
+            "        + alphabet[b2 & 63]\n"
+            "    )\n"
             "\n"
             "def test_encode_base64():\n"
             f'    assert encodeBase64("abc") == "{expected}"\n'
@@ -94,7 +103,7 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assert assertion_contract["sourceWarrants"][0]["role"] == "python.literal-call-sugar"
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
     assert assertion_contract["warrantedBy"]["contractName"] == function_contract["name"]
-    assert assertion_contract["warrantedBy"]["callsite"] == "test_base64.py:5:11"
+    assert assertion_contract["warrantedBy"]["callsite"] == "test_base64.py:14:11"
     assert _single_equality_status(assertion_contract) == "sat"
     assert _single_equality_status(bad_doc["ir"][1]) == "unsat"
     assert good_doc["callEdges"] == [
@@ -103,11 +112,15 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
             "sourceContract": function_contract["name"],
             "targetSymbol": "encodeBase64",
             "targetContract": assertion_contract["name"],
-            "callsite": "test_base64.py:5:11",
+            "callsite": "test_base64.py:14:11",
         }
     ]
     assert [row["selected"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
-        "StringLiteralSugar",
+        "AlphabetLiteralSugar",
+        "OrdSugar",
+        "OrdSugar",
+        "OrdSugar",
+        "BitwiseBase64Sugar",
         "FunctionCallSugar",
     ]
     assert good_doc["sourceLedger"]["source_loci"] == 2

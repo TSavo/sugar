@@ -113,7 +113,7 @@ def _lift_assert(
     expected = complete_value(expected_sugar.desugar(), owner="literal call expected")
 
     target_fn = call_sugar.function
-    return_stmt = target_fn.body[0]
+    body_steps = call_sugar.factory_steps()
     function_contract_name = f"{Path(memento_file).stem}::{target_fn.name}::callable"
     assertion_contract_name = f"{Path(memento_file).stem}::{fn.name}::literal-call-sugar"
     function_memento = _function_source_memento(
@@ -123,14 +123,19 @@ def _lift_assert(
         role="python.literal-call-sugar",
         contract_name=function_contract_name,
     )
-    return_memento = _statement_source_memento(
-        return_stmt,
-        target_fn,
-        memento_file,
-        source_lines,
-        contract_name=function_contract_name,
-        role="python.literal-call-sugar",
-    )
+    body_mementos = [
+        _statement_source_memento(
+            step_stmt,
+            target_fn,
+            memento_file,
+            source_lines,
+            contract_name=function_contract_name,
+            role="python.literal-call-sugar",
+        )
+        for _, _, step_stmt, _ in body_steps
+    ]
+    return_memento = body_mementos[-1]
+    return_stmt = body_steps[-1][2]
     assertion_function_memento = _function_source_memento(
         fn,
         memento_file,
@@ -174,7 +179,7 @@ def _lift_assert(
     )
     return (
         [function_contract, assertion_contract],
-        [function_memento, return_memento, assertion_function_memento, assertion_memento],
+        [function_memento, *body_mementos, assertion_function_memento, assertion_memento],
         [
             _source_audit(
                 target_fn,
@@ -197,14 +202,20 @@ def _lift_assert(
         ],
         [
             _walk_row(
-                "StringLiteralSugar",
-                "Constant",
-                return_stmt,
+                selected,
+                ast_kind,
+                step_stmt,
                 filename,
-                return_memento,
-                "StringValue",
-                emitted_formula=function_post,
-            ),
+                step_memento,
+                output,
+                emitted_formula=function_post if index == len(body_steps) - 1 else None,
+            )
+            for index, (
+                (selected, ast_kind, step_stmt, output),
+                step_memento,
+            ) in enumerate(zip(body_steps, body_mementos))
+        ]
+        + [
             _walk_row(
                 "FunctionCallSugar",
                 "Call",
