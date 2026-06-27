@@ -4627,10 +4627,16 @@ pub(crate) struct TemporalScope {
     /// In-scope simple `let <id> = <init>;` initializer EXPRS for this block, owned.
     /// Binding-aware sugars and value resolvers use this map to recurse through the
     /// initializer in effect at the reference's program point. Resolution is gated on
-    /// `!is_mut_local` (a `let mut` binding could be reassigned, so its later value is
-    /// not the written init -- such a name is NOT resolved). EXACT-OR-BAIL: an absent
-    /// / unresolvable binding makes the caller decline rather than over-claim.
+    /// the mutability of THIS CURRENT binding (a `let mut` binding could be reassigned,
+    /// so its later value is not the written init -- such a binding is NOT resolved).
+    /// EXACT-OR-BAIL: an absent / unresolvable binding makes the caller decline rather
+    /// than over-claim.
     let_bindings: BTreeMap<String, Expr>,
+    /// The subset of `let_bindings` whose currently in-scope binding was declared
+    /// `let mut`. This is deliberately binding-local, not name-global: a later shadow
+    /// `let mut x` must not poison an earlier immutable `let x` at a prior source
+    /// position.
+    mutable_let_bindings: BTreeSet<String>,
     /// Expected type pinned by a typed simple binding (`let x: T = ...`). The factory
     /// threads this through a later `BoundPathSugar` construction so target-typed sugars
     /// such as `.into()` can dispatch against the compiler-provided target instead of
@@ -4724,6 +4730,7 @@ impl TemporalScope {
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
+            mutable_let_bindings: BTreeSet::new(),
             let_binding_types: BTreeMap::new(),
             term_bindings: BTreeMap::new(),
             runtime_destructured_locals: BTreeSet::new(),
@@ -4898,6 +4905,13 @@ impl TemporalScope {
                 .filter(|(name, _)| parent.stable_let_binding_for_term(name).is_some())
                 .map(|(name, expr)| (name.clone(), expr.clone())),
         );
+        self.mutable_let_bindings.extend(
+            parent
+                .mutable_let_bindings
+                .iter()
+                .filter(|name| parent.stable_let_binding_for_term(name).is_some())
+                .cloned(),
+        );
         self.let_binding_types.extend(
             parent
                 .let_binding_types
@@ -4926,7 +4940,7 @@ impl TemporalScope {
     }
 
     pub(crate) fn stable_let_binding_for_term(&self, name: &str) -> Option<&Expr> {
-        if self.is_mut_local(name)
+        if self.mutable_let_bindings.contains(name)
             || self.ambiguous_contains(name)
             || self.plan.interior_mut.contains(name)
         {
@@ -4946,7 +4960,7 @@ impl TemporalScope {
     }
 
     pub(crate) fn stable_term_binding_for_term(&self, name: &str) -> Option<Rc<Term>> {
-        if self.is_mut_local(name)
+        if self.mutable_let_bindings.contains(name)
             || self.ambiguous_contains(name)
             || self.plan.interior_mut.contains(name)
             || self.plan.iterators.contains(name)
@@ -5052,7 +5066,7 @@ impl TemporalScope {
     }
 
     pub(crate) fn replayable_let_binding_for_source(&self, name: &str) -> Option<&Expr> {
-        if self.is_mut_local(name)
+        if self.mutable_let_bindings.contains(name)
             || self.ambiguous_contains(name)
             || self.plan.interior_mut.contains(name)
         {
@@ -5066,9 +5080,13 @@ impl TemporalScope {
     /// re-`let` of the same name OVERWRITES). The lift loop advances this as it passes
     /// each `Stmt::Local`, so a `try_fold` operand resolves the binding in effect at
     /// its position, never a later shadow. A `let mut` name is recorded too, but the
-    /// evaluator gates resolution on `!is_mut_local` (a mutable binding's later value
-    /// is not its written init).
+    /// evaluator gates resolution on the current binding's mutability (a mutable
+    /// binding's later value is not its written init).
     fn record_let_binding(&mut self, name: &str, init: Expr) {
+        self.record_let_value_binding(name, init, false);
+    }
+
+    fn record_let_value_binding(&mut self, name: &str, init: Expr, is_mutable: bool) {
         let rewritten = substitute_expr(&init, &self.let_bindings);
         let temporal_bindings = self.temporal_rewrite.borrow().expr_bindings();
         let rewritten = substitute_expr(&rewritten, &temporal_bindings);
@@ -5080,6 +5098,7 @@ impl TemporalScope {
                 "declined self-referential stable let binding"
             );
             self.let_bindings.remove(name);
+            self.mutable_let_bindings.remove(name);
             self.let_binding_types.remove(name);
             self.term_bindings.remove(name);
             self.runtime_destructured_locals.remove(name);
@@ -5090,6 +5109,11 @@ impl TemporalScope {
         self.let_binding_types.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.remove(name);
+        if is_mutable {
+            self.mutable_let_bindings.insert(name.to_string());
+        } else {
+            self.mutable_let_bindings.remove(name);
+        }
         self.let_bindings.insert(name.to_string(), rewritten);
     }
 
@@ -5102,6 +5126,7 @@ impl TemporalScope {
 
     pub(crate) fn record_let_term_binding(&mut self, name: &str, term: Rc<Term>) {
         self.let_bindings.remove(name);
+        self.mutable_let_bindings.remove(name);
         self.let_binding_types.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.remove(name);
@@ -5119,6 +5144,7 @@ impl TemporalScope {
             ),
             literal_arrays: self.literal_arrays.clone(),
             let_bindings: self.let_bindings.clone(),
+            mutable_let_bindings: self.mutable_let_bindings.clone(),
             let_binding_types: self.let_binding_types.clone(),
             term_bindings: self.term_bindings.clone(),
             runtime_destructured_locals: self.runtime_destructured_locals.clone(),
@@ -5142,6 +5168,7 @@ impl TemporalScope {
 
     fn record_runtime_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
+        self.mutable_let_bindings.remove(name);
         self.let_binding_types.remove(name);
         self.term_bindings.remove(name);
         self.unresolved_destructured_locals.remove(name);
@@ -5150,6 +5177,7 @@ impl TemporalScope {
 
     fn record_unresolved_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
+        self.mutable_let_bindings.remove(name);
         self.let_binding_types.remove(name);
         self.term_bindings.remove(name);
         self.runtime_destructured_locals.remove(name);
@@ -9279,6 +9307,14 @@ fn let_simple_value_binding_type(pat: &Pat) -> Option<(String, &Type)> {
     }
 }
 
+fn let_simple_value_binding_is_mutable(pat: &Pat) -> bool {
+    match pat {
+        Pat::Ident(pi) if pi.by_ref.is_none() && pi.subpat.is_none() => pi.mutability.is_some(),
+        Pat::Type(t) => let_simple_value_binding_is_mutable(&t.pat),
+        _ => false,
+    }
+}
+
 fn record_simple_value_binding(scope: &mut TemporalScope, local: &syn::Local) {
     let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
         return;
@@ -9286,7 +9322,11 @@ fn record_simple_value_binding(scope: &mut TemporalScope, local: &syn::Local) {
     let Some(name) = let_simple_value_binding(&local.pat) else {
         return;
     };
-    scope.record_let_binding(&name, (*init.expr).clone());
+    scope.record_let_value_binding(
+        &name,
+        (*init.expr).clone(),
+        let_simple_value_binding_is_mutable(&local.pat),
+    );
     if let Some((typed_name, ty)) = let_simple_value_binding_type(&local.pat) {
         if typed_name == name {
             scope.record_let_binding_expected_type(&name, ty);
