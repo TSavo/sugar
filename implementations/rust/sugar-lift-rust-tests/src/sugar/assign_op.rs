@@ -1082,6 +1082,12 @@ impl TemporalRewriteState {
                 init = %token_key(&init.expr),
                 "temporal rewrite declined local"
             );
+            if pat_is_mutable_simple_binding(&local.pat) {
+                if let Some(method) = untrackable_iterator_state_method(&init.expr) {
+                    self.invalidate_iterator_binding(&name, &method);
+                    return;
+                }
+            }
             self.clear_value(&name);
         }
     }
@@ -2189,6 +2195,41 @@ fn trackable_sequence_args(call: &syn::ExprMethodCall) -> bool {
     }
 }
 
+fn untrackable_iterator_state_method(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if iterator_state_initializer_adapter(call) => {
+            iterator_state_initializer_source(&call.receiver).then(|| call.method.to_string())
+        }
+        Expr::Reference(reference) => untrackable_iterator_state_method(&reference.expr),
+        Expr::Paren(paren) => untrackable_iterator_state_method(&paren.expr),
+        Expr::Group(group) => untrackable_iterator_state_method(&group.expr),
+        _ => None,
+    }
+}
+
+fn iterator_state_initializer_source(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Range(_) | Expr::Repeat(_) => true,
+        Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "vec") => true,
+        Expr::Call(call) => collection_constructor_sequence(call) || ufcs_into_iter_call(call),
+        Expr::MethodCall(call) if iterator_state_initializer_adapter(call) => {
+            iterator_state_initializer_source(&call.receiver)
+        }
+        Expr::Reference(reference) => iterator_state_initializer_source(&reference.expr),
+        Expr::Paren(paren) => iterator_state_initializer_source(&paren.expr),
+        Expr::Group(group) => iterator_state_initializer_source(&group.expr),
+        _ => false,
+    }
+}
+
+fn iterator_state_initializer_adapter(call: &syn::ExprMethodCall) -> bool {
+    match call.method.to_string().as_str() {
+        "array_chunks" | "array_chunks_mut" => call.args.is_empty(),
+        method if trackable_sequence_method(method) => trackable_sequence_args(call),
+        _ => false,
+    }
+}
+
 fn collection_constructor_sequence(call: &syn::ExprCall) -> bool {
     let Expr::Path(path) = strip_refs_groups(&call.func) else {
         return false;
@@ -2480,6 +2521,17 @@ fn simple_pat_binding(pat: &Pat) -> Option<String> {
         Pat::Type(typed) => simple_pat_binding(&typed.pat),
         Pat::Paren(paren) => simple_pat_binding(&paren.pat),
         _ => None,
+    }
+}
+
+fn pat_is_mutable_simple_binding(pat: &Pat) -> bool {
+    match pat {
+        Pat::Ident(ident) => {
+            ident.mutability.is_some() && ident.by_ref.is_none() && ident.subpat.is_none()
+        }
+        Pat::Type(typed) => pat_is_mutable_simple_binding(&typed.pat),
+        Pat::Paren(paren) => pat_is_mutable_simple_binding(&paren.pat),
+        _ => false,
     }
 }
 

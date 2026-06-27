@@ -4417,6 +4417,63 @@ fn for_slice_pattern_over_inferred_array_chunks_replays_literal_receiver() {
     }
 }
 
+#[test]
+fn bound_array_chunks_iterator_state_refuses_instead_of_composite_gap() {
+    let src = r#"
+        use std::cell::Cell;
+
+        struct CountDrop<'a>(&'a Cell<i32>);
+        impl<'a> CountDrop<'a> {
+            fn new(count: &'a Cell<i32>) -> Self { Self(count) }
+        }
+        impl Drop for CountDrop<'_> {
+            fn drop(&mut self) { self.0.set(self.0.get() + 1); }
+        }
+
+        #[test]
+        fn t_array_chunks_drop_state() {
+            let count = Cell::new(0);
+            let mut it = (0..5).map(|_| CountDrop::new(&count)).array_chunks::<3>();
+            assert_eq!(it.by_ref().count(), 1);
+            let mut it2 = it.clone();
+            assert_eq!(it.into_remainder().len(), 2);
+            assert!(it2.next().is_none());
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| {
+        lift_file(
+            &parse(src),
+            "tests/iter/adapters/array_chunks_bound_iterator.rs",
+        )
+    })
+    .unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+        panic!(
+            "bound mutable iterator `it` over drop/Cell array_chunks state must refuse by \
+             named runtime iterator state instead of panicking as a Composite factory gap; \
+             add a bound-path/runtime-iterator Composite effect sugar for this shape: {message}"
+        )
+    });
+
+    assert!(
+        out.assertions_refused >= 1
+            && out.skip_reasons.iter().any(|reason| {
+                reason.contains("unknown iterator consumption")
+                    && reason.contains("it")
+                    && reason.contains("array_chunks")
+            }),
+        "bound `it` must report unknown iterator consumption for array_chunks drop/Cell \
+         state, not warrant or disappear: refused={}, skips={:?}, audits={:?}",
+        out.assertions_refused,
+        out.skip_reasons,
+        out.factory_audits
+    );
+}
+
 // MECHANISM-2 gap (b): `.flat_map(|n| [..])` over a literal base maps each element to a
 // finite literal sub-sequence and concatenates -- map + flatten in one step. The closure
 // is const-eval'd per element (`*n` derefs the bound value); exact-or-refuse.
