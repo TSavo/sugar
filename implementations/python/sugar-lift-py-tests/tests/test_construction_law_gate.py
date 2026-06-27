@@ -2,16 +2,25 @@
 
 A STRUCTURAL lint over ``sugar/`` and ``floor/`` source. It does not care which
 runtime path built a sugar, so a sugar hand-assembled by a side-door lifter is
-caught here exactly the same as one that went through ``build()``. Three crimes,
-named after the base64 disaster that motivated the gate:
+caught here exactly the same as one the factory built.
+
+The architecture it enforces: the FACTORY recognizes a shape, builds the
+children bottom-up, and HANDS the finished ``SugarBody`` to the sugar at
+construction. A sugar is a dumb value that holds its body -- no ``ctx``, no
+``build_body``, no path back to the factory. ``desugar`` is the only
+transformation: it rewrites/lowers the body it was handed and passes the result
+downstream, lowering to FOL so the solver does the math.
+
+Four crimes, named after the base64 disaster that motivated the gate:
 
   A. self-construction from raw AST   -- ``from_function(fn: ast.FunctionDef)``
   B. raw AST held as a semantic child -- ``stmt: ast.Return``
-  C. execution instead of lowering    -- ``left << right`` in kit source
+  C. execution instead of lowering    -- ``left << right`` inside desugar
+  D. pulling its own body             -- ``ctx.build_body(...)`` in a sugar
 
-The gate is RED until every sugar is ``build()``-born, holds ``SugarBody``
-children, and lowers shapes to FOL for the solver. Green is the only way to
-ship. A vendor fingerprint with a private interpreter cannot pass it.
+Green is the only way to ship. A vendor fingerprint with a private interpreter
+cannot pass it, and neither can a sugar that assembles itself instead of being
+handed its body.
 """
 
 from __future__ import annotations
@@ -27,11 +36,13 @@ _LINTED_DIRS = ("sugar", "floor")
 _BITWISE_EXEC = (ast.LShift, ast.RShift, ast.BitAnd, ast.BitXor)
 _AST_REF = re.compile(r"\bast\.[A-Za-z_]")
 
-# Monotonic-down ratchet. This count only ever decreases, and lowering it is a
-# recorded commit. A PR that raises it is a relapse -- someone reached for an
-# interpreter -- and the build goes red. 0 is the target: the whole sugar layer
-# build()-born and lowering to FOL. The coordinator tightens it as the fleet lands.
-_CRIME_CEILING = 37
+# Monotonic-down ratchet: the count only ever decreases as crimes are fixed, and
+# lowering it is a recorded commit. The ONE exception is when the gate gains a new
+# DETECTOR -- a crime it was blind to -- which reveals pre-existing debt and re-pins
+# UP, deliberately, on the record. That happened here: crime D (a sugar pulling its
+# own body from the factory) was added, 37 -> 47. 0 is the target: every sugar
+# handed its body by the factory at construction, desugar lowering to FOL.
+_CRIME_CEILING = 47
 
 
 def _linted_files() -> list[Path]:
@@ -89,6 +100,17 @@ def crimes_in(path: Path, root: Path) -> list[str]:
                 f"`{ast.unparse(node)}` -- the kit must LOWER bitwise ops to bitvector FOL "
                 "for the solver, never compute them in Python."
             )
+        # CRIME D: a sugar reaches into the factory to assemble its own body.
+        # The factory builds the children bottom-up and HANDS the finished
+        # SugarBody to the sugar at construction. A sugar that calls build_body is
+        # pulling its body instead of receiving it -- the inversion.
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "build_body":
+                crimes.append(
+                    f"{rel}:{node.lineno}: CRIME D (sugar pulls its own body from the factory) "
+                    f"`{ast.unparse(node.func)}(...)` -- the factory builds the children and "
+                    "hands the SugarBody to the sugar at __init__; a sugar never calls build_body."
+                )
     return crimes
 
 
