@@ -580,6 +580,10 @@ Create a new spine under the Python lifter package with class-per-file layout:
 
 The RPC module is orchestration only. Its name and shape must not become the
 architecture. It does not own source semantics; sugars and floors do.
+Any field rendered by `sugar lift --report` may appear in an RPC response as a
+transport convenience, but it must also be minted into proof/memento data or be
+derivable from minted proof/memento data. Live RPC-only report sections are side
+doors and must be treated as instrumentation failures.
 
 ## Wholesale Migration Strategy
 
@@ -643,6 +647,24 @@ path to that zero, but they are not the measured `R`.
 Reports must be assembled from proof/memento data plus source-oracle resolution,
 not from side-door source text.
 
+The Rust reporting lesson is two ownership rules, both of which Python must
+copy:
+
+1. Assertion lifting owns "this source assertion warranted this observed
+   callsite fact." The proof must pin the fact, its source memento, its
+   callsite subject, and enough accounting to reproduce the assertion-surface
+   report without asking the live RPC lifter again.
+2. Body-universe lifting owns "this observed callsite fact warranted this
+   universe walk." The proof must pin the universe contract, the warranting
+   fact reference, source mementos, factory walk/effect mementos, emitted
+   predicates, and any implication/precondition edges that the report renders.
+
+RPC may assemble these rows for the immediate lift response, but `--report` must
+be able to regenerate the same logical report from the `.proof` file alone. If a
+source bundle is absent, the report asks the source oracle route pinned in the
+plan, then degrades to file/span/CID text if the oracle is unavailable or
+refuses. Missing source never justifies embedding body text into the proof.
+
 For `--visual`, Python should follow the Rust report shape:
 
 1. Plan roll call: component discovery, source oracle, witness oracle,
@@ -687,6 +709,10 @@ python numpy/pandas lift panic audit:
     effect reasons without typed Effect: N
     source mementos with body_text or ast_template: N
     report sections not reproducible from proof: N
+    assertion surface audit rows not pinned or proof-derivable: N
+    live RPC-only report fields: N
+    callsite fact/body universe links missing proof memento: N
+    implication/precondition edges not proof-pool reconstructable: N
 ```
 
 The first target is not zero for all of Python. The first target is that the
@@ -700,20 +726,27 @@ The first implementation slice should be small enough to prove the model:
 
 1. Python component roll call via `sugar.component.plan`.
 2. Source oracle component route for Python.
-3. Minimal factory/floor kernel.
-4. Route every selected Python AST site through the new factory, with no
+3. Proof-report memento schema for plan atoms, assertion facts, callsite facts,
+   body universes, source warrants, factory walks, effects, implications, and
+   compiler selection.
+4. Proof-only report regression: build a tiny `.proof`/memento fixture with one
+   unit-test fact, one warranted body universe, one source memento, and one
+   implication/precondition edge, then assert the report renders without a live
+   Python RPC lifter.
+5. Minimal factory/floor kernel.
+6. Route every selected Python AST site through the new factory, with no
    semantic fallback to old cascades. The expected state is all sugar screams.
-5. Port one existing family as a native sugar:
+7. Port one existing family as a native sugar:
    - recommended: translate/rstrip body universe plus unit-test fact pairing,
      because the source memento behavior already exists and the visual report
      can prove the full loop.
-6. Add the floor species/readers/visitors that the new sugar exposes. The
+8. Add the floor species/readers/visitors that the new sugar exposes. The
    expected intermediate state is floor screams.
-7. Emit factory audit rows and a report section from the new spine.
-8. Add audit-only mode that reports all construction gaps at once without
+9. Emit factory audit rows and a report section from the new spine.
+10. Add audit-only mode that reports all construction gaps at once without
    changing normal panic semantics.
-9. Add the first SAT/UNSAT z3 proof pair for the migrated sugar.
-10. Run a Python example without config/manifest by component discovery.
+11. Add the first SAT/UNSAT z3 proof pair for the migrated sugar.
+12. Run a Python example without config/manifest by component discovery.
 
 The slice is successful when the report can show:
 
