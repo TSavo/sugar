@@ -58,10 +58,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, AtomMemento, AuthorityMemento,
-    AuthorityMementoRef, BridgeMemento, ClaimContractMemento, ContractBody, ContractMementoRef,
-    Ed25519Seed, FactoryWalkMemento, FlatAtom, ImplicationMemento, LibrarySugarBindingMemento,
-    PlanMemento, ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
+    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
+    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
+    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
+    SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -2217,6 +2218,10 @@ fn mint_lift_response(
                 .get("factoryAuditSummary")
                 .and_then(|summary| summary.get("factoryWalk"))
                 .and_then(Value::as_array);
+            let assertion_surface_audits = lift_resp
+                .get("assertionSurfaceAudits")
+                .or_else(|| lift_resp.get("assertion_surface_audits"))
+                .and_then(Value::as_array);
             debug!(
                 ir_entries = ir.len(),
                 "mint: minting ir-document into .proof bundle"
@@ -2226,6 +2231,7 @@ fn mint_lift_response(
                 source_mementos,
                 plan_mementos,
                 factory_walk,
+                assertion_surface_audits,
                 authorities,
                 implications,
                 witnesses,
@@ -2608,6 +2614,7 @@ fn mint_ir_document_with_source_mementos(
         source_mementos,
         None,
         factory_walk,
+        None,
         authorities,
         implications,
         witnesses,
@@ -2622,6 +2629,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
     source_mementos: Option<&Vec<Value>>,
     plan_mementos: Option<&Vec<Value>>,
     factory_walk: Option<&Vec<Value>>,
+    assertion_surface_audits: Option<&Vec<Value>>,
     authorities: Option<&Vec<Value>>,
     implications: Option<&Vec<Value>>,
     witnesses: Option<&Vec<Value>>,
@@ -2722,6 +2730,18 @@ fn mint_ir_document_with_source_and_plan_mementos(
         for row in factory_walk {
             let (cid, bytes) = mint_factory_walk_memento(row)?;
             push_graph_memento!(FactoryWalkMemento, push_factory_walk, cid.as_str(), bytes);
+        }
+    }
+
+    if let Some(assertion_surface_audits) = assertion_surface_audits {
+        for row in assertion_surface_audits {
+            let (cid, bytes) = mint_assertion_surface_memento(row)?;
+            push_graph_memento!(
+                AssertionSurfaceMemento,
+                push_assertion_surface,
+                cid.as_str(),
+                bytes
+            );
         }
     }
 
@@ -3845,6 +3865,89 @@ fn mint_factory_walk_memento(row: &Value) -> Result<(String, Vec<u8>), String> {
             if let Some(value) = source_memento.get(body_field).cloned() {
                 header.insert(header_field.to_string(), value);
             }
+        }
+    }
+
+    let envelope = json!({
+        "body": Value::Object(body),
+        "header": Value::Object(header),
+        "schemaVersion": "1",
+    });
+    let canonical = encode_jcs(&json_to_cvalue(&envelope));
+    let cid = blake3_512_of(canonical.as_bytes());
+    Ok((cid, canonical.into_bytes()))
+}
+
+fn mint_assertion_surface_memento(row: &Value) -> Result<(String, Vec<u8>), String> {
+    let mut body = row
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "`assertion-surface-audit` must be an object".to_string())?;
+    for forbidden in [
+        "source",
+        "term",
+        "site",
+        "body_text",
+        "ast_template",
+        "bodyText",
+        "astTemplate",
+    ] {
+        if body.contains_key(forbidden) {
+            return Err(format!(
+                "`assertion-surface-audit` must carry SourceMemento pins only; forbidden inline field `{forbidden}` present"
+            ));
+        }
+    }
+    body.entry("kind".to_string())
+        .or_insert_with(|| json!("assertion-surface-audit"));
+    if body.get("kind").and_then(Value::as_str) != Some("assertion-surface-audit") {
+        return Err("`assertion-surface-audit.kind` must be `assertion-surface-audit`".to_string());
+    }
+
+    let mut header = serde_json::Map::new();
+    header.insert("kind".to_string(), json!("assertion-surface-memento"));
+    for field in [
+        "surface",
+        "file",
+        "line",
+        "col",
+        "status",
+        "sourceStatus",
+        "assertionSource",
+    ] {
+        if let Some(value) = body.get(field).cloned() {
+            header.insert(field.to_string(), value);
+        }
+    }
+    if let Some(source_memento) = body.get("sourceMemento").and_then(Value::as_object) {
+        for (header_field, body_field) in [
+            ("sourceCid", "source_cid"),
+            ("sourceCid", "sourceCid"),
+            ("claimName", "claimName"),
+            ("contractName", "contractName"),
+            ("sourceFunctionName", "sourceFunctionName"),
+            ("sourceFunctionName", "source_function_name"),
+        ] {
+            if !header.contains_key(header_field) {
+                if let Some(value) = source_memento.get(body_field).cloned() {
+                    header.insert(header_field.to_string(), value);
+                }
+            }
+        }
+    }
+    if !header.contains_key("contractName") {
+        if let Some(contract) = body
+            .get("facts")
+            .and_then(Value::as_array)
+            .and_then(|facts| facts.first())
+            .and_then(|fact| {
+                fact.get("contract")
+                    .or_else(|| fact.get("contractName"))
+                    .or_else(|| fact.get("contract_name"))
+            })
+            .cloned()
+        {
+            header.insert("contractName".to_string(), contract);
         }
     }
 
@@ -5744,6 +5847,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &root,
             &out_dir,
             true,
@@ -5913,6 +6017,7 @@ mod tests {
             &ir,
             None,
             Some(&plan_mementos),
+            None,
             None,
             None,
             None,

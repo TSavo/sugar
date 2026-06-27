@@ -880,6 +880,270 @@ done
 }
 
 #[test]
+fn lift_report_rehydrates_assertion_surface_audits_from_minted_proof() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let fact_manifest = project.join(".sugar/lift/python-test-assertions");
+    let body_manifest = project.join(".sugar/lift/python-body-universes");
+    fs::create_dir_all(&fact_manifest).expect("create fact manifest dir");
+    fs::create_dir_all(&body_manifest).expect("create body manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "python-test-assertions"
+kind = "lift"
+surface = "python-test-assertions"
+emit = "ir-document"
+
+[[plugins]]
+name = "python-body-universes"
+kind = "lift"
+surface = "python-body-universes"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let fact_source = json!({
+        "kind": "source-memento",
+        "file": "test_encoder.py",
+        "sourceFunctionName": "test_encode_len",
+        "source_function_name": "test_encode_len",
+        "span": {"start_line": 4, "start_col": 0, "end_line": 5, "end_col": 33},
+        "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "contractName": "test_encoder::test_encode_len::fact",
+        "claimName": "test_encoder::test_encode_len::fact",
+        "role": "unit-test-fact"
+    });
+    let body_source = json!({
+        "kind": "source-memento",
+        "file": "encoder.py",
+        "sourceFunctionName": "encode_len",
+        "source_function_name": "encode_len",
+        "span": {"start_line": 1, "start_col": 0, "end_line": 3, "end_col": 19},
+        "paramNames": ["payload"],
+        "param_names": ["payload"],
+        "source_cid": "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "template_cid": "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "contractName": "encode_len",
+        "claimName": "encode_len",
+        "role": "body-universe"
+    });
+    let fact_formula = json!({
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {"kind": "ctor", "name": "call:encode_len", "args": [{"kind": "str", "value": "abc"}]},
+            {"kind": "int", "value": 4}
+        ]
+    });
+    let body_formula = json!({
+        "kind": "atomic",
+        "name": ">=",
+        "args": [
+            {"kind": "var", "name": "out"},
+            {"kind": "int", "value": 0}
+        ]
+    });
+    let fact_response = json!({
+        "kind": "ir-document",
+        "ir": [{
+            "kind": "contract",
+            "name": "test_encoder::test_encode_len::fact",
+            "outBinding": "out",
+            "inv": fact_formula,
+            "sourceWarrants": [fact_source]
+        }],
+        "sourceLedger": {
+            "source_loci": 1,
+            "source_warranted": 1,
+            "source_inactive": 0,
+            "source_support": 0,
+            "source_refused": 0,
+            "source_unresolved": 0
+        },
+        "sourceAudits": [],
+        "factoryAudits": [],
+        "factoryAuditSummary": {
+            "emittedRows": 0,
+            "statusCounts": {"warranted": 0, "refused": 0, "support": 0, "unresolved": 0},
+            "unresolvedSites": [],
+            "factoryWalk": []
+        },
+        "assertionSurfaceAudits": [{
+            "kind": "assertion-surface-audit",
+            "surface": "python-unittest",
+            "assertionSource": "test_encoder::test_encode_len",
+            "file": "test_encoder.py",
+            "line": 5,
+            "col": 4,
+            "sourceStatus": "warranted",
+            "status": "facts-emitted",
+            "facts": [{
+                "kind": "warranted",
+                "contract": "test_encoder::test_encode_len::fact",
+                "claim": "assert encode_len('abc') == 4",
+                "claimCount": 1,
+                "sourcePath": "test_encoder.py",
+                "sourceMemento": fact_source,
+                "sourceMementos": [fact_source]
+            }],
+            "supportFacts": [],
+            "sourceMemento": fact_source
+        }],
+        "sourceMementos": [fact_source],
+        "diagnostics": []
+    });
+    let body_response = json!({
+        "kind": "ir-document",
+        "ir": [{
+            "kind": "function-contract",
+            "name": "encode_len",
+            "outBinding": "out",
+            "formals": ["payload"],
+            "formalSorts": [{"kind": "named", "name": "String"}],
+            "post": body_formula,
+            "sourceWarrants": [body_source]
+        }],
+        "sourceLedger": {
+            "source_loci": 1,
+            "source_warranted": 1,
+            "source_inactive": 0,
+            "source_support": 0,
+            "source_refused": 0,
+            "source_unresolved": 0
+        },
+        "sourceAudits": [],
+        "factoryAudits": [],
+        "factoryAuditSummary": {
+            "emittedRows": 1,
+            "statusCounts": {"warranted": 1, "refused": 0, "support": 0, "unresolved": 0},
+            "unresolvedSites": [],
+            "factoryWalk": [{
+                "kind": "factory-walk-row",
+                "file": "encoder.py",
+                "line": 2,
+                "col": 4,
+                "status": "warranted",
+                "verdict": "complete",
+                "selected": "return",
+                "output": "post",
+                "sourceFunctionName": "encode_len",
+                "contractName": "encode_len",
+                "claimName": "encode_len",
+                "emittedFormula": body_formula,
+                "sourceMemento": body_source
+            }]
+        },
+        "sourceMementos": [body_source],
+        "diagnostics": []
+    });
+
+    let fact_response_path = dir.path().join("fact-response.json");
+    let body_response_path = dir.path().join("body-response.json");
+    fs::write(
+        &fact_response_path,
+        serde_json::to_string(&fact_response).expect("serialize fact response"),
+    )
+    .expect("write fact response");
+    fs::write(
+        &body_response_path,
+        serde_json::to_string(&body_response).expect("serialize body response"),
+    )
+    .expect("write body response");
+
+    fn write_response_plugin(script: &Path, response_path: &Path, name: &str) {
+        let response = response_path.display().to_string().replace('\'', "'\\''");
+        write_executable(
+            script,
+            &format!(
+                r#"#!/usr/bin/env bash
+set -euo pipefail
+response='{response}'
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"name":"{name}","protocol_version":"pep/1.7.0","capabilities":{{}}}}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    printf '{{"jsonrpc":"2.0","id":2,"result":'
+    cat "$response"
+    printf '}}\n'
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{{"jsonrpc":"2.0","id":3,"result":null}}'
+    exit 0
+  fi
+done
+"#
+            ),
+        );
+    }
+
+    let fact_plugin = dir.path().join("fact-plugin.sh");
+    let body_plugin = dir.path().join("body-plugin.sh");
+    write_response_plugin(&fact_plugin, &fact_response_path, "python-test-assertions");
+    write_response_plugin(&body_plugin, &body_response_path, "python-body-universes");
+    fs::write(
+        fact_manifest.join("manifest.toml"),
+        format!(
+            "name = \"python-test-assertions\"\ncommand = [\"{}\"]\n",
+            fact_plugin.display()
+        ),
+    )
+    .expect("write fact manifest");
+    fs::write(
+        body_manifest.join("manifest.toml"),
+        format!(
+            "name = \"python-body-universes\"\ncommand = [\"{}\"]\n",
+            body_plugin.display()
+        ),
+    )
+    .expect("write body manifest");
+
+    let output = output_retrying_etxtbsy(
+        Command::new(sugar_bin())
+            .arg("lift")
+            .arg("--report")
+            .arg("--json")
+            .arg(&project),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "lift report must mint then render from the proof-only report path\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
+    let assertion_audits = report["assertionSurfaceAudits"]
+        .as_array()
+        .expect("assertionSurfaceAudits array");
+    assert_eq!(
+        assertion_audits.len(),
+        1,
+        "unit-test assertion audit must survive mint into the proof-only report: {report:#}"
+    );
+    assert_eq!(
+        assertion_audits[0]["facts"][0]["contract"].as_str(),
+        Some("test_encoder::test_encode_len::fact")
+    );
+    assert!(
+        report["contracts"]
+            .as_array()
+            .expect("contracts array")
+            .iter()
+            .any(|entry| entry["name"].as_str() == Some("encode_len")),
+        "body universe should also be reconstructed from the same proof: {report:#}"
+    );
+    assert_eq!(
+        report["factoryWalk"]
+            .as_array()
+            .expect("factoryWalk array")
+            .len(),
+        1,
+        "factory walk should still be proof-only evidence: {report:#}"
+    );
+}
+
+#[test]
 fn mint_ignores_emit_only_plugin_registrations() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");

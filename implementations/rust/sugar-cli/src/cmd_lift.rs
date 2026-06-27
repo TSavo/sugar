@@ -1564,6 +1564,22 @@ fn source_report_from_proof_pool(
         factory_walk.push(normalize_factory_gap_walk_row(body.clone()));
     }
 
+    let mut assertion_surface_audits = Vec::new();
+    for envelope in pool.mementos.values() {
+        if sugar_verifier::memento_kind(envelope) != Some("assertion-surface-memento") {
+            continue;
+        }
+        let Some(body) = sugar_verifier::memento_body(envelope) else {
+            continue;
+        };
+        if contract_filter
+            .is_some_and(|filter| !assertion_surface_audit_matches_filter(body, filter))
+        {
+            continue;
+        }
+        assertion_surface_audits.push(normalize_assertion_surface_audit(body.clone()));
+    }
+
     let mut plan_mementos = Vec::new();
     for envelope in pool.mementos.values() {
         if sugar_verifier::memento_kind(envelope) != Some("plan-memento") {
@@ -1620,7 +1636,7 @@ fn source_report_from_proof_pool(
         audits: Vec::new(),
         factory_audits: Vec::new(),
         factory_walk,
-        assertion_surface_audits: Vec::new(),
+        assertion_surface_audits,
         source_mementos,
         plan_mementos,
         contracts,

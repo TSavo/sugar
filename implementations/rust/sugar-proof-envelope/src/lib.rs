@@ -33,11 +33,11 @@ pub use cbor_decode::{decode as cbor_decode, CborDecodeError, CborValue};
 pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
-    AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
-    ClaimContractMemento, ContractBody, ContractBodyCid, ContractMemento, ContractMementoRef,
-    EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom, ImplicationMemento,
-    LibrarySugarBindingMemento, MementoCid, PlanMemento, ProofGraph, ProofRunMemento,
-    SourceMemento, StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
+    AssertionSurfaceMemento, AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef,
+    BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractMemento,
+    ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
+    ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento, ProofGraph,
+    ProofRunMemento, SourceMemento, StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
