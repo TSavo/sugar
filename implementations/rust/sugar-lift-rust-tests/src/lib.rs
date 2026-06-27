@@ -6310,7 +6310,9 @@ impl<'a> PeeledExpr<'a> {
 /// Wrap `inner` in `RevSugar` (the `.rev()` adaptor, also the synthetic final `Rev`
 /// appended for `.rfold`).
 fn wrap_rev(inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
-    Box::new(sugar::rev::RevSugar { inner })
+    Box::new(sugar::rev::RevSugar {
+        inner: sugar::factory::SugarBody::from_node(inner),
+    })
 }
 
 /// Peel iterator adaptors off a `.fold`/`.rfold` receiver and RESOLVE `let`-bound
@@ -6413,7 +6415,11 @@ fn peel_fold_adaptors_inner<'a>(
                             inner: sugar::factory::SugarBody::from_node(inner),
                         })
                     }),
-                    ("rev", 0) => Box::new(|inner, _fcx| Box::new(sugar::rev::RevSugar { inner })),
+                    ("rev", 0) => Box::new(|inner, _fcx| {
+                        Box::new(sugar::rev::RevSugar {
+                            inner: sugar::factory::SugarBody::from_node(inner),
+                        })
+                    }),
                     // `.inspect(f)` yields the SAME items in the SAME order -- the closure
                     // receives `&Item` and CANNOT alter the value stream (its side effect is
                     // irrelevant to the asserted values). So it is the identity adaptor over
