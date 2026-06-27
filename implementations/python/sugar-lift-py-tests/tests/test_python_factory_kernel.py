@@ -166,6 +166,101 @@ def test_factory_matches_registered_sugar_for_last_popped_source_site() -> None:
     }
 
 
+def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering() -> None:
+    node = ast.parse("1", mode="eval").body
+
+    @dataclass(frozen=True)
+    class OwnedSugar:
+        owner: str
+
+    def owns_literal(site) -> bool:
+        return isinstance(site.node, ast.Constant)
+
+    catalog = SugarCatalog(
+        [
+            SugarClaim(
+                name="AlphaLiteralSugar",
+                role=SugarRole.TERM,
+                owns=owns_literal,
+                build=lambda _site, _ctx: OwnedSugar("alpha"),
+            ),
+            SugarClaim(
+                name="BetaLiteralSugar",
+                role=SugarRole.TERM,
+                owns=owns_literal,
+                build=lambda _site, _ctx: OwnedSugar("beta"),
+            ),
+        ]
+    )
+
+    with pytest.raises(FactoryGap) as raised:
+        build_node(node, filename="ambiguous.py", role=SugarRole.TERM, catalog=catalog)
+
+    assert str(raised.value).startswith("write more Sugar ordering for this AST")
+    assert raised.value.info == {
+        "owner": "python.factory",
+        "blame": "ambiguous.py:1:0",
+        "observed": "PrimitiveLiteral candidates=[AlphaLiteralSugar, BetaLiteralSugar]",
+        "requested": "term",
+        "fix": "declare comes_before or split the sugar role",
+    }
+    assert raised.value.audit_row.to_json() == {
+        "kind": "factory-audit-row",
+        "role": "term",
+        "status": "sugar-ambiguous",
+        "observed": "PrimitiveLiteral",
+        "blame": "ambiguous.py:1:0",
+        "selected": None,
+        "candidates": ["AlphaLiteralSugar", "BetaLiteralSugar"],
+        "message": str(raised.value),
+    }
+
+
+def test_factory_uses_comes_before_to_resolve_multiple_claims() -> None:
+    node = ast.parse("1", mode="eval").body
+
+    @dataclass(frozen=True)
+    class OwnedSugar:
+        owner: str
+
+    def owns_literal(site) -> bool:
+        return isinstance(site.node, ast.Constant)
+
+    alpha = SugarClaim(
+        name="AlphaLiteralSugar",
+        role=SugarRole.TERM,
+        owns=owns_literal,
+        build=lambda _site, _ctx: OwnedSugar("alpha"),
+        comes_before=("BetaLiteralSugar",),
+    )
+    beta = SugarClaim(
+        name="BetaLiteralSugar",
+        role=SugarRole.TERM,
+        owns=owns_literal,
+        build=lambda _site, _ctx: OwnedSugar("beta"),
+    )
+    catalog = SugarCatalog([beta, alpha])
+
+    result = build_node(
+        node,
+        filename="ordered.py",
+        role=SugarRole.TERM,
+        catalog=catalog,
+    )
+
+    assert result.sugar == OwnedSugar("alpha")
+    assert result.audit_row.to_json() == {
+        "kind": "factory-audit-row",
+        "role": "term",
+        "status": "selected",
+        "observed": "PrimitiveLiteral",
+        "blame": "ordered.py:1:0",
+        "selected": "AlphaLiteralSugar",
+        "candidates": ["BetaLiteralSugar", "AlphaLiteralSugar"],
+        "message": "selected Sugar `AlphaLiteralSugar` for role term at `ordered.py:1:0`",
+    }
+
+
 def test_array_literal_factory_hits_missing_primitive_literal_leaf_first() -> None:
     node = ast.parse("[1, 2, 3]", mode="eval").body
 

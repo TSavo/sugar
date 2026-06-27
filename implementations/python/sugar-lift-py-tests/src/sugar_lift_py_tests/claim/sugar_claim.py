@@ -12,3 +12,4 @@ class SugarClaim:
     role: SugarRole
     owns: Callable[[Any], bool]
     build: Callable[[Any], Any]
+    comes_before: tuple[str, ...] = ()
