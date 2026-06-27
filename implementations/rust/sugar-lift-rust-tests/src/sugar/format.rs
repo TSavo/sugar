@@ -1706,6 +1706,31 @@ fn zero_pad(body: String, width: usize) -> String {
 }
 
 fn render_i128_display(value: i128, spec: &Spec) -> String {
+    if spec.alternate {
+        return match (spec.align, spec.zero_width, spec.width, spec.plus) {
+            (None, Some(w), _, false) => format!("{value:#0w$}"),
+            (None, Some(w), _, true) => format!("{value:+#0w$}"),
+            (None, None, Some(w), false) => format!("{value:#w$}"),
+            (None, None, Some(w), true) => format!("{value:+#w$}"),
+            (None, None, None, false) => format!("{value:#}"),
+            (None, None, None, true) => format!("{value:+#}"),
+            (Some(Align::Left), Some(w), _, false) => format!("{value:<#0w$}"),
+            (Some(Align::Left), Some(w), _, true) => format!("{value:<+#0w$}"),
+            (Some(Align::Left), None, Some(w), false) => format!("{value:<#w$}"),
+            (Some(Align::Left), None, Some(w), true) => format!("{value:<+#w$}"),
+            (Some(Align::Right), Some(w), _, false) => format!("{value:>#0w$}"),
+            (Some(Align::Right), Some(w), _, true) => format!("{value:>+#0w$}"),
+            (Some(Align::Right), None, Some(w), false) => format!("{value:>#w$}"),
+            (Some(Align::Right), None, Some(w), true) => format!("{value:>+#w$}"),
+            (Some(Align::Center), Some(w), _, false) => format!("{value:^#0w$}"),
+            (Some(Align::Center), Some(w), _, true) => format!("{value:^+#0w$}"),
+            (Some(Align::Center), None, Some(w), false) => format!("{value:^#w$}"),
+            (Some(Align::Center), None, Some(w), true) => format!("{value:^+#w$}"),
+            (Some(_), None, None, false) => format!("{value:#}"),
+            (Some(_), None, None, true) => format!("{value:+#}"),
+        };
+    }
+
     match (spec.align, spec.zero_width, spec.width, spec.plus) {
         (None, Some(w), _, false) => format!("{value:0w$}"),
         (None, Some(w), _, true) => format!("{value:+0w$}"),
@@ -1845,9 +1870,6 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
     // Render the body via the real formatter, honoring sign for Display/Debug.
     let body = match spec.kind {
         Kind::Display => {
-            if spec.alternate {
-                return None;
-            }
             if spec.precision.is_some() {
                 return None; // precision on an integer Display — bail (no faithful arm)
             }
@@ -3534,6 +3556,27 @@ mod tests {
         assert_eq!(
             resolve(r#"format!("{:#?}", 'x')"#).unwrap().as_deref(),
             Some("'x'")
+        );
+    }
+
+    #[test]
+    fn alternate_display_int_delegates_to_literal_floor() {
+        match render_format_values(
+            "{:#}",
+            &[FmtValue::Int {
+                value: 1,
+                suffix: IntKind::Unsuffixed,
+            }],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            r#"format!("{:#}", 1)"#,
+        ) {
+            FloorRead::Complete(value) => assert_eq!(value, "1"),
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
+        assert_eq!(
+            resolve(r#"format!("{:#}", 1)"#).unwrap().as_deref(),
+            Some("1")
         );
     }
 
