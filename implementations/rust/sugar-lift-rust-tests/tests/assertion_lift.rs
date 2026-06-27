@@ -4487,6 +4487,37 @@ fn test_iterator_array_chunks_skip_next() {
 }
 
 #[test]
+fn rpc_source_array_chunks_skip_rev_chain_uses_sequence_floor() {
+    let doc = std::panic::catch_unwind(|| {
+        run_rpc_lift(
+            "tests/iter/adapters/array_chunks_skip_rev.rs",
+            r#"
+#[test]
+fn test_iterator_array_chunks_skip_rev_chain_next() {
+    let mut it = ((0..11).array_chunks::<3>()).skip(1).rev().skip(1).rev();
+    assert_eq!(it.next(), Some([3, 4, 5]));
+}
+"#,
+        )
+    })
+    .unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic>");
+        panic!(
+            "`rev()` in an iterator adaptor chain must be owned by rev as a \
+             Composite-floor adaptor: construct the receiver with `SugarBody::composite`, \
+             delegate to upstream floors like array_chunks/skip, and bubble child effects \
+             instead of rebuilding a literal-only receiver path: {message}"
+        )
+    });
+
+    assert_rpc_source_warranted(&doc, "test_iterator_array_chunks_skip_rev_chain_next");
+}
+
+#[test]
 fn bound_array_chunks_iterator_state_refuses_instead_of_composite_gap() {
     let src = r#"
         use std::cell::Cell;
