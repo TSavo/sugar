@@ -206,6 +206,17 @@ def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys):
     assert exit_code == 1
     assert "numpy_sugar_panics" in stdout
     assert "fix:" in stdout
+
+
+def test_failed_lift_without_gap_records_counts_as_unexpected():
+    def failing_runner(command: list[str], cwd: Path) -> CommandResult:
+        return CommandResult(returncode=2, stdout="", stderr="error: unknown option --audit-only\n")
+
+    report = collect_panic_audit(ROOT, run_command=failing_runner)
+
+    assert report.r.values["unexpected_panics"] == 2
+    assert not report.is_zero
+    assert all(record.kind == "unexpected" for record in report.records)
 ```
 
 - [ ] **Step 2: Run the focused test to see it fail**
@@ -377,6 +388,10 @@ class PanicAuditReport:
     def r(self) -> PanicVector:
         return PanicVector.from_records(self.records)
 
+    @property
+    def is_zero(self) -> bool:
+        return self.r.is_zero and not self.diagnostics
+
     def to_json(self) -> dict:
         return {
             "kind": "python-numpy-pandas-panic-audit",
@@ -400,7 +415,7 @@ from .lift_target import LiftTarget
 from .panic_record import PanicRecord
 
 
-_FIELD = re.compile(r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\\s(?:owner|blame|observed|requested|fix)=|$)")
+_FIELD = re.compile(r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)")
 
 
 def extract_panic_records(target: LiftTarget, stdout: str, stderr: str) -> list[PanicRecord]:
@@ -450,6 +465,7 @@ from .command_result import CommandResult
 from .extract_panic_records import extract_panic_records
 from .lift_target import LiftTarget
 from .panic_audit_report import PanicAuditReport
+from .panic_record import PanicRecord
 
 
 RunCommand = Callable[[list[str], Path], CommandResult]
@@ -466,14 +482,40 @@ def collect_panic_audit(root: Path, run_command: RunCommand | None = None) -> Pa
     records = []
     for target in targets:
         if not target.path.exists():
-            diagnostics.append(f"missing target: {target.path}")
+            message = f"missing target: {target.path}"
+            diagnostics.append(message)
+            records.append(
+                PanicRecord(
+                    target=target.name,
+                    kind="unexpected",
+                    owner="idd.collect_panic_audit",
+                    blame=str(target.path),
+                    observed="missing-target",
+                    requested="audit target",
+                    fix="create the numpy/pandas target or point the audit at the real target",
+                    message=message,
+                )
+            )
             continue
         command = ["sugar", "lift", "--report", "--visual", "--audit-only", str(target.path)]
         result = runner(command, root)
         target_records = extract_panic_records(target, result.stdout, result.stderr)
         records.extend(target_records)
         if result.returncode != 0 and not target_records:
-            diagnostics.append(f"{target.name} lift exited {result.returncode} without construction panic records")
+            message = f"{target.name} lift exited {result.returncode} without construction panic records"
+            diagnostics.append(message)
+            records.append(
+                PanicRecord(
+                    target=target.name,
+                    kind="unexpected",
+                    owner="idd.collect_panic_audit",
+                    blame=str(target.path),
+                    observed=f"exit={result.returncode}",
+                    requested="construction-panic-records",
+                    fix="make audit-only emit structured construction panic records",
+                    message=message,
+                )
+            )
     return PanicAuditReport(targets=targets, records=records, diagnostics=diagnostics)
 
 
@@ -534,7 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report.to_json(), sort_keys=True, indent=2))
     else:
         print(render_text(report), end="")
-    return 0 if report.r.is_zero else 1
+    return 0 if report.is_zero else 1
 ```
 
 - [ ] **Step 9: Add the console entry**
@@ -553,7 +595,7 @@ Run:
 PYTHONPATH=implementations/python/sugar-lift-py-tests/src pytest -q implementations/python/sugar-lift-py-tests/tests/test_numpy_pandas_panic_audit.py
 ```
 
-Expected: `2 passed`.
+Expected: `3 passed`.
 
 Run:
 
@@ -1282,7 +1324,9 @@ git commit -m "Add Python sugar factory construction gaps"
 ## Task 4: Add Audit-Only Gap Inventory
 
 **Files:**
-- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only.py`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/__init__.py`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/audit_only_gap.py`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py`
 - Test: `implementations/python/sugar-lift-py-tests/tests/test_audit_only_gaps.py`
 
 **Interfaces:**
@@ -1351,18 +1395,14 @@ Expected: import failure for `sugar_lift_py_tests.audit_only`.
 
 - [ ] **Step 3: Implement audit-only collection**
 
-Create `audit_only.py`:
+Create `audit_only/audit_only_gap.py`:
 
 ```python
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, TypeAlias
 
-from sugar_lift_py_tests.gaps import ConstructionGapInfo, ConstructionGapPanic
-
-
-AuditWalker: TypeAlias = tuple[str, Callable[[], object]]
+from sugar_lift_py_tests.gaps import ConstructionGapInfo
 
 
 @dataclass(frozen=True)
@@ -1378,6 +1418,21 @@ class AuditOnlyGap:
             "message": self.message,
             "gap": self.info.to_json(),
         }
+```
+
+Create `audit_only/collect_construction_gaps.py`:
+
+```python
+from __future__ import annotations
+
+from typing import Callable, Iterable, TypeAlias
+
+from sugar_lift_py_tests.gaps import ConstructionGapPanic
+
+from .audit_only_gap import AuditOnlyGap
+
+
+AuditWalker: TypeAlias = tuple[str, Callable[[], object]]
 
 
 def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyGap]:
@@ -1388,6 +1443,17 @@ def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyG
         except ConstructionGapPanic as exc:
             gaps.append(AuditOnlyGap(label=label, info=exc.info, message=str(exc)))
     return gaps
+```
+
+Create `audit_only/__init__.py`:
+
+```python
+from __future__ import annotations
+
+from .audit_only_gap import AuditOnlyGap
+from .collect_construction_gaps import collect_construction_gaps
+
+__all__ = ["AuditOnlyGap", "collect_construction_gaps"]
 ```
 
 - [ ] **Step 4: Verify audit-only and normal panic behavior**
@@ -1413,7 +1479,7 @@ Expected: exit code `1` until numpy and pandas produce zero observed constructio
 - [ ] **Step 6: Commit**
 
 ```bash
-git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only.py implementations/python/sugar-lift-py-tests/tests/test_audit_only_gaps.py
+git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only implementations/python/sugar-lift-py-tests/tests/test_audit_only_gaps.py
 git commit -m "Add Python audit-only construction gap inventory"
 ```
 
@@ -1882,7 +1948,7 @@ name = "python-test-assertions"
 version = "0.1.0"
 protocol_version = "sugar-component/1"
 command = ["python3", "-m", "sugar_lift_py_tests.kit_rpc.server", "--rpc"]
-working_dir = "../../implementations/python/sugar-lift-py-tests/src"
+working_dir = "../../.."
 ```
 
 - [ ] **Step 5: Verify component test**
