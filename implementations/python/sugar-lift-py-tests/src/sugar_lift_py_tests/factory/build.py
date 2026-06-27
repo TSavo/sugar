@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
+from sugar_lift_py_tests.claim import SugarCandidate, SugarCatalog, SugarRole
 
 from .factory_audit_row import FactoryAuditRow
 from .factory_build_context import FactoryBuildContext
@@ -85,7 +85,9 @@ def _build_site(
         )
         raise FactoryGap(info, audit_row)
 
-    selected = candidates[0]
+    selected = _select_candidate(candidates)
+    if selected is None:
+        _raise_ambiguous_candidates(site, role, candidates)
     sugar = selected.claim.build(site, ctx)
     message = f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     audit_row = FactoryAuditRow(
@@ -98,6 +100,76 @@ def _build_site(
         message=message,
     )
     return FactoryBuildResult(sugar=sugar, audit_row=audit_row)
+
+
+def _select_candidate(candidates: list[SugarCandidate]) -> SugarCandidate | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    if len({candidate.name for candidate in candidates}) != len(candidates):
+        return None
+
+    by_name = {candidate.name: candidate for candidate in candidates}
+    winners = [
+        candidate
+        for candidate in candidates
+        if all(
+            candidate.name == other.name
+            or _dominates(candidate, other, by_name, seen=frozenset())
+            for other in candidates
+        )
+    ]
+    if len(winners) != 1:
+        return None
+    return winners[0]
+
+
+def _dominates(
+    left: SugarCandidate,
+    right: SugarCandidate,
+    by_name: dict[str, SugarCandidate],
+    *,
+    seen: frozenset[str],
+) -> bool:
+    if left.name in seen:
+        return False
+    next_seen = seen | {left.name}
+    for next_name in left.claim.comes_before:
+        if next_name == right.name:
+            return True
+        next_candidate = by_name.get(next_name)
+        if next_candidate is not None and _dominates(
+            next_candidate,
+            right,
+            by_name,
+            seen=next_seen,
+        ):
+            return True
+    return False
+
+
+def _raise_ambiguous_candidates(
+    site: SourceSite, role: SugarRole, candidates: list[SugarCandidate]
+) -> None:
+    names = [candidate.name for candidate in candidates]
+    info = FactoryGapInfo(
+        owner="python.factory",
+        blame=site.blame,
+        observed=f"{site.observed} candidates=[{', '.join(names)}]",
+        requested=role.value,
+        fix="declare comes_before or split the sugar role",
+        gap_kind="Sugar ordering",
+        gap_locus="AST",
+    )
+    audit_row = FactoryAuditRow(
+        role=role.value,
+        status="sugar-ambiguous",
+        observed=site.observed,
+        blame=site.blame,
+        selected=None,
+        candidates=names,
+        message=info.message,
+    )
+    raise FactoryGap(info, audit_row)
 
 
 def default_catalog() -> SugarCatalog:
