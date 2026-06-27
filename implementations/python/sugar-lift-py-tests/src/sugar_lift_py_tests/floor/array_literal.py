@@ -13,3 +13,6 @@ class ArrayLiteral(FloorValue):
 
     def map_with(self, operation: Any, ctx: Any) -> Any:
         return operation.map_array(self, ctx)
+
+    def add_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.add_array(self, ctx)

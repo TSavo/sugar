@@ -40,4 +40,7 @@ def perform_operation(
                 message=info.message,
             ),
         )
+    recorder = getattr(ctx, "record_operation", None)
+    if recorder is not None:
+        recorder(owner=owner, method_name=method_name, operation=operation)
     return method(operation, ctx)
