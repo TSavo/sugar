@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_builder_ctor_sugar
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -15,13 +16,13 @@ class BuilderCtorSugar:
     blame: str
 
     @classmethod
-    def from_site(cls, site, ctx) -> "BuilderCtorSugar | None":
+    def from_site(cls, site, *, items: SugarBody) -> "BuilderCtorSugar | None":
         if not _is_builder_call(site.node):
             return None
         if len(site.node.args) != 1:
             return None
         return cls(
-            items=ctx.build_body(site.node.args[0], SugarRole.TERM),
+            items=items,
             blame=site.blame,
         )
 
@@ -44,16 +45,9 @@ def _owns(site) -> bool:
     return _is_builder_call(site.node)
 
 
-def _build(site, ctx) -> BuilderCtorSugar:
-    sugar = BuilderCtorSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("BuilderCtorSugar claim built a non-builder call")
-    return sugar
-
-
 BUILDER_CTOR_CLAIM = SugarClaim(
     name="BuilderCtorSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_builder_ctor_sugar,
 )

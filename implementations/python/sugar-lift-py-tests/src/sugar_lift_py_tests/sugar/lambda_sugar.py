@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_lambda_sugar
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -16,7 +17,7 @@ class LambdaSugar:
     blame: str
 
     @classmethod
-    def from_site(cls, site, ctx) -> "LambdaSugar | None":
+    def from_site(cls, site, *, body: SugarBody) -> "LambdaSugar | None":
         if not isinstance(site.node, ast.Lambda):
             return None
         if len(site.node.args.args) != 1:
@@ -24,7 +25,7 @@ class LambdaSugar:
         parameter = site.node.args.args[0].arg
         return cls(
             parameter=parameter,
-            body=ctx.build_body(site.node.body, SugarRole.TERM),
+            body=body,
             blame=site.blame,
         )
 
@@ -36,16 +37,9 @@ def _owns(site) -> bool:
     return isinstance(site.node, ast.Lambda) and len(site.node.args.args) == 1
 
 
-def _build(site, ctx) -> LambdaSugar:
-    sugar = LambdaSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("LambdaSugar claim built a non-lambda")
-    return sugar
-
-
 LAMBDA_CLAIM = SugarClaim(
     name="LambdaSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_lambda_sugar,
 )

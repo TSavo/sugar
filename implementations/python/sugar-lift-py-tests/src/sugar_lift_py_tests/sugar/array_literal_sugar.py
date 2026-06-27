@@ -4,40 +4,35 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_array_literal_sugar
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
-
-from .primitive_literal_sugar import PrimitiveLiteralSugar
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
 class ArrayLiteralSugar:
-    node: ast.List
-    elements: tuple[PrimitiveLiteralSugar, ...]
+    elements: tuple[SugarBody, ...]
 
     def __post_init__(self) -> None:
-        if not all(isinstance(element, PrimitiveLiteralSugar) for element in self.elements):
-            raise TypeError("ArrayLiteralSugar elements must be PrimitiveLiteralSugar")
+        if not all(isinstance(element, SugarBody) for element in self.elements):
+            raise TypeError("ArrayLiteralSugar elements must be factory-built bodies")
 
     @classmethod
-    def from_site(cls, site, ctx) -> "ArrayLiteralSugar | None":
+    def from_site(
+        cls, site, *, elements: tuple[SugarBody, ...]
+    ) -> "ArrayLiteralSugar | None":
         if not isinstance(site.node, ast.List):
             return None
-        elements: list[PrimitiveLiteralSugar] = []
-        for item in site.node.elts:
-            child = ctx.build_child(item, SugarRole.TERM).sugar
-            if not isinstance(child, PrimitiveLiteralSugar):
-                raise TypeError(
-                    "ArrayLiteralSugar elements must be PrimitiveLiteralSugar"
-                )
-            elements.append(child)
-        return cls(node=site.node, elements=tuple(elements))
+        return cls(elements=elements)
 
-    def desugar(self) -> Outcome:
+    def desugar(self, ctx=None) -> Outcome:
         return Complete(
             ArrayLiteral(
                 tuple(
-                    _term_value(complete_value(element.desugar(), owner="ArrayLiteralSugar"))
+                    _term_value(
+                        complete_value(element.reduce(ctx), owner="ArrayLiteralSugar")
+                    )
                     for element in self.elements
                 )
             )
@@ -54,16 +49,9 @@ def _owns(site) -> bool:
     return isinstance(site.node, ast.List)
 
 
-def _build(site, ctx) -> ArrayLiteralSugar:
-    sugar = ArrayLiteralSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("ArrayLiteralSugar claim built a non-array literal")
-    return sugar
-
-
 ARRAY_LITERAL_CLAIM = SugarClaim(
     name="ArrayLiteralSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_array_literal_sugar,
 )

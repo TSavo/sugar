@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_list_literal_sugar
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -14,14 +15,12 @@ class ListLiteralSugar:
     elements: tuple[SugarBody, ...]
 
     @classmethod
-    def from_site(cls, site, ctx) -> "ListLiteralSugar | None":
+    def from_site(
+        cls, site, *, elements: tuple[SugarBody, ...]
+    ) -> "ListLiteralSugar | None":
         if not isinstance(site.node, ast.List):
             return None
-        return cls(
-            elements=tuple(
-                ctx.build_body(element, SugarRole.TERM) for element in site.node.elts
-            ),
-        )
+        return cls(elements=elements)
 
     def desugar(self, ctx) -> Outcome:
         items: list[TermValue] = []
@@ -37,16 +36,9 @@ def _owns(site) -> bool:
     return isinstance(site.node, ast.List)
 
 
-def _build(site, ctx) -> ListLiteralSugar:
-    sugar = ListLiteralSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("ListLiteralSugar claim built a non-list literal")
-    return sugar
-
-
 LIST_LITERAL_CLAIM = SugarClaim(
     name="ListLiteralSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_list_literal_sugar,
 )

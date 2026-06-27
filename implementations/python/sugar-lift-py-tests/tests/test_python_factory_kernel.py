@@ -14,6 +14,7 @@ from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
 from sugar_lift_py_tests.factory import FactoryGap, build_next, build_node
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.array_literal_sugar import (
     ARRAY_LITERAL_CLAIM,
     ArrayLiteralSugar,
@@ -287,12 +288,15 @@ def test_array_literal_factory_requires_primitive_literal_children() -> None:
     result = build_node(node, filename="array.py", role=SugarRole.TERM)
 
     assert isinstance(result.sugar, ArrayLiteralSugar)
-    assert all(isinstance(child, PrimitiveLiteralSugar) for child in result.sugar.elements)
+    assert all(isinstance(child, SugarBody) for child in result.sugar.elements)
+    assert all(
+        isinstance(child.sugar, PrimitiveLiteralSugar) for child in result.sugar.elements
+    )
     assert complete_value(result.sugar.desugar(), owner="array literal") == ArrayLiteral(
         (TermValue(1), TermValue(2), TermValue(3))
     )
-    with pytest.raises(TypeError, match="ArrayLiteralSugar elements must be PrimitiveLiteralSugar"):
-        ArrayLiteralSugar(node=node, elements=(node,))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="ArrayLiteralSugar elements must be factory-built bodies"):
+        ArrayLiteralSugar(elements=(node,))  # type: ignore[arg-type]
 
 
 def test_bitwise_op_factory_hits_missing_primitive_literal_leaf_first() -> None:
@@ -324,14 +328,15 @@ def test_bitwise_op_factory_requires_factory_built_operands() -> None:
 
     assert isinstance(and_result.sugar, BitwiseOpSugar)
     assert isinstance(shift_result.sugar, BitwiseOpSugar)
-    assert isinstance(and_result.sugar.left, PrimitiveLiteralSugar)
-    assert isinstance(and_result.sugar.right, PrimitiveLiteralSugar)
+    assert isinstance(and_result.sugar.left, SugarBody)
+    assert isinstance(and_result.sugar.right, SugarBody)
+    assert isinstance(and_result.sugar.left.sugar, PrimitiveLiteralSugar)
+    assert isinstance(and_result.sugar.right.sugar, PrimitiveLiteralSugar)
     assert complete_value(and_result.sugar.desugar(), owner="bitwise and") == TermValue(1)
     assert complete_value(shift_result.sugar.desugar(), owner="bitwise shift") == TermValue(16)
-    with pytest.raises(TypeError, match="BitwiseOpSugar operands must be factory-built term sugar"):
+    with pytest.raises(TypeError, match="BitwiseOpSugar operands must be factory-built bodies"):
         BitwiseOpSugar(
-            node=and_node,  # type: ignore[arg-type]
             operator="&",
             left=and_node.left,  # type: ignore[arg-type]
-            right=PrimitiveLiteralSugar(and_node.right),  # type: ignore[arg-type]
+            right=and_result.sugar.right,
         )
