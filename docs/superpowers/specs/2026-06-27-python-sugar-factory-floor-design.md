@@ -45,12 +45,12 @@ The first executable artifact is the new factory. Everything goes through that
 factory immediately. At the start it has no sugar, so every source shape it sees
 panics with `write more Sugar for this AST` and a precise requested role,
 observed AST, blame locus, and suggested sugar module. Then a sugar may claim the
-shape and expose the next gap: no lawful floor species, floor reader, or
-floor-owned visitor exists yet, so construction panics with `write more Floor for
-this AST` or `write more Floor for this construction`. That is the intended red
-instrument, not a failure of design. Each migration step teaches the factory one
-more dumb sugar or one more floor visitor until the screaming set shrinks to
-stable zero.
+shape and expose the next gap: no lawful completed value, floor operation, or
+ProofIR emission path exists yet, so construction panics with `write more Floor
+for this AST` or `write more Floor for this construction`. That is the intended
+red instrument, not a failure of design. Each migration step teaches the factory
+one more dumb sugar or one more completed-value operation until the screaming
+set shrinks to stable zero.
 
 The old Python tests and cascades are not compatibility obligations. They are
 source material. Copy a helper, fixture, or expected predicate only when it fits
@@ -77,13 +77,17 @@ hidden in clever base classes or bucket modules.
 - Claims are module-level constants exported by the sugar module that owns the
   source shape.
 - Context is an explicit object, not a bag of globals.
-- Floors use `Protocol` visitors and `accept_*` methods for operation-specific
-  double dispatch.
+- Completed values are Pythonic floors: duck-typed semantic values such as
+  `ArrayLiteral`, `TermValue`, or `BuilderState`. `Protocol`s document optional
+  capabilities, but runtime dispatch is ordinary method dispatch such as
+  `receiver.map_with(MapOperation(...))`; missing methods become loud floor
+  gaps.
 - Gaps are normal Python exceptions with structured `.info`, but the message is
   intentionally loud and stable enough for tests and reports.
 - Tests are pytest fixtures around real Python source snippets and, for proof
   obligations, the literal `sugar lift` command path.
-- One file per class. A sugar class, floor class, effect class, visitor class,
+- One file per class. A sugar class, completed-value class, effect class,
+  operation class,
   or substantial proof/report class gets its own module. Package `__init__.py`
   files may re-export names, and tiny value enums/constants may live with their
   sole owner, but semantic classes do not share bucket files.
@@ -175,62 +179,66 @@ At least one of `pre`, `post`, or `inv` must be present. `sourceWarrants` are
 input to proof-envelope minting; they are not an excuse to embed source text in
 the contract.
 
-### Floors Are Typed Consumption Contracts
+### Floors Are Completed Semantic Values
 
 A floor is not a status such as `warranted`, `refused`, or `support`.
 
-A floor is the semantic type a parent sugar is allowed to consume. Rust's key
-lesson is that a parent does not rummage through child syntax and hope. It asks
-the factory for a child in a role, reduces that child, and consumes the completed
-value through the expected floor. If the child completed as the wrong species,
-that is an internal bug, not a graceful report condition.
+In Python, a floor should first mean "the value is no longer raw syntax." It is
+a completed semantic value a parent sugar may operate on: `ArrayLiteral`,
+`TermValue`, `PredicateValue`, `BodyUniverse`, `BuilderState`, `RuntimeValue`,
+and later numpy/pandas values. Rust needs nominal traits to make that boundary
+load-bearing. Python should preserve the boundary without importing nominal
+ceremony for its own sake.
 
-Examples from Rust:
+The invariant is still strict:
 
-- a term consumer requires a term floor;
-- a sequence adaptor requires a finite sequence floor;
-- tuple decomposition requires tuple components;
-- format lowering consumes typed format-template and format-value floors;
-- float operations consume an IEEE float floor, not generic term syntax.
+- a parent sugar receives completed child bodies, not raw child AST;
+- a sugar either gets a completed semantic value, bubbles an actual effect, or
+  panics with a construction gap;
+- unsupported pure values are not effects;
+- missing capability on a completed value is a floor gap;
+- ProofIR emission reads completed values only.
 
-Python needs this invariant more than it needs Rust's exact floor names.
+So the Rust lesson is not "require `SequenceFloor` before mapping." The lesson
+is "do not let a parent sugar rummage through child syntax." In Python, the
+parent sugar can simply call the semantic operation it owns on the completed
+value and let duck typing tell us whether the operation exists.
 
-### Floors Delegate By Double Dispatch
+### Operations Are Sugar-Owned And Duck-Typed
 
-Every floor operation goes through a floor-owned delegation interface. A sugar
-or report/compiler pass does not crack open a floor by `isinstance` chains,
-private dict keys, ctor names, or ad hoc shape tests. The caller provides a
-narrow operation visitor; the floor accepts it and calls the method for its own
-species.
+Every floor operation goes through an explicit operation boundary. A sugar or
+report/compiler pass does not crack open a completed value by private dict keys,
+ctor names, or ad hoc AST tests. The sugar owns the source operation intent and
+passes a narrow operation object to the completed value.
 
-The Rust floors are operation-specific traits, not one global visitor:
-
-- `SequenceFloorVisitor` plus `accept_sequence_floor`;
-- `SequenceElementVisitor` plus `accept_sequence`;
-- `TermFloorVisitor`, `BoolFloorVisitor`, `ScalarFloorVisitor`, and
-  `MonadicFloorVisitor` over term floors;
-- `DesugaredFloorVisitor` plus `accept_desugared_floor` for term/term-seq/tuple
-  component projection;
-- `IeeeFloatVisitor`, `LiteralCStrVisitor`, and `NumericLiteralVisitor` for
-  domain floors.
-
-Python should mirror that shape with small `Protocol`s and explicit `accept_*`
-methods:
+For the smallest array/map example:
 
 ```python
-class DesugaredFloorVisitor(Protocol[T]):
-    def visit_term(self, floor: TermFloor) -> T: ...
-    def visit_tuple_components(self, floor: TupleComponentsFloor) -> T: ...
-    def visit_passthrough(self, floor: FloorValue) -> T: ...
-
-result = completed_floor.accept_desugared_floor(visitor)
+receiver = ArrayLiteral(items=(TermValue(1), TermValue(2), TermValue(3)))
+operation = MapOperation(mapper=lambda_body, owner="MapSugar", blame="x.py:1:0")
+outcome = receiver.map_with(operation, ctx)
 ```
 
-That is double dispatch: the consumer chooses the operation, the floor chooses
-the species-specific branch. If no visitor method exists for the species, that
-is `write more Floor for this construction`, not a sugar-side fallback. Each
-new floor visitor is an intentional door through the floor. It exists so callers
-do not cut side doors through floor internals.
+`MapSugar` owns the fact that this source site is a map. `ArrayLiteral` owns
+whether a finite literal array can perform that operation. The operation object
+owns how to apply the mapper to each element. If the receiver lacks `map_with`,
+the dispatch helper raises:
+
+```text
+write more Floor for this construction: owner=MapSugar ... requested=map_with fix=add map_with to <value class> or emit a real effect
+```
+
+`Protocol`s are still useful, but they are documentation and static-checking
+shape, not runtime gates:
+
+```python
+class SupportsMap(Protocol):
+    def map_with(self, operation: MapOperation, ctx: ReduceContext) -> Outcome: ...
+```
+
+Use nominal `accept_*` visitors only after a concrete operation proves that the
+visitor shape is simpler than ordinary method dispatch. The default Python path
+is operation object plus duck-typed completed value plus loud gap helper.
 
 ### Outcome Is Total
 
@@ -320,6 +328,62 @@ then walks the already-built chain inside-out. That is why bad construction is
 impossible to ignore: if the child floor does not exist, parent construction
 does not complete.
 
+The same graph rewrites forward during `desugar`. Each sugar performs exactly
+the operation owned by its source shape, then hands the transformed floor to the
+next sugar in the syntactic parent chain. Construction is last-to-first;
+reduction is transform-to-transform until the outer sugar produces the final
+floor that ProofIR/FOL may consume.
+
+### Temporal Rewriting Feeds Completed Values
+
+Temporal rewriting is upstream of sugar/floor operations. A source name or
+receiver at a program point must resolve to its current completed value before
+later sugars operate on it.
+
+For example:
+
+```python
+n = 10
+n += 1
+out = Builder([1, 2, 3]).map(lambda x: x + 2).add(n).to_list()
+assert out == [14, 15, 16]
+```
+
+The `.map` sugar should not receive "raw AST receiver plus method name" as its
+semantic input. It should receive the current completed receiver value, such as
+`BuilderState([1, 2, 3])` or `ArrayLiteral([1, 2, 3])`. The `.add(n)` sugar
+should receive `TermValue(11)` for `n`, because the temporal context has already
+replayed `n += 1` at that source point.
+
+Reduction then runs forward through completed values:
+
+1. `BuilderCtorSugar` completes to a replayable `BuilderState`.
+2. `MapSugar` calls `receiver.map_with(MapOperation(...), ctx)`.
+3. `BuilderState.map_with` or `ArrayLiteral.map_with` delegates to the
+   operation object to curry the lambda over each element and returns the next
+   completed value.
+4. `AddSugar` calls `receiver.add_with(AddOperation(TermValue(11)), ctx)`.
+5. `ToListSugar` calls `receiver.materialize_with(MaterializeOperation(...),
+   ctx)` and returns the final completed literal/list value.
+
+Only after that does ProofIR/FOL see the result. The solver-facing facts are
+timeless:
+
+```text
+len(out) = 3
+out[0] = 14
+out[1] = 15
+out[2] = 16
+```
+
+If a fluent method mutates a receiver in a way the temporal context cannot
+replay, that is a real temporal effect or a missing completed-value operation.
+It must not emit predicates past the red boundary.
+
+This is the context law for Python: temporal context turns names and receivers
+into current floors; sugars wire source shapes to floor-owned operations; floors
+rewrite forward or refuse loudly.
+
 ### Python Builtins Are Sugars
 
 Every Python builtin that contributes semantics is a sugar. There is no
@@ -397,58 +461,77 @@ AST classes.
 
 ## Python Floor Set
 
-This is the first proposed Python floor set. The names should evolve only when
-a real consumer needs the distinction.
+This is the first proposed Python completed-value set. These are still floors
+in the architecture, but they should read like Python semantic values, not Rust
+trait names. The names should evolve only when a real consumer needs the
+distinction.
 
-### `TermFloor`
+### `TermValue`
 
 A timeless ProofIR term. Used for literal values, stable names, pure operators,
 constructor terms, field reads that have a closed shape, and call-result terms
 when the call is represented as an uninterpreted but stable subject.
 
-### `PredicateFloor`
+### `PredicateValue`
 
 A boolean formula suitable for assertions, guards, and pre/post conditions.
-This is distinct from `TermFloor` so Python truthiness does not leak into FOL
+This is distinct from `TermValue` so Python truthiness does not leak into FOL
 by accident.
 
-### `AssertionFactFloor`
+### `AssertionFact`
 
 A unit-test warranted fact with a source warrant. The floor carries the formula,
 the test/callsite identity, and the memento rope to the test source.
 
-### `CallsiteFactFloor`
+### `CallsiteFact`
 
 A fact about one observed callsite. This is the place where unit-test evidence
 and body universes meet. It must carry enough subject identity to support
 implications and downstream precondition reporting.
 
-### `BodyUniverseFloor`
+### `BodyUniverse`
 
 Predicates warranted by walking a function body. Examples include translate,
 rstrip/lstrip, delegation, regex membership, guard/raise, return literal, and
 constructor field universes. The floor carries predicates plus the source
 memento for the body that warranted them.
 
-### `PreconditionFloor`
+### `PreconditionValue`
 
 A function-entry or partial-function precondition, including guard-then-raise
 patterns and built-in partial operations. This should be separate from
 `BodyUniverseFloor` so downstream callsite obligations can be reported as
 preconditions, not as generic predicates.
 
-### `LiteralValueFloor`
+### `LiteralValue`
 
 An exact CPython literal value. This is for closed, finite data that can be
 inspected without invoking runtime behavior.
 
-### `SequenceFloor`
+### `ArrayLiteral`
 
-A finite iterable sequence. Consumers such as tuple/list projection,
-enumeration, and finite loop expansion may consume this floor. Runtime
-iterables do not complete here.
+A finite Python literal array/list/tuple value. It is the first place map-like,
+projection, enumeration, and finite loop sugars can ask for semantic work.
+`ArrayLiteral` may implement methods such as `map_with`, `add_with`,
+`materialize_with`, or `project_with` as those sugars arrive. Runtime iterables
+do not pretend to be `ArrayLiteral`; they complete as `RuntimeValue` or return
+an actual effect.
 
-### `TupleComponentsFloor`
+### `BuilderState`
+
+A replayable current receiver state for fluent APIs. It is not a Python object
+snapshot; it is a completed value that records the current semantic value of a
+receiver after temporal rewriting has replayed prior source operations.
+Consumers such as `.map(...)`, `.add(...)`, `.filter(...)`, `.assign(...)`,
+`.pipe(...)`, and `.to_list()` must use operation methods against this state
+instead of inspecting raw chained-call AST.
+
+This value is the bridge for Python builder, pandas, and numpy fluent surfaces:
+each method sugar asks the receiver value to perform one operation, and the
+value returns the next current state value, a materialized sequence/table/term
+value, a real effect, or a loud floor gap.
+
+### `TupleComponents`
 
 Fixed destructurable components. This exists because tuple-producing operations
 and tuple destructuring need component identity, not a generic sequence blob.
