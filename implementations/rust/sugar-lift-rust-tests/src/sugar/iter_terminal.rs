@@ -220,6 +220,9 @@ fn recognized_receiver_is_static_sequence(
     {
         return false;
     }
+    if direct_bound_cursor_receiver(&call.receiver, fcx) {
+        return true;
+    }
     receiver_resolves_static_sequence(&call.receiver, fcx, 0)
 }
 
@@ -229,6 +232,21 @@ fn terminal_consumes_cursor_without_replay(terminal: &Terminal) -> bool {
 
 fn direct_unrewritten_path_receiver(expr: &Expr) -> bool {
     simple_path_name(expr).is_some()
+}
+
+fn direct_bound_cursor_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Some(name) = simple_path_name(expr) else {
+        return false;
+    };
+    fcx.scope().temporal_rewrite_expr_for(&name).is_some()
+        || fcx
+            .scope()
+            .unknown_iterator_consumption_reason(&name)
+            .is_some()
+        || fcx.scope().is_consumed_iterator_local(&name)
+        || fcx.scope().is_mut_local(&name)
+        || fcx.let_inits().contains_key(&name)
+        || fcx.scope().stable_let_binding_for_term(&name).is_some()
 }
 
 fn receiver_is_chunk_window_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {

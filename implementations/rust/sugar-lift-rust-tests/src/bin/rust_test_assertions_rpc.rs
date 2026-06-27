@@ -2922,6 +2922,9 @@ fn iterator_consumption_named_refusal_category(
     if !reason.contains("unknown iterator consumption") {
         return None;
     }
+    if reason.contains("produced by a generator/closure/call") {
+        return Some("opaque runtime iterator collection");
+    }
     match (source_path, source_name) {
         ("tests/iter/adapters/array_chunks.rs", "test_iterator_array_chunks_clone_and_drop") => {
             Some("observable drop/Cell iterator state")
@@ -4828,6 +4831,16 @@ mod tests {
         assert_eq!(
             clean_named_refusal_category("tests/time.rs", "saturating_mul", runtime_operand_reason),
             Some("Duration/time runtime operand")
+        );
+
+        let runtime_iterator_source_reason = "rust test assertions: unsupported assertion surface; released to layer 0: unknown iterator consumption for `CycleIter :: new (& [0])` via `new`: OPAQUE runtime iterator source state is produced by a generator/closure/call, so there is no single timeless source sequence to read at the assertion; refused";
+        assert_eq!(
+            clean_named_refusal_category(
+                "tests/iter/adapters/peekable.rs",
+                "test_iterator_peekable_remember_peek_none_3",
+                runtime_iterator_source_reason,
+            ),
+            Some("opaque runtime iterator collection")
         );
 
         let pointer_alignment_reason = "rust test assertions: unsupported assertion surface; released to layer 0: assert_ne!: runtime operand, not literal";
