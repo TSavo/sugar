@@ -492,6 +492,26 @@ mod tests {
             .collect()
     }
 
+    fn candidate_names_for_role_with_let_inits_and_array_width(
+        expr: &Expr,
+        role: SugarRole,
+        let_inits: &BTreeMap<String, Expr>,
+        width: usize,
+    ) -> Vec<&'static str> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let borrowed_let_inits: BTreeMap<_, _> = let_inits
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
+        let fcx = SugarBuildCtx::new(&scope, &options, &borrowed_let_inits)
+            .with_expected_sequence_array_len(Some(width));
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect()
+    }
+
     fn selected_candidate_name_for_role(expr: &Expr, role: SugarRole) -> Option<&'static str> {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
@@ -531,6 +551,26 @@ mod tests {
             .map(|(name, init)| (name.clone(), init))
             .collect();
         let fcx = SugarBuildCtx::new(&scope, &options, &borrowed_let_inits);
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .next()
+            .map(|candidate| candidate.name())
+    }
+
+    fn selected_candidate_name_for_role_with_let_inits_and_array_width(
+        expr: &Expr,
+        role: SugarRole,
+        let_inits: &BTreeMap<String, Expr>,
+        width: usize,
+    ) -> Option<&'static str> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let borrowed_let_inits: BTreeMap<_, _> = let_inits
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
+        let fcx = SugarBuildCtx::new(&scope, &options, &borrowed_let_inits)
+            .with_expected_sequence_array_len(Some(width));
         super::matching_expr_claims_for_role(expr, &fcx, role)
             .into_iter()
             .next()
@@ -1704,6 +1744,46 @@ mod tests {
                 &expr,
                 SugarRole::Composite,
                 &let_inits
+            ),
+            Some("array_chunks")
+        );
+    }
+
+    #[test]
+    fn inferred_array_chunks_uses_consumer_array_width_hint() {
+        let expr: Expr = syn::parse_str("xs.iter().copied().array_chunks()").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert(
+            "xs".to_string(),
+            syn::parse_str("[1i32, 2, 1, 2, 1, 1]").unwrap(),
+        );
+
+        let unhinted_names =
+            candidate_names_for_role_with_let_inits(&expr, SugarRole::Composite, &let_inits);
+        assert!(
+            !unhinted_names.contains(&"array_chunks"),
+            "bare array_chunks() without a consumer item-width hint must stay loud; only \
+             the pattern/type consumer can supply the inferred const generic: {unhinted_names:?}"
+        );
+
+        let hinted_names = candidate_names_for_role_with_let_inits_and_array_width(
+            &expr,
+            SugarRole::Composite,
+            &let_inits,
+            3,
+        );
+        assert!(
+            hinted_names.contains(&"array_chunks"),
+            "for [a, b, c] over xs.iter().copied().array_chunks() supplies the inferred \
+             const generic as an expected sequence array width; ArrayChunksSugar should \
+             own the adaptor and delegate to the receiver sequence floor: {hinted_names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits_and_array_width(
+                &expr,
+                SugarRole::Composite,
+                &let_inits,
+                3
             ),
             Some("array_chunks")
         );

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Composite recognizer for iterator `array_chunks::<N>()`.
+// Composite recognizer for iterator `array_chunks::<N>()` / inferred `array_chunks()`.
 //
 // `array_chunks` is not a terminal; it is a sequence adaptor. A literal-backed receiver
 // yields full N-element arrays and drops the remainder, matching Rust iterator semantics.
@@ -22,12 +22,13 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if call.method != "array_chunks" || !call.args.is_empty() {
         return None;
     }
-    let n = method_const_usize(call)?;
+    let n = method_const_usize(call).or_else(|| fcx.expected_sequence_array_len())?;
     if n == 0 {
         return None;
     }
+    let receiver_fcx = fcx.with_expected_sequence_array_len(None);
     Some(Box::new(ArrayChunksSugar {
-        receiver: SugarBody::composite(&call.receiver, fcx),
+        receiver: SugarBody::composite(&call.receiver, &receiver_fcx),
         n,
     }))
 }
