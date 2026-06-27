@@ -4,7 +4,11 @@ import json
 import os
 import sys
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.lib import lift_source
@@ -14,6 +18,11 @@ KIT_ID = "python"
 KIT_VERSION = "0.1.0"
 LIFT_RPC_MODULE = "sugar_lift_py_tests.lift_rpc"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
+COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
+COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
+LIFT_PROTOCOL_VERSION = "pep/1.7.0"
+PYTHON_SURFACE = "python"
+PYTHON_LIFT_NAME = "python-lift"
 
 
 def _send(obj: Dict[str, Any]) -> None:
@@ -43,6 +52,7 @@ def _kit_declaration_result() -> Dict[str, Any]:
             "methods": [
                 {"name": "initialize", "required": True},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
+                {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
                 {"name": "shutdown", "required": False},
             ]
@@ -67,6 +77,119 @@ def _iter_python_files(workspace_root: str, source_paths: List[Any]) -> List[str
     return sorted(set(out))
 
 
+def _items_from_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for evidence_key in (
+        "project_forensics",
+        "projectForensics",
+        "workspace_evidence",
+        "workspaceEvidence",
+    ):
+        evidence = params.get(evidence_key)
+        if not isinstance(evidence, dict):
+            continue
+        items = evidence.get("items")
+        if not isinstance(items, list):
+            continue
+        out.extend(item for item in items if isinstance(item, dict))
+    return out
+
+
+def _language_evidence_from_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for evidence_key in ("workspace_evidence", "workspaceEvidence"):
+        evidence = params.get(evidence_key)
+        if not isinstance(evidence, dict):
+            continue
+        languages = evidence.get("languages")
+        if not isinstance(languages, list):
+            continue
+        out.extend(item for item in languages if isinstance(item, dict))
+    return out
+
+
+def _path_is_python(path: Any) -> bool:
+    return str(path).endswith(".py")
+
+
+def _item_mentions_python(item: Dict[str, Any]) -> bool:
+    language = item.get("language_hint", item.get("languageHint"))
+    return language == "python" or _path_is_python(item.get("path", ""))
+
+
+def _first_python_claim(params: Dict[str, Any], workspace_root: str) -> Optional[str]:
+    for item in _items_from_params(params):
+        if not _item_mentions_python(item):
+            continue
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            return item_id
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            return f"file:{path}"
+
+    for language in _language_evidence_from_params(params):
+        if language.get("language") != "python":
+            continue
+        path = language.get("path")
+        if isinstance(path, str) and path:
+            return f"file:{path}"
+
+    root = Path(workspace_root)
+    if root.is_dir():
+        for path in sorted(root.rglob("*.py")):
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                relative = path
+            return f"file:{relative.as_posix()}"
+    return None
+
+
+def _component_plan_result(params: Dict[str, Any]) -> Dict[str, Any]:
+    workspace_root = str(params.get("workspace_root", "."))
+    claim_item = _first_python_claim(params, workspace_root)
+    if claim_item is None:
+        return {
+            "decision": "decline",
+            "reason": "no Python source evidence",
+        }
+    return {
+        "decision": "claim",
+        "claims": [
+            {
+                "item": claim_item,
+                "role": "source-lifter",
+                "surface": PYTHON_SURFACE,
+            }
+        ],
+        "plugins": [
+            {
+                "name": PYTHON_LIFT_NAME,
+                "kind": "lift",
+                "surface": PYTHON_SURFACE,
+                "emit": "ir-document",
+            }
+        ],
+        "lift_manifests": [
+            {
+                "surface": PYTHON_SURFACE,
+                "name": PYTHON_LIFT_NAME,
+                "version": KIT_VERSION,
+                "protocol_version": LIFT_PROTOCOL_VERSION,
+                "kind": "lift",
+                "command": _runtime_lift_command(),
+                "working_dir": ".",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
+def _runtime_lift_command() -> List[str]:
+    return [sys.executable, str(Path(__file__).resolve()), "--rpc"]
+
+
 def _handle_initialize(msg_id: Any) -> None:
     _send(
         {
@@ -76,6 +199,7 @@ def _handle_initialize(msg_id: Any) -> None:
                 "name": "sugar-lift-python",
                 "version": KIT_VERSION,
                 "kit_id": KIT_ID,
+                "component_protocol_version": COMPONENT_PROTOCOL_VERSION,
             },
         }
     )
@@ -143,6 +267,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             _handle_initialize(msg_id)
         elif method == KIT_DECLARATION_RPC_METHOD:
             _send({"jsonrpc": "2.0", "id": msg_id, "result": _kit_declaration_result()})
+        elif method == COMPONENT_PLAN_RPC_METHOD:
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": _component_plan_result(params if isinstance(params, dict) else {}),
+                }
+            )
         elif method == "lift":
             _handle_lift(msg_id, params if isinstance(params, dict) else {})
         elif method == "shutdown":

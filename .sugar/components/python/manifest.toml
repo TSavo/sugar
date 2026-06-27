@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name = "python"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["python3", "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", "--rpc"]
+working_dir = "../../.."
