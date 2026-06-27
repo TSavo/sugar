@@ -9,13 +9,13 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 @dataclass(frozen=True)
 class OrdSugar:
-    stmt: ast.Assign
     target: str
     source_name: str
     index: int
 
     @classmethod
-    def from_stmt(cls, stmt: ast.stmt, *, source_name: str) -> "OrdSugar | None":
+    def from_site(cls, site, *, source_name: str) -> "OrdSugar | None":
+        stmt = site.node
         if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
             return None
         target = stmt.targets[0]
@@ -38,7 +38,7 @@ class OrdSugar:
         index = subscript.slice.value
         if not isinstance(index, int):
             return None
-        return cls(stmt=stmt, target=target.id, source_name=source_name, index=index)
+        return cls(target=target.id, source_name=source_name, index=index)
 
     def apply(self, value: StringValue) -> Outcome:
         return Complete(TermValue(ord(value.value[self.index])))

@@ -14,12 +14,12 @@ BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678
 
 @dataclass(frozen=True)
 class AlphabetLiteralSugar:
-    stmt: ast.Assign
     name: str
     literal: StringLiteralSugar
 
     @classmethod
-    def from_stmt(cls, stmt: ast.stmt) -> "AlphabetLiteralSugar | None":
+    def from_site(cls, site, _ctx=None) -> "AlphabetLiteralSugar | None":
+        stmt = site.node
         if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
             return None
         target = stmt.targets[0]
@@ -28,7 +28,7 @@ class AlphabetLiteralSugar:
         literal = string_literal_sugar(stmt.value)
         if literal is None or literal.value != BASE64_ALPHABET:
             return None
-        return cls(stmt=stmt, name=target.id, literal=literal)
+        return cls(name=target.id, literal=literal)
 
     def desugar(self) -> Outcome:
         return Complete(StringValue(self.literal.value))
