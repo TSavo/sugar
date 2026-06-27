@@ -9,13 +9,27 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 @dataclass(frozen=True)
 class StringLiteralSugar:
-    node: ast.Constant
+    value: str
 
     @classmethod
-    def from_node(cls, node: ast.AST) -> "StringLiteralSugar | None":
-        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+    def from_site(cls, site, _ctx=None) -> "StringLiteralSugar | None":
+        value = string_literal_value(site.node)
+        if value is None:
             return None
-        return cls(node)
+        return cls(value)
 
     def desugar(self) -> Outcome:
-        return Complete(StringValue(self.node.value))
+        return Complete(StringValue(self.value))
+
+
+def string_literal_value(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return None
+    return node.value
+
+
+def string_literal_sugar(node: ast.AST) -> StringLiteralSugar | None:
+    value = string_literal_value(node)
+    if value is None:
+        return None
+    return StringLiteralSugar(value)
