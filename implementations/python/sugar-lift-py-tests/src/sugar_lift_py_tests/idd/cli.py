@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import List, Optional
+
+from .collect_panic_audit import collect_panic_audit
+from .render_panic_audit import render_text
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    report = collect_panic_audit(Path(args.root))
+    if args.json:
+        print(json.dumps(report.to_json(), sort_keys=True, indent=2))
+    else:
+        print(render_text(report), end="")
+    return 0 if report.is_zero else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
