@@ -83,6 +83,7 @@ pub mod sugar {
     pub mod control_flow_term;
     pub mod cstr;
     pub mod ctor_term;
+    pub mod cycle;
     pub mod dormant_mut_ref;
     pub mod duration_accessor;
     pub mod dyn_any;
@@ -7879,6 +7880,14 @@ fn const_eval_finite_int_iter(
         }
         _ => Err(FlatMapIterEval::Gap),
     }
+}
+
+pub(crate) fn const_eval_finite_int_iter_values(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+    limit: Option<usize>,
+) -> Option<Vec<ConstVal>> {
+    const_eval_finite_int_iter(expr, env, limit).ok()
 }
 
 /// Enumerate a const integer range to its element prefix. A bounded range (`a..b` /

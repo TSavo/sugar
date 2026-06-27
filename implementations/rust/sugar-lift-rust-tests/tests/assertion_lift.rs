@@ -26330,6 +26330,27 @@ fn test_iterator_chain_nth_replayed_skip() {
 }
 
 #[test]
+fn rpc_source_replays_cycle_take_enumerate_for_without_composite_gap() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/cycle.rs",
+        r#"
+use core::iter::*;
+
+#[test]
+fn test_cycle_take_enumerate_replay() {
+    let cycle_len = 3;
+    let it = (0..).step_by(1).take(cycle_len).cycle();
+    for (i, x) in it.take(100).enumerate() {
+        assert_eq!(i % cycle_len, x);
+    }
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_cycle_take_enumerate_replay");
+}
+
+#[test]
 fn rpc_source_splits_fresh_literal_try_fold_from_consumed_iterator_refusal() {
     let doc = run_rpc_lift(
         "tests/iter/adapters/cloned.rs",

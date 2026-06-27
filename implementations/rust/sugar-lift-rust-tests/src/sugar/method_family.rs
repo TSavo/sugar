@@ -109,6 +109,9 @@ pub(crate) fn build_literal_sequence_composite(
 }
 
 fn build_owned_sequence_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    if let Some(node) = crate::sugar::cycle::recognize_cycle_take_composite(expr, fcx) {
+        return Some(node);
+    }
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
@@ -278,9 +281,23 @@ fn literal_iter_call_name(call: &ExprCall) -> Option<String> {
 }
 
 pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    finite_int_iter_sequence_with_env(expr, &BTreeMap::new())
+}
+
+pub(crate) fn finite_int_iter_sequence_in_build_ctx(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+) -> Option<Vec<DesugaredElem>> {
+    let env = const_env_from_build_ctx(fcx);
+    finite_int_iter_sequence_with_env(expr, &env)
+}
+
+fn finite_int_iter_sequence_with_env(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+) -> Option<Vec<DesugaredElem>> {
     finite_iter_sequence(expr, 0).or_else(|| {
-        crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)
-            .ok()?
+        crate::const_eval_finite_int_iter_values(expr, env, None)?
             .into_iter()
             .map(|value| {
                 let expr = value.to_expr()?;
@@ -291,6 +308,35 @@ pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>
             })
             .collect()
     })
+}
+
+pub(crate) fn const_usize_in_build_ctx(expr: &Expr, fcx: &SugarBuildCtx) -> Option<usize> {
+    crate::repeat_count_in_scope(expr, fcx.scope()).or_else(|| {
+        let env = const_env_from_build_ctx(fcx);
+        const_eval(expr, &env)
+            .and_then(|value| value.as_int())
+            .and_then(|value| usize::try_from(value).ok())
+    })
+}
+
+fn const_env_from_build_ctx(fcx: &SugarBuildCtx) -> BTreeMap<String, ConstVal> {
+    let mut env = BTreeMap::new();
+    for _ in 0..fcx.let_inits().len().saturating_add(1) {
+        let mut changed = false;
+        for (name, expr) in fcx.let_inits() {
+            if env.contains_key(name.as_str()) {
+                continue;
+            }
+            if let Some(value) = const_eval(expr, &env) {
+                env.insert(name.clone(), value);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    env
 }
 
 fn finite_iter_sequence(expr: &Expr, depth: usize) -> Option<Vec<DesugaredElem>> {
