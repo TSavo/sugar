@@ -11,7 +11,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class LambdaSugar:
-    node: ast.Lambda
     parameter: str
     body: SugarBody
     blame: str
@@ -24,7 +23,6 @@ class LambdaSugar:
             return None
         parameter = site.node.args.args[0].arg
         return cls(
-            node=site.node,
             parameter=parameter,
             body=ctx.build_body(site.node.body, SugarRole.TERM),
             blame=site.blame,
