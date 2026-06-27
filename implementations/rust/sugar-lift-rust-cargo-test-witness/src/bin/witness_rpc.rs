@@ -232,7 +232,7 @@ fn component_plan(params: &Value) -> Value {
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    if !workspace_root.join("Cargo.toml").is_file() {
+    if !has_rust_project_candidate(params, &workspace_root) {
         return json!({
             "decision": "decline",
             "reason": "Cargo.toml not present",
@@ -249,6 +249,11 @@ fn component_plan(params: &Value) -> Value {
         .unwrap_or_else(|| "discharge_cli".to_string());
     json!({
         "decision": "claim",
+        "claims": [{
+            "item": "file:Cargo.toml",
+            "role": "witness-producer",
+            "surface": SURFACE,
+        }],
         "plugins": [{
             "name": "rust-cargo-test-witness-lift",
             "kind": "lift",
@@ -269,6 +274,33 @@ fn component_plan(params: &Value) -> Value {
         }],
         "diagnostics": [],
     })
+}
+
+fn has_rust_project_candidate(params: &Value, workspace_root: &Path) -> bool {
+    forensic_items(params).iter().any(|item| {
+        item.get("path").and_then(Value::as_str) == Some("Cargo.toml")
+            && item
+                .get("language_hint")
+                .or_else(|| item.get("languageHint"))
+                .and_then(Value::as_str)
+                == Some("rust")
+    }) || workspace_root.join("Cargo.toml").is_file()
+}
+
+fn forensic_items(params: &Value) -> Vec<&Value> {
+    params
+        .get("project_forensics")
+        .or_else(|| params.get("projectForensics"))
+        .and_then(|value| value.get("items"))
+        .or_else(|| {
+            params
+                .get("workspace_evidence")
+                .or_else(|| params.get("workspaceEvidence"))
+                .and_then(|value| value.get("items"))
+        })
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 fn main() {

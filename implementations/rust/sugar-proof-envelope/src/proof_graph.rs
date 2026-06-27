@@ -233,7 +233,7 @@ impl ContractBody {
         Self::from_slots(vec![("inv", inv)])
     }
 
-    fn from_slots(slots: Vec<(&str, &AtomMemento)>) -> Self {
+    pub fn from_slots(slots: Vec<(&str, &AtomMemento)>) -> Self {
         assert!(
             !slots.is_empty(),
             "contract body must point at at least one formula atom"
@@ -423,6 +423,7 @@ impl From<&AuthorityMemento> for AuthorityMementoRef {
 }
 
 whole_byte_memento!(LibrarySugarBindingMemento, ["library-sugar-binding-entry"]);
+whole_byte_memento!(FactoryWalkMemento, ["factory-walk-memento"]);
 whole_byte_memento!(PlanMemento, ["plan-memento"]);
 whole_byte_memento!(SourceMemento, ["source-memento"]);
 whole_byte_memento!(WitnessMemento, ["witness-memento"]);
@@ -621,6 +622,10 @@ impl ProofGraph {
     }
 
     pub fn push_implication(&mut self, memento: ImplicationMemento) {
+        self.insert_member(memento.record);
+    }
+
+    pub fn push_factory_walk(&mut self, memento: FactoryWalkMemento) {
         self.insert_member(memento.record);
     }
 

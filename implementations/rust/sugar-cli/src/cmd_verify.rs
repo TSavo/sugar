@@ -58,7 +58,6 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
 use sugar_verifier::body_discharge;
-use sugar_verifier::compiler_registry;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, memento_body, memento_kind,
@@ -336,7 +335,7 @@ pub fn run(args: VerifyArgs) -> u8 {
         return EXIT_USER_ERROR;
     }
 
-    if args.emit_witnesses.is_none() && project_root.join(".sugar").join("config.toml").exists() {
+    if use_artifact_project_verify(&args, &project_root) {
         return run_artifact_project_verify(&project_root, &args);
     }
 
@@ -402,7 +401,7 @@ pub fn run(args: VerifyArgs) -> u8 {
     // The kit author's declared `[solvers]` plan wins; otherwise the
     // default verify dispatch table over a single-Z3 registry.
     let (plan, solver_registry, plan_is_default) = build_plan_and_registry(&project_root, &args.z3);
-    let compiler_registry = compiler_registry::build(&project_root);
+    let compiler_registry = crate::component_plan::compiler_registry(&project_root);
 
     if !quiet && !json_out {
         let plan_label = match (&plan, plan_is_default) {
@@ -517,6 +516,11 @@ pub fn run(args: VerifyArgs) -> u8 {
     }
 }
 
+fn use_artifact_project_verify(args: &VerifyArgs, project_root: &Path) -> bool {
+    args.emit_witnesses.is_none()
+        && (args.project.is_some() || project_root.join(".sugar").join("config.toml").exists())
+}
+
 fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     let quiet = args.out.quiet;
     let json_out = args.out.json;
@@ -550,7 +554,8 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         extra_proofs: dependency_proofs,
         ..Default::default()
     };
-    let runner = Runner::new(cfg);
+    let compilers = crate::component_plan::compiler_registry(project_root);
+    let runner = Runner::new_with_compilers(cfg, compilers);
     let run_artifact = match runner.run_with_proof_run() {
         Ok(artifact) => artifact,
         Err(error) => {
@@ -1548,6 +1553,58 @@ mod tests {
             sugar_ir_compiler_smt_lib::SmtLibCompiler::new(),
         ));
         compilers
+    }
+
+    fn verify_args(project: Option<PathBuf>, emit_witnesses: Option<PathBuf>) -> VerifyArgs {
+        VerifyArgs {
+            kit: None,
+            project,
+            z3: "z3".to_string(),
+            emit_witnesses,
+            require_empirically_witnessed: None,
+            require_fixture: None,
+            consensus_policy: None,
+            artifact: None,
+            proof: None,
+            policy: None,
+            out: crate::OutputFlags::default(),
+        }
+    }
+
+    fn temp_project(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("{name}_{nanos}"));
+        std::fs::create_dir_all(&root).expect("create temp project");
+        root
+    }
+
+    #[test]
+    fn explicit_project_verify_uses_artifact_report_without_config() {
+        let root = temp_project("verify_project_no_config");
+        let args = verify_args(Some(root.clone()), None);
+        assert!(use_artifact_project_verify(&args, &root));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn emit_witnesses_keeps_project_verify_on_live_claim_path() {
+        let root = temp_project("verify_project_emit_witnesses");
+        let args = verify_args(Some(root.clone()), Some(root.join(".sugar/witnesses")));
+        assert!(!use_artifact_project_verify(&args, &root));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn config_still_selects_artifact_report_for_implicit_project() {
+        let root = temp_project("verify_project_config");
+        std::fs::create_dir_all(root.join(".sugar")).expect("create .sugar");
+        std::fs::write(root.join(".sugar/config.toml"), "").expect("write config");
+        let args = verify_args(None, None);
+        assert!(use_artifact_project_verify(&args, &root));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

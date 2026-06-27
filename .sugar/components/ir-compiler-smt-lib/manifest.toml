@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name = "ir-compiler-smt-lib"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["implementations/rust/target/debug/sugar-ir-smt-lib"]
+working_dir = "../../.."

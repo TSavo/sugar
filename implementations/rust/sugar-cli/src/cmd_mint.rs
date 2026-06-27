@@ -48,17 +48,20 @@ use libsugar::core::{
     PathDocument, Term, Verb, Verdict,
 };
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+#[cfg(test)]
+use sugar_claim_envelope::mint_contract;
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields, compute_contract_set_cid, contract_cid, mint_authority,
-    mint_bridge, mint_contract, mint_implication, Authoring, BodyDischargePolicyWarning,
-    BridgeCallsite, MintAuthorityArgs, MintBridgeArgs, MintContractArgs, MintImplicationArgs,
+    mint_bridge, mint_contract_with_body_cid, mint_implication, Authoring,
+    BodyDischargePolicyWarning, BridgeCallsite, MintAuthorityArgs, MintBridgeArgs,
+    MintContractArgs, MintImplicationArgs,
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, AuthorityMemento,
-    AuthorityMementoRef, BridgeMemento, ClaimContractMemento, ContractMementoRef, Ed25519Seed,
-    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
-    SourceMemento, WitnessMemento,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, AtomMemento, AuthorityMemento,
+    AuthorityMementoRef, BridgeMemento, ClaimContractMemento, ContractBody, ContractMementoRef,
+    Ed25519Seed, FactoryWalkMemento, FlatAtom, ImplicationMemento, LibrarySugarBindingMemento,
+    PlanMemento, ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1246,7 +1249,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     let mut pool = sugar_verifier::types::MementoPool::default();
     sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, &mut pool);
 
-    use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
+    use sugar_verifier::types::{memento_body_field, memento_kind};
     // member CID -> the `.proof` bundle CID it was loaded from. This is the
     // `targetProofCid` a cross-crate bridge must pin so the verifier enforces
     // ConsequentBundlePinned (the contract member MUST come from THIS bundle,
@@ -1321,7 +1324,9 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let has_pre = memento_body(env)
+        let resolved_body = pool.resolve_contract_body(env);
+        let has_pre = resolved_body
+            .as_ref()
             .and_then(|body| body.get("pre"))
             .is_some_and(has_nontrivial_pre_json);
         let has_post = memento_body_field(env, "postHash").is_some();
@@ -1533,11 +1538,55 @@ pub(crate) fn lift_plugins_response_for_report(
         });
     }
 
-    match per_plugin.len() {
+    let plan_memento = finalize_toolchain_plan_memento(
+        toolchain_plan_seed(project_root, plugins, report_toolchain_plan_steps(plugins)),
+        &per_plugin,
+    )?;
+    let mut response = match per_plugin.len() {
         0 => Err("lift report graph has no lift plugins".to_string()),
         1 => Ok(per_plugin.into_iter().next().unwrap().response),
         _ => merge_ir_document_responses(per_plugin),
+    }?;
+    if response.get("kind").and_then(Value::as_str) == Some("ir-document") {
+        let mut plan_mementos = response
+            .get("planMementos")
+            .or_else(|| response.get("plan_mementos"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        plan_mementos.push(plan_memento);
+        response["planMementos"] = Value::Array(plan_mementos);
     }
+    Ok(response)
+}
+
+fn report_toolchain_plan_steps(plugins: &[PluginEntry]) -> Vec<Value> {
+    let mut steps = plugins
+        .iter()
+        .enumerate()
+        .map(|(idx, plugin)| {
+            json!({
+                "name": if plugins.len() == 1 { "lift".to_string() } else { format!("lift_{idx}") },
+                "role": "lift",
+                "kit": format!("lift-plugin:{}", plugin.surface),
+                "surface": plugin.surface,
+                "verb": "transform",
+                "dependsOn": [],
+            })
+        })
+        .collect::<Vec<_>>();
+    steps.push(json!({
+        "name": "report",
+        "role": "report",
+        "kit": "sugar-lift-report",
+        "verb": "render",
+        "dependsOn": plugins
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| if plugins.len() == 1 { "lift".to_string() } else { format!("lift_{idx}") })
+            .collect::<Vec<_>>(),
+    }));
+    steps
 }
 
 fn dispatch_report_lift_plugin(
@@ -1842,16 +1891,138 @@ fn toolchain_plan_seed(
             })
         })
         .collect();
+    let plan_atoms = plan_atoms_for_plugins(project_root, plugins);
     json!({
         "kind": "component-plan",
         "schemaVersion": "1",
         "workspaceRoot": project_root.display().to_string(),
         "planning": {
-            "source": "mint-path",
+            "source": "component-discovery",
         },
         "plugins": plugin_entries,
+        "planAtoms": plan_atoms,
         "pathSteps": path_steps,
     })
+}
+
+fn plan_atoms_for_plugins(project_root: &Path, plugins: &[PluginEntry]) -> Vec<Value> {
+    plugins
+        .iter()
+        .map(|plugin| {
+            let manifest = lift_plugin::find_manifest_for_surface(project_root, &plugin.surface);
+            let (manifest_name, version, protocol_version, command, working_dir, phase, method) =
+                match manifest {
+                    Ok(manifest) => {
+                        let working_dir =
+                            lift_plugin::resolved_working_dir_for(project_root, &manifest);
+                        (
+                            Some(manifest.name),
+                            manifest.version,
+                            manifest.protocol_version,
+                            manifest.command,
+                            working_dir,
+                            manifest.phase,
+                            manifest.method,
+                        )
+                    }
+                    Err(error) => (
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                        None,
+                        None,
+                        Some(format!("manifest resolution failed: {error}")),
+                    ),
+                };
+            let binary = command
+                .first()
+                .map(|program| plan_binary_identity(project_root, working_dir.as_deref(), program));
+            json!({
+                "kind": "plan-atom",
+                "schemaVersion": "1",
+                "atomKind": "lifter-binary",
+                "role": plan_role_for_plugin(plugin, phase.as_deref()),
+                "surface": plugin.surface,
+                "pluginName": plugin.display_name(),
+                "manifestName": manifest_name,
+                "version": version,
+                "protocolVersion": protocol_version,
+                "command": command,
+                "method": method,
+                "phase": phase,
+                "workspaceOverride": plugin.workspace_override,
+                "emit": plugin.emit,
+                "layer": plugin.layer,
+                "binary": binary,
+            })
+        })
+        .collect()
+}
+
+fn plan_binary_identity(project_root: &Path, working_dir: Option<&Path>, program: &str) -> Value {
+    let resolved = resolve_plan_binary_path(project_root, working_dir, program);
+    let binary_cid = resolved
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| blake3_512_of(&bytes));
+    json!({
+        "program": program,
+        "path": resolved
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| program.to_string()),
+        "cid": binary_cid,
+    })
+}
+
+fn resolve_plan_binary_path(
+    project_root: &Path,
+    working_dir: Option<&Path>,
+    program: &str,
+) -> Option<PathBuf> {
+    let program_path = PathBuf::from(program);
+    if program_path.is_absolute() && program_path.exists() {
+        return Some(program_path.canonicalize().unwrap_or(program_path));
+    }
+
+    let mut bases = Vec::new();
+    if let Some(working_dir) = working_dir {
+        bases.push(working_dir.to_path_buf());
+    }
+    bases.push(project_root.to_path_buf());
+    if let Ok(current) = std::env::current_dir() {
+        bases.push(current);
+    }
+    for base in bases {
+        let candidate = base.join(program);
+        if candidate.exists() {
+            return Some(candidate.canonicalize().unwrap_or(candidate));
+        }
+    }
+
+    if !program.contains('/') && !program.contains('\\') {
+        if let Some(paths) = std::env::var_os("PATH") {
+            for base in std::env::split_paths(&paths) {
+                let candidate = base.join(program);
+                if candidate.exists() {
+                    return Some(candidate.canonicalize().unwrap_or(candidate));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn plan_role_for_plugin(plugin: &PluginEntry, phase: Option<&str>) -> &'static str {
+    match plugin.surface.as_str() {
+        "rust-test-assertions" => "unit-test-assertions",
+        "rust-fn-contracts" => "body-universes",
+        "rust-implications" => "implications",
+        "rust-cargo-test-witness" => "witness-oracle",
+        _ if phase == Some("consumer") => "consumer",
+        _ => "lifter",
+    }
 }
 
 fn mint_lift_response(
@@ -1917,6 +2088,10 @@ fn mint_lift_response(
                 .get("planMementos")
                 .or_else(|| lift_resp.get("plan_mementos"))
                 .and_then(|v| v.as_array());
+            let factory_walk = lift_resp
+                .get("factoryAuditSummary")
+                .and_then(|summary| summary.get("factoryWalk"))
+                .and_then(Value::as_array);
             debug!(
                 ir_entries = ir.len(),
                 "mint: minting ir-document into .proof bundle"
@@ -1925,6 +2100,7 @@ fn mint_lift_response(
                 ir,
                 source_mementos,
                 plan_mementos,
+                factory_walk,
                 authorities,
                 implications,
                 witnesses,
@@ -2281,6 +2457,7 @@ fn mint_ir_document(
     mint_ir_document_with_source_mementos(
         ir,
         None,
+        None,
         authorities,
         implications,
         witnesses,
@@ -2293,6 +2470,7 @@ fn mint_ir_document(
 fn mint_ir_document_with_source_mementos(
     ir: &[Value],
     source_mementos: Option<&Vec<Value>>,
+    factory_walk: Option<&Vec<Value>>,
     authorities: Option<&Vec<Value>>,
     implications: Option<&Vec<Value>>,
     witnesses: Option<&Vec<Value>>,
@@ -2304,6 +2482,7 @@ fn mint_ir_document_with_source_mementos(
         ir,
         source_mementos,
         None,
+        factory_walk,
         authorities,
         implications,
         witnesses,
@@ -2317,6 +2496,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
     ir: &[Value],
     source_mementos: Option<&Vec<Value>>,
     plan_mementos: Option<&Vec<Value>>,
+    factory_walk: Option<&Vec<Value>>,
     authorities: Option<&Vec<Value>>,
     implications: Option<&Vec<Value>>,
     witnesses: Option<&Vec<Value>>,
@@ -2411,9 +2591,19 @@ fn mint_ir_document_with_source_and_plan_mementos(
         }
     }
 
+    if let Some(factory_walk) = factory_walk {
+        for row in factory_walk {
+            let (cid, bytes) = mint_factory_walk_memento(row)?;
+            push_graph_memento!(FactoryWalkMemento, push_factory_walk, cid.as_str(), bytes);
+        }
+    }
+
     if let Some(plan_mementos) = plan_mementos {
         for plan_memento in plan_mementos {
-            let (cid, bytes) = mint_plan_memento(plan_memento)?;
+            let (cid, bytes, plan_atoms) = mint_plan_memento(plan_memento)?;
+            for atom in plan_atoms {
+                proof_graph.register_atom(atom);
+            }
             push_graph_memento!(PlanMemento, push_plan, cid.as_str(), bytes);
         }
     }
@@ -2862,7 +3052,16 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let inv_hash = args.inv.as_ref().map(formula_hash);
         content_cids.push(ccid.clone());
 
-        let m = mint_contract(&args).map_err(|e| format!("mint contract: {e}"))?;
+        let contract_body = register_contract_body_graph(
+            &mut proof_graph,
+            args.pre.as_ref(),
+            args.post.as_ref(),
+            args.inv.as_ref(),
+        )
+        .map_err(|e| format!("contract `{}`: {e}", args.contract_name))?;
+        let body_cid = contract_body.cid().as_str().to_string();
+        let m = mint_contract_with_body_cid(&args, Some(&body_cid))
+            .map_err(|e| format!("mint contract: {e}"))?;
 
         // Production bridge-writer (#1436/#1440, PR-23): for a body-derived
         // function contract, AUTOMATICALLY mint the bridge that points a
@@ -3285,15 +3484,66 @@ fn mint_witness_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     Ok((cid, canonical.into_bytes()))
 }
 
-fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
+fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>, Vec<FlatAtom>), String> {
     let mut body = decl
         .get("plan_memento")
         .or_else(|| decl.get("planMemento"))
         .cloned()
         .unwrap_or_else(|| decl.clone());
+    let raw_plan_atoms = body
+        .as_object_mut()
+        .ok_or_else(|| "`plan-memento` must be an object".to_string())?
+        .remove("planAtoms")
+        .or_else(|| {
+            body.as_object_mut()
+                .and_then(|object| object.remove("plan_atoms"))
+        });
+    let mut plan_atoms = Vec::new();
+    let mut plan_atom_refs = Vec::new();
+    if let Some(raw_plan_atoms) = raw_plan_atoms {
+        let raw_plan_atoms = raw_plan_atoms
+            .as_array()
+            .ok_or_else(|| "`plan-memento.planAtoms` must be an array".to_string())?;
+        for raw_atom in raw_plan_atoms {
+            let mut atom = raw_atom
+                .get("planAtom")
+                .or_else(|| raw_atom.get("plan_atom"))
+                .cloned()
+                .unwrap_or_else(|| raw_atom.clone());
+            let atom_obj = atom
+                .as_object_mut()
+                .ok_or_else(|| "`plan-memento.planAtoms[]` must be an object".to_string())?;
+            atom_obj
+                .entry("kind".to_string())
+                .or_insert_with(|| json!("plan-atom"));
+            if atom_obj.get("kind").and_then(Value::as_str) != Some("plan-atom") {
+                return Err("`plan-memento.planAtoms[].kind` must be `plan-atom`".to_string());
+            }
+            atom_obj
+                .entry("schemaVersion".to_string())
+                .or_insert_with(|| json!("1"));
+            let flat_atom = FlatAtom::new(json_to_cvalue(&atom));
+            let atom_cid = flat_atom.cid().as_str().to_string();
+            plan_atom_refs.push(json!({
+                "kind": "atom-memento",
+                "atomCid": atom_cid,
+            }));
+            plan_atoms.push(flat_atom);
+        }
+    }
+
     let body_obj = body
         .as_object_mut()
         .ok_or_else(|| "`plan-memento` must be an object".to_string())?;
+    if !plan_atom_refs.is_empty() {
+        let plan_atom_cids = plan_atom_refs
+            .iter()
+            .filter_map(|reference| reference.get("atomCid").and_then(Value::as_str))
+            .map(|cid| json!(cid))
+            .collect::<Vec<_>>();
+        body_obj.insert("planAtoms".to_string(), Value::Array(plan_atom_refs));
+        body_obj.insert("planAtomCids".to_string(), Value::Array(plan_atom_cids));
+    }
     body_obj
         .entry("kind".to_string())
         .or_insert_with(|| json!("component-plan"));
@@ -3331,7 +3581,7 @@ fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     });
     let canonical = encode_jcs(&json_to_cvalue(&envelope));
     let cid = blake3_512_of(canonical.as_bytes());
-    Ok((cid, canonical.into_bytes()))
+    Ok((cid, canonical.into_bytes(), plan_atoms))
 }
 
 fn mint_source_memento(
@@ -3416,6 +3666,63 @@ fn mint_source_memento(
     Ok((cid, canonical.into_bytes()))
 }
 
+fn mint_factory_walk_memento(row: &Value) -> Result<(String, Vec<u8>), String> {
+    let mut body = row
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "`factory-walk-row` must be an object".to_string())?;
+    for forbidden in ["source", "term", "site"] {
+        if body.contains_key(forbidden) {
+            return Err(format!(
+                "`factory-walk-row` must carry SourceMemento pins only; forbidden inline field `{forbidden}` present"
+            ));
+        }
+    }
+    if !body.contains_key("sourceMemento") {
+        return Err("`factory-walk-row` missing `sourceMemento`".to_string());
+    }
+    body.entry("kind".to_string())
+        .or_insert_with(|| json!("factory-walk-row"));
+    if body.get("kind").and_then(Value::as_str) != Some("factory-walk-row") {
+        return Err("`factory-walk-row.kind` must be `factory-walk-row`".to_string());
+    }
+
+    let source_memento = body
+        .get("sourceMemento")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "`factory-walk-row.sourceMemento` must be an object".to_string())?;
+    let mut header = serde_json::Map::new();
+    header.insert("kind".to_string(), json!("factory-walk-memento"));
+    for field in ["file", "line", "status", "verdict", "output", "selected"] {
+        if let Some(value) = body.get(field).cloned() {
+            header.insert(field.to_string(), value);
+        }
+    }
+    for (header_field, body_field) in [
+        ("sourceFunctionName", "sourceFunctionName"),
+        ("sourceFunctionName", "source_function_name"),
+        ("contractName", "contractName"),
+        ("contractName", "contract_name"),
+        ("claimName", "claimName"),
+        ("claimName", "claim_name"),
+    ] {
+        if !header.contains_key(header_field) {
+            if let Some(value) = source_memento.get(body_field).cloned() {
+                header.insert(header_field.to_string(), value);
+            }
+        }
+    }
+
+    let envelope = json!({
+        "body": Value::Object(body),
+        "header": Value::Object(header),
+        "schemaVersion": "1",
+    });
+    let canonical = encode_jcs(&json_to_cvalue(&envelope));
+    let cid = blake3_512_of(canonical.as_bytes());
+    Ok((cid, canonical.into_bytes()))
+}
+
 /// Reduce a function-contract `fnName` to the bare symbol a harvested call
 /// ctor uses. Rust walk emits the bare ident already (`double`), so this is
 /// the identity. Java's `JavaSourceLifter` emits a fully-qualified mangled
@@ -3443,6 +3750,42 @@ fn required_str<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a 
 
 fn formula_hash(formula: &Arc<CValue>) -> String {
     blake3_512_of(encode_jcs(formula).as_bytes())
+}
+
+fn register_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    pre: Option<&Arc<CValue>>,
+    post: Option<&Arc<CValue>>,
+    inv: Option<&Arc<CValue>>,
+) -> Result<ContractBody, String> {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(formula) = pre {
+        slots.push((
+            "pre",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = post {
+        slots.push((
+            "post",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = inv {
+        slots.push((
+            "inv",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if slots.is_empty() {
+        return Err("contract body graph requires at least one formula slot".to_string());
+    }
+
+    let slot_refs = slots
+        .iter()
+        .map(|(slot, atom)| (*slot, atom))
+        .collect::<Vec<_>>();
+    Ok(proof_graph.register_body(ContractBody::from_slots(slot_refs)))
 }
 
 fn string_array(value: &Value, field: &str, context: &str) -> Result<Vec<String>, String> {
@@ -4237,6 +4580,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mint_from_ir_document_emits_contract_body_graph_for_loader() {
+        let root = temp_workspace("mint_ir_document_contract_body_graph");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "body_graph_contract",
+            "outBinding": "result",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "result"},
+                    {"kind": "const", "value": 7, "sort": {"kind": "primitive", "name": "Int"}}
+                ]
+            }
+        })];
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
+        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
+        let header = contract_header(&catalog, "body_graph_contract");
+        let body_cid = header
+            .get("bodyCid")
+            .and_then(|value| value.as_str())
+            .expect("contract header carries bodyCid");
+        assert!(
+            header.get("post").is_none(),
+            "contract formulas must live in catalog body/atoms, not inline header fields"
+        );
+        let bodies = catalog
+            .as_map()
+            .and_then(|root| root.get("body"))
+            .and_then(|body| body.as_map())
+            .expect("catalog body map");
+        assert!(
+            bodies.contains_key(body_cid),
+            "catalog body map must contain contract bodyCid {body_cid}"
+        );
+
+        let proof_path = root.join(format!("{}.proof", minted.filename_cid));
+        std::fs::write(&proof_path, &minted.bytes).expect("write proof");
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_path], &mut pool);
+        assert!(
+            pool.load_errors.is_empty(),
+            "minted proof must load without body graph errors: {:?}",
+            pool.load_errors
+        );
+        let env = pool
+            .mementos
+            .values()
+            .find(|env| {
+                env.pointer("/header/name").and_then(|value| value.as_str())
+                    == Some("body_graph_contract")
+            })
+            .expect("loaded contract memento");
+        let resolved = pool
+            .resolve_contract_body(env)
+            .expect("resolve graph-backed contract body");
+        assert!(
+            resolved.get("post").is_some_and(|post| post.is_object()),
+            "semantic post must resolve from catalog body/atoms"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn function_contract_with_panic_loci(panic_loci: Option<Value>) -> Vec<Value> {
         let mut decl = json!({
             "kind": "function-contract",
@@ -4333,6 +4744,25 @@ mod tests {
             .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
             .filter(|envelope| {
                 envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("plan-memento")
+            })
+            .collect()
+    }
+
+    fn factory_walk_memento_members(
+        catalog: &sugar_verifier::cbor_decode::CborValue,
+    ) -> Vec<Value> {
+        let members = catalog
+            .as_map()
+            .and_then(|m| m.get("members"))
+            .and_then(|v| v.as_map())
+            .expect("proof members");
+        members
+            .values()
+            .filter_map(|member| member.as_bstr())
+            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+            .filter(|envelope| {
+                envelope.pointer("/header/kind").and_then(|v| v.as_str())
+                    == Some("factory-walk-memento")
             })
             .collect()
     }
@@ -5027,6 +5457,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &root,
             &out_dir,
             true,
@@ -5071,12 +5502,13 @@ mod tests {
             }]
         });
 
-        let (member_cid, bytes) = mint_plan_memento(&plan).expect("mint plan memento");
+        let (member_cid, bytes, plan_atoms) = mint_plan_memento(&plan).expect("mint plan memento");
         let envelope: Value = serde_json::from_slice(&bytes).expect("canonical plan memento JSON");
         let body_canonical = encode_jcs(json_to_cvalue(&plan).as_ref());
         let body_cid = blake3_512_of(body_canonical.as_bytes());
         let envelope_canonical = encode_jcs(json_to_cvalue(&envelope).as_ref());
 
+        assert!(plan_atoms.is_empty());
         assert_eq!(
             envelope.pointer("/header/kind").and_then(Value::as_str),
             Some("plan-memento")
@@ -5096,6 +5528,52 @@ mod tests {
             member_cid,
             blake3_512_of(envelope_canonical.as_bytes()),
             "the catalog member CID addresses the envelope bytes"
+        );
+    }
+
+    #[test]
+    fn mint_plan_memento_lowers_plan_atoms_before_the_memento() {
+        let plan_atom = json!({
+            "kind": "plan-atom",
+            "schemaVersion": "1",
+            "atomKind": "lifter-binary",
+            "role": "unit-test-assertions",
+            "surface": "rust-test-assertions",
+            "version": "0.1.0",
+            "binary": {
+                "path": "/bin/rust_test_assertions_rpc",
+                "cid": format!("blake3-512:{}", "d".repeat(128))
+            }
+        });
+        let plan = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "planAtoms": [plan_atom.clone()],
+            "expectedOutputCids": [
+                format!("blake3-512:{}", "a".repeat(128))
+            ]
+        });
+
+        let (_member_cid, bytes, plan_atoms) =
+            mint_plan_memento(&plan).expect("mint plan atom memento");
+        let envelope: Value = serde_json::from_slice(&bytes).expect("canonical plan memento JSON");
+        let expected_atom = FlatAtom::new(json_to_cvalue(&plan_atom));
+
+        assert_eq!(plan_atoms.len(), 1);
+        assert_eq!(plan_atoms[0].cid().as_str(), expected_atom.cid().as_str());
+        assert_eq!(
+            envelope
+                .pointer("/body/planAtoms/0/kind")
+                .and_then(Value::as_str),
+            Some("atom-memento"),
+            "plan memento body must pin atom refs, not inline plan atom bodies"
+        );
+        assert_eq!(
+            envelope
+                .pointer("/body/planAtoms/0/atomCid")
+                .and_then(Value::as_str),
+            Some(expected_atom.cid().as_str())
         );
     }
 
@@ -5130,6 +5608,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &root,
             &out_dir,
             true,
@@ -5154,6 +5633,179 @@ mod tests {
                 .pointer("/body/expectedOutputCids/0")
                 .and_then(Value::as_str),
             Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_lift_response_mints_factory_walk_rows_as_envelope_members() {
+        let root = temp_workspace("mint_factory_walk_mementos_envelope");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let source_memento = json!({
+            "kind": "source-memento",
+            "role": "rust-fn-contracts",
+            "file": "src/encode.rs",
+            "sourceFunctionName": "encoded_len",
+            "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "b".repeat(128)),
+            "span": {"start_line": 92, "start_col": 4, "end_line": 92, "end_col": 29}
+        });
+        let lift_response = json!({
+            "kind": "ir-document",
+            "ir": [{
+                "kind": "contract",
+                "name": "encoded_len",
+                "outBinding": "result",
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "rem"},
+                        {"kind": "ctor", "name": "%", "args": [
+                            {"kind": "var", "name": "bytes_len"},
+                            {"kind": "const", "value": 3, "sort": {"name": "Int"}}
+                        ]}
+                    ]
+                }
+            }],
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 1,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [{
+                    "file": "src/encode.rs",
+                    "line": 92,
+                    "requested_role": "FunctionBodyConstraint",
+                    "ast_kind": "stmt",
+                    "selected": "function_contract_body_post",
+                    "status": "warranted",
+                    "verdict": "complete",
+                    "output": "constraints",
+                    "sourceMemento": source_memento,
+                    "emittedFormula": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "rem"},
+                            {"kind": "ctor", "name": "%", "args": [
+                                {"kind": "var", "name": "bytes_len"},
+                                {"kind": "const", "value": 3, "sort": {"name": "Int"}}
+                            ]}
+                        ]
+                    }
+                }]
+            }
+        });
+
+        let result =
+            mint_lift_response(&root, &out_dir, true, lift_response).expect("mint lift response");
+        let proof_file = result.proof_file.expect("proof path");
+        let proof_bytes = std::fs::read(&proof_file).expect("read proof");
+        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
+        let mementos = factory_walk_memento_members(&catalog);
+
+        assert_eq!(mementos.len(), 1);
+        let memento = &mementos[0];
+        assert_eq!(
+            memento.pointer("/header/kind").and_then(Value::as_str),
+            Some("factory-walk-memento")
+        );
+        assert_eq!(
+            memento.pointer("/body/kind").and_then(Value::as_str),
+            Some("factory-walk-row")
+        );
+        assert_eq!(
+            memento
+                .pointer("/body/sourceMemento/sourceFunctionName")
+                .and_then(Value::as_str),
+            Some("encoded_len")
+        );
+        assert_eq!(
+            memento
+                .pointer("/body/emittedFormula/args/0/name")
+                .and_then(Value::as_str),
+            Some("rem")
+        );
+        assert!(memento.pointer("/body/source").is_none());
+        assert!(memento.pointer("/body/term").is_none());
+        assert!(memento.pointer("/body/site").is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_ir_document_stores_plan_atoms_in_catalog_atoms() {
+        let root = temp_workspace("mint_plan_atoms_catalog");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let plan_atom = json!({
+            "kind": "plan-atom",
+            "schemaVersion": "1",
+            "atomKind": "lifter-binary",
+            "role": "body-universes",
+            "surface": "rust-fn-contracts",
+            "version": "0.1.0",
+            "binary": {
+                "path": "/bin/sugar-walk-rpc",
+                "cid": format!("blake3-512:{}", "e".repeat(128))
+            }
+        });
+        let expected_atom = FlatAtom::new(json_to_cvalue(&plan_atom));
+        let plan_mementos = vec![json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": root.display().to_string(),
+            "planAtoms": [plan_atom],
+            "expectedOutputCids": [
+                format!("blake3-512:{}", "c".repeat(128))
+            ]
+        })];
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "plan.atom.assertion",
+            "outBinding": "out",
+            "inv": {"kind": "atomic", "name": "=", "args": []}
+        })];
+
+        let minted = mint_ir_document_with_source_and_plan_mementos(
+            &ir,
+            None,
+            Some(&plan_mementos),
+            None,
+            None,
+            None,
+            None,
+            &root,
+            &out_dir,
+            true,
+        )
+        .expect("mint ir-document");
+        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
+        let atoms = catalog
+            .as_map()
+            .and_then(|root| root.get("atoms"))
+            .and_then(|atoms| atoms.as_map())
+            .expect("catalog atoms map");
+        let stored = atoms
+            .get(expected_atom.cid().as_str())
+            .and_then(|value| value.as_bstr())
+            .expect("plan atom is stored in catalog atoms");
+        let stored_json: Value = serde_json::from_slice(stored).expect("plan atom json");
+        assert_eq!(stored_json["kind"], "plan-atom");
+        assert_eq!(stored_json["surface"], "rust-fn-contracts");
+        let memento = plan_memento_members(&catalog).pop().expect("plan memento");
+        assert_eq!(
+            memento
+                .pointer("/body/planAtoms/0/atomCid")
+                .and_then(Value::as_str),
+            Some(expected_atom.cid().as_str())
         );
 
         let _ = std::fs::remove_dir_all(root);

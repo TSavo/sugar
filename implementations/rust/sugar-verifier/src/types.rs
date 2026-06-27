@@ -264,6 +264,39 @@ impl MementoPool {
         self.verify_by_hash(&cid)
     }
 
+    /// Return the semantic contract body for a loaded contract memento.
+    ///
+    /// Modern `.proof` catalogs store formula leaves in `atoms` and body
+    /// composition in the catalog `body` map. The contract memento itself
+    /// carries only binding/header metadata plus `bodyCid`. Callers that need
+    /// semantic slots (`pre`, `post`, `inv`) must resolve through the pool so
+    /// the graph, not legacy inline fields, is the source of truth.
+    pub fn resolve_contract_body(&self, envelope: &Json) -> Option<Json> {
+        let mut body = memento_body(envelope)?.as_object()?.clone();
+        if let Some(body_cid) = contract_body_pointer(envelope) {
+            for (slot, formula) in self.resolve_body_formula_slots(&body_cid)? {
+                body.insert(slot, formula);
+            }
+        }
+        Some(Json::Object(body))
+    }
+
+    fn resolve_body_formula_slots(&self, body_cid: &str) -> Option<BTreeMap<String, Json>> {
+        let body_bytes = self.body.get(body_cid)?;
+        let body_doc: Json = serde_json::from_slice(body_bytes).ok()?;
+        let slots = body_doc.pointer("/body")?.as_object()?;
+        let mut resolved = BTreeMap::new();
+        for (slot, slot_memento) in slots {
+            let atom_cid = slot_memento
+                .get("atomCid")
+                .and_then(|value| value.as_str())?;
+            let atom_bytes = self.atoms.get(atom_cid)?;
+            let formula: Json = serde_json::from_slice(atom_bytes).ok()?;
+            resolved.insert(slot.clone(), formula);
+        }
+        Some(resolved)
+    }
+
     /// Check if P → Q is already proven in the pool.
     /// Looks for an implication memento whose evidence body contains
     /// both antecedentHash = P and consequentHash = Q.

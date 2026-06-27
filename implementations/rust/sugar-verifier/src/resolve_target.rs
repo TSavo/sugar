@@ -13,7 +13,7 @@
 use serde_json::{json, Value as Json};
 use tracing::{debug, warn};
 
-use crate::types::{memento_body, memento_kind, CallSite, MementoPool, ResolvedProperty};
+use crate::types::{memento_kind, CallSite, MementoPool, ResolvedProperty};
 
 pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String> {
     debug!(
@@ -48,7 +48,8 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
         return Err("target memento is not a contract memento".into());
     }
     // Shape-agnostic body: v1.2 layered -> `header`, v1.1 flat -> `evidence.body`.
-    let body = memento_body(env)
+    let body = pool
+        .resolve_contract_body(env)
         .filter(|v| v.is_object())
         .ok_or("contract memento has no body/header object")?;
 
@@ -137,9 +138,9 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     let ir_formula = body
         .get("pre")
         .cloned()
-        .map(|pre| wrap_pre_forall(pre, body));
-    let formal_names = formal_names(body);
-    let formal_sorts = formal_sorts(body);
+        .map(|pre| wrap_pre_forall(pre, &body));
+    let formal_names = formal_names(&body);
+    let formal_sorts = formal_sorts(&body);
     // A target carrying a `formals` array is a body-derived op-contract
     // (body-bearing). The caller must NOT vacuous-pass such a target if its
     // obligation was not reduced + discharged; it must refuse. Surface the

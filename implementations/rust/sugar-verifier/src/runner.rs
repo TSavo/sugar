@@ -35,7 +35,7 @@ use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolversConfig,
 };
-use crate::types::{memento_body, CallSite, MementoPool, ObligationVerdict, Report};
+use crate::types::{CallSite, MementoPool, ObligationVerdict, Report};
 use crate::{
     body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -159,12 +159,16 @@ pub struct Runner {
 
 impl Runner {
     pub fn new(cfg: RunnerConfig) -> Self {
+        let compilers = compiler_registry::build(&cfg.project_root);
+        Self::new_with_compilers(cfg, compilers)
+    }
+
+    pub fn new_with_compilers(cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
         // Resolve solver config. Precedence:
         //   1. cfg.solvers_config (test/demo override)
         //   2. .sugar/config.toml under project_root
         //   3. fallback: single Z3 at cfg.z3_path
         let (plan, registry) = build_plan_and_registry(&cfg);
-        let compilers = compiler_registry::build(&cfg.project_root);
         Self {
             cfg,
             plan,
@@ -1192,10 +1196,14 @@ fn callsite_body_refusal_is_owned_by_consistency(
     {
         return false;
     }
-    let Some(body) = pool.mementos.get(&cs.property_cid).and_then(memento_body) else {
+    let Some(body) = pool
+        .mementos
+        .get(&cs.property_cid)
+        .and_then(|env| pool.resolve_contract_body(env))
+    else {
         return false;
     };
-    crate::consistency::linked_post_instance_count(pool, body) > 0
+    crate::consistency::linked_post_instance_count(pool, &body) > 0
 }
 
 /// Verify each body-derived contract's OWN postcondition. For a contract
@@ -1214,7 +1222,7 @@ fn verify_contract_self_posts(
     registry: &HashMap<String, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
-    use crate::types::{memento_body, memento_kind};
+    use crate::types::memento_kind;
 
     let contracts: Vec<(&String, &Json)> = pool
         .mementos
@@ -1225,7 +1233,7 @@ fn verify_contract_self_posts(
     contracts
         .par_iter()
         .filter_map(|(cid, env)| {
-            let body = memento_body(env)?;
+            let body = pool.resolve_contract_body(env)?;
             // Body-derived contracts carry `formals` + `post`. A contract
             // without `post` (or without a result equation) has no
             // self-post to verify here.

@@ -154,7 +154,7 @@ fn component_plan_result(params: &Value) -> Value {
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    if !workspace_root.join("Cargo.toml").is_file() {
+    if !has_rust_project_candidate(params, &workspace_root) {
         return json!({
             "decision": "decline",
             "reason": "Cargo.toml not present",
@@ -166,6 +166,11 @@ fn component_plan_result(params: &Value) -> Value {
         .unwrap_or_else(|| "rust_test_assertions_rpc".to_string());
     json!({
         "decision": "claim",
+        "claims": [{
+            "item": "file:Cargo.toml",
+            "role": "assertion-lifter",
+            "surface": SURFACE,
+        }],
         "plugins": [{
             "name": "rust-test-assertions-lift",
             "kind": "lift",
@@ -183,6 +188,33 @@ fn component_plan_result(params: &Value) -> Value {
         }],
         "diagnostics": [],
     })
+}
+
+fn has_rust_project_candidate(params: &Value, workspace_root: &Path) -> bool {
+    forensic_items(params).iter().any(|item| {
+        item.get("path").and_then(Value::as_str) == Some("Cargo.toml")
+            && item
+                .get("language_hint")
+                .or_else(|| item.get("languageHint"))
+                .and_then(Value::as_str)
+                == Some("rust")
+    }) || workspace_root.join("Cargo.toml").is_file()
+}
+
+fn forensic_items(params: &Value) -> Vec<&Value> {
+    params
+        .get("project_forensics")
+        .or_else(|| params.get("projectForensics"))
+        .and_then(|value| value.get("items"))
+        .or_else(|| {
+            params
+                .get("workspace_evidence")
+                .or_else(|| params.get("workspaceEvidence"))
+                .and_then(|value| value.get("items"))
+        })
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 /// Per-file marshalled-decl byte bound. A file whose emitted assertion decls exceed
@@ -3906,6 +3938,9 @@ fn resolve_source_memento_for_report(workspace_root: &Path, memento_value: &Valu
             let memento = resolved.fragment.to_memento();
             json!({
                 "status": "resolved",
+                "source": resolved.fragment.body_text.trim(),
+                "bodyText": resolved.fragment.body_text.trim(),
+                "sourceLines": source_lines_for_memento(workspace_root, &memento),
                 "display": format_source_memento_for_report(&memento.to_json()),
                 "memento": memento.to_json(),
             })
@@ -3925,6 +3960,35 @@ fn resolve_source_memento_for_report(workspace_root: &Path, memento_value: &Valu
 
 fn source_refusal_is_drift(reason: &str) -> bool {
     reason.contains("source CID misaligned") || reason.contains("template CID misaligned")
+}
+
+fn source_lines_for_memento(
+    workspace_root: &Path,
+    memento: &source_oracle::SourceMemento,
+) -> Value {
+    let Ok(source) = std::fs::read_to_string(workspace_root.join(&memento.file)) else {
+        return Value::Array(Vec::new());
+    };
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(start) = memento.span.start_line.checked_sub(1) else {
+        return Value::Array(Vec::new());
+    };
+    let end = memento.span.end_line.max(memento.span.start_line);
+    let Some(selected) = lines.get(start..end) else {
+        return Value::Array(Vec::new());
+    };
+    Value::Array(
+        selected
+            .iter()
+            .enumerate()
+            .map(|(offset, source)| {
+                json!({
+                    "line": start + offset + 1,
+                    "source": source.trim_end(),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn source_memento_from_json(value: &Value) -> Option<source_oracle::SourceMemento> {
