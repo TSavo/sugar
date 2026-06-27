@@ -1862,6 +1862,79 @@ fn render_bool_debug_floor(value: bool, spec: &Spec) -> String {
     }
 }
 
+fn render_radix_value<T>(value: T, spec: &Spec) -> Option<String>
+where
+    T: std::fmt::Binary
+        + std::fmt::Debug
+        + std::fmt::LowerHex
+        + std::fmt::Octal
+        + std::fmt::UpperHex
+        + Copy,
+{
+    if spec.precision.is_some() || spec.plus || spec.align.is_some() {
+        return None;
+    }
+
+    Some(
+        match (spec.kind, spec.alternate, spec.zero_width, spec.width) {
+            (Kind::LowerHex, false, Some(w), _) => format!("{value:0w$x}"),
+            (Kind::LowerHex, true, Some(w), _) => format!("{value:#0w$x}"),
+            (Kind::LowerHex, false, None, Some(w)) => format!("{value:w$x}"),
+            (Kind::LowerHex, true, None, Some(w)) => format!("{value:#w$x}"),
+            (Kind::LowerHex, false, None, None) => format!("{value:x}"),
+            (Kind::LowerHex, true, None, None) => format!("{value:#x}"),
+            (Kind::LowerHexDebug, false, Some(w), _) => format!("{value:0w$x?}"),
+            (Kind::LowerHexDebug, true, Some(w), _) => format!("{value:#0w$x?}"),
+            (Kind::LowerHexDebug, false, None, Some(w)) => format!("{value:w$x?}"),
+            (Kind::LowerHexDebug, true, None, Some(w)) => format!("{value:#w$x?}"),
+            (Kind::LowerHexDebug, false, None, None) => format!("{value:x?}"),
+            (Kind::LowerHexDebug, true, None, None) => format!("{value:#x?}"),
+            (Kind::UpperHex, false, Some(w), _) => format!("{value:0w$X}"),
+            (Kind::UpperHex, true, Some(w), _) => format!("{value:#0w$X}"),
+            (Kind::UpperHex, false, None, Some(w)) => format!("{value:w$X}"),
+            (Kind::UpperHex, true, None, Some(w)) => format!("{value:#w$X}"),
+            (Kind::UpperHex, false, None, None) => format!("{value:X}"),
+            (Kind::UpperHex, true, None, None) => format!("{value:#X}"),
+            (Kind::UpperHexDebug, false, Some(w), _) => format!("{value:0w$X?}"),
+            (Kind::UpperHexDebug, true, Some(w), _) => format!("{value:#0w$X?}"),
+            (Kind::UpperHexDebug, false, None, Some(w)) => format!("{value:w$X?}"),
+            (Kind::UpperHexDebug, true, None, Some(w)) => format!("{value:#w$X?}"),
+            (Kind::UpperHexDebug, false, None, None) => format!("{value:X?}"),
+            (Kind::UpperHexDebug, true, None, None) => format!("{value:#X?}"),
+            (Kind::Binary, false, Some(w), _) => format!("{value:0w$b}"),
+            (Kind::Binary, true, Some(w), _) => format!("{value:#0w$b}"),
+            (Kind::Binary, false, None, Some(w)) => format!("{value:w$b}"),
+            (Kind::Binary, true, None, Some(w)) => format!("{value:#w$b}"),
+            (Kind::Binary, false, None, None) => format!("{value:b}"),
+            (Kind::Binary, true, None, None) => format!("{value:#b}"),
+            (Kind::Octal, false, Some(w), _) => format!("{value:0w$o}"),
+            (Kind::Octal, true, Some(w), _) => format!("{value:#0w$o}"),
+            (Kind::Octal, false, None, Some(w)) => format!("{value:w$o}"),
+            (Kind::Octal, true, None, Some(w)) => format!("{value:#w$o}"),
+            (Kind::Octal, false, None, None) => format!("{value:o}"),
+            (Kind::Octal, true, None, None) => format!("{value:#o}"),
+            _ => return None,
+        },
+    )
+}
+
+fn render_int_radix(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
+    match suffix {
+        IntKind::I8 => render_radix_value(value as i8, spec),
+        IntKind::U8 => render_radix_value(value as u8, spec),
+        IntKind::I16 => render_radix_value(value as i16, spec),
+        IntKind::U16 => render_radix_value(value as u16, spec),
+        IntKind::I32 | IntKind::Unsuffixed => render_radix_value(value as i32, spec),
+        IntKind::U32 => render_radix_value(value as u32, spec),
+        IntKind::I64 => render_radix_value(value as i64, spec),
+        IntKind::U64 => render_radix_value(value as u64, spec),
+        IntKind::I128 => render_radix_value(value, spec),
+        IntKind::U128 => render_radix_value(value as u128, spec),
+        IntKind::Isize => render_radix_value(value as isize, spec),
+        IntKind::Usize => render_radix_value(value as usize, spec),
+    }
+}
+
 fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
     // Precision is meaningless for integer Display/radix in rust (it's ignored for
     // integers except `e`/`E`). We bail if a precision is set on a non-exp integer
@@ -1892,26 +1965,14 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
                 (true, false) => return None,
             }
         }
-        // Radix formats operate on the value's BITS at its width. We reconstruct the
-        // unsigned bit pattern at the declared width so `{:x}` of `-1i8` == "ff" etc.
+        // Radix formats belong to the typed integer floor. Preserve the literal's
+        // concrete width, then let Rust's formatter produce the bytes.
         Kind::LowerHex
         | Kind::LowerHexDebug
         | Kind::UpperHex
         | Kind::UpperHexDebug
         | Kind::Binary
-        | Kind::Octal => {
-            if spec.precision.is_some() || spec.plus || spec.alternate || spec.align.is_some() {
-                return None;
-            }
-            let bits = bits_at_width(value, suffix)?;
-            match spec.kind {
-                Kind::LowerHex | Kind::LowerHexDebug => format!("{bits:x}"),
-                Kind::UpperHex | Kind::UpperHexDebug => format!("{bits:X}"),
-                Kind::Binary => format!("{bits:b}"),
-                Kind::Octal => format!("{bits:o}"),
-                _ => unreachable!(),
-            }
-        }
+        | Kind::Octal => return render_int_radix(value, suffix, spec),
         Kind::LowerExp | Kind::UpperExp => {
             if spec.alternate || spec.align.is_some() {
                 return None;
@@ -1949,25 +2010,6 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
         (None, Some(w)) => format!("{body:>w$}"),
         (None, None) => body,
     })
-}
-
-/// The unsigned bit pattern of `value` at its declared width, for radix rendering.
-/// Bails for the i128/u128 widths only if the carrier cannot represent it (it always
-/// can for i128/u128). Unsuffixed defaults to i32.
-fn bits_at_width(value: i128, suffix: IntKind) -> Option<u128> {
-    let bits: u128 = match suffix {
-        IntKind::I8 => (value as i8) as u8 as u128,
-        IntKind::U8 => (value as u8) as u128,
-        IntKind::I16 => (value as i16) as u16 as u128,
-        IntKind::U16 => (value as u16) as u128,
-        IntKind::I32 | IntKind::Unsuffixed => (value as i32) as u32 as u128,
-        IntKind::U32 => (value as u32) as u128,
-        IntKind::I64 | IntKind::Isize => (value as i64) as u64 as u128,
-        IntKind::U64 | IntKind::Usize => (value as u64) as u128,
-        IntKind::I128 => (value as i128) as u128,
-        IntKind::U128 => value as u128,
-    };
-    Some(bits)
 }
 
 fn is_unsigned(suffix: IntKind) -> bool {
@@ -3581,8 +3623,36 @@ mod tests {
     }
 
     #[test]
-    fn bails_on_unsupported_alternate_radix() {
-        assert_eq!(resolve(r#"format!("{:#x}", 255u32)"#).unwrap(), None);
+    fn alternate_lower_hex_int_delegates_to_literal_floor() {
+        match render_format_values(
+            "{:#x}",
+            &[FmtValue::Int {
+                value: 10,
+                suffix: IntKind::Unsuffixed,
+            }],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            r#"format!("{:#x}", 10)"#,
+        ) {
+            FloorRead::Complete(value) => assert_eq!(value, "0xa"),
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
+        assert_eq!(
+            resolve(r#"format!("{:#x}", 10)"#).unwrap().as_deref(),
+            Some("0xa")
+        );
+    }
+
+    #[test]
+    fn alternate_radix_delegates_to_literal_floors() {
+        assert_eq!(
+            resolve(r#"format!("{:#x}", 255u32)"#).unwrap().as_deref(),
+            Some("0xff")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:#x}", -1i8)"#).unwrap().as_deref(),
+            Some("0xff")
+        );
     }
 
     #[test]
