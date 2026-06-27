@@ -9633,7 +9633,9 @@ fn resolve_destructure_source_expr(
             resolve_destructure_source_expr(scope, &reference.expr, depth + 1)
         }
         Expr::MethodCall(call) => {
-            resolve_known_slice_destructure_method(scope, call).or_else(|| Some(expr.clone()))
+            resolve_iterator_positional_destructure_source(scope, call, depth + 1)
+                .or_else(|| resolve_known_slice_destructure_method(scope, call))
+                .or_else(|| Some(expr.clone()))
         }
         Expr::Call(call) => {
             resolve_refcell_map_split_call(scope, call, depth + 1).or_else(|| Some(expr.clone()))
@@ -9648,6 +9650,158 @@ fn resolve_destructure_source_expr(
             resolve_destructure_source_expr(scope, &init, depth + 1)
         }
         _ => Some(expr.clone()),
+    }
+}
+
+fn resolve_iterator_positional_destructure_source(
+    scope: &TemporalScope,
+    call: &ExprMethodCall,
+    depth: usize,
+) -> Option<Expr> {
+    if depth > 16 {
+        return None;
+    }
+    match call.method.to_string().as_str() {
+        "unwrap" if call.args.is_empty() => {
+            resolve_destructure_source_expr(scope, &call.receiver, depth + 1)
+        }
+        "expect" if call.args.len() == 1 => {
+            resolve_destructure_source_expr(scope, &call.receiver, depth + 1)
+        }
+        "next" if call.args.is_empty() => {
+            positional_destructure_sequence_elem(scope, &call.receiver, depth + 1, false, 0)
+        }
+        "next_back" | "last" if call.args.is_empty() => {
+            positional_destructure_sequence_elem(scope, &call.receiver, depth + 1, true, 0)
+        }
+        "nth" if call.args.len() == 1 => {
+            let n = const_usize_arg(scope, call.args.first()?)?;
+            positional_destructure_sequence_elem(scope, &call.receiver, depth + 1, false, n)
+        }
+        "nth_back" if call.args.len() == 1 => {
+            let n = const_usize_arg(scope, call.args.first()?)?;
+            positional_destructure_sequence_elem(scope, &call.receiver, depth + 1, true, n)
+        }
+        _ => None,
+    }
+}
+
+fn positional_destructure_sequence_elem(
+    scope: &TemporalScope,
+    receiver: &Expr,
+    depth: usize,
+    from_back: bool,
+    offset: usize,
+) -> Option<Expr> {
+    let seq = destructure_sequence_exprs(scope, receiver, depth + 1)?;
+    let idx = if from_back {
+        let offset = offset.checked_add(1)?;
+        seq.len().checked_sub(offset)?
+    } else {
+        (offset < seq.len()).then_some(offset)?
+    };
+    seq.get(idx).cloned()
+}
+
+fn destructure_sequence_exprs(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> Option<Vec<Expr>> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Repeat(_) | Expr::Index(_) => {
+            static_literal_slice_elems(scope, expr, depth + 1)
+        }
+        Expr::Range(_) => const_eval_finite_int_iter_values(expr, &BTreeMap::new(), None)?
+            .into_iter()
+            .map(|value| value.to_expr())
+            .collect(),
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return destructure_sequence_exprs(scope, &init, depth + 1);
+                }
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            destructure_sequence_exprs(scope, &init, depth + 1)
+        }
+        Expr::Call(call) => {
+            let source = into_iter_arg(call)?;
+            destructure_sequence_exprs(scope, source, depth + 1)
+        }
+        Expr::MethodCall(call) if call.args.is_empty() => {
+            let method = call.method.to_string();
+            match method.as_str() {
+                "collect" => destructure_sequence_exprs(scope, &call.receiver, depth + 1),
+                "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable"
+                | "by_ref" | "clone" | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
+                    destructure_sequence_exprs(scope, &call.receiver, depth + 1)
+                }
+                "rev" => {
+                    let mut seq = destructure_sequence_exprs(scope, &call.receiver, depth + 1)?;
+                    seq.reverse();
+                    Some(seq)
+                }
+                "enumerate" => {
+                    let seq = destructure_sequence_exprs(scope, &call.receiver, depth + 1)?;
+                    seq.into_iter()
+                        .enumerate()
+                        .map(|(idx, elem)| {
+                            let idx = syn::parse_str::<Expr>(&idx.to_string()).ok()?;
+                            Some(tuple_expr(vec![idx, elem]))
+                        })
+                        .collect()
+                }
+                _ => None,
+            }
+        }
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            let method = call.method.to_string();
+            match method.as_str() {
+                "take" => {
+                    let n = const_usize_arg(scope, call.args.first()?)?;
+                    let mut seq = destructure_sequence_exprs(scope, &call.receiver, depth + 1)?;
+                    seq.truncate(n);
+                    Some(seq)
+                }
+                "skip" => {
+                    let n = const_usize_arg(scope, call.args.first()?)?;
+                    Some(
+                        destructure_sequence_exprs(scope, &call.receiver, depth + 1)?
+                            .into_iter()
+                            .skip(n)
+                            .collect(),
+                    )
+                }
+                "step_by" => {
+                    let n = const_usize_arg(scope, call.args.first()?)?;
+                    if n == 0 {
+                        return None;
+                    }
+                    Some(
+                        destructure_sequence_exprs(scope, &call.receiver, depth + 1)?
+                            .into_iter()
+                            .step_by(n)
+                            .collect(),
+                    )
+                }
+                "chain" => {
+                    let mut left = destructure_sequence_exprs(scope, &call.receiver, depth + 1)?;
+                    let right = destructure_sequence_exprs(scope, call.args.first()?, depth + 1)?;
+                    if left.len().checked_add(right.len())? > SUGAR_SEQ_CAP as usize {
+                        return None;
+                    }
+                    left.extend(right);
+                    Some(left)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -10840,6 +10994,9 @@ fn panic_freedom_direct_method_callsite_effect(
 ) -> Option<Effect> {
     let method = call.method.to_string();
     if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
+        if scope.temporal_rewrite_expr_for(&receiver).is_some() {
+            return None;
+        }
         return Some(Effect::AmbiguousTemporalIdentity {
             boundary: receiver.clone(),
             reason: format!(

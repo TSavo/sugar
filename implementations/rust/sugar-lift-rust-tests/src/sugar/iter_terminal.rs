@@ -69,6 +69,7 @@ use crate::sugar::factory::{
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::sequence_floor::sequence_value_term_floor;
 use crate::sugar::term_dispatch::fold_int_terms;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
@@ -693,10 +694,13 @@ impl IterTerminalReceiver {
     }
 
     fn body(&self, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+        let source_expr = simple_path_name(&self.source_expr)
+            .and_then(|name| fcx.scope().temporal_rewrite_expr_for(&name))
+            .unwrap_or_else(|| self.source_expr.clone());
         SugarBody::from_node(
-            crate::sugar::scan::try_build_scan_inner(&self.source_expr, fcx)
-                .or_else(|| method_family::build_literal_sequence_composite(&self.source_expr, fcx))
-                .unwrap_or_else(|| build_composite(&self.source_expr, fcx)),
+            crate::sugar::scan::try_build_scan_inner(&source_expr, fcx)
+                .or_else(|| method_family::build_literal_sequence_composite(&source_expr, fcx))
+                .unwrap_or_else(|| build_composite(&source_expr, fcx)),
         )
     }
 }
@@ -1083,9 +1087,10 @@ impl IterTerminalSugar {
             // POSITIONAL terminals (`.next()`/`.next_back()`/`.nth(k)`/`.nth_back(k)`/
             // `.last()`): index the literal Seq and GROUND to a `MonadicSugar`
             // `Some(element)` / `None` (the ADT-backed `opt:some`/`opt:none` ctor). An
-            // in-range element must be an EXACT integer const (the ADT field sort is
-            // `Int`); a non-int element bails to the factory gap path (never a guessed
-            // value). An out-of-range index grounds to the structural `None`.
+            // in-range element must have an EXACT sequence value floor (including tuple
+            // elements produced by `.enumerate()` / `.zip()`); an opaque element bails to
+            // the factory gap path (never a guessed value). An out-of-range index grounds
+            // to the structural `None`.
             let positional_idx = match &self.terminal {
                 Terminal::Next => Some(Some(0usize)),
                 Terminal::NextBack => Some(seq.len().checked_sub(1)),
@@ -1102,8 +1107,8 @@ impl IterTerminalSugar {
             if let Some(idx) = positional_idx {
                 return Some(match idx.and_then(|idx| seq.get(idx)) {
                     Some(elem) => {
-                        let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
-                        Desugared::Term(monadic::some_term(num(n)))
+                        let term = elem.value.as_ref().and_then(sequence_value_term_floor)?;
+                        Desugared::Term(monadic::some_term(term))
                     }
                     // Past the end (or `.last()` / `.next_back()` on the empty Seq) -- the
                     // value IS `None`.
