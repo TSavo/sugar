@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_binop_sugar
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -17,15 +18,17 @@ class BinOpSugar:
     blame: str
 
     @classmethod
-    def from_site(cls, site, ctx) -> "BinOpSugar | None":
+    def from_site(
+        cls, site, *, left: SugarBody, right: SugarBody
+    ) -> "BinOpSugar | None":
         if not isinstance(site.node, ast.BinOp):
             return None
         if not isinstance(site.node.op, ast.Add):
             return None
         return cls(
             operator="+",
-            left=ctx.build_body(site.node.left, SugarRole.TERM),
-            right=ctx.build_body(site.node.right, SugarRole.TERM),
+            left=left,
+            right=right,
             blame=site.blame,
         )
 
@@ -41,16 +44,9 @@ def _owns(site) -> bool:
     return isinstance(site.node, ast.BinOp) and isinstance(site.node.op, ast.Add)
 
 
-def _build(site, ctx) -> BinOpSugar:
-    sugar = BinOpSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("BinOpSugar claim built a non-addition")
-    return sugar
-
-
 BINOP_CLAIM = SugarClaim(
     name="BinOpSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_binop_sugar,
 )

@@ -23,7 +23,7 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar.list_sugar import ListSugar
-from sugar_lift_py_tests.sugar.map_sugar import MapSugar
+from sugar_lift_py_tests.sugar.map_sugar import MapSugar, map_operation_from_node
 from sugar_lift_py_tests.sugar.method_sugar import MethodSugar
 
 
@@ -143,7 +143,15 @@ def _lift_fluent_array_map_assert(
         return None
     blame = f"{filename}:{method.call.lineno}:{method.call.col_offset}"
     factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
-    map_sugar = MapSugar.from_method(method, blame=blame, ctx=factory_ctx)
+    receiver = factory_ctx.build_child(method.receiver, SugarRole.TERM).sugar
+    if not isinstance(receiver, ArrayLiteralSugar):
+        return None
+    map_sugar = MapSugar.from_method(
+        method,
+        blame=blame,
+        receiver=receiver,
+        operation=map_operation_from_node(method.args[0]),
+    )
     if map_sugar is None:
         return None
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)

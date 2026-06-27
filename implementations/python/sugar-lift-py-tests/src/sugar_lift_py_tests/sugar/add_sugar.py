@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_add_sugar
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import AddOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
@@ -17,7 +18,9 @@ class AddSugar:
     blame: str
 
     @classmethod
-    def from_site(cls, site, ctx) -> "AddSugar | None":
+    def from_site(
+        cls, site, *, receiver: SugarBody, operand: SugarBody
+    ) -> "AddSugar | None":
         if not _is_add_call(site.node):
             return None
         assert isinstance(site.node, ast.Call)
@@ -25,8 +28,8 @@ class AddSugar:
         if len(site.node.args) != 1:
             return None
         return cls(
-            receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
-            operand=ctx.build_body(site.node.args[0], SugarRole.TERM),
+            receiver=receiver,
+            operand=operand,
             blame=site.blame,
         )
 
@@ -57,16 +60,9 @@ def _owns(site) -> bool:
     return _is_add_call(site.node)
 
 
-def _build(site, ctx) -> AddSugar:
-    sugar = AddSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("AddSugar claim built a non-add call")
-    return sugar
-
-
 ADD_CLAIM = SugarClaim(
     name="AddSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_add_sugar,
 )

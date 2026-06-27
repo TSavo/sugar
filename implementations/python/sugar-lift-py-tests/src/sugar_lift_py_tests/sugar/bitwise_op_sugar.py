@@ -2,49 +2,48 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Any, TypeAlias
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_bitwise_op_sugar
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
-
-from .primitive_literal_sugar import PrimitiveLiteralSugar
-
-BitwiseOperand: TypeAlias = Any
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
 class BitwiseOpSugar:
-    node: ast.BinOp
     operator: str
-    left: BitwiseOperand
-    right: BitwiseOperand
+    left: SugarBody
+    right: SugarBody
 
     def __post_init__(self) -> None:
-        if not isinstance(self.left, (PrimitiveLiteralSugar, BitwiseOpSugar)):
-            raise TypeError("BitwiseOpSugar operands must be factory-built term sugar")
-        if not isinstance(self.right, (PrimitiveLiteralSugar, BitwiseOpSugar)):
-            raise TypeError("BitwiseOpSugar operands must be factory-built term sugar")
+        if not isinstance(self.left, SugarBody):
+            raise TypeError("BitwiseOpSugar operands must be factory-built bodies")
+        if not isinstance(self.right, SugarBody):
+            raise TypeError("BitwiseOpSugar operands must be factory-built bodies")
 
     @classmethod
-    def from_site(cls, site, ctx) -> "BitwiseOpSugar | None":
+    def from_site(
+        cls, site, *, left: SugarBody, right: SugarBody
+    ) -> "BitwiseOpSugar | None":
         if not isinstance(site.node, ast.BinOp):
             return None
         operator = _operator(site.node.op)
         if operator is None:
             return None
-        left = ctx.build_child(site.node.left, SugarRole.TERM).sugar
-        right = ctx.build_child(site.node.right, SugarRole.TERM).sugar
         return cls(
-            node=site.node,
             operator=operator,
             left=left,
             right=right,
         )
 
-    def desugar(self) -> Outcome:
-        left = _term_value(complete_value(self.left.desugar(), owner="BitwiseOpSugar left"))
-        right = _term_value(complete_value(self.right.desugar(), owner="BitwiseOpSugar right"))
+    def desugar(self, ctx=None) -> Outcome:
+        left = _term_value(
+            complete_value(self.left.reduce(ctx), owner="BitwiseOpSugar left")
+        )
+        right = _term_value(
+            complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right")
+        )
         if self.operator == "&":
             return Complete(TermValue(left.value & right.value))
         if self.operator == "<<":
@@ -70,16 +69,9 @@ def _owns(site) -> bool:
     return isinstance(site.node, ast.BinOp) and _operator(site.node.op) is not None
 
 
-def _build(site, ctx) -> BitwiseOpSugar:
-    sugar = BitwiseOpSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("BitwiseOpSugar claim built a non-bitwise op")
-    return sugar
-
-
 BITWISE_OP_CLAIM = SugarClaim(
     name="BitwiseOpSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_bitwise_op_sugar,
 )

@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.sugar_constructors import build_to_list_sugar
 from sugar_lift_py_tests.operations import MaterializeOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -15,7 +16,7 @@ class ToListSugar:
     blame: str
 
     @classmethod
-    def from_site(cls, site, ctx) -> "ToListSugar | None":
+    def from_site(cls, site, *, receiver: SugarBody) -> "ToListSugar | None":
         if not _is_to_list_call(site.node):
             return None
         assert isinstance(site.node, ast.Call)
@@ -23,7 +24,7 @@ class ToListSugar:
         if site.node.args:
             return None
         return cls(
-            receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
+            receiver=receiver,
             blame=site.blame,
         )
 
@@ -51,16 +52,9 @@ def _owns(site) -> bool:
     return _is_to_list_call(site.node)
 
 
-def _build(site, ctx) -> ToListSugar:
-    sugar = ToListSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("ToListSugar claim built a non-to-list call")
-    return sugar
-
-
 TO_LIST_CLAIM = SugarClaim(
     name="ToListSugar",
     role=SugarRole.TERM,
     owns=_owns,
-    build=_build,
+    build=build_to_list_sugar,
 )
