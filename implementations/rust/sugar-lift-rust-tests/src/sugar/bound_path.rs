@@ -62,7 +62,7 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = unknown_iterator_consumption_refusal(&name, fcx) {
         return Some(hit);
     }
-    if let Some(hit) = consumed_iterator_state_refusal(&name, fcx) {
+    if let Some(hit) = consumed_iterator_state_refusal(&name, fcx, role) {
         return Some(hit);
     }
     if let Some(hit) = unknown_mutation_refusal(&name, fcx) {
@@ -421,10 +421,20 @@ fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Opti
         .map(|reason| temporal_effect(name, reason))
 }
 
-fn consumed_iterator_state_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    (fcx.scope().is_consumed_iterator_local(name)
-        && fcx.scope().temporal_rewrite_expr_for(name).is_none())
-    .then(|| {
+fn consumed_iterator_state_refusal(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    role: BoundPathRole,
+) -> Option<Box<dyn Sugar>> {
+    if fcx.scope().temporal_rewrite_expr_for(name).is_some() {
+        return None;
+    }
+    let mutable_iterator_without_body = matches!(role, BoundPathRole::Composite)
+        && fcx.scope().is_mut_local(name)
+        && fcx.scope().is_iterator_local(name)
+        && !fcx.let_inits().contains_key(name)
+        && fcx.scope().stable_let_binding_for_term(name).is_none();
+    (fcx.scope().is_consumed_iterator_local(name) || mutable_iterator_without_body).then(|| {
         Box::new(BoundPathConsumedIteratorStateSugar {
             boundary: name.to_string(),
         }) as Box<dyn Sugar>

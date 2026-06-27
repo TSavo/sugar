@@ -5300,6 +5300,10 @@ impl TemporalScope {
         self.plan.consumed_iterator_locals.contains(name)
     }
 
+    pub(crate) fn is_iterator_local(&self, name: &str) -> bool {
+        self.plan.iterators.contains(name)
+    }
+
     fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
         self.plan.sideeffecting_clone_locals.contains(name)
     }
@@ -20524,6 +20528,53 @@ mod lifter_key_tests {
                 effect.reason()
             ),
             Outcome::Complete(_) => panic!("consumed iterator Composite receiver completed"),
+        }
+    }
+
+    #[test]
+    fn mutable_iterator_terminal_without_replay_is_named_effect_not_receiver_gap() {
+        let mut plan = TemporalPlan::default();
+        plan.mut_locals.insert("iter".to_string());
+        plan.iterators.insert("iter".to_string());
+        plan.versioned.insert("iter".to_string());
+        let scope = TemporalScope::new("tests/test_src.rs::mutable_iter", plan);
+        let expr: Expr = syn::parse_str("iter.next()").expect("terminal parses");
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
+        let items = Vec::<syn::Item>::new();
+        let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sugar::factory::build_term(&expr, &fcx).desugar(&ctx)
+        }))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`iter.next()` over a mutable iterator local with no temporal replay must be \
+                 owned as `Incomplete(ConsumedIteratorState)`: make the iterator terminal or \
+                 bound-path Composite receiver emit the typed iterator-state effect before \
+                 receiver composition falls through to `no Sugar candidate for role Composite \
+                 at iter`: {message}"
+            )
+        });
+
+        match outcome {
+            Outcome::Incomplete(Effect::ConsumedIteratorState { boundary }) => {
+                assert_eq!(boundary, "iter");
+            }
+            Outcome::Incomplete(effect) => panic!(
+                "mutable iterator terminal without replay must emit ConsumedIteratorState, got {}",
+                effect.reason()
+            ),
+            Outcome::Complete(_) => panic!("mutable iterator terminal without replay completed"),
         }
     }
 
