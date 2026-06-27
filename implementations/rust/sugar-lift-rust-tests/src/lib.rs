@@ -32,6 +32,7 @@ pub mod sugar {
     pub mod addr_of_mut;
     pub mod aggregate_decomp;
     pub mod aggregate_term;
+    pub mod array_chunks;
     pub mod array_repeat;
     pub mod array_term;
     pub mod array_try_from;

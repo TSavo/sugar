@@ -11,9 +11,9 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    addr_of_mut, aggregate_decomp, array_repeat, array_term, array_try_from, assign_op,
-    atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path, call,
-    cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
+    addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
+    assign_op, atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path,
+    call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
     char_range_filter_map, closure_iter_advance_body, closure_mutating_body,
     closure_opaque_accessor, closure_runtime_receiver, closure_term, closure_tls_accessor, collect,
     collection_literal, compute_float, concat_macro, conditional, const_block, const_if,
@@ -206,6 +206,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &chain::EXPR_SUGAR,
     &flatten::EXPR_SUGAR,
     &flat_map::EXPR_SUGAR,
+    &array_chunks::EXPR_SUGAR,
     &slice_chunk_window::EXPR_SUGAR,
     &iterator::EXPR_SUGAR,
     &iter_next::EXPR_SUGAR,
@@ -1679,6 +1680,33 @@ mod tests {
                 "unknown receiver `{src}` should keep a recursive/effect fallback: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn array_chunks_is_composite_sequence_adaptor_before_for_replay_asks_for_domain() {
+        let expr: Expr = syn::parse_str("xs.iter().copied().array_chunks::<3>()").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert(
+            "xs".to_string(),
+            syn::parse_str("[1i32, 2, 1, 2, 1, 1]").unwrap(),
+        );
+        let names =
+            candidate_names_for_role_with_let_inits(&expr, SugarRole::Composite, &let_inits);
+
+        assert!(
+            names.contains(&"array_chunks"),
+            "array_chunks::<N>() is a const-generic iterator sequence adaptor; add \
+             ArrayChunksSugar as a Composite owner that delegates to the receiver sequence \
+             floor and yields full N-element array floors: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(
+                &expr,
+                SugarRole::Composite,
+                &let_inits
+            ),
+            Some("array_chunks")
+        );
     }
 
     #[test]

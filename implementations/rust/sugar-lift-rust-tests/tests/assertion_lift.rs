@@ -4353,6 +4353,37 @@ fn for_slice_pattern_binds_components_in_order() {
     }
 }
 
+#[test]
+fn for_slice_pattern_over_array_chunks_replays_literal_receiver() {
+    let src = r#"
+        #[test]
+        fn t_array_chunks() {
+            let xs = [1i32, 2, 1, 2, 1, 1];
+            for [a, b, c] in xs.iter().copied().array_chunks::<3>() {
+                assert_eq!(a + b + c, 4);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/array_chunks_for.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert!(
+        out.assertions_refused == 0 && out.skip_reasons.is_empty(),
+        "array_chunks::<3>() over a literal-backed receiver must be a Composite sequence \
+         sugar that for_replay can destructure, not a structural Composite gap: {:?}",
+        out.skip_reasons
+    );
+    let decl = single_warranted_decl(&out);
+    assert!(
+        !decl_mentions_ctor(decl, "array_chunks")
+            && !decl_mentions_ctor(decl, "method:array_chunks"),
+        "array_chunks should dissolve to concrete array floors before assertion lowering: {:?}",
+        decl.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "array_chunks_for") {
+        assert!(sat, "both [1,2,1] and [2,1,1] chunks sum to 4");
+    }
+}
+
 // MECHANISM-2 gap (b): `.flat_map(|n| [..])` over a literal base maps each element to a
 // finite literal sub-sequence and concatenates -- map + flatten in one step. The closure
 // is const-eval'd per element (`*n` derefs the bound value); exact-or-refuse.
