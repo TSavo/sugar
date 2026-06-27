@@ -4045,6 +4045,28 @@ fn for_flatten_over_nested_literals_lifts() {
     }
 }
 
+#[test]
+fn rpc_source_map_flatten_sequence_floor_lifts() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/flatten_map_sequence_floor.rs",
+        r#"
+#[test]
+fn test_map_flatten_sequence_floor() {
+    let xs = [0, 3, 6];
+    let ys = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let it = xs.iter().map(|&x| (x..).step_by(1).take(3)).flatten();
+    let mut i = 0;
+    for x in it {
+        assert_eq!(x, ys[i]);
+        i += 1;
+    }
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_map_flatten_sequence_floor");
+}
+
 // GAP (b) TEETH: a WRONG expected over the flattened domain must refute.
 #[test]
 fn for_flatten_wrong_expected_is_unsat() {
