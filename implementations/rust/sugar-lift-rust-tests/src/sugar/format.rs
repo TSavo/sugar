@@ -1862,6 +1862,85 @@ fn render_bool_debug_floor(value: bool, spec: &Spec) -> String {
     }
 }
 
+macro_rules! render_radix_kind {
+    (
+        $value:expr,
+        $spec:expr,
+        plain: $plain:literal,
+        alternate: $alternate:literal,
+        width: $width:literal,
+        alternate_width: $alternate_width:literal,
+        zero_width: $zero_width:literal,
+        alternate_zero_width: $alternate_zero_width:literal,
+        left: $left:literal,
+        alternate_left: $alternate_left:literal,
+        left_zero_width: $left_zero_width:literal,
+        alternate_left_zero_width: $alternate_left_zero_width:literal,
+        right: $right:literal,
+        alternate_right: $alternate_right:literal,
+        right_zero_width: $right_zero_width:literal,
+        alternate_right_zero_width: $alternate_right_zero_width:literal,
+        center: $center:literal,
+        alternate_center: $alternate_center:literal,
+        center_zero_width: $center_zero_width:literal,
+        alternate_center_zero_width: $alternate_center_zero_width:literal $(,)?
+    ) => {{
+        let value = $value;
+        Some(
+            match ($spec.alternate, $spec.align, $spec.zero_width, $spec.width) {
+                (false, None, Some(w), _) => format!($zero_width, value = value, w = w),
+                (true, None, Some(w), _) => format!($alternate_zero_width, value = value, w = w),
+                (false, None, None, Some(w)) => format!($width, value = value, w = w),
+                (true, None, None, Some(w)) => format!($alternate_width, value = value, w = w),
+                (false, None, None, None) => format!($plain, value = value),
+                (true, None, None, None) => format!($alternate, value = value),
+                (false, Some(Align::Left), Some(w), _) => {
+                    format!($left_zero_width, value = value, w = w)
+                }
+                (true, Some(Align::Left), Some(w), _) => {
+                    format!($alternate_left_zero_width, value = value, w = w)
+                }
+                (false, Some(Align::Left), None, Some(w)) => {
+                    format!($left, value = value, w = w)
+                }
+                (true, Some(Align::Left), None, Some(w)) => {
+                    format!($alternate_left, value = value, w = w)
+                }
+                (false, Some(Align::Left), None, None) => format!($plain, value = value),
+                (true, Some(Align::Left), None, None) => format!($alternate, value = value),
+                (false, Some(Align::Right), Some(w), _) => {
+                    format!($right_zero_width, value = value, w = w)
+                }
+                (true, Some(Align::Right), Some(w), _) => {
+                    format!($alternate_right_zero_width, value = value, w = w)
+                }
+                (false, Some(Align::Right), None, Some(w)) => {
+                    format!($right, value = value, w = w)
+                }
+                (true, Some(Align::Right), None, Some(w)) => {
+                    format!($alternate_right, value = value, w = w)
+                }
+                (false, Some(Align::Right), None, None) => format!($plain, value = value),
+                (true, Some(Align::Right), None, None) => format!($alternate, value = value),
+                (false, Some(Align::Center), Some(w), _) => {
+                    format!($center_zero_width, value = value, w = w)
+                }
+                (true, Some(Align::Center), Some(w), _) => {
+                    format!($alternate_center_zero_width, value = value, w = w)
+                }
+                (false, Some(Align::Center), None, Some(w)) => {
+                    format!($center, value = value, w = w)
+                }
+                (true, Some(Align::Center), None, Some(w)) => {
+                    format!($alternate_center, value = value, w = w)
+                }
+                (false, Some(Align::Center), None, None) => format!($plain, value = value),
+                (true, Some(Align::Center), None, None) => format!($alternate, value = value),
+            },
+        )
+    }};
+}
+
 fn render_radix_value<T>(value: T, spec: &Spec) -> Option<String>
 where
     T: std::fmt::Binary
@@ -1871,51 +1950,145 @@ where
         + std::fmt::UpperHex
         + Copy,
 {
-    if spec.precision.is_some() || spec.plus || spec.align.is_some() {
+    if spec.precision.is_some() || spec.plus {
         return None;
     }
 
-    Some(
-        match (spec.kind, spec.alternate, spec.zero_width, spec.width) {
-            (Kind::LowerHex, false, Some(w), _) => format!("{value:0w$x}"),
-            (Kind::LowerHex, true, Some(w), _) => format!("{value:#0w$x}"),
-            (Kind::LowerHex, false, None, Some(w)) => format!("{value:w$x}"),
-            (Kind::LowerHex, true, None, Some(w)) => format!("{value:#w$x}"),
-            (Kind::LowerHex, false, None, None) => format!("{value:x}"),
-            (Kind::LowerHex, true, None, None) => format!("{value:#x}"),
-            (Kind::LowerHexDebug, false, Some(w), _) => format!("{value:0w$x?}"),
-            (Kind::LowerHexDebug, true, Some(w), _) => format!("{value:#0w$x?}"),
-            (Kind::LowerHexDebug, false, None, Some(w)) => format!("{value:w$x?}"),
-            (Kind::LowerHexDebug, true, None, Some(w)) => format!("{value:#w$x?}"),
-            (Kind::LowerHexDebug, false, None, None) => format!("{value:x?}"),
-            (Kind::LowerHexDebug, true, None, None) => format!("{value:#x?}"),
-            (Kind::UpperHex, false, Some(w), _) => format!("{value:0w$X}"),
-            (Kind::UpperHex, true, Some(w), _) => format!("{value:#0w$X}"),
-            (Kind::UpperHex, false, None, Some(w)) => format!("{value:w$X}"),
-            (Kind::UpperHex, true, None, Some(w)) => format!("{value:#w$X}"),
-            (Kind::UpperHex, false, None, None) => format!("{value:X}"),
-            (Kind::UpperHex, true, None, None) => format!("{value:#X}"),
-            (Kind::UpperHexDebug, false, Some(w), _) => format!("{value:0w$X?}"),
-            (Kind::UpperHexDebug, true, Some(w), _) => format!("{value:#0w$X?}"),
-            (Kind::UpperHexDebug, false, None, Some(w)) => format!("{value:w$X?}"),
-            (Kind::UpperHexDebug, true, None, Some(w)) => format!("{value:#w$X?}"),
-            (Kind::UpperHexDebug, false, None, None) => format!("{value:X?}"),
-            (Kind::UpperHexDebug, true, None, None) => format!("{value:#X?}"),
-            (Kind::Binary, false, Some(w), _) => format!("{value:0w$b}"),
-            (Kind::Binary, true, Some(w), _) => format!("{value:#0w$b}"),
-            (Kind::Binary, false, None, Some(w)) => format!("{value:w$b}"),
-            (Kind::Binary, true, None, Some(w)) => format!("{value:#w$b}"),
-            (Kind::Binary, false, None, None) => format!("{value:b}"),
-            (Kind::Binary, true, None, None) => format!("{value:#b}"),
-            (Kind::Octal, false, Some(w), _) => format!("{value:0w$o}"),
-            (Kind::Octal, true, Some(w), _) => format!("{value:#0w$o}"),
-            (Kind::Octal, false, None, Some(w)) => format!("{value:w$o}"),
-            (Kind::Octal, true, None, Some(w)) => format!("{value:#w$o}"),
-            (Kind::Octal, false, None, None) => format!("{value:o}"),
-            (Kind::Octal, true, None, None) => format!("{value:#o}"),
-            _ => return None,
-        },
-    )
+    match spec.kind {
+        Kind::LowerHex => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:x}",
+            alternate: "{value:#x}",
+            width: "{value:w$x}",
+            alternate_width: "{value:#w$x}",
+            zero_width: "{value:0w$x}",
+            alternate_zero_width: "{value:#0w$x}",
+            left: "{value:<w$x}",
+            alternate_left: "{value:<#w$x}",
+            left_zero_width: "{value:<0w$x}",
+            alternate_left_zero_width: "{value:<#0w$x}",
+            right: "{value:>w$x}",
+            alternate_right: "{value:>#w$x}",
+            right_zero_width: "{value:>0w$x}",
+            alternate_right_zero_width: "{value:>#0w$x}",
+            center: "{value:^w$x}",
+            alternate_center: "{value:^#w$x}",
+            center_zero_width: "{value:^0w$x}",
+            alternate_center_zero_width: "{value:^#0w$x}",
+        ),
+        Kind::LowerHexDebug => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:x?}",
+            alternate: "{value:#x?}",
+            width: "{value:w$x?}",
+            alternate_width: "{value:#w$x?}",
+            zero_width: "{value:0w$x?}",
+            alternate_zero_width: "{value:#0w$x?}",
+            left: "{value:<w$x?}",
+            alternate_left: "{value:<#w$x?}",
+            left_zero_width: "{value:<0w$x?}",
+            alternate_left_zero_width: "{value:<#0w$x?}",
+            right: "{value:>w$x?}",
+            alternate_right: "{value:>#w$x?}",
+            right_zero_width: "{value:>0w$x?}",
+            alternate_right_zero_width: "{value:>#0w$x?}",
+            center: "{value:^w$x?}",
+            alternate_center: "{value:^#w$x?}",
+            center_zero_width: "{value:^0w$x?}",
+            alternate_center_zero_width: "{value:^#0w$x?}",
+        ),
+        Kind::UpperHex => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:X}",
+            alternate: "{value:#X}",
+            width: "{value:w$X}",
+            alternate_width: "{value:#w$X}",
+            zero_width: "{value:0w$X}",
+            alternate_zero_width: "{value:#0w$X}",
+            left: "{value:<w$X}",
+            alternate_left: "{value:<#w$X}",
+            left_zero_width: "{value:<0w$X}",
+            alternate_left_zero_width: "{value:<#0w$X}",
+            right: "{value:>w$X}",
+            alternate_right: "{value:>#w$X}",
+            right_zero_width: "{value:>0w$X}",
+            alternate_right_zero_width: "{value:>#0w$X}",
+            center: "{value:^w$X}",
+            alternate_center: "{value:^#w$X}",
+            center_zero_width: "{value:^0w$X}",
+            alternate_center_zero_width: "{value:^#0w$X}",
+        ),
+        Kind::UpperHexDebug => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:X?}",
+            alternate: "{value:#X?}",
+            width: "{value:w$X?}",
+            alternate_width: "{value:#w$X?}",
+            zero_width: "{value:0w$X?}",
+            alternate_zero_width: "{value:#0w$X?}",
+            left: "{value:<w$X?}",
+            alternate_left: "{value:<#w$X?}",
+            left_zero_width: "{value:<0w$X?}",
+            alternate_left_zero_width: "{value:<#0w$X?}",
+            right: "{value:>w$X?}",
+            alternate_right: "{value:>#w$X?}",
+            right_zero_width: "{value:>0w$X?}",
+            alternate_right_zero_width: "{value:>#0w$X?}",
+            center: "{value:^w$X?}",
+            alternate_center: "{value:^#w$X?}",
+            center_zero_width: "{value:^0w$X?}",
+            alternate_center_zero_width: "{value:^#0w$X?}",
+        ),
+        Kind::Binary => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:b}",
+            alternate: "{value:#b}",
+            width: "{value:w$b}",
+            alternate_width: "{value:#w$b}",
+            zero_width: "{value:0w$b}",
+            alternate_zero_width: "{value:#0w$b}",
+            left: "{value:<w$b}",
+            alternate_left: "{value:<#w$b}",
+            left_zero_width: "{value:<0w$b}",
+            alternate_left_zero_width: "{value:<#0w$b}",
+            right: "{value:>w$b}",
+            alternate_right: "{value:>#w$b}",
+            right_zero_width: "{value:>0w$b}",
+            alternate_right_zero_width: "{value:>#0w$b}",
+            center: "{value:^w$b}",
+            alternate_center: "{value:^#w$b}",
+            center_zero_width: "{value:^0w$b}",
+            alternate_center_zero_width: "{value:^#0w$b}",
+        ),
+        Kind::Octal => render_radix_kind!(
+            value,
+            spec,
+            plain: "{value:o}",
+            alternate: "{value:#o}",
+            width: "{value:w$o}",
+            alternate_width: "{value:#w$o}",
+            zero_width: "{value:0w$o}",
+            alternate_zero_width: "{value:#0w$o}",
+            left: "{value:<w$o}",
+            alternate_left: "{value:<#w$o}",
+            left_zero_width: "{value:<0w$o}",
+            alternate_left_zero_width: "{value:<#0w$o}",
+            right: "{value:>w$o}",
+            alternate_right: "{value:>#w$o}",
+            right_zero_width: "{value:>0w$o}",
+            alternate_right_zero_width: "{value:>#0w$o}",
+            center: "{value:^w$o}",
+            alternate_center: "{value:^#w$o}",
+            center_zero_width: "{value:^0w$o}",
+            alternate_center_zero_width: "{value:^#0w$o}",
+        ),
+        _ => None,
+    }
 }
 
 fn render_int_radix(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
@@ -3652,6 +3825,60 @@ mod tests {
         assert_eq!(
             resolve(r#"format!("{:#x}", -1i8)"#).unwrap().as_deref(),
             Some("0xff")
+        );
+    }
+
+    #[test]
+    fn aligned_radix_int_delegates_to_literal_floor() {
+        match render_format_values(
+            "{:<8x}",
+            &[FmtValue::Int {
+                value: 10,
+                suffix: IntKind::Unsuffixed,
+            }],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            r#"format!("{:<8x}", 10)"#,
+        ) {
+            FloorRead::Complete(value) => assert_eq!(value, "a       "),
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
+
+        assert_eq!(
+            resolve(r#"format!("{:<8x}", 10)"#).unwrap().as_deref(),
+            Some("a       ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:>8x}", 10)"#).unwrap().as_deref(),
+            Some("       a")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:^8x}", 10)"#).unwrap().as_deref(),
+            Some("   a    ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:<#8x}", 10)"#).unwrap().as_deref(),
+            Some("0xa     ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:<8x}", -1i8)"#).unwrap().as_deref(),
+            Some("ff      ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:>8X}", 10)"#).unwrap().as_deref(),
+            Some("       A")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:^8b}", 10)"#).unwrap().as_deref(),
+            Some("  1010  ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:<#8o}", 10)"#).unwrap().as_deref(),
+            Some("0o12    ")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:>8X?}", 10)"#).unwrap().as_deref(),
+            Some("       A")
         );
     }
 
