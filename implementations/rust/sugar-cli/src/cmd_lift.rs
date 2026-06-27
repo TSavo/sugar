@@ -1451,7 +1451,12 @@ fn source_report_from_lift_response(
     );
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     trace_lift_collection_checkpoint("source_report.contracts", contracts.len());
-    let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
+    let mut call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
+    call_edges.extend(matching_report_implication_edges(
+        response,
+        contract_filter,
+        &filtered_audits,
+    ));
     trace_lift_collection_checkpoint("source_report.call_edges", call_edges.len());
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
@@ -1506,11 +1511,15 @@ fn source_report_from_proof_pool(
     contract_filter: Option<&str>,
 ) -> LiftSourceReport {
     let mut contracts = Vec::new();
+    let mut contract_names_by_cid = BTreeMap::new();
     for (cid, envelope) in &pool.mementos {
         if sugar_verifier::memento_kind(envelope) != Some("contract") {
             continue;
         }
         let mut contract = proof_contract_value(pool, cid, envelope);
+        if let Some(name) = contract_value_name(&contract) {
+            contract_names_by_cid.insert(cid.clone(), name.to_string());
+        }
         if contract_filter.is_some_and(|filter| !proof_contract_matches_filter(&contract, filter)) {
             continue;
         }
@@ -1559,6 +1568,14 @@ fn source_report_from_proof_pool(
         }
     }
 
+    let mut call_edges = proof_implication_call_edges(pool, &contract_names_by_cid);
+    call_edges.extend(proof_callsite_precondition_edges(pool));
+    let mut call_edges = call_edges
+        .into_iter()
+        .filter(|edge| {
+            contract_filter.is_none_or(|filter| call_edge_matches_filter(edge, filter, &[]))
+        })
+        .collect::<Vec<_>>();
     let implication_count = pool
         .mementos
         .values()
@@ -1569,8 +1586,7 @@ fn source_report_from_proof_pool(
         .values()
         .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("witness-memento"))
         .count();
-    let mut call_edges = Vec::new();
-    if implication_count > 0 {
+    if implication_count > 0 && call_edges.is_empty() {
         call_edges.push(serde_json::json!({
             "sourceContract": "proof-members",
             "targetSymbol": "implication",
@@ -1607,6 +1623,213 @@ fn source_report_from_proof_pool(
         project_root: None,
         source_oracle_routes: Vec::new(),
     }
+}
+
+fn proof_implication_call_edges(
+    pool: &sugar_verifier::types::MementoPool,
+    contract_names_by_cid: &BTreeMap<String, String>,
+) -> Vec<Value> {
+    pool.mementos
+        .values()
+        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("implication"))
+        .filter_map(|envelope| proof_implication_call_edge(envelope, contract_names_by_cid))
+        .collect()
+}
+
+fn proof_implication_call_edge(
+    envelope: &Value,
+    contract_names_by_cid: &BTreeMap<String, String>,
+) -> Option<Value> {
+    let antecedent_cid =
+        sugar_verifier::memento_body_field(envelope, "antecedentCid").and_then(Value::as_str)?;
+    let consequent_cid =
+        sugar_verifier::memento_body_field(envelope, "consequentCid").and_then(Value::as_str)?;
+    let source = contract_names_by_cid
+        .get(antecedent_cid)
+        .cloned()
+        .unwrap_or_else(|| antecedent_cid.to_string());
+    let target = contract_names_by_cid
+        .get(consequent_cid)
+        .cloned()
+        .unwrap_or_else(|| consequent_cid.to_string());
+    let source_slot = sugar_verifier::memento_body_field(envelope, "antecedentSlot")
+        .and_then(Value::as_str)
+        .unwrap_or("post");
+    let target_slot = sugar_verifier::memento_body_field(envelope, "consequentSlot")
+        .and_then(Value::as_str)
+        .unwrap_or("pre");
+    let mut edge = serde_json::json!({
+        "kind": "implication",
+        "sourceContract": source,
+        "sourceSlot": source_slot,
+        "targetSymbol": target,
+        "targetContract": target,
+        "targetSlot": target_slot,
+        "sourceContractCid": antecedent_cid,
+        "targetContractCid": consequent_cid,
+    });
+    for (field, out_field) in [
+        ("prover", "prover"),
+        ("proofWitness", "proofWitness"),
+        ("smtLibInput", "smtLibInput"),
+    ] {
+        if let Some(value) = sugar_verifier::memento_body_field(envelope, field).cloned() {
+            edge[out_field] = value;
+        }
+    }
+    Some(edge)
+}
+
+fn proof_callsite_precondition_edges(pool: &sugar_verifier::types::MementoPool) -> Vec<Value> {
+    let mut edges = Vec::new();
+    let mut seen = BTreeSet::new();
+    for callsite in sugar_verifier::enumerate_callsites::run(pool) {
+        let source = callsite_producer_contract_name(&callsite)
+            .unwrap_or_else(|| callsite.property_name.clone());
+        let postcondition = proof_contract_slot_formula_by_name(pool, &source, "post");
+        if callsite.bridge_target_cid.is_empty() {
+            let mut edge = serde_json::json!({
+                "kind": "callsite-precondition-unresolved",
+                "sourceContract": source,
+                "sourceSlot": "post",
+                "targetSymbol": callsite.bridge_ir_name.clone(),
+                "targetContract": callsite.bridge_ir_name.clone(),
+                "targetSlot": "pre",
+                "callerContract": callsite.property_name.clone(),
+                "callerContractCid": callsite.property_cid.clone(),
+                "precondition": format!(
+                    "unresolved: NoBridgeTarget: callsite {} has no targetContractCid",
+                    callsite.bridge_ir_name
+                ),
+            });
+            if let Some(postcondition) = postcondition {
+                edge["postcondition"] = postcondition;
+            }
+            if let Some(file) = callsite.file.as_ref() {
+                edge["file"] = Value::String(file.clone());
+            }
+            if let Some(line) = callsite.line {
+                edge["line"] = serde_json::json!(line);
+            }
+            let formatted = format_dependency_edge(&edge);
+            if seen.insert(formatted) {
+                edges.push(edge);
+            }
+            continue;
+        }
+        let resolved = match sugar_verifier::resolve_target::run(&callsite, pool) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let mut edge = serde_json::json!({
+                    "kind": "callsite-precondition-unresolved",
+                    "sourceContract": source,
+                    "sourceSlot": "post",
+                    "targetSymbol": callsite.bridge_ir_name.clone(),
+                    "targetContract": callsite.bridge_ir_name.clone(),
+                    "targetSlot": "pre",
+                    "callerContract": callsite.property_name.clone(),
+                    "callerContractCid": callsite.property_cid.clone(),
+                    "precondition": format!("unresolved: {error}"),
+                });
+                if let Some(postcondition) = postcondition {
+                    edge["postcondition"] = postcondition;
+                }
+                if let Some(file) = callsite.file.as_ref() {
+                    edge["file"] = Value::String(file.clone());
+                }
+                if let Some(line) = callsite.line {
+                    edge["line"] = serde_json::json!(line);
+                }
+                let formatted = format_dependency_edge(&edge);
+                if seen.insert(formatted) {
+                    edges.push(edge);
+                }
+                continue;
+            }
+        };
+        if resolved.ir_formula.is_none() {
+            continue;
+        }
+        let actual_terms = callsite_actual_terms_for_report(&callsite);
+        let Ok(obligation) = sugar_verifier::instantiate::run_specialized(
+            &resolved,
+            &actual_terms,
+            callsite.formal_actuals.as_ref(),
+        ) else {
+            continue;
+        };
+        let precondition = sugar_verifier::instantiate::strip_outer_forall(&obligation.ir_formula);
+        let target = pool
+            .cid_to_name
+            .get(&resolved.cid)
+            .cloned()
+            .unwrap_or_else(|| callsite.bridge_ir_name.clone());
+        let mut edge = serde_json::json!({
+            "kind": "callsite-precondition",
+            "sourceContract": source,
+            "sourceSlot": "post",
+            "targetSymbol": callsite.bridge_ir_name,
+            "targetContract": target,
+            "targetSlot": "pre",
+            "targetContractCid": resolved.cid,
+            "callerContract": callsite.property_name,
+            "callerContractCid": callsite.property_cid,
+            "precondition": precondition,
+        });
+        if let Some(postcondition) = postcondition {
+            edge["postcondition"] = postcondition;
+        }
+        if let Some(file) = callsite.file {
+            edge["file"] = Value::String(file);
+        }
+        if let Some(line) = callsite.line {
+            edge["line"] = serde_json::json!(line);
+        }
+        let formatted = format_dependency_edge(&edge);
+        if seen.insert(formatted) {
+            edges.push(edge);
+        }
+    }
+    edges
+}
+
+fn callsite_actual_terms_for_report(callsite: &sugar_verifier::types::CallSite) -> Vec<Value> {
+    if !callsite.arg_terms.is_empty() {
+        return callsite.arg_terms.clone();
+    }
+    callsite.arg_term.iter().cloned().collect()
+}
+
+fn callsite_producer_contract_name(callsite: &sugar_verifier::types::CallSite) -> Option<String> {
+    callsite
+        .arg_term
+        .as_ref()
+        .and_then(producer_contract_name_from_term)
+}
+
+fn producer_contract_name_from_term(term: &Value) -> Option<String> {
+    if term.get("kind").and_then(Value::as_str) != Some("ctor") {
+        return None;
+    }
+    let name = term.get("name").and_then(Value::as_str)?;
+    let name = name.strip_prefix("call:").unwrap_or(name);
+    let name = name.strip_suffix("#panic_callsite").unwrap_or(name);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn proof_contract_slot_formula_by_name(
+    pool: &sugar_verifier::types::MementoPool,
+    name: &str,
+    slot: &str,
+) -> Option<Value> {
+    let cid = pool.name_to_cid.get(name)?;
+    let envelope = pool.mementos.get(cid)?;
+    let body = pool.resolve_contract_body(envelope)?;
+    body.get(slot).cloned()
 }
 
 fn enrich_report_source_mementos_from_oracles(report: &mut LiftSourceReport) {
@@ -1927,6 +2150,79 @@ fn matching_report_call_edges(
         |edge| call_edge_matches_filter(edge, filter, &audit_bases),
         |row| row,
     )
+}
+
+fn matching_report_implication_edges(
+    response: &Value,
+    contract_filter: Option<&str>,
+    audits: &[Value],
+) -> Vec<Value> {
+    let Some(implications) = response.get("implications").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let audit_bases = audits
+        .iter()
+        .filter_map(contract_name)
+        .map(contract_group_key)
+        .collect::<Vec<_>>();
+    clone_matching_report_values(
+        "matching_report_implication_edges",
+        implications,
+        |implication| {
+            let edge = implication_edge_from_row(implication);
+            contract_filter
+                .is_none_or(|filter| call_edge_matches_filter(&edge, filter, &audit_bases))
+        },
+        |row| implication_edge_from_row(&row),
+    )
+}
+
+fn implication_edge_from_row(row: &Value) -> Value {
+    let source = report_text_field(row, &["antecedent", "sourceContract", "source_contract"])
+        .unwrap_or_else(|| "<unknown antecedent>".to_string());
+    let source_slot = report_text_field(
+        row,
+        &[
+            "antecedentSlot",
+            "antecedent_slot",
+            "sourceSlot",
+            "source_slot",
+        ],
+    )
+    .unwrap_or_else(|| "post".to_string());
+    let target = report_text_field(row, &["consequent", "targetContract", "target_contract"])
+        .unwrap_or_else(|| "<unknown consequent>".to_string());
+    let target_slot = report_text_field(
+        row,
+        &[
+            "consequentSlot",
+            "consequent_slot",
+            "targetSlot",
+            "target_slot",
+        ],
+    )
+    .unwrap_or_else(|| "pre".to_string());
+    let target_symbol = report_text_field(row, &["targetSymbol", "target_symbol"])
+        .unwrap_or_else(|| target.clone());
+    let mut edge = serde_json::json!({
+        "kind": "implication",
+        "sourceContract": source,
+        "sourceSlot": source_slot,
+        "targetSymbol": target_symbol,
+        "targetContract": target,
+        "targetSlot": target_slot,
+    });
+    for (from, to) in [
+        ("name", "name"),
+        ("prover", "prover"),
+        ("proofWitness", "proofWitness"),
+        ("proof_witness", "proofWitness"),
+    ] {
+        if let Some(value) = row.get(from).cloned() {
+            edge[to] = value;
+        }
+    }
+    edge
 }
 
 fn call_edge_matches_filter(edge: &Value, filter: &str, audit_bases: &[String]) -> bool {
@@ -4291,6 +4587,23 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             .iter()
             .filter_map(|contract| format_contract_asserted_fact(report, contract))
             .collect::<Vec<_>>();
+        let body_contracts = group_contracts
+            .iter()
+            .copied()
+            .filter(|contract| !contract_inv_is_observed_fact(contract))
+            .collect::<Vec<_>>();
+        let case_warranting_facts = if body_contracts.is_empty() {
+            Vec::new()
+        } else {
+            warranting_fact_rows_for_contracts(report, &body_contracts)
+        };
+        let case_downstream_edges = if body_contracts.is_empty() {
+            Vec::new()
+        } else {
+            downstream_call_edges_for_contracts(&report.call_edges, &body_contracts)
+        };
+        let forensic_case = !body_contracts.is_empty()
+            && (!case_warranting_facts.is_empty() || !case_downstream_edges.is_empty());
         if fact_mementos.is_empty() && asserted_fact_rows.is_empty() {
             if let Some(site) = assertion_site_for_group(&group_contracts) {
                 out.push_str(&format!(
@@ -4317,6 +4630,43 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
                 }
             }
         }
+        if forensic_case {
+            let universe_rows = body_contracts
+                .iter()
+                .filter_map(|contract| format_contract_universe_fol(contract))
+                .collect::<Vec<_>>();
+            if !universe_rows.is_empty() {
+                out.push_str("universe under investigation:\n");
+                for row in universe_rows {
+                    out.push_str(&format!("  - {row}\n"));
+                }
+            }
+            if !case_warranting_facts.is_empty() {
+                out.push_str("walk warranted by observed facts:\n");
+                let displayed = case_warranting_facts.iter().take(8).collect::<Vec<_>>();
+                for fact in displayed {
+                    out.push_str(&format!("  - {}\n", fact.row));
+                }
+                if case_warranting_facts.len() > 8 {
+                    out.push_str(&format!(
+                        "  - (+{} more observed facts using this universe)\n",
+                        case_warranting_facts.len() - 8
+                    ));
+                }
+                out.push_str("known callers of this function:\n");
+                for fact in &case_warranting_facts {
+                    out.push_str(&format!("  - {}\n", fact.row));
+                }
+            }
+            out.push_str("callsite preconditions depending on this post:\n");
+            if case_downstream_edges.is_empty() {
+                out.push_str("  - no precondition implication mementos observed in this proof\n");
+            } else {
+                for edge in &case_downstream_edges {
+                    out.push_str(&format!("  - {}\n", format_dependency_edge(edge)));
+                }
+            }
+        }
         let warranted_mementos = group_mementos
             .iter()
             .filter(|memento| !is_fact_source_memento(memento))
@@ -4329,6 +4679,9 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             })
             .collect::<Vec<_>>();
         if !warranted_mementos.is_empty() || !group_audits.is_empty() {
+            if forensic_case {
+                out.push_str("source walk evidence:\n");
+            }
             out.push_str("warranted complete walks:\n");
             for memento in warranted_mementos {
                 out.push_str(&format!("  - {}\n", format_source_memento_value(memento)));
@@ -4363,7 +4716,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             }
         }
 
-        if !group_contracts.is_empty() {
+        if !group_contracts.is_empty() && !forensic_case {
             let generalized_rows = group_contracts
                 .iter()
                 .flat_map(|contract| generalized_contract_fol(contract))
@@ -4533,6 +4886,188 @@ fn format_call_edge(edge: &Value) -> String {
         .map(format_call_edge_locus)
         .unwrap_or_else(|| "<unknown locus>".to_string());
     format!("{source} -> {target_symbol} -> {target} cid={target_cid} @ {locus}")
+}
+
+fn warranting_fact_rows_for_contracts(
+    report: &LiftSourceReport,
+    contracts: &[&Value],
+) -> Vec<ReportFactRow> {
+    let tokens = contract_dependency_tokens_for_contracts(contracts);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let mut seen = BTreeSet::new();
+    let facts = report
+        .contracts
+        .iter()
+        .filter(|contract| contract_inv_is_observed_fact(contract))
+        .filter_map(|contract| format_contract_asserted_fact(report, contract))
+        .filter(|fact| fact_row_mentions_any_token(fact, &tokens))
+        .filter(|fact| seen.insert(fact.row.clone()))
+        .collect::<Vec<_>>();
+    let source_backed = facts
+        .iter()
+        .filter(|fact| fact.source.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    let preferred = if source_backed.is_empty() {
+        facts
+    } else {
+        source_backed
+    };
+    let non_internal = preferred
+        .iter()
+        .filter(|fact| !fact.row.contains("method:unwrap#panic_callsite"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if non_internal.is_empty() {
+        preferred
+    } else {
+        non_internal
+    }
+}
+
+fn contract_dependency_tokens_for_contracts(contracts: &[&Value]) -> Vec<String> {
+    let mut tokens = BTreeSet::new();
+    for contract in contracts {
+        if let Some(name) = contract_value_name(contract) {
+            for token in contract_dependency_tokens(name) {
+                tokens.insert(token);
+            }
+        }
+    }
+    tokens.into_iter().collect()
+}
+
+fn contract_dependency_tokens(name: &str) -> Vec<String> {
+    let mut tokens = BTreeSet::new();
+    push_contract_dependency_token(&mut tokens, name);
+    if let Some(stripped) = name.strip_prefix("rust-source::") {
+        push_contract_dependency_token(&mut tokens, stripped);
+    }
+    let base = name.split('#').next().unwrap_or(name);
+    push_contract_dependency_token(&mut tokens, base);
+    if let Some(last) = base.rsplit("::").next() {
+        push_contract_dependency_token(&mut tokens, last);
+    }
+    if let Some(method) = base.strip_prefix("method:") {
+        push_contract_dependency_token(&mut tokens, method);
+    }
+    if let Some(call) = base.strip_prefix("call:") {
+        push_contract_dependency_token(&mut tokens, call);
+    }
+    tokens.into_iter().collect()
+}
+
+fn push_contract_dependency_token(tokens: &mut BTreeSet<String>, token: &str) {
+    let token = token.trim();
+    if token.len() >= 3 && token != "<unknown contract>" {
+        tokens.insert(token.to_string());
+    }
+}
+
+fn fact_row_mentions_any_token(fact: &ReportFactRow, tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        fact.row.contains(&format!("call:{token}"))
+            || fact.row.contains(&format!("method:{token}"))
+            || fact.row.contains(&format!("{token}#"))
+            || fact.row.contains(&format!("::{token}"))
+            || fact.row.contains(&format!("{token}("))
+            || (token.contains("::") && fact.row.contains(token))
+    })
+}
+
+fn downstream_call_edges_for_contracts(edges: &[Value], contracts: &[&Value]) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for edge in edges {
+        let Some(source) =
+            report_text_field(edge, &["sourceContract", "source_contract", "antecedent"])
+        else {
+            continue;
+        };
+        if !contracts
+            .iter()
+            .filter_map(|contract| contract_value_name(contract))
+            .any(|name| edge_source_matches_contract(&source, name))
+        {
+            continue;
+        }
+        let formatted = format_dependency_edge(edge);
+        if seen.insert(formatted) {
+            out.push(edge.clone());
+        }
+    }
+    out
+}
+
+fn edge_source_matches_contract(edge_source: &str, contract_name: &str) -> bool {
+    if edge_source == contract_name
+        || report_contract_group_key(edge_source) == report_contract_group_key(contract_name)
+    {
+        return true;
+    }
+    contract_dependency_tokens(contract_name)
+        .iter()
+        .any(|token| edge_source == token || edge_source.ends_with(&format!("::{token}")))
+}
+
+fn format_dependency_edge(edge: &Value) -> String {
+    let source = report_text_field(edge, &["sourceContract", "source_contract", "antecedent"])
+        .unwrap_or_else(|| "<unknown source contract>".to_string());
+    let source_slot = report_text_field(
+        edge,
+        &[
+            "sourceSlot",
+            "source_slot",
+            "antecedentSlot",
+            "antecedent_slot",
+        ],
+    )
+    .unwrap_or_else(|| "post".to_string());
+    let target = report_text_field(edge, &["targetContract", "target_contract", "consequent"])
+        .unwrap_or_else(|| "<unknown target contract>".to_string());
+    let target_slot = report_text_field(
+        edge,
+        &[
+            "targetSlot",
+            "target_slot",
+            "consequentSlot",
+            "consequent_slot",
+        ],
+    )
+    .unwrap_or_else(|| "pre".to_string());
+    let target_symbol = report_text_field(edge, &["targetSymbol", "target_symbol"])
+        .unwrap_or_else(|| target.clone());
+    let mut row = format!("{source}.{source_slot}");
+    if let Some(postcondition) = report_text_field(
+        edge,
+        &[
+            "postcondition",
+            "sourcePostcondition",
+            "source_postcondition",
+        ],
+    ) {
+        row.push_str(&format!(" [post: {postcondition}]"));
+    }
+    row.push_str(&format!(" -> {target}.{target_slot}"));
+    if !target_symbol.is_empty() && target_symbol != "<unknown target symbol>" {
+        row.push_str(&format!(" via {target_symbol}"));
+    }
+    if let Some(precondition) = report_text_field(
+        edge,
+        &[
+            "precondition",
+            "specializedPrecondition",
+            "specialized_precondition",
+        ],
+    ) {
+        row.push_str(&format!(" [pre: {precondition}]"));
+    }
+    if let Some(prover) = report_text_field(edge, &["prover"]) {
+        row.push_str(&format!(" ({prover})"));
+    }
+    row
 }
 
 fn format_call_edge_locus(locus: &Value) -> String {
@@ -8246,6 +8781,307 @@ mod tests {
     }
 
     #[test]
+    fn proof_only_report_rehydrates_implication_edges_as_downstream_dependencies() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        pool.insert(
+            "blake3-512:antecedent".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "encoded_len"
+                },
+                "body": {},
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:consequent".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "method:checked_add"
+                },
+                "body": {},
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:implication".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "implication",
+                    "antecedentCid": "blake3-512:antecedent",
+                    "consequentCid": "blake3-512:consequent",
+                    "antecedentSlot": "post",
+                    "consequentSlot": "pre"
+                },
+                "metadata": {
+                    "prover": "rust-implications",
+                    "proofWitness": "rust-call-pre:encoded_len->method:checked_add@src/encode.rs:110:26"
+                },
+                "schemaVersion": "1"
+            }),
+        );
+
+        let report = source_report_from_proof_pool(&pool, None);
+
+        assert_eq!(report.call_edges.len(), 1);
+        assert_eq!(
+            format_dependency_edge(&report.call_edges[0]),
+            "encoded_len.post -> method:checked_add.pre via method:checked_add (rust-implications)"
+        );
+    }
+
+    #[test]
+    fn proof_only_forensic_report_lists_known_callers_when_implications_are_absent() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        let encoded_len_cid = "blake3-512:encoded_len_contract";
+        pool.insert(
+            encoded_len_cid.to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "encoded_len"
+                },
+                "body": {
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:observed_fact".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion"
+                },
+                "body": {
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "const", "value": 3, "sort": {"name": "Int"}},
+                            {"kind": "ctor", "name": "call:encoded_len", "args": [
+                                {"kind": "const", "value": 2, "sort": {"name": "Int"}},
+                                {"kind": "const", "value": false, "sort": {"name": "Bool"}}
+                            ]}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:bridge".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "bridge",
+                    "sourceSymbol": "encoded_len",
+                    "sourceLayer": "source",
+                    "targetContractCid": encoded_len_cid,
+                    "targetLayer": "kit"
+                },
+                "schemaVersion": "1"
+            }),
+        );
+
+        let report = source_report_from_proof_pool(&pool, Some("encoded_len"));
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains("  - no precondition implication mementos observed in this proof"),
+            "{human}"
+        );
+        assert!(human.contains("known callers of this function:"), "{human}");
+        assert!(
+            human.contains("src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len::assertion :: 3 = call:encoded_len(2, false)"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn proof_only_forensic_report_reconstructs_callsite_preconditions_from_pool() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        let bundle_cid = "blake3-512:test_bundle";
+        let callee_cid = "blake3-512:callee_contract";
+        let unwrap_cid = "blake3-512:unwrap_contract";
+        let bridge_cid = "blake3-512:unwrap_bridge";
+
+        pool.insert(
+            callee_cid.to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "callee"
+                },
+                "body": {
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "value"}]}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:caller_fact".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "src/lib.rs::tests::test_callee_unwrap::callee::assertion"
+                },
+                "body": {
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "ctor", "name": "method:unwrap", "args": [
+                                {"kind": "ctor", "name": "call:callee", "args": [
+                                    {"kind": "const", "value": 7, "sort": {"name": "Int"}}
+                                ]}
+                            ]},
+                            {"kind": "const", "value": 11, "sort": {"name": "Int"}}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            unwrap_cid.to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "method:unwrap"
+                },
+                "body": {
+                    "formals": ["opt"],
+                    "formalSorts": [{"kind": "primitive", "name": "Any"}],
+                    "pre": {
+                        "kind": "atomic",
+                        "name": "is_some",
+                        "args": [{"kind": "var", "name": "opt"}]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        let bridge = serde_json::json!({
+            "header": {
+                "kind": "bridge",
+                "sourceSymbol": "method:unwrap",
+                "sourceLayer": "rust-tests",
+                "targetContractCid": unwrap_cid,
+                "targetLayer": "rust-core"
+            },
+            "schemaVersion": "1"
+        });
+        pool.insert(bridge_cid.to_string(), bridge.clone());
+        pool.bridges_by_symbol
+            .insert("method:unwrap".to_string(), bridge);
+        pool.bridge_self_bundle_by_symbol
+            .insert("method:unwrap".to_string(), bundle_cid.to_string());
+        pool.bundle_members
+            .entry(bundle_cid.to_string())
+            .or_default()
+            .extend([
+                callee_cid.to_string(),
+                unwrap_cid.to_string(),
+                bridge_cid.to_string(),
+                "blake3-512:caller_fact".to_string(),
+            ]);
+
+        let report = source_report_from_proof_pool(&pool, Some("callee"));
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: is_some(call:callee(7))]"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn proof_only_forensic_report_lists_unresolved_callsite_precondition_targets() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        let callee_cid = "blake3-512:callee_contract";
+        pool.insert(
+            callee_cid.to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "callee"
+                },
+                "body": {
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "value"}]}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            "blake3-512:caller_fact".to_string(),
+            serde_json::json!({
+                "header": {
+                    "kind": "contract",
+                    "contractName": "src/lib.rs::tests::test_callee_unwrap::callee::assertion"
+                },
+                "body": {
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "ctor", "name": "method:unwrap", "args": [
+                                {"kind": "ctor", "name": "call:callee", "args": [
+                                    {"kind": "const", "value": 7, "sort": {"name": "Int"}}
+                                ]}
+                            ]},
+                            {"kind": "const", "value": 11, "sort": {"name": "Int"}}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        let bridge = serde_json::json!({
+            "header": {
+                "kind": "bridge",
+                "sourceSymbol": "method:unwrap",
+                "sourceLayer": "rust-tests",
+                "targetLayer": "rust-core"
+            },
+            "schemaVersion": "1"
+        });
+        pool.bridges_by_symbol
+            .insert("method:unwrap".to_string(), bridge);
+
+        let report = source_report_from_proof_pool(&pool, Some("callee"));
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains("callsite preconditions depending on this post:\n  - callee.post [post: result = Some(value)] -> method:unwrap.pre via method:unwrap [pre: unresolved: NoBridgeTarget: callsite method:unwrap has no targetContractCid]"),
+            "{human}"
+        );
+    }
+
+    #[test]
     fn human_report_renders_full_unit_test_from_source_oracle_with_fact_inline() {
         let mut report = minimal_source_report();
         report.audits = Vec::new();
@@ -8340,18 +9176,39 @@ mod tests {
     fn human_report_renders_full_body_source_from_source_oracle_with_universe_inline() {
         let mut report = minimal_source_report();
         report.audits = Vec::new();
-        report.contracts = vec![serde_json::json!({
-            "kind": "contract",
-            "name": "encoded_len",
-            "post": {
-                "kind": "atomic",
-                "name": "=",
-                "args": [
-                    {"kind": "var", "name": "result"},
-                    {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
-                ]
-            }
-        })];
+        report.contracts = vec![
+            serde_json::json!({
+                "kind": "contract",
+                "name": "encoded_len",
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "result"},
+                        {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "kind": "contract",
+                "name": "src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion",
+                "inv": {
+                    "kind": "not",
+                    "operands": [{
+                        "kind": "atomic",
+                        "name": "panic",
+                        "args": [{
+                            "kind": "ctor",
+                            "name": "call:encoded_len#panic_callsite",
+                            "args": [
+                                {"kind": "const", "value": 2, "sort": {"name": "Int"}},
+                                {"kind": "const", "value": false, "sort": {"name": "Bool"}}
+                            ]
+                        }]
+                    }]
+                }
+            }),
+        ];
         let source_memento = serde_json::json!({
             "kind": "source-memento",
             "contractName": "encoded_len",
@@ -8410,9 +9267,45 @@ mod tests {
                 ]
             }
         })];
+        report.call_edges = vec![serde_json::json!({
+            "kind": "implication",
+            "name": "rust-call-pre:encoded_len->method:checked_add@src/encode.rs:110:26",
+            "sourceContract": "encoded_len",
+            "sourceSlot": "post",
+            "targetSymbol": "method:checked_add",
+            "targetContract": "method:checked_add",
+            "targetSlot": "pre",
+            "prover": "rust-implications"
+        })];
 
         let human = render_source_report_human(&report);
 
+        assert!(
+            human.contains(
+                "universe under investigation:\n  - encoded_len :: result = Some(complete_chunk_output)"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains(
+                "walk warranted by observed facts:\n  - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains(
+                "callsite preconditions depending on this post:\n  - encoded_len.post -> method:checked_add.pre via method:checked_add"
+            ),
+            "{human}"
+        );
+        let universe_index = human
+            .find("universe under investigation:")
+            .expect("universe section");
+        let source_index = human.find("source walk evidence:").expect("source section");
+        assert!(
+            universe_index < source_index,
+            "the body universe should be read before the source walk:\n{human}"
+        );
         assert!(
             human.contains(
                 "    let rem = bytes_len % 3;  UNIVERSE ⊢ result = Some(complete_chunk_output)"
@@ -8431,10 +9324,7 @@ mod tests {
             ),
             "{human}"
         );
-        assert!(
-            human.contains("lifted FOL:\n  - encoded_len :: result = Some(complete_chunk_output)"),
-            "{human}"
-        );
+        assert!(!human.contains("lifted FOL:"), "{human}");
         assert!(
             !human.contains("source present:\n          let rem = bytes_len % 3;\n"),
             "{human}"
