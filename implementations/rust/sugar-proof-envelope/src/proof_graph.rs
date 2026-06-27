@@ -423,6 +423,7 @@ impl From<&AuthorityMemento> for AuthorityMementoRef {
 }
 
 whole_byte_memento!(LibrarySugarBindingMemento, ["library-sugar-binding-entry"]);
+whole_byte_memento!(AssertionSurfaceMemento, ["assertion-surface-memento"]);
 whole_byte_memento!(FactoryWalkMemento, ["factory-walk-memento"]);
 whole_byte_memento!(PlanMemento, ["plan-memento"]);
 whole_byte_memento!(SourceMemento, ["source-memento"]);
@@ -622,6 +623,10 @@ impl ProofGraph {
     }
 
     pub fn push_implication(&mut self, memento: ImplicationMemento) {
+        self.insert_member(memento.record);
+    }
+
+    pub fn push_assertion_surface(&mut self, memento: AssertionSurfaceMemento) {
         self.insert_member(memento.record);
     }
 
