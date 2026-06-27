@@ -372,6 +372,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 _merge_source_ledger(payload.source_ledger, file_payload.source_ledger)
                 payload.source_audits.extend(file_payload.source_audits)
                 payload.factory_walk.extend(file_payload.factory_walk)
+                payload.call_edges.extend(file_payload.call_edges)
                 payload.diagnostics.extend(file_payload.diagnostics)
         _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
     except FactoryGap as exc:
