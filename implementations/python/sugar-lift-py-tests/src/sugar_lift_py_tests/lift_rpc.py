@@ -355,7 +355,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     try:
-        payload = LiftReportPayloadDto()
+        payload = LiftReportPayloadDto(source_ledger={})
         root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
             full_path = Path(path)
@@ -369,6 +369,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 file_payload = result.payload
                 payload.ir.extend(file_payload.ir)
                 payload.source_mementos.extend(file_payload.source_mementos)
+                _merge_source_ledger(payload.source_ledger, file_payload.source_ledger)
                 payload.source_audits.extend(file_payload.source_audits)
                 payload.factory_walk.extend(file_payload.factory_walk)
                 payload.diagnostics.extend(file_payload.diagnostics)
@@ -400,6 +401,16 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 },
             }
         )
+
+
+def _merge_source_ledger(
+    current: Dict[str, int],
+    incoming: Dict[str, int] | None,
+) -> None:
+    if incoming is None:
+        return
+    for key, value in incoming.items():
+        current[key] = current.get(key, 0) + int(value)
 
 
 def main(argv: Optional[List[str]] = None) -> None:

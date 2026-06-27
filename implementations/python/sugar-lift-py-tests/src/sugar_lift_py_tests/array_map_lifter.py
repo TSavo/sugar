@@ -53,9 +53,9 @@ def lift_array_map_assertions(
             )
             if lifted is None:
                 continue
-            contract, memento, audit, rows = lifted
+            contract, mementos, audit, rows = lifted
             contracts.append(contract)
-            source_mementos.append(memento)
+            source_mementos.extend(mementos)
             source_audits.append(audit)
             factory_walk.extend(rows)
     if not contracts:
@@ -64,6 +64,7 @@ def lift_array_map_assertions(
         LiftReportPayloadDto(
             ir=contracts,
             source_mementos=source_mementos,
+            source_ledger=_source_ledger(len(source_audits)),
             source_audits=source_audits,
             factory_walk=factory_walk,
         )
@@ -79,7 +80,7 @@ def _lift_assert(
     source_lines: list[str],
 ) -> tuple[
     BodyUniverseDto,
-    SourceMementoDto,
+    list[SourceMementoDto],
     dict[str, Any],
     list[FactoryWalkRowDto],
 ] | None:
@@ -103,7 +104,14 @@ def _lift_assert(
     if len(actual.items) != len(expected.items):
         return None
 
-    memento = _source_memento(fn, memento_file, source_lines)
+    function_memento = _function_source_memento(fn, memento_file, source_lines)
+    statement_memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=f"{Path(memento_file).stem}::{fn.name}::array-map-sugar",
+    )
     formula = and_(
         [eq(num(len(actual.items)), num(len(expected.items)))]
         + [
@@ -116,17 +124,39 @@ def _lift_assert(
         name=f"{Path(memento_file).stem}::{fn.name}::array-map-sugar",
         out_binding="out",
         inv=inv,
-        source_warrants=[memento],
+        source_warrants=[statement_memento],
     )
     rows = [
-        _walk_row("ArrayLiteralSugar", "List", stmt, filename, memento, "ArrayLiteral"),
-        _walk_row("MethodSugar", "Call", stmt, filename, memento, "method-call"),
-        _walk_row("MapSugar", "Call", stmt, filename, memento, "predicate"),
+        _walk_row(
+            "ArrayLiteralSugar",
+            "List",
+            stmt,
+            filename,
+            statement_memento,
+            "ArrayLiteral",
+        ),
+        _walk_row(
+            "MethodSugar",
+            "Call",
+            stmt,
+            filename,
+            statement_memento,
+            "method-call",
+        ),
+        _walk_row(
+            "MapSugar",
+            "Call",
+            stmt,
+            filename,
+            statement_memento,
+            "predicate",
+            emitted_formula=inv,
+        ),
     ]
     return (
         contract,
-        memento,
-        _source_audit(stmt, fn, memento_file, contract.name, memento),
+        [function_memento, statement_memento],
+        _source_audit(stmt, fn, memento_file, contract.name, statement_memento),
         rows,
     )
 
@@ -175,6 +205,7 @@ def _walk_row(
     filename: str,
     memento: SourceMementoDto,
     output: str,
+    emitted_formula: dict[str, Any] | None = None,
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(
         file=filename,
@@ -191,10 +222,11 @@ def _walk_row(
             end_line=stmt.end_lineno,
             end_col=stmt.end_col_offset or 0,
         ),
+        emitted_formula=emitted_formula,
     )
 
 
-def _source_memento(
+def _function_source_memento(
     fn: ast.FunctionDef,
     memento_file: str,
     source_lines: list[str],
@@ -218,6 +250,34 @@ def _source_memento(
     )
 
 
+def _statement_source_memento(
+    stmt: ast.stmt,
+    fn: ast.FunctionDef,
+    memento_file: str,
+    source_lines: list[str],
+    *,
+    contract_name: str,
+) -> SourceMementoDto:
+    statement_source = _statement_source_locator(stmt, fn, memento_file, source_lines)
+    span = statement_source["span"]
+    return SourceMementoDto(
+        file=memento_file,
+        span=SourceSpanDto(
+            start_line=span["start_line"],
+            start_col=span["start_col"],
+            end_line=span["end_line"],
+            end_col=span["end_col"],
+        ),
+        source_cid=statement_source["source_cid"],
+        template_cid=statement_source["template_cid"],
+        source_function_name=fn.name,
+        role="python.array-map-sugar",
+        contract_name=contract_name,
+        param_names=statement_source.get("param_names", []),
+        extra={"source_kind": "python.ast-stmt"},
+    )
+
+
 def _body_source_locator(
     fn: ast.FunctionDef,
     memento_file: str,
@@ -233,3 +293,70 @@ def _body_source_locator(
             sys.path.insert(0, str(sibling_src))
         from sugar_lift_python_source.bind_lifter import _body_source_locator as locator
     return locator(fn, memento_file.replace(os.sep, "/"), source_lines)
+
+
+def _statement_source_locator(
+    stmt: ast.stmt,
+    fn: ast.FunctionDef,
+    memento_file: str,
+    source_lines: list[str],
+) -> dict[str, Any]:
+    source = "".join(source_lines)
+    source_text = ast.get_source_segment(source, stmt)
+    if source_text is None:
+        raise ValueError(f"could not extract source for statement at line {stmt.lineno}")
+    function_param_names, stmt_to_template, blake3_512_of, template_cid_of_json = (
+        _statement_source_api()
+    )
+    ast_template = stmt_to_template(stmt, function_param_names(fn))
+    return {
+        "file": memento_file.replace(os.sep, "/"),
+        "source_cid": blake3_512_of(source_text.encode("utf-8")),
+        "span": {
+            "start_line": stmt.lineno,
+            "start_col": stmt.col_offset,
+            "end_line": stmt.end_lineno or stmt.lineno,
+            "end_col": stmt.end_col_offset or 0,
+        },
+        "template_cid": template_cid_of_json(ast_template),
+        "param_names": function_param_names(fn),
+    }
+
+
+def _statement_source_api():
+    try:
+        from sugar_lift_python_source.ast_template import (
+            function_param_names,
+            stmt_to_template,
+        )
+        from sugar_lift_python_source.canonical import (
+            blake3_512_of,
+            template_cid_of_json,
+        )
+    except ModuleNotFoundError:
+        sibling_src = (
+            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+        )
+        if str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        from sugar_lift_python_source.ast_template import (
+            function_param_names,
+            stmt_to_template,
+        )
+        from sugar_lift_python_source.canonical import (
+            blake3_512_of,
+            template_cid_of_json,
+        )
+    return function_param_names, stmt_to_template, blake3_512_of, template_cid_of_json
+
+
+def _source_ledger(source_loci: int) -> dict[str, int]:
+    return {
+        "source_loci": source_loci,
+        "source_warranted": source_loci,
+        "source_inactive": 0,
+        "source_support": 0,
+        "source_refused": 0,
+        "source_unresolved": 0,
+        "unclassified_source": 0,
+    }

@@ -10,6 +10,8 @@ from sugar_lift_python_source.bind_lifter import (
     lift_source,
     source_memento_of,
 )
+from sugar_lift_python_source.ast_template import function_param_names, stmt_to_template
+from sugar_lift_python_source.canonical import blake3_512_of, template_cid_of_json
 from sugar_lift_python_source.source_oracle import (
     SourceOracleRefusal,
     resolve_source_memento,
@@ -63,6 +65,42 @@ def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
     out = resolve_source_memento(str(tmp_path), memento)
 
     assert out["body_text"] == 'return b""'
+    assert out["source_cid"] == memento["source_cid"]
+    assert out["template_cid"] == memento["template_cid"]
+
+
+def test_oracle_resolves_statement_memento_exactly(tmp_path: Path) -> None:
+    src = (
+        "def test_array_map_sugar():\n"
+        "    assert [1, 2, 3].map(lambda x: x + 1) == [2, 3, 4]\n"
+    )
+    rel = "tests/test_array_map.py"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(src, encoding="utf-8")
+    tree = ast.parse(src, filename=rel)
+    fn = tree.body[0]
+    stmt = fn.body[0]
+    source = "assert [1, 2, 3].map(lambda x: x + 1) == [2, 3, 4]"
+    template = stmt_to_template(stmt, function_param_names(fn))
+    memento = {
+        "kind": "source-memento",
+        "source_kind": "python.ast-stmt",
+        "source_function_name": "test_array_map_sugar",
+        "file": rel,
+        "span": {
+            "start_line": stmt.lineno,
+            "start_col": stmt.col_offset,
+            "end_line": stmt.end_lineno,
+            "end_col": stmt.end_col_offset,
+        },
+        "source_cid": blake3_512_of(source.encode("utf-8")),
+        "template_cid": template_cid_of_json(template),
+    }
+
+    out = resolve_source_memento(str(tmp_path), memento)
+
+    assert out["body_text"] == source
     assert out["source_cid"] == memento["source_cid"]
     assert out["template_cid"] == memento["template_cid"]
 
