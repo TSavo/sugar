@@ -15,14 +15,16 @@ from .ord_sugar import OrdSugar
 
 @dataclass(frozen=True)
 class Base64BodySugar:
-    function: ast.FunctionDef
     parameter: str
     alphabet: AlphabetLiteralSugar
     ords: tuple[OrdSugar, OrdSugar, OrdSugar]
     return_sugar: BitwiseBase64Sugar
 
     @classmethod
-    def from_function(cls, function: ast.FunctionDef) -> "Base64BodySugar | None":
+    def from_site(cls, site, _ctx=None) -> "Base64BodySugar | None":
+        function = site.node
+        if not isinstance(function, ast.FunctionDef):
+            return None
         if len(function.args.args) != 1 or len(function.body) != 5:
             return None
         parameter = function.args.args[0].arg
@@ -44,7 +46,6 @@ class Base64BodySugar:
         if return_sugar is None:
             return None
         return cls(
-            function=function,
             parameter=parameter,
             alphabet=alphabet,
             ords=ords,  # type: ignore[arg-type]
@@ -67,12 +68,12 @@ class Base64BodySugar:
             env[ord_sugar.target] = value.value
         return self.return_sugar.apply(env)
 
-    def factory_steps(self) -> list[tuple[str, str, ast.stmt, str]]:
+    def factory_steps(self, function: ast.FunctionDef) -> list[tuple[str, str, ast.stmt, str]]:
         return [
-            ("AlphabetLiteralSugar", "Assign", self.function.body[0], "StringValue"),
+            ("AlphabetLiteralSugar", "Assign", function.body[0], "StringValue"),
             *[
                 ("OrdSugar", "Assign", stmt, "TermValue")
-                for stmt in self.function.body[1:4]
+                for stmt in function.body[1:4]
             ],
             ("BitwiseBase64Sugar", "Return", self.return_sugar.stmt, "StringValue"),
         ]
