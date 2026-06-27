@@ -15,10 +15,11 @@
 - The machine self-instruments. The instrument runs the actual numpy and pandas lift path in audit-only mode, catches construction panics, groups them by target/role/owner/fix, and reports current `R`.
 - `R` is the observed panic vector for numpy and pandas: `numpy_sugar_panics`, `numpy_floor_panics`, `pandas_sugar_panics`, `pandas_floor_panics`, and `unexpected_panics`. Scaffold-readiness checks are diagnostics, not `R`.
 - The Python kit is written in Python and owns all Pythonisms. The Rust CLI is written in Rust and must stay language-blind.
-- The new factory is first. All selected Python AST traffic goes through it immediately. With no sugar it screams `write more Sugar for this AST`; after sugar claims a shape, missing floor species/readers/visitors scream `write more Floor for this AST` or `write more Floor for this construction`.
+- The new factory is first. All selected Python AST traffic goes through it immediately. With no sugar it screams `write more Sugar for this AST`; after sugar claims a shape, missing completed values, floor operations, or ProofIR emitters scream `write more Floor for this AST` or `write more Floor for this construction`.
 - The Python kit is done only when a user literally runs `sugar lift` on numpy and pandas projects with no config/manifest, Python claims the project through discovery, and Rust still only transports ProofIR, plans solver work, recomputes witnesses, and verifies.
-- Vendor unit tests emit callsite facts. Callsite facts trigger digs for their constraint universes. The Python kit walks the dug AST source, constructs shape-owned sugar post-order (deepest/last child first, then the parent with typed child bodies), calls `desugar` on the already-built chain, emits ProofIR from completed floors, and reaches only `Complete(FloorValue)`, `Incomplete(Effect)`, or a loud construction-gap panic.
-- Constraints are discovered by Python source shape during that AST walk, not by framework adapter. The Python catalog asks for a role; shape-owned sugars volunteer, build typed child floors, and emit universe predicates, preconditions, effects, and ProofIR.
+- Vendor unit tests emit callsite facts. Callsite facts trigger digs for their constraint universes. The Python kit walks the dug AST source, constructs shape-owned sugar post-order (deepest/last child first, then the parent with typed child bodies), calls `desugar` on the already-built chain, emits ProofIR from completed values/floors, and reaches only `Complete(FloorValue)`, `Incomplete(Effect)`, or a loud construction-gap panic.
+- Temporal rewriting is upstream completed-value production: by the time a sugar operates on a source name or fluent receiver, the current program-point meaning must be a semantic value such as `TermValue`, `ArrayLiteral`, or `BuilderState`, not raw AST. Unknown temporal receiver mutation is a real effect or a loud floor gap; it never emits fake predicates.
+- Constraints are discovered by Python source shape during that AST walk, not by framework adapter. The Python catalog asks for a role; shape-owned sugars volunteer, build typed child bodies into completed values, and emit universe predicates, preconditions, effects, and ProofIR.
 - The Python kit emits the ProofIR for Python facts and universes. The Rust CLI must not lower Python floors into ProofIR.
 - Do not copy `lift_pydantic_model` as the architecture. Pydantic-style facts must enter as source-shape sugars such as `Field(..., ge=1)` call keywords or `Annotated[...]` subscript metadata after Python name resolution.
 - Construction has exactly three exits: `Complete(FloorValue)` because all work was done, `Incomplete(Effect)` because the source has an actual effect, or panic because construction is missing sugar/floor support.
@@ -27,7 +28,7 @@
 - Normal mode panics on the first construction gap. Audit-only mode catches construction-gap panics, records all gaps with owner/blame/observed/fix metadata, and does not emit semantic outcomes for those gaps.
 - A factory miss or pure-but-untranslated shape is a construction gap, not an `Effect`.
 - A floor miss or missing floor operation is a construction gap, not a generic dict, `None`, legacy fallback, or `Effect`.
-- All floor operations go through double dispatch. In Python, floor operation traits are `Protocol`s, consumers pass a visitor, and floors call the species-specific visitor method. Sugars must not inspect floor internals by shape.
+- All floor operations go through sugar-owned operation objects and duck-typed completed values. `Protocol`s may document capabilities, but runtime dispatch is an explicit method call such as `receiver.map_with(MapOperation(...), ctx)`. Missing methods are floor construction gaps. Sugars must not inspect completed-value internals by shape.
 - Sugar construction gaps must raise a loud panic-style exception whose message starts with `write more Sugar for this AST`.
 - AST-warranted floor construction gaps must raise a loud panic-style exception whose message starts with `write more Floor for this AST`.
 - Lower-level floor construction gaps must start with `write more Floor for this construction`.
@@ -43,7 +44,7 @@
 - Config and manifests are overrides. Component discovery is the default path.
 - The new kit RPC entrypoint is protocol plumbing only. Do not name or design the architecture around the old transport file.
 - Build lots of small, well organized type hierarchies with dumb classes. A class mostly carries typed fields plus one tiny operation.
-- One file per class. A sugar class, floor class, effect class, visitor class, factory audit class, proof fixture class, report class, or source-oracle class gets its own module. Package `__init__.py` files may re-export names, and small enums/constants may live with their sole owner.
+- One file per class. A sugar class, completed-value/floor class, effect class, operation class, factory audit class, proof fixture class, report class, or source-oracle class gets its own module. Package `__init__.py` files may re-export names, and small enums/constants may live with their sole owner.
 
 ---
 
@@ -54,9 +55,15 @@
 - Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/gaps/`
   - `construction_gap_info.py`, `construction_gap_panic.py`, `sugar_construction_gap.py`, `floor_construction_gap.py`: structured panic metadata and loud exception classes.
 - Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/`
-  - `floor_value.py`, `floor_mismatch.py`, `require_floor.py`, `floor_gap.py`, `term_floor.py`, `predicate_floor.py`, `assertion_fact_floor.py`, `callsite_fact_floor.py`, `body_universe_floor.py`, `precondition_floor.py`, `literal_value_floor.py`, `sequence_floor.py`, `tuple_components_floor.py`, `class_shape_floor.py`, `support_floor.py`: one dumb floor class or helper per file.
-- Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/visitors/`
-  - `desugared_floor_visitor.py`, `sequence_floor_visitor.py`: one operation-specific visitor protocol per file.
+  - `floor_value.py`, `floor_mismatch.py`, `floor_gap.py`, `term_value.py`, `predicate_value.py`, `assertion_fact.py`, `callsite_fact.py`, `body_universe.py`, `precondition_value.py`, `literal_value.py`, `array_literal.py`, `builder_state.py`, `tuple_components.py`, `class_shape.py`, `runtime_value.py`, `support_value.py`: one dumb completed-value/floor class or helper per file.
+- Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/operations/`
+  - `map_operation.py`, `add_operation.py`, `materialize_operation.py`, `perform_operation.py`, `supports_map.py`, `supports_add.py`, `supports_materialize.py`: one operation object, dispatch helper, or optional capability protocol per file.
+- Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context/`
+  - `factory_build_context.py`, `reduce_context.py`: explicit build/reduce context objects.
+- Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/`
+  - `temporal_context.py`, `temporal_binding.py`, `temporal_rewrite_step.py`: current program-point floor bindings and replay records.
+- Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/`
+  - `sugar_body.py`: typed child-body carrier used by parent sugars.
 - Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect/`
   - `effect.py`, `effect_kind.py`: typed effects and effect disposition names.
 - Create `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/`
@@ -612,19 +619,19 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd i
 git commit -m "Add Python numpy pandas panic audit"
 ```
 
-## Task 2: Add The Construction-Law Kernel
+## Task 2: Add The Construction-Law Kernel With Completed Values
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/gaps/`
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/`
-- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/visitors/`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/operations/`
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect/`
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/`
 - Test: `implementations/python/sugar-lift-py-tests/tests/test_floor_kernel.py`
 
 **Interfaces:**
 - Consumes: `idd.collect_panic_audit`
-- Produces: `ConstructionGapInfo`, `ConstructionGapPanic`, `FloorValue`, `TermFloor`, `PredicateFloor`, `BodyUniverseFloor`, `PreconditionFloor`, `SupportFloor`, `Effect`, `Complete`, `Incomplete`, `SugarConstructionGap`, `FloorConstructionGap`, `FloorMismatch`
+- Produces: `ConstructionGapInfo`, `ConstructionGapPanic`, `FloorValue`, `TermValue`, `PredicateValue`, `BodyUniverse`, `PreconditionValue`, `ArrayLiteral`, `BuilderState`, `RuntimeValue`, `Effect`, `Complete`, `Incomplete`, `complete_value`, `MapOperation`, `AddOperation`, `MaterializeOperation`, `perform_operation`, `SugarConstructionGap`, `FloorConstructionGap`, `FloorMismatch`
 
 - [ ] **Step 1: Write the failing kernel tests**
 
@@ -637,28 +644,22 @@ import pytest
 
 from sugar_lift_py_tests.effect import Effect
 from sugar_lift_py_tests.floor import (
-    BodyUniverseFloor,
-    DesugaredFloorVisitor,
+    ArrayLiteral,
+    BodyUniverse,
     FloorConstructionGap,
-    FloorMismatch,
-    PredicateFloor,
-    SequenceFloor,
-    SequenceFloorVisitor,
-    TermFloor,
+    RuntimeValue,
+    TermValue,
     floor_gap,
-    require_floor,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_floor
+from sugar_lift_py_tests.operations import AddOperation, MapOperation, MaterializeOperation, perform_operation
+from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
 
 
-def test_complete_has_exact_floor_species():
-    term = TermFloor(term={"kind": "var", "name": "x"})
+def test_complete_contains_completed_value_not_effect_or_gap():
+    term = TermValue(term={"kind": "var", "name": "x"})
     outcome = Complete(term)
 
-    assert complete_floor(outcome, TermFloor) is term
-
-    with pytest.raises(FloorMismatch, match="required PredicateFloor but got TermFloor"):
-        complete_floor(outcome, PredicateFloor)
+    assert complete_value(outcome, owner="python-test") is term
 
 
 def test_incomplete_is_only_typed_effect():
@@ -668,52 +669,64 @@ def test_incomplete_is_only_typed_effect():
     assert outcome.effect is effect
 
 
-def test_require_floor_names_owner_on_mismatch():
-    floor = BodyUniverseFloor(predicates=[], source_memento={"file": "x.py"})
+def test_complete_value_refuses_to_read_incomplete_effect():
+    effect = Effect(kind="RuntimeValue", boundary={"file": "x.py", "line": 3}, reason="unknown runtime value")
 
-    with pytest.raises(FloorMismatch, match="python-test required PredicateFloor but got BodyUniverseFloor"):
-        require_floor(floor, PredicateFloor, owner="python-test")
-
-
-class RecordingDesugaredVisitor:
-    def visit_term(self, floor):
-        return ("term", floor.term)
-
-    def visit_tuple_components(self, floor):
-        return ("tuple-components", floor.parts)
-
-    def visit_passthrough(self, floor):
-        return ("passthrough", type(floor).__name__)
+    with pytest.raises(RuntimeError, match="map receiver cannot read completed value from incomplete effect"):
+        complete_value(Incomplete(effect), owner="map receiver")
 
 
-class RecordingSequenceVisitor:
-    def visit_sequence(self, floor):
-        return ("sequence", floor.items)
+def test_array_literal_performs_operation_by_duck_typed_method():
+    receiver = ArrayLiteral(items=(TermValue.literal(1), TermValue.literal(2), TermValue.literal(3)))
+    operation = MapOperation(
+        mapper=lambda item: TermValue.literal(item.literal_value + 2),
+        owner="MapSugar",
+        blame="x.py:1:0",
+    )
 
-    def visit_non_sequence(self, floor):
-        return ("non-sequence", type(floor).__name__)
+    outcome = perform_operation(
+        owner="MapSugar",
+        blame="x.py:1:0",
+        receiver=receiver,
+        method_name="map_with",
+        operation=operation,
+        ctx=None,
+    )
+
+    mapped = complete_value(outcome, owner="map result")
+    assert isinstance(mapped, ArrayLiteral)
+    assert [item.literal_value for item in mapped.items] == [3, 4, 5]
 
 
-def test_floor_operations_delegate_by_double_dispatch():
-    desugared: DesugaredFloorVisitor[tuple[str, object]] = RecordingDesugaredVisitor()
-    sequence: SequenceFloorVisitor[tuple[str, object]] = RecordingSequenceVisitor()
-    term = TermFloor(term={"kind": "var", "name": "x"})
-    seq = SequenceFloor(items=(term,))
-    predicate = PredicateFloor(formula={"kind": "atomic", "name": "p", "args": []})
+def test_missing_operation_is_a_loud_floor_gap():
+    receiver = RuntimeValue(reason="opaque iterator")
 
-    assert term.accept_desugared_floor(desugared) == ("term", {"kind": "var", "name": "x"})
-    assert seq.accept_sequence_floor(sequence) == ("sequence", (term,))
-    assert predicate.accept_sequence_floor(sequence) == ("non-sequence", "PredicateFloor")
+    with pytest.raises(FloorConstructionGap) as exc:
+        perform_operation(
+            owner="MapSugar",
+            blame="x.py:1:0",
+            receiver=receiver,
+            method_name="map_with",
+            operation=MapOperation(mapper=lambda item: item, owner="MapSugar", blame="x.py:1:0"),
+            ctx=None,
+        )
+
+    message = str(exc.value)
+    assert message.startswith("write more Floor for this construction")
+    assert "owner=MapSugar" in message
+    assert "observed=RuntimeValue" in message
+    assert "requested=map_with" in message
+    assert "fix=add map_with to RuntimeValue or emit a real effect" in message
 
 
-def test_floor_gap_names_the_floor_fix():
+def test_floor_gap_names_ast_or_construction_fix():
     with pytest.raises(FloorConstructionGap) as exc:
         floor_gap(
             owner="python-test",
             blame="x.py:4:2",
             ast_kind="ListComp",
-            required_floor="BodyUniverseFloor",
-            fix="add BodyUniverseFloor construction for ListComp",
+            requested="BodyUniverse",
+            fix="add BodyUniverse construction for ListComp",
         )
 
     message = str(exc.value)
@@ -721,11 +734,10 @@ def test_floor_gap_names_the_floor_fix():
     assert "owner=python-test" in message
     assert "blame=x.py:4:2" in message
     assert "observed=ListComp" in message
-    assert "requested=BodyUniverseFloor" in message
-    assert "fix=add BodyUniverseFloor construction for ListComp" in message
+    assert "requested=BodyUniverse" in message
+    assert "fix=add BodyUniverse construction for ListComp" in message
     assert exc.value.info.owner == "python-test"
-    assert exc.value.info.blame == "x.py:4:2"
-    assert exc.value.info.fix == "add BodyUniverseFloor construction for ListComp"
+    assert exc.value.info.fix == "add BodyUniverse construction for ListComp"
 ```
 
 - [ ] **Step 2: Run the focused test to see it fail**
@@ -736,7 +748,8 @@ Run:
 PYTHONPATH=implementations/python/sugar-lift-py-tests/src pytest -q implementations/python/sugar-lift-py-tests/tests/test_floor_kernel.py
 ```
 
-Expected: import failure for `sugar_lift_py_tests.floor`.
+Expected: import failure for `sugar_lift_py_tests.floor` or
+`sugar_lift_py_tests.operations`.
 
 - [ ] **Step 3: Implement structured construction-gap metadata**
 
@@ -784,17 +797,18 @@ class ConstructionGapPanic(RuntimeError):
         )
 ```
 
-- [ ] **Step 4: Implement floor values and readers**
+- [ ] **Step 4: Implement completed-value floors**
 
-Add the `floor/` package. The snippet below shows the API shape; implement every
-floor class, visitor protocol, exception class, and helper in its own file, then
+Add the `floor/` package. Implement every class/helper in its own file, then
 re-export from `floor/__init__.py`.
+
+The important shape is:
 
 ```python
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NoReturn, Protocol, TypeVar
+from typing import Any, NoReturn
 
 from sugar_lift_py_tests.gaps import ConstructionGapInfo, ConstructionGapPanic
 
@@ -807,122 +821,90 @@ class FloorConstructionGap(ConstructionGapPanic):
     pass
 
 
-VisitorT = TypeVar("VisitorT")
-
-
-class DesugaredFloorVisitor(Protocol[VisitorT]):
-    def visit_term(self, floor: "TermFloor") -> VisitorT: ...
-    def visit_tuple_components(self, floor: "TupleComponentsFloor") -> VisitorT: ...
-    def visit_passthrough(self, floor: "FloorValue") -> VisitorT: ...
-
-
-class SequenceFloorVisitor(Protocol[VisitorT]):
-    def visit_sequence(self, floor: "SequenceFloor") -> VisitorT: ...
-    def visit_non_sequence(self, floor: "FloorValue") -> VisitorT: ...
-
-
 class FloorValue:
-    def accept_desugared_floor(self, visitor: DesugaredFloorVisitor[VisitorT]) -> VisitorT:
-        return visitor.visit_passthrough(self)
-
-    def accept_sequence_floor(self, visitor: SequenceFloorVisitor[VisitorT]) -> VisitorT:
-        return visitor.visit_non_sequence(self)
+    pass
 
 
 @dataclass(frozen=True)
-class TermFloor(FloorValue):
+class TermValue(FloorValue):
     term: dict[str, Any]
+    literal_value: Any | None = None
 
-    def accept_desugared_floor(self, visitor: DesugaredFloorVisitor[VisitorT]) -> VisitorT:
-        return visitor.visit_term(self)
+    @staticmethod
+    def literal(value: Any) -> "TermValue":
+        return TermValue(term={"kind": "literal", "value": value}, literal_value=value)
 
 
 @dataclass(frozen=True)
-class PredicateFloor(FloorValue):
+class PredicateValue(FloorValue):
     formula: dict[str, Any]
 
 
-
 @dataclass(frozen=True)
-class AssertionFactFloor(FloorValue):
-    formula: dict[str, Any]
-    source_memento: dict[str, Any]
-    subject: dict[str, Any] | None = None
-
-
-
-@dataclass(frozen=True)
-class CallsiteFactFloor(FloorValue):
-    formula: dict[str, Any]
-    callsite: dict[str, Any]
-    subject: dict[str, Any]
-
-
-
-@dataclass(frozen=True)
-class BodyUniverseFloor(FloorValue):
+class BodyUniverse(FloorValue):
     predicates: list[dict[str, Any]]
     source_memento: dict[str, Any]
 
 
-
 @dataclass(frozen=True)
-class PreconditionFloor(FloorValue):
+class PreconditionValue(FloorValue):
     formula: dict[str, Any]
     source_memento: dict[str, Any] | None = None
 
 
-
 @dataclass(frozen=True)
-class LiteralValueFloor(FloorValue):
-    value: Any
-
-
-
-@dataclass(frozen=True)
-class SequenceFloor(FloorValue):
-    items: tuple[FloorValue, ...]
-
-    def accept_sequence_floor(self, visitor: SequenceFloorVisitor[VisitorT]) -> VisitorT:
-        return visitor.visit_sequence(self)
-
-
-@dataclass(frozen=True)
-class TupleComponentsFloor(FloorValue):
-    parts: tuple[FloorValue, ...]
-
-    def accept_desugared_floor(self, visitor: DesugaredFloorVisitor[VisitorT]) -> VisitorT:
-        return visitor.visit_tuple_components(self)
-
-
-@dataclass(frozen=True)
-class ClassShapeFloor(FloorValue):
-    shape: dict[str, Any]
-
-
-
-@dataclass(frozen=True)
-class SupportFloor(FloorValue):
+class RuntimeValue(FloorValue):
     reason: str
 
 
+@dataclass(frozen=True)
+class ArrayLiteral(FloorValue):
+    items: tuple[FloorValue, ...]
 
-FloorT = TypeVar("FloorT", bound=FloorValue)
+    def map_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.map_array(self, ctx)
+
+    def add_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.add_array(self, ctx)
+
+    def materialize_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.materialize_array(self, ctx)
 
 
-def require_floor(value: FloorValue, expected: type[FloorT], *, owner: str) -> FloorT:
-    if isinstance(value, expected):
-        return value
-    raise FloorMismatch(
-        f"{owner} required {expected.__name__} but got {type(value).__name__}"
-    )
+@dataclass(frozen=True)
+class BuilderState(FloorValue):
+    current: FloorValue
+
+    def map_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.map_builder(self, ctx)
+
+    def add_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.add_builder(self, ctx)
+
+    def materialize_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.materialize_builder(self, ctx)
+
+
+@dataclass(frozen=True)
+class TupleComponents(FloorValue):
+    parts: tuple[FloorValue, ...]
+
+
+@dataclass(frozen=True)
+class ClassShape(FloorValue):
+    shape: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SupportValue(FloorValue):
+    reason: str
 
 
 def floor_gap(
     *,
     owner: str,
     blame: str,
-    required_floor: str,
+    requested: str,
     fix: str,
     ast_kind: str | None = None,
     observed: str | None = None,
@@ -935,7 +917,7 @@ def floor_gap(
                 owner=owner,
                 blame=blame,
                 observed=ast_kind,
-                requested=required_floor,
+                requested=requested,
                 fix=fix,
             ),
         )
@@ -948,13 +930,99 @@ def floor_gap(
             owner=owner,
             blame=blame,
             observed=observed,
-            requested=required_floor,
+            requested=requested,
             fix=fix,
         ),
     )
 ```
 
-- [ ] **Step 5: Implement typed effects**
+- [ ] **Step 5: Implement sugar-owned operation objects and dispatch**
+
+Add the `operations/` package. Keep one operation/Protocol/helper per file.
+`Protocol`s are documentation/static shape only; the runtime gate is the
+shared dispatcher.
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, NoReturn, Protocol
+
+from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, FloorValue, TermValue, floor_gap
+from sugar_lift_py_tests.outcome import Complete, Outcome
+
+
+class SupportsMap(Protocol):
+    def map_with(self, operation: "MapOperation", ctx: Any) -> Outcome: ...
+
+
+@dataclass(frozen=True)
+class MapOperation:
+    mapper: Callable[[FloorValue], FloorValue]
+    owner: str
+    blame: str
+
+    def map_array(self, receiver: ArrayLiteral, ctx: Any) -> Outcome:
+        return Complete(ArrayLiteral(tuple(self.mapper(item) for item in receiver.items)))
+
+    def map_builder(self, receiver: BuilderState, ctx: Any) -> Outcome:
+        return Complete(BuilderState(complete_value(receiver.current.map_with(self, ctx), owner=self.owner)))
+
+
+@dataclass(frozen=True)
+class AddOperation:
+    operand: TermValue
+    owner: str
+    blame: str
+
+    def add_array(self, receiver: ArrayLiteral, ctx: Any) -> Outcome:
+        return Complete(
+            ArrayLiteral(
+                tuple(
+                    TermValue.literal(item.literal_value + self.operand.literal_value)
+                    for item in receiver.items
+                )
+            )
+        )
+
+    def add_builder(self, receiver: BuilderState, ctx: Any) -> Outcome:
+        return Complete(BuilderState(complete_value(receiver.current.add_with(self, ctx), owner=self.owner)))
+
+
+@dataclass(frozen=True)
+class MaterializeOperation:
+    owner: str
+    blame: str
+
+    def materialize_array(self, receiver: ArrayLiteral, ctx: Any) -> Outcome:
+        return Complete(receiver)
+
+    def materialize_builder(self, receiver: BuilderState, ctx: Any) -> Outcome:
+        return complete_value(receiver.current.materialize_with(self, ctx), owner=self.owner)
+
+
+def perform_operation(
+    *,
+    owner: str,
+    blame: str,
+    receiver: FloorValue,
+    method_name: str,
+    operation: object,
+    ctx: Any,
+) -> Outcome:
+    method = getattr(receiver, method_name, None)
+    if method is None:
+        floor_gap(
+            owner=owner,
+            blame=blame,
+            observed=type(receiver).__name__,
+            requested=method_name,
+            fix=f"add {method_name} to {type(receiver).__name__} or emit a real effect",
+        )
+    return method(operation, ctx)
+```
+
+- [ ] **Step 6: Implement typed effects**
 
 Add the `effect/` package. Keep `Effect` in `effect/effect.py` and the allowed
 kind set in `effect/effect_kind.py`.
@@ -997,9 +1065,9 @@ class Effect:
             raise ValueError("effect reason must be non-empty")
 ```
 
-- [ ] **Step 6: Implement total outcomes**
+- [ ] **Step 7: Implement total outcomes**
 
-Add the `outcome/` package. Keep `Complete`, `Incomplete`, and `complete_floor`
+Add the `outcome/` package. Keep `Complete`, `Incomplete`, and `complete_value`
 in separate files and re-export them from `outcome/__init__.py`.
 
 ```python
@@ -1008,12 +1076,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .effect import Effect
-from .floor import FloorT, FloorValue, require_floor
+from .floor import FloorValue
 
 
 @dataclass(frozen=True)
 class Complete:
-    floor: FloorValue
+    value: FloorValue
 
 
 @dataclass(frozen=True)
@@ -1024,13 +1092,15 @@ class Incomplete:
 Outcome = Complete | Incomplete
 
 
-def complete_floor(outcome: Outcome, expected: type[FloorT], *, owner: str = "floor reader") -> FloorT:
+def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
     if isinstance(outcome, Incomplete):
-        raise RuntimeError(f"{owner} cannot read floor from incomplete effect: {outcome.effect.reason}")
-    return require_floor(outcome.floor, expected, owner=owner)
+        raise RuntimeError(
+            f"{owner} cannot read completed value from incomplete effect: {outcome.effect.reason}"
+        )
+    return outcome.value
 ```
 
-- [ ] **Step 7: Run the panic audit to confirm the kernel does not redefine `R`**
+- [ ] **Step 8: Run the panic audit to confirm the kernel does not redefine `R`**
 
 Run the instrument again and verify it still reports only numpy/pandas panic
 axes. Kernel module creation may remove diagnostics later, but it must not add
@@ -1044,7 +1114,7 @@ PYTHONPATH=implementations/python/sugar-lift-py-tests/src python -m sugar_lift_p
 
 Expected: exit code `1` until numpy and pandas lift with zero construction panics. The JSON `r` object contains only `numpy_sugar_panics`, `numpy_floor_panics`, `pandas_sugar_panics`, `pandas_floor_panics`, and `unexpected_panics`.
 
-- [ ] **Step 8: Run focused tests**
+- [ ] **Step 9: Run focused tests**
 
 ```bash
 PYTHONPATH=implementations/python/sugar-lift-py-tests/src pytest -q implementations/python/sugar-lift-py-tests/tests/test_floor_kernel.py implementations/python/sugar-lift-py-tests/tests/test_numpy_pandas_panic_audit.py
@@ -1052,14 +1122,126 @@ PYTHONPATH=implementations/python/sugar-lift-py-tests/src pytest -q implementati
 
 Expected: all tests pass. The standalone IDD command remains red until stable zero.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/gaps implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome implementations/python/sugar-lift-py-tests/tests/test_floor_kernel.py
-git commit -m "Add Python floor outcome construction law"
+git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/gaps implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/operations implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome implementations/python/sugar-lift-py-tests/tests/test_floor_kernel.py
+git commit -m "Add Python completed-value construction law"
 ```
 
-## Task 3: Add Factory Claims And Loud Construction Gaps
+## Task 3: Add Temporal Context And Forward Rewrite Kernel
+
+**Files:**
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context/`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/`
+- Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/`
+- Extend: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/`
+- Test: `implementations/python/sugar-lift-py-tests/tests/test_temporal_forward_rewrite.py`
+
+**Interfaces:**
+- Consumes: `FloorValue`, `TermValue`, `ArrayLiteral`, `BuilderState`, `RuntimeValue`, `Complete`, `Incomplete`, `complete_value`, `MapOperation`, `AddOperation`, `MaterializeOperation`, `perform_operation`
+- Produces: `FactoryBuildContext`, `ReduceContext`, `TemporalContext`, `TemporalBinding`, `TemporalRewriteStep`, `SugarBody`, and the first temporal red/green instrument.
+
+- [ ] **Step 1: Write the fluent-builder red instrument**
+
+Create a focused test around exact Python source:
+
+```python
+n = 10
+n += 1
+out = Builder([1, 2, 3]).map(lambda x: x + 2).add(n).to_list()
+assert out == [14, 15, 16]
+```
+
+The test must assert the construction/reduction law, not just final numbers:
+
+- factory construction is inside-out: `ListLiteralSugar -> BuilderCtorSugar -> LambdaSugar/BinOpSugar -> MapSugar -> NameSugar(n) -> AddSugar -> ToListSugar`;
+- every parent sugar is constructed with `SugarBody` children;
+- calling `desugar` on the outer `ToListSugar` rewrites forward through current completed values;
+- `NameSugar("n")` reads the current temporal value `TermValue(11)`, never raw `ast.Name`;
+- `.map(...)` calls `perform_operation(..., method_name="map_with", operation=MapOperation(...))`;
+- `.add(n)` consumes `TermValue(11)` and calls `perform_operation(..., method_name="add_with", operation=AddOperation(...))`;
+- `.to_list()` calls `perform_operation(..., method_name="materialize_with", operation=MaterializeOperation(...))`;
+- the final ProofIR/FOL-facing value is timeless: `len(out)=3`, `out[0]=14`, `out[1]=15`, `out[2]=16`;
+- an unknown fluent receiver mutation emits a real temporal effect or a loud floor gap, never fake predicates.
+
+- [ ] **Step 2: Add explicit context objects**
+
+Add one small class per file:
+
+- `FactoryBuildContext`: source oracle handle, temporal context, expected role, name resolver, audit sink.
+- `ReduceContext`: temporal context at the reduction point, source oracle, proof/report sinks, and factory audit sink.
+- `TemporalContext`: immutable/forkable current bindings. It answers “what completed value does this name/receiver mean at this source point?”
+- `TemporalRewriteStep`: record of a replayed assignment, fluent receiver update, loop replay, or red temporal boundary.
+
+The context API must make temporal rewriting upstream of sugar/completed-value
+consumption:
+
+```python
+ctx.temporal.value_for("n")       # -> TermValue(11)
+ctx.temporal.receiver_for("out")  # -> current receiver value, if bound
+ctx.temporal.bind_value("x", value)
+ctx.temporal.apply_step(step)
+```
+
+- [ ] **Step 3: Add `SugarBody` as the post-order carrier**
+
+`SugarBody` is the Python equivalent of Rust's typed child body. It wraps an
+already-built child sugar and the requested semantic role. Parent sugars store
+`SugarBody`, not raw child AST, except for provenance/source mementos.
+
+Reduction shape:
+
+```python
+outcome = body.reduce(ctx)
+receiver = complete_value(outcome, owner="MapSugar receiver")
+return perform_operation(
+    owner="MapSugar",
+    blame=self.blame,
+    receiver=receiver,
+    method_name="map_with",
+    operation=MapOperation(mapper=self.mapper, owner="MapSugar", blame=self.blame),
+    ctx=ctx,
+)
+```
+
+A missing operation is a floor construction panic, not a silent `None`.
+
+- [ ] **Step 4: State the FOL handoff invariant**
+
+After temporal rewriting and operation dispatch, the solver-facing output has no
+program time left. Time has become one of:
+
+- stable completed terms, such as `TermValue(11)`;
+- finite rewritten values, such as `ArrayLiteral((14, 15, 16))`;
+- occurrence-pinned runtime symbols where source is visible enough to name but
+  not reduce;
+- a real temporal effect;
+- a loud construction/floor gap.
+
+The fluent-builder test should assert the no-time-left result directly.
+
+- [ ] **Step 5: Verify the focused temporal test is red, then green**
+
+Run:
+
+```bash
+PYTHONPATH=implementations/python/sugar-lift-py-tests/src pytest -q implementations/python/sugar-lift-py-tests/tests/test_temporal_forward_rewrite.py
+```
+
+Expected first failure: missing `FactoryBuildContext` / `TemporalContext` /
+`SugarBody` modules. Expected green result after the task: the fluent-builder
+forward rewrite produces the timeless array/list facts and the unknown mutation
+twin reports the red boundary as an effect or named floor gap.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body implementations/python/sugar-lift-py-tests/tests/test_temporal_forward_rewrite.py
+git commit -m "Add Python temporal forward rewrite kernel"
+```
+
+## Task 4: Add Factory Claims And Loud Construction Gaps
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/claim/`
@@ -1321,7 +1503,7 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/claim
 git commit -m "Add Python sugar factory construction gaps"
 ```
 
-## Task 4: Add Audit-Only Gap Inventory
+## Task 5: Add Audit-Only Gap Inventory
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/__init__.py`
@@ -1483,7 +1665,7 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit
 git commit -m "Add Python audit-only construction gap inventory"
 ```
 
-## Task 5: Add Callsite Fact To Post-Order Constraint Universe Flow
+## Task 6: Add Callsite Fact To Post-Order Constraint Universe Flow
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/constraint_flow/__init__.py`
@@ -1802,7 +1984,7 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/const
 git commit -m "Add Python source-shape constraint flow"
 ```
 
-## Task 6: Wire Component Discovery Before More Migration
+## Task 7: Wire Component Discovery Before More Migration
 
 **Files:**
 - Create: `.sugar/components/python-test-assertions/manifest.toml`
@@ -1966,7 +2148,7 @@ git add .sugar/components/python-test-assertions/manifest.toml implementations/p
 git commit -m "Add Python component discovery plan"
 ```
 
-## Task 7: Port One Existing Family As Native Python Sugar
+## Task 8: Port One Existing Family As Native Python Sugar
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/__init__.py`
@@ -2178,7 +2360,7 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar
 git commit -m "Add native Python translate universe sugar"
 ```
 
-## Task 8: Attach Factory Accounting To Lift Reports
+## Task 9: Attach Factory Accounting To Lift Reports
 
 **Files:**
 - Create: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/report_payload.py`
@@ -2261,7 +2443,7 @@ git add implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_r
 git commit -m "Expose Python factory audit summary"
 ```
 
-## Task 9: Prove The First No-Config Python Report Loop
+## Task 10: Prove The First No-Config Python Report Loop
 
 **Files:**
 - Create or reuse: a smallest Python example under `examples/python-urlsafe-seam/good` or a new focused `examples/python-factory-floor-good`

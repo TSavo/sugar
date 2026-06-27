@@ -11,6 +11,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lib import lift_source
 
 
@@ -354,21 +355,23 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     try:
+        payload = LiftReportPayloadDto()
+        root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
+            full_path = Path(path)
+            try:
+                rel_path = full_path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                rel_path = full_path.name
             with open(path, "r", encoding="utf-8") as handle:
-                lift_source(path, handle.read())
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "kind": "ir-document",
-                    "ir": [],
-                    "diagnostics": [],
-                    "warnings": [],
-                },
-            }
-        )
+                result = lift_source(path, handle.read(), memento_file=rel_path)
+            if hasattr(result, "payload"):
+                file_payload = result.payload
+                payload.ir.extend(file_payload.ir)
+                payload.source_mementos.extend(file_payload.source_mementos)
+                payload.factory_walk.extend(file_payload.factory_walk)
+                payload.diagnostics.extend(file_payload.diagnostics)
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
     except FactoryGap as exc:
         _send(
             {

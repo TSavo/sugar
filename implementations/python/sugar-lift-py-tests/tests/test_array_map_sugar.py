@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.operations import MapOperation, perform_operation
+
+
+ROOT = Path(__file__).resolve().parents[4]
+PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
+
+
+def _run_lift_rpc(project: Path) -> dict:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PY_TESTS / "src"),
+    }
+    request = "\n".join(
+        json.dumps(message)
+        for message in [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "lift",
+                "params": {"workspace_root": str(project), "source_paths": ["."]},
+            },
+            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
+        ]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
+        input=request + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    response = next(item for item in responses if item.get("id") == 2)
+    assert "error" not in response, response
+    return response["result"]
+
+
+def _write_twin(project: Path, expected: str) -> None:
+    project.mkdir()
+    (project / "test_array_map.py").write_text(
+        (
+            "def test_array_map_sugar():\n"
+            f"    assert [1, 2, 3].map(lambda x: x + 1) == {expected}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
+def _inv_status(contract: dict) -> str:
+    inv = contract["inv"]
+    assert inv["kind"] == "and"
+    equalities = inv["operands"]
+    assert all(item["kind"] == "atomic" and item["name"] == "=" for item in equalities)
+    values = [
+        (item["args"][0]["value"], item["args"][1]["value"])
+        for item in equalities
+    ]
+    return "sat" if all(left == right for left, right in values) else "unsat"
+
+
+def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path) -> None:
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_twin(good, "[2, 3, 4]")
+    _write_twin(bad, "[2, 3, 99]")
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    good_contract = good_doc["ir"][0]
+    bad_contract = bad_doc["ir"][0]
+    assert _inv_status(good_contract) == "sat"
+    assert _inv_status(bad_contract) == "unsat"
+
+    walk = good_doc["factoryAuditSummary"]["factoryWalk"]
+    assert [row["selected"] for row in walk] == [
+        "ArrayLiteralSugar",
+        "MethodSugar",
+        "MapSugar",
+    ]
+    assert walk[-1]["sourceMemento"]["kind"] == "source-memento"
+    assert walk[-1]["sourceMemento"]["file"] == "test_array_map.py"
+    assert "source" not in walk[-1]
+    assert "term" not in walk[-1]
+    assert good_contract["sourceWarrants"][0]["kind"] == "source-memento"
+    assert good_contract["name"].endswith("::array-map-sugar")
+
+
+def test_map_operation_missing_floor_names_floor_gap() -> None:
+    with pytest.raises(FactoryGap) as raised:
+        perform_operation(
+            owner="MapSugar",
+            blame="x.py:1:0",
+            receiver=TermValue(1),
+            method_name="map_with",
+            operation=MapOperation(parameter="x", addend=1),
+            ctx=None,
+        )
+
+    assert str(raised.value).startswith(
+        "write more Floor for this construction: "
+    )
+    assert raised.value.info == {
+        "owner": "MapSugar",
+        "blame": "x.py:1:0",
+        "observed": "TermValue",
+        "requested": "map_with",
+        "fix": "add map_with to TermValue or emit a real effect",
+    }
