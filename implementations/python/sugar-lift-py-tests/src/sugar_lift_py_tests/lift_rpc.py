@@ -369,6 +369,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 file_payload = result.payload
                 payload.ir.extend(file_payload.ir)
                 payload.source_mementos.extend(file_payload.source_mementos)
+                payload.source_audits.extend(file_payload.source_audits)
                 payload.factory_walk.extend(file_payload.factory_walk)
                 payload.diagnostics.extend(file_payload.diagnostics)
         _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})

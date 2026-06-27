@@ -38,6 +38,7 @@ def lift_array_map_assertions(
     lines = source.splitlines(keepends=True)
     contracts: list[BodyUniverseDto] = []
     source_mementos: list[SourceMementoDto] = []
+    source_audits: list[dict[str, Any]] = []
     factory_walk: list[FactoryWalkRowDto] = []
     for fn in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
         for stmt in fn.body:
@@ -52,9 +53,10 @@ def lift_array_map_assertions(
             )
             if lifted is None:
                 continue
-            contract, memento, rows = lifted
+            contract, memento, audit, rows = lifted
             contracts.append(contract)
             source_mementos.append(memento)
+            source_audits.append(audit)
             factory_walk.extend(rows)
     if not contracts:
         return None
@@ -62,6 +64,7 @@ def lift_array_map_assertions(
         LiftReportPayloadDto(
             ir=contracts,
             source_mementos=source_mementos,
+            source_audits=source_audits,
             factory_walk=factory_walk,
         )
     )
@@ -74,7 +77,12 @@ def _lift_assert(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-) -> tuple[BodyUniverseDto, SourceMementoDto, list[FactoryWalkRowDto]] | None:
+) -> tuple[
+    BodyUniverseDto,
+    SourceMementoDto,
+    dict[str, Any],
+    list[FactoryWalkRowDto],
+] | None:
     comparison = stmt.test
     if not isinstance(comparison, ast.Compare) or len(comparison.ops) != 1:
         return None
@@ -115,7 +123,49 @@ def _lift_assert(
         _walk_row("MethodSugar", "Call", stmt, filename, memento, "method-call"),
         _walk_row("MapSugar", "Call", stmt, filename, memento, "predicate"),
     ]
-    return contract, memento, rows
+    return (
+        contract,
+        memento,
+        _source_audit(stmt, fn, memento_file, contract.name, memento),
+        rows,
+    )
+
+
+def _source_audit(
+    stmt: ast.Assert,
+    fn: ast.FunctionDef,
+    memento_file: str,
+    contract_name: str,
+    memento: SourceMementoDto,
+) -> dict[str, Any]:
+    totals = {
+        "source_loci": 1,
+        "source_warranted": 1,
+        "source_inactive": 0,
+        "source_support": 0,
+        "source_refused": 0,
+        "source_unresolved": 0,
+        "unclassified_source": 0,
+    }
+    return {
+        "role": "python.array-map-sugar",
+        "contract": contract_name,
+        "file": memento_file,
+        "sourceFunctionName": fn.name,
+        "totals": totals,
+        "loci": [
+            {
+                "file": memento_file,
+                "line": stmt.lineno,
+                "col": stmt.col_offset,
+                "status": "warranted",
+                "ast_kind": "Assert",
+                "role": "python.array-map-sugar",
+                "contract": contract_name,
+                "sourceMemento": memento,
+            }
+        ],
+    }
 
 
 def _walk_row(
