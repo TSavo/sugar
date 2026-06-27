@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.outcome import Outcome
 
-from .map_builtin_sugar import MapBuiltinSugar
+from .map_builtin_sugar import MapBuiltinSugar, map_builtin_sugar
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ def list_sugar(
         return None
     if node.keywords or len(node.args) != 1:
         return None
-    body = MapBuiltinSugar.from_call(
+    body = map_builtin_sugar(
         node.args[0],
         functions_by_name,
         blame=blame,

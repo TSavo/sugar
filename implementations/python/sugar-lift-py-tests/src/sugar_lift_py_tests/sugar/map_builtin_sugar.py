@@ -12,37 +12,21 @@ from .range_sugar import RangeSugar, range_sugar
 
 @dataclass(frozen=True)
 class MapBuiltinSugar:
-    call: ast.Call
     callable: FunctionRefSugar
     sequence: RangeSugar
     blame: str
+    source_line: int
+    source_col: int
 
     @classmethod
-    def from_call(
+    def from_site(
         cls,
-        node: ast.AST,
-        functions_by_name: dict[str, ast.FunctionDef],
+        site,
         *,
+        functions_by_name: dict[str, ast.FunctionDef],
         blame: str,
     ) -> "MapBuiltinSugar | None":
-        if not isinstance(node, ast.Call):
-            return None
-        if not isinstance(node.func, ast.Name) or node.func.id != "map":
-            return None
-        if node.keywords or len(node.args) != 2:
-            return None
-        callable_sugar = FunctionRefSugar.from_node(node.args[0], functions_by_name)
-        if callable_sugar is None:
-            return None
-        sequence = range_sugar(node.args[1])
-        if sequence is None:
-            return None
-        return cls(
-            call=node,
-            callable=callable_sugar,
-            sequence=sequence,
-            blame=blame,
-        )
+        return map_builtin_sugar(site.node, functions_by_name, blame=blame)
 
     def desugar(self) -> Outcome:
         receiver = complete_value(self.sequence.desugar(), owner="MapBuiltinSugar receiver")
@@ -58,3 +42,30 @@ class MapBuiltinSugar:
             operation=CallableMapOperation(callable_value),
             ctx=None,
         )
+
+
+def map_builtin_sugar(
+    node: ast.AST,
+    functions_by_name: dict[str, ast.FunctionDef],
+    *,
+    blame: str,
+) -> MapBuiltinSugar | None:
+    if not isinstance(node, ast.Call):
+        return None
+    if not isinstance(node.func, ast.Name) or node.func.id != "map":
+        return None
+    if node.keywords or len(node.args) != 2:
+        return None
+    callable_sugar = FunctionRefSugar.from_node(node.args[0], functions_by_name)
+    if callable_sugar is None:
+        return None
+    sequence = range_sugar(node.args[1])
+    if sequence is None:
+        return None
+    return MapBuiltinSugar(
+        callable=callable_sugar,
+        sequence=sequence,
+        blame=blame,
+        source_line=node.lineno,
+        source_col=node.col_offset,
+    )
