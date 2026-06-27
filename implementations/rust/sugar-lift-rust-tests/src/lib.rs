@@ -154,6 +154,7 @@ pub mod sugar {
     pub mod option_adaptor;
     pub mod option_predicate;
     pub mod option_unwrap;
+    pub mod panic_macro;
     pub mod partition_point;
     pub mod path;
     pub mod peekable;
@@ -691,6 +692,9 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // when a runtime driver polls/awaits it. There is no source-visible macro body to
         // expand and no single timeless output value at construction.
         || reason.contains("join! future construction")
+        // TERMINAL: builtin `panic!` diverges by unwinding/aborting. It has no source-visible
+        // macro_rules body here and no returned value floor to hand upward.
+        || reason.contains("panic! macro divergence")
         // TERMINAL: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION
         // (`Type::of::<T>()` / `TypeId::of::<T>()` read through `.kind` + a `match` arm).
         // A `TypeId` is a target/compiler-determined identity, not a value constructed
@@ -8790,6 +8794,9 @@ enum Effect {
     /// available when the future is driven/awaited. The macro has no source-visible
     /// `macro_rules!` body here, and its output is not a timeless source value.
     FutureJoin { boundary: String },
+    /// PANIC-MACRO: builtin `panic!` diverges by unwinding or aborting at runtime. There is
+    /// no source-visible `macro_rules!` body here and no returned value floor to hand upward.
+    PanicMacro { boundary: String },
     /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
     /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
     /// runtime result, not a scalar equality over constructible values -- no single timeless
@@ -9025,6 +9032,10 @@ impl Effect {
                  future whose output is produced only when driven or awaited; no single timeless \
                  source value is available here; refused"
             ),
+            Effect::PanicMacro { boundary } => format!(
+                "panic! macro divergence `{boundary}`: builtin panic! diverges by unwinding or \
+                 aborting at runtime; no single timeless source value is available here; refused"
+            ),
             Effect::RuntimeMatchScrutinee { boundary } => format!(
                 "only scalar equality is liftable; operand is a runtime non-scalar result \
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
@@ -9126,6 +9137,7 @@ impl Effect {
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::FutureJoin { boundary }
+            | Effect::PanicMacro { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
             | Effect::TypeInferredParseResult { boundary, .. }
             | Effect::PanicPayload { boundary }
@@ -23047,6 +23059,9 @@ fn t() {
             },
             Effect::FutureJoin {
                 boundary: "join!(async { 0 })".to_string(),
+            },
+            Effect::PanicMacro {
+                boundary: "panic!(\"boom\")".to_string(),
             },
         ];
         for e in &effects {
