@@ -119,8 +119,8 @@ fn runtime_iterator_source(call: &ExprCall) -> bool {
 
 fn runtime_iterator_adaptor(call: &ExprMethodCall) -> bool {
     match call.method.to_string().as_str() {
-        "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "rev"
-        | "enumerate" | "flatten" => call.args.is_empty(),
+        "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "clone"
+        | "rev" | "enumerate" | "flatten" => call.args.is_empty(),
         "skip" | "take" | "step_by" => call.args.len() == 1 && const_int(&call.args[0]).is_some(),
         "map" | "filter" | "filter_map" | "skip_while" | "take_while" | "inspect" | "flat_map"
         | "scan" => call.args.len() == 1,

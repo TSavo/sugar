@@ -8430,6 +8430,50 @@ fn iterator_last_literal_array_bad() {
 }
 
 #[test]
+fn iterator_clone_binding_uses_runtime_iterator_source_floor() {
+    // Vendor shape: rust-src library/coretests/tests/array.rs::iterator_clone.
+    let src = r#"
+#[test]
+fn iterator_clone() {
+    let mut it = IntoIterator::into_iter([0, 2, 4, 6, 8]);
+    assert_eq!(it.next(), Some(0));
+    assert_eq!(it.next_back(), Some(8));
+    let mut clone = it.clone();
+    assert_eq!(it.next_back(), Some(6));
+    assert_eq!(clone.next_back(), Some(6));
+}
+"#;
+
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "tests/array.rs")).unwrap_or_else(
+        |panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`it.clone()` in iterator position must be owned by runtime_iterator_source: \
+                 recognize `.clone()` as an iterator-source adaptor, construct the `clone` \
+                 binding as a CompositeFloor, and bubble the named unknown-iterator-consumption \
+                 effect instead of asking for Composite at bare `clone`: {message}"
+            )
+        },
+    );
+
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("unknown iterator consumption")
+                && reason.contains("IntoIterator")),
+        "cloned iterator binding should delegate through the runtime iterator source floor \
+         and bubble the child effect unchanged, not panic or fake-warrant: skips={:?} \
+         warnings={:?}",
+        out.skip_reasons,
+        out.warnings
+    );
+}
+
+#[test]
 fn repeat_take_size_hint_reduces_to_literal_tuple_floor() {
     // Vendor shape: rust-src library/coretests/tests/iter/sources.rs::test_repeat_take.
     fn term_is_opt_some_int(term: &Term, expected: i128) -> bool {
