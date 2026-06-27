@@ -101,6 +101,20 @@ def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path
     assert "term" not in walk[-1]
     assert good_contract["sourceWarrants"][0]["kind"] == "source-memento"
     assert good_contract["name"].endswith("::array-map-sugar")
+    assert good_doc["sourceLedger"] == {
+        "source_loci": 1,
+        "source_warranted": 1,
+        "source_inactive": 0,
+        "source_support": 0,
+        "source_refused": 0,
+        "source_unresolved": 0,
+        "unclassified_source": 0,
+    }
+    assert good_doc["sourceAudits"][0]["role"] == "python.array-map-sugar"
+    assert good_doc["sourceAudits"][0]["totals"]["source_warranted"] == 1
+    assert good_doc["sourceAudits"][0]["loci"][0]["sourceMemento"]["kind"] == (
+        "source-memento"
+    )
 
 
 def test_map_operation_missing_floor_names_floor_gap() -> None:

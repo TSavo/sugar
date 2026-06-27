@@ -3992,6 +3992,9 @@ fn select_source_oracle_route<'a>(
         return Some((route, file));
     }
     match routes {
+        [route] if normalized_workspace_prefix(route.workspace_override.as_deref()).is_none() => {
+            Some((route, normalized_file))
+        }
         [route] if normalized_workspace_prefix(route.workspace_override.as_deref()).is_some() => {
             Some((route, normalized_file))
         }
@@ -10758,6 +10761,29 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             vendor.canonicalize().unwrap_or(vendor),
             "visual source oracle requests must run against the plugin workspace root"
         );
+    }
+
+    #[test]
+    fn visual_source_oracle_route_accepts_single_project_route_without_override() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let route = SourceOracleRoute {
+            surface: "python".to_string(),
+            workspace_override: None,
+            role: Some("source-lifter".to_string()),
+        };
+        let memento = serde_json::json!({
+            "file": "test_array_map.py",
+            "sourceFunctionName": "test_array_map_sugar",
+            "span": {"start_line": 1, "start_col": 0, "end_line": 2, "end_col": 54},
+            "source_cid": "blake3-512:source",
+            "template_cid": "blake3-512:template"
+        });
+
+        let routed = routed_source_memento(root.path(), &[route], &memento)
+            .expect("single project source oracle route should own local files");
+
+        assert_eq!(routed.memento["file"], "test_array_map.py");
+        assert_eq!(routed.workspace_root, root.path().canonicalize().unwrap());
     }
 
     #[test]
