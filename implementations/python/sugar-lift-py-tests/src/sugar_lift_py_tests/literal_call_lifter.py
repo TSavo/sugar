@@ -13,7 +13,7 @@ from sugar_lift_py_tests.array_map_lifter import (
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.ir import eq, formula_to_value, make_var, str_const
+from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, str_const
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     CallsiteFactDto,
@@ -114,8 +114,17 @@ def _lift_assert(
 
     target_fn = call_sugar.function
     body_steps = call_sugar.factory_steps()
+    body_formulas = call_sugar.constraint_formulas(actual)
+    body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
+    function_post = (
+        body_formula_values[0]
+        if len(body_formulas) == 1
+        else _formula_to_rpc(and_(body_formulas))
+    )
     function_contract_name = f"{Path(memento_file).stem}::{target_fn.name}::callable"
-    assertion_contract_name = f"{Path(memento_file).stem}::{fn.name}::literal-call-sugar"
+    assertion_contract_name = (
+        f"{Path(memento_file).stem}::{fn.name}::literal-call-sugar::assertion"
+    )
     function_memento = _function_source_memento(
         target_fn,
         memento_file,
@@ -152,12 +161,7 @@ def _lift_assert(
         role="python.literal-call-sugar",
     )
 
-    function_post = json.loads(
-        encode_jcs(formula_to_value(eq(make_var("out"), str_const(actual.value))))
-    )
-    assertion_inv = json.loads(
-        encode_jcs(formula_to_value(eq(str_const(actual.value), str_const(expected.value))))
-    )
+    assertion_inv = _formula_to_rpc(eq(str_const(actual.value), str_const(expected.value)))
     function_contract = BodyUniverseDto(
         name=function_contract_name,
         out_binding="out",
@@ -208,7 +212,10 @@ def _lift_assert(
                 filename,
                 step_memento,
                 output,
-                emitted_formula=function_post if index == len(body_steps) - 1 else None,
+                requested_role="FunctionBodyConstraint",
+                emitted_formula=body_formula_values[index]
+                if index < len(body_formula_values)
+                else None,
             )
             for index, (
                 (selected, ast_kind, step_stmt, output),
@@ -223,6 +230,7 @@ def _lift_assert(
                 filename,
                 assertion_memento,
                 "predicate",
+                requested_role="AssertionSurface",
                 emitted_formula=assertion_inv,
             ),
         ],
@@ -236,6 +244,10 @@ def _lift_assert(
             }
         ],
     )
+
+
+def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
+    return json.loads(encode_jcs(formula_to_value(formula)))
 
 
 def _source_audit(
@@ -286,12 +298,13 @@ def _walk_row(
     memento: SourceMementoDto,
     output: str,
     *,
+    requested_role: str = "term",
     emitted_formula: dict[str, Any] | None = None,
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(
         file=filename,
         line=getattr(stmt, "lineno"),
-        requested_role="term",
+        requested_role=requested_role,
         ast_kind=ast_kind,
         selected=selected,
         status="warranted",

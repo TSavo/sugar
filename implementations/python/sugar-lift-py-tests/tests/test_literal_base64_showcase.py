@@ -77,6 +77,13 @@ def _single_equality_status(contract: dict) -> str:
     return "sat" if left["value"] == right["value"] else "unsat"
 
 
+def _eq_name_value(formula: dict) -> tuple[str, object]:
+    assert formula["kind"] == "atomic"
+    assert formula["name"] == "="
+    left, right = formula["args"]
+    return left["name"], right["value"]
+
+
 def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -> None:
     good = tmp_path / "good"
     bad = tmp_path / "bad"
@@ -89,12 +96,17 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     names = [contract["name"] for contract in good_doc["ir"]]
     assert names == [
         "test_base64::encodeBase64::callable",
-        "test_base64::test_encode_base64::literal-call-sugar",
+        "test_base64::test_encode_base64::literal-call-sugar::assertion",
     ]
     function_contract, assertion_contract = good_doc["ir"]
-    assert function_contract["post"]["name"] == "="
-    assert function_contract["post"]["args"][0]["name"] == "out"
-    assert function_contract["post"]["args"][1]["value"] == "YWJj"
+    assert function_contract["post"]["kind"] == "and"
+    assert [_eq_name_value(formula) for formula in function_contract["post"]["operands"]] == [
+        ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+        ("b0", 97),
+        ("b1", 98),
+        ("b2", 99),
+        ("out", "YWJj"),
+    ]
     assert function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
@@ -123,5 +135,27 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         "BitwiseBase64Sugar",
         "FunctionCallSugar",
     ]
+    assert [row["requested_role"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
+        "FunctionBodyConstraint",
+        "FunctionBodyConstraint",
+        "FunctionBodyConstraint",
+        "FunctionBodyConstraint",
+        "FunctionBodyConstraint",
+        "AssertionSurface",
+    ]
+    assert [
+        _eq_name_value(row["emittedFormula"])
+        for row in good_doc["factoryAuditSummary"]["factoryWalk"][:5]
+    ] == [
+        ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+        ("b0", 97),
+        ("b1", 98),
+        ("b2", 99),
+        ("out", "YWJj"),
+    ]
+    assert (
+        good_doc["factoryAuditSummary"]["factoryWalk"][5]["emittedFormula"]
+        == assertion_contract["inv"]
+    )
     assert good_doc["sourceLedger"]["source_loci"] == 2
     assert good_doc["sourceLedger"]["source_warranted"] == 2
