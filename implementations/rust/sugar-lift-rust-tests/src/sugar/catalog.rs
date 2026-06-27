@@ -20,23 +20,24 @@ use crate::sugar::{
     const_item, const_path, constraint, control_flow_term, cstr, dormant_mut_ref,
     duration_accessor, dyn_any, enumerate, field_term, filter, filter_map, flat_map, flatten,
     float_literal_method, float_refinement, fold, for_each, for_loop_mutation, for_replay,
-    forall_loop, format_args, format_macro, from_bool, function_map, identity_map, impl_method,
-    index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt, integer_decode, intersperse,
-    intersperse_collect_string, intersperse_concat, into, ip_addr, is_empty, is_sorted, iter_next,
-    iter_terminal, iterator, kmerge, len, literal, literal_iterator_quantifier, literal_slice,
-    loop_break_term, macro_assertion_surface, macro_term, map, match_node, match_scrutinee,
-    matches_macro, maybe_uninit_new, maybe_uninit_zeroed, memchr, method, monadic, nonzero,
-    offset_of, option_adaptor, option_predicate, option_unwrap, partition_point, path, peekable,
-    primitive_int, ptr_metadata, range_accessor, range_bounds_contains, range_construct,
-    range_contains, range_term, raw_addr_term, raw_pointer_arithmetic, reference_sequence,
-    reference_term, regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
-    runtime_iterator_source, size_hint, sizeof, skip, skip_while, slice_accessor,
-    slice_chunk_window, slice_index, slice_search, source_location, statement_async_future,
-    statement_control_flow, statement_future_handoff, statement_loop_advance,
-    statement_nested_assertion, statement_reflection, statement_runtime_expr, step_by, str_method,
-    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
-    unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, write_macro, zip,
+    forall_loop, format_args, format_macro, from_bool, function_map, future_join, identity_map,
+    impl_method, index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt, integer_decode,
+    intersperse, intersperse_collect_string, intersperse_concat, into, ip_addr, is_empty,
+    is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
+    literal_iterator_quantifier, literal_slice, loop_break_term, macro_assertion_surface,
+    macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
+    maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
+    option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
+    range_accessor, range_bounds_contains, range_construct, range_contains, range_term,
+    raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term, regex_match,
+    repeat_term, result_predicate, result_transpose_collect, rev, runtime_iterator_source,
+    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
+    slice_search, source_location, statement_async_future, statement_control_flow,
+    statement_future_handoff, statement_loop_advance, statement_nested_assertion,
+    statement_reflection, statement_runtime_expr, step_by, str_method, string_add,
+    string_predicate, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary, unsafe_memory, value_if,
+    vec_literal, vec_macro, wrapping_neg, write_macro, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -178,6 +179,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &vec_macro::EXPR_SUGAR,
     &offset_of::EXPR_SUGAR,
     &addr_of_mut::EXPR_SUGAR,
+    &future_join::EXPR_SUGAR,
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
@@ -610,6 +612,54 @@ mod tests {
             selected_candidate_name_for_role(&expr, SugarRole::Composite),
             Some("statement_future_handoff_composite"),
             "async future handoff owns the real effect before the opaque call fallback"
+        );
+    }
+
+    #[test]
+    fn join_macro_is_future_sugar_before_generic_macro_term() {
+        let expr: Expr = syn::parse_str("join!(async { 0 })").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        let future_join = names
+            .iter()
+            .position(|name| *name == "future_join")
+            .unwrap_or_else(|| {
+                panic!(
+                    "join! is a std future macro and needs dedicated FutureJoinSugar before \
+                     generic macro_term; candidates were {names:?}"
+                )
+            });
+        let macro_term = names
+            .iter()
+            .position(|name| *name == "macro_term")
+            .unwrap_or_else(|| panic!("join! should still expose the generic macro fallback"));
+
+        assert!(
+            future_join < macro_term,
+            "FutureJoinSugar must outrank MacroTermSugar for join!: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("future_join")
+        );
+    }
+
+    #[test]
+    fn join_macro_reports_future_effect_instead_of_macro_rules_gap() {
+        let expr: Expr = syn::parse_str("join!(async { 0 })").unwrap();
+        let audits = run_expr_with_audit(&expr, SugarRole::Term);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == "join ! (async { 0 })" && audit.requested_role == "Term")
+            .unwrap_or_else(|| panic!("join! term site should be audited: {audits:?}"));
+
+        assert_eq!(audit.selected, Some("future_join"));
+        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert!(
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("join! future construction")),
+            "join! should report a typed future effect, not a macro_rules gap: {audit:?}"
         );
     }
 
