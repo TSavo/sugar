@@ -19,10 +19,12 @@ KIT_VERSION = "0.1.0"
 LIFT_RPC_MODULE = "sugar_lift_py_tests.lift_rpc"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
+RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
 PYTHON_LIFT_NAME = "python-lift"
+PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
 
 
 def _send(obj: Dict[str, Any]) -> None:
@@ -53,6 +55,7 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": "initialize", "required": True},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
+                {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
                 {"name": "shutdown", "required": False},
             ]
@@ -182,12 +185,154 @@ def _component_plan_result(params: Dict[str, Any]) -> Dict[str, Any]:
                 "working_dir": ".",
             }
         ],
+        "source_oracles": [
+            {
+                "surface": PYTHON_SURFACE,
+                "name": PYTHON_SOURCE_ORACLE_NAME,
+                "version": KIT_VERSION,
+                "method": RESOLVE_SOURCE_MEMENTO_RPC_METHOD,
+                "command": _runtime_lift_command(),
+                "working_dir": ".",
+            }
+        ],
         "diagnostics": [],
     }
 
 
 def _runtime_lift_command() -> List[str]:
     return [sys.executable, str(Path(__file__).resolve()), "--rpc"]
+
+
+def _source_oracle_api():
+    try:
+        from sugar_lift_python_source.source_oracle import (
+            SourceOracleRefusal,
+            resolve_source_memento,
+        )
+    except ModuleNotFoundError:
+        sibling_src = (
+            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+        )
+        if str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        from sugar_lift_python_source.source_oracle import (
+            SourceOracleRefusal,
+            resolve_source_memento,
+        )
+    return SourceOracleRefusal, resolve_source_memento
+
+
+def _source_memento_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    raw = (
+        params.get("memento")
+        or params.get("sourceMemento")
+        or params.get("source_memento")
+    )
+    if not isinstance(raw, dict):
+        return None
+    out = dict(raw)
+    aliases = {
+        "sourceFunctionName": "source_function_name",
+        "sourceCid": "source_cid",
+        "templateCid": "template_cid",
+        "paramNames": "param_names",
+    }
+    for camel, snake in aliases.items():
+        if snake not in out and camel in out:
+            out[snake] = out[camel]
+    out.setdefault("kind", "source-memento")
+    return out
+
+
+def _source_memento_response(
+    original: Dict[str, Any], resolved: Dict[str, Any]
+) -> Dict[str, Any]:
+    out = dict(original)
+    out["kind"] = "source-memento"
+    for field_name in ("source_cid", "template_cid", "param_names"):
+        if resolved.get(field_name) is not None:
+            out[field_name] = resolved[field_name]
+    for forbidden in ("body_text", "ast_template", "bodyText", "astTemplate", "sourceOracle"):
+        out.pop(forbidden, None)
+    return out
+
+
+def _source_lines_for_memento(
+    workspace_root: str, memento: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    file_name = memento.get("file")
+    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
+    start_line = span.get("start_line")
+    end_line = span.get("end_line", start_line)
+    if not isinstance(file_name, str) or not isinstance(start_line, int):
+        return []
+    if not isinstance(end_line, int):
+        end_line = start_line
+    try:
+        source_lines = (Path(workspace_root) / file_name).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    except OSError:
+        return []
+    start_index = max(start_line - 1, 0)
+    end_index = max(end_line, start_line)
+    return [
+        {"line": start_index + offset + 1, "source": source.rstrip()}
+        for offset, source in enumerate(source_lines[start_index:end_index])
+    ]
+
+
+def _source_memento_display(memento: Dict[str, Any]) -> str:
+    file_name = str(memento.get("file", "<unknown>"))
+    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
+    start_line = span.get("start_line", "?")
+    start_col = span.get("start_col", "?")
+    end_line = span.get("end_line", "?")
+    end_col = span.get("end_col", "?")
+    name = memento.get("source_function_name") or memento.get("sourceFunctionName")
+    source_cid = memento.get("source_cid") or memento.get("sourceCid")
+    pieces = [f"{file_name}:{start_line}:{start_col}-{end_line}:{end_col}"]
+    if isinstance(name, str) and name:
+        pieces.append(name)
+    if isinstance(source_cid, str) and source_cid:
+        pieces.append(source_cid)
+    return " ".join(pieces)
+
+
+def _source_refusal_status(reason: str) -> str:
+    if "source CID misaligned" in reason or "template CID misaligned" in reason:
+        return "drifted"
+    return "absent"
+
+
+def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
+    workspace_root = str(params.get("workspace_root", "."))
+    memento = _source_memento_from_params(params)
+    if memento is None:
+        return {
+            "status": "absent",
+            "reason": "invalid source memento shape",
+        }
+    SourceOracleRefusal, resolve_source_memento = _source_oracle_api()
+    try:
+        resolved = resolve_source_memento(workspace_root, memento)
+    except SourceOracleRefusal as exc:
+        reason = str(exc)
+        return {
+            "status": _source_refusal_status(reason),
+            "reason": reason,
+            "memento": _source_memento_response(memento, {}),
+        }
+    body_text = str(resolved.get("body_text") or "").strip()
+    lean_memento = _source_memento_response(memento, resolved)
+    return {
+        "status": "resolved",
+        "source": body_text,
+        "bodyText": body_text,
+        "sourceLines": _source_lines_for_memento(workspace_root, lean_memento),
+        "display": _source_memento_display(lean_memento),
+        "memento": lean_memento,
+    }
 
 
 def _handle_initialize(msg_id: Any) -> None:
@@ -273,6 +418,16 @@ def main(argv: Optional[List[str]] = None) -> None:
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": _component_plan_result(params if isinstance(params, dict) else {}),
+                }
+            )
+        elif method == RESOLVE_SOURCE_MEMENTO_RPC_METHOD:
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": _resolve_source_memento_result(
+                        params if isinstance(params, dict) else {}
+                    ),
                 }
             )
         elif method == "lift":
