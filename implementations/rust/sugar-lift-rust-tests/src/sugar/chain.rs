@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::{const_val_term, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -97,6 +98,9 @@ fn sequence_from_body(
         Outcome::Complete(Desugared::Seq(seq)) => Ok(ChainSequence::Values(seq)),
         Outcome::Complete(Desugared::TermSeq(terms)) => Ok(ChainSequence::Terms(terms)),
         Outcome::Complete(_) => panic!("{label} reduced to non-sequence"),
+        Outcome::Incomplete(effect) if effect.is_literal_domain_reason(EMPTY_DOMAIN_REASON) => {
+            Ok(ChainSequence::Values(Vec::new()))
+        }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }

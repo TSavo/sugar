@@ -6362,7 +6362,7 @@ fn peel_fold_adaptors_inner<'a>(
         match cur {
             Expr::MethodCall(m) => {
                 let name = m.method.to_string();
-                if name == "zip" && m.args.len() == 1 {
+                if matches!(name.as_str(), "chain" | "zip") && m.args.len() == 1 {
                     break;
                 }
                 if matches!(name.as_str(), "chars" | "bytes") && m.args.is_empty() {
