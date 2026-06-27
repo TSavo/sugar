@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
-from .string_literal_sugar import StringLiteralSugar
+from .string_literal_sugar import StringLiteralSugar, string_literal_sugar
 
 
 BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -25,10 +25,10 @@ class AlphabetLiteralSugar:
         target = stmt.targets[0]
         if not isinstance(target, ast.Name):
             return None
-        literal = StringLiteralSugar.from_node(stmt.value)
-        if literal is None or literal.node.value != BASE64_ALPHABET:
+        literal = string_literal_sugar(stmt.value)
+        if literal is None or literal.value != BASE64_ALPHABET:
             return None
         return cls(stmt=stmt, name=target.id, literal=literal)
 
     def desugar(self) -> Outcome:
-        return Complete(StringValue(self.literal.node.value))
+        return Complete(StringValue(self.literal.value))

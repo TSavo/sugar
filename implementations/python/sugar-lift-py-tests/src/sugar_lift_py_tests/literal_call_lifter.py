@@ -24,7 +24,7 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
-from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def _lift_assert(
     call_sugar = FunctionCallSugar.from_call(comparison.left, functions_by_name)
     if call_sugar is None:
         return None
-    expected_sugar = StringLiteralSugar.from_node(comparison.comparators[0])
+    expected_sugar = string_literal_sugar(comparison.comparators[0])
     if expected_sugar is None:
         return None
     actual = complete_value(call_sugar.desugar(), owner="literal function call actual")

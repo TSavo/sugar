@@ -40,7 +40,7 @@ _AST_REF = re.compile(r"\bast\.[A-Za-z_]")
 # recorded commit. A PR that raises it is a relapse -- someone reached for an
 # interpreter -- and the build goes red. 0 is the target: the whole sugar layer
 # build()-born and lowering to FOL. The coordinator tightens it as the fleet lands.
-_CRIME_CEILING = 32
+_CRIME_CEILING = 30
 
 
 def _linted_files() -> list[Path]:
