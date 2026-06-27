@@ -7,7 +7,7 @@ from sugar_lift_py_tests.operations import CallableMapOperation, perform_operati
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 
 from .function_ref_sugar import FunctionRefSugar
-from .range_sugar import RangeSugar
+from .range_sugar import RangeSugar, range_sugar
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class MapBuiltinSugar:
         callable_sugar = FunctionRefSugar.from_node(node.args[0], functions_by_name)
         if callable_sugar is None:
             return None
-        sequence = RangeSugar.from_call(node.args[1])
+        sequence = range_sugar(node.args[1])
         if sequence is None:
             return None
         return cls(
