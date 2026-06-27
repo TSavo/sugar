@@ -917,12 +917,7 @@ impl IterTerminalSugar {
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
             {
-                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                    boundary: name.clone(),
-                    reason: format!(
-                        "consumed iterator `{name}` has no replayable temporal rewrite at this point; refused"
-                    ),
-                });
+                return Outcome::Incomplete(Effect::ConsumedIteratorState { boundary: name });
             }
         }
         if matches!(self.terminal, Terminal::Count) {
