@@ -872,6 +872,12 @@ fn source_oracle_routes_from_plan_mementos(plan_mementos: &[Value]) -> Vec<Sourc
                 .and_then(Value::as_str)
                 .filter(|role| !role.is_empty())
                 .map(str::to_string);
+            if matches!(
+                role.as_deref(),
+                Some("factory-report" | "proofir-compiler" | "witness-oracle")
+            ) {
+                continue;
+            }
             let key = (
                 surface.to_string(),
                 workspace_override.clone().unwrap_or_default(),
@@ -3051,6 +3057,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
     };
     let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
+    out.push_str(&render_report_plan_roll_call(report));
     out.push_str(&render_universe_visual_report(report, source_lookup));
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -3117,6 +3124,9 @@ fn render_universe_visual_report(
                 ));
             }
         }
+        if mode == UniverseVisualMode::BodyComplete {
+            render_visual_forensic_context(&mut out, report, contract);
+        }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
             continue;
@@ -3132,6 +3142,35 @@ fn render_universe_visual_report(
         );
     }
     out
+}
+
+fn render_visual_forensic_context(out: &mut String, report: &LiftSourceReport, contract: &Value) {
+    let contracts = [contract];
+    let warranting_facts = warranting_fact_rows_for_contracts(report, &contracts);
+    let downstream_edges = downstream_call_edges_for_contracts(&report.call_edges, &contracts);
+    if warranting_facts.is_empty() && downstream_edges.is_empty() {
+        return;
+    }
+    if !warranting_facts.is_empty() {
+        out.push_str("    walk warranted by observed facts:\n");
+        for fact in warranting_facts.iter().take(8) {
+            out.push_str(&format!("      - {}\n", fact.row));
+        }
+        if warranting_facts.len() > 8 {
+            out.push_str(&format!(
+                "      - (+{} more observed facts using this universe)\n",
+                warranting_facts.len() - 8
+            ));
+        }
+    }
+    out.push_str("    callsite preconditions depending on this post:\n");
+    if downstream_edges.is_empty() {
+        out.push_str("      - no precondition implication mementos observed in this proof\n");
+    } else {
+        for edge in &downstream_edges {
+            out.push_str(&format!("      - {}\n", format_dependency_edge(edge)));
+        }
+    }
 }
 
 fn format_contract_visual_fol(contract: &Value) -> String {
@@ -4262,7 +4301,7 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
     }
     out.push_str(&format!(
         "report sections: unit test facts={}, body universes={}, factory report={}, implications={}, source mementos={}\n",
-        report.assertion_surface_audits.len(),
+        report_unit_test_fact_count(report),
         report.contracts.len(),
         report.factory_audits.len() + report.factory_walk.len(),
         report.call_edges.len() + report.vendor_conjoins.len(),
@@ -4293,7 +4332,7 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new())),
         "reportSections": {
-            "unitTestFacts": report.assertion_surface_audits.len(),
+            "unitTestFacts": report_unit_test_fact_count(report),
             "bodyUniverses": report.contracts.len(),
             "factoryReport": report.factory_audits.len() + report.factory_walk.len(),
             "implications": report.call_edges.len() + report.vendor_conjoins.len(),
@@ -4334,6 +4373,12 @@ fn format_plan_atom_roll_call(atom: &Value) -> String {
         .and_then(Value::as_str)
         .map(plan_role_label)
         .unwrap_or("component");
+    let participation = atom
+        .get("participation")
+        .and_then(Value::as_str)
+        .filter(|participation| *participation != "executed")
+        .map(|participation| format!(" ({participation})"))
+        .unwrap_or_default();
     let name = atom
         .get("pluginName")
         .or_else(|| atom.get("manifestName"))
@@ -4358,7 +4403,7 @@ fn format_plan_atom_roll_call(atom: &Value) -> String {
         .filter(|workspace| !workspace.is_empty())
         .map(|workspace| format!(" workspace {workspace}"))
         .unwrap_or_default();
-    format!("{role}: {name}{version}{binary_cid}{workspace}")
+    format!("{role}{participation}: {name}{version}{binary_cid}{workspace}")
 }
 
 fn plan_role_label(role: &str) -> &'static str {
@@ -4366,6 +4411,7 @@ fn plan_role_label(role: &str) -> &'static str {
         "unit-test-assertions" => "unit test assertions",
         "body-universes" => "body universes",
         "implications" => "implications",
+        "factory-report" => "factory report",
         "witness-oracle" => "witness oracle",
         "proofir-compiler" => "ProofIR compiler",
         "source-oracle" => "source oracle",
@@ -4379,6 +4425,20 @@ fn short_cid(cid: &str) -> String {
         return format!("blake3-512:{short}");
     }
     cid.to_string()
+}
+
+fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
+    let audit_facts = report
+        .assertion_surface_audits
+        .iter()
+        .map(assertion_surface_fact_count)
+        .sum::<usize>();
+    let contract_facts = report
+        .contracts
+        .iter()
+        .filter(|contract| contract_inv_is_observed_fact(contract))
+        .count();
+    audit_facts.max(contract_facts)
 }
 
 fn render_source_report_human(report: &LiftSourceReport) -> String {
@@ -8737,6 +8797,19 @@ mod tests {
             parsed["assemblyPlan"]["planAtoms"][1]["workspaceOverride"],
             "vendor/base64-0.22.1"
         );
+
+        let visual = render_report_visual(&report, None);
+        assert!(
+            visual.starts_with(
+                "plan: component-discovery\nThis report was assembled with the use of:\n"
+            ),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("unit test assertions: rust-test-assertions-lift"),
+            "{visual}"
+        );
+        assert!(visual.contains("universe visual:"), "{visual}");
     }
 
     #[test]
@@ -9328,6 +9401,20 @@ mod tests {
         assert!(
             !human.contains("source present:\n          let rem = bytes_len % 3;\n"),
             "{human}"
+        );
+
+        let visual = render_report_visual(&report, None);
+        assert!(
+            visual.contains(
+                "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(call:encoded_len#panic_callsite(2, false))"
+            ),
+            "{visual}"
+        );
+        assert!(
+            visual.contains(
+                "    callsite preconditions depending on this post:\n      - encoded_len.post -> method:checked_add.pre via method:checked_add"
+            ),
+            "{visual}"
         );
     }
 

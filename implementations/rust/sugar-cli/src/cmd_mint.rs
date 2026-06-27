@@ -1891,7 +1891,13 @@ fn toolchain_plan_seed(
             })
         })
         .collect();
-    let plan_atoms = plan_atoms_for_plugins(project_root, plugins);
+    let component_plan = crate::component_plan::plan_workspace(project_root);
+    let mut plan_atoms = plan_atoms_for_plugins(project_root, plugins);
+    plan_atoms.extend(support_plan_atoms_for_component_plan(
+        project_root,
+        plugins,
+        &component_plan,
+    ));
     json!({
         "kind": "component-plan",
         "schemaVersion": "1",
@@ -1908,56 +1914,175 @@ fn toolchain_plan_seed(
 fn plan_atoms_for_plugins(project_root: &Path, plugins: &[PluginEntry]) -> Vec<Value> {
     plugins
         .iter()
-        .map(|plugin| {
-            let manifest = lift_plugin::find_manifest_for_surface(project_root, &plugin.surface);
-            let (manifest_name, version, protocol_version, command, working_dir, phase, method) =
-                match manifest {
-                    Ok(manifest) => {
-                        let working_dir =
-                            lift_plugin::resolved_working_dir_for(project_root, &manifest);
-                        (
-                            Some(manifest.name),
-                            manifest.version,
-                            manifest.protocol_version,
-                            manifest.command,
-                            working_dir,
-                            manifest.phase,
-                            manifest.method,
-                        )
-                    }
-                    Err(error) => (
-                        None,
-                        None,
-                        None,
-                        Vec::new(),
-                        None,
-                        None,
-                        Some(format!("manifest resolution failed: {error}")),
-                    ),
-                };
-            let binary = command
-                .first()
-                .map(|program| plan_binary_identity(project_root, working_dir.as_deref(), program));
-            json!({
-                "kind": "plan-atom",
-                "schemaVersion": "1",
-                "atomKind": "lifter-binary",
-                "role": plan_role_for_plugin(plugin, phase.as_deref()),
-                "surface": plugin.surface,
-                "pluginName": plugin.display_name(),
-                "manifestName": manifest_name,
-                "version": version,
-                "protocolVersion": protocol_version,
-                "command": command,
-                "method": method,
-                "phase": phase,
-                "workspaceOverride": plugin.workspace_override,
-                "emit": plugin.emit,
-                "layer": plugin.layer,
-                "binary": binary,
-            })
-        })
+        .map(|plugin| plan_atom_for_plugin(project_root, plugin))
         .collect()
+}
+
+fn plan_atom_for_plugin(project_root: &Path, plugin: &PluginEntry) -> Value {
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, &plugin.surface);
+    let (manifest_name, version, protocol_version, command, working_dir, phase, method) =
+        match manifest {
+            Ok(manifest) => {
+                let working_dir = lift_plugin::resolved_working_dir_for(project_root, &manifest);
+                (
+                    Some(manifest.name),
+                    manifest.version,
+                    manifest.protocol_version,
+                    manifest.command,
+                    working_dir,
+                    manifest.phase,
+                    manifest.method,
+                )
+            }
+            Err(error) => (
+                None,
+                None,
+                None,
+                Vec::new(),
+                None,
+                None,
+                Some(format!("manifest resolution failed: {error}")),
+            ),
+        };
+    let binary = command
+        .first()
+        .map(|program| plan_binary_identity(project_root, working_dir.as_deref(), program));
+    json!({
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "lifter-binary",
+        "role": plan_role_for_plugin(plugin, phase.as_deref()),
+        "surface": plugin.surface.clone(),
+        "pluginName": plugin.display_name(),
+        "manifestName": manifest_name,
+        "version": version,
+        "protocolVersion": protocol_version,
+        "command": command,
+        "method": method,
+        "phase": phase,
+        "workspaceOverride": plugin.workspace_override.clone(),
+        "emit": plugin.emit.clone(),
+        "layer": plugin.layer.clone(),
+        "binary": binary,
+        "participation": "executed",
+    })
+}
+
+fn support_plan_atoms_for_component_plan(
+    project_root: &Path,
+    active_plugins: &[PluginEntry],
+    component_plan: &crate::component_plan::ComponentPlan,
+) -> Vec<Value> {
+    let active_surfaces = active_plugins
+        .iter()
+        .map(|plugin| plugin.surface.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut atoms = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for plugin in active_plugins {
+        let mut atom = plan_atom_for_plugin(project_root, plugin);
+        atom["atomKind"] = json!("source-oracle");
+        atom["role"] = json!("source-oracle");
+        atom["pluginName"] = json!(format!("{} source oracle", plugin.display_name()));
+        push_unique_plan_atom(&mut atoms, &mut seen, atom);
+    }
+
+    push_unique_plan_atom(
+        &mut atoms,
+        &mut seen,
+        factory_report_plan_atom(project_root),
+    );
+
+    for plugin in &component_plan.plugins {
+        if active_surfaces.contains(plugin.surface.as_str()) {
+            continue;
+        }
+        let phase = planned_phase_for_plugin(component_plan, &plugin.surface);
+        if plan_role_for_plugin(plugin, phase.as_deref()) != "witness-oracle" {
+            continue;
+        }
+        let mut atom = plan_atom_for_plugin(project_root, plugin);
+        atom["participation"] = json!("available");
+        push_unique_plan_atom(&mut atoms, &mut seen, atom);
+    }
+
+    for compiler in &component_plan.ir_compilers {
+        push_unique_plan_atom(
+            &mut atoms,
+            &mut seen,
+            proofir_compiler_plan_atom(project_root, compiler),
+        );
+    }
+
+    atoms
+}
+
+fn push_unique_plan_atom(atoms: &mut Vec<Value>, seen: &mut BTreeSet<String>, atom: Value) {
+    let key = format!(
+        "{}\0{}\0{}",
+        atom.get("role").and_then(Value::as_str).unwrap_or(""),
+        atom.get("surface").and_then(Value::as_str).unwrap_or(""),
+        atom.get("pluginName").and_then(Value::as_str).unwrap_or(""),
+    );
+    if seen.insert(key) {
+        atoms.push(atom);
+    }
+}
+
+fn factory_report_plan_atom(project_root: &Path) -> Value {
+    let program = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "sugar".to_string());
+    json!({
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "factory-report",
+        "role": "factory-report",
+        "pluginName": "sugar-lift-report",
+        "version": env!("CARGO_PKG_VERSION"),
+        "command": [program.clone()],
+        "binary": plan_binary_identity(project_root, None, &program),
+        "participation": "executed",
+    })
+}
+
+fn planned_phase_for_plugin(
+    component_plan: &crate::component_plan::ComponentPlan,
+    surface: &str,
+) -> Option<String> {
+    component_plan
+        .lift_manifests
+        .iter()
+        .find(|manifest| manifest.surface == surface)
+        .and_then(|manifest| manifest.phase.clone())
+}
+
+fn proofir_compiler_plan_atom(
+    project_root: &Path,
+    compiler: &crate::component_plan::PlannedIrCompiler,
+) -> Value {
+    let binary = compiler.command.first().map(|program| {
+        plan_binary_identity(project_root, compiler.working_dir.as_deref(), program)
+    });
+    json!({
+        "kind": "plan-atom",
+        "schemaVersion": "1",
+        "atomKind": "proofir-compiler",
+        "role": "proofir-compiler",
+        "pluginName": compiler.name.clone(),
+        "manifestName": compiler.name.clone(),
+        "version": compiler.version.clone(),
+        "protocolVersion": compiler.protocol_version.clone(),
+        "command": compiler.command.clone(),
+        "workspaceOverride": compiler.working_dir.as_ref().map(|path| path.display().to_string()),
+        "dialects": compiler.dialects.clone(),
+        "supportedSorts": compiler.supported_sorts.clone(),
+        "supportedPredicates": compiler.supported_predicates.clone(),
+        "binary": binary,
+        "participation": "available",
+    })
 }
 
 fn plan_binary_identity(project_root: &Path, working_dir: Option<&Path>, program: &str) -> Value {
@@ -2519,6 +2644,8 @@ fn mint_ir_document_with_source_and_plan_mementos(
         pre_hash: Option<String>,
         post_hash: Option<String>,
         inv_hash: Option<String>,
+        pre_body: Option<Value>,
+        post_body: Option<Value>,
         has_nontrivial_pre: bool,
         body_discharge_eligible: bool,
         body_discharge_refusal_reason: Option<String>,
@@ -2849,12 +2976,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
             .unwrap_or("out")
             .to_string();
         let pre_decl = decl.get("pre").or_else(|| decl.get("precondition"));
+        let pre_body = pre_decl.cloned();
         let has_nontrivial_pre = pre_decl.is_some_and(has_nontrivial_pre_json);
         let pre = pre_decl.map(json_to_cvalue);
-        let post = decl
-            .get("post")
-            .or_else(|| decl.get("postcondition"))
-            .map(json_to_cvalue);
+        let post_decl = decl.get("post").or_else(|| decl.get("postcondition"));
+        let post_body = post_decl.cloned();
+        let post = post_decl.map(json_to_cvalue);
         let inv = decl
             .get("inv")
             .or_else(|| decl.get("invariant"))
@@ -3115,6 +3242,8 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 pre_hash,
                 post_hash,
                 inv_hash,
+                pre_body,
+                post_body,
                 has_nontrivial_pre,
                 body_discharge_eligible,
                 body_discharge_refusal_reason,
@@ -3340,6 +3469,12 @@ fn mint_ir_document_with_source_and_plan_mementos(
             }
             if let Some(formal_sorts) = &contract.formal_sorts {
                 binding["formalSorts"] = Value::Array(formal_sorts.clone());
+            }
+            if let Some(pre) = &contract.pre_body {
+                binding["pre"] = pre.clone();
+            }
+            if let Some(post) = &contract.post_body {
+                binding["post"] = post.clone();
             }
             binding
         })
@@ -5969,6 +6104,14 @@ mod tests {
         assert_eq!(
             binding["formalSorts"],
             json!([{"kind": "primitive", "name": "unit"}])
+        );
+        assert_eq!(
+            binding["pre"],
+            json!({"kind": "atomic", "name": "ready", "args": []})
+        );
+        assert_eq!(
+            binding["post"],
+            json!({"kind": "atomic", "name": "true", "args": []})
         );
 
         let _ = std::fs::remove_dir_all(root);

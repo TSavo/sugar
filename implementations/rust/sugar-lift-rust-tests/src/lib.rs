@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub mod closed_eval;
 mod macro_expand;
@@ -238,6 +239,8 @@ pub(crate) use crate::sugar::term_dispatch::{
     translate_term_in_scope_with_audits,
 };
 use quote::ToTokens;
+use sugar_canonicalizer::Value as CValue;
+use sugar_ir_symbolic::serialize::term_to_value;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, gt, gte, lt, lte, make_var, ne, not_, num, or_, real_const, str_const,
     ConstValue, ContractDecl, Formula, Term,
@@ -1952,7 +1955,7 @@ fn lift_source_assertion_contracts_in_stmts(
             SourceAssertionContractSlot::Inv => inv_entries.push(entry.entry),
         }
     }
-    for group in group_assertions(pre_entries, item_name) {
+    for group in group_assertions(pre_entries, item_name, source_path) {
         emit_assertion_fact_metadata(out, source_path, item_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
@@ -1961,11 +1964,11 @@ fn lift_source_assertion_contracts_in_stmts(
             inv: None,
             out_binding: "out".to_string(),
             evidence: None,
-            panic_loci: Vec::new(),
+            panic_loci: group.panic_loci,
             concept_hint: None,
         });
     }
-    for group in group_assertions(inv_entries, item_name) {
+    for group in group_assertions(inv_entries, item_name, source_path) {
         emit_assertion_fact_metadata(out, source_path, item_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
@@ -1974,7 +1977,7 @@ fn lift_source_assertion_contracts_in_stmts(
             inv: Some(and_(group.atoms)),
             out_binding: "out".to_string(),
             evidence: None,
-            panic_loci: Vec::new(),
+            panic_loci: group.panic_loci,
             concept_hint: None,
         });
     }
@@ -2365,7 +2368,7 @@ fn visit_test_fn(
         return;
     }
 
-    for group in group_assertions(entries, &test_name) {
+    for group in group_assertions(entries, &test_name, source_path) {
         emit_assertion_fact_metadata(out, source_path, &test_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
@@ -2374,7 +2377,7 @@ fn visit_test_fn(
             inv: Some(and_(group.atoms)),
             out_binding: "out".to_string(),
             evidence: None,
-            panic_loci: Vec::new(),
+            panic_loci: group.panic_loci,
             concept_hint: None,
         });
     }
@@ -2410,6 +2413,7 @@ pub(crate) struct AssertionEntry {
 struct AssertionGroup {
     name: String,
     atoms: Vec<Rc<Formula>>,
+    panic_loci: Vec<Arc<CValue>>,
     warranted_fact_spans: Vec<proc_macro2::Span>,
     support_fact_spans: Vec<proc_macro2::Span>,
     warranted_claim_count: usize,
@@ -5305,7 +5309,11 @@ impl TemporalScope {
     }
 }
 
-fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<AssertionGroup> {
+fn group_assertions(
+    entries: Vec<AssertionEntry>,
+    fallback_name: &str,
+    source_path: &str,
+) -> Vec<AssertionGroup> {
     // Each entry joins the obligation named by its callsite (or the fn
     // fallback). A lifted loop is a named `<test>::loop::<var>` memento with its
     // own obligation here, mirroring the Python layer-2 lifter. Whether a
@@ -5321,14 +5329,19 @@ fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<As
             kind,
             claim_count,
         } = entry;
+        let panic_loci = fact_span
+            .map(|span| panic_leaf_loci_for_formula(atom.as_ref(), source_path, span))
+            .unwrap_or_default();
         let name = name.unwrap_or_else(|| fallback_name.to_string());
         if let Some(group) = groups.iter_mut().find(|group| group.name == name) {
             group.atoms.push(atom);
             record_assertion_group_kind(group, kind, fact_span, claim_count);
+            group.panic_loci.extend(panic_loci);
         } else {
             let mut group = AssertionGroup {
                 name,
                 atoms: vec![atom],
+                panic_loci,
                 warranted_fact_spans: Vec::new(),
                 support_fact_spans: Vec::new(),
                 warranted_claim_count: 0,
@@ -5341,6 +5354,73 @@ fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<As
         }
     }
     groups
+}
+
+fn panic_leaf_loci_for_formula(
+    formula: &Formula,
+    source_path: &str,
+    span: proc_macro2::Span,
+) -> Vec<Arc<CValue>> {
+    let mut loci = Vec::new();
+    collect_panic_leaf_loci(formula, source_path, span, &mut loci);
+    loci
+}
+
+fn collect_panic_leaf_loci(
+    formula: &Formula,
+    source_path: &str,
+    span: proc_macro2::Span,
+    out: &mut Vec<Arc<CValue>>,
+) {
+    match formula {
+        Formula::Atomic { name, args } if name == "panic" => {
+            for arg in args {
+                if let Some(locus) = panic_leaf_locus(arg.as_ref(), source_path, span) {
+                    out.push(locus);
+                }
+            }
+        }
+        Formula::Atomic { .. } => {}
+        Formula::Connective { operands, .. } => {
+            for operand in operands {
+                collect_panic_leaf_loci(operand.as_ref(), source_path, span, out);
+            }
+        }
+        Formula::Quantifier { body, .. } | Formula::Choice { body, .. } => {
+            collect_panic_leaf_loci(body.as_ref(), source_path, span, out);
+        }
+    }
+}
+
+fn panic_leaf_locus(
+    term: &Term,
+    source_path: &str,
+    span: proc_macro2::Span,
+) -> Option<Arc<CValue>> {
+    let Term::Ctor { name, args } = term else {
+        return None;
+    };
+    let callee = name.strip_suffix("#panic_callsite")?;
+    if !matches!(
+        callee,
+        "method:unwrap" | "method:expect" | "method:unwrap_err"
+    ) {
+        return None;
+    }
+    let receiver = args.first()?;
+    let start = span.start();
+    let end = span.end();
+    Some(CValue::object([
+        ("callee", CValue::string(callee)),
+        ("file", CValue::string(source_path)),
+        ("line", CValue::integer(start.line as i128)),
+        ("col", CValue::integer(start.column as i128)),
+        ("start_line", CValue::integer(start.line as i128)),
+        ("start_col", CValue::integer(start.column as i128)),
+        ("end_line", CValue::integer(end.line as i128)),
+        ("end_col", CValue::integer(end.column as i128)),
+        ("argTerm", term_to_value(receiver)),
+    ]))
 }
 
 fn record_assertion_group_kind(
@@ -14334,7 +14414,7 @@ fn lift_item_assertions(
         }
     }
 
-    for group in group_assertions(entries, &item_name) {
+    for group in group_assertions(entries, &item_name, source_path) {
         emit_assertion_fact_metadata(out, source_path, &item_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
@@ -14343,7 +14423,7 @@ fn lift_item_assertions(
             inv: Some(and_(group.atoms)),
             out_binding: "out".to_string(),
             evidence: None,
-            panic_loci: Vec::new(),
+            panic_loci: group.panic_loci,
             concept_hint: None,
         });
     }
