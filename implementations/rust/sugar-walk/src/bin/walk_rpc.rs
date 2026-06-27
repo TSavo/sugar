@@ -6892,6 +6892,7 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
 
     emit_infallible_serialize_contracts(&infallible_serialize, &current_crate, &mut entries)?;
     emit_function_postcondition_contracts(&function_postconditions, &current_crate, &mut entries)?;
+    emit_builtin_std_panic_partial_contracts(&mut entries);
 
     // Producer-side visibility. This surface emits the contracts that the
     // implication matcher later bridges into; a collapse here (e.g. a soundness
@@ -7314,6 +7315,58 @@ fn emit_function_postcondition_contracts(
         }));
     }
     Ok(())
+}
+
+fn emit_builtin_std_panic_partial_contracts(entries: &mut Vec<Value>) {
+    for partial in [
+        StdPanicPartial {
+            name: "option_unwrap@std/src/option.rs:1:1",
+            predicate: panic_freedom::IS_SOME,
+            sort: "Option",
+        },
+        StdPanicPartial {
+            name: "option_expect@std/src/option.rs:1:1",
+            predicate: panic_freedom::IS_SOME,
+            sort: "Option",
+        },
+        StdPanicPartial {
+            name: "result_unwrap@std/src/result.rs:1:1",
+            predicate: panic_freedom::IS_OK,
+            sort: "Result",
+        },
+        StdPanicPartial {
+            name: "result_expect@std/src/result.rs:1:1",
+            predicate: panic_freedom::IS_OK,
+            sort: "Result",
+        },
+        StdPanicPartial {
+            name: "result_unwrap_err@std/src/result.rs:1:1",
+            predicate: panic_freedom::IS_ERR,
+            sort: "Result",
+        },
+    ] {
+        entries.push(json!({
+            "kind": "function-contract",
+            "name": partial.name,
+            "fn_name": partial.name,
+            "formals": ["receiver"],
+            "formalSorts": [{"kind": "primitive", "name": partial.sort}],
+            "outBinding": "out",
+            "pre": {
+                "kind": "atomic",
+                "name": partial.predicate,
+                "args": [{"kind": "var", "name": "receiver"}],
+            },
+            "bodyDischargeEligible": true,
+            "library": "std",
+        }));
+    }
+}
+
+struct StdPanicPartial {
+    name: &'static str,
+    predicate: &'static str,
+    sort: &'static str,
 }
 
 fn pure_free_guard_rules_for_function_post_lift(
@@ -13789,6 +13842,66 @@ pub fn identity(value: i64) -> i64 {
             .find(|entry| entry["name"] == "identity")
             .expect("identity function contract");
         assert_eq!(entry["library"], "sugar_cli");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_lift_publishes_builtin_std_panic_partials() {
+        let root = temp_workspace("function_contract_builtin_std_partials");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "std-partial-consumer"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+        fs::write(
+            src_dir.join("lib.rs"),
+            r#"
+pub fn identity(value: i64) -> i64 {
+    value
+}
+"#,
+        )
+        .expect("write source");
+
+        let resp = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect("function contract lift");
+
+        let entries = resp["ir"].as_array().expect("ir array");
+        for (name, predicate) in [
+            ("option_unwrap@std/src/option.rs:1:1", "is_some"),
+            ("option_expect@std/src/option.rs:1:1", "is_some"),
+            ("result_unwrap@std/src/result.rs:1:1", "is_ok"),
+            ("result_expect@std/src/result.rs:1:1", "is_ok"),
+            ("result_unwrap_err@std/src/result.rs:1:1", "is_err"),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry["name"] == name)
+                .unwrap_or_else(|| panic!("missing builtin std partial `{name}`: {entries:?}"));
+            assert_eq!(entry["kind"], "function-contract");
+            assert_eq!(entry["library"], "std");
+            assert_eq!(entry["bodyDischargeEligible"], true);
+            assert_eq!(
+                entry["pre"],
+                json!({
+                    "kind": "atomic",
+                    "name": predicate,
+                    "args": [{"kind": "var", "name": "receiver"}]
+                })
+            );
+            assert_eq!(entry["formals"], json!(["receiver"]));
+        }
 
         let _ = fs::remove_dir_all(root);
     }

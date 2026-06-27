@@ -6,10 +6,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use quote::ToTokens;
 use serde_json::{json, Value};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_ir_symbolic::{eq, make_var, ContractDecl, Term};
 use sugar_lift_rust_tests::cargo_cfg::{
@@ -185,6 +186,7 @@ fn component_plan_result(params: &Value) -> Value {
             "kind": "lift",
             "command": [command],
             "working_dir": ".",
+            "phase": "consumer",
         }],
         "diagnostics": [],
     })
@@ -591,12 +593,15 @@ fn lift(params: &Value) -> Value {
                 &fns,
                 &mut source_cache,
             );
+            let assertion_panic_bridges =
+                assertion_panic_partial_bridges(&assertion_entries, params);
             assertion_surface_audits.extend(assertion_surface_audits_for_file(
                 &out.assertion_facts,
                 &assertion_sources,
                 &fns,
                 &mut source_cache,
             ));
+            entries.extend(assertion_panic_bridges);
             entries.extend(assertion_entries);
         }
         info!(
@@ -917,6 +922,319 @@ fn attach_assertion_source_warrants(
     }
 
     entries
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProducerReturnKind {
+    Option,
+    ResultOk,
+    ResultErr,
+}
+
+#[derive(Clone, Debug)]
+struct StdPanicPartialTarget {
+    contract_cid: String,
+    formals: Vec<String>,
+}
+
+fn assertion_panic_partial_bridges(assertion_entries: &[Value], params: &Value) -> Vec<Value> {
+    let bindings = contract_bindings(params);
+    if bindings.is_empty() {
+        return Vec::new();
+    }
+    let std_partials = std_panic_partial_targets(&bindings);
+    if std_partials.is_empty() {
+        return Vec::new();
+    }
+    let producer_returns = producer_return_kinds(&bindings);
+    if producer_returns.is_empty() {
+        return Vec::new();
+    }
+
+    let mut bridges = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in assertion_entries {
+        let Some(loci) = entry
+            .get("panicLoci")
+            .or_else(|| entry.get("panic_loci"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for locus in loci {
+            let Some(callee) = locus.get("callee").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(receiver) = locus.get("argTerm") else {
+                continue;
+            };
+            let Some(producer_leaf) = producer_leaf_from_receiver(receiver) else {
+                continue;
+            };
+            let Some(return_kind) = producer_returns.get(producer_leaf) else {
+                continue;
+            };
+            let Some(partial_leaf) = std_partial_leaf_for_panic(callee, *return_kind) else {
+                continue;
+            };
+            let Some(target) = std_partials.get(partial_leaf) else {
+                continue;
+            };
+            let Some(file) = locus.get("file").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(line) = locus
+                .get("line")
+                .or_else(|| locus.get("start_line"))
+                .and_then(Value::as_u64)
+            else {
+                continue;
+            };
+            let col = locus
+                .get("col")
+                .or_else(|| locus.get("start_col"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let formal = target
+                .formals
+                .first()
+                .map(String::as_str)
+                .unwrap_or("receiver");
+            let key = format!(
+                "{callee}\0{file}\0{line}\0{col}\0{}\0{}",
+                target.contract_cid,
+                encode_jcs(json_to_cvalue(receiver).as_ref())
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            bridges.push(json!({
+                "kind": "bridge",
+                "name": format!(
+                    "rust-test-assertions:panic-partial:{callee}@{file}:{line}:{col}->{partial_leaf}"
+                ),
+                "schemaVersion": "1",
+                "sourceContractCid": target.contract_cid,
+                "sourceLayer": SURFACE,
+                "sourceSymbol": callee,
+                "target": {"cid": target.contract_cid, "kind": "contract"},
+                "targetContractCid": target.contract_cid,
+                "targetLayer": "rust",
+                "callsite": {
+                    "panicSite": true,
+                    "effectSite": "panic",
+                    "file": file,
+                    "line": line,
+                    "formalActuals": {
+                        formal: receiver.clone(),
+                    },
+                },
+            }));
+        }
+    }
+    bridges
+}
+
+fn contract_bindings(params: &Value) -> Vec<Value> {
+    params
+        .get("contract_bindings")
+        .or_else(|| params.get("contractBindings"))
+        .and_then(Value::as_array)
+        .map(|bindings| bindings.to_vec())
+        .unwrap_or_default()
+}
+
+fn std_panic_partial_targets(bindings: &[Value]) -> BTreeMap<String, StdPanicPartialTarget> {
+    let mut out = BTreeMap::new();
+    for binding in bindings {
+        if binding.get("library").and_then(Value::as_str) != Some("std") {
+            continue;
+        }
+        if !binding_bool(binding, "has_pre", "hasPre")
+            && !binding
+                .get("pre")
+                .is_some_and(|pre| !formula_is_trivial_true(pre))
+        {
+            continue;
+        }
+        let Some(name) = binding.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let leaf = contract_leaf(name).to_string();
+        if !matches!(
+            leaf.as_str(),
+            "option_unwrap"
+                | "option_expect"
+                | "result_unwrap"
+                | "result_expect"
+                | "result_unwrap_err"
+        ) {
+            continue;
+        }
+        let Some(contract_cid) = binding
+            .get("contract_cid")
+            .or_else(|| binding.get("contractCid"))
+            .and_then(Value::as_str)
+            .filter(|cid| !cid.is_empty())
+        else {
+            continue;
+        };
+        let formals = binding
+            .get("formals")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["receiver".to_string()]);
+        out.entry(leaf).or_insert(StdPanicPartialTarget {
+            contract_cid: contract_cid.to_string(),
+            formals,
+        });
+    }
+    out
+}
+
+fn producer_return_kinds(bindings: &[Value]) -> BTreeMap<String, ProducerReturnKind> {
+    let mut out = BTreeMap::new();
+    for binding in bindings {
+        if binding.get("library").and_then(Value::as_str) == Some("std") {
+            continue;
+        }
+        if !binding_bool(binding, "has_post", "hasPost") && binding.get("post").is_none() {
+            continue;
+        }
+        let Some(post) = binding.get("post") else {
+            continue;
+        };
+        let Some(kind) = producer_return_kind_from_post(post) else {
+            continue;
+        };
+        let Some(name) = binding.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        out.entry(contract_leaf(name).to_string()).or_insert(kind);
+        if let Some(alias) = binding
+            .get("bridgeSourceSymbol")
+            .or_else(|| binding.get("bridge_source_symbol"))
+            .and_then(Value::as_str)
+        {
+            out.entry(symbol_leaf(alias).to_string()).or_insert(kind);
+        }
+    }
+    out
+}
+
+fn producer_return_kind_from_post(post: &Value) -> Option<ProducerReturnKind> {
+    if formula_contains_name(post, &["Some", "Option::Some", "is_some", "is_none"]) {
+        return Some(ProducerReturnKind::Option);
+    }
+    if formula_contains_name(post, &["Ok", "Result::Ok", "is_ok"]) {
+        return Some(ProducerReturnKind::ResultOk);
+    }
+    if formula_contains_name(post, &["Err", "Result::Err", "is_err"]) {
+        return Some(ProducerReturnKind::ResultErr);
+    }
+    None
+}
+
+fn formula_contains_name(value: &Value, names: &[&str]) -> bool {
+    match value {
+        Value::Object(obj) => {
+            if obj
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| names.iter().any(|needle| *needle == name))
+            {
+                return true;
+            }
+            obj.values()
+                .any(|child| formula_contains_name(child, names))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|child| formula_contains_name(child, names)),
+        _ => false,
+    }
+}
+
+fn std_partial_leaf_for_panic(
+    callee: &str,
+    return_kind: ProducerReturnKind,
+) -> Option<&'static str> {
+    match (callee, return_kind) {
+        ("method:unwrap", ProducerReturnKind::Option) => Some("option_unwrap"),
+        ("method:expect", ProducerReturnKind::Option) => Some("option_expect"),
+        ("method:unwrap", ProducerReturnKind::ResultOk) => Some("result_unwrap"),
+        ("method:expect", ProducerReturnKind::ResultOk) => Some("result_expect"),
+        ("method:unwrap_err", ProducerReturnKind::ResultErr) => Some("result_unwrap_err"),
+        _ => None,
+    }
+}
+
+fn producer_leaf_from_receiver(receiver: &Value) -> Option<&str> {
+    if receiver.get("kind").and_then(Value::as_str) != Some("ctor") {
+        return None;
+    }
+    let name = receiver.get("name").and_then(Value::as_str)?;
+    Some(symbol_leaf(name))
+}
+
+fn symbol_leaf(symbol: &str) -> &str {
+    symbol
+        .strip_prefix("call:")
+        .or_else(|| symbol.strip_prefix("method:"))
+        .unwrap_or(symbol)
+        .strip_suffix("#panic_callsite")
+        .unwrap_or_else(|| {
+            symbol
+                .strip_prefix("call:")
+                .or_else(|| symbol.strip_prefix("method:"))
+                .unwrap_or(symbol)
+        })
+}
+
+fn contract_leaf(name: &str) -> &str {
+    name.split('@').next().unwrap_or(name).trim()
+}
+
+fn binding_bool(binding: &Value, snake: &str, camel: &str) -> bool {
+    binding
+        .get(snake)
+        .or_else(|| binding.get(camel))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn formula_is_trivial_true(formula: &Value) -> bool {
+    formula.get("kind").and_then(Value::as_str) == Some("atomic")
+        && formula.get("name").and_then(Value::as_str) == Some("true")
+}
+
+fn json_to_cvalue(value: &Value) -> Arc<CValue> {
+    match value {
+        Value::Null => CValue::null(),
+        Value::Bool(value) => CValue::boolean(*value),
+        Value::Number(number) => {
+            if let Some(value) = number.as_i64() {
+                CValue::integer(i128::from(value))
+            } else if let Some(value) = number.as_u64() {
+                CValue::integer(i128::from(value))
+            } else {
+                CValue::string(number.to_string())
+            }
+        }
+        Value::String(value) => CValue::string(value.clone()),
+        Value::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
+        Value::Object(map) => CValue::object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), json_to_cvalue(value)))
+                .collect::<Vec<_>>(),
+        ),
+    }
 }
 
 fn assertion_surface_audits_for_file(
@@ -4260,6 +4578,98 @@ mod tests {
             "source_paths": ["src/lib.rs"]
         }));
         (root, response)
+    }
+
+    #[test]
+    fn lift_bridges_unit_test_unwrap_to_std_option_partial_from_producer_post() {
+        let root = unique_temp_dir("lift_bridges_unit_test_unwrap_option_partial");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
+    if padding { Some(bytes_len) } else { Some(bytes_len + 1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encoded_len;
+
+    #[test]
+    fn unwrapped_fact() {
+        assert_eq!(0, encoded_len(0, false).unwrap());
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+        let option_unwrap_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"],
+            "contract_bindings": [
+                {
+                    "name": "encoded_len@src/lib.rs:2:1",
+                    "library": "base64_showcase",
+                    "contract_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "body_bearing": true,
+                    "has_post": true,
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {
+                                "kind": "ctor",
+                                "name": "Some",
+                                "args": [{"kind": "var", "name": "bytes_len"}]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "option_unwrap@std/src/option.rs:1:1",
+                    "library": "std",
+                    "contract_cid": option_unwrap_cid,
+                    "body_bearing": true,
+                    "has_pre": true,
+                    "formals": ["receiver"],
+                    "pre": {
+                        "kind": "atomic",
+                        "name": "is_some",
+                        "args": [{"kind": "var", "name": "receiver"}]
+                    }
+                }
+            ]
+        }));
+        let ir = response["ir"].as_array().expect("ir array");
+        let bridge = ir
+            .iter()
+            .find(|entry| entry["kind"] == "bridge" && entry["sourceSymbol"] == "method:unwrap")
+            .unwrap_or_else(|| panic!("missing unit-test unwrap bridge: {response}"));
+        assert_eq!(bridge["targetContractCid"], option_unwrap_cid);
+        assert_eq!(bridge["callsite"]["panicSite"], true);
+        assert_eq!(bridge["callsite"]["file"], "src/lib.rs");
+        assert_eq!(
+            bridge["callsite"]["formalActuals"]["receiver"]["name"],
+            "call:encoded_len#panic_callsite"
+        );
+
+        let panic_contract = ir
+            .iter()
+            .find(|entry| {
+                entry["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains("method:unwrap#panic_callsite"))
+            })
+            .unwrap_or_else(|| panic!("missing unwrap panic support contract: {response}"));
+        assert_eq!(panic_contract["panicLoci"][0]["callee"], "method:unwrap");
+        assert_eq!(
+            panic_contract["panicLoci"][0]["argTerm"]["name"],
+            "call:encoded_len#panic_callsite"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn source_locus<'a>(response: &'a Value, ast_path: &str) -> &'a Value {
