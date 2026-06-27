@@ -11,7 +11,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class ListLiteralSugar:
-    node: ast.List
     elements: tuple[SugarBody, ...]
 
     @classmethod
@@ -19,7 +18,6 @@ class ListLiteralSugar:
         if not isinstance(site.node, ast.List):
             return None
         return cls(
-            node=site.node,
             elements=tuple(
                 ctx.build_body(element, SugarRole.TERM) for element in site.node.elts
             ),
