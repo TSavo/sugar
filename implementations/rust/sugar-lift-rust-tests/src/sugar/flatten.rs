@@ -9,7 +9,8 @@
 // recognizer; `peel_fold_adaptors` carries the same `FlattenSugar` when `.flatten()`
 // sits inside a longer adaptor chain.
 
-use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::flat_map::{FlatMapClosure, FlatMapSugar};
 use crate::sugar::method_family;
 use crate::sugar::sequence_floor::SequenceElementVisitor;
 use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
@@ -25,6 +26,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     // The receiver must resolve to a finite literal sequence (whose ELEMENTS are
     // checked to be sub-sequences at desugar time, bailing if not).
     if call.method == "flatten" && call.args.is_empty() {
+        if let Some(sugar) = recognize_map_flatten(call.receiver.as_ref(), fcx) {
+            return Some(sugar);
+        }
         return Some(Box::new(FlattenSugar {
             inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
                 &call.receiver,
@@ -33,6 +37,27 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         }));
     }
     None
+}
+
+fn recognize_map_flatten(receiver: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(map_call) = receiver else {
+        return None;
+    };
+    if map_call.method != "map" || map_call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(f) = &map_call.args[0] else {
+        return None;
+    };
+    if !method_family::resolves_literal_sequence(&map_call.receiver, fcx.let_inits())
+        && !has_composite(&map_call.receiver, fcx)
+    {
+        return None;
+    }
+    Some(Box::new(FlatMapSugar {
+        inner: SugarBody::composite(&map_call.receiver, fcx),
+        mapper: FlatMapClosure::new(f.clone()),
+    }))
 }
 
 /// Concatenate each element's own finite literal sub-sequence in source order.
