@@ -1001,6 +1001,7 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
     fn visit_format_args_text(self, value: &str) -> Self::Output {
         if matches!(self.spec.kind, Kind::Display | Kind::Debug)
             && !self.spec.plus
+            && self.spec.align.is_none()
             && self.spec.zero_width.is_none()
             && self.spec.precision.is_none()
             && (self.spec.kind == Kind::Debug || !self.spec.alternate)
@@ -1014,6 +1015,7 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
     fn visit_debug_text(self, value: &str) -> Self::Output {
         if self.spec.kind == Kind::Debug
             && !self.spec.plus
+            && self.spec.align.is_none()
             && self.spec.width.is_none()
             && self.spec.zero_width.is_none()
             && self.spec.precision.is_none()
@@ -1526,9 +1528,28 @@ struct Spec {
     kind: Kind,
     alternate: bool,
     plus: bool,
+    align: Option<Align>,
     width: Option<usize>,
     zero_width: Option<usize>,
     precision: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Align {
+    Left,
+    Right,
+    Center,
+}
+
+impl Align {
+    fn parse(c: char) -> Option<Self> {
+        Some(match c {
+            '<' => Align::Left,
+            '>' => Align::Right,
+            '^' => Align::Center,
+            _ => return None,
+        })
+    }
 }
 
 impl Spec {
@@ -1537,6 +1558,7 @@ impl Spec {
             kind: Kind::Display,
             alternate: false,
             plus: false,
+            align: None,
             width: None,
             zero_width: None,
             precision: None,
@@ -1550,20 +1572,29 @@ impl Spec {
         let mut s = spec;
         let mut alternate = false;
         let mut plus = false;
+        let mut align = None;
+        let mut zero_fill = false;
         let mut width = None;
         let mut zero_width = None;
         let mut precision = None;
 
-        // [[fill]align] — we do NOT reproduce fill/align, so reject if present. An
-        // align char is one of < ^ >, optionally preceded by a fill char.
-        // Detect: second char is an align, or first char is an align.
-        let chars: Vec<char> = s.chars().collect();
-        if let Some(&c0) = chars.first() {
-            if matches!(c0, '<' | '^' | '>') {
-                return None;
-            }
-            if chars.len() >= 2 && matches!(chars[1], '<' | '^' | '>') {
-                return None;
+        // [[fill]align] — support rust's default-fill alignment and explicit `0` fill,
+        // both delegated to static `format!` arms by the value floor. Other explicit
+        // fill chars remain unsupported until a floor owns those exact arms.
+        let mut chars = s.char_indices();
+        if let Some((_, c0)) = chars.next() {
+            if let Some(parsed) = Align::parse(c0) {
+                align = Some(parsed);
+                s = &s[c0.len_utf8()..];
+            } else if let Some((i1, c1)) = chars.next() {
+                if let Some(parsed) = Align::parse(c1) {
+                    if c0 != '0' {
+                        return None;
+                    }
+                    align = Some(parsed);
+                    zero_fill = true;
+                    s = &s[i1 + c1.len_utf8()..];
+                }
             }
         }
 
@@ -1585,15 +1616,19 @@ impl Spec {
         // [0][width] — `0`-padded fixed width gets its own field. Bare width is accepted
         // structurally and then rendered only by floors that explicitly own it.
         if let Some(rest) = s.strip_prefix('0') {
+            zero_fill = true;
+            s = rest;
+        }
+
+        if zero_fill {
             // parse the width digits
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
             if !digits.is_empty() {
                 zero_width = Some(digits.parse().ok()?);
-                s = &rest[digits.len()..];
+                s = &s[digits.len()..];
             } else {
                 // `{:0}` with no width — degenerate; treat as width 0 (no pad) and
                 // continue (rare). Effectively a no-op.
-                s = rest;
             }
         } else {
             let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -1635,6 +1670,7 @@ impl Spec {
             kind,
             alternate,
             plus,
+            align,
             width,
             zero_width,
             precision,
@@ -1669,6 +1705,138 @@ fn zero_pad(body: String, width: usize) -> String {
     }
 }
 
+fn render_i128_display(value: i128, spec: &Spec) -> String {
+    match (spec.align, spec.zero_width, spec.width, spec.plus) {
+        (None, Some(w), _, false) => format!("{value:0w$}"),
+        (None, Some(w), _, true) => format!("{value:+0w$}"),
+        (None, None, Some(w), false) => format!("{value:w$}"),
+        (None, None, Some(w), true) => format!("{value:+w$}"),
+        (None, None, None, false) => format!("{value}"),
+        (None, None, None, true) => format!("{value:+}"),
+        (Some(Align::Left), Some(w), _, false) => format!("{value:<0w$}"),
+        (Some(Align::Left), Some(w), _, true) => format!("{value:<+0w$}"),
+        (Some(Align::Left), None, Some(w), false) => format!("{value:<w$}"),
+        (Some(Align::Left), None, Some(w), true) => format!("{value:<+w$}"),
+        (Some(Align::Right), Some(w), _, false) => format!("{value:>0w$}"),
+        (Some(Align::Right), Some(w), _, true) => format!("{value:>+0w$}"),
+        (Some(Align::Right), None, Some(w), false) => format!("{value:>w$}"),
+        (Some(Align::Right), None, Some(w), true) => format!("{value:>+w$}"),
+        (Some(Align::Center), Some(w), _, false) => format!("{value:^0w$}"),
+        (Some(Align::Center), Some(w), _, true) => format!("{value:^+0w$}"),
+        (Some(Align::Center), None, Some(w), false) => format!("{value:^w$}"),
+        (Some(Align::Center), None, Some(w), true) => format!("{value:^+w$}"),
+        (Some(_), None, None, false) => format!("{value}"),
+        (Some(_), None, None, true) => format!("{value:+}"),
+    }
+}
+
+fn render_i128_debug(value: i128, spec: &Spec) -> Option<String> {
+    Some(match (spec.align, spec.zero_width, spec.width, spec.plus) {
+        (None, Some(w), _, false) => format!("{value:0w$?}"),
+        (None, Some(w), _, true) => format!("{value:+0w$?}"),
+        (None, None, Some(w), false) => format!("{value:w$?}"),
+        (None, None, Some(w), true) => format!("{value:+w$?}"),
+        (None, None, None, false) => format!("{value:?}"),
+        (None, None, None, true) => format!("{value:+?}"),
+        (Some(Align::Left), Some(w), _, false) => format!("{value:<0w$?}"),
+        (Some(Align::Left), Some(w), _, true) => format!("{value:<+0w$?}"),
+        (Some(Align::Left), None, Some(w), false) => format!("{value:<w$?}"),
+        (Some(Align::Left), None, Some(w), true) => format!("{value:<+w$?}"),
+        (Some(Align::Right), Some(w), _, false) => format!("{value:>0w$?}"),
+        (Some(Align::Right), Some(w), _, true) => format!("{value:>+0w$?}"),
+        (Some(Align::Right), None, Some(w), false) => format!("{value:>w$?}"),
+        (Some(Align::Right), None, Some(w), true) => format!("{value:>+w$?}"),
+        (Some(Align::Center), Some(w), _, false) => format!("{value:^0w$?}"),
+        (Some(Align::Center), Some(w), _, true) => format!("{value:^+0w$?}"),
+        (Some(Align::Center), None, Some(w), false) => format!("{value:^w$?}"),
+        (Some(Align::Center), None, Some(w), true) => format!("{value:^+w$?}"),
+        (Some(_), None, None, false) => format!("{value:?}"),
+        (Some(_), None, None, true) => format!("{value:+?}"),
+    })
+}
+
+fn render_str_display_floor(value: &str, spec: &Spec) -> String {
+    match (spec.align, spec.zero_width, spec.width) {
+        (None, Some(w), _) => format!("{value:0w$}"),
+        (None, None, Some(w)) => format!("{value:w$}"),
+        (None, None, None) => format!("{value}"),
+        (Some(Align::Left), Some(w), _) => format!("{value:<0w$}"),
+        (Some(Align::Left), None, Some(w)) => format!("{value:<w$}"),
+        (Some(Align::Right), Some(w), _) => format!("{value:>0w$}"),
+        (Some(Align::Right), None, Some(w)) => format!("{value:>w$}"),
+        (Some(Align::Center), Some(w), _) => format!("{value:^0w$}"),
+        (Some(Align::Center), None, Some(w)) => format!("{value:^w$}"),
+        (Some(_), None, None) => format!("{value}"),
+    }
+}
+
+fn render_str_debug_floor(value: &str, spec: &Spec) -> String {
+    match (spec.align, spec.zero_width, spec.width) {
+        (None, Some(w), _) => format!("{value:0w$?}"),
+        (None, None, Some(w)) => format!("{value:w$?}"),
+        (None, None, None) => format!("{value:?}"),
+        (Some(Align::Left), Some(w), _) => format!("{value:<0w$?}"),
+        (Some(Align::Left), None, Some(w)) => format!("{value:<w$?}"),
+        (Some(Align::Right), Some(w), _) => format!("{value:>0w$?}"),
+        (Some(Align::Right), None, Some(w)) => format!("{value:>w$?}"),
+        (Some(Align::Center), Some(w), _) => format!("{value:^0w$?}"),
+        (Some(Align::Center), None, Some(w)) => format!("{value:^w$?}"),
+        (Some(_), None, None) => format!("{value:?}"),
+    }
+}
+
+fn render_char_display_floor(value: char, spec: &Spec) -> String {
+    match (spec.align, spec.zero_width, spec.width) {
+        (None, Some(w), _) => format!("{value:0w$}"),
+        (None, None, Some(w)) => format!("{value:w$}"),
+        (None, None, None) => format!("{value}"),
+        (Some(Align::Left), Some(w), _) => format!("{value:<0w$}"),
+        (Some(Align::Left), None, Some(w)) => format!("{value:<w$}"),
+        (Some(Align::Right), Some(w), _) => format!("{value:>0w$}"),
+        (Some(Align::Right), None, Some(w)) => format!("{value:>w$}"),
+        (Some(Align::Center), Some(w), _) => format!("{value:^0w$}"),
+        (Some(Align::Center), None, Some(w)) => format!("{value:^w$}"),
+        (Some(_), None, None) => format!("{value}"),
+    }
+}
+
+fn render_char_debug_floor(value: char, spec: &Spec) -> String {
+    match (spec.align, spec.zero_width, spec.width) {
+        (None, Some(w), _) => format!("{value:0w$?}"),
+        (None, None, Some(w)) => format!("{value:w$?}"),
+        (None, None, None) => format!("{value:?}"),
+        (Some(Align::Left), Some(w), _) => format!("{value:<0w$?}"),
+        (Some(Align::Left), None, Some(w)) => format!("{value:<w$?}"),
+        (Some(Align::Right), Some(w), _) => format!("{value:>0w$?}"),
+        (Some(Align::Right), None, Some(w)) => format!("{value:>w$?}"),
+        (Some(Align::Center), Some(w), _) => format!("{value:^0w$?}"),
+        (Some(Align::Center), None, Some(w)) => format!("{value:^w$?}"),
+        (Some(_), None, None) => format!("{value:?}"),
+    }
+}
+
+fn render_bool_display_floor(value: bool, spec: &Spec) -> String {
+    match (spec.align, spec.width) {
+        (None, Some(w)) => format!("{value:w$}"),
+        (None, None) => format!("{value}"),
+        (Some(Align::Left), Some(w)) => format!("{value:<w$}"),
+        (Some(Align::Right), Some(w)) => format!("{value:>w$}"),
+        (Some(Align::Center), Some(w)) => format!("{value:^w$}"),
+        (Some(_), None) => format!("{value}"),
+    }
+}
+
+fn render_bool_debug_floor(value: bool, spec: &Spec) -> String {
+    match (spec.align, spec.width) {
+        (None, Some(w)) => format!("{value:w$?}"),
+        (None, None) => format!("{value:?}"),
+        (Some(Align::Left), Some(w)) => format!("{value:<w$?}"),
+        (Some(Align::Right), Some(w)) => format!("{value:>w$?}"),
+        (Some(Align::Center), Some(w)) => format!("{value:^w$?}"),
+        (Some(_), None) => format!("{value:?}"),
+    }
+}
+
 fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
     // Precision is meaningless for integer Display/radix in rust (it's ignored for
     // integers except `e`/`E`). We bail if a precision is set on a non-exp integer
@@ -1683,21 +1851,23 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
             if spec.precision.is_some() {
                 return None; // precision on an integer Display — bail (no faithful arm)
             }
-            if spec.plus {
-                format!("{value:+}")
-            } else {
-                format!("{value}")
-            }
+            return Some(render_i128_display(value, spec));
         }
         Kind::Debug => {
             if spec.precision.is_some() {
                 return None;
             }
             match (spec.alternate, spec.plus) {
-                (false, false) => format!("{value:?}"),
-                (false, true) => format!("{value:+?}"),
-                (true, false) => format!("{value:#?}"),
+                (false, _) => return render_i128_debug(value, spec),
+                (true, false)
+                    if spec.align.is_none()
+                        && spec.width.is_none()
+                        && spec.zero_width.is_none() =>
+                {
+                    format!("{value:#?}")
+                }
                 (true, true) => return None,
+                (true, false) => return None,
             }
         }
         // Radix formats operate on the value's BITS at its width. We reconstruct the
@@ -1708,7 +1878,7 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
         | Kind::UpperHexDebug
         | Kind::Binary
         | Kind::Octal => {
-            if spec.precision.is_some() || spec.plus || spec.alternate {
+            if spec.precision.is_some() || spec.plus || spec.alternate || spec.align.is_some() {
                 return None;
             }
             let bits = bits_at_width(value, suffix)?;
@@ -1721,7 +1891,7 @@ fn render_int(value: i128, suffix: IntKind, spec: &Spec) -> Option<String> {
             }
         }
         Kind::LowerExp | Kind::UpperExp => {
-            if spec.alternate {
+            if spec.alternate || spec.align.is_some() {
                 return None;
             }
             // integer exp: rust formats the integer in exponential. Only support the
@@ -1786,6 +1956,9 @@ fn is_unsigned(suffix: IntKind) -> bool {
 }
 
 fn render_float_f64(x: f64, spec: &Spec) -> Option<String> {
+    if spec.align.is_some() {
+        return None;
+    }
     // CRITICAL: Display (`{}`) and Debug (`{:?}`) DIFFER for floats -- Debug always shows
     // a decimal point (`0.0`, `-3.0`) and switches to exponential outside [1e-4, 1e16)
     // (`1e16`, `9e-5`), while Display does not. Each dispatches to its OWN real `format!`;
@@ -1819,6 +1992,9 @@ fn render_float_f64(x: f64, spec: &Spec) -> Option<String> {
 }
 
 fn render_float_f32(x: f32, spec: &Spec) -> Option<String> {
+    if spec.align.is_some() {
+        return None;
+    }
     // See `render_float_f64`: Display and Debug differ for floats; render each through
     // its own real `format!`, never collapse Debug onto Display.
     let body = match (spec.kind, spec.precision, spec.plus, spec.alternate) {
@@ -1849,15 +2025,17 @@ fn render_float_f32(x: f32, spec: &Spec) -> Option<String> {
 }
 
 fn render_char(c: char, spec: &Spec) -> Option<String> {
-    if spec.plus || spec.zero_width.is_some() {
+    if spec.plus {
         return None;
     }
-    match (spec.kind, spec.precision, spec.alternate, spec.width) {
-        (Kind::Display, None, false, None) => Some(format!("{c}")),
-        (Kind::Display, None, false, Some(w)) => Some(format!("{c:w$}")),
-        (Kind::Debug, None, false, None) => Some(format!("{c:?}")),
-        (Kind::Debug, None, false, Some(w)) => Some(format!("{c:w$?}")),
-        (Kind::Debug, None, true, None) => Some(format!("{c:#?}")),
+    match (spec.kind, spec.precision, spec.alternate) {
+        (Kind::Display, None, false) => Some(render_char_display_floor(c, spec)),
+        (Kind::Debug, None, false) => Some(render_char_debug_floor(c, spec)),
+        (Kind::Debug, None, true)
+            if spec.align.is_none() && spec.width.is_none() && spec.zero_width.is_none() =>
+        {
+            Some(format!("{c:#?}"))
+        }
         // A char in a radix prints its code point. The corpus does not do this; bail to
         // be safe rather than guess width semantics.
         _ => None,
@@ -1865,28 +2043,31 @@ fn render_char(c: char, spec: &Spec) -> Option<String> {
 }
 
 fn render_str(s: &str, spec: &Spec) -> Option<String> {
-    if spec.plus || spec.zero_width.is_some() {
+    if spec.plus {
         return None; // sign/zero-pad meaningless for &str
     }
     match (spec.kind, spec.alternate, spec.precision, spec.width) {
-        (Kind::Display, false, None, None) => Some(s.to_string()),
-        (Kind::Display, false, None, Some(w)) => Some(format!("{s:w$}")),
+        (Kind::Display, false, None, _) => Some(render_str_display_floor(s, spec)),
         (Kind::Display, false, Some(p), width) => {
+            if spec.align.is_some() || spec.zero_width.is_some() {
+                return None;
+            }
             let truncated: String = s.chars().take(p).collect();
             Some(match width {
                 Some(w) => format!("{truncated:<w$}"),
                 None => truncated,
             })
         }
-        (Kind::Debug, false, None, None) => Some(format!("{s:?}")),
-        (Kind::Debug, false, None, Some(w)) => Some(format!("{s:w$?}")),
-        (Kind::Debug, true, None, None) => Some(format!("{s:#?}")),
+        (Kind::Debug, false, None, _) => Some(render_str_debug_floor(s, spec)),
+        (Kind::Debug, true, None, None) if spec.align.is_none() && spec.zero_width.is_none() => {
+            Some(format!("{s:#?}"))
+        }
         _ => None,
     }
 }
 
 fn render_byte_str(bytes: &[u8], spec: &Spec) -> Option<String> {
-    if spec.plus || spec.alternate || spec.precision.is_some() {
+    if spec.plus || spec.alternate || spec.precision.is_some() || spec.align.is_some() {
         return None;
     }
     match spec.kind {
@@ -1919,6 +2100,7 @@ fn render_byte_str_element(byte: u8, spec: &Spec) -> Option<String> {
 fn render_cstr(bytes: &CStrBytes, spec: &Spec) -> String {
     if spec.kind != Kind::Debug
         || spec.plus
+        || spec.align.is_some()
         || spec.width.is_some()
         || spec.zero_width.is_some()
         || spec.precision.is_some()
@@ -1938,16 +2120,16 @@ fn render_bool(b: bool, spec: &Spec) -> Option<String> {
     if spec.plus || spec.zero_width.is_some() || spec.precision.is_some() {
         return None;
     }
-    let body = match (spec.kind, spec.alternate) {
-        (Kind::Display, false) => format!("{b}"),
-        (Kind::Debug, false) => format!("{b:?}"),
-        (Kind::Debug, true) => format!("{b:#?}"),
-        _ => return None,
-    };
-    Some(match spec.width {
-        Some(w) => format!("{body:<w$}"),
-        None => body,
-    })
+    match (spec.kind, spec.alternate) {
+        (Kind::Display, false) => Some(render_bool_display_floor(b, spec)),
+        (Kind::Debug, false) => Some(render_bool_debug_floor(b, spec)),
+        (Kind::Debug, true)
+            if spec.align.is_none() && spec.width.is_none() && spec.zero_width.is_none() =>
+        {
+            Some(format!("{b:#?}"))
+        }
+        _ => None,
+    }
 }
 
 // ── Reconstruct a typed literal value from the source AST ─────────────────────────
@@ -3286,11 +3468,55 @@ mod tests {
         assert_eq!(resolve(r#"format!("{:p}", &x)"#).unwrap(), None);
     }
     #[test]
-    fn bails_on_fill_alignment_width() {
-        // Fill+align is an alignment we do NOT reproduce -> bail.
-        assert_eq!(resolve(r#"format!("{:>9}", 1)"#).unwrap(), None);
-        assert_eq!(resolve(r#"format!("{:^9?}", 1)"#).unwrap(), None);
+    fn default_alignment_delegates_to_format_floor() {
+        assert_eq!(
+            resolve(r#"format!("{:>9}", 1)"#).unwrap().as_deref(),
+            Some("        1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:^9?}", 1)"#).unwrap().as_deref(),
+            Some("    1    ")
+        );
     }
+
+    #[test]
+    fn bails_on_explicit_arbitrary_fill_alignment_width() {
+        // Explicit non-zero fill needs its own static format! arm before we claim it.
+        assert_eq!(resolve(r#"format!("{:*>9}", 1)"#).unwrap(), None);
+        assert_eq!(resolve(r#"format!("{:x^9?}", 1)"#).unwrap(), None);
+    }
+
+    #[test]
+    fn parses_left_align_zero_width_template_for_format_floor() {
+        let mut captures = BTreeMap::new();
+        captures.insert(
+            "Bar".to_string(),
+            FmtValue::Int {
+                value: 1,
+                suffix: IntKind::Unsuffixed,
+            },
+        );
+
+        match render_format_values(
+            "{Bar:<03}",
+            &[],
+            &BTreeMap::new(),
+            &captures,
+            r#"format!("{Bar:<03}")"#,
+        ) {
+            FloorRead::Complete(value) => assert_eq!(value, "001"),
+            FloorRead::Incomplete(effect) => panic!("unexpected effect: {}", effect.reason()),
+        }
+        assert_eq!(
+            resolve(r#"format!("{:<03}", 1)"#).unwrap().as_deref(),
+            Some("001")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:<03}", "a")"#).unwrap().as_deref(),
+            Some("a  ")
+        );
+    }
+
     #[test]
     fn alternate_debug_delegates_to_literal_floors() {
         assert_eq!(
