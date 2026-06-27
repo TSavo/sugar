@@ -49,7 +49,7 @@ use crate::{
     resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped,
     stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition,
     ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, SugarCtx,
-    TemporalScope, MAX_MACRO_EXPANSION_DEPTH, MAX_VALUE_CALL_INLINE_DEPTH,
+    TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
 
 /// Build the opaque panic-freedom subject for a call/method expression.
@@ -87,6 +87,9 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
             return opaque_or_fallback();
         }
         if source_less_format_args_builtin(expr, ctx) {
+            return callsite_child_identity_term(expr, ctx.scope);
+        }
+        if callsite_child_is_opaque_value(expr) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
         if let Some(term) = callsite_child_floor_term(expr, ctx) {
@@ -134,6 +137,16 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
             "opaque callsite term constructed for non-call expression `{}`",
             expr_head_key(expr)
         ),
+    }
+}
+
+fn callsite_child_is_opaque_value(expr: &Expr) -> bool {
+    match expr {
+        Expr::Closure(_) => true,
+        Expr::Block(_) | Expr::Unsafe(_) => {
+            !crate::sugar::block_term::has_transparent_term_tail(expr)
+        }
+        _ => false,
     }
 }
 

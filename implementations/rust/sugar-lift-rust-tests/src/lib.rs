@@ -6616,6 +6616,37 @@ fn peel_fold_adaptors_inner<'a>(
                             })
                         })
                     }
+                    ("scan", 2) => match &m.args[1] {
+                        Expr::Closure(_) => {
+                            let init = m.args[0].clone();
+                            let mapper = m.args[1].clone();
+                            Box::new(move |inner, fcx| {
+                                sugar::scan::build_scan_adaptor(
+                                    inner,
+                                    init.clone(),
+                                    mapper.clone(),
+                                    fcx,
+                                )
+                            })
+                        }
+                        func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
+                            let mapper = strip_refs_groups(func).clone();
+                            let name = simple_path_name(&mapper)?;
+                            if !scope.is_some_and(|scope| scope.has_visible_fn(&name)) {
+                                return None;
+                            }
+                            let init = m.args[0].clone();
+                            Box::new(move |inner, fcx| {
+                                sugar::scan::build_scan_adaptor(
+                                    inner,
+                                    init.clone(),
+                                    mapper.clone(),
+                                    fcx,
+                                )
+                            })
+                        }
+                        _ => return None,
+                    },
                     (
                         "chunks" | "chunks_mut" | "rchunks" | "rchunks_mut" | "chunks_exact"
                         | "chunks_exact_mut" | "rchunks_exact" | "rchunks_exact_mut" | "windows",
@@ -10981,7 +11012,10 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
 }
 
-fn panic_freedom_expr_callsite_effect(expr: &Expr, scope: &TemporalScope) -> Option<Effect> {
+pub(crate) fn panic_freedom_expr_callsite_effect(
+    expr: &Expr,
+    scope: &TemporalScope,
+) -> Option<Effect> {
     match expr {
         Expr::MethodCall(call) => panic_freedom_direct_method_callsite_effect(call, scope)
             .or_else(|| panic_freedom_closure_callsite_effect(call))
