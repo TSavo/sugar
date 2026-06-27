@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor import StringValue, TermValue
+from sugar_lift_py_tests.ir import Formula, eq, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 
 from .alphabet_literal_sugar import AlphabetLiteralSugar
@@ -68,4 +69,15 @@ class Base64BodySugar:
                 for ord_sugar in self.ords
             ],
             ("BitwiseBase64Sugar", "Return", self.return_sugar.stmt, "StringValue"),
+        ]
+
+    def constraint_formulas(self, argument: StringValue, output: StringValue) -> list[Formula]:
+        alphabet = complete_value(self.alphabet.desugar(), owner="Base64BodySugar alphabet")
+        return [
+            eq(make_var(self.alphabet.name), str_const(alphabet.value)),
+            *[
+                eq(make_var(ord_sugar.target), num(ord(argument.value[ord_sugar.index])))
+                for ord_sugar in self.ords
+            ],
+            eq(make_var("out"), str_const(output.value)),
         ]

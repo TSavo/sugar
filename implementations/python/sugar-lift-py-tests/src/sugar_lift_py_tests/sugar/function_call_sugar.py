@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.floor import StringValue
+from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 
 from .base64_body_sugar import Base64BodySugar
@@ -56,6 +58,14 @@ class FunctionCallSugar:
         if isinstance(self.body, StringLiteralSugar):
             return [("StringLiteralSugar", "Constant", self.function.body[0], "StringValue")]
         return self.body.factory_steps()
+
+    def constraint_formulas(self, output: StringValue) -> list[Formula]:
+        if isinstance(self.body, StringLiteralSugar):
+            return [eq(make_var("out"), str_const(output.value))]
+        argument = complete_value(self.argument.desugar(), owner="FunctionCallSugar argument")
+        if not isinstance(argument, StringValue):
+            raise ValueError("write more Floor for FunctionCallSugar argument")
+        return self.body.constraint_formulas(argument, output)
 
 
 def _function_body_sugar(function: ast.FunctionDef) -> FunctionCallBody | None:
