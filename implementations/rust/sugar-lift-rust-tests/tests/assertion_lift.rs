@@ -25575,6 +25575,53 @@ fn peekable_empty_slice_literal_warrants_none_with_teeth() {
 }
 
 #[test]
+fn rpc_source_peekable_next_if_eq_followup_next_uses_sequence_floor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/peekable_next_if_eq_followup_next.rs",
+        r#"
+#[test]
+fn test_iterator_peekable_next_if_eq_followup_next() {
+    let xs = ["Heart", "of", "Gold"];
+    let mut it = xs.into_iter().peekable();
+    assert_eq!(it.next_if_eq(&"trillian"), None);
+    assert_eq!(it.next_if_eq(&"Heart"), Some("Heart"));
+    assert_eq!(it.peek(), Some(&"of"));
+    assert_eq!(it.next_if_eq(&"of"), Some("of"));
+    assert_eq!(it.next_if_eq(&"zaphod"), None);
+    assert_eq!(it.next(), Some("Gold"));
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_iterator_peekable_next_if_eq_followup_next");
+}
+
+#[test]
+fn rpc_source_peekable_mut_if_let_guard_refuses_stale_read_as_mutable_view() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/peekable_mut_if_let_guard.rs",
+        r#"
+#[test]
+fn test_iterator_peekable_mut_if_let_guard() {
+    let mut it = [1, 2, 3].into_iter().peekable();
+    if let Some(p) = it.peek_mut() {
+        if *p == 1 {
+            *p = 5;
+        }
+    }
+    assert_eq!(it.collect::<Vec<_>>(), vec![5, 2, 3]);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "test_iterator_peekable_mut_if_let_guard",
+        "mutable view temporal state",
+    );
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",
