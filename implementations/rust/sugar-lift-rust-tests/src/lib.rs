@@ -107,6 +107,7 @@ pub mod sugar {
     pub mod format_macro;
     pub mod from_bool;
     pub mod function_map;
+    pub mod future_join;
     pub mod identity;
     pub mod identity_map;
     pub mod impl_method;
@@ -686,6 +687,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // unclassified only because the block was not classified; not a fake-zero -- the
         // block is held + named.)
         || reason.contains("effectful control-flow block")
+        // TERMINAL: std `future::join!` constructs a future whose output is produced only
+        // when a runtime driver polls/awaits it. There is no source-visible macro body to
+        // expand and no single timeless output value at construction.
+        || reason.contains("join! future construction")
         // TERMINAL: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION
         // (`Type::of::<T>()` / `TypeId::of::<T>()` read through `.kind` + a `match` arm).
         // A `TypeId` is a target/compiler-determined identity, not a value constructed
@@ -8781,6 +8786,10 @@ enum Effect {
     /// inert; it does NOT execute the assertion vocabulary in the body. The body can become
     /// a fact only when a learned driver consumes it. No driver spelling is trusted here.
     DormantFuture { boundary: String },
+    /// FUTURE-JOIN: std `future::join!` constructs a runtime future whose output is only
+    /// available when the future is driven/awaited. The macro has no source-visible
+    /// `macro_rules!` body here, and its output is not a timeless source value.
+    FutureJoin { boundary: String },
     /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
     /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
     /// runtime result, not a scalar equality over constructible values -- no single timeless
@@ -9011,6 +9020,11 @@ impl Effect {
                  the future is inert at construction; driver semantics must be learned \
                  dynamically from source/proof before the async body is a point-wise fact; refused"
             ),
+            Effect::FutureJoin { boundary } => format!(
+                "join! future construction `{boundary}`: std future join constructs a runtime \
+                 future whose output is produced only when driven or awaited; no single timeless \
+                 source value is available here; refused"
+            ),
             Effect::RuntimeMatchScrutinee { boundary } => format!(
                 "only scalar equality is liftable; operand is a runtime non-scalar result \
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
@@ -9111,6 +9125,7 @@ impl Effect {
             | Effect::MemchrRuntime { boundary, .. }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
+            | Effect::FutureJoin { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
             | Effect::TypeInferredParseResult { boundary, .. }
             | Effect::PanicPayload { boundary }
@@ -23029,6 +23044,9 @@ fn t() {
             },
             Effect::ControlFlow {
                 boundary: "try { maybe_fut? }".to_string(),
+            },
+            Effect::FutureJoin {
+                boundary: "join!(async { 0 })".to_string(),
             },
         ];
         for e in &effects {
