@@ -67,7 +67,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         );
         return None;
     }
-    let adaptor_domain = sequence_adaptor_domain_shape(&for_loop.expr, fcx);
+    let domain_fcx =
+        fcx.with_expected_sequence_array_len(expected_sequence_array_len(&for_loop.pat));
+    let adaptor_domain = sequence_adaptor_domain_shape(&for_loop.expr, &domain_fcx);
     let finite_replay_domain = domain_has_replay_shape(&for_loop.expr, adaptor_domain);
     if !finite_replay_domain {
         debug!(
@@ -123,7 +125,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     );
     Some(Box::new(ForReplaySugar {
         vars,
-        domain: SugarBody::composite(&for_loop.expr, fcx),
+        domain: SugarBody::composite(&for_loop.expr, &domain_fcx),
         domain_expr: (*for_loop.expr).clone(),
         body_stmts: for_loop.body.stmts.clone(),
         seed_names,
@@ -209,6 +211,15 @@ fn loop_var_bindings(pat: &Pat) -> Option<Vec<String>> {
         // value is sound regardless of the `&`).
         Pat::Reference(r) => loop_var_bindings(&r.pat),
         _ => component_ident(pat).map(|name| vec![name]),
+    }
+}
+
+fn expected_sequence_array_len(pat: &Pat) -> Option<usize> {
+    match pat {
+        Pat::Slice(slice) if slice.elems.len() >= 2 => Some(slice.elems.len()),
+        Pat::Paren(p) => expected_sequence_array_len(&p.pat),
+        Pat::Reference(r) => expected_sequence_array_len(&r.pat),
+        _ => None,
     }
 }
 

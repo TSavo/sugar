@@ -274,6 +274,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     options: &'a LiftOptions,
     let_inits: &'a BTreeMap<String, &'e Expr>,
     expected_type: Option<String>,
+    expected_sequence_array_len: Option<usize>,
     bound_path_stack: Vec<String>,
     const_path_stack: Vec<String>,
     macro_depth: usize,
@@ -291,6 +292,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options,
             let_inits,
             expected_type: None,
+            expected_sequence_array_len: None,
             bound_path_stack: Vec::new(),
             const_path_stack: Vec::new(),
             macro_depth: 0,
@@ -314,12 +316,34 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
         self.expected_type.as_deref()
     }
 
+    pub(crate) fn expected_sequence_array_len(&self) -> Option<usize> {
+        self.expected_sequence_array_len
+    }
+
     pub(crate) fn with_expected_type(&self, expected_type: Option<String>) -> Self {
         Self {
             scope: self.scope,
             options: self.options,
             let_inits: self.let_inits,
             expected_type,
+            expected_sequence_array_len: self.expected_sequence_array_len,
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack: self.const_path_stack.clone(),
+            macro_depth: self.macro_depth,
+            panic_freedom_effect: self.panic_freedom_effect.clone(),
+        }
+    }
+
+    pub(crate) fn with_expected_sequence_array_len(
+        &self,
+        expected_sequence_array_len: Option<usize>,
+    ) -> Self {
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
+            expected_sequence_array_len,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
@@ -336,6 +360,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             expected_type: self.expected_type.clone(),
+            expected_sequence_array_len: self.expected_sequence_array_len,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
@@ -355,6 +380,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             expected_type: self.expected_type.clone(),
+            expected_sequence_array_len: self.expected_sequence_array_len,
             bound_path_stack,
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
@@ -374,6 +400,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             expected_type: self.expected_type.clone(),
+            expected_sequence_array_len: self.expected_sequence_array_len,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack,
             macro_depth: self.macro_depth,
@@ -391,6 +418,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             expected_type: self.expected_type.clone(),
+            expected_sequence_array_len: self.expected_sequence_array_len,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth,
@@ -408,6 +436,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             expected_type: self.expected_type.clone(),
+            expected_sequence_array_len: self.expected_sequence_array_len,
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack: self.const_path_stack.clone(),
             macro_depth: self.macro_depth,
