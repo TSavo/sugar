@@ -11,7 +11,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class BuilderCtorSugar:
-    node: ast.Call
     items: SugarBody
     blame: str
 
@@ -22,7 +21,6 @@ class BuilderCtorSugar:
         if len(site.node.args) != 1:
             return None
         return cls(
-            node=site.node,
             items=ctx.build_body(site.node.args[0], SugarRole.TERM),
             blame=site.blame,
         )

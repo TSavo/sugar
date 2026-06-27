@@ -11,7 +11,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class BinOpSugar:
-    node: ast.BinOp
     operator: str
     left: SugarBody
     right: SugarBody
@@ -24,7 +23,6 @@ class BinOpSugar:
         if not isinstance(site.node.op, ast.Add):
             return None
         return cls(
-            node=site.node,
             operator="+",
             left=ctx.build_body(site.node.left, SugarRole.TERM),
             right=ctx.build_body(site.node.right, SugarRole.TERM),
