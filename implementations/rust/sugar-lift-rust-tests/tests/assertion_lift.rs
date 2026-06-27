@@ -26311,6 +26311,25 @@ fn array_chunks_count_literal_twin() {
 }
 
 #[test]
+fn rpc_source_replays_chain_skip_receiver_without_composite_gap() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/chain.rs",
+        r#"
+#[test]
+fn test_iterator_chain_nth_replayed_skip() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let zs = [];
+    let mut it = xs.iter().chain(&zs);
+    assert_eq!(it.nth(5), Some(&5));
+    assert_eq!(it.next(), None);
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_iterator_chain_nth_replayed_skip");
+}
+
+#[test]
 fn rpc_source_splits_fresh_literal_try_fold_from_consumed_iterator_refusal() {
     let doc = run_rpc_lift(
         "tests/iter/adapters/cloned.rs",
