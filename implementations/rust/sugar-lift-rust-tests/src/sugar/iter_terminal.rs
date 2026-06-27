@@ -186,7 +186,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         terminal,
         site_key: token_key(expr),
         closure_refusal: closure_adaptor_refusal(expr, fcx.scope()),
-        receiver: IterTerminalReceiver::new((*call.receiver).clone(), fcx),
+        receiver: IterTerminalReceiver::new((*call.receiver).clone()),
         advance_by_arg,
         let_inits: capture_let_inits(fcx),
     }))
@@ -671,9 +671,9 @@ fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
 }
 
 /// The iterator scalar-reduction terminal node. Holds the raw receiver expression and
-/// the captured reduction kind. `desugar` lazily composes the receiver to a literal `Seq`,
-/// then reduces it to the scalar value term; if the elements are not cleanly
-/// const-reducible, it structurally bails to the factory gap path.
+/// the captured reduction kind. `desugar` lazily composes the receiver to a literal `Seq`
+/// through the live build context, then reduces it to the scalar value term; if the
+/// elements are not cleanly const-reducible, it structurally bails to the factory gap path.
 struct IterTerminalSugar {
     terminal: Terminal,
     site_key: String,
@@ -685,17 +685,19 @@ struct IterTerminalSugar {
 
 struct IterTerminalReceiver {
     source_expr: Expr,
-    body: SugarBody<CompositeFloor>,
 }
 
 impl IterTerminalReceiver {
-    fn new(source_expr: Expr, fcx: &SugarBuildCtx) -> Self {
-        let body = SugarBody::from_node(
-            crate::sugar::scan::try_build_scan_inner(&source_expr, fcx)
-                .or_else(|| method_family::build_literal_sequence_composite(&source_expr, fcx))
-                .unwrap_or_else(|| build_composite(&source_expr, fcx)),
-        );
-        Self { source_expr, body }
+    fn new(source_expr: Expr) -> Self {
+        Self { source_expr }
+    }
+
+    fn body(&self, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+        SugarBody::from_node(
+            crate::sugar::scan::try_build_scan_inner(&self.source_expr, fcx)
+                .or_else(|| method_family::build_literal_sequence_composite(&self.source_expr, fcx))
+                .unwrap_or_else(|| build_composite(&self.source_expr, fcx)),
+        )
     }
 }
 
@@ -954,7 +956,8 @@ impl IterTerminalSugar {
         let seq = if allow_empty_sequence {
             Vec::new()
         } else {
-            match self.receiver.body.reduce(ctx) {
+            let receiver_body = self.receiver.body(&fcx);
+            match receiver_body.reduce(ctx) {
                 Outcome::Complete(Desugared::TermSeq(terms)) => {
                     return self.reduce_term_seq_terminal(terms, ctx, &let_inits);
                 }

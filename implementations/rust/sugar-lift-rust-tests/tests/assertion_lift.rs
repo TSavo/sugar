@@ -26285,6 +26285,32 @@ fn successors_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_bound_array_chunks_count_over_overcap_repeat_without_composite_gap() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/array_chunks.rs",
+        r#"
+#[test]
+fn test_iterator_array_chunks_count() {
+    let it = [(); usize::MAX].iter().array_chunks::<2>();
+    assert_eq!(it.count(), usize::MAX / 2);
+}
+
+#[test]
+fn array_chunks_count_literal_twin() {
+    assert_eq!(3, 3);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "test_iterator_array_chunks_count",
+        "array repeat non-literal length",
+    );
+    assert_rpc_source_warranted(&doc, "array_chunks_count_literal_twin");
+}
+
+#[test]
 fn rpc_source_splits_fresh_literal_try_fold_from_consumed_iterator_refusal() {
     let doc = run_rpc_lift(
         "tests/iter/adapters/cloned.rs",
