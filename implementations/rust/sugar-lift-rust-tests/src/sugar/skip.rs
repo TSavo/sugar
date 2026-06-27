@@ -6,8 +6,7 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
-use crate::sugar::method_family;
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -20,12 +19,12 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if call.method != "skip" || call.args.len() != 1 {
         return None;
     }
+    if !has_composite(&call.receiver, fcx) {
+        return None;
+    }
     let n: usize = const_int(&call.args[0])?.try_into().ok()?;
     Some(Box::new(SkipSugar {
-        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
-            &call.receiver,
-            fcx,
-        )?),
+        inner: SugarBody::composite(&call.receiver, fcx),
         n,
     }))
 }
