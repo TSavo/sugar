@@ -4,12 +4,17 @@
 // finite, timeless sequence floor. Adaptors over them should delegate here and
 // bubble the named temporal effect instead of manufacturing effects themselves.
 
+use std::collections::BTreeSet;
+
 use syn::{Expr, ExprCall, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collection_literal::collection_literal_array;
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
-use crate::{const_int, simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{
+    closure_body_is_side_effecting, closure_constructs_drop_side_effect_value, const_int,
+    simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "runtime_iterator_source",
@@ -32,8 +37,15 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 producer: producer_name(call).unwrap_or_else(|| "iterator source".to_string()),
             }) as Box<dyn Sugar>
         }),
+        Expr::MethodCall(call) if runtime_iterator_effectful_adaptor(call) => {
+            Some(Box::new(RuntimeIteratorSourceSugar {
+                boundary: token_key(expr),
+                producer: call.method.to_string(),
+            }))
+        }
         Expr::MethodCall(call)
-            if runtime_iterator_adaptor(call) && runtime_iterator_source_expr(&call.receiver) =>
+            if runtime_iterator_adaptor(call)
+                && runtime_iterator_source_expr(&call.receiver, fcx) =>
         {
             Some(Box::new(RuntimeIteratorBindingSugar {
                 source: SugarBody::composite(&call.receiver, fcx),
@@ -84,7 +96,7 @@ fn recognize_mutable_source_binding(expr: &Expr, fcx: &SugarBuildCtx) -> Option<
         return None;
     }
     let init = fcx.scope().let_binding_for_audit(&name)?;
-    if !runtime_iterator_source_expr(init) {
+    if !runtime_iterator_source_expr(init, fcx) {
         return None;
     }
     Some(Box::new(RuntimeIteratorBindingSugar {
@@ -92,14 +104,42 @@ fn recognize_mutable_source_binding(expr: &Expr, fcx: &SugarBuildCtx) -> Option<
     }))
 }
 
-fn runtime_iterator_source_expr(expr: &Expr) -> bool {
+fn runtime_iterator_source_expr(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let mut seen = BTreeSet::new();
+    runtime_iterator_source_expr_inner(expr, fcx, &mut seen)
+}
+
+fn runtime_iterator_source_expr_inner(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    seen: &mut BTreeSet<String>,
+) -> bool {
     if collection_literal_array(expr).is_some() {
         return false;
     }
     match strip_groups(expr) {
         Expr::Call(call) => runtime_iterator_source(call),
         Expr::MethodCall(call) => {
-            runtime_iterator_adaptor(call) && runtime_iterator_source_expr(&call.receiver)
+            runtime_iterator_effectful_adaptor(call)
+                || runtime_iterator_adaptor(call)
+                    && runtime_iterator_source_expr_inner(&call.receiver, fcx, seen)
+        }
+        Expr::Path(_) => simple_path_name(expr).is_some_and(|name| {
+            if !seen.insert(name.clone()) {
+                return false;
+            }
+            fcx.scope()
+                .unknown_iterator_consumption_reason(&name)
+                .is_some()
+                || fcx
+                    .scope()
+                    .let_binding_for_audit(&name)
+                    .is_some_and(|init| runtime_iterator_source_expr_inner(init, fcx, seen))
+        }),
+        Expr::Paren(paren) => runtime_iterator_source_expr_inner(&paren.expr, fcx, seen),
+        Expr::Group(group) => runtime_iterator_source_expr_inner(&group.expr, fcx, seen),
+        Expr::Reference(reference) => {
+            runtime_iterator_source_expr_inner(&reference.expr, fcx, seen)
         }
         _ => false,
     }
@@ -120,12 +160,32 @@ fn runtime_iterator_source(call: &ExprCall) -> bool {
 fn runtime_iterator_adaptor(call: &ExprMethodCall) -> bool {
     match call.method.to_string().as_str() {
         "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "clone"
-        | "rev" | "enumerate" | "flatten" => call.args.is_empty(),
+        | "rev" | "enumerate" | "flatten" | "array_chunks" => call.args.is_empty(),
         "skip" | "take" | "step_by" => call.args.len() == 1 && const_int(&call.args[0]).is_some(),
         "map" | "filter" | "filter_map" | "skip_while" | "take_while" | "inspect" | "flat_map"
         | "scan" => call.args.len() == 1,
         _ => false,
     }
+}
+
+fn runtime_iterator_effectful_adaptor(call: &ExprMethodCall) -> bool {
+    matches!(
+        call.method.to_string().as_str(),
+        "map"
+            | "filter"
+            | "filter_map"
+            | "skip_while"
+            | "take_while"
+            | "inspect"
+            | "flat_map"
+            | "scan"
+    ) && call.args.iter().any(|arg| {
+        let Expr::Closure(closure) = arg else {
+            return false;
+        };
+        closure_body_is_side_effecting(&closure.body)
+            || closure_constructs_drop_side_effect_value(closure)
+    })
 }
 
 fn producer_name(call: &ExprCall) -> Option<String> {

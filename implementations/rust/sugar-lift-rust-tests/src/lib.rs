@@ -11073,7 +11073,7 @@ fn panic_freedom_closure_callsite_effect(call: &syn::ExprMethodCall) -> Option<E
     None
 }
 
-fn closure_constructs_drop_side_effect_value(closure: &syn::ExprClosure) -> bool {
+pub(crate) fn closure_constructs_drop_side_effect_value(closure: &syn::ExprClosure) -> bool {
     let mut param_vec = Vec::new();
     for pat in &closure.inputs {
         collect_pat_idents(pat, &mut param_vec);
