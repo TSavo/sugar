@@ -4751,6 +4751,24 @@ fn for_flat_map_runtime_take_count_refuses() {
     );
 }
 
+#[test]
+fn rpc_source_flat_map_slice_view_closure_uses_sequence_floor() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/flat_map_slice_view.rs",
+        r#"
+#[test]
+fn test_flat_map_slice_view_next_back() {
+    let u = [0, 1];
+    let v = [5, 6, 7, 8];
+    let mut it = u.iter().flat_map(|x| &v[*x..v.len()]);
+    assert_eq!(it.next_back().unwrap(), &8);
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_flat_map_slice_view_next_back");
+}
+
 // MECHANISM-2 gap (b): `while let Some(x) = it.next_if(pred)` over a peekable literal
 // iterator. MAP: rewrite to `for x in domain.take_while(pred) { body }`. REDUCE: the
 // existing take_while prefix + for_replay body replay. next_if-in-a-while-let is exactly

@@ -13,8 +13,9 @@ use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    const_eval, const_int, repeat_count_in_scope, repeat_count_literal, strip_refs_groups,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope, SUGAR_SEQ_CAP,
+    const_acc_init_value, const_eval, const_int, repeat_count_in_scope, repeat_count_literal,
+    strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope,
+    SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -29,7 +30,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     };
     let elems = resolve_literal_elems(&index.expr, fcx.let_inits(), Some(fcx.scope()), 0)?;
-    let (start, end) = slice_bounds(&index.index, elems.len())?;
+    let (start, end) = slice_bounds_with_lets(&index.index, elems.len(), fcx.let_inits())?;
     debug!(
         target: "sugar_lift_rust_tests::sugar::literal_slice",
         start,
@@ -74,7 +75,7 @@ fn is_literal_slice_base_inner<'a>(
         return false;
     };
     resolve_literal_elems(&index.expr, let_inits, scope, 0)
-        .and_then(|elems| slice_bounds(&index.index, elems.len()))
+        .and_then(|elems| slice_bounds_with_lets(&index.index, elems.len(), let_inits))
         .is_some()
 }
 
@@ -102,7 +103,7 @@ fn literal_slice_len_inner<'a>(
         return None;
     };
     let elems = resolve_literal_elems(&index.expr, let_inits, scope, 0)?;
-    let (start, end) = slice_bounds(&index.index, elems.len())?;
+    let (start, end) = slice_bounds_with_lets(&index.index, elems.len(), let_inits)?;
     Some(end - start)
 }
 
@@ -239,6 +240,38 @@ fn slice_range_bounds(range: &ExprRange, len: usize) -> Option<(usize, usize)> {
     (start <= end && end <= len).then_some((start, end))
 }
 
+fn slice_bounds_with_lets<'a>(
+    expr: &Expr,
+    len: usize,
+    let_inits: &BTreeMap<String, &'a Expr>,
+) -> Option<(usize, usize)> {
+    if let Some(bounds) = exhausted_literal_iterator_block_bounds(expr, len) {
+        return Some(bounds);
+    }
+    if len > SUGAR_SEQ_CAP as usize {
+        return None;
+    }
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let start = match &range.start {
+        Some(start) => const_usize_with_lets(start, let_inits)?,
+        None => 0,
+    };
+    let mut end = match &range.end {
+        Some(end) => const_usize_with_lets(end, let_inits)?,
+        None => len,
+    };
+    if matches!(range.limits, syn::RangeLimits::Closed(_)) {
+        end = end.checked_add(1)?;
+    }
+    (start <= end && end <= len).then_some((start, end))
+}
+
 fn const_usize(expr: &Expr) -> Option<usize> {
     usize::try_from(const_int(expr)?).ok()
+}
+
+fn const_usize_with_lets<'a>(expr: &Expr, let_inits: &BTreeMap<String, &'a Expr>) -> Option<usize> {
+    usize::try_from(const_acc_init_value(expr, let_inits)?.as_int()?).ok()
 }
