@@ -15,17 +15,18 @@ FunctionCallBody = StringLiteralSugar | Base64BodySugar
 
 @dataclass(frozen=True)
 class FunctionCallSugar:
-    call: ast.Call
-    function: ast.FunctionDef
+    target_name: str
     argument: StringLiteralSugar
     body: FunctionCallBody
 
     @classmethod
-    def from_call(
+    def from_site(
         cls,
-        node: ast.AST,
+        site,
+        *,
         functions_by_name: dict[str, ast.FunctionDef],
     ) -> "FunctionCallSugar | None":
+        node = site.node
         if not isinstance(node, ast.Call):
             return None
         if not isinstance(node.func, ast.Name):
@@ -42,8 +43,7 @@ class FunctionCallSugar:
         if body is None:
             return None
         return cls(
-            call=node,
-            function=function,
+            target_name=node.func.id,
             argument=argument,
             body=body,
         )
@@ -54,9 +54,9 @@ class FunctionCallSugar:
         argument = complete_value(self.argument.desugar(), owner="FunctionCallSugar argument")
         return self.body.apply(argument)
 
-    def factory_steps(self) -> list[tuple[str, str, ast.stmt, str]]:
+    def factory_steps(self, function: ast.FunctionDef) -> list[tuple[str, str, ast.stmt, str]]:
         if isinstance(self.body, StringLiteralSugar):
-            return [("StringLiteralSugar", "Constant", self.function.body[0], "StringValue")]
+            return [("StringLiteralSugar", "Constant", function.body[0], "StringValue")]
         return self.body.factory_steps()
 
     def constraint_formulas(self, output: StringValue) -> list[Formula]:

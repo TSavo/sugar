@@ -13,6 +13,7 @@ from sugar_lift_py_tests.array_map_lifter import (
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
+from sugar_lift_py_tests.factory import SourceSite
 from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, str_const
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -103,7 +104,10 @@ def _lift_assert(
         return None
     if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
         return None
-    call_sugar = FunctionCallSugar.from_call(comparison.left, functions_by_name)
+    call_sugar = FunctionCallSugar.from_site(
+        SourceSite.from_node(comparison.left, filename),
+        functions_by_name=functions_by_name,
+    )
     if call_sugar is None:
         return None
     expected_sugar = string_literal_sugar(comparison.comparators[0])
@@ -112,8 +116,8 @@ def _lift_assert(
     actual = complete_value(call_sugar.desugar(), owner="literal function call actual")
     expected = complete_value(expected_sugar.desugar(), owner="literal call expected")
 
-    target_fn = call_sugar.function
-    body_steps = call_sugar.factory_steps()
+    target_fn = functions_by_name[call_sugar.target_name]
+    body_steps = call_sugar.factory_steps(target_fn)
     body_formulas = call_sugar.constraint_formulas(actual)
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
     function_post = (
@@ -168,7 +172,7 @@ def _lift_assert(
         post=function_post,
         source_warrants=[function_memento],
     )
-    callsite = _callsite_string(memento_file, call_sugar.call)
+    callsite = _callsite_string(memento_file, comparison.left)
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
@@ -238,7 +242,7 @@ def _lift_assert(
             {
                 "kind": "call-edge",
                 "sourceContract": function_contract.name,
-                "targetSymbol": target_fn.name,
+                "targetSymbol": call_sugar.target_name,
                 "targetContract": assertion_contract.name,
                 "callsite": callsite,
             }

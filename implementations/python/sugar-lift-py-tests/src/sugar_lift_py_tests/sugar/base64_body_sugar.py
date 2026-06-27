@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.factory import SourceSite
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.ir import Formula, eq, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -25,11 +26,16 @@ class Base64BodySugar:
         if len(function.args.args) != 1 or len(function.body) != 5:
             return None
         parameter = function.args.args[0].arg
-        alphabet = AlphabetLiteralSugar.from_stmt(function.body[0])
+        alphabet = AlphabetLiteralSugar.from_site(
+            SourceSite.from_node(function.body[0], "<base64-body>")
+        )
         if alphabet is None:
             return None
         ords = tuple(
-            OrdSugar.from_stmt(stmt, source_name=parameter)
+            OrdSugar.from_site(
+                SourceSite.from_node(stmt, "<base64-body>"),
+                source_name=parameter,
+            )
             for stmt in function.body[1:4]
         )
         if not all(ords):
@@ -63,10 +69,10 @@ class Base64BodySugar:
 
     def factory_steps(self) -> list[tuple[str, str, ast.stmt, str]]:
         return [
-            ("AlphabetLiteralSugar", "Assign", self.alphabet.stmt, "StringValue"),
+            ("AlphabetLiteralSugar", "Assign", self.function.body[0], "StringValue"),
             *[
-                ("OrdSugar", "Assign", ord_sugar.stmt, "TermValue")
-                for ord_sugar in self.ords
+                ("OrdSugar", "Assign", stmt, "TermValue")
+                for stmt in self.function.body[1:4]
             ],
             ("BitwiseBase64Sugar", "Return", self.return_sugar.stmt, "StringValue"),
         ]
