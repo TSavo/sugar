@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryBuildContext, default_catalog
+from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
+from sugar_lift_py_tests.context import ReduceContext
+from sugar_lift_py_tests.factory import FactoryBuildContext, SourceSite
 from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -23,8 +24,7 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar.list_sugar import list_sugar
-from sugar_lift_py_tests.sugar.map_sugar import MapSugar, map_operation_from_node
-from sugar_lift_py_tests.sugar.method_sugar import MethodSugar
+from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 
 
 @dataclass(frozen=True)
@@ -138,26 +138,31 @@ def _lift_fluent_array_map_assert(
     list[FactoryWalkRowDto],
     list[dict[str, Any]],
 ] | None:
-    method = MethodSugar.from_call(comparison.left)
-    if method is None:
+    call = comparison.left
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "map"
+        and len(call.args) == 1
+    ):
         return None
-    blame = f"{filename}:{method.call.lineno}:{method.call.col_offset}"
-    factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
-    receiver = factory_ctx.build_child(method.receiver, SugarRole.TERM).sugar
-    if not isinstance(receiver, ArrayLiteralSugar):
+    factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
+    receiver = factory_ctx.build_body(call.func.value, SugarRole.TERM)
+    if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
-    map_sugar = MapSugar.from_method(
-        method,
-        blame=blame,
+    mapper = factory_ctx.build_body(call.args[0], SugarRole.TERM)
+    map_sugar = MapSugar.from_site(
+        SourceSite.from_node(call, filename),
         receiver=receiver,
-        operation=map_operation_from_node(method.args[0]),
+        mapper=mapper,
     )
     if map_sugar is None:
         return None
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
         return None
-    actual = complete_value(map_sugar.desugar(), owner="array-map actual")
+    reduce_ctx = ReduceContext(temporal=factory_ctx.temporal)
+    actual = complete_value(map_sugar.desugar(reduce_ctx), owner="array-map actual")
     expected = complete_value(expected_sugar.desugar(), owner="array-map expected")
     if len(actual.items) != len(expected.items):
         return None
@@ -194,12 +199,12 @@ def _lift_fluent_array_map_assert(
             "ArrayLiteral",
         ),
         _walk_row(
-            "MethodSugar",
-            "Call",
+            "LambdaSugar",
+            "Lambda",
             stmt,
             filename,
             statement_memento,
-            "method-call",
+            "callable",
         ),
         _walk_row(
             "MapSugar",
@@ -244,7 +249,7 @@ def _lift_native_list_map_assert(
     )
     if list_sugar_value is None:
         return None
-    factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
         return None
@@ -254,8 +259,9 @@ def _lift_native_list_map_assert(
         return None
 
     callable_sugar = list_sugar_value.body.callable
-    callable_fn = callable_sugar.function
-    callable_contract_name = f"{Path(memento_file).stem}::{callable_fn.name}::callable"
+    callable_name = callable_sugar.name
+    callable_fn = functions_by_name[callable_name]
+    callable_contract_name = f"{Path(memento_file).stem}::{callable_name}::callable"
     assertion_contract_name = f"{Path(memento_file).stem}::{fn.name}::array-map-sugar"
     callable_memento = _function_source_memento(
         callable_fn,
@@ -324,7 +330,7 @@ def _lift_native_list_map_assert(
             filename,
             statement_memento,
             "callable",
-            extra={"targetFunctionName": callable_fn.name},
+            extra={"targetFunctionName": callable_name},
         ),
         _walk_row(
             "RangeSugar",
@@ -369,7 +375,7 @@ def _lift_native_list_map_assert(
             {
                 "kind": "call-edge",
                 "sourceContract": callable_contract.name,
-                "targetSymbol": callable_fn.name,
+                "targetSymbol": callable_name,
                 "targetContract": assertion_contract.name,
                 "callsite": callsite,
             }
@@ -384,6 +390,26 @@ def _array_literal_sugar(node: ast.AST, ctx: FactoryBuildContext) -> ArrayLitera
     if not isinstance(sugar, ArrayLiteralSugar):
         return None
     return sugar
+
+
+def _array_map_catalog() -> SugarCatalog:
+    from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
+    from sugar_lift_py_tests.sugar.binop_sugar import BINOP_CLAIM
+    from sugar_lift_py_tests.sugar.lambda_sugar import LAMBDA_CLAIM
+    from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM
+    from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
+        PRIMITIVE_LITERAL_CLAIM,
+    )
+
+    return SugarCatalog(
+        [
+            PRIMITIVE_LITERAL_CLAIM,
+            NAME_CLAIM,
+            BINOP_CLAIM,
+            LAMBDA_CLAIM,
+            ARRAY_LITERAL_CLAIM,
+        ]
+    )
 
 
 def _callsite_string(memento_file: str, node: ast.AST) -> str:

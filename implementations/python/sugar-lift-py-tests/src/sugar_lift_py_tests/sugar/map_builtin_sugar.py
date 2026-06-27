@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.operations import CallableMapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 
-from .function_ref_sugar import FunctionRefSugar
+from .function_ref_sugar import FunctionRefSugar, function_ref_sugar
 from .range_sugar import RangeSugar, range_sugar
 
 
@@ -56,7 +56,7 @@ def map_builtin_sugar(
         return None
     if node.keywords or len(node.args) != 2:
         return None
-    callable_sugar = FunctionRefSugar.from_node(node.args[0], functions_by_name)
+    callable_sugar = function_ref_sugar(node.args[0], functions_by_name)
     if callable_sugar is None:
         return None
     sequence = range_sugar(node.args[1])
