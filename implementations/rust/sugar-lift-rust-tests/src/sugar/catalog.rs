@@ -27,17 +27,17 @@ use crate::sugar::{
     literal_iterator_quantifier, literal_slice, loop_break_term, macro_assertion_surface,
     macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
     maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
-    option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
-    range_accessor, range_bounds_contains, range_construct, range_contains, range_term,
-    raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term, regex_match,
-    repeat_term, result_predicate, result_transpose_collect, rev, runtime_iterator_source,
-    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
-    slice_search, source_location, statement_async_future, statement_control_flow,
-    statement_future_handoff, statement_loop_advance, statement_nested_assertion,
-    statement_reflection, statement_runtime_expr, step_by, str_method, string_add,
-    string_predicate, struct_term, take, take_while, term_literal, to_string, transparent_term,
-    try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary, unsafe_memory, value_if,
-    vec_literal, vec_macro, wrapping_neg, write_macro, zip,
+    option_predicate, option_unwrap, panic_macro, partition_point, path, peekable, primitive_int,
+    ptr_metadata, range_accessor, range_bounds_contains, range_construct, range_contains,
+    range_term, raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term,
+    regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
+    runtime_iterator_source, size_hint, sizeof, skip, skip_while, slice_accessor,
+    slice_chunk_window, slice_index, slice_search, source_location, statement_async_future,
+    statement_control_flow, statement_future_handoff, statement_loop_advance,
+    statement_nested_assertion, statement_reflection, statement_runtime_expr, step_by, str_method,
+    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
+    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
+    unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, write_macro, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -180,6 +180,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &offset_of::EXPR_SUGAR,
     &addr_of_mut::EXPR_SUGAR,
     &future_join::EXPR_SUGAR,
+    &panic_macro::EXPR_SUGAR,
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
@@ -660,6 +661,82 @@ mod tests {
                 .as_deref()
                 .is_some_and(|reason| reason.contains("join! future construction")),
             "join! should report a typed future effect, not a macro_rules gap: {audit:?}"
+        );
+    }
+
+    #[test]
+    fn panic_macro_is_builtin_sugar_before_generic_macro_term() {
+        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        let panic_macro = names
+            .iter()
+            .position(|name| *name == "panic_macro")
+            .unwrap_or_else(|| {
+                panic!(
+                    "panic! is a builtin divergence macro and needs dedicated PanicMacroSugar \
+                     before generic macro_term; candidates were {names:?}"
+                )
+            });
+        let macro_term = names
+            .iter()
+            .position(|name| *name == "macro_term")
+            .unwrap_or_else(|| panic!("panic! should still expose the generic macro fallback"));
+
+        assert!(
+            panic_macro < macro_term,
+            "PanicMacroSugar must outrank MacroTermSugar for panic!: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("panic_macro")
+        );
+    }
+
+    #[test]
+    fn panic_macro_reports_builtin_effect_instead_of_macro_rules_gap() {
+        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+        let audits = run_expr_with_audit(&expr, SugarRole::Term);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == "panic ! (\"boom\")" && audit.requested_role == "Term")
+            .unwrap_or_else(|| panic!("panic! term site should be audited: {audits:?}"));
+
+        assert_eq!(audit.selected, Some("panic_macro"));
+        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert!(
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("panic! macro divergence")),
+            "panic! should report a typed builtin panic effect, not a macro_rules gap: {audit:?}"
+        );
+    }
+
+    #[test]
+    fn panic_macro_effect_bubbles_through_parent_floor() {
+        let expr: Expr = syn::parse_str("{ panic!(\"boom\") }").unwrap();
+        let audits = run_expr_with_audit(&expr, SugarRole::Term);
+        let child = audits
+            .iter()
+            .find(|audit| audit.selected == Some("panic_macro"))
+            .unwrap_or_else(|| panic!("block tail should build panic_macro child: {audits:?}"));
+        let parent = audits
+            .iter()
+            .find(|audit| audit.selected == Some("block_term"))
+            .unwrap_or_else(|| panic!("block should be audited as parent floor: {audits:?}"));
+
+        assert_eq!(child.disposition, FactoryDisposition::Refused);
+        assert_eq!(parent.disposition, FactoryDisposition::Refused);
+        assert!(
+            child
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("panic! macro divergence")),
+            "child panic_macro must name the builtin effect: {child:?}"
+        );
+        assert_eq!(
+            parent.reason, child.reason,
+            "parent floors must bubble the panic! effect unchanged instead of rewriting it"
         );
     }
 
