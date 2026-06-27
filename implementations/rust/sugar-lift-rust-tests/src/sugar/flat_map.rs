@@ -14,13 +14,16 @@
 // stay loud. A range whose start >= end yields the empty sub-sequence, a legitimate
 // flat_map drop.
 
+use std::collections::BTreeMap;
+
+use crate::sugar::factory::{build_composite, desugar_build_ctx};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    const_eval_flat_map_closure, ConstVal, Desugared, DesugaredElem, Effect, FlatMapClosureEval,
-    Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    const_eval_flat_map_closure, substitute_expr, ConstVal, Desugared, DesugaredElem, Effect,
+    FlatMapClosureEval, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
-use syn::Expr;
+use syn::{Expr, Pat, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("flat_map", recognize_composite);
@@ -69,6 +72,16 @@ impl FlatMapClosure {
     fn eval(&self, value: &ConstVal) -> FlatMapClosureEval {
         const_eval_flat_map_closure(&self.expr, value)
     }
+
+    fn substituted_body_for(&self, value: &ConstVal) -> Option<Expr> {
+        if self.expr.inputs.len() != 1 {
+            return None;
+        }
+        let tail = closure_tail_expr(&self.expr)?;
+        let mut bindings = BTreeMap::new();
+        bind_expr_closure_arg(&self.expr.inputs[0], value, &mut bindings)?;
+        Some(substitute_expr(tail, &bindings))
+    }
 }
 
 /// Apply the closure to each element and concatenate the resulting finite literal
@@ -95,6 +108,12 @@ fn reduce_flat_map(
             .unwrap_or_else(|| flat_map_gap("flat_map receiver reduced to non-sequence")),
         Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
     };
+    let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+    let let_inits: BTreeMap<String, &Expr> = stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect();
+    let fcx = desugar_build_ctx(ctx.scope, ctx.options, &let_inits);
     let mut out = Vec::new();
     for elem in seq {
         // An opaque element (no const value) cannot drive the closure.
@@ -104,10 +123,16 @@ fn reduce_flat_map(
             );
         };
         let sub = match mapper.eval(value) {
-            FlatMapClosureEval::Finite(sub) => sub,
+            FlatMapClosureEval::Finite(sub) => flat_map_values_to_elems(sub),
             FlatMapClosureEval::LiteralDomain(reason) => return flat_map_literal_domain(reason),
             FlatMapClosureEval::Gap => {
-                flat_map_gap("flat_map closure did not reduce to a finite sequence")
+                match reduce_flat_map_closure_sequence(mapper, value, ctx, &fcx) {
+                    Ok(Some(sub)) => sub,
+                    Ok(None) => {
+                        flat_map_gap("flat_map closure did not reduce to a finite sequence")
+                    }
+                    Err(outcome) => return outcome,
+                }
             }
         };
         let Some(total) = out.len().checked_add(sub.len()) else {
@@ -118,16 +143,85 @@ fn reduce_flat_map(
                 "literal domain exceeds SUGAR_SEQ_CAP -- flat_map concatenated sequence is finite but over-cap; refused",
             );
         }
-        for v in sub {
-            out.push(DesugaredElem {
-                expr: v
-                    .to_expr()
-                    .unwrap_or_else(|| flat_map_gap("flat_map result could not materialize")),
-                value: Some(v),
-            });
-        }
+        out.extend(sub);
     }
     Outcome::Complete(Desugared::Seq(out))
+}
+
+fn flat_map_values_to_elems(values: Vec<ConstVal>) -> Vec<DesugaredElem> {
+    values
+        .into_iter()
+        .map(|value| DesugaredElem {
+            expr: value
+                .to_expr()
+                .unwrap_or_else(|| flat_map_gap("flat_map result could not materialize")),
+            value: Some(value),
+        })
+        .collect()
+}
+
+fn reduce_flat_map_closure_sequence(
+    mapper: &FlatMapClosure,
+    value: &ConstVal,
+    ctx: &SugarCtx,
+    fcx: &SugarBuildCtx,
+) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
+    let Some(body) = mapper.substituted_body_for(value) else {
+        return Ok(None);
+    };
+    let Some(node) = method_family::build_literal_sequence_composite(&body, fcx)
+        .or_else(|| has_composite(&body, fcx).then(|| build_composite(&body, fcx)))
+    else {
+        return Ok(None);
+    };
+    match SugarBody::<CompositeFloor>::from_node(node).reduce(ctx) {
+        Outcome::Complete(d) => {
+            Ok(Some(d.into_seq().unwrap_or_else(|| {
+                flat_map_gap("flat_map closure floor reduced to non-sequence")
+            })))
+        }
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+fn closure_tail_expr(closure: &syn::ExprClosure) -> Option<&Expr> {
+    match closure.body.as_ref() {
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [Stmt::Expr(expr, None)] => Some(expr),
+            _ => None,
+        },
+        other => Some(other),
+    }
+}
+
+fn bind_expr_closure_arg(
+    pat: &Pat,
+    value: &ConstVal,
+    bindings: &mut BTreeMap<String, Expr>,
+) -> Option<()> {
+    match pat {
+        Pat::Ident(ident) if ident.subpat.is_none() => {
+            bindings.insert(ident.ident.to_string(), value.to_expr()?);
+            Some(())
+        }
+        Pat::Tuple(tuple) => {
+            let ConstVal::Tuple(items) = value else {
+                return None;
+            };
+            if tuple.elems.len() != items.len() {
+                return None;
+            }
+            for (pat, item) in tuple.elems.iter().zip(items) {
+                bind_expr_closure_arg(pat, item, bindings)?;
+            }
+            Some(())
+        }
+        Pat::Wild(_) => Some(()),
+        Pat::Paren(paren) => bind_expr_closure_arg(&paren.pat, value, bindings),
+        Pat::Reference(reference) => bind_expr_closure_arg(&reference.pat, value, bindings),
+        Pat::Type(typed) => bind_expr_closure_arg(&typed.pat, value, bindings),
+        _ => None,
+    }
 }
 
 fn flat_map_gap(reason: &str) -> ! {
