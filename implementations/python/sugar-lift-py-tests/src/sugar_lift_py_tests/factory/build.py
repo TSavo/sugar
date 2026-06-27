@@ -19,11 +19,18 @@ def build_node(
     filename: str,
     role: SugarRole,
     catalog: Optional[SugarCatalog] = None,
+    ctx: Optional[FactoryBuildContext] = None,
 ) -> FactoryBuildResult:
+    catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
     return _build_site(
         SourceSite.from_node(node, filename),
         role=role,
-        catalog=catalog or default_catalog(),
+        catalog=catalog,
+        ctx=ctx
+        or FactoryBuildContext(
+            filename=filename,
+            catalog=catalog,
+        ),
     )
 
 
@@ -32,12 +39,23 @@ def build_next(
     filename: str,
     role: SugarRole,
     catalog: Optional[SugarCatalog] = None,
+    ctx: Optional[FactoryBuildContext] = None,
 ) -> FactoryBuildResult:
     site = SourceSiteStack.from_source(source, filename).pop()
     if site is None:
         raise ValueError("factory source contained no source sites")
 
-    return _build_site(site, role=role, catalog=catalog or default_catalog())
+    catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
+    return _build_site(
+        site,
+        role=role,
+        catalog=catalog,
+        ctx=ctx
+        or FactoryBuildContext(
+            filename=filename,
+            catalog=catalog,
+        ),
+    )
 
 
 def _build_site(
@@ -45,6 +63,7 @@ def _build_site(
     *,
     role: SugarRole,
     catalog: SugarCatalog,
+    ctx: FactoryBuildContext,
 ) -> FactoryBuildResult:
     candidates = catalog.candidates_for(role, site)
     if not candidates:
@@ -67,7 +86,7 @@ def _build_site(
         raise FactoryGap(info, audit_row)
 
     selected = candidates[0]
-    sugar = selected.claim.build(site, FactoryBuildContext(site.filename, catalog))
+    sugar = selected.claim.build(site, ctx)
     message = f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     audit_row = FactoryAuditRow(
         role=role.value,

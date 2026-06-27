@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+import ast
+from dataclasses import dataclass
+
+from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.operations import AddOperation, perform_operation
+from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+@dataclass(frozen=True)
+class AddSugar:
+    receiver: SugarBody
+    operand: SugarBody
+    blame: str
+
+    @classmethod
+    def from_site(cls, site, ctx) -> "AddSugar | None":
+        if not _is_add_call(site.node):
+            return None
+        assert isinstance(site.node, ast.Call)
+        assert isinstance(site.node.func, ast.Attribute)
+        if len(site.node.args) != 1:
+            return None
+        return cls(
+            receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
+            operand=ctx.build_body(site.node.args[0], SugarRole.TERM),
+            blame=site.blame,
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        receiver = complete_value(self.receiver.reduce(ctx), owner="AddSugar receiver")
+        operand = complete_value(self.operand.reduce(ctx), owner="AddSugar operand")
+        if not isinstance(operand, TermValue):
+            raise TypeError("AddSugar operand must reduce to TermValue")
+        return perform_operation(
+            owner="AddSugar",
+            blame=self.blame,
+            receiver=receiver,
+            method_name="add_with",
+            operation=AddOperation(operand=operand, owner="AddSugar", blame=self.blame),
+            ctx=ctx,
+        )
+
+
+def _is_add_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add"
+    )
+
+
+def _owns(site) -> bool:
+    return _is_add_call(site.node)
+
+
+def _build(site, ctx) -> AddSugar:
+    sugar = AddSugar.from_site(site, ctx)
+    if sugar is None:
+        raise TypeError("AddSugar claim built a non-add call")
+    return sugar
+
+
+ADD_CLAIM = SugarClaim(
+    name="AddSugar",
+    role=SugarRole.TERM,
+    owns=_owns,
+    build=_build,
+)
