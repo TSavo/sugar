@@ -2813,6 +2813,7 @@ fn mutable_view_temporal_reason(reason: &str) -> bool {
             ".rchunks_mut()",
             ".get_disjoint_mut()",
             ".as_mut()",
+            ".peek_mut()",
         ]
         .iter()
         .any(|method| reason.contains(method)))

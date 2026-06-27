@@ -11179,6 +11179,7 @@ const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
     "next_back",
     "nth",
     "nth_back",
+    "peek_mut",
     "push",
     "push_back",
     "push_front",

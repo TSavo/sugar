@@ -17,8 +17,9 @@ use tracing::{debug, trace};
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
-    const_fold_int_term, const_int, num, parse_int_lit, parse_macro_args, simple_path_name,
-    strip_refs_groups, token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    const_eval, const_fold_int_term, const_int, literal_string_value, num, parse_int_lit,
+    parse_macro_args, simple_path_name, strip_refs_groups, token_key, AssertionFactKind, Desugared,
+    Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -509,7 +510,9 @@ impl TemporalRewriteState {
                             self.invalidate_mutating_receiver(&name, &call.method.to_string());
                     }
                 }
-                if let Some((direction, count)) = iterator_consumption(call) {
+                if let Some(handled) = self.apply_conditional_iterator_consumption(call) {
+                    applied |= handled;
+                } else if let Some((direction, count)) = iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
                         applied |= self.advance_iterator_binding(&name, direction, count);
                     }
@@ -589,6 +592,7 @@ impl TemporalRewriteState {
                 self.apply_while_loop(while_expr)
                     | self.apply_while_loop_iterator_exhaustion(while_expr)
             }
+            Expr::Let(let_expr) => self.apply_consumption_expr(&let_expr.expr),
             Expr::Loop(loop_expr) => self.apply_loop(loop_expr),
             Expr::If(if_expr) => {
                 let mut applied = self.apply_consumption_expr(&if_expr.cond)
@@ -861,6 +865,29 @@ impl TemporalRewriteState {
         self.values.insert(name.to_string(), updated);
         self.unknown_consumed_iterators.remove(name);
         true
+    }
+
+    fn apply_conditional_iterator_consumption(
+        &mut self,
+        call: &syn::ExprMethodCall,
+    ) -> Option<bool> {
+        if call.method != "next_if_eq" || call.args.len() != 1 {
+            return None;
+        }
+        let name = simple_path_name(&call.receiver)?;
+        let Some(current) = self.expr_for(&name) else {
+            return Some(self.invalidate_iterator_binding(&name, "next_if_eq"));
+        };
+        let Some(front) = literal_sequence_nth_expr(&current, 0) else {
+            return Some(self.invalidate_iterator_binding(&name, "next_if_eq"));
+        };
+        match literal_expr_eq(&front, call.args.first()?) {
+            Some(true) => {
+                Some(self.advance_iterator_binding(&name, IteratorConsumptionDirection::Front, 1))
+            }
+            Some(false) => Some(false),
+            None => Some(self.invalidate_iterator_binding(&name, "next_if_eq")),
+        }
     }
 
     fn invalidate_iterator_binding(&mut self, name: &str, method: &str) -> bool {
@@ -1781,6 +1808,7 @@ fn mutable_view_method(method: &str) -> bool {
             | "get_mut"
             | "get_unchecked_mut"
             | "get_disjoint_mut"
+            | "peek_mut"
             | "split_at_mut"
             | "chunks_mut"
             | "rchunks_mut"
@@ -2151,6 +2179,40 @@ fn iterator_consumption(
         }
         _ => None,
     }
+}
+
+fn literal_sequence_nth_expr(expr: &Expr, index: usize) -> Option<Expr> {
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => array.elems.get(index).cloned(),
+        Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
+            "iter" | "iter_mut" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" => {
+                literal_sequence_nth_expr(&call.receiver, index)
+            }
+            _ => None,
+        },
+        Expr::MethodCall(call) if call.args.len() == 1 => match call.method.to_string().as_str() {
+            "skip" => {
+                let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                literal_sequence_nth_expr(&call.receiver, index.checked_add(n)?)
+            }
+            "take" => {
+                let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                (index < n).then(|| literal_sequence_nth_expr(&call.receiver, index))?
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn literal_expr_eq(left: &Expr, right: &Expr) -> Option<bool> {
+    let left = strip_refs_groups(left);
+    let right = strip_refs_groups(right);
+    if let (Some(left), Some(right)) = (literal_string_value(left), literal_string_value(right)) {
+        return Some(left == right);
+    }
+    let empty = BTreeMap::new();
+    Some(const_eval(left, &empty)? == const_eval(right, &empty)?)
 }
 
 fn trackable_sequence_method(method: &str) -> bool {

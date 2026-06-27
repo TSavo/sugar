@@ -4,9 +4,13 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
 
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::literal_array_term_from_terms;
 use crate::sugar::unit_path::unit_path_literal_name;
-use crate::{canonical_term_sig, const_val_term, token_key, ConstVal, Desugared, DesugaredElem};
+use crate::{
+    canonical_term_sig, const_val_term, token_key, ConstVal, Desugared, DesugaredElem, Outcome,
+    SugarCtx,
+};
 
 /// Dispatch a completed composite floor by whether it is a finite sequence.
 pub(crate) trait SequenceFloorVisitor {
@@ -133,6 +137,23 @@ pub(crate) fn sequence_elem_term_floor(elem: &DesugaredElem, family: &str) -> Rc
         .as_ref()
         .and_then(sequence_value_term_floor)
         .unwrap_or_else(|| make_var(format!("opaque:{family}-elem:{}", token_key(&elem.expr))))
+}
+
+pub(crate) fn reduce_sequence_elem_term_floor(
+    elem: &DesugaredElem,
+    family: &str,
+    fcx: &SugarBuildCtx,
+    ctx: &SugarCtx,
+) -> Result<Rc<Term>, Outcome> {
+    if let Some(term) = elem.value.as_ref().and_then(sequence_value_term_floor) {
+        return Ok(term);
+    }
+    match SugarBody::<TermFloor>::term(&elem.expr, fcx).reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("{family} sequence element completed as non-term floor"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
 }
 
 pub(crate) fn sequence_value_term_floor(value: &ConstVal) -> Option<Rc<Term>> {
