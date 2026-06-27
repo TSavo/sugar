@@ -22,7 +22,7 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
-from sugar_lift_py_tests.sugar.list_sugar import ListSugar
+from sugar_lift_py_tests.sugar.list_sugar import list_sugar
 from sugar_lift_py_tests.sugar.map_sugar import MapSugar, map_operation_from_node
 from sugar_lift_py_tests.sugar.method_sugar import MethodSugar
 
@@ -237,23 +237,23 @@ def _lift_native_list_map_assert(
     list[dict[str, Any]],
 ] | None:
     blame = f"{filename}:{comparison.left.lineno}:{comparison.left.col_offset}"
-    list_sugar = ListSugar.from_call(
+    list_sugar_value = list_sugar(
         comparison.left,
         functions_by_name,
         blame=blame,
     )
-    if list_sugar is None:
+    if list_sugar_value is None:
         return None
     factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
         return None
-    actual = complete_value(list_sugar.desugar(), owner="native list-map actual")
+    actual = complete_value(list_sugar_value.desugar(), owner="native list-map actual")
     expected = complete_value(expected_sugar.desugar(), owner="native list-map expected")
     if len(actual.items) != len(expected.items):
         return None
 
-    callable_sugar = list_sugar.body.callable
+    callable_sugar = list_sugar_value.body.callable
     callable_fn = callable_sugar.function
     callable_contract_name = f"{Path(memento_file).stem}::{callable_fn.name}::callable"
     assertion_contract_name = f"{Path(memento_file).stem}::{fn.name}::array-map-sugar"
@@ -299,7 +299,7 @@ def _lift_native_list_map_assert(
         post=callable_post,
         source_warrants=[callable_memento],
     )
-    callsite = _callsite_string(memento_file, list_sugar.body.call)
+    callsite = _callsite_string(memento_file, list_sugar_value.body.call)
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
