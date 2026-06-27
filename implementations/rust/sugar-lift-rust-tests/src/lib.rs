@@ -612,6 +612,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("atomic read-modify-write runtime state")
         || reason.contains("atomic load/store ordering")
         || reason.contains("iterator size_hint runtime bound")
+        || (reason.contains("consumed iterator")
+            && reason.contains("has no replayable temporal rewrite at this point"))
         || reason.contains("type-level obligation")
         // TERMINAL: a macro EXPANDED (from a definition we hold) but its expansion
         // contains NO liftable assertion -- the body is type-level or purely effectful,
@@ -8692,6 +8694,11 @@ enum Effect {
     /// value is per-iteration, not timeless. (Carried under the side-effecting closure-body
     /// proto reason today; typed here as its own named boundary.)
     IterAdvance { boundary: String },
+    /// CONSUMED-ITERATOR-STATE: a local iterator has already been advanced or consumed, and
+    /// the temporal replay ledger has no expression for the current iterator state. Reading a
+    /// terminal such as `.next()` from that binding would invent a timeless value for a
+    /// stateful iterator position, so the terminal sugar owns this named boundary.
+    ConsumedIteratorState { boundary: String },
     /// OPAQUE-RUNTIME (bin-2): the iterated / asserted value is RUNTIME data -- a param, a
     /// runtime call result, an opaque receiver -- not constructible from source literals.
     /// There is no construction to walk, so no finite universe to emit. A source property.
@@ -8974,6 +8981,9 @@ impl Effect {
                  advances an iterator); not a pure point-wise claim; refused"
                     .to_string()
             }
+            Effect::ConsumedIteratorState { boundary } => format!(
+                "consumed iterator `{boundary}` has no replayable temporal rewrite at this point; refused"
+            ),
             Effect::OpaqueRuntime { accessor, .. } => {
                 if *accessor {
                     "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
@@ -9155,6 +9165,7 @@ impl Effect {
         let boundary = match self {
             Effect::Mutation { boundary }
             | Effect::IterAdvance { boundary }
+            | Effect::ConsumedIteratorState { boundary }
             | Effect::OpaqueRuntime { boundary, .. }
             | Effect::Tls { boundary }
             | Effect::Io { boundary }
@@ -24696,6 +24707,19 @@ fn t() {
         ] {
             assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
         }
+    }
+
+    #[test]
+    fn consumed_iterator_without_replay_is_a_named_terminal_effect() {
+        let reason =
+            "consumed iterator `it` has no replayable temporal rewrite at this point; refused";
+        assert_eq!(
+            refusal_disposition(reason),
+            Disposition::Refused,
+            "consumed iterator state must be a named terminal Effect, not an \
+             AmbiguousTemporalIdentity catch-all or an unclassified refusal string; add a \
+             ConsumedIteratorState effect and classify this exact terminal boundary"
+        );
     }
 
     // ── Runtime-residue refusal: impl-method / runtime if-guard / runtime expr-stmt ──
