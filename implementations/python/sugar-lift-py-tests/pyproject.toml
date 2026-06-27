@@ -21,7 +21,7 @@ test = ["pytest>=7"]
 
 [project.scripts]
 sugar-lsp-python = "sugar_lift_py_tests.lsp:main"
-sugar-lift-python = "sugar_lift_py_tests.lsp:main"
+sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"
 sugar-python-factory-floor-idd = "sugar_lift_py_tests.idd.cli:main"
 # The persistent editor language server (LSP wire protocol; renders `sugar
 # prove` as red squiggles). Distinct from the batch lift plugin above.
