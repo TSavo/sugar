@@ -12,9 +12,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sugar_ir_compiler::{
+    registry::Registry as CompilerRegistry, subprocess::LazyJsonRpcCompiler, Capabilities,
+    PROTOCOL_VERSION as IR_COMPILER_PROTOCOL_VERSION,
+};
 use tracing::{debug, info, warn};
 
 use crate::project_config::PluginEntry;
@@ -25,6 +30,7 @@ pub(crate) const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 #[derive(Debug, Clone, Default)]
 pub(crate) struct WorkspaceCensus {
     pub languages: Vec<LanguageEvidence>,
+    pub items: Vec<ForensicItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,10 +40,20 @@ pub(crate) struct LanguageEvidence {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForensicItem {
+    pub id: String,
+    pub kind: String,
+    pub path: String,
+    pub language_hint: Option<String>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ComponentPlan {
     pub plugins: Vec<PluginEntry>,
     pub lift_manifests: Vec<PlannedLiftManifest>,
+    pub ir_compilers: Vec<PlannedIrCompiler>,
     pub diagnostics: Vec<ComponentDiagnostic>,
     pub census: WorkspaceCensus,
 }
@@ -60,6 +76,7 @@ pub(crate) struct PlannedLiftManifest {
     pub surface: String,
     pub name: String,
     pub version: Option<String>,
+    pub protocol_version: Option<String>,
     pub command: Vec<String>,
     pub working_dir: Option<PathBuf>,
     pub method: Option<String>,
@@ -68,6 +85,18 @@ pub(crate) struct PlannedLiftManifest {
     pub witness_tool: Option<String>,
     pub resolve_witness_command: Vec<String>,
     pub resolve_witness_method: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PlannedIrCompiler {
+    pub name: String,
+    pub version: Option<String>,
+    pub protocol_version: String,
+    pub command: Vec<String>,
+    pub working_dir: Option<PathBuf>,
+    pub dialects: Vec<String>,
+    pub supported_sorts: Vec<String>,
+    pub supported_predicates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,10 +137,12 @@ pub(crate) fn plan_workspace(project_root: &Path) -> ComponentPlan {
                     component = component.name,
                     plugins = result.plugins.len(),
                     manifests = result.lift_manifests.len(),
+                    ir_compilers = result.ir_compilers.len(),
                     "component claimed workspace"
                 );
                 plan.plugins.extend(result.plugins);
                 plan.lift_manifests.extend(result.lift_manifests);
+                plan.ir_compilers.extend(result.ir_compilers);
                 plan.diagnostics.extend(result.diagnostics);
             }
             Ok(None) => {
@@ -142,6 +173,8 @@ pub(crate) fn plan_workspace(project_root: &Path) -> ComponentPlan {
 
     dedupe_plugins(&mut plan.plugins);
     dedupe_manifests(&mut plan.lift_manifests);
+    dedupe_ir_compilers(&mut plan.ir_compilers);
+    order_component_plugins(&mut plan.plugins);
     if plan.plugins.is_empty() {
         if let Some(message) = missing_kit_message_from_census(&plan.census) {
             plan.diagnostics.push(ComponentDiagnostic {
@@ -173,16 +206,186 @@ pub(crate) fn planned_lift_manifests(project_root: &Path) -> Vec<PlannedLiftMani
     plan_workspace(project_root).lift_manifests
 }
 
+#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
+pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler> {
+    plan_workspace(project_root).ir_compilers
+}
+
+#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
+pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
+    let mut registry = sugar_verifier::compiler_registry::build(project_root);
+    register_planned_ir_compilers(
+        &mut registry,
+        project_root,
+        planned_ir_compilers(project_root),
+    );
+    registry
+}
+
+#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
+fn register_planned_ir_compilers(
+    registry: &mut CompilerRegistry,
+    project_root: &Path,
+    compilers: Vec<PlannedIrCompiler>,
+) {
+    for compiler in compilers {
+        if compiler.protocol_version != IR_COMPILER_PROTOCOL_VERSION {
+            warn!(
+                compiler = compiler.name,
+                protocol = compiler.protocol_version,
+                expected = IR_COMPILER_PROTOCOL_VERSION,
+                "skipping component IR compiler with incompatible protocol"
+            );
+            continue;
+        }
+        if compiler.command.is_empty() {
+            warn!(
+                compiler = compiler.name,
+                "skipping component IR compiler without command"
+            );
+            continue;
+        }
+        let dialects = compiler
+            .dialects
+            .iter()
+            .filter(|dialect| registry.get(dialect).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        if dialects.is_empty() {
+            continue;
+        }
+        let caps = Capabilities {
+            name: compiler.name.clone(),
+            version: compiler
+                .version
+                .clone()
+                .unwrap_or_else(|| "0.0.0".to_string()),
+            protocol_version: compiler.protocol_version.clone(),
+            dialects,
+            supported_sorts: compiler.supported_sorts.clone(),
+            supported_predicates: compiler.supported_predicates.clone(),
+        };
+        let working_dir =
+            resolve_project_relative_working_dir(project_root, compiler.working_dir.as_ref());
+        registry.register(Arc::new(LazyJsonRpcCompiler::new(
+            compiler.command.clone(),
+            working_dir,
+            caps,
+        )));
+    }
+}
+
 fn census_workspace(project_root: &Path) -> WorkspaceCensus {
     let mut languages = Vec::new();
+    let mut items = Vec::new();
     if project_root.join("Cargo.toml").is_file() {
         languages.push(LanguageEvidence {
             language: "rust".to_string(),
             path: "Cargo.toml".to_string(),
             reason: "Cargo package manifest".to_string(),
         });
+        items.push(ForensicItem {
+            id: "file:Cargo.toml".to_string(),
+            kind: "package-manifest".to_string(),
+            path: "Cargo.toml".to_string(),
+            language_hint: Some("rust".to_string()),
+            reason: "Cargo package manifest".to_string(),
+        });
     }
-    WorkspaceCensus { languages }
+    collect_forensic_items(project_root, project_root, &mut items);
+    dedupe_forensic_items(&mut items);
+    WorkspaceCensus { languages, items }
+}
+
+fn collect_forensic_items(project_root: &Path, dir: &Path, items: &mut Vec<ForensicItem>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if path.is_dir() {
+            if matches!(
+                file_name.as_ref(),
+                ".git" | ".sugar" | "target" | "__pycache__" | ".pytest_cache"
+            ) {
+                continue;
+            }
+            collect_forensic_items(project_root, &path, items);
+            continue;
+        }
+        let Some(rel) = rel_path(project_root, &path) else {
+            continue;
+        };
+        match file_name.as_ref() {
+            "Cargo.toml" => items.push(ForensicItem {
+                id: format!("file:{rel}"),
+                kind: "package-manifest".to_string(),
+                path: rel,
+                language_hint: Some("rust".to_string()),
+                reason: "Cargo package manifest".to_string(),
+            }),
+            "pom.xml" | "build.gradle" | "build.gradle.kts" => items.push(ForensicItem {
+                id: format!("file:{rel}"),
+                kind: "package-manifest".to_string(),
+                path: rel,
+                language_hint: Some("java".to_string()),
+                reason: "Java package manifest".to_string(),
+            }),
+            "pyproject.toml" | "pytest.ini" | "setup.cfg" | "setup.py" => {
+                items.push(ForensicItem {
+                    id: format!("file:{rel}"),
+                    kind: "package-manifest".to_string(),
+                    path: rel,
+                    language_hint: Some("python".to_string()),
+                    reason: "Python package/test manifest".to_string(),
+                });
+            }
+            _ => {
+                let language = match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("rs") => Some("rust"),
+                    Some("java") => Some("java"),
+                    Some("py") => Some("python"),
+                    _ => None,
+                };
+                if let Some(language) = language {
+                    items.push(ForensicItem {
+                        id: format!("file:{rel}"),
+                        kind: "source-file".to_string(),
+                        path: rel,
+                        language_hint: Some(language.to_string()),
+                        reason: format!("{language} source file"),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn rel_path(root: &Path, path: &Path) -> Option<String> {
+    Some(
+        path.strip_prefix(root)
+            .ok()?
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+    )
+}
+
+fn dedupe_forensic_items(items: &mut Vec<ForensicItem>) {
+    items.sort_by(|a, b| a.id.cmp(&b.id));
+    items.dedup_by(|a, b| a.id == b.id);
+}
+
+fn forensic_item_to_json(item: &ForensicItem) -> Value {
+    json!({
+        "id": item.id,
+        "kind": item.kind,
+        "path": item.path,
+        "language_hint": item.language_hint,
+        "reason": item.reason,
+    })
 }
 
 fn missing_kit_message_from_census(census: &WorkspaceCensus) -> Option<String> {
@@ -352,12 +555,16 @@ fn request_component_plan(
         "method": COMPONENT_PLAN_RPC_METHOD,
         "params": {
             "workspace_root": project_root.display().to_string(),
+            "project_forensics": {
+                "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
+            },
             "workspace_evidence": {
                 "languages": census.languages.iter().map(|language| json!({
                     "language": language.language,
                     "path": language.path,
                     "reason": language.reason,
                 })).collect::<Vec<_>>(),
+                "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
             },
             "intent": "lift",
         }
@@ -456,6 +663,7 @@ fn rpc_error_is_method_not_supported(error: &Value) -> bool {
 struct ComponentPlanResult {
     plugins: Vec<PluginEntry>,
     lift_manifests: Vec<PlannedLiftManifest>,
+    ir_compilers: Vec<PlannedIrCompiler>,
     diagnostics: Vec<ComponentDiagnostic>,
 }
 
@@ -501,6 +709,17 @@ fn parse_component_plan_result(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let ir_compilers = value
+        .get("ir_compilers")
+        .or_else(|| value.get("irCompilers"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| planned_ir_compiler_from_value(component, item))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let diagnostics = value
         .get("diagnostics")
         .and_then(Value::as_array)
@@ -509,6 +728,7 @@ fn parse_component_plan_result(
     Ok(Some(ComponentPlanResult {
         plugins,
         lift_manifests,
+        ir_compilers,
         diagnostics,
     }))
 }
@@ -543,6 +763,8 @@ fn planned_lift_manifest_from_value(
         surface,
         name: string_field(value, "name").unwrap_or_else(|| component.name.clone()),
         version: string_field(value, "version"),
+        protocol_version: string_field(value, "protocol_version")
+            .or_else(|| string_field(value, "protocolVersion")),
         command,
         working_dir: string_field(value, "working_dir")
             .or_else(|| string_field(value, "workingDir"))
@@ -557,6 +779,44 @@ fn planned_lift_manifest_from_value(
             .or_else_empty(|| string_array_field(value, "resolveWitnessCommand")),
         resolve_witness_method: string_field(value, "resolve_witness_method")
             .or_else(|| string_field(value, "resolveWitnessMethod")),
+    })
+}
+
+fn planned_ir_compiler_from_value(
+    component: &ComponentRegistration,
+    value: &Value,
+) -> Option<PlannedIrCompiler> {
+    let command = string_array_field(value, "command");
+    if command.is_empty() {
+        warn!(
+            component = component.name,
+            "component returned an IR compiler without a command"
+        );
+        return None;
+    }
+    let dialects = string_array_field(value, "dialects");
+    if dialects.is_empty() {
+        warn!(
+            component = component.name,
+            "component returned an IR compiler without dialects"
+        );
+        return None;
+    }
+    Some(PlannedIrCompiler {
+        name: string_field(value, "name").unwrap_or_else(|| component.name.clone()),
+        version: string_field(value, "version"),
+        protocol_version: string_field(value, "protocol_version")
+            .or_else(|| string_field(value, "protocolVersion"))
+            .unwrap_or_else(|| IR_COMPILER_PROTOCOL_VERSION.to_string()),
+        command,
+        working_dir: string_field(value, "working_dir")
+            .or_else(|| string_field(value, "workingDir"))
+            .map(PathBuf::from),
+        dialects,
+        supported_sorts: string_array_field(value, "supported_sorts")
+            .or_else_empty(|| string_array_field(value, "supportedSorts")),
+        supported_predicates: string_array_field(value, "supported_predicates")
+            .or_else_empty(|| string_array_field(value, "supportedPredicates")),
     })
 }
 
@@ -622,6 +882,28 @@ fn dedupe_plugins(plugins: &mut Vec<PluginEntry>) {
     });
 }
 
+fn order_component_plugins(plugins: &mut [PluginEntry]) {
+    plugins.sort_by_key(|plugin| {
+        (
+            component_plugin_order(&plugin.surface),
+            plugin.surface.clone(),
+            plugin.name.clone().unwrap_or_default(),
+        )
+    });
+}
+
+fn component_plugin_order(surface: &str) -> u8 {
+    match surface {
+        "rust-test-assertions" => 10,
+        "rust-fn-contracts" => 20,
+        "rust-implications" => 30,
+        "rust-cargo-test-witness" => 40,
+        _ if surface.contains("witness") => 40,
+        _ if surface.contains("implication") => 30,
+        _ => 20,
+    }
+}
+
 fn dedupe_manifests(manifests: &mut Vec<PlannedLiftManifest>) {
     let mut seen = BTreeSet::new();
     manifests.retain(|manifest| {
@@ -629,6 +911,17 @@ fn dedupe_manifests(manifests: &mut Vec<PlannedLiftManifest>) {
             manifest.surface.clone(),
             manifest.name.clone(),
             manifest.command.clone(),
+        ))
+    });
+}
+
+fn dedupe_ir_compilers(compilers: &mut Vec<PlannedIrCompiler>) {
+    let mut seen = BTreeSet::new();
+    compilers.retain(|compiler| {
+        seen.insert((
+            compiler.name.clone(),
+            compiler.command.clone(),
+            compiler.dialects.clone(),
         ))
     });
 }
@@ -670,6 +963,41 @@ pub(crate) fn resolve_project_relative_working_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value as Json;
+    use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityManifest};
+
+    struct TestCompiler {
+        dialect: String,
+    }
+
+    impl IrCompiler for TestCompiler {
+        fn compile(&self, _ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
+            if dialect != self.dialect {
+                return Err(CompileError::UnsupportedDialect(dialect.to_string()));
+            }
+            Ok(CompiledFormula {
+                preamble: "; original\n".to_string(),
+                body: "(check-sat)\n".to_string(),
+                free_vars: vec![FreeVar {
+                    name: "x".to_string(),
+                    sort: "Int".to_string(),
+                }],
+                opacity_manifest: OpacityManifest::default(),
+                metadata: Json::Null,
+            })
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                name: "original".to_string(),
+                version: "0.1.0".to_string(),
+                protocol_version: IR_COMPILER_PROTOCOL_VERSION.to_string(),
+                dialects: vec![self.dialect.clone()],
+                supported_sorts: vec!["Int".to_string()],
+                supported_predicates: vec!["=".to_string()],
+            }
+        }
+    }
 
     #[test]
     fn rust_census_yields_missing_kit_suggestion() {
@@ -683,6 +1011,44 @@ mod tests {
         let message = missing_kit_message_from_census(&census).unwrap();
         assert!(message.contains("Rust workspace detected"));
         assert!(message.contains("apt install sugar-kit-rust"));
+    }
+
+    #[test]
+    fn rust_census_collects_batched_forensic_items_for_component_claims() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='base64-showcase-good'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("lib.rs"), "pub fn encode_base64() {}\n").unwrap();
+        let vendor = dir.path().join("vendor/base64-0.22.1/src");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(
+            dir.path().join("vendor/base64-0.22.1/Cargo.toml"),
+            "[package]\nname='base64'\nversion='0.22.1'\n",
+        )
+        .unwrap();
+        std::fs::write(vendor.join("encode.rs"), "pub fn encoded_len() {}\n").unwrap();
+
+        let census = census_workspace(dir.path());
+        let paths = census
+            .items
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"Cargo.toml"));
+        assert!(paths.contains(&"src/lib.rs"));
+        assert!(paths.contains(&"vendor/base64-0.22.1/Cargo.toml"));
+        assert!(paths.contains(&"vendor/base64-0.22.1/src/encode.rs"));
+        assert!(census.items.iter().any(|item| {
+            item.kind == "source-file"
+                && item.path == "src/lib.rs"
+                && item.language_hint.as_deref() == Some("rust")
+        }));
     }
 
     #[test]
@@ -716,5 +1082,179 @@ mod tests {
         assert_eq!(result.plugins[0].emit.as_deref(), Some("ir-document"));
         assert_eq!(result.lift_manifests.len(), 1);
         assert_eq!(result.lift_manifests[0].surface, "rust-test-assertions");
+    }
+
+    #[test]
+    fn parses_claimed_component_plan_with_item_claims() {
+        let component = ComponentRegistration {
+            name: "rust-walk".to_string(),
+            command: vec!["does-not-run".to_string()],
+            working_dir: None,
+            source: PathBuf::from("manifest.toml"),
+        };
+        let value = json!({
+            "decision": "claim",
+            "claims": [{
+                "item": "file:vendor/base64-0.22.1/Cargo.toml",
+                "role": "contract-producer",
+                "surface": "rust-fn-contracts"
+            }],
+            "plugins": [{
+                "name": "rust-fn-contracts-lift",
+                "kind": "lift",
+                "surface": "rust-fn-contracts",
+                "emit": "ir-document",
+                "workspace_override": "vendor/base64-0.22.1"
+            }],
+            "lift_manifests": [{
+                "surface": "rust-fn-contracts",
+                "name": "rust-fn-contracts-lift",
+                "command": ["/bin/sugar-walk-rpc", "--rpc"],
+                "working_dir": "."
+            }]
+        });
+
+        let result = parse_component_plan_result(&component, value)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.plugins[0].surface, "rust-fn-contracts");
+        assert_eq!(
+            result.plugins[0].workspace_override.as_deref(),
+            Some("vendor/base64-0.22.1")
+        );
+        assert_eq!(result.lift_manifests[0].surface, "rust-fn-contracts");
+    }
+
+    #[test]
+    fn parses_claimed_component_plan_with_ir_compiler() {
+        let component = ComponentRegistration {
+            name: "smt-lib-compiler".to_string(),
+            command: vec!["does-not-run".to_string()],
+            working_dir: None,
+            source: PathBuf::from("manifest.toml"),
+        };
+        let value = json!({
+            "decision": "claim",
+            "claims": [{
+                "role": "ir-compiler",
+                "dialects": ["smt-lib-v2.6"]
+            }],
+            "ir_compilers": [{
+                "name": "smt-lib-reference",
+                "version": "0.1.0",
+                "protocol_version": "sugar-ir-compiler/1",
+                "command": ["/bin/sugar-ir-smt-lib"],
+                "dialects": ["smt-lib-v2.6"],
+                "supported_sorts": ["Int", "Bool"],
+                "supported_predicates": ["="]
+            }]
+        });
+
+        let result = parse_component_plan_result(&component, value)
+            .unwrap()
+            .unwrap();
+
+        assert!(result.plugins.is_empty());
+        assert_eq!(result.ir_compilers.len(), 1);
+        assert_eq!(result.ir_compilers[0].name, "smt-lib-reference");
+        assert_eq!(
+            result.ir_compilers[0].dialects,
+            vec!["smt-lib-v2.6".to_string()]
+        );
+        assert_eq!(
+            result.ir_compilers[0].supported_sorts,
+            vec!["Int".to_string(), "Bool".to_string()]
+        );
+    }
+
+    #[test]
+    fn component_ir_compiler_fills_missing_dialect() {
+        let mut registry = CompilerRegistry::new();
+        register_planned_ir_compilers(
+            &mut registry,
+            Path::new("."),
+            vec![PlannedIrCompiler {
+                name: "smt-lib-reference".to_string(),
+                version: Some("0.1.0".to_string()),
+                protocol_version: IR_COMPILER_PROTOCOL_VERSION.to_string(),
+                command: vec!["does-not-run-until-compile".to_string()],
+                dialects: vec!["smt-lib-v2.6".to_string()],
+                ..Default::default()
+            }],
+        );
+
+        assert!(registry.get("smt-lib-v2.6").is_some());
+    }
+
+    #[test]
+    fn component_ir_compiler_preserves_manifest_override() {
+        let mut registry = CompilerRegistry::new();
+        registry.register(Arc::new(TestCompiler {
+            dialect: "smt-lib-v2.6".to_string(),
+        }));
+
+        register_planned_ir_compilers(
+            &mut registry,
+            Path::new("."),
+            vec![PlannedIrCompiler {
+                name: "component".to_string(),
+                version: Some("0.1.0".to_string()),
+                protocol_version: IR_COMPILER_PROTOCOL_VERSION.to_string(),
+                command: vec!["does-not-run-because-override-wins".to_string()],
+                dialects: vec!["smt-lib-v2.6".to_string()],
+                ..Default::default()
+            }],
+        );
+
+        let compiled = registry
+            .compile(&json!({}), "smt-lib-v2.6")
+            .expect("manifest override compiler should still be registered");
+        assert_eq!(compiled.preamble, "; original\n");
+    }
+
+    #[test]
+    fn component_plugins_order_like_the_handwritten_base64_graph() {
+        let mut plugins = vec![
+            PluginEntry {
+                name: Some("rust-cargo-test-witness-lift".to_string()),
+                kind: Some("lift".to_string()),
+                surface: "rust-cargo-test-witness".to_string(),
+                ..Default::default()
+            },
+            PluginEntry {
+                name: Some("rust-implications-lift".to_string()),
+                kind: Some("lift".to_string()),
+                surface: "rust-implications".to_string(),
+                ..Default::default()
+            },
+            PluginEntry {
+                name: Some("rust-fn-contracts-lift".to_string()),
+                kind: Some("lift".to_string()),
+                surface: "rust-fn-contracts".to_string(),
+                ..Default::default()
+            },
+            PluginEntry {
+                name: Some("rust-test-assertions-lift".to_string()),
+                kind: Some("lift".to_string()),
+                surface: "rust-test-assertions".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        order_component_plugins(&mut plugins);
+
+        assert_eq!(
+            plugins
+                .iter()
+                .map(|plugin| plugin.surface.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "rust-test-assertions",
+                "rust-fn-contracts",
+                "rust-implications",
+                "rust-cargo-test-witness"
+            ]
+        );
     }
 }

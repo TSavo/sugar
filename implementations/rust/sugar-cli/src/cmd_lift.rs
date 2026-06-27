@@ -35,9 +35,9 @@ pub fn run(args: LiftArgs) -> u8 {
     let project_cfg = read_project_config(&project_root);
     let user_cfg = read_user_config();
     if args.report {
-        let project_lift_plugins = lift_report_graph_plugins(&project_root, &project_cfg);
-        if project_lift_plugins.len() > 1 {
-            return run_configured_lift_report_graph(&args, &project_root, &project_lift_plugins);
+        let graph_plugins = lift_report_graph_plugins(&project_root, &project_cfg, &user_cfg);
+        if graph_plugins.len() > 1 {
+            return run_configured_lift_report_graph(&args, &project_root, &graph_plugins);
         }
     }
     let resolved_surface = match configured_or_planned_lift_surface(
@@ -274,8 +274,12 @@ pub fn run(args: LiftArgs) -> u8 {
     }
 }
 
-fn lift_report_graph_plugins(project_root: &Path, project_cfg: &ProjectConfig) -> Vec<PluginEntry> {
-    project_cfg
+fn lift_report_graph_plugins(
+    project_root: &Path,
+    project_cfg: &ProjectConfig,
+    user_cfg: &ProjectConfig,
+) -> Vec<PluginEntry> {
+    let configured = project_cfg
         .plugins
         .iter()
         .filter(|plugin| plugin.is_lift_plugin())
@@ -284,6 +288,25 @@ fn lift_report_graph_plugins(project_root: &Path, project_cfg: &ProjectConfig) -
                 || lift_plugin::surface_phase(project_root, &plugin.surface) == "consumer"
         })
         .cloned()
+        .collect::<Vec<_>>();
+    if !configured.is_empty() {
+        return configured;
+    }
+    if project_cfg
+        .surface_for("lift")
+        .or_else(|| user_cfg.surface_for("lift"))
+        .is_some()
+    {
+        return Vec::new();
+    }
+    crate::component_plan::plan_workspace(project_root)
+        .plugins
+        .into_iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .filter(|plugin| {
+            plugin.emit.as_deref() == Some("ir-document")
+                || lift_plugin::surface_phase(project_root, &plugin.surface) == "consumer"
+        })
         .collect()
 }
 
@@ -447,6 +470,94 @@ fn run_configured_lift_report_graph(
     plugins: &[PluginEntry],
 ) -> u8 {
     let out_dir = lift_report_auto_mint_dir(project_root);
+    if !args.report_summary {
+        let proof_file = match cmd_mint::mint_lift_plugins_for_report(
+            project_root,
+            plugins,
+            &out_dir,
+            args.library_bindings,
+        ) {
+            Ok(Some(proof_file)) => proof_file,
+            Ok(None) => {
+                eprintln!(
+                    "{}: configured lift report did not mint a proof file",
+                    "error".red().bold()
+                );
+                return EXIT_USER_ERROR;
+            }
+            Err(error) => {
+                eprintln!("{}: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        };
+        trace_lift_report_checkpoint("before_source_report_from_proof");
+        let mut report =
+            match source_report_from_proof_files(&[proof_file.clone()], args.contract.as_deref()) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
+                }
+            };
+        report.project_root = Some(project_root.to_path_buf());
+        report.source_oracle_routes =
+            source_oracle_routes_from_plan_mementos(&report.plan_mementos);
+        enrich_report_source_mementos_from_oracles(&mut report);
+        trace_lift_source_report("after_source_report_from_proof", &report);
+
+        let prove_with = if args.prove {
+            let mut with = args.with.clone();
+            with.push(absolute_path(&out_dir).display().to_string());
+            with
+        } else {
+            Vec::new()
+        };
+        let prove_report = if args.prove {
+            trace_lift_report_checkpoint("before_build_prove_report");
+            match cmd_prove::build_prove_report(project_root, &args.z3, &prove_with) {
+                Ok(prove_report) => {
+                    trace_lift_report_checkpoint("after_build_prove_report");
+                    Some(prove_report)
+                }
+                Err(error) => {
+                    eprintln!("{}: prove report: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
+                }
+            }
+        } else {
+            None
+        };
+        let mut hard_failure = source_report_has_hard_failures(&report);
+        if let Some(prove_report) = &prove_report {
+            hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
+        }
+        trace_lift_source_report("before_render_report", &report);
+        let rendered = if args.out.json {
+            match render_report_json(&report, prove_report.as_ref()) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    eprintln!("{}: render lift report: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
+                }
+            }
+        } else if args.visual {
+            render_report_visual(&report, prove_report.as_ref())
+        } else {
+            render_report_human(&report, prove_report.as_ref())
+        };
+        trace_lift_render_checkpoint("after_render_report", rendered.len());
+        if let Err(error) = write_output(None, rendered.as_bytes()) {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
+        trace_lift_render_checkpoint("after_write_report", rendered.len());
+        return if hard_failure {
+            EXIT_VERIFY_FAIL
+        } else {
+            EXIT_OK
+        };
+    }
+
     let response = match cmd_mint::lift_plugins_response_for_report(
         project_root,
         plugins,
@@ -738,7 +849,44 @@ fn source_oracle_route_for_surface(
     SourceOracleRoute {
         surface: surface.to_string(),
         workspace_override,
+        role: None,
     }
+}
+
+fn source_oracle_routes_from_plan_mementos(plan_mementos: &[Value]) -> Vec<SourceOracleRoute> {
+    let mut routes = Vec::new();
+    let mut seen = BTreeSet::new();
+    for plan_body in plan_mementos.iter().filter_map(plan_body_from_memento) {
+        for atom in plan_atoms_from_body(plan_body) {
+            let Some(surface) = atom.get("surface").and_then(Value::as_str) else {
+                continue;
+            };
+            let workspace_override = atom
+                .get("workspaceOverride")
+                .or_else(|| atom.get("workspace_override"))
+                .and_then(Value::as_str)
+                .filter(|workspace| !workspace.is_empty())
+                .map(str::to_string);
+            let role = atom
+                .get("role")
+                .and_then(Value::as_str)
+                .filter(|role| !role.is_empty())
+                .map(str::to_string);
+            let key = (
+                surface.to_string(),
+                workspace_override.clone().unwrap_or_default(),
+                role.clone().unwrap_or_default(),
+            );
+            if seen.insert(key) {
+                routes.push(SourceOracleRoute {
+                    surface: surface.to_string(),
+                    workspace_override,
+                    role,
+                });
+            }
+        }
+    }
+    routes
 }
 
 fn matching_lift_plugin<'a>(
@@ -759,6 +907,7 @@ struct LiftSourceReport {
     factory_walk: Vec<Value>,
     assertion_surface_audits: Vec<Value>,
     source_mementos: Vec<Value>,
+    plan_mementos: Vec<Value>,
     contracts: Vec<Value>,
     call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
@@ -779,6 +928,7 @@ struct LiftReportSummary {
 struct SourceOracleRoute {
     surface: String,
     workspace_override: Option<String>,
+    role: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1306,6 +1456,13 @@ fn source_report_from_lift_response(
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
     trace_lift_collection_checkpoint("source_report.source_mementos", source_mementos.len());
+    let plan_mementos = response
+        .get("planMementos")
+        .or_else(|| response.get("plan_mementos"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    trace_lift_collection_checkpoint("source_report.plan_mementos", plan_mementos.len());
     let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
     trace_lift_collection_checkpoint("source_report.vendor_conjoins", vendor_conjoins.len());
 
@@ -1316,12 +1473,345 @@ fn source_report_from_lift_response(
         factory_walk,
         assertion_surface_audits,
         source_mementos,
+        plan_mementos,
         contracts,
         call_edges,
         vendor_conjoins,
         project_root: None,
         source_oracle_routes: Vec::new(),
     })
+}
+
+fn source_report_from_proof_files(
+    proof_files: &[PathBuf],
+    contract_filter: Option<&str>,
+) -> Result<LiftSourceReport, String> {
+    let mut pool = sugar_verifier::types::MementoPool::default();
+    sugar_verifier::load_all_proofs::load_files_into_pool(proof_files, &mut pool);
+    if !pool.load_errors.is_empty() {
+        return Err(format!(
+            "proof report load errors: {}",
+            pool.load_errors
+                .iter()
+                .map(|error| format!("{}: {}", error.proof_path, error.reason))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    Ok(source_report_from_proof_pool(&pool, contract_filter))
+}
+
+fn source_report_from_proof_pool(
+    pool: &sugar_verifier::types::MementoPool,
+    contract_filter: Option<&str>,
+) -> LiftSourceReport {
+    let mut contracts = Vec::new();
+    for (cid, envelope) in &pool.mementos {
+        if sugar_verifier::memento_kind(envelope) != Some("contract") {
+            continue;
+        }
+        let mut contract = proof_contract_value(pool, cid, envelope);
+        if contract_filter.is_some_and(|filter| !proof_contract_matches_filter(&contract, filter)) {
+            continue;
+        }
+        if let Some(object) = contract.as_object_mut() {
+            object.insert("proofMemberCid".to_string(), Value::String(cid.clone()));
+        }
+        contracts.push(contract);
+    }
+
+    let mut source_mementos = Vec::new();
+    for envelope in pool.mementos.values() {
+        if sugar_verifier::memento_kind(envelope) != Some("source-memento") {
+            continue;
+        }
+        let Some(body) = sugar_verifier::memento_body(envelope) else {
+            continue;
+        };
+        if contract_filter.is_some_and(|filter| !proof_source_memento_matches_filter(body, filter))
+        {
+            continue;
+        }
+        source_mementos.push(body.clone());
+    }
+
+    let mut factory_walk = Vec::new();
+    for envelope in pool.mementos.values() {
+        if sugar_verifier::memento_kind(envelope) != Some("factory-walk-memento") {
+            continue;
+        }
+        let Some(body) = sugar_verifier::memento_body(envelope) else {
+            continue;
+        };
+        if contract_filter.is_some_and(|filter| !factory_audit_matches_filter(body, filter)) {
+            continue;
+        }
+        factory_walk.push(normalize_factory_gap_walk_row(body.clone()));
+    }
+
+    let mut plan_mementos = Vec::new();
+    for envelope in pool.mementos.values() {
+        if sugar_verifier::memento_kind(envelope) != Some("plan-memento") {
+            continue;
+        }
+        if let Some(plan) = proof_plan_memento_with_atoms(pool, envelope) {
+            plan_mementos.push(plan);
+        }
+    }
+
+    let implication_count = pool
+        .mementos
+        .values()
+        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("implication"))
+        .count();
+    let witness_count = pool
+        .mementos
+        .values()
+        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("witness-memento"))
+        .count();
+    let mut call_edges = Vec::new();
+    if implication_count > 0 {
+        call_edges.push(serde_json::json!({
+            "sourceContract": "proof-members",
+            "targetSymbol": "implication",
+            "targetContract": format!("{implication_count} implication memento(s) pinned in proof")
+        }));
+    }
+    if witness_count > 0 {
+        call_edges.push(serde_json::json!({
+            "sourceContract": "proof-members",
+            "targetSymbol": "witness",
+            "targetContract": format!("{witness_count} witness memento(s) pinned in proof")
+        }));
+    }
+
+    let source_loci = source_mementos.len() as i64;
+    LiftSourceReport {
+        ledger: serde_json::json!({
+            "source_loci": source_loci,
+            "source_warranted": source_loci,
+            "source_support": 0,
+            "source_refused": 0,
+            "source_inactive": 0,
+            "source_unresolved": 0,
+        }),
+        audits: Vec::new(),
+        factory_audits: Vec::new(),
+        factory_walk,
+        assertion_surface_audits: Vec::new(),
+        source_mementos,
+        plan_mementos,
+        contracts,
+        call_edges,
+        vendor_conjoins: Vec::new(),
+        project_root: None,
+        source_oracle_routes: Vec::new(),
+    }
+}
+
+fn enrich_report_source_mementos_from_oracles(report: &mut LiftSourceReport) {
+    let Some(project_root) = report.project_root.clone() else {
+        return;
+    };
+    let routes = report.source_oracle_routes.clone();
+    for memento in &mut report.source_mementos {
+        enrich_source_memento_value_from_oracle(&project_root, &routes, memento);
+    }
+    for row in &mut report.factory_walk {
+        if let Some(memento) = row.get_mut("sourceMemento") {
+            enrich_source_memento_value_from_oracle(&project_root, &routes, memento);
+        }
+    }
+}
+
+fn enrich_source_memento_value_from_oracle(
+    project_root: &Path,
+    routes: &[SourceOracleRoute],
+    memento: &mut Value,
+) {
+    let resolution = resolve_report_source_memento_via_plan_routes(project_root, routes, memento);
+    if let Some(object) = memento.as_object_mut() {
+        object.insert("sourceOracle".to_string(), resolution);
+    }
+}
+
+fn resolve_report_source_memento_via_plan_routes(
+    project_root: &Path,
+    routes: &[SourceOracleRoute],
+    memento_value: &Value,
+) -> Value {
+    let mut attempts = Vec::new();
+    for route in source_oracle_route_attempt_order(routes, memento_value) {
+        let Some(routed) = routed_source_memento_for_route(project_root, route, memento_value)
+        else {
+            continue;
+        };
+        match invoke_source_oracle_route(
+            project_root,
+            &routed.route,
+            &routed.workspace_root,
+            &routed.memento,
+        ) {
+            Ok(resolution) if resolution.status.as_deref() == Some("resolved") => {
+                return resolution.to_report_json(&routed.route, memento_value);
+            }
+            Ok(resolution) if resolution.source.is_some() => {
+                return resolution.to_report_json(&routed.route, memento_value);
+            }
+            Ok(resolution) => {
+                attempts.push(source_oracle_attempt_json(&routed.route, resolution.reason));
+            }
+            Err(error) => {
+                attempts.push(source_oracle_attempt_json(&routed.route, Some(error)));
+            }
+        }
+    }
+    serde_json::json!({
+        "status": "absent",
+        "display": format_source_not_present(memento_value),
+        "attempts": attempts,
+    })
+}
+
+fn source_oracle_route_attempt_order<'a>(
+    routes: &'a [SourceOracleRoute],
+    memento: &Value,
+) -> Vec<&'a SourceOracleRoute> {
+    let mut ordered = routes.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|route| source_oracle_route_priority(route, memento));
+    ordered
+}
+
+fn source_oracle_route_priority(route: &SourceOracleRoute, memento: &Value) -> usize {
+    let role = route.role.as_deref().unwrap_or_default();
+    let memento_role = memento
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let contract_name = memento
+        .get("contractName")
+        .or_else(|| memento.get("contract_name"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !memento_role.is_empty()
+        && (memento_role == role
+            || (memento_role.contains("test") && role == "unit-test-assertions")
+            || (memento_role.contains("contract") && role == "body-universes"))
+    {
+        return 0;
+    }
+    if contract_name.contains("test") && role == "unit-test-assertions" {
+        return 1;
+    }
+    if role == "body-universes" {
+        return 2;
+    }
+    if role == "unit-test-assertions" {
+        return 3;
+    }
+    4
+}
+
+fn source_oracle_attempt_json(route: &SourceOracleRoute, reason: Option<String>) -> Value {
+    serde_json::json!({
+        "surface": route.surface.clone(),
+        "role": route.role.clone(),
+        "workspaceOverride": route.workspace_override.clone(),
+        "reason": reason.unwrap_or_else(|| "source oracle did not resolve this memento".to_string()),
+    })
+}
+
+fn proof_contract_value(
+    pool: &sugar_verifier::types::MementoPool,
+    cid: &str,
+    envelope: &Value,
+) -> Value {
+    let name = sugar_verifier::memento_body_field(envelope, "contractName")
+        .or_else(|| sugar_verifier::memento_body_field(envelope, "name"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown contract>");
+    let mut contract = serde_json::json!({
+        "kind": "contract",
+        "name": name,
+        "contractCid": cid,
+    });
+    if let Some(body) = pool.resolve_contract_body(envelope) {
+        for slot in ["pre", "post", "inv"] {
+            if let Some(formula) = body.get(slot) {
+                contract[slot] = formula.clone();
+            }
+        }
+    }
+    contract
+}
+
+fn proof_contract_matches_filter(contract: &Value, filter: &str) -> bool {
+    contract_value_name(contract).is_some_and(|name| name.contains(filter))
+        || serde_json::to_string(contract)
+            .ok()
+            .is_some_and(|text| text.contains(filter))
+}
+
+fn proof_source_memento_matches_filter(source: &Value, filter: &str) -> bool {
+    [
+        "claimName",
+        "claim_name",
+        "contractName",
+        "contract_name",
+        "sourceFunctionName",
+        "source_function_name",
+        "file",
+        "role",
+    ]
+    .into_iter()
+    .any(|field| {
+        source
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.contains(filter))
+    })
+}
+
+fn proof_plan_memento_with_atoms(
+    pool: &sugar_verifier::types::MementoPool,
+    envelope: &Value,
+) -> Option<Value> {
+    let mut body = sugar_verifier::memento_body(envelope)?.clone();
+    let refs = body
+        .get("planAtoms")
+        .or_else(|| body.get("plan_atoms"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if refs.is_empty() {
+        return Some(body);
+    }
+    let mut resolved_atoms = Vec::new();
+    let mut unresolved_refs = Vec::new();
+    for atom_ref in refs {
+        let Some(atom_cid) = atom_ref.get("atomCid").and_then(Value::as_str) else {
+            unresolved_refs.push(atom_ref);
+            continue;
+        };
+        let Some(bytes) = pool.atoms.get(atom_cid) else {
+            unresolved_refs.push(atom_ref);
+            continue;
+        };
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(atom) => resolved_atoms.push(atom),
+            Err(_) => unresolved_refs.push(atom_ref),
+        }
+    }
+    if let Some(object) = body.as_object_mut() {
+        object.insert("planAtoms".to_string(), Value::Array(resolved_atoms));
+        if !unresolved_refs.is_empty() {
+            object.insert(
+                "unresolvedPlanAtoms".to_string(),
+                Value::Array(unresolved_refs),
+            );
+        }
+    }
+    Some(body)
 }
 
 fn matching_report_source_mementos(
@@ -1607,6 +2097,9 @@ fn factory_audit_matches_filter(row: &Value, filter: &str) -> bool {
     .into_iter()
     .flatten()
     .any(|text| text.contains(filter))
+        || row
+            .get("sourceMemento")
+            .is_some_and(|memento| proof_source_memento_matches_filter(memento, filter))
 }
 
 fn recompute_source_ledger(audits: &[Value]) -> Value {
@@ -1923,7 +2416,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
             serde_json::json!({ "method": method, "universes": us.len(), "occurrences": occurrences })
         })
         .collect();
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "kind": "lift-source-report",
         "sourceLedger": report.ledger,
         "sourceAudits": report.audits,
@@ -1931,6 +2424,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "factoryWalk": report.factory_walk,
         "assertionSurfaceAudits": report.assertion_surface_audits,
         "sourceMementos": report.source_mementos,
+        "planMementos": report.plan_mementos,
         "contracts": report.contracts,
         "callEdges": report.call_edges,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
@@ -1947,7 +2441,11 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
             "occurrences": report.contracts.len(),
             "perMethod": universe_rows,
         },
-    })
+    });
+    if let Some(assembly_plan) = assembly_plan_json_value(report) {
+        value["assemblyPlan"] = assembly_plan;
+    }
+    value
 }
 
 fn render_report_json(
@@ -2467,7 +2965,7 @@ fn render_universe_warrant_breakdown(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct VisualSourceWalkLine {
     line: u64,
     source: String,
@@ -2649,27 +3147,56 @@ fn resolve_source_memento_visual_lines(
     source_lookup: VisualSourceLookup<'_>,
     memento_value: &Value,
 ) -> Result<Vec<VisualSourceWalkLine>, String> {
+    if let Some(resolution) = source_oracle_resolution_from_report_memento(memento_value) {
+        if let Some(lines) = resolution.lines.clone() {
+            return Ok(lines);
+        }
+        if let Some(source) = resolution.source.as_deref() {
+            return visual_lines_from_source_text(memento_value, source)
+                .ok_or_else(|| "source oracle text did not map to source lines".to_string());
+        }
+        return Err(resolution.display_source_or_absent(memento_value));
+    }
     let project_root = source_lookup
         .project_root
         .ok_or_else(|| "missing project root".to_string())?;
     if let Some(routed) = routed_source_memento(project_root, source_lookup.routes, memento_value) {
-        invoke_source_oracle_route(
+        let resolution = invoke_source_oracle_route(
             project_root,
             &routed.route,
             &routed.workspace_root,
             &routed.memento,
         )?;
-        let memento = source_memento_from_report_json(&routed.memento)
-            .ok_or_else(|| "invalid source memento shape".to_string())?;
-        return source_lines_for_memento_with_numbers(&routed.workspace_root, &memento)
-            .ok_or_else(|| "source memento lines not found".to_string());
+        if let Some(lines) = resolution.lines {
+            return Ok(lines);
+        }
+        if let Some(source) = resolution.source.as_deref() {
+            return visual_lines_from_source_text(memento_value, source)
+                .ok_or_else(|| "source oracle text did not map to source lines".to_string());
+        }
+        return Err(resolution.display_source_or_absent(memento_value));
     }
-    let memento = source_memento_from_report_json(memento_value)
-        .ok_or_else(|| "invalid source memento shape".to_string())?;
-    sugar_walk::source_oracle::resolve_source_memento(project_root, &memento)
-        .map_err(|refusal| refusal.reason)?;
-    source_lines_for_memento_with_numbers(project_root, &memento)
-        .ok_or_else(|| "source memento lines not found".to_string())
+    Err(format_source_not_present(memento_value))
+}
+
+fn visual_lines_from_source_text(
+    memento_value: &Value,
+    source: &str,
+) -> Option<Vec<VisualSourceWalkLine>> {
+    let start_line = memento_value
+        .get("span")
+        .and_then(|span| span.get("start_line"))
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    let lines = source
+        .lines()
+        .enumerate()
+        .map(|(index, source)| VisualSourceWalkLine {
+            line: start_line + index as u64,
+            source: source.to_string(),
+        })
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then_some(lines)
 }
 
 fn render_visual_source_annotation(
@@ -2881,22 +3408,18 @@ fn resolve_source_memento_visual_source(
     source_lookup: VisualSourceLookup<'_>,
     memento_value: &Value,
 ) -> String {
+    if let Some(resolution) = source_oracle_resolution_from_report_memento(memento_value) {
+        return resolution.display_source_or_absent(memento_value);
+    }
     if let Some(resolved) =
         resolve_source_memento_visual_source_via_rpc(source_lookup, memento_value)
     {
         return resolved;
     }
-    let Some(root) = source_lookup.project_root else {
-        return "<source memento unresolved: missing project root>".to_string();
-    };
-    let Some(memento) = source_memento_from_report_json(memento_value) else {
+    if source_memento_from_report_json(memento_value).is_none() {
         return "<source memento invalid>".to_string();
-    };
-    match sugar_walk::source_oracle::resolve_source_memento(root, &memento) {
-        Ok(resolved) => source_lines_for_memento(root, &memento)
-            .unwrap_or_else(|| resolved.fragment.body_text.trim().to_string()),
-        Err(refusal) => format!("<source memento unresolved: {}>", refusal.reason),
     }
+    format_source_not_present(memento_value)
 }
 
 fn resolve_source_memento_visual_source_via_rpc(
@@ -2911,9 +3434,139 @@ fn resolve_source_memento_visual_source_via_rpc(
         &routed.workspace_root,
         &routed.memento,
     ) {
-        Ok(source) => Some(source),
+        Ok(resolution) => Some(resolution.display_source_or_absent(memento_value)),
         Err(error) => Some(format!("<source memento unresolved: {error}>")),
     }
+}
+
+fn source_oracle_resolution_from_report_memento(
+    memento_value: &Value,
+) -> Option<SourceOracleResolution> {
+    let oracle = memento_value.get("sourceOracle")?;
+    Some(SourceOracleResolution {
+        status: oracle
+            .get("status")
+            .and_then(Value::as_str)
+            .filter(|status| !status.is_empty())
+            .map(str::to_string),
+        source: oracle
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|source| !source.trim().is_empty())
+            .map(str::to_string),
+        lines: source_oracle_lines_from_value(oracle),
+        display: oracle
+            .get("display")
+            .and_then(Value::as_str)
+            .filter(|display| !display.trim().is_empty())
+            .map(str::to_string),
+        reason: oracle
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .map(str::to_string),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceOracleResolution {
+    status: Option<String>,
+    source: Option<String>,
+    lines: Option<Vec<VisualSourceWalkLine>>,
+    display: Option<String>,
+    reason: Option<String>,
+}
+
+impl SourceOracleResolution {
+    fn display_source_or_absent(&self, memento: &Value) -> String {
+        if let Some(lines) = self.lines.as_deref() {
+            return lines
+                .iter()
+                .map(|line| line.source.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        if let Some(source) = self.source.as_deref() {
+            return source.to_string();
+        }
+        self.display
+            .clone()
+            .unwrap_or_else(|| format_source_not_present(memento))
+    }
+
+    fn to_report_json(&self, route: &SourceOracleRoute, memento: &Value) -> Value {
+        let status = self
+            .status
+            .as_deref()
+            .filter(|status| !status.is_empty())
+            .unwrap_or_else(|| {
+                if self.source.is_some() || self.lines.is_some() || self.display.is_some() {
+                    "resolved"
+                } else {
+                    "absent"
+                }
+            });
+        serde_json::json!({
+            "status": status,
+            "surface": route.surface.clone(),
+            "role": route.role.clone(),
+            "workspaceOverride": route.workspace_override.clone(),
+            "source": self.source.clone(),
+            "sourceLines": source_oracle_lines_json(self.lines.as_deref()),
+            "display": self.display.as_deref().map(str::to_string).unwrap_or_else(|| {
+                if self.source.is_some() || self.lines.is_some() {
+                    "source present".to_string()
+                } else {
+                    format_source_not_present(memento)
+                }
+            }),
+            "reason": self.reason.clone(),
+        })
+    }
+}
+
+fn source_oracle_lines_from_value(value: &Value) -> Option<Vec<VisualSourceWalkLine>> {
+    let lines = value
+        .get("sourceLines")
+        .or_else(|| value.get("source_lines"))?
+        .as_array()?;
+    let parsed = lines
+        .iter()
+        .filter_map(|line| {
+            let number = line
+                .get("line")
+                .or_else(|| line.get("lineNumber"))
+                .or_else(|| line.get("line_number"))
+                .and_then(Value::as_u64)?;
+            let source = line
+                .get("source")
+                .or_else(|| line.get("text"))
+                .and_then(Value::as_str)?;
+            Some(VisualSourceWalkLine {
+                line: number,
+                source: source.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    (!parsed.is_empty()).then_some(parsed)
+}
+
+fn source_oracle_lines_json(lines: Option<&[VisualSourceWalkLine]>) -> Value {
+    lines
+        .map(|lines| {
+            Value::Array(
+                lines
+                    .iter()
+                    .map(|line| {
+                        serde_json::json!({
+                            "line": line.line,
+                            "source": line.source,
+                        })
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or(Value::Null)
 }
 
 struct RoutedSourceMemento {
@@ -2929,6 +3582,30 @@ fn routed_source_memento(
 ) -> Option<RoutedSourceMemento> {
     let file = memento_value.get("file").and_then(Value::as_str)?;
     let (route, routed_file) = select_source_oracle_route(routes, file)?;
+    let mut memento = memento_value.clone();
+    if let Value::Object(object) = &mut memento {
+        object.insert("file".to_string(), Value::String(routed_file));
+    }
+    Some(RoutedSourceMemento {
+        workspace_root: route_workspace_root(project_root, route),
+        route: route.clone(),
+        memento,
+    })
+}
+
+fn routed_source_memento_for_route(
+    project_root: &Path,
+    route: &SourceOracleRoute,
+    memento_value: &Value,
+) -> Option<RoutedSourceMemento> {
+    let file = memento_value.get("file").and_then(Value::as_str)?;
+    let normalized_file = normalize_report_path(file);
+    let routed_file = match normalized_workspace_prefix(route.workspace_override.as_deref()) {
+        Some(prefix) => {
+            strip_report_path_prefix(&normalized_file, &prefix).unwrap_or(normalized_file)
+        }
+        None => normalized_file,
+    };
     let mut memento = memento_value.clone();
     if let Value::Object(object) = &mut memento {
         object.insert("file".to_string(), Value::String(routed_file));
@@ -3016,7 +3693,7 @@ fn invoke_source_oracle_route(
     route: &SourceOracleRoute,
     workspace_root: &Path,
     memento: &Value,
-) -> Result<String, String> {
+) -> Result<SourceOracleResolution, String> {
     let manifest = lift_plugin::find_manifest_for_surface(project_root, &route.surface)?;
     let (program, args) = manifest.command.split_first().ok_or_else(|| {
         format!(
@@ -3089,58 +3766,33 @@ fn invoke_source_oracle_route(
             .unwrap_or("source oracle refused");
         return Err(message.to_string());
     }
-    response
+    let result = response
         .get("result")
-        .and_then(|result| {
-            result
-                .get("source")
-                .or_else(|| result.get("bodyText"))
-                .and_then(Value::as_str)
-        })
-        .map(str::to_string)
-        .ok_or_else(|| {
-            format!(
-                "source oracle `{}` response missing result.source",
-                route.surface
-            )
-        })
-}
-
-fn source_lines_for_memento(
-    root: &Path,
-    memento: &sugar_walk::source_oracle::SourceMemento,
-) -> Option<String> {
-    let lines = source_lines_for_memento_with_numbers(root, memento)?;
-    Some(
-        lines
-            .into_iter()
-            .map(|line| line.source)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string(),
-    )
-}
-
-fn source_lines_for_memento_with_numbers(
-    root: &Path,
-    memento: &sugar_walk::source_oracle::SourceMemento,
-) -> Option<Vec<VisualSourceWalkLine>> {
-    let source = std::fs::read_to_string(root.join(&memento.file)).ok()?;
-    let lines = source.lines().collect::<Vec<_>>();
-    let start = memento.span.start_line.checked_sub(1)?;
-    let end = memento.span.end_line.max(memento.span.start_line);
-    let selected = lines.get(start..end)?;
-    Some(
-        selected
-            .iter()
-            .enumerate()
-            .map(|(offset, source)| VisualSourceWalkLine {
-                line: (start + offset + 1) as u64,
-                source: source.trim_end().to_string(),
-            })
-            .collect(),
-    )
+        .ok_or_else(|| format!("source oracle `{}` response missing result", route.surface))?;
+    Ok(SourceOracleResolution {
+        status: result
+            .get("status")
+            .and_then(Value::as_str)
+            .filter(|status| !status.is_empty())
+            .map(str::to_string),
+        source: result
+            .get("source")
+            .or_else(|| result.get("bodyText"))
+            .and_then(Value::as_str)
+            .filter(|source| !source.trim().is_empty())
+            .map(str::to_string),
+        lines: source_oracle_lines_from_value(result),
+        display: result
+            .get("display")
+            .and_then(Value::as_str)
+            .filter(|display| !display.trim().is_empty())
+            .map(str::to_string),
+        reason: result
+            .get("reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .map(str::to_string),
+    })
 }
 
 fn factory_walk_context_key(row: &Value, file: &str) -> String {
@@ -3188,11 +3840,12 @@ fn contract_visual_warrants<'a>(
     report: &'a LiftSourceReport,
     contract: &'a Value,
 ) -> Vec<&'a Value> {
-    if contract_inv_is_observed_fact(contract) {
-        if let Some(name) = contract_value_name(contract) {
-            if let Some(memento) = source_memento_for_contract(report, name) {
-                return vec![memento];
+    if let Some(name) = contract_value_name(contract) {
+        if let Some(memento) = source_memento_for_contract(report, name) {
+            if contract_inv_is_observed_fact(contract) {
+                return vec![fuller_source_memento_for_report(report, memento).unwrap_or(memento)];
             }
+            return vec![memento];
         }
     }
     contract_source_warrants(contract)
@@ -3228,20 +3881,17 @@ fn source_span_sort_key(span: &Value) -> (u64, u64, u64, u64) {
     )
 }
 
-fn resolve_factory_walk_term(project_root: Option<&Path>, row: &Value) -> String {
-    let Some(root) = project_root else {
-        return "<source memento unresolved: missing project root>".to_string();
-    };
+fn resolve_factory_walk_term(_project_root: Option<&Path>, row: &Value) -> String {
     let Some(memento_value) = row.get("sourceMemento") else {
         return "<source memento absent>".to_string();
     };
-    let Some(memento) = source_memento_from_report_json(memento_value) else {
-        return "<source memento invalid>".to_string();
-    };
-    match sugar_walk::source_oracle::resolve_source_memento(root, &memento) {
-        Ok(resolved) => resolved.fragment.body_text,
-        Err(refusal) => format!("<source memento unresolved: {}>", refusal.reason),
+    if let Some(resolution) = source_oracle_resolution_from_report_memento(memento_value) {
+        return resolution.display_source_or_absent(memento_value);
     }
+    if source_memento_from_report_json(memento_value).is_none() {
+        return "<source memento invalid>".to_string();
+    }
+    format_source_not_present(memento_value)
 }
 
 fn source_memento_from_report_json(
@@ -3295,9 +3945,150 @@ fn source_report_summary_has_hard_failures(summary: &LiftReportSummary) -> bool 
     source_unresolved_count(&summary.ledger) > 0 || summary.factory.unresolved > 0
 }
 
+fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
+    let Some(plan_body) = report.plan_mementos.iter().find_map(plan_body_from_memento) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    let source = plan_body
+        .pointer("/planning/source")
+        .and_then(Value::as_str)
+        .unwrap_or("component-plan");
+    out.push_str(&format!("plan: {source}\n"));
+    out.push_str("This report was assembled with the use of:\n");
+    let plan_atoms = plan_atoms_from_body(plan_body);
+    if plan_atoms.is_empty() {
+        out.push_str("  - plan memento: pinned, but PlanAtom details are available only by resolving catalog atoms\n");
+    } else {
+        for atom in plan_atoms {
+            out.push_str(&format!("  - {}\n", format_plan_atom_roll_call(atom)));
+        }
+    }
+    out.push_str(&format!(
+        "report sections: unit test facts={}, body universes={}, factory report={}, implications={}, source mementos={}\n",
+        report.assertion_surface_audits.len(),
+        report.contracts.len(),
+        report.factory_audits.len() + report.factory_walk.len(),
+        report.call_edges.len() + report.vendor_conjoins.len(),
+        report.source_mementos.len(),
+    ));
+    out
+}
+
+fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
+    let plan_body = report
+        .plan_mementos
+        .iter()
+        .find_map(plan_body_from_memento)?;
+    Some(serde_json::json!({
+        "source": plan_body
+            .pointer("/planning/source")
+            .and_then(Value::as_str)
+            .unwrap_or("component-plan"),
+        "planMementos": report.plan_mementos.len(),
+        "planAtoms": plan_body
+            .get("planAtoms")
+            .or_else(|| plan_body.get("plan_atoms"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "expectedOutputCids": plan_body
+            .get("expectedOutputCids")
+            .or_else(|| plan_body.get("expected_output_cids"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "reportSections": {
+            "unitTestFacts": report.assertion_surface_audits.len(),
+            "bodyUniverses": report.contracts.len(),
+            "factoryReport": report.factory_audits.len() + report.factory_walk.len(),
+            "implications": report.call_edges.len() + report.vendor_conjoins.len(),
+            "sourceMementos": report.source_mementos.len(),
+        },
+    }))
+}
+
+fn plan_body_from_memento(value: &Value) -> Option<&Value> {
+    if value.pointer("/header/kind").and_then(Value::as_str) == Some("plan-memento") {
+        return value.get("body");
+    }
+    if value.get("kind").and_then(Value::as_str) == Some("component-plan") {
+        return Some(value);
+    }
+    value
+        .get("planMemento")
+        .or_else(|| value.get("plan_memento"))
+        .filter(|body| body.get("kind").and_then(Value::as_str) == Some("component-plan"))
+}
+
+fn plan_atoms_from_body(body: &Value) -> Vec<&Value> {
+    body.get("planAtoms")
+        .or_else(|| body.get("plan_atoms"))
+        .and_then(Value::as_array)
+        .map(|atoms| {
+            atoms
+                .iter()
+                .filter(|atom| atom.get("kind").and_then(Value::as_str) == Some("plan-atom"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn format_plan_atom_roll_call(atom: &Value) -> String {
+    let role = atom
+        .get("role")
+        .and_then(Value::as_str)
+        .map(plan_role_label)
+        .unwrap_or("component");
+    let name = atom
+        .get("pluginName")
+        .or_else(|| atom.get("manifestName"))
+        .or_else(|| atom.get("surface"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let version = atom
+        .get("version")
+        .and_then(Value::as_str)
+        .filter(|version| !version.is_empty())
+        .map(|version| format!(" v{version}"))
+        .unwrap_or_default();
+    let binary_cid = atom
+        .pointer("/binary/cid")
+        .and_then(Value::as_str)
+        .map(short_cid)
+        .map(|cid| format!(" bin {cid}"))
+        .unwrap_or_default();
+    let workspace = atom
+        .get("workspaceOverride")
+        .and_then(Value::as_str)
+        .filter(|workspace| !workspace.is_empty())
+        .map(|workspace| format!(" workspace {workspace}"))
+        .unwrap_or_default();
+    format!("{role}: {name}{version}{binary_cid}{workspace}")
+}
+
+fn plan_role_label(role: &str) -> &'static str {
+    match role {
+        "unit-test-assertions" => "unit test assertions",
+        "body-universes" => "body universes",
+        "implications" => "implications",
+        "witness-oracle" => "witness oracle",
+        "proofir-compiler" => "ProofIR compiler",
+        "source-oracle" => "source oracle",
+        _ => "component",
+    }
+}
+
+fn short_cid(cid: &str) -> String {
+    if let Some(rest) = cid.strip_prefix("blake3-512:") {
+        let short: String = rest.chars().take(12).collect();
+        return format!("blake3-512:{short}");
+    }
+    cid.to_string()
+}
+
 fn render_source_report_human(report: &LiftSourceReport) -> String {
     trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
+    out.push_str(&render_report_plan_roll_call(report));
     out.push_str(&format!(
         "source audit: {}\n",
         format_counts(&report.ledger)
@@ -3404,10 +4195,14 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         report.project_root.as_deref(),
     ));
     trace_lift_render_checkpoint("render_source_report_human.after_factory_walk", out.len());
-    if report.audits.is_empty() {
+    if report.audits.is_empty() && report.contracts.is_empty() && report.source_mementos.is_empty()
+    {
         out.push_str("no source audits emitted\n");
         trace_lift_render_checkpoint("render_source_report_human.end", out.len());
         return out;
+    }
+    if report.audits.is_empty() {
+        out.push_str("no source audits emitted\n");
     }
 
     let mut group_keys = Vec::new();
@@ -3506,19 +4301,62 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             out.push_str("facts observed:\n");
             for memento in fact_mementos {
                 out.push_str(&format!("  - {}\n", format_fact_memento(memento)));
+                push_source_resolution_lines(&mut out, memento);
             }
-            for row in asserted_fact_rows {
-                out.push_str(&format!("  - {row}\n"));
+            for fact in &asserted_fact_rows {
+                out.push_str(&format!("  - {}\n", fact.row));
+                if let Some(source) = fact.source.as_ref() {
+                    let render_source =
+                        fuller_source_memento_for_report(report, source).unwrap_or(source);
+                    let annotations = fact.source_annotations(source_start_line(source));
+                    push_source_resolution_lines_with_annotations(
+                        &mut out,
+                        render_source,
+                        &annotations,
+                    );
+                }
             }
         }
         let warranted_mementos = group_mementos
             .iter()
             .filter(|memento| !is_fact_source_memento(memento))
+            .filter(|memento| {
+                !asserted_fact_rows.iter().any(|fact| {
+                    fact.source
+                        .as_ref()
+                        .is_some_and(|source| source == **memento)
+                })
+            })
             .collect::<Vec<_>>();
         if !warranted_mementos.is_empty() || !group_audits.is_empty() {
             out.push_str("warranted complete walks:\n");
             for memento in warranted_mementos {
                 out.push_str(&format!("  - {}\n", format_source_memento_value(memento)));
+                let fact_annotations = asserted_fact_rows
+                    .iter()
+                    .filter(|fact| fact.source.is_none())
+                    .filter_map(|fact| fact.source_annotation(source_start_line(memento)))
+                    .collect::<Vec<_>>();
+                let render_source = if fact_annotations.is_empty() {
+                    *memento
+                } else {
+                    fuller_source_memento_for_report(report, memento).unwrap_or(memento)
+                };
+                let annotations = if fact_annotations.is_empty() {
+                    universe_source_annotations(
+                        report,
+                        &group_contracts,
+                        render_source,
+                        source_start_line(render_source),
+                    )
+                } else {
+                    fact_annotations
+                };
+                push_source_resolution_lines_with_annotations(
+                    &mut out,
+                    render_source,
+                    &annotations,
+                );
             }
             for audit in &group_audits {
                 out.push_str(&format!("  - {}\n", format_source_memento(audit)));
@@ -4523,6 +5361,7 @@ fn render_assertion_surface_contract_refs(
             if let Some(contract) = facts_by_contract.get(contract_name) {
                 let rendered = if observed_fact {
                     format_contract_asserted_fact(report, contract)
+                        .map(|fact| fact.row)
                         .unwrap_or_else(|| format_contract_fol(contract))
                 } else {
                     format_contract_fol(contract)
@@ -4876,6 +5715,134 @@ fn format_source_memento_with_role(source: &Value, role: &str, universe: &str) -
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReportSourceAnnotation {
+    line: u64,
+    label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ReportFactRow {
+    row: String,
+    source: Option<Value>,
+    predicate: String,
+    annotation_line: Option<u64>,
+}
+
+impl ReportFactRow {
+    fn source_annotation(&self, fallback_line: Option<u64>) -> Option<ReportSourceAnnotation> {
+        let line = self.annotation_line.or(fallback_line)?;
+        Some(ReportSourceAnnotation {
+            line,
+            label: format!("FACT ⊢ {}", self.predicate),
+        })
+    }
+
+    fn source_annotations(&self, fallback_line: Option<u64>) -> Vec<ReportSourceAnnotation> {
+        self.source_annotation(fallback_line).into_iter().collect()
+    }
+}
+
+fn format_source_resolution_line_with_annotations(
+    source: &Value,
+    annotations: &[ReportSourceAnnotation],
+) -> String {
+    let Some(oracle) = source.get("sourceOracle") else {
+        return format_source_not_present(source);
+    };
+    let status = oracle
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("absent");
+    if status == "resolved" {
+        if let Some(lines) = source_oracle_lines_from_value(oracle) {
+            let text = render_source_oracle_lines_with_annotations(&lines, annotations);
+            return format!("source present:\n{}", indent_block(text.trim_end(), 6));
+        }
+        if let Some(text) = oracle.get("source").and_then(Value::as_str) {
+            return format!("source present:\n{}", indent_block(text.trim(), 6));
+        }
+        if let Some(display) = oracle.get("display").and_then(Value::as_str) {
+            return format!("source present: {display}");
+        }
+    }
+    oracle
+        .get("display")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format_source_not_present(source))
+}
+
+fn render_source_oracle_lines_with_annotations(
+    lines: &[VisualSourceWalkLine],
+    annotations: &[ReportSourceAnnotation],
+) -> String {
+    lines
+        .iter()
+        .map(|line| {
+            let labels = annotations
+                .iter()
+                .filter(|annotation| annotation.line == line.line)
+                .map(|annotation| annotation.label.as_str())
+                .collect::<Vec<_>>();
+            if labels.is_empty() {
+                line.source.clone()
+            } else {
+                format!("{}  {}", line.source, labels.join(" ; "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn push_source_resolution_lines(out: &mut String, source: &Value) {
+    push_source_resolution_lines_with_annotations(out, source, &[]);
+}
+
+fn push_source_resolution_lines_with_annotations(
+    out: &mut String,
+    source: &Value,
+    annotations: &[ReportSourceAnnotation],
+) {
+    for line in format_source_resolution_line_with_annotations(source, annotations).lines() {
+        out.push_str("    ");
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
+fn indent_block(text: &str, spaces: usize) -> String {
+    let prefix = " ".repeat(spaces);
+    text.lines()
+        .map(|line| format!("{prefix}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_source_not_present(source: &Value) -> String {
+    let file = source
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let span = source.get("span");
+    let line = span
+        .and_then(|span| span.get("start_line"))
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let col = span
+        .and_then(|span| span.get("start_col"))
+        .and_then(Value::as_i64)
+        .map(|col| col.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let cid = source
+        .get("source_cid")
+        .or_else(|| source.get("sourceCid"))
+        .and_then(Value::as_str)
+        .unwrap_or("<missing source cid>");
+    format!("source not present, file {file} line {line} col {col} cid {cid}")
+}
+
 fn format_source_ref(source: &Value) -> String {
     let file = source
         .get("file")
@@ -4942,7 +5909,10 @@ fn format_contract_universe_fol(contract: &Value) -> Option<String> {
     None
 }
 
-fn format_contract_asserted_fact(report: &LiftSourceReport, contract: &Value) -> Option<String> {
+fn format_contract_asserted_fact(
+    report: &LiftSourceReport,
+    contract: &Value,
+) -> Option<ReportFactRow> {
     if !contract_inv_is_observed_fact(contract) {
         return None;
     }
@@ -4951,16 +5921,23 @@ fn format_contract_asserted_fact(report: &LiftSourceReport, contract: &Value) ->
         .get("inv")
         .map(proofir_formula_to_fol_with_instances)?;
     let mut row = format!("{name} :: {rendered}");
-    if let Some(source) =
-        contract_source_warrant(contract).or_else(|| source_memento_for_contract(report, name))
-    {
+    let source = contract_source_warrant(contract)
+        .or_else(|| fact_source_memento_for_contract(report, name))
+        .cloned();
+    if let Some(source) = source.as_ref() {
         row.push_str(" @ ");
         row.push_str(&format_fact_source_memento_ref(source));
     } else if let Some(locus) = source_locus_for_contract(report, name) {
         row.push_str(" @ ");
         row.push_str(&format_fact_source_locus_ref(locus));
     }
-    Some(row)
+    let annotation_line = source.as_ref().and_then(source_start_line);
+    Some(ReportFactRow {
+        row,
+        source,
+        predicate: rendered,
+        annotation_line,
+    })
 }
 
 fn contract_inv_is_observed_fact(contract: &Value) -> bool {
@@ -4976,6 +5953,149 @@ fn contract_source_warrant(contract: &Value) -> Option<&Value> {
         .or_else(|| contract.get("source_warrants"))
         .and_then(Value::as_array)
         .and_then(|warrants| warrants.first())
+}
+
+fn source_start_line(source: &Value) -> Option<u64> {
+    source
+        .get("span")
+        .and_then(|span| span.get("start_line"))
+        .and_then(Value::as_u64)
+}
+
+fn source_end_line(source: &Value) -> Option<u64> {
+    source
+        .get("span")
+        .and_then(|span| span.get("end_line"))
+        .and_then(Value::as_u64)
+}
+
+fn source_file(source: &Value) -> Option<&str> {
+    source.get("file").and_then(Value::as_str)
+}
+
+fn fuller_source_memento_for_report<'a>(
+    report: &'a LiftSourceReport,
+    source: &Value,
+) -> Option<&'a Value> {
+    let file = source_file(source)?;
+    let function = source_function_name(source)?;
+    let start = source_start_line(source).unwrap_or(0);
+    let end = source_end_line(source).unwrap_or(start);
+    report
+        .source_mementos
+        .iter()
+        .filter(|candidate| source_file(candidate) == Some(file))
+        .filter(|candidate| source_function_name(candidate) == Some(function))
+        .filter(|candidate| {
+            let candidate_start = source_start_line(candidate).unwrap_or(u64::MAX);
+            let candidate_end = source_end_line(candidate).unwrap_or(candidate_start);
+            candidate_start <= start && candidate_end >= end
+        })
+        .max_by_key(|candidate| {
+            let candidate_start = source_start_line(candidate).unwrap_or(0);
+            let candidate_end = source_end_line(candidate).unwrap_or(candidate_start);
+            candidate_end.saturating_sub(candidate_start)
+        })
+}
+
+fn universe_source_annotations(
+    report: &LiftSourceReport,
+    contracts: &[&Value],
+    source: &Value,
+    fallback_line: Option<u64>,
+) -> Vec<ReportSourceAnnotation> {
+    let body_contracts = contracts
+        .iter()
+        .copied()
+        .filter(|contract| !contract_inv_is_observed_fact(contract))
+        .collect::<Vec<_>>();
+    if body_contracts.is_empty() {
+        return Vec::new();
+    }
+    let context = source_memento_context_key(source);
+    if factory_walk_context_has_incomplete_boundary(&report.factory_walk, &context) {
+        return Vec::new();
+    }
+    let factory_annotations = universe_factory_source_annotations(&report.factory_walk, &context);
+    if !factory_annotations.is_empty() {
+        return factory_annotations;
+    }
+    let Some(line) = fallback_line else {
+        return Vec::new();
+    };
+    body_contracts
+        .iter()
+        .flat_map(|contract| contract_predicate_rows(contract))
+        .map(|predicate| ReportSourceAnnotation {
+            line,
+            label: format!("UNIVERSE ⊢ {predicate}"),
+        })
+        .collect()
+}
+
+fn universe_factory_source_annotations(
+    factory_walk: &[Value],
+    context: &str,
+) -> Vec<ReportSourceAnnotation> {
+    factory_walk
+        .iter()
+        .filter_map(|row| {
+            let memento = row.get("sourceMemento")?;
+            if source_memento_context_key(memento) != context {
+                return None;
+            }
+            let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+            if status != "warranted" && status != "support" {
+                return None;
+            }
+            if row
+                .get("verdict")
+                .and_then(Value::as_str)
+                .is_some_and(|verdict| verdict != "complete")
+            {
+                return None;
+            }
+            let line = memento
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or_default()
+                .0;
+            if line == 0 {
+                return None;
+            }
+            let formula = row
+                .get("emittedFormula")
+                .or_else(|| row.get("emitted_formula"))
+                .or_else(|| row.get("formula"))?;
+            Some(ReportSourceAnnotation {
+                line,
+                label: format!(
+                    "UNIVERSE ⊢ {}",
+                    proofir_formula_to_fol_with_instances(formula)
+                ),
+            })
+        })
+        .collect()
+}
+
+fn factory_walk_context_has_incomplete_boundary(factory_walk: &[Value], context: &str) -> bool {
+    factory_walk.iter().any(|row| {
+        let Some(memento) = row.get("sourceMemento") else {
+            return false;
+        };
+        if source_memento_context_key(memento) != context {
+            return false;
+        }
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        let verdict = if status == "unresolved" {
+            "gap"
+        } else {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete")
+        };
+        verdict != "complete"
+    })
 }
 
 fn source_memento_for_contract<'a>(
@@ -4995,6 +6115,61 @@ fn source_memento_for_contract<'a>(
         source_function_name(memento)
             .is_some_and(|name| contract_name_matches_source_function(contract_name, name))
     })
+}
+
+fn fact_source_memento_for_contract<'a>(
+    report: &'a LiftSourceReport,
+    contract_name: &str,
+) -> Option<&'a Value> {
+    if let Some(exact) = report
+        .source_mementos
+        .iter()
+        .filter(|memento| source_memento_names_contract(memento, contract_name))
+        .min_by_key(|memento| source_memento_span_width(memento))
+    {
+        return Some(exact);
+    }
+
+    let owner = owning_source_function_name(contract_name);
+    if let Some(owner) = owner.as_deref() {
+        if let Some(memento) = report
+            .source_mementos
+            .iter()
+            .filter(|memento| {
+                source_function_name(memento)
+                    .is_some_and(|name| source_function_name_matches_owner(name, owner))
+            })
+            .min_by_key(|memento| source_memento_span_width(memento))
+        {
+            return Some(memento);
+        }
+    }
+
+    report
+        .source_mementos
+        .iter()
+        .filter(|memento| {
+            source_function_name(memento)
+                .is_some_and(|name| contract_name_matches_source_function(contract_name, name))
+        })
+        .min_by_key(|memento| source_memento_span_width(memento))
+}
+
+fn source_memento_names_contract(memento: &Value, contract_name: &str) -> bool {
+    ["contractName", "contract_name", "claimName", "claim_name"]
+        .into_iter()
+        .any(|field| {
+            memento
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == contract_name)
+        })
+}
+
+fn source_memento_span_width(memento: &Value) -> (u64, u64) {
+    let start = source_start_line(memento).unwrap_or(u64::MAX);
+    let end = source_end_line(memento).unwrap_or(start);
+    (end.saturating_sub(start), start)
 }
 
 fn source_locus_for_contract<'a>(
@@ -5720,12 +6895,69 @@ mod tests {
             factory_walk: vec![],
             assertion_surface_audits: vec![],
             source_mementos: vec![],
+            plan_mementos: vec![],
             contracts: vec![],
             call_edges: vec![],
             vendor_conjoins: vec![],
             project_root: None,
             source_oracle_routes: Vec::new(),
         }
+    }
+
+    fn stamp_source_oracles(value: &mut Value, source_text: &str) {
+        match value {
+            Value::Object(object) => {
+                let is_source_memento = object.contains_key("file") && object.contains_key("span");
+                if is_source_memento && !object.contains_key("sourceOracle") {
+                    if let Some(lines) = source_lines_json_for_memento_object(object, source_text) {
+                        object.insert(
+                            "sourceOracle".to_string(),
+                            serde_json::json!({
+                                "status": "resolved",
+                                "sourceLines": lines,
+                                "display": "source present",
+                            }),
+                        );
+                    }
+                }
+                for child in object.values_mut() {
+                    stamp_source_oracles(child, source_text);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    stamp_source_oracles(child, source_text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn source_lines_json_for_memento_object(
+        object: &Map<String, Value>,
+        source_text: &str,
+    ) -> Option<Value> {
+        let span = object.get("span")?;
+        let start_line = span.get("start_line").and_then(Value::as_u64)? as usize;
+        let end_line = span
+            .get("end_line")
+            .and_then(Value::as_u64)
+            .unwrap_or(start_line as u64) as usize;
+        let lines = source_text.lines().collect::<Vec<_>>();
+        let start = start_line.checked_sub(1)?;
+        let selected = lines.get(start..end_line.max(start_line))?;
+        Some(Value::Array(
+            selected
+                .iter()
+                .enumerate()
+                .map(|(offset, source)| {
+                    serde_json::json!({
+                        "line": start_line + offset,
+                        "source": source.trim_end(),
+                    })
+                })
+                .collect(),
+        ))
     }
 
     fn prove_report_with_sat_witness() -> Report {
@@ -6861,6 +8093,557 @@ mod tests {
     }
 
     #[test]
+    fn full_report_renders_plan_roll_call_first() {
+        let mut report = minimal_source_report();
+        report.assertion_surface_audits = vec![serde_json::json!({
+            "contract": "src/lib.rs::tests::encode_base64_len",
+            "facts": ["call:encodeBase64(bytes) = out"]
+        })];
+        report.factory_audits = vec![serde_json::json!({"kind": "factory-audit"})];
+        report.factory_walk = vec![serde_json::json!({"kind": "factory-walk"})];
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "encode_len",
+            "post": {"kind": "atomic", "name": "=", "args": [{"kind": "var", "name": "out"}, {"kind": "var", "name": "expected"}]}
+        })];
+        report.call_edges = vec![serde_json::json!({
+            "sourceContract": "src/lib.rs::tests::encode_base64_len",
+            "targetSymbol": "encode_len",
+            "targetContract": "encode_len"
+        })];
+        report.source_mementos = vec![serde_json::json!({
+            "kind": "source-memento",
+            "role": "rust-source-universe",
+            "contractName": "encode_len",
+            "file": "vendor/base64-0.22.1/src/encode.rs"
+        })];
+        report.plan_mementos = vec![serde_json::json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "planning": {"source": "component-discovery"},
+            "expectedOutputCids": [format!("blake3-512:{}", "a".repeat(128))],
+            "planAtoms": [
+                {
+                    "kind": "plan-atom",
+                    "schemaVersion": "1",
+                    "atomKind": "lifter-binary",
+                    "role": "unit-test-assertions",
+                    "surface": "rust-test-assertions",
+                    "pluginName": "rust-test-assertions-lift",
+                    "version": "0.1.0",
+                    "binary": {"path": "/bin/rust_test_assertions_rpc", "cid": format!("blake3-512:{}", "b".repeat(128))}
+                },
+                {
+                    "kind": "plan-atom",
+                    "schemaVersion": "1",
+                    "atomKind": "lifter-binary",
+                    "role": "body-universes",
+                    "surface": "rust-fn-contracts",
+                    "pluginName": "rust-fn-contracts-lift",
+                    "version": "0.1.0",
+                    "workspaceOverride": "vendor/base64-0.22.1",
+                    "binary": {"path": "/bin/sugar-walk-rpc", "cid": format!("blake3-512:{}", "c".repeat(128))}
+                },
+                {
+                    "kind": "plan-atom",
+                    "schemaVersion": "1",
+                    "atomKind": "lifter-binary",
+                    "role": "implications",
+                    "surface": "rust-implications",
+                    "pluginName": "rust-implications-lift",
+                    "version": "0.1.0",
+                    "binary": {"path": "/bin/sugar-walk-rpc", "cid": format!("blake3-512:{}", "c".repeat(128))}
+                },
+                {
+                    "kind": "plan-atom",
+                    "schemaVersion": "1",
+                    "atomKind": "lifter-binary",
+                    "role": "witness-oracle",
+                    "surface": "rust-cargo-test-witness",
+                    "pluginName": "rust-cargo-test-witness-lift",
+                    "version": "0.1.0",
+                    "binary": {"path": "/bin/witness_rpc", "cid": format!("blake3-512:{}", "d".repeat(128))}
+                }
+            ]
+        })];
+
+        let human = render_source_report_human(&report);
+        assert!(
+            human.starts_with(
+                "plan: component-discovery\nThis report was assembled with the use of:\n"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("unit test assertions: rust-test-assertions-lift"),
+            "{human}"
+        );
+        assert!(
+            human.contains("body universes: rust-fn-contracts-lift"),
+            "{human}"
+        );
+        assert!(
+            human.contains("implications: rust-implications-lift"),
+            "{human}"
+        );
+        assert!(
+            human.contains("witness oracle: rust-cargo-test-witness-lift"),
+            "{human}"
+        );
+        assert!(human.contains("bin blake3-512:"), "{human}");
+        assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, implications=1, source mementos=1"), "{human}");
+
+        let rendered_json = render_report_json(&report, None).expect("json report");
+        let parsed: serde_json::Value = serde_json::from_str(&rendered_json).expect("valid json");
+        assert_eq!(parsed["assemblyPlan"]["source"], "component-discovery");
+        assert_eq!(parsed["assemblyPlan"]["reportSections"]["bodyUniverses"], 1);
+        assert_eq!(
+            parsed["assemblyPlan"]["planAtoms"][1]["workspaceOverride"],
+            "vendor/base64-0.22.1"
+        );
+    }
+
+    #[test]
+    fn proof_only_report_renders_contract_source_and_predicates_without_audits() {
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "encode_len",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {"kind": "ctor", "name": "+", "args": [
+                        {"kind": "var", "name": "n"},
+                        {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+                    ]}
+                ]
+            }
+        })];
+        report.source_mementos = vec![serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "encode_len",
+            "file": "src/lib.rs",
+            "span": {"start_line": 7, "start_col": 4, "end_line": 9, "end_col": 5},
+            "sourceFunctionName": "encode_len",
+            "paramNames": ["n"],
+            "source_cid": format!("blake3-512:{}", "e".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "f".repeat(128)),
+        })];
+
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("no source audits emitted"), "{human}");
+        assert!(human.contains("contract: encode_len"), "{human}");
+        assert!(human.contains("encode_len :: out = (n + 1)"), "{human}");
+        assert!(
+            human.contains("source not present, file src/lib.rs line 7 col 4 cid blake3-512:"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn human_report_renders_full_unit_test_from_source_oracle_with_fact_inline() {
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion",
+            "inv": {
+                "kind": "not",
+                "operands": [{
+                    "kind": "atomic",
+                    "name": "panic",
+                    "args": [{
+                        "kind": "ctor",
+                        "name": "call:encoded_len#panic_callsite",
+                        "args": [
+                            {"kind": "const", "value": 2, "sort": {"name": "Int"}},
+                            {"kind": "const", "value": false, "sort": {"name": "Bool"}}
+                        ]
+                    }]
+                }]
+            }
+        })];
+        let assertion_source = serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion",
+            "file": "src/lib.rs",
+            "span": {"start_line": 24, "start_col": 4, "end_line": 24, "end_col": 56},
+            "sourceFunctionName": "tests::test_encoded_len_unpadded_2_exact_row",
+            "paramNames": [],
+            "source_cid": format!("blake3-512:{}", "c".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "d".repeat(128)),
+            "sourceOracle": {
+                "status": "resolved",
+                "source": "assert_eq!(3, encoded_len(2, false).unwrap());",
+                "sourceLines": [
+                    {"line": 24, "source": "    assert_eq!(3, encoded_len(2, false).unwrap());"}
+                ]
+            }
+        });
+        report.source_mementos = vec![
+            serde_json::json!({
+                "kind": "source-memento",
+                "contractName": "rust-source::tests::test_encoded_len_unpadded_2_exact_row",
+                "file": "src/lib.rs",
+                "span": {"start_line": 20, "start_col": 0, "end_line": 25, "end_col": 1},
+                "sourceFunctionName": "tests::test_encoded_len_unpadded_2_exact_row",
+                "paramNames": [],
+                "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+                "template_cid": format!("blake3-512:{}", "b".repeat(128)),
+                "sourceOracle": {
+                    "status": "resolved",
+                    "source": "assert_eq!(3, encoded_len(2, false).unwrap());",
+                    "sourceLines": [
+                        {"line": 20, "source": "#[test]"},
+                        {"line": 21, "source": "fn test_encoded_len_unpadded_2_exact_row() {"},
+                        {"line": 22, "source": "    // Vendor source: base64 0.22.1 tests/encode.rs::encoded_len_unpadded."},
+                        {"line": 23, "source": "    // Exact row: encoded_len(2, false) == Some(3)."},
+                        {"line": 24, "source": "    assert_eq!(3, encoded_len(2, false).unwrap());"},
+                        {"line": 25, "source": "}"}
+                    ]
+                }
+            }),
+            assertion_source,
+        ];
+
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains(
+                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(call:encoded_len#panic_callsite(2, false))"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("fn test_encoded_len_unpadded_2_exact_row() {"),
+            "{human}"
+        );
+        assert!(human.contains("#[test]"), "{human}");
+        assert!(
+            !human.contains(
+                "source present:\n          assert_eq!(3, encoded_len(2, false).unwrap());\n"
+            ),
+            "{human}"
+        );
+        assert!(
+            !human.contains("#[test]  FACT ⊢"),
+            "FACT must stay on the assertion line, not the test attribute:\n{human}"
+        );
+    }
+
+    #[test]
+    fn human_report_renders_full_body_source_from_source_oracle_with_universe_inline() {
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "encoded_len",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "result"},
+                    {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                ]
+            }
+        })];
+        let source_memento = serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "encoded_len",
+            "file": "src/encode.rs",
+            "span": {"start_line": 92, "start_col": 4, "end_line": 92, "end_col": 29},
+            "sourceFunctionName": "encoded_len",
+            "paramNames": ["bytes_len", "padding"],
+            "source_cid": format!("blake3-512:{}", "e".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "f".repeat(128)),
+            "sourceOracle": {
+                "status": "resolved",
+                "source": "let rem = bytes_len % 3;",
+                "sourceLines": [
+                    {"line": 92, "source": "    let rem = bytes_len % 3;"}
+                ]
+            }
+        });
+        report.source_mementos = vec![serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "encoded_len",
+            "file": "src/encode.rs",
+            "span": {"start_line": 90, "start_col": 0, "end_line": 96, "end_col": 1},
+            "sourceFunctionName": "encoded_len",
+            "paramNames": ["bytes_len", "padding"],
+            "source_cid": format!("blake3-512:{}", "c".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "d".repeat(128)),
+            "sourceOracle": {
+                "status": "resolved",
+                "source": "let rem = bytes_len % 3;",
+                "sourceLines": [
+                    {"line": 90, "source": "/// Calculate the base64 encoded length for a given input length."},
+                    {"line": 91, "source": "pub const fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {"},
+                    {"line": 92, "source": "    let rem = bytes_len % 3;"},
+                    {"line": 93, "source": "    let complete_input_chunks = bytes_len / 3;"},
+                    {"line": 94, "source": "    Some(complete_chunk_output)"},
+                    {"line": 95, "source": "}"}
+                ]
+            }
+        })];
+        report.factory_walk = vec![serde_json::json!({
+            "file": "src/encode.rs",
+            "line": 92,
+            "requested_role": "FunctionBodyConstraint",
+            "ast_kind": "stmt",
+            "selected": "function_contract_body_post",
+            "status": "warranted",
+            "verdict": "complete",
+            "output": "constraints",
+            "sourceMemento": source_memento,
+            "emittedFormula": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "result"},
+                    {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                ]
+            }
+        })];
+
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains(
+                "    let rem = bytes_len % 3;  UNIVERSE ⊢ result = Some(complete_chunk_output)"
+            ),
+            "{human}"
+        );
+        assert!(
+            !human.contains(
+                "/// Calculate the base64 encoded length for a given input length.  UNIVERSE ⊢"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains(
+                "pub const fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("lifted FOL:\n  - encoded_len :: result = Some(complete_chunk_output)"),
+            "{human}"
+        );
+        assert!(
+            !human.contains("source present:\n          let rem = bytes_len % 3;\n"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn proof_only_report_rehydrates_factory_walk_rows_for_visual_warrants() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        let contract = serde_json::json!({
+            "header": {
+                "kind": "contract",
+                "contractName": "encoded_len"
+            },
+            "body": {
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "result"},
+                        {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                    ]
+                }
+            },
+            "schemaVersion": "1"
+        });
+        pool.insert(format!("blake3-512:{}", "1".repeat(128)), contract);
+        pool.insert(
+            format!("blake3-512:{}", "2".repeat(128)),
+            serde_json::json!({
+                "header": {"kind": "source-memento"},
+                "body": {
+                    "kind": "source-memento",
+                    "contractName": "encoded_len",
+                    "file": "src/encode.rs",
+                    "span": {"start_line": 90, "start_col": 0, "end_line": 96, "end_col": 1},
+                    "sourceFunctionName": "encoded_len",
+                    "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+                    "template_cid": format!("blake3-512:{}", "b".repeat(128)),
+                    "sourceOracle": {
+                        "status": "resolved",
+                        "sourceLines": [
+                            {"line": 90, "source": "/// Calculate the base64 encoded length for a given input length."},
+                            {"line": 91, "source": "pub const fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {"},
+                            {"line": 92, "source": "    let rem = bytes_len % 3;"},
+                            {"line": 93, "source": "    let complete_input_chunks = bytes_len / 3;"},
+                            {"line": 94, "source": "    Some(complete_chunk_output)"},
+                            {"line": 95, "source": "}"}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+        pool.insert(
+            format!("blake3-512:{}", "3".repeat(128)),
+            serde_json::json!({
+                "header": {"kind": "factory-walk-memento"},
+                "body": {
+                    "kind": "factory-walk-row",
+                    "file": "src/encode.rs",
+                    "line": 92,
+                    "requested_role": "FunctionBodyConstraint",
+                    "ast_kind": "stmt",
+                    "selected": "function_contract_body_post",
+                    "status": "warranted",
+                    "verdict": "complete",
+                    "output": "constraints",
+                    "sourceMemento": {
+                        "kind": "source-memento",
+                        "file": "src/encode.rs",
+                        "span": {"start_line": 92, "start_col": 4, "end_line": 92, "end_col": 29},
+                        "sourceFunctionName": "encoded_len",
+                        "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+                        "template_cid": format!("blake3-512:{}", "b".repeat(128)),
+                        "sourceOracle": {
+                            "status": "resolved",
+                            "sourceLines": [
+                                {"line": 92, "source": "    let rem = bytes_len % 3;"}
+                            ]
+                        }
+                    },
+                    "emittedFormula": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {"kind": "ctor", "name": "Some", "args": [{"kind": "var", "name": "complete_chunk_output"}]}
+                        ]
+                    }
+                },
+                "schemaVersion": "1"
+            }),
+        );
+
+        let report = source_report_from_proof_pool(&pool, Some("encoded_len"));
+
+        assert_eq!(report.factory_walk.len(), 1);
+        assert_eq!(
+            report.factory_walk[0]
+                .pointer("/sourceMemento/span/start_line")
+                .and_then(Value::as_u64),
+            Some(92)
+        );
+        let visual = render_visual_source_report(&report);
+        assert!(
+            visual.contains("\u{1b}[32m    let rem = bytes_len % 3;\u{1b}[0m  GREEN ⊢ result = Some(complete_chunk_output)"),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains(
+                "Calculate the base64 encoded length for a given input length.\u{1b}[0m  GREEN ⊢"
+            ),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn proof_plan_routes_source_oracle_absence_to_pinned_memento_line() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.project_root = Some(root.path().to_path_buf());
+        report.plan_mementos = vec![serde_json::json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "planning": {"source": "component-discovery"},
+            "planAtoms": [{
+                "kind": "plan-atom",
+                "schemaVersion": "1",
+                "atomKind": "lifter-binary",
+                "role": "body-universes",
+                "surface": "rust-fn-contracts",
+                "pluginName": "rust-fn-contracts-lift",
+                "binary": {"path": "/bin/sugar-walk-rpc"}
+            }]
+        })];
+        report.source_oracle_routes =
+            source_oracle_routes_from_plan_mementos(&report.plan_mementos);
+        report.source_mementos = vec![serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "encode_len",
+            "file": "src/lib.rs",
+            "span": {"start_line": 11, "start_col": 8, "end_line": 12, "end_col": 1},
+            "sourceFunctionName": "encode_len",
+            "source_cid": format!("blake3-512:{}", "a".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "b".repeat(128)),
+        })];
+
+        enrich_report_source_mementos_from_oracles(&mut report);
+
+        let oracle = &report.source_mementos[0]["sourceOracle"];
+        assert_eq!(oracle["status"], "absent");
+        assert_eq!(
+            oracle["display"],
+            format!(
+                "source not present, file src/lib.rs line 11 col 8 cid blake3-512:{}",
+                "a".repeat(128)
+            )
+        );
+        assert_eq!(oracle["attempts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn visual_report_without_source_shows_pinned_absence_and_predicate() {
+        let mut report = minimal_source_report();
+        report.audits = Vec::new();
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract",
+            "name": "encode_len",
+            "post": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "out"},
+                    {"kind": "var", "name": "expected"}
+                ]
+            }
+        })];
+        report.source_mementos = vec![serde_json::json!({
+            "kind": "source-memento",
+            "contractName": "encode_len",
+            "file": "src/lib.rs",
+            "span": {"start_line": 21, "start_col": 2, "end_line": 22, "end_col": 1},
+            "sourceFunctionName": "encode_len",
+            "source_cid": format!("blake3-512:{}", "c".repeat(128)),
+            "template_cid": format!("blake3-512:{}", "d".repeat(128)),
+            "sourceOracle": {
+                "status": "absent",
+                "display": format!("source not present, file src/lib.rs line 21 col 2 cid blake3-512:{}", "c".repeat(128))
+            }
+        })];
+
+        let visual = render_report_visual(&report, None);
+
+        assert!(visual.contains("universe visual:"), "{visual}");
+        assert!(visual.contains("  universe encode_len"), "{visual}");
+        assert!(
+            visual.contains("FOL: encode_len ⊢ out = expected"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("source not present, file src/lib.rs line 21 col 2 cid blake3-512:"),
+            "{visual}"
+        );
+        assert!(visual.contains("GREEN ⊢ out = expected"), "{visual}");
+    }
+
+    #[test]
     fn summary_report_renders_gate_accounting_without_universe_dump() {
         let root = tempfile::tempdir().expect("tempdir");
         let source_dir = root.path().join("tests");
@@ -7220,7 +9003,7 @@ fn sample() {
             .expect("term memento")
             .to_json()
         };
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "kind": "ir-document",
             "ir": [],
             "sourceLedger": {
@@ -7292,31 +9075,32 @@ fn sample() {
                 ]
             }
         });
+        stamp_source_oracles(&mut response, &source_text);
         let mut report = source_report_from_lift_response(&response, None).expect("source report");
         report.project_root = Some(root.path().to_path_buf());
 
         let visual = render_visual_source_report(&report);
 
         assert!(
-            visual.contains("\u{1b}[32mlet x = 1;\u{1b}[0m  GREEN"),
+            visual.contains("\u{1b}[32m    let x = 1;\u{1b}[0m  GREEN"),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[32mlet y = 2;\u{1b}[0m  GREEN"),
+            visual.contains("\u{1b}[32m    let y = 2;\u{1b}[0m  GREEN"),
             "{visual}"
         );
         assert!(
             visual.contains(
-                "\u{1b}[31mlet z = runtime();\u{1b}[0m  RED HERE effect: runtime boundary: pointer identity"
+                "\u{1b}[31m    let z = runtime();\u{1b}[0m  RED HERE effect: runtime boundary: pointer identity"
             ),
             "{visual}"
         );
         assert!(
-            visual.contains("\u{1b}[31mlet a = 10;\u{1b}[0m  RED"),
+            visual.contains("\u{1b}[31m    let a = 10;\u{1b}[0m  RED"),
             "{visual}"
         );
         assert!(
-            !visual.contains("let a = 10;\u{1b}[0m  RED HERE"),
+            !visual.contains("    let a = 10;\u{1b}[0m  RED HERE"),
             "{visual}"
         );
     }
@@ -7381,7 +9165,7 @@ fn sample() {
                 {"kind": "const", "value": 10, "sort": {"name": "Int"}}
             ]
         });
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
                 {
@@ -7449,6 +9233,7 @@ fn sample() {
                 ]
             }
         });
+        stamp_source_oracles(&mut response, &source_text);
         let mut report = source_report_from_lift_response(&response, None).expect("source report");
         report.project_root = Some(root.path().to_path_buf());
 
@@ -7528,7 +9313,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
         )
         .expect("effect statement memento")
         .to_json();
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
                 {
@@ -7575,6 +9360,7 @@ fn encode_with_padding(input: &[u8], output: &mut [u8], engine: &Engine) {
                 ]
             }
         });
+        stamp_source_oracles(&mut response, &source_text);
         let mut report = source_report_from_lift_response(&response, None).expect("source report");
         report.project_root = Some(root.path().to_path_buf());
 
@@ -7683,7 +9469,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 ]}
             ]
         });
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
                 {
@@ -7750,6 +9536,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 ]
             }
         });
+        stamp_source_oracles(&mut response, &source_text);
         let mut report = source_report_from_lift_response(&response, None).expect("source report");
         report.project_root = Some(root.path().to_path_buf());
 
@@ -7856,7 +9643,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 ]}
             ]
         });
-        let response = serde_json::json!({
+        let mut response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
                 {
@@ -7903,6 +9690,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 ]
             }
         });
+        stamp_source_oracles(&mut response, &source_text);
         let mut report = source_report_from_lift_response(&response, None).expect("source report");
         report.project_root = Some(root.path().to_path_buf());
 
@@ -7954,6 +9742,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let route = SourceOracleRoute {
             surface: "rust-fn-contracts".to_string(),
             workspace_override: Some("vendor/base64-0.22.1".to_string()),
+            role: Some("body-universes".to_string()),
         };
         let memento = serde_json::json!({
             "file": "vendor/base64-0.22.1/src/encode.rs",
@@ -7985,10 +9774,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             SourceOracleRoute {
                 surface: "rust-test-assertions".to_string(),
                 workspace_override: None,
+                role: Some("unit-test-assertions".to_string()),
             },
             SourceOracleRoute {
                 surface: "rust-fn-contracts".to_string(),
                 workspace_override: Some("vendor/base64-0.22.1".to_string()),
+                role: Some("body-universes".to_string()),
             },
         ];
         let memento = serde_json::json!({
@@ -8874,6 +10665,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             factory_walk: vec![],
             assertion_surface_audits: vec![],
             source_mementos: vec![],
+            plan_mementos: vec![],
             contracts: vec![],
             call_edges: vec![],
             vendor_conjoins: vec![VendorConjoinReport {

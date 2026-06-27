@@ -997,6 +997,13 @@ pub fn compute_contract_set_cid(mut contract_cids: Vec<String>) -> String {
 }
 
 pub fn mint_contract(args: &MintContractArgs) -> Result<MintedEnvelope, ClaimEnvelopeError> {
+    mint_contract_with_body_cid(args, None)
+}
+
+pub fn mint_contract_with_body_cid(
+    args: &MintContractArgs,
+    body_cid: Option<&str>,
+) -> Result<MintedEnvelope, ClaimEnvelopeError> {
     if args.pre.is_none() && args.post.is_none() && args.inv.is_none() {
         return Err(ClaimEnvelopeError::EmptyContract);
     }
@@ -1030,14 +1037,19 @@ pub fn mint_contract(args: &MintContractArgs) -> Result<MintedEnvelope, ClaimEnv
         ("name".into(), Value::string(args.contract_name.clone())),
         ("outBinding".into(), Value::string(args.out_binding.clone())),
     ];
-    if let Some(pre) = &canonical_pre {
-        kind_specific.push(("pre".into(), pre.clone()));
+    if let Some(body_cid) = body_cid.filter(|cid| !cid.is_empty()) {
+        kind_specific.push(("bodyCid".into(), Value::string(body_cid.to_string())));
     }
-    if let Some(post) = &canonical_post {
-        kind_specific.push(("post".into(), post.clone()));
-    }
-    if let Some(inv) = &canonical_inv {
-        kind_specific.push(("inv".into(), inv.clone()));
+    if body_cid.is_none() {
+        if let Some(pre) = &canonical_pre {
+            kind_specific.push(("pre".into(), pre.clone()));
+        }
+        if let Some(post) = &canonical_post {
+            kind_specific.push(("post".into(), post.clone()));
+        }
+        if let Some(inv) = &canonical_inv {
+            kind_specific.push(("inv".into(), inv.clone()));
+        }
     }
     // Body-derived op-contract slots: `formals` (+ `formalSorts`) ride in
     // the header so `body_discharge::CatalogResolver` (which reads the

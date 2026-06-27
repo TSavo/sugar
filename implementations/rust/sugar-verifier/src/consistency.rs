@@ -68,9 +68,7 @@ use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
 use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
-use crate::types::{
-    memento_body, memento_body_field, memento_kind, MementoPool, ObligationVerdict,
-};
+use crate::types::{memento_body_field, memento_kind, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
@@ -1654,7 +1652,10 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         if memento_kind(contract_env) != Some("contract") {
             continue;
         }
-        let Some(body) = memento_body(contract_env) else {
+        let Some(body) = pool
+            .resolve_contract_body(contract_env)
+            .filter(|value| value.is_object())
+        else {
             continue;
         };
         let Some(post) = body
@@ -1833,11 +1834,14 @@ pub fn verify_consistency(
     registry: &HashMap<String, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<ConsistencyResult> {
-    let candidates: Vec<(&String, &Json)> = pool
+    let candidates: Vec<(String, Json)> = pool
         .mementos
         .iter()
         .filter(|(_, env)| memento_kind(env) == Some("contract"))
-        .filter_map(|(cid, env)| memento_body(env).map(|b| (cid, b)))
+        .filter_map(|(cid, env)| {
+            pool.resolve_contract_body(env)
+                .map(|body| (cid.clone(), body))
+        })
         .filter(|(_, body)| is_consistency_candidate(body))
         .collect();
 
@@ -1909,7 +1913,7 @@ pub fn verify_consistency(
     // assertions dedupe by CID (one member) and stay PROVEN. The contract NAME is
     // the content-keyed callsite, so same name == same callsite == sound to
     // conjoin -- the same invariant mint relies on.
-    let mut by_name: std::collections::BTreeMap<String, Vec<(&String, &Json)>> =
+    let mut by_name: std::collections::BTreeMap<String, Vec<(String, Json)>> =
         std::collections::BTreeMap::new();
     for (cid, body) in &candidates {
         let name = body
@@ -1918,9 +1922,12 @@ pub fn verify_consistency(
             .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
             .unwrap_or("<unnamed>")
             .to_string();
-        by_name.entry(name).or_default().push((*cid, *body));
+        by_name
+            .entry(name)
+            .or_default()
+            .push((cid.clone(), body.clone()));
     }
-    let groups: Vec<(String, Vec<(&String, &Json)>)> = by_name.into_iter().collect();
+    let groups: Vec<(String, Vec<(String, Json)>)> = by_name.into_iter().collect();
 
     let results: Vec<ConsistencyResult> = groups
         .par_iter()
@@ -1931,19 +1938,19 @@ pub fn verify_consistency(
             // PER MEMBER. They are NEVER folded into the symbolic conjunction
             // AND never short-circuit the group: a witness member must not mask
             // a contradictory inv group.
-            let mut inv_cids: Vec<&String> = Vec::new();
-            let mut inv_bodies: Vec<&Json> = Vec::new();
+            let mut inv_cids: Vec<String> = Vec::new();
+            let mut inv_bodies: Vec<Json> = Vec::new();
             for (m_cid, body) in members {
                 if is_witness_member(body) {
                     if let Some(res) =
-                        try_witness_discharge(body, (*m_cid).clone(), property_name.clone())
+                        try_witness_discharge(body, m_cid.clone(), property_name.clone())
                     {
                         out.push(res);
                         continue;
                     }
                 }
-                inv_bodies.push(body);
-                inv_cids.push(m_cid);
+                inv_bodies.push(body.clone());
+                inv_cids.push(m_cid.clone());
             }
             if inv_bodies.is_empty() {
                 return out;

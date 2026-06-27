@@ -19,13 +19,21 @@ cargo build --manifest-path "$RUST/Cargo.toml" \
   -p sugar-walk --bin sugar-walk-rpc \
   -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
   -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
+  -p sugar-lift-rust-cargo-test-witness --bin discharge_cli \
+  -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+  -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+  -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+  -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/sugar-walk-rpc" ] || { echo "FAIL: sugar-walk-rpc not built"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
 [ -x "$BIN_DIR/witness_rpc" ] || { echo "FAIL: witness_rpc not built"; exit 1; }
 [ -x "$BIN_DIR/discharge_cli" ] || { echo "FAIL: discharge_cli not built"; exit 1; }
+[ -x "$BIN_DIR/sugar-ir-smt-lib" ] || { echo "FAIL: sugar-ir-smt-lib not built"; exit 1; }
+[ -x "$BIN_DIR/sugar-ir-coq" ] || { echo "FAIL: sugar-ir-coq not built"; exit 1; }
+[ -x "$BIN_DIR/sugar-ir-lean" ] || { echo "FAIL: sugar-ir-lean not built"; exit 1; }
+[ -x "$BIN_DIR/sugar-ir-maude" ] || { echo "FAIL: sugar-ir-maude not built"; exit 1; }
 
 prepare_base64_vendor_source() {
   local suite_dir="$1"
@@ -49,13 +57,40 @@ prepare_base64_vendor_source() {
   ln -s "$src_root" "$suite_dir/vendor/base64-0.22.1"
 }
 
+assert_zero_config_suite() {
+  local suite_dir="$1"
+  local cursor="$suite_dir"
+  if [ -d "$suite_dir/.sugar/lift" ]; then
+    find "$suite_dir/.sugar/lift" -name 'manifest.toml' -delete
+  fi
+  [ ! -e "$suite_dir/.sugar/config.toml" ] || {
+    echo "FAIL: $suite_dir must run without .sugar/config.toml"
+    exit 1
+  }
+  if [ -d "$suite_dir/.sugar/lift" ] && find "$suite_dir/.sugar/lift" -name 'manifest.toml*' -print -quit | grep -q .; then
+    echo "FAIL: $suite_dir must run without .sugar/lift/*/manifest.toml*"
+    exit 1
+  fi
+  while :; do
+    if [ -d "$cursor/.sugar/ir-compilers" ] && find "$cursor/.sugar/ir-compilers" -name 'manifest.toml' -print -quit | grep -q .; then
+      echo "FAIL: $suite_dir must run without inherited .sugar/ir-compilers/*/manifest.toml"
+      exit 1
+    fi
+    [ "$cursor" = "$REPO" ] && break
+    local next
+    next="$(dirname "$cursor")"
+    [ "$next" != "$cursor" ] || break
+    cursor="$next"
+  done
+  if [ -d "${HOME:-}/.config/sugar/ir-compilers" ] && find "${HOME:-}/.config/sugar/ir-compilers" -name 'manifest.toml' -print -quit | grep -q .; then
+    echo "FAIL: $suite_dir must run without user .config/sugar/ir-compilers/*/manifest.toml"
+    exit 1
+  fi
+}
+
 for suite in good bad; do
   prepare_base64_vendor_source "$HERE/$suite"
-  for surface in rust-cargo-test-witness rust-fn-contracts rust-implications rust-test-assertions; do
-    mfin="$HERE/$suite/.sugar/lift/$surface/manifest.toml.in"
-    mf="$HERE/$suite/.sugar/lift/$surface/manifest.toml"
-    sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"
-  done
+  assert_zero_config_suite "$HERE/$suite"
   for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/.sugar/witnesses" "$HERE/$suite/target" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json "$HERE/$suite/Cargo.lock" 2>/dev/null || true
@@ -65,6 +100,7 @@ pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)
 
 write_lying_discharge() {
   local script="$1"
+  mkdir -p "$(dirname "$script")"
   cat > "$script" <<'SH'
 #!/usr/bin/env sh
 echo '{"verdict":"DISCHARGED","reason":"lying discharge regression"}'

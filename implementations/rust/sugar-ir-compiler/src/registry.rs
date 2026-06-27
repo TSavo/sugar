@@ -12,7 +12,7 @@ use crate::{CompileError, IrCompiler};
 /// Registry of compilers, keyed by dialect identifier. A single
 /// compiler that serves multiple dialects is registered once per
 /// dialect (the `Arc` makes that cheap).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Registry {
     by_dialect: HashMap<String, Arc<dyn IrCompiler>>,
 }

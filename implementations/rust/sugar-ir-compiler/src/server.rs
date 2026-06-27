@@ -7,7 +7,9 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value as Json};
 use tracing::{debug, error, warn};
 
-use crate::IrCompiler;
+use crate::{Capabilities, IrCompiler};
+
+const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 
 /// Serve one line-delimited JSON-RPC request per stdin line and write one
 /// response per stdout line. Compiler binaries should be thin wrappers around
@@ -53,6 +55,12 @@ pub fn serve_stdio(compiler: impl IrCompiler) {
         debug!(method, id = %id, "ir compiler rpc server: request");
 
         let resp = match method {
+            "initialize" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": compiler.capabilities(),
+            }),
+            COMPONENT_PLAN_RPC_METHOD => component_plan_response(id, &compiler.capabilities()),
             "sugar.ir.handshake" => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -106,7 +114,7 @@ pub fn serve_stdio(compiler: impl IrCompiler) {
                     }
                 }
             }
-            "sugar.ir.shutdown" => {
+            "shutdown" | "sugar.ir.shutdown" => {
                 let r = json!({"jsonrpc": "2.0", "id": id, "result": {}});
                 emit_line(&mut out, &r);
                 break;
@@ -116,6 +124,34 @@ pub fn serve_stdio(compiler: impl IrCompiler) {
 
         emit_line(&mut out, &resp);
     }
+}
+
+fn component_plan_response(id: Json, caps: &Capabilities) -> Json {
+    let command = std::env::current_exe()
+        .ok()
+        .map(|path| vec![path.display().to_string()])
+        .unwrap_or_else(|| vec![caps.name.clone()]);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "decision": "claim",
+            "claims": [{
+                "role": "ir-compiler",
+                "name": caps.name.clone(),
+                "dialects": caps.dialects.clone(),
+            }],
+            "ir_compilers": [{
+                "name": caps.name.clone(),
+                "version": caps.version.clone(),
+                "protocol_version": caps.protocol_version.clone(),
+                "command": command,
+                "dialects": caps.dialects.clone(),
+                "supported_sorts": caps.supported_sorts.clone(),
+                "supported_predicates": caps.supported_predicates.clone(),
+            }],
+        },
+    })
 }
 
 fn error_response(id: Json, code: i64, message: &str, data: Option<Json>) -> Json {

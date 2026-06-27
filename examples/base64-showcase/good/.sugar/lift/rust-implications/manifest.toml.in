@@ -1,5 +1,0 @@
-name = "rust-implications-lift"
-command = ["@BIN_DIR@/sugar-walk-rpc", "--rpc"]
-working_dir = "."
-method = "sugar.plugin.lift_implications"
-phase = "consumer"

@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-
-name = "lean4-mathlib-reference"
-version = "0.1.0"
-protocol_version = "sugar-ir-compiler/1"
-command = ["target/debug/sugar-ir-lean"]
-working_dir = "implementations/rust"
-dialects = ["lean"]

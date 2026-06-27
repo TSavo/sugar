@@ -264,7 +264,8 @@ pub(crate) fn build_prove_report(
         extra_proofs: dependency_proofs,
         ..Default::default()
     };
-    Runner::new(cfg)
+    let compilers = crate::component_plan::compiler_registry(project_root);
+    Runner::new_with_compilers(cfg, compilers)
         .run_with_proof_run()
         .map(|artifact| artifact.report)
         .map_err(|error| error.to_string())

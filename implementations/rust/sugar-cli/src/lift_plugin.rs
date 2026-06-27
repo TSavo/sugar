@@ -22,6 +22,8 @@ use sugar_ir_types::CompositionRefusalMemento;
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginManifest {
     pub name: String,
+    pub version: Option<String>,
+    pub protocol_version: Option<String>,
     pub command: Vec<String>,
     pub working_dir: Option<PathBuf>,
     /// Optional JSON-RPC method override. Defaults to `lift`.
@@ -351,6 +353,9 @@ fn parse_manifest(path: &Path) -> Result<LiftPluginManifest, String> {
         .unwrap_or_default();
     let manifest = LiftPluginManifest {
         name: string_field("name").unwrap_or_default(),
+        version: string_field("version"),
+        protocol_version: string_field("protocol_version")
+            .or_else(|| string_field("protocolVersion")),
         command,
         working_dir: string_field("working_dir").map(PathBuf::from),
         method: string_field("method"),
@@ -393,6 +398,8 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifes
     if let Some(planned) = crate::component_plan::planned_lift_manifest(project_root, surface) {
         return Ok(LiftPluginManifest {
             name: planned.name,
+            version: planned.version,
+            protocol_version: planned.protocol_version,
             command: planned.command,
             working_dir: planned.working_dir,
             method: planned.method,

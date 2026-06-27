@@ -52,6 +52,8 @@ use sugar_walk::{
 use syn::spanned::Spanned;
 use tracing::{debug, info, trace, warn};
 
+const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
+
 // Tier 2b native semantic oracle (spec 2026-05-30-callee-resolution-tiers §2.T2b).
 // The RA LSP client now lives in the `sugar_walk::ra_oracle` library module so
 // BOTH this per-mint binary AND the resident `sugar-linkerd` daemon import the
@@ -232,6 +234,7 @@ fn handle_line(line: &str) -> Value {
         "lift" => bind_lift(&params),
         "shutdown" => Ok(Value::Null),
         KIT_DECLARATION_RPC_METHOD => Ok(kit_declaration_result()),
+        COMPONENT_PLAN_RPC_METHOD => Ok(component_plan_result(&params)),
         // Recognizer foundation (#81, #82) per protocol §4.2.5. The lift
         // binary handles this too because it already owns the syn AST
         // machinery that recognize needs — same kit, same language.
@@ -301,7 +304,34 @@ fn resolve_source_memento_rpc(params: &Value) -> Result<Value, String> {
         },
         "source": resolved.fragment.body_text.trim(),
         "bodyText": resolved.fragment.body_text.trim(),
+        "sourceLines": source_lines_for_memento(Path::new(workspace_root), &memento),
     }))
+}
+
+fn source_lines_for_memento(workspace_root: &Path, memento: &SourceMemento) -> Value {
+    let Ok(source) = std::fs::read_to_string(workspace_root.join(&memento.file)) else {
+        return Value::Array(Vec::new());
+    };
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(start) = memento.span.start_line.checked_sub(1) else {
+        return Value::Array(Vec::new());
+    };
+    let end = memento.span.end_line.max(memento.span.start_line);
+    let Some(selected) = lines.get(start..end) else {
+        return Value::Array(Vec::new());
+    };
+    Value::Array(
+        selected
+            .iter()
+            .enumerate()
+            .map(|(offset, source)| {
+                json!({
+                    "line": start + offset + 1,
+                    "source": source.trim_end(),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn source_memento_from_json_value(value: &Value) -> Option<SourceMemento> {
@@ -5921,6 +5951,7 @@ fn kit_declaration_result() -> Value {
                 {"name": "shutdown", "required": true},
                 {"name": "sugar.plugin.recognize", "required": false},
                 {"name": "sugar.plugin.lift_implications", "required": false},
+                {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": false}
             ]
         },
@@ -5929,6 +5960,124 @@ fn kit_declaration_result() -> Value {
         },
         "residueCategories": []
     })
+}
+
+fn component_plan_result(params: &Value) -> Value {
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let Some(vendor_root) = claimed_base64_vendor_root(params, &workspace_root) else {
+        return json!({
+            "decision": "decline",
+            "reason": "no base64 0.22.1 vendor source candidate",
+        });
+    };
+    let command = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "sugar-walk-rpc".to_string());
+    let vendor_manifest_item = forensic_items(params)
+        .into_iter()
+        .find(|item| {
+            item.get("path").and_then(Value::as_str) == Some(&format!("{vendor_root}/Cargo.toml"))
+        })
+        .and_then(|item| item.get("id").and_then(Value::as_str))
+        .unwrap_or("file:vendor/base64-0.22.1/Cargo.toml")
+        .to_string();
+
+    json!({
+        "decision": "claim",
+        "claims": [
+            {
+                "item": vendor_manifest_item,
+                "role": "contract-producer",
+                "surface": "rust-fn-contracts",
+            },
+            {
+                "item": "file:Cargo.toml",
+                "role": "implication-consumer",
+                "surface": "rust-implications",
+            }
+        ],
+        "plugins": [
+            {
+                "name": "rust-fn-contracts-lift",
+                "kind": "lift",
+                "surface": "rust-fn-contracts",
+                "emit": "ir-document",
+                "workspace_override": vendor_root,
+            },
+            {
+                "name": "rust-implications-lift",
+                "kind": "lift",
+                "surface": "rust-implications",
+            }
+        ],
+        "lift_manifests": [
+            {
+                "surface": "rust-fn-contracts",
+                "name": "rust-fn-contracts-lift",
+                "version": env!("CARGO_PKG_VERSION"),
+                "protocol_version": "pep/1.7.0",
+                "kind": "lift",
+                "command": [command, "--rpc"],
+                "working_dir": ".",
+            },
+            {
+                "surface": "rust-implications",
+                "name": "rust-implications-lift",
+                "version": env!("CARGO_PKG_VERSION"),
+                "protocol_version": "pep/1.7.0",
+                "kind": "lift",
+                "command": [command, "--rpc"],
+                "working_dir": ".",
+                "method": "sugar.plugin.lift_implications",
+                "phase": "consumer",
+            }
+        ],
+        "diagnostics": [],
+    })
+}
+
+fn claimed_base64_vendor_root(params: &Value, workspace_root: &Path) -> Option<String> {
+    for item in forensic_items(params) {
+        let path = item.get("path").and_then(Value::as_str)?;
+        let language = item
+            .get("language_hint")
+            .or_else(|| item.get("languageHint"))
+            .and_then(Value::as_str);
+        if language != Some("rust") {
+            continue;
+        }
+        if path == "vendor/base64-0.22.1/Cargo.toml" {
+            return Some("vendor/base64-0.22.1".to_string());
+        }
+    }
+    if workspace_root
+        .join("vendor/base64-0.22.1/Cargo.toml")
+        .is_file()
+    {
+        return Some("vendor/base64-0.22.1".to_string());
+    }
+    None
+}
+
+fn forensic_items(params: &Value) -> Vec<&Value> {
+    params
+        .get("project_forensics")
+        .or_else(|| params.get("projectForensics"))
+        .and_then(|value| value.get("items"))
+        .or_else(|| {
+            params
+                .get("workspace_evidence")
+                .or_else(|| params.get("workspaceEvidence"))
+                .and_then(|value| value.get("items"))
+        })
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
 }
 
 fn bind_lift(params: &Value) -> Result<Value, String> {
@@ -9802,7 +9951,7 @@ fn cvalue_to_json(v: &CValue) -> Value {
 mod tests {
     use super::*;
     use libsugar::core::{bind_result_payload, bind_term_document, BindOptions, Term};
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_claim_envelope::{
@@ -12233,6 +12382,79 @@ pub fn bitwise_not() -> i64 {
         let root = std::env::temp_dir().join(format!("{name}_{nanos}"));
         fs::create_dir_all(&root).expect("create temp workspace");
         root
+    }
+
+    #[test]
+    fn component_plan_claims_base64_vendor_contracts_and_implications() {
+        let root = temp_workspace("component_plan_base64_vendor");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='base64-showcase-good'\nversion='0.1.0'\n",
+        )
+        .expect("write project Cargo.toml");
+        let vendor = root.join("vendor/base64-0.22.1/src");
+        fs::create_dir_all(&vendor).expect("create vendor src");
+        fs::write(
+            root.join("vendor/base64-0.22.1/Cargo.toml"),
+            "[package]\nname='base64'\nversion='0.22.1'\n",
+        )
+        .expect("write vendor Cargo.toml");
+        fs::write(vendor.join("encode.rs"), "pub fn encoded_len() {}\n")
+            .expect("write vendor source");
+
+        let response = component_plan_result(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "project_forensics": {
+                "items": [
+                    {
+                        "id": "file:Cargo.toml",
+                        "kind": "package-manifest",
+                        "path": "Cargo.toml",
+                        "language_hint": "rust",
+                        "reason": "Cargo package manifest"
+                    },
+                    {
+                        "id": "file:vendor/base64-0.22.1/Cargo.toml",
+                        "kind": "package-manifest",
+                        "path": "vendor/base64-0.22.1/Cargo.toml",
+                        "language_hint": "rust",
+                        "reason": "Cargo package manifest"
+                    },
+                    {
+                        "id": "file:vendor/base64-0.22.1/src/encode.rs",
+                        "kind": "source-file",
+                        "path": "vendor/base64-0.22.1/src/encode.rs",
+                        "language_hint": "rust",
+                        "reason": "rust source file"
+                    }
+                ]
+            }
+        }));
+
+        assert_eq!(response["decision"].as_str(), Some("claim"));
+        let plugins = response["plugins"].as_array().expect("plugins");
+        let fn_contracts = plugins
+            .iter()
+            .find(|plugin| plugin["surface"] == "rust-fn-contracts")
+            .expect("rust-fn-contracts plugin");
+        assert_eq!(
+            fn_contracts["workspace_override"].as_str(),
+            Some("vendor/base64-0.22.1")
+        );
+        assert!(plugins
+            .iter()
+            .any(|plugin| plugin["surface"] == "rust-implications"));
+        let manifests = response["lift_manifests"].as_array().expect("manifests");
+        let implications = manifests
+            .iter()
+            .find(|manifest| manifest["surface"] == "rust-implications")
+            .expect("rust-implications manifest");
+        assert_eq!(
+            implications["method"].as_str(),
+            Some("sugar.plugin.lift_implications")
+        );
+        assert_eq!(implications["phase"].as_str(), Some("consumer"));
+        fs::remove_dir_all(&root).ok();
     }
 
     fn write_infallible_serialize_manifest(root: &Path, body: &str) {

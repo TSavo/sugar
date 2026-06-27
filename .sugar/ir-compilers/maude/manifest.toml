@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-
-name = "maude-equational-reference"
-version = "0.1.0"
-protocol_version = "sugar-ir-compiler/1"
-command = ["target/debug/sugar-ir-maude"]
-working_dir = "implementations/rust"
-dialects = ["maude"]

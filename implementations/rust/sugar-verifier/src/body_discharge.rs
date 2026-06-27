@@ -104,7 +104,7 @@ use libsugar::wp::{
 };
 use sugar_ir_types::{IrFormula, IrTerm};
 
-use crate::types::{memento_body, memento_kind, CallSite, MementoPool};
+use crate::types::{memento_kind, CallSite, MementoPool};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -143,7 +143,7 @@ pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
     if memento_kind(env) != Some("contract") {
         return false;
     }
-    let Some(body) = memento_body(env).filter(|v| v.is_object()) else {
+    let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
         return false;
     };
     match body.get("pre") {
@@ -191,7 +191,7 @@ impl<'a> CatalogResolver<'a> {
     /// targets. Returns the contract body JSON object, or `None` if there
     /// is no bridge for that symbol, the target CID is not in the pool, or
     /// the target memento is not a contract.
-    fn target_contract_body(&self, op_name: &str) -> Option<&'a Json> {
+    fn target_contract_body(&self, op_name: &str) -> Option<Json> {
         let bridge = self.pool.bridges_by_symbol.get(op_name)?;
         let bbody = bridge.get("evidence").and_then(|e| e.get("body"));
         // v1.2-layered bridges carry the fields on `header`; v1.1-flat on
@@ -204,7 +204,9 @@ impl<'a> CatalogResolver<'a> {
         if memento_kind(env) != Some("contract") {
             return None;
         }
-        memento_body(env).filter(|v| v.is_object())
+        self.pool
+            .resolve_contract_body(env)
+            .filter(|v| v.is_object())
     }
 }
 
@@ -830,7 +832,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         );
         return None;
     }
-    let Some(body) = memento_body(env).filter(|v| v.is_object()) else {
+    let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
         gdbg!("REJECT cond2: target {target_cid} has no object body");
         return None;
     };
