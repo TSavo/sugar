@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import ast
+
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.sugar.method_sugar import MethodSugar
 
 
 def build_add_sugar(site, ctx):
@@ -98,13 +99,17 @@ def build_list_literal_sugar(site, ctx):
 def build_map_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 
-    method = MethodSugar.from_call(site.node)
-    if method is None:
+    if not (
+        isinstance(site.node, ast.Call)
+        and isinstance(site.node.func, ast.Attribute)
+        and site.node.func.attr == "map"
+        and len(site.node.args) == 1
+    ):
         raise TypeError("MapSugar claim built a non-map call")
     sugar = MapSugar.from_site(
         site,
-        receiver=ctx.build_body(method.receiver, SugarRole.TERM),
-        mapper=ctx.build_body(method.args[0], SugarRole.TERM),
+        receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
+        mapper=ctx.build_body(site.node.args[0], SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("MapSugar claim built a non-map call")

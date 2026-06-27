@@ -23,6 +23,13 @@ SUGAR_DIR = (
     / "sugar_lift_py_tests"
     / "sugar"
 )
+FACTORY_CONSTRUCTORS = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "sugar_lift_py_tests"
+    / "factory"
+    / "sugar_constructors.py"
+)
 
 
 def test_factory_backed_sugars_do_not_call_ctx_builders() -> None:
@@ -41,6 +48,22 @@ def test_factory_backed_sugars_do_not_call_ctx_builders() -> None:
                     and child.func.value.id == "ctx"
                 ):
                     offenders.append(f"{path.name}:{node.name}.{child.func.attr}")
+
+    assert offenders == []
+
+
+def test_factory_constructors_do_not_delegate_method_shape_to_sugar() -> None:
+    tree = ast.parse(FACTORY_CONSTRUCTORS.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "from_call"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "MethodSugar"
+        ):
+            offenders.append(f"{FACTORY_CONSTRUCTORS.name}:{node.lineno}")
 
     assert offenders == []
 

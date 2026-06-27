@@ -106,7 +106,7 @@ def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path
     walk = good_doc["factoryAuditSummary"]["factoryWalk"]
     assert [row["selected"] for row in walk] == [
         "ArrayLiteralSugar",
-        "MethodSugar",
+        "LambdaSugar",
         "MapSugar",
     ]
     map_row = walk[-1]
