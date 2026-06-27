@@ -584,6 +584,9 @@ impl Sugar for BoolExprSugar {
                 expr,
                 asserted,
             } => {
+                if let Some(effect) = crate::panic_freedom_expr_callsite_effect(expr, ctx.scope) {
+                    return Outcome::Incomplete(effect);
+                }
                 let term = match term_payload(term, ctx) {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
@@ -1183,6 +1186,18 @@ fn relation_constraint_from_bodies(
     {
         return Outcome::Incomplete(effect);
     }
+    if let Some(effect) = relation_source_capability_effect(lhs_expr) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = relation_source_capability_effect(rhs_expr) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = crate::panic_freedom_expr_callsite_effect(lhs_expr, ctx.scope) {
+        return Outcome::Incomplete(effect);
+    }
+    if let Some(effect) = crate::panic_freedom_expr_callsite_effect(rhs_expr, ctx.scope) {
+        return Outcome::Incomplete(effect);
+    }
     let lhs = match term_payload(lhs, ctx) {
         Ok(term) => term,
         Err(outcome) => return outcome,
@@ -1191,12 +1206,6 @@ fn relation_constraint_from_bodies(
         Ok(term) => term,
         Err(outcome) => return outcome,
     };
-    if let Some(effect) = relation_source_capability_effect(lhs_expr) {
-        return Outcome::Incomplete(effect);
-    }
-    if let Some(effect) = relation_source_capability_effect(rhs_expr) {
-        return Outcome::Incomplete(effect);
-    }
     if let Some(effect) = relation_operand_capability_effect(lhs_expr, &lhs) {
         return Outcome::Incomplete(effect);
     }

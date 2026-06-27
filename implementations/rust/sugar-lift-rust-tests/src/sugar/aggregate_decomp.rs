@@ -160,6 +160,12 @@ impl Sugar for AggregateDecompSugar {
         if let Some(effect) = relation_source_capability_effect(&self.rhs_expr) {
             return Outcome::Incomplete(effect);
         }
+        if let Some(effect) = crate::panic_freedom_expr_callsite_effect(&self.lhs_expr, ctx.scope) {
+            return Outcome::Incomplete(effect);
+        }
+        if let Some(effect) = crate::panic_freedom_expr_callsite_effect(&self.rhs_expr, ctx.scope) {
+            return Outcome::Incomplete(effect);
+        }
         let lhs = aggregate_components(&self.lhs, ctx);
         let rhs = aggregate_components(&self.rhs, ctx);
         match (lhs, rhs) {

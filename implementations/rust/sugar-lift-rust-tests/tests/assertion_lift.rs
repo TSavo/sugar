@@ -4440,6 +4440,319 @@ fn for_slice_pattern_over_inferred_array_chunks_replays_literal_receiver() {
 }
 
 #[test]
+fn assert_predicate_over_runtime_iterator_next_bubbles_named_effect_not_receiver_gap() {
+    let src = r#"
+        use std::iter::empty;
+
+        struct Toggle {
+            is_empty: bool,
+        }
+
+        impl Iterator for Toggle {
+            type Item = ();
+
+            fn next(&mut self) -> Option<()> {
+                if self.is_empty {
+                    self.is_empty = false;
+                    None
+                } else {
+                    Some(())
+                }
+            }
+        }
+
+        struct NonFused<I> {
+            iter: I,
+            done: bool,
+        }
+
+        impl<I> NonFused<I> {
+            fn new(iter: I) -> Self {
+                Self { iter, done: false }
+            }
+        }
+
+        impl<I: Iterator> Iterator for NonFused<I> {
+            type Item = I::Item;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                assert!(!self.done, "already done");
+                self.iter.next().or_else(|| {
+                    self.done = true;
+                    None
+                })
+            }
+        }
+
+        #[test]
+        fn t_chain_unfused() {
+            let mut iter = NonFused::new(empty()).chain(Toggle { is_empty: true });
+            assert!(iter.next().is_none());
+        }
+    "#;
+    let out =
+        std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/chain_unfused.rs"))
+            .unwrap_or_else(|panic| {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("<non-string panic>");
+                panic!(
+                "`assert!(iter.next().is_none())` over a runtime iterator must bubble the named \
+                 iterator-consumption effect from the bool predicate-term sugar before generic \
+                 method lowering asks the receiver `iter` for a Composite floor: {message}"
+            )
+            });
+    assert!(
+        out.assertions_refused > 0
+            && out
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("unknown iterator consumption for `iter` via `next`")),
+        "runtime iterator predicate assertion must be refused by name, not completed or hidden \
+         behind a factory gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn aggregate_decomp_over_runtime_iterator_next_bubbles_named_effect_not_receiver_gap() {
+    let src = r#"
+        struct TestCounter {
+            counter: usize,
+        }
+
+        impl Iterator for TestCounter {
+            type Item = usize;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.counter % 2 == 0 {
+                    self.counter += 1;
+                    None
+                } else {
+                    self.counter += 1;
+                    Some(self.counter)
+                }
+            }
+        }
+
+        #[test]
+        fn t_intersperse_runtime() {
+            let mut intersperse_iter = TestCounter { counter: 0 }.intersperse(1);
+            assert_eq!(intersperse_iter.next(), None);
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/intersperse.rs"))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`assert_eq!(intersperse_iter.next(), None)` over a runtime iterator must \
+                     bubble the named iterator-consumption effect from aggregate_decomp before \
+                     scalar term decomposition asks `intersperse_iter` for a Composite floor: \
+                     {message}"
+            )
+        });
+    assert!(
+        out.assertions_refused > 0
+            && out.skip_reasons.iter().any(|reason| {
+                reason.contains("unknown iterator consumption for `intersperse_iter` via `next`")
+                    || reason
+                        .contains("consumed iterator `intersperse_iter` has no replayable temporal")
+            }),
+        "aggregate decomposition over runtime iterator next must be refused by name, not hidden \
+         behind a factory gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn relation_macro_over_runtime_iterator_next_bubbles_named_effect_not_receiver_gap() {
+    let src = r#"
+        struct TestCounter {
+            counter: usize,
+        }
+
+        impl Iterator for TestCounter {
+            type Item = usize;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.counter % 2 == 0 {
+                    self.counter += 1;
+                    None
+                } else {
+                    self.counter += 1;
+                    Some(self.counter)
+                }
+            }
+        }
+
+        #[test]
+        fn t_intersperse_runtime() {
+            let counter = 0;
+            let non_fused_iter = TestCounter { counter };
+            let mut intersperse_iter = non_fused_iter.intersperse(1);
+            assert_eq!(intersperse_iter.next(), None);
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/intersperse.rs"))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`assert_eq!(intersperse_iter.next(), None)` over a named runtime iterator \
+                 must bubble the named iterator-consumption effect from relation macro sugar \
+                 before scalar term decomposition asks `intersperse_iter` for a Composite floor: \
+                 {message}"
+            )
+        });
+    assert!(
+        out.assertions_refused > 0
+            && out.skip_reasons.iter().any(|reason| {
+                reason.contains("unknown iterator consumption for `intersperse_iter` via `next`")
+                    || reason
+                        .contains("consumed iterator `intersperse_iter` has no replayable temporal")
+            }),
+        "relation macro over runtime iterator next must be refused by name, not hidden behind a \
+         factory gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn no_panic_callsite_block_closure_arg_uses_identity_not_block_term_gap() {
+    let src = r#"
+        #[test]
+        fn t_next_if_map_panic() {
+            use std::panic::{AssertUnwindSafe, catch_unwind};
+
+            let mut it = [1, 2].into_iter().peekable();
+            let result = catch_unwind({
+                let mut it = AssertUnwindSafe(&mut it);
+                move || it.next_if_map::<()>(|_| panic!())
+            });
+            assert!(result.is_err());
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/peekable.rs"))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`catch_unwind({{ let mut it = AssertUnwindSafe(&mut it); move || ... }})` \
+                 panic-freedom support must use an opaque identity for the block closure \
+                 argument, not ask block_term to prove a mutable-let block is a term floor: \
+                 {message}"
+            )
+        });
+    assert!(
+        out.assertions_lifted > 0 || out.assertions_refused > 0,
+        "the peekable panic fixture should be handled or named-refused, not hidden behind a \
+         block_term gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn for_replay_visible_function_scan_uses_scan_floor_not_composite_gap() {
+    let src = r#"
+        #[test]
+        fn t_iterator_scan() {
+            fn add(old: &mut isize, new: &usize) -> Option<f64> {
+                *old += *new as isize;
+                Some(*old as f64)
+            }
+            let xs = [0, 1, 2, 3, 4];
+            let ys = [0f64, 1.0, 3.0, 6.0, 10.0];
+
+            let it = xs.iter().scan(0, add);
+            let mut i = 0;
+            for x in it {
+                assert_eq!(x, ys[i]);
+                i += 1;
+            }
+            assert_eq!(i, ys.len());
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/scan.rs"))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`xs.iter().scan(0, add)` with a visible function mapper must be constructed by \
+                 scan sugar as a finite sequence floor before for_replay asks for loop values, \
+                 not fall through to the Composite backstop: {message}"
+            )
+        });
+    assert!(
+        out.assertions_lifted > 0,
+        "visible function scan should replay the for-loop assertions instead of being hidden \
+         behind a composite gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn fold_unit_state_scan_item_yield_uses_scan_floor_not_init_gap() {
+    let src = r#"
+        #[test]
+        fn t_fuse_fold_unit_state_scan() {
+            let xs = [0, 1, 2];
+            let it = xs.iter().scan((), |_, &x| Some(x));
+            let i = it.fuse().fold(0, |i, x| {
+                assert_eq!(x, xs[i]);
+                i + 1
+            });
+            assert_eq!(i, xs.len());
+        }
+    "#;
+    let out = std::panic::catch_unwind(|| lift_file(&parse(src), "coretests/iter/fuse.rs"))
+        .unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            panic!(
+                "`scan((), |_, &x| Some(x))` is a unit-state item-yield sequence adaptor; scan \
+                 sugar must delegate it to the receiver sequence floor instead of panicking on \
+                 an integer-accumulator initializer gap: {message}"
+            )
+        });
+    assert!(
+        out.assertions_lifted > 0,
+        "unit-state item-yield scan should feed fold replay/lift instead of hiding behind a \
+         scan init gap: lifted={}, refused={}, skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn rpc_source_array_chunks_next_uses_sequence_floor() {
     let doc = run_rpc_lift(
         "tests/iter/adapters/array_chunks_next.rs",

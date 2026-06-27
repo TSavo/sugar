@@ -5,7 +5,6 @@
 // statement effects bubble, transparent tail expressions reduce recursively, and any
 // unsupported block structure stays a loud gap.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::factory::{StatementEffectFloor, SugarBody, SugarBuildCtx, TermFloor};
@@ -25,6 +24,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         Expr::Unsafe(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
         Expr::Block(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
         _ => None,
+    }
+}
+
+pub(crate) fn has_transparent_term_tail(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unsafe(block) => transparent_tail_expr(&block.block.stmts).is_some(),
+        Expr::Block(block) => transparent_tail_expr(&block.block.stmts).is_some(),
+        _ => false,
     }
 }
 
@@ -140,6 +147,13 @@ fn inert_prefix_tail(stmts: &[Stmt]) -> Option<&Expr> {
     }
 }
 
+fn transparent_tail_expr(stmts: &[Stmt]) -> Option<Expr> {
+    if let Some(tail) = inert_prefix_tail(stmts) {
+        return Some(tail.clone());
+    }
+    let_prefix_tail_expr(stmts)
+}
+
 fn let_prefix_tail_expr(stmts: &[Stmt]) -> Option<Expr> {
     let (last, prefix) = stmts.split_last()?;
     let Stmt::Expr(tail, None) = last else {
@@ -204,9 +218,6 @@ fn statement_effect_expr(stmt: &Stmt) -> Option<Expr> {
 }
 
 fn tail_body(stmts: &[Stmt], fcx: &SugarBuildCtx) -> Option<SugarBody<TermFloor>> {
-    if let Some(tail) = inert_prefix_tail(stmts) {
-        return Some(SugarBody::term(tail, fcx));
-    }
-    let tail = let_prefix_tail_expr(stmts)?;
+    let tail = transparent_tail_expr(stmts)?;
     Some(SugarBody::term(&tail, fcx))
 }
