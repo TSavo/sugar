@@ -207,7 +207,7 @@ class TestDaemonProtocol:
         assert manifest["command"] == [
             "python3",
             "-m",
-            "sugar_lift_py_tests.lsp",
+            "sugar_lift_py_tests.lift_rpc",
             "--rpc",
         ]
         assert manifest["working_dir"] == "sugar-lift-py-tests/src"
