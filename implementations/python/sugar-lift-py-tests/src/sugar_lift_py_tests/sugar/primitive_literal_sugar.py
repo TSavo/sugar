@@ -7,10 +7,12 @@ from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
+PrimitiveValue = int | str
+
 
 @dataclass(frozen=True)
 class PrimitiveLiteralSugar:
-    node: ast.Constant
+    value: PrimitiveValue
 
     @classmethod
     def from_site(cls, site) -> "PrimitiveLiteralSugar | None":
@@ -18,15 +20,15 @@ class PrimitiveLiteralSugar:
             return None
         if not isinstance(site.node.value, (int, str)):
             return None
-        return cls(site.node)
+        return cls(site.node.value)
 
     def desugar(self) -> Outcome:
-        if isinstance(self.node.value, int):
-            return Complete(TermValue(self.node.value))
-        if isinstance(self.node.value, str):
-            return Complete(StringValue(self.node.value))
+        if isinstance(self.value, int):
+            return Complete(TermValue(self.value))
+        if isinstance(self.value, str):
+            return Complete(StringValue(self.value))
         raise TypeError(
-            f"write more Floor for PrimitiveLiteralSugar value `{type(self.node.value).__name__}`"
+            f"write more Floor for PrimitiveLiteralSugar value `{type(self.value).__name__}`"
         )
 
 
