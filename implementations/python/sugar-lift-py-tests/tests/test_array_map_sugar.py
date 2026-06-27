@@ -63,6 +63,20 @@ def _write_twin(project: Path, expected: str) -> None:
     )
 
 
+def _write_native_callable_twin(project: Path, expected: str) -> None:
+    project.mkdir()
+    (project / "test_array_map.py").write_text(
+        (
+            "def id(x):\n"
+            "    return x\n"
+            "\n"
+            "def test_array_map_sugar():\n"
+            f"    assert list(map(id, range(1, 6))) == {expected}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 def _inv_status(contract: dict) -> str:
     inv = contract["inv"]
     assert inv["kind"] == "and"
@@ -122,6 +136,56 @@ def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path
     assert good_doc["sourceAudits"][0]["loci"][0]["sourceMemento"]["kind"] == (
         "source-memento"
     )
+
+
+def test_native_list_map_function_ref_emits_callable_universe(tmp_path: Path) -> None:
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_native_callable_twin(good, "[1, 2, 3, 4, 5]")
+    _write_native_callable_twin(bad, "[1, 2, 3, 4, 99]")
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    names = [contract["name"] for contract in good_doc["ir"]]
+    assert names == [
+        "test_array_map::id::callable",
+        "test_array_map::test_array_map_sugar::array-map-sugar",
+    ]
+    id_contract, good_contract = good_doc["ir"]
+    assert id_contract["post"]["name"] == "="
+    assert id_contract["post"]["args"][0]["name"] == "out"
+    assert id_contract["post"]["args"][1]["name"] == "x"
+    assert id_contract["sourceWarrants"][0]["sourceFunctionName"] == "id"
+    assert id_contract["sourceWarrants"][0]["span"]["start_line"] == 1
+    assert _inv_status(good_contract) == "sat"
+    assert _inv_status(bad_doc["ir"][1]) == "unsat"
+
+    walk = good_doc["factoryAuditSummary"]["factoryWalk"]
+    assert [row["selected"] for row in walk] == [
+        "FunctionRefSugar",
+        "RangeSugar",
+        "MapBuiltinSugar",
+        "ListSugar",
+    ]
+    assert walk[0]["sourceMemento"]["sourceFunctionName"] == "test_array_map_sugar"
+    assert walk[0]["sourceMemento"]["source_kind"] == "python.ast-stmt"
+    assert walk[0]["targetFunctionName"] == "id"
+    assert walk[-1]["emittedFormula"] == good_contract["inv"]
+    assert good_contract["warrantedBy"]["kind"] == "callsite-fact"
+    assert good_contract["warrantedBy"]["contractName"] == id_contract["name"]
+    assert good_contract["warrantedBy"]["callsite"] == "test_array_map.py:5:16"
+    assert good_doc["callEdges"] == [
+        {
+            "kind": "call-edge",
+            "sourceContract": id_contract["name"],
+            "targetSymbol": "id",
+            "targetContract": good_contract["name"],
+            "callsite": "test_array_map.py:5:16",
+        }
+    ]
+    assert good_doc["sourceLedger"]["source_loci"] == 2
+    assert good_doc["sourceLedger"]["source_warranted"] == 2
 
 
 def test_map_operation_missing_floor_names_floor_gap() -> None:
