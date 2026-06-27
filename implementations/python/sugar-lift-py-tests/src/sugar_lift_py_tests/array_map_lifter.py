@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.factory import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -140,10 +142,11 @@ def _lift_fluent_array_map_assert(
     if method is None:
         return None
     blame = f"{filename}:{method.call.lineno}:{method.call.col_offset}"
-    map_sugar = MapSugar.from_method(method, blame=blame)
+    factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    map_sugar = MapSugar.from_method(method, blame=blame, ctx=factory_ctx)
     if map_sugar is None:
         return None
-    expected_sugar = ArrayLiteralSugar.from_node(comparison.comparators[0])
+    expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
         return None
     actual = complete_value(map_sugar.desugar(), owner="array-map actual")
@@ -233,7 +236,8 @@ def _lift_native_list_map_assert(
     )
     if list_sugar is None:
         return None
-    expected_sugar = ArrayLiteralSugar.from_node(comparison.comparators[0])
+    factory_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
         return None
     actual = complete_value(list_sugar.desugar(), owner="native list-map actual")
@@ -359,6 +363,15 @@ def _lift_native_list_map_assert(
             }
         ],
     )
+
+
+def _array_literal_sugar(node: ast.AST, ctx: FactoryBuildContext) -> ArrayLiteralSugar | None:
+    if not isinstance(node, ast.List):
+        return None
+    sugar = ctx.build_child(node, SugarRole.TERM).sugar
+    if not isinstance(sugar, ArrayLiteralSugar):
+        return None
+    return sugar
 
 
 def _callsite_string(memento_file: str, node: ast.AST) -> str:

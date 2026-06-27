@@ -5,10 +5,26 @@ from typing import Optional
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 
 from .factory_audit_row import FactoryAuditRow
+from .factory_build_context import FactoryBuildContext
 from .factory_build_result import FactoryBuildResult
 from .factory_gap import FactoryGap
 from .factory_gap_info import FactoryGapInfo
+from .source_site import SourceSite
 from .source_site_stack import SourceSiteStack
+
+
+def build_node(
+    node,
+    *,
+    filename: str,
+    role: SugarRole,
+    catalog: Optional[SugarCatalog] = None,
+) -> FactoryBuildResult:
+    return _build_site(
+        SourceSite.from_node(node, filename),
+        role=role,
+        catalog=catalog or default_catalog(),
+    )
 
 
 def build_next(
@@ -21,8 +37,16 @@ def build_next(
     if site is None:
         raise ValueError("factory source contained no source sites")
 
-    sugar_catalog = catalog or SugarCatalog()
-    candidates = sugar_catalog.candidates_for(role, site)
+    return _build_site(site, role=role, catalog=catalog or default_catalog())
+
+
+def _build_site(
+    site: SourceSite,
+    *,
+    role: SugarRole,
+    catalog: SugarCatalog,
+) -> FactoryBuildResult:
+    candidates = catalog.candidates_for(role, site)
     if not candidates:
         info = FactoryGapInfo(
             owner="python.factory",
@@ -43,7 +67,7 @@ def build_next(
         raise FactoryGap(info, audit_row)
 
     selected = candidates[0]
-    sugar = selected.claim.build(site)
+    sugar = selected.claim.build(site, FactoryBuildContext(site.filename, catalog))
     message = f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     audit_row = FactoryAuditRow(
         role=role.value,
@@ -55,3 +79,13 @@ def build_next(
         message=message,
     )
     return FactoryBuildResult(sugar=sugar, audit_row=audit_row)
+
+
+def default_catalog() -> SugarCatalog:
+    from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
+    from sugar_lift_py_tests.sugar.bitwise_op_sugar import BITWISE_OP_CLAIM
+    from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
+        PRIMITIVE_LITERAL_CLAIM,
+    )
+
+    return SugarCatalog([PRIMITIVE_LITERAL_CLAIM, BITWISE_OP_CLAIM, ARRAY_LITERAL_CLAIM])

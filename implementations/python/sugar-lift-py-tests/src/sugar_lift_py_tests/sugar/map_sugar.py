@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 
@@ -18,11 +19,11 @@ class MapSugar:
     blame: str
 
     @classmethod
-    def from_method(cls, method: MethodSugar, *, blame: str) -> "MapSugar | None":
+    def from_method(cls, method: MethodSugar, *, blame: str, ctx) -> "MapSugar | None":
         if method.method_name != "map" or len(method.args) != 1:
             return None
-        receiver = ArrayLiteralSugar.from_node(method.receiver)
-        if receiver is None:
+        receiver = ctx.build_child(method.receiver, SugarRole.TERM).sugar
+        if not isinstance(receiver, ArrayLiteralSugar):
             return None
         operation = _map_operation(method.args[0])
         if operation is None:
