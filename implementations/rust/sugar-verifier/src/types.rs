@@ -989,6 +989,14 @@ pub struct ResolvedProperty {
     /// their vacuous-discharge branch: `cmd_verify::verify_one_claim` and
     /// `runner::work_one`.
     pub target_is_body_bearing: bool,
+    /// True iff the resolved target contract carries a `post` field in its
+    /// body. A post-only contract with a `post` (e.g. `eq(out, "AAAA")`) is
+    /// making an obligation claim about its output — it is NOT vacuously
+    /// dischargeable just because it has no `pre`. The vacuous discharge is
+    /// only legitimate for targets that are truly claim-free (no pre, no post,
+    /// or carry only a totality marker already verified via `postHash`).
+    /// `runner::work_one` checks this before the vacuous-discharge branch.
+    pub target_has_post: bool,
 }
 
 #[derive(Debug, Clone)]
