@@ -132,11 +132,24 @@ def _lift_assert(
     except TypeError:
         actual = None
         body_formulas = call_sugar.constraint_formulas()
-        assertion_formula = and_([*body_formulas, eq(make_var("out"), str_const(expected.value))])
+        callsite_fact_formulas = call_sugar.callsite_fact_formulas(expected)
+        assertion_formula = and_([*body_formulas, *callsite_fact_formulas])
+        body_step_formulas = call_sugar.constraint_formula_steps()
     else:
         body_formulas = call_sugar.constraint_formulas(actual)
+        callsite_fact_formulas = call_sugar.callsite_fact_formulas(expected)
         assertion_formula = eq(str_const(actual.value), str_const(expected.value))
+        body_step_formulas = list(body_formulas)
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
+    body_step_formula_values = [
+        _formula_to_rpc(formula) if formula is not None else None
+        for formula in body_step_formulas
+    ]
+    callsite_fact = (
+        _formula_to_rpc(callsite_fact_formulas[0])
+        if len(callsite_fact_formulas) == 1
+        else _formula_to_rpc(and_(callsite_fact_formulas))
+    )
     function_post = (
         body_formula_values[0]
         if len(body_formulas) == 1
@@ -198,7 +211,7 @@ def _lift_assert(
         warranted_by=CallsiteFactDto(
             contract_name=function_contract_name,
             callsite=callsite,
-            fact=function_post,
+            fact=callsite_fact,
             source_memento=assertion_memento,
         ),
     )
@@ -234,8 +247,8 @@ def _lift_assert(
                 step_memento,
                 output,
                 requested_role="FunctionBodyConstraint",
-                emitted_formula=body_formula_values[index]
-                if index < len(body_formula_values)
+                emitted_formula=body_step_formula_values[index]
+                if index < len(body_step_formula_values)
                 else None,
             )
             for index, (

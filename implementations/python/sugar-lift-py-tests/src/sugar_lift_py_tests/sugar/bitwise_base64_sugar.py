@@ -83,16 +83,8 @@ class BitwiseBase64Sugar:
             return None
         return cls(expression=expression)
 
-    def payload_json(
-        self, *, input_value: str, alphabet: str, alphabet_name: str, byte_names: list[str]
-    ) -> str:
-        if len(input_value) != len(byte_names):
-            raise ValueError("base64 payload requires one byte name per input character")
-        input_bytes = [ord(ch) for ch in input_value]
-        if any(byte < 0 or byte > 255 for byte in input_bytes):
-            raise ValueError("base64 payload currently requires byte-sized characters")
+    def payload_json(self, *, alphabet: str, alphabet_name: str, byte_names: list[str]) -> str:
         payload = {
-            "input_bytes": input_bytes,
             "vars": byte_names,
             "per_char": [
                 _term_json(term) for term in self.expression.output_indices(alphabet_name)

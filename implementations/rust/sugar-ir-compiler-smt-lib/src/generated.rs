@@ -548,7 +548,12 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
         // GOOD claim → sat (z3 computes "YmFy"); alphabet-valid-but-WRONG claim
         // ("ZmFy") → unsat. The weak str.chars-in-set row cannot refute "ZmFy";
         // only these equations can. That refutation is the entire point.
-        "str.eq-bv-blocks" if args.len() == 2 => emit_b64_strong_blocks(&args[0], &args[1]),
+        "str.eq-bv-blocks" if args.len() == 2 => {
+            emit_b64_strong_blocks(&args[0], None, &args[1])
+        }
+        "str.eq-bv-blocks" if args.len() == 3 => {
+            emit_b64_strong_blocks(&args[0], Some(&args[1]), &args[2])
+        }
         // ── @Pattern REGEX UNIVERSE (Door 3 — regular-language membership) ─────
         // str.in-regex: arg[0] = subject (the callresult String term — the value
         //               the consumer claims is valid), arg[1] = a String const
@@ -602,7 +607,7 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
 /// shape. Returns `None` (the atom is dropped, never approximated) if the
 /// payload is malformed — but the Java walker only ever emits well-formed
 /// payloads, and a malformed one is a kit bug, not a soundness hole.
-fn emit_b64_strong_blocks(subject: &Term, payload: &Term) -> Option<String> {
+fn emit_b64_strong_blocks(subject: &Term, input: Option<&Term>, payload: &Term) -> Option<String> {
     // Payload is a String const carrying the JSON.
     let json_str = match payload {
         Term::Const {
@@ -611,7 +616,7 @@ fn emit_b64_strong_blocks(subject: &Term, payload: &Term) -> Option<String> {
         } if name == "String" => s,
         _ => return None,
     };
-    let body = render_b64_blocks_body(json_str)?;
+    let body = render_b64_blocks_body_with_input(json_str, input)?;
     Some(format!("(= {} {})", emit_string_term(subject), body))
 }
 
@@ -621,26 +626,43 @@ fn emit_b64_strong_blocks(subject: &Term, payload: &Term) -> Option<String> {
 /// path (`sugar derive` over a strong-tier universe) can reuse the exact same
 /// rendering, keeping the derived string and the discharge check byte-aligned.
 pub fn render_b64_blocks_body(payload_json: &str) -> Option<String> {
+    render_b64_blocks_body_with_input(payload_json, None)
+}
+
+fn render_b64_blocks_body_with_input(payload_json: &str, input: Option<&Term>) -> Option<String> {
     let payload: serde_json::Value = serde_json::from_str(payload_json).ok()?;
 
-    let input_bytes = payload.get("input_bytes")?.as_array()?;
     let vars = payload.get("vars")?.as_array()?;
     let per_char = payload.get("per_char")?.as_array()?;
     let table = payload.get("table")?.as_array()?;
 
-    if input_bytes.len() != vars.len() {
-        return None;
-    }
-
-    // Build the byte-var substitution: bN → bv32 hex of the literal byte.
+    // Build the byte-var substitution. Old payloads carry concrete
+    // `input_bytes`; general body universes carry a separate input String term
+    // and derive bN from `(str.at input N)` in solver-land.
     let mut subst: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut let_binds: Vec<String> = Vec::new();
-    for (vname_v, byte_v) in vars.iter().zip(input_bytes.iter()) {
-        let vname = vname_v.as_str()?;
-        let b = byte_v.as_i64()?;
-        let hex = i32_to_bv32_hex(b);
-        subst.insert(vname.to_string(), hex.clone());
-        let_binds.push(format!("({} {})", vname, hex));
+    if let Some(input_bytes) = payload.get("input_bytes").and_then(|v| v.as_array()) {
+        if input_bytes.len() != vars.len() {
+            return None;
+        }
+        for (vname_v, byte_v) in vars.iter().zip(input_bytes.iter()) {
+            let vname = vname_v.as_str()?;
+            let b = byte_v.as_i64()?;
+            let hex = i32_to_bv32_hex(b);
+            subst.insert(vname.to_string(), hex.clone());
+            let_binds.push(format!("({} {})", vname, hex));
+        }
+    } else {
+        let input_smt = emit_string_term(input?);
+        for (idx, vname_v) in vars.iter().enumerate() {
+            let vname = vname_v.as_str()?;
+            let byte = format!(
+                "((_ int_to_bv 32) (str.to_code (str.at {} {})))",
+                input_smt, idx
+            );
+            subst.insert(vname.to_string(), byte.clone());
+            let_binds.push(format!("({} {})", vname, byte));
+        }
     }
 
     // Build the table-lookup `ite` chain ONCE as a parameterised closure over an
@@ -2968,6 +2990,23 @@ mod b64_strong_tests {
         }
     }
 
+    fn bar_general_payload() -> Term {
+        let payload = serde_json::json!({
+            "vars": ["b0","b1","b2"],
+            "per_char": [
+                block_index_tree(18),
+                block_index_tree(12),
+                block_index_tree(6),
+                block_index_tree(0),
+            ],
+            "table": std_table(),
+        });
+        Term::Const {
+            value: serde_json::Value::String(payload.to_string()),
+            sort: s("String"),
+        }
+    }
+
     fn subject() -> Term {
         Term::Ctor {
             name: "call:encodeBase64String".into(),
@@ -3135,12 +3174,43 @@ mod b64_strong_tests {
     }
 
     #[test]
+    fn emits_symbolic_input_string_bytes_for_general_universe() {
+        let rendered = emit_string_theory_atomic(
+            "str.eq-bv-blocks",
+            &[
+                Term::Var { name: "out".into() },
+                Term::Var {
+                    name: "input".into(),
+                },
+                bar_general_payload(),
+            ],
+        )
+        .expect("general str.eq-bv-blocks must render");
+        assert!(
+            rendered.contains("(str.to_code (str.at input 0))"),
+            "b0 must come from the symbolic input string: {rendered}"
+        );
+        assert!(
+            rendered.contains("(str.to_code (str.at input 1))"),
+            "b1 must come from the symbolic input string: {rendered}"
+        );
+        assert!(
+            rendered.contains("(str.to_code (str.at input 2))"),
+            "b2 must come from the symbolic input string: {rendered}"
+        );
+        assert!(
+            !rendered.contains("#x00000062"),
+            "general universe must not bake bar's bytes into the body: {rendered}"
+        );
+    }
+
+    #[test]
     fn malformed_payload_drops_atom() {
         let bad = Term::Const {
             value: serde_json::Value::String("not json".into()),
             sort: s("String"),
         };
-        assert!(emit_b64_strong_blocks(&subject(), &bad).is_none());
+        assert!(emit_b64_strong_blocks(&subject(), None, &bad).is_none());
     }
 
     // z3 integration: GOOD claim sat, alphabet-valid-but-WRONG claim unsat.
@@ -3242,6 +3312,61 @@ mod b64_strong_tests {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
+    fn run_compiled_general_claim(claim: &str) -> String {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let input = Term::Var {
+            name: "input".into(),
+        };
+        let out = Term::Var { name: "out".into() };
+        let formula = Formula::And {
+            operands: vec![
+                Formula::Atomic {
+                    name: "str.eq-bv-blocks".into(),
+                    args: vec![out.clone(), input.clone(), bar_general_payload()],
+                },
+                Formula::Atomic {
+                    name: "=".into(),
+                    args: vec![
+                        input,
+                        Term::Const {
+                            value: serde_json::Value::String("bar".into()),
+                            sort: s("String"),
+                        },
+                    ],
+                },
+                Formula::Atomic {
+                    name: "=".into(),
+                    args: vec![
+                        out,
+                        Term::Const {
+                            value: serde_json::Value::String(claim.into()),
+                            sort: s("String"),
+                        },
+                    ],
+                },
+            ],
+        };
+        let parts = compile_asserted_formula(&formula);
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let mut child = Command::new("z3")
+            .args(["-smt2", "-in"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn z3");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
     #[test]
     fn compiled_var_subject_equality_routes_to_string_theory() {
         use std::process::Command;
@@ -3259,6 +3384,26 @@ mod b64_strong_tests {
         assert!(
             bad.starts_with("unsat"),
             "compiled wrong ZmFy claim must be unsat; got: {bad}"
+        );
+    }
+
+    #[test]
+    fn compiled_general_input_fact_routes_to_string_theory() {
+        use std::process::Command;
+        if Command::new("z3").arg("--version").output().is_err() {
+            eprintln!("z3 absent: skipping compiled general b64 z3 integration test");
+            return;
+        }
+
+        let good = run_compiled_general_claim("YmFy");
+        assert!(
+            good.starts_with("sat"),
+            "general GOOD claim YmFy must be sat; got: {good}"
+        );
+        let bad = run_compiled_general_claim("ZmFy");
+        assert!(
+            bad.starts_with("unsat"),
+            "general wrong ZmFy claim must be unsat; got: {bad}"
         );
     }
 

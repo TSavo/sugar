@@ -3,8 +3,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.floor import StringValue, TermValue
-from sugar_lift_py_tests.ir import Formula, atomic, eq, make_var, num, str_const
+from sugar_lift_py_tests.floor import StringValue
+from sugar_lift_py_tests.ir import Formula, atomic, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import complete_value
 
 from .alphabet_literal_sugar import AlphabetLiteralSugar
@@ -66,19 +66,27 @@ class Base64BodySugar:
             ("BitwiseBase64Sugar", "Return", function.body[4], "StringValue"),
         ]
 
-    def constraint_formulas(self, argument: StringValue) -> list[Formula]:
+    def constraint_formulas(self) -> list[Formula]:
         alphabet = complete_value(self.alphabet.desugar(), owner="Base64BodySugar alphabet")
         payload = self.return_sugar.payload_json(
-            input_value=argument.value,
             alphabet=alphabet.value,
             alphabet_name=self.alphabet.name,
             byte_names=[ord_sugar.target for ord_sugar in self.ords],
         )
         return [
             eq(make_var(self.alphabet.name), str_const(alphabet.value)),
-            *[
-                eq(make_var(ord_sugar.target), num(ord(argument.value[ord_sugar.index])))
-                for ord_sugar in self.ords
-            ],
-            atomic("str.eq-bv-blocks", [make_var("out"), str_const(payload)]),
+            atomic(
+                "str.eq-bv-blocks",
+                [make_var("out"), make_var(self.parameter), str_const(payload)],
+            ),
+        ]
+
+    def constraint_formula_steps(self) -> list[Formula | None]:
+        formulas = self.constraint_formulas()
+        return [
+            formulas[0],
+            None,
+            None,
+            None,
+            formulas[1],
         ]

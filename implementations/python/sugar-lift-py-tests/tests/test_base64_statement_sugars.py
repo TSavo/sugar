@@ -126,9 +126,9 @@ def test_base64_body_sugar_is_site_born_without_raw_function_storage() -> None:
         sugar.apply(StringValue("abc"))
     formulas = [
         json.loads(encode_jcs(formula_to_value(formula)))
-        for formula in sugar.constraint_formulas(StringValue("abc"))
+        for formula in sugar.constraint_formulas()
     ]
-    assert formulas[:4] == [
+    assert formulas[0] == (
         {
             "args": [
                 {"kind": "var", "name": "alphabet"},
@@ -140,48 +140,15 @@ def test_base64_body_sugar_is_site_born_without_raw_function_storage() -> None:
             ],
             "kind": "atomic",
             "name": "=",
-        },
-        {
-            "args": [
-                {"kind": "var", "name": "b0"},
-                {
-                    "kind": "const",
-                    "sort": {"kind": "primitive", "name": "Int"},
-                    "value": 97,
-                },
-            ],
-            "kind": "atomic",
-            "name": "=",
-        },
-        {
-            "args": [
-                {"kind": "var", "name": "b1"},
-                {
-                    "kind": "const",
-                    "sort": {"kind": "primitive", "name": "Int"},
-                    "value": 98,
-                },
-            ],
-            "kind": "atomic",
-            "name": "=",
-        },
-        {
-            "args": [
-                {"kind": "var", "name": "b2"},
-                {
-                    "kind": "const",
-                    "sort": {"kind": "primitive", "name": "Int"},
-                    "value": 99,
-                },
-            ],
-            "kind": "atomic",
-            "name": "=",
-        },
-    ]
-    atom = formulas[4]
+        }
+    )
+    assert len(formulas) == 2
+    atom = formulas[1]
     assert atom["name"] == "str.eq-bv-blocks"
-    payload = json.loads(atom["args"][1]["value"])
-    assert payload["input_bytes"] == [97, 98, 99]
+    assert atom["args"][0] == {"kind": "var", "name": "out"}
+    assert atom["args"][1] == {"kind": "var", "name": "value"}
+    payload = json.loads(atom["args"][2]["value"])
+    assert "input_bytes" not in payload
     assert payload["vars"] == ["b0", "b1", "b2"]
     assert len(payload["per_char"]) == 4
     assert payload["table"] == [ord(ch) for ch in BASE64_ALPHABET]
@@ -208,13 +175,12 @@ def test_bitwise_base64_sugar_is_site_born_without_raw_return_storage() -> None:
     assert not hasattr(sugar, "stmt")
     payload = json.loads(
         sugar.payload_json(
-            input_value="abc",
             alphabet=BASE64_ALPHABET,
             alphabet_name="alphabet",
             byte_names=["b0", "b1", "b2"],
         )
     )
-    assert payload["input_bytes"] == [97, 98, 99]
+    assert "input_bytes" not in payload
     assert payload["vars"] == ["b0", "b1", "b2"]
     assert payload["table"] == [ord(ch) for ch in BASE64_ALPHABET]
     assert payload["per_char"][0] == {

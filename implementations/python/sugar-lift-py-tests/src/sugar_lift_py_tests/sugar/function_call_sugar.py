@@ -64,10 +64,23 @@ class FunctionCallSugar:
             if output is None:
                 raise ValueError("FunctionCallSugar simple body requires an output value")
             return [eq(make_var("out"), str_const(output.value))]
+        return self.body.constraint_formulas()
+
+    def constraint_formula_steps(self) -> list[Formula | None]:
+        if isinstance(self.body, SugarBody):
+            return []
+        return self.body.constraint_formula_steps()
+
+    def callsite_fact_formulas(self, expected: StringValue) -> list[Formula]:
+        if isinstance(self.body, SugarBody):
+            return [eq(make_var("out"), str_const(expected.value))]
         argument = complete_value(
             self.argument.reduce(None),
             owner="FunctionCallSugar argument",
         )
         if not isinstance(argument, StringValue):
             raise ValueError("write more Floor for FunctionCallSugar argument")
-        return self.body.constraint_formulas(argument)
+        return [
+            eq(make_var(self.body.parameter), str_const(argument.value)),
+            eq(make_var("out"), str_const(expected.value)),
+        ]
