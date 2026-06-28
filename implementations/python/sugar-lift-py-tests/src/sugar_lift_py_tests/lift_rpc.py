@@ -58,6 +58,8 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
+                {"name": "sugar.plugin.lift_implications", "required": False},
+                {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
                 {"name": "shutdown", "required": False},
             ]
         },
@@ -354,7 +356,15 @@ def _handle_initialize(msg_id: Any) -> None:
 def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
+    contract_bindings = params.get("contract_bindings") or []
+    if not isinstance(contract_bindings, list):
+        contract_bindings = []
     try:
+        with open("/tmp/dbg_b.txt", "a") as _d:  # DEBUG: bindings arrival + name shape
+            _d.write(
+                f"lift n_bindings={len(contract_bindings)} "
+                f"names={[b.get('name') for b in contract_bindings if isinstance(b, dict)][:5]}\n"
+            )
         payload = LiftReportPayloadDto(source_ledger={})
         root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
@@ -364,7 +374,12 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
             except ValueError:
                 rel_path = full_path.name
             with open(path, "r", encoding="utf-8") as handle:
-                result = lift_source(path, handle.read(), memento_file=rel_path)
+                result = lift_source(
+                    path,
+                    handle.read(),
+                    memento_file=rel_path,
+                    contract_bindings=contract_bindings,
+                )
             if hasattr(result, "payload"):
                 file_payload = result.payload
                 payload.ir.extend(file_payload.ir)
@@ -414,6 +429,29 @@ def _merge_source_ledger(
         current[key] = current.get(key, 0) + int(value)
 
 
+def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> None:
+    """Surface dependency `.proof` files from the project's `.sugar/imports/` so the
+    rust verifier folds the vendor universe into the proof pool. Mirrors lsp.py's
+    handler -- the factory kit must answer this for cross-project federation."""
+    import base64
+
+    project_root = str(params.get("project_root") or params.get("workspace_root") or ".")
+    imports_dir = Path(project_root) / ".sugar" / "imports"
+    proofs: List[Dict[str, Any]] = []
+    if imports_dir.is_dir():
+        for path in sorted(imports_dir.glob("blake3-512_*.proof")):
+            if not path.is_file():
+                continue
+            proofs.append(
+                {
+                    "cid": path.name[: -len(".proof")],
+                    "bytes_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+                    "source": f"sugar-imports:{path.name}",
+                }
+            )
+    _send({"jsonrpc": "2.0", "id": msg_id, "result": {"proofs": proofs}})
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     del argv
     while True:
@@ -448,6 +486,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
         elif method == "lift":
             _handle_lift(msg_id, params if isinstance(params, dict) else {})
+        elif method == "sugar.plugin.lift_implications":
+            _handle_lift(msg_id, params if isinstance(params, dict) else {})
+        elif method == "sugar.plugin.resolve_dependency_proofs":
+            _handle_resolve_dependency_proofs(
+                msg_id, params if isinstance(params, dict) else {}
+            )
         elif method == "shutdown":
             _send({"jsonrpc": "2.0", "id": msg_id, "result": {"ok": True}})
             break
