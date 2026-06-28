@@ -8,6 +8,7 @@
 // Callers do not assemble `{cid -> bytes}` maps. They construct typed mementos;
 // this module derives, validates, and lowers the graph at the serialization edge.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -24,6 +25,12 @@ impl AtomCid {
         Self(blake3_512_of(bytes))
     }
 
+    /// Wrap a raw string as an AtomCid without hash validation.
+    /// Used by typed-member parsing where the CID came off the wire.
+    pub(crate) fn from_raw(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -35,6 +42,12 @@ pub struct ContractBodyCid(String);
 impl ContractBodyCid {
     fn from_bytes(bytes: &[u8]) -> Self {
         Self(blake3_512_of(bytes))
+    }
+
+    /// Wrap a raw string as a ContractBodyCid without hash validation.
+    /// Used by typed-member parsing where the CID came off the wire.
+    pub(crate) fn from_raw(s: impl Into<String>) -> Self {
+        Self(s.into())
     }
 
     pub fn as_str(&self) -> &str {
@@ -56,6 +69,17 @@ impl MementoCid {
 
     fn from_bytes(bytes: &[u8]) -> Self {
         Self::new(blake3_512_of(bytes))
+    }
+
+    /// Fallible constructor: returns `Ok` only when `cid` carries the
+    /// `blake3-512:` tag. Used by typed-member parsing to surface a typed
+    /// error instead of panicking.
+    pub(crate) fn try_parse(cid: String) -> Result<Self, String> {
+        if cid.starts_with("blake3-512:") {
+            Ok(Self(cid))
+        } else {
+            Err(cid)
+        }
     }
 
     fn from_json_field(bytes: &[u8], pointer: &str, type_name: &str) -> Self {
@@ -753,6 +777,10 @@ pub struct ProofGraph {
     atoms: BTreeMap<String, FlatAtom>,
     bodies: BTreeMap<String, ContractBody>,
     members: BTreeMap<String, MemberRecord>,
+    /// Lazy typed-member cache. Populated on first access per member CID.
+    /// `RefCell` for interior mutability; `Arc` so callers can hold the
+    /// parsed `Member` without borrowing `self`.
+    typed_cache: RefCell<BTreeMap<String, Arc<crate::typed_member::Member>>>,
 }
 
 impl ProofGraph {
@@ -761,6 +789,7 @@ impl ProofGraph {
             atoms: BTreeMap::new(),
             bodies: BTreeMap::new(),
             members: BTreeMap::new(),
+            typed_cache: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -931,6 +960,54 @@ impl ProofGraph {
         self.members.values().map(|record| MemberView {
             cid: &record.cid,
             bytes: record.bytes.as_slice(),
+        })
+    }
+
+    /// Parse and return a typed `Member` for the given CID, memoizing the
+    /// result so each member is parsed at most once. Returns `None` when the
+    /// CID is not in this graph.
+    pub fn typed_member(
+        &self,
+        cid: &MementoCid,
+    ) -> Option<Result<Arc<crate::typed_member::Member>, crate::typed_member::MemberError>> {
+        // Fast path: already parsed.
+        {
+            let cache = self.typed_cache.borrow();
+            if let Some(m) = cache.get(cid.as_str()) {
+                return Some(Ok(m.clone()));
+            }
+        }
+        // Slow path: parse and cache.
+        let record = self.members.get(cid.as_str())?;
+        let result = crate::typed_member::Member::parse(&record.bytes);
+        match result {
+            Ok(m) => {
+                let m = Arc::new(m);
+                self.typed_cache
+                    .borrow_mut()
+                    .insert(cid.as_str().to_string(), m.clone());
+                Some(Ok(m))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+
+    /// Iterate over all members, parsing each lazily and memoizing. Yields
+    /// `(CID, Result<Arc<Member>>)` in BTreeMap key order.
+    pub fn typed_members_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            MementoCid,
+            Result<Arc<crate::typed_member::Member>, crate::typed_member::MemberError>,
+        ),
+    > + '_ {
+        self.members.keys().map(move |cid_str| {
+            let cid = MementoCid::new(cid_str.clone());
+            let result = self
+                .typed_member(&cid)
+                .unwrap_or_else(|| Err(crate::typed_member::MemberError::UnknownCid(cid_str.clone())));
+            (cid, result)
         })
     }
 
