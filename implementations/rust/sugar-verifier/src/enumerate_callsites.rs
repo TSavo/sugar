@@ -10,7 +10,7 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{memento_body, AttributeSafetyObligation, CallSite, MementoPool};
+use crate::types::{AttributeSafetyObligation, CallSite, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -210,7 +210,7 @@ fn callsite_from_panic_locus(
     };
     let bridge_env = scoped_bridge;
     let bridge_body = bridge_env
-        .and_then(memento_body)
+        .and_then(sugar_proof_envelope::member_body)
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     if bridge_env.is_none() {
@@ -357,7 +357,7 @@ fn warn_if_panic_callsite_alias_disagrees_for_locus(
     };
     let Some(bridge_body) =
         callsite_scoped_bridge_for_locus(pool, callsite_bundle_cid, callee, locus)
-            .and_then(memento_body)
+            .and_then(sugar_proof_envelope::member_body)
     else {
         return;
     };
@@ -796,7 +796,7 @@ fn bridge_formal_actuals_match_arg_terms(
     bridge: &Json,
     arg_terms: &[Json],
 ) -> bool {
-    let Some(bridge_body) = memento_body(bridge) else {
+    let Some(bridge_body) = sugar_proof_envelope::member_body(bridge) else {
         return false;
     };
     let Some(target_cid) = bridge_body
@@ -907,7 +907,7 @@ fn walk_term(
     if let Some(benv) = bridge_env {
         // Shape-agnostic: v1.2-layered bridges carry the fields on
         // `header`; v1.1-flat on `evidence.body`.
-        let bbody = memento_body(benv)
+        let bbody = sugar_proof_envelope::member_body(benv)
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         // Forward pin: REQUIRED by the current BridgeDeclaration grammar

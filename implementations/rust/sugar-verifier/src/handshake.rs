@@ -133,12 +133,12 @@ pub fn locate_producer_post(
     // flat path alone meant the producer post never resolved for harvested
     // calls, so the callsite fell through to the bare `instantiate` form
     // instead of the real `producer_post -> consumer_pre` implication.
-    let bridge_body = crate::types::memento_body(producer_bridge)?;
+    let bridge_body = sugar_proof_envelope::member_body(producer_bridge)?;
     let target_cid = bridge_body
         .get("targetContractCid")
         .and_then(|v| v.as_str())?;
     let producer_contract = pool_mementos.get(target_cid)?;
-    let producer_body = crate::types::memento_body(producer_contract)?;
+    let producer_body = sugar_proof_envelope::member_body(producer_contract)?;
     let post = producer_body
         .get("post")
         .filter(|v| v.is_object())

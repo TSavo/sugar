@@ -714,7 +714,7 @@ done
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
         )
     });
-    let target_cid = sugar_verifier::types::memento_body_field(bridge, "targetContractCid")
+    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge targetContractCid");
     assert!(

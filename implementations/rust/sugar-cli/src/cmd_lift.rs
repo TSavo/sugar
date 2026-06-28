@@ -1540,7 +1540,7 @@ fn source_report_from_proof_pool(
         if pool.member_kind(cid) != Some("source-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !proof_source_memento_matches_filter(body, filter))
@@ -1555,7 +1555,7 @@ fn source_report_from_proof_pool(
         if pool.member_kind(cid) != Some("factory-walk-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !factory_audit_matches_filter(body, filter)) {
@@ -1569,7 +1569,7 @@ fn source_report_from_proof_pool(
         if pool.member_kind(cid) != Some("assertion-surface-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter
@@ -2022,7 +2022,7 @@ fn proof_plan_memento_with_atoms(
     pool: &sugar_verifier::types::MementoPool,
     envelope: &Value,
 ) -> Option<Value> {
-    let mut body = sugar_verifier::memento_body(envelope)?.clone();
+    let mut body = sugar_proof_envelope::member_body(envelope)?.clone();
     let refs = body
         .get("planAtoms")
         .or_else(|| body.get("plan_atoms"))

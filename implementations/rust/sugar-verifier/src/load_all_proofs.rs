@@ -29,9 +29,7 @@ use tracing::{debug, info, warn};
 
 use sugar_proof_envelope::ProofGraph;
 
-use crate::types::{
-    memento_body, memento_body_field, memento_kind, EffectSiteAnnotation, LoadError, MementoPool,
-};
+use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
 
 const SIG_TAG_PREFIX: &str = "ed25519:";
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
@@ -286,8 +284,8 @@ fn load_catalog_bytes(
             });
             continue;
         }
-        if memento_kind(&env) == Some("contract") {
-            let Some(body_cid) = memento_body_field(&env, "bodyCid")
+        if sugar_proof_envelope::member_kind(&env) == Some("contract") {
+            let Some(body_cid) = sugar_proof_envelope::member_field(&env, "bodyCid")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
             else {
@@ -323,11 +321,11 @@ fn load_catalog_bytes(
             .insert(cid.clone());
         index_effect_site_annotation(&source_label, &derived_full, &cid, &env, pool);
 
-        // Bridge indexing. Shape-aware helpers (memento_kind / memento_body_field)
+        // Bridge indexing. Shape-aware helpers (member_kind / member_field)
         // cover both v1.1 (evidence.kind / evidence.body.sourceSymbol) and v1.2
         // (header.kind / header.sourceSymbol) without branching at the call site.
-        if memento_kind(&env) == Some("bridge") {
-            if let Some(sym) = memento_body_field(&env, "sourceSymbol")
+        if sugar_proof_envelope::member_kind(&env) == Some("bridge") {
+            if let Some(sym) = sugar_proof_envelope::member_field(&env, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
             {
@@ -347,7 +345,7 @@ fn load_catalog_bytes(
                 // bridge won the per-symbol slot. Bundle scoping is required
                 // for soundness: relative paths (`src/lib.rs`) collide
                 // across crates. First-writer wins per full key.
-                if let Some(body) = memento_body(&env) {
+                if let Some(body) = sugar_proof_envelope::member_body(&env) {
                     let cs = body.get("callsite");
                     let file = cs
                         .and_then(|v| v.get("file"))
@@ -383,10 +381,10 @@ fn index_effect_site_annotation(
     env: &Json,
     pool: &mut MementoPool,
 ) {
-    if memento_kind(env) != Some("effect-site-annotation") {
+    if sugar_proof_envelope::member_kind(env) != Some("effect-site-annotation") {
         return;
     }
-    let Some(body) = memento_body(env) else {
+    let Some(body) = sugar_proof_envelope::member_body(env) else {
         pool.load_errors.push(LoadError {
             proof_path: source_label.to_string(),
             reason: format!(
@@ -539,12 +537,9 @@ fn compute_envelope_cid(env: &Json) -> String {
 }
 
 fn compute_member_cid(env: &Json) -> String {
-    let kind = env
-        .pointer("/header/kind")
-        .or_else(|| env.pointer("/envelope/header/kind"))
-        .and_then(|v| v.as_str());
+    let kind = sugar_proof_envelope::member_kind(env);
     if matches!(kind, Some("proof-run" | "stage-receipt")) {
-        if let Some(cid) = env.pointer("/header/cid").and_then(|v| v.as_str()) {
+        if let Some(cid) = sugar_proof_envelope::member_field(env, "cid").and_then(|v| v.as_str()) {
             return cid.to_string();
         }
     }

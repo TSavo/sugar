@@ -634,6 +634,54 @@ impl<'a> MemberView<'a> {
     }
 }
 
+/// Shape-agnostic kind of a member envelope. The api owner's reader for sites
+/// that hold a raw member `Json` without a graph/CID context (e.g. the verifier
+/// reading pool members) -- so consumers read kind through the api instead of
+/// hand pointer-fishing `/header/kind`.
+pub fn member_kind(envelope: &Json) -> Option<&str> {
+    envelope
+        .pointer("/header/kind")
+        .or_else(|| envelope.pointer("/envelope/header/kind"))
+        .or_else(|| envelope.pointer("/evidence/kind"))
+        .and_then(Json::as_str)
+}
+
+/// Shape-agnostic body object of a member envelope (the container of
+/// kind-specific fields), regardless of v1.1 flat / v1.2 layered / lean shape.
+pub fn member_body(envelope: &Json) -> Option<&Json> {
+    if envelope.get("envelope").is_some() {
+        envelope
+            .get("header")
+            .or_else(|| envelope.pointer("/envelope/header"))
+    } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
+        envelope.get("body").or_else(|| envelope.get("header"))
+    } else {
+        envelope.pointer("/evidence/body")
+    }
+}
+
+/// Shape-agnostic lookup of a named body-tier field on a member envelope,
+/// mirroring how members are minted: header, then metadata/body, then the v1.1
+/// flat `evidence.body`. The api owner's reader for pool-less field reads.
+pub fn member_field<'a>(envelope: &'a Json, name: &str) -> Option<&'a Json> {
+    if envelope.get("envelope").is_some() {
+        envelope
+            .pointer("/header")
+            .and_then(|h| h.get(name))
+            .or_else(|| envelope.pointer("/metadata").and_then(|m| m.get(name)))
+            .or_else(|| envelope.pointer("/envelope/header").and_then(|h| h.get(name)))
+            .or_else(|| envelope.pointer("/envelope/metadata").and_then(|m| m.get(name)))
+    } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
+        envelope
+            .pointer("/header")
+            .and_then(|h| h.get(name))
+            .or_else(|| envelope.pointer("/body").and_then(|b| b.get(name)))
+            .or_else(|| envelope.pointer("/metadata").and_then(|m| m.get(name)))
+    } else {
+        envelope.pointer("/evidence/body").and_then(|b| b.get(name))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProofGraph {
     atoms: BTreeMap<String, FlatAtom>,
