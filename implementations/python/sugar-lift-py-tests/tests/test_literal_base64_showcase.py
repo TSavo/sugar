@@ -87,15 +87,16 @@ def _eq_var_const(formula: dict, name: str, value: object) -> None:
 def _base64_payload(formula: dict) -> dict:
     assert formula["kind"] == "atomic"
     assert formula["name"] == "str.eq-bv-blocks"
-    subject, payload = formula["args"]
+    subject, input_term, payload = formula["args"]
     assert subject == {"kind": "var", "name": "out"}
+    assert input_term == {"kind": "var", "name": "value"}
     assert payload["sort"] == {"kind": "primitive", "name": "String"}
     return json.loads(payload["value"])
 
 
 def _assert_base64_payload(formula: dict) -> None:
     payload = _base64_payload(formula)
-    assert payload["input_bytes"] == [97, 98, 99]
+    assert "input_bytes" not in payload
     assert payload["vars"] == ["b0", "b1", "b2"]
     assert len(payload["per_char"]) == 4
     assert payload["table"] == [
@@ -107,13 +108,20 @@ def _assert_assertion_inv(contract: dict, expected: str) -> None:
     inv = contract["inv"]
     assert inv["kind"] == "and"
     operands = inv["operands"]
-    assert len(operands) == 6
+    assert len(operands) == 4
     _eq_var_const(operands[0], "alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
-    _eq_var_const(operands[1], "b0", 97)
-    _eq_var_const(operands[2], "b1", 98)
-    _eq_var_const(operands[3], "b2", 99)
-    _assert_base64_payload(operands[4])
-    _eq_var_const(operands[5], "out", expected)
+    _assert_base64_payload(operands[1])
+    _eq_var_const(operands[2], "value", "abc")
+    _eq_var_const(operands[3], "out", expected)
+
+
+def _assert_callsite_fact(contract: dict, expected: str) -> None:
+    fact = contract["warrantedBy"]["fact"]
+    assert fact["kind"] == "and"
+    operands = fact["operands"]
+    assert len(operands) == 2
+    _eq_var_const(operands[0], "value", "abc")
+    _eq_var_const(operands[1], "out", expected)
 
 
 def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -> None:
@@ -133,13 +141,9 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     function_contract, assertion_contract = good_doc["ir"]
     assert function_contract["post"]["kind"] == "and"
     post_operands = function_contract["post"]["operands"]
-    assert [_eq_name_value(formula) for formula in post_operands[:4]] == [
-        ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
-        ("b0", 97),
-        ("b1", 98),
-        ("b2", 99),
-    ]
-    _assert_base64_payload(post_operands[4])
+    assert len(post_operands) == 2
+    _eq_var_const(post_operands[0], "alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    _assert_base64_payload(post_operands[1])
     assert function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
@@ -149,8 +153,10 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
     assert assertion_contract["warrantedBy"]["contractName"] == function_contract["name"]
     assert assertion_contract["warrantedBy"]["callsite"] == "test_base64.py:14:11"
+    _assert_callsite_fact(assertion_contract, "YWJj")
     _assert_assertion_inv(assertion_contract, "YWJj")
     _assert_assertion_inv(bad_doc["ir"][1], "AAAA")
+    _assert_callsite_fact(bad_doc["ir"][1], "AAAA")
     assert good_doc["callEdges"] == [
         {
             "kind": "call-edge",
@@ -176,15 +182,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         "FunctionBodyConstraint",
         "AssertionSurface",
     ]
-    assert [
-        _eq_name_value(row["emittedFormula"])
-        for row in good_doc["factoryAuditSummary"]["factoryWalk"][:4]
-    ] == [
-        ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
-        ("b0", 97),
-        ("b1", 98),
-        ("b2", 99),
-    ]
+    _eq_var_const(
+        good_doc["factoryAuditSummary"]["factoryWalk"][0]["emittedFormula"],
+        "alphabet",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+    )
+    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][1]
+    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][2]
+    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][3]
     _assert_base64_payload(good_doc["factoryAuditSummary"]["factoryWalk"][4]["emittedFormula"])
     assert (
         good_doc["factoryAuditSummary"]["factoryWalk"][5]["emittedFormula"]
