@@ -502,6 +502,13 @@ fn run_configured_lift_report_graph(
         report.project_root = Some(project_root.to_path_buf());
         report.source_oracle_routes =
             source_oracle_routes_from_plan_mementos(&report.plan_mementos);
+        // Rebase file paths in source mementos and contract sourceWarrants
+        // using workspace_override from plan mementos.  In the proof path
+        // (dispatch_multi) the lifter output is minted as-is; the
+        // dispatch_report_lift_plugin path applies prefix_workspace_override_source_files
+        // inline, so the proof already has rebased paths there.  Here we apply
+        // the same prefix so the two paths agree on the file names in the report.
+        rebase_proof_source_file_paths(&mut report);
         enrich_report_source_mementos_from_oracles(&mut report);
         trace_lift_source_report("after_source_report_from_proof", &report);
 
@@ -1534,6 +1541,33 @@ fn source_report_from_proof_pool(
         }
         contracts.push(contract);
     }
+    // Bridge members (e.g. consumer-lifted "dig:<sourceSymbol>") are also
+    // surfaced as contracts so they appear in the report's contracts list.
+    // Bridge envelopes carry `sourceSymbol` in the header, not `name`; the
+    // report convention is "dig:<sourceSymbol>" per the consumer IR naming.
+    for (cid, _envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("bridge") {
+            continue;
+        }
+        let source_symbol = match pool.member_field(cid, "sourceSymbol").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let bridge_name = format!("dig:{source_symbol}");
+        let mut contract = serde_json::json!({
+            "kind": "contract",
+            "name": bridge_name,
+            "contractCid": cid,
+        });
+        contract_names_by_cid.insert(cid.clone(), bridge_name.clone());
+        if contract_filter.is_some_and(|filter| !proof_contract_matches_filter(&contract, filter)) {
+            continue;
+        }
+        if let Some(object) = contract.as_object_mut() {
+            object.insert("proofMemberCid".to_string(), Value::String(cid.clone()));
+        }
+        contracts.push(contract);
+    }
 
     let mut source_mementos = Vec::new();
     for (cid, envelope) in &pool.mementos {
@@ -1621,6 +1655,40 @@ fn source_report_from_proof_pool(
             "targetSymbol": "witness",
             "targetContract": format!("{witness_count} witness memento(s) pinned in proof")
         }));
+    }
+
+    // Reconstruct sourceWarrants for each contract from source mementos
+    // that were minted as separate pool entries (from ir[*].sourceWarrants).
+    // Those entries carry contractName in their header/body (set by mint_source_memento
+    // when given a default_contract_name). Top-level sourceMementos[] entries do not
+    // have contractName and are excluded here.
+    let mut source_warrants_map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (cid, envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("source-memento") {
+            continue;
+        }
+        let Some(contract_name) = pool
+            .member_field(cid, "contractName")
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
+            continue;
+        };
+        source_warrants_map
+            .entry(contract_name.to_string())
+            .or_default()
+            .push(body.clone());
+    }
+    for contract in &mut contracts {
+        if let Some(name) = contract_value_name(contract) {
+            if let Some(warrants) = source_warrants_map.get(name) {
+                if let Some(obj) = contract.as_object_mut() {
+                    obj.insert("sourceWarrants".to_string(), Value::Array(warrants.clone()));
+                }
+            }
+        }
     }
 
     let source_loci = source_mementos.len() as i64;
@@ -1853,6 +1921,80 @@ fn proof_contract_slot_formula_by_name(
     let envelope = pool.mementos.get(cid)?;
     let body = pool.resolve_contract_body(envelope)?;
     body.get(slot).cloned()
+}
+
+/// Apply the workspace_override prefix to `file` fields in source mementos
+/// and contract sourceWarrants loaded from a proof pool.  The proof path
+/// (dispatch_multi / mint_input_multi) mints source mementos with the raw
+/// relative paths returned by the lifter; dispatch_report_lift_plugin applies
+/// prefix_workspace_override_source_files inline before minting, so rebased
+/// paths already live in the proof there.  Here we close the gap so both
+/// paths emit the same file names in the JSON report.
+fn rebase_proof_source_file_paths(report: &mut LiftSourceReport) {
+    let routes = report.source_oracle_routes.clone();
+    if routes.is_empty() {
+        return;
+    }
+    for memento in &mut report.source_mementos {
+        if let Some(prefix) = best_workspace_override_prefix_for_memento(memento, &routes) {
+            rebase_proof_file_fields(memento, &prefix);
+        }
+    }
+    for contract in &mut report.contracts {
+        // Walk into sourceWarrants inside each contract and rebase their file
+        // fields; the contract object itself does not carry a top-level "file".
+        if let Some(warrants) = contract
+            .get_mut("sourceWarrants")
+            .and_then(Value::as_array_mut)
+        {
+            for warrant in warrants.iter_mut() {
+                if let Some(prefix) =
+                    best_workspace_override_prefix_for_memento(warrant, &routes)
+                {
+                    rebase_proof_file_fields(warrant, &prefix);
+                }
+            }
+        }
+    }
+}
+
+fn best_workspace_override_prefix_for_memento(
+    memento: &Value,
+    routes: &[SourceOracleRoute],
+) -> Option<String> {
+    for route in source_oracle_route_attempt_order(routes, memento) {
+        if let Some(prefix) = normalized_workspace_prefix(route.workspace_override.as_deref()) {
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn rebase_proof_file_fields(value: &mut Value, prefix: &str) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::String(file)) = object.get_mut("file") {
+                let normalized = file.replace('\\', "/");
+                let relative = normalized.trim_start_matches("./");
+                if !normalized.trim().is_empty()
+                    && !Path::new(&normalized).is_absolute()
+                    && relative != prefix
+                    && !relative.starts_with(&format!("{prefix}/"))
+                {
+                    *file = format!("{prefix}/{relative}");
+                }
+            }
+            for child in object.values_mut() {
+                rebase_proof_file_fields(child, prefix);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                rebase_proof_file_fields(item, prefix);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn enrich_report_source_mementos_from_oracles(report: &mut LiftSourceReport) {

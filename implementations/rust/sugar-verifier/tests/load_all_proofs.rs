@@ -15,13 +15,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sugar_canonicalizer::{blake3_512_of, Value as CValue};
-use sugar_claim_envelope::{
-    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
-};
-use sugar_ir_symbolic::serialize::formula_to_value;
+use sugar_claim_envelope::{mint_bridge, MintBridgeArgs, MintedEnvelope};
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento, ContractBody,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody, ContractMemento,
     ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::load_all_proofs;
@@ -37,11 +34,28 @@ fn make_unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
-fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
-    let cid = minted.cid.clone();
-    let memento = ClaimContractMemento::new(minted.canonical_bytes);
-    assert_eq!(memento.cid().as_str(), cid);
-    graph.push_claim_contract(memento);
+/// Build a proper body-graph contract (atom → body → ContractMemento) and
+/// register it in `graph`.  Returns the contract's member CID.  Tests that
+/// load .proof files require contracts to carry a `bodyCid` pointer; the old
+/// inline-body `ClaimContractMemento` path was rejected by the strict loader.
+fn add_body_graph_contract(
+    graph: &mut ProofGraph,
+    name: &str,
+    signer_seed: Ed25519Seed,
+    declared_at: &str,
+) -> String {
+    // Dummy post atom — deterministic per name, content not checked by tests.
+    let post_atom = FlatAtom::new(CValue::object([
+        ("kind", CValue::string("contract-atom")),
+        ("name", CValue::string(name.to_owned())),
+    ]));
+    let post_memento = graph.register_atom(post_atom);
+    // register_contract asserts the metadata atom is present.
+    graph.register_atom(FlatAtom::empty_metadata());
+    let body = graph.register_body(ContractBody::new(&post_memento));
+    let contract = ContractMemento::new_at(name, &body, signer_seed, declared_at);
+    let cid = contract.cid().as_str().to_string();
+    graph.register_contract(contract);
     cid
 }
 
@@ -64,33 +78,7 @@ fn publish_parseint_proof(dir: &Path) -> String {
     let mut graph = ProofGraph::new();
     let mut name_to_cid = std::collections::HashMap::<String, String>::new();
     for d in &decls {
-        let args = MintContractArgs {
-            evidence_term: None,
-            formals: Vec::new(),
-            emit_empty_formals: false,
-            formal_sorts: Vec::new(),
-            library: None,
-            body_discharge_eligible: true,
-            body_discharge_refusal_reason: None,
-            panic_loci: Vec::new(),
-            class_shapes: Vec::new(),
-            source_warrants: Vec::new(),
-            contract_name: d.name.clone(),
-            pre: d.pre.as_deref().map(formula_to_value),
-            post: d.post.as_deref().map(formula_to_value),
-            inv: d.inv.as_deref().map(formula_to_value),
-            out_binding: d.out_binding.clone(),
-            produced_by: produced_by.into(),
-            produced_at: declared_at.into(),
-            input_cids: vec![],
-            authoring: Authoring::KitAuthor {
-                author: produced_by.into(),
-                note: None,
-            },
-            signer_seed,
-        };
-        let m = mint_contract(&args).expect("mint_contract");
-        let cid = push_claim_contract(&mut graph, m);
+        let cid = add_body_graph_contract(&mut graph, &d.name, signer_seed, declared_at);
         name_to_cid.insert(d.name.clone(), cid);
     }
     let bridge_args = MintBridgeArgs {
@@ -389,33 +377,7 @@ fn multiple_proofs_in_one_dir_all_loaded() {
     let declared_at = "2026-04-30T01:00:00.000Z";
     let mut graph = ProofGraph::new();
     for d in &decls {
-        let args = MintContractArgs {
-            evidence_term: None,
-            formals: Vec::new(),
-            emit_empty_formals: false,
-            formal_sorts: Vec::new(),
-            library: None,
-            body_discharge_eligible: true,
-            body_discharge_refusal_reason: None,
-            panic_loci: Vec::new(),
-            class_shapes: Vec::new(),
-            source_warrants: Vec::new(),
-            contract_name: d.name.clone(),
-            pre: d.pre.as_deref().map(formula_to_value),
-            post: None,
-            inv: None,
-            out_binding: d.out_binding.clone(),
-            produced_by: "rust-test@1.0".into(),
-            produced_at: declared_at.into(),
-            input_cids: vec![],
-            authoring: Authoring::KitAuthor {
-                author: "rust-test@1.0".into(),
-                note: None,
-            },
-            signer_seed,
-        };
-        let m = mint_contract(&args).expect("mint");
-        push_claim_contract(&mut graph, m);
+        add_body_graph_contract(&mut graph, &d.name, signer_seed, declared_at);
     }
     let signer_cid = blake3_512_of(ed25519_pubkey_string(&signer_seed).as_bytes());
     let built = build_proof_envelope(&ProofEnvelopeInput {
