@@ -4362,7 +4362,7 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
 }
 
 fn plan_body_from_memento(value: &Value) -> Option<&Value> {
-    if value.pointer("/header/kind").and_then(Value::as_str) == Some("plan-memento") {
+    if sugar_proof_envelope::member_kind(value) == Some("plan-memento") {
         return value.get("body");
     }
     if value.get("kind").and_then(Value::as_str) == Some("component-plan") {

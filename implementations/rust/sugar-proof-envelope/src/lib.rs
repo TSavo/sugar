@@ -36,8 +36,10 @@ pub use proof_graph::{
     AssertionSurfaceMemento, AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef,
     BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractEntry,
     ContractMemento, ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
-    member_body, member_field, member_kind, ImplicationMemento, LibrarySugarBindingMemento,
-    MemberView, MementoCid, PlanMemento, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento,
+    member_body, member_field, member_kind, member_signature, member_signer, ImplicationMemento,
+    LibrarySugarBindingMemento,
+    MemberView, MementoCid, PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento,
+    SourceMemento,
     StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{

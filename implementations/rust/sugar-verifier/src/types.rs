@@ -385,10 +385,8 @@ impl MementoPool {
             let env_for_name = self.mementos.get(&memento_cid);
             let name = env_for_name
                 .and_then(|env| {
-                    env.pointer("/header/contractName")
-                        .or_else(|| env.pointer("/header/name"))
-                        .or_else(|| env.pointer("/evidence/body/contractName"))
-                        .or_else(|| env.pointer("/evidence/body/name"))
+                    sugar_proof_envelope::member_field(env, "contractName")
+                        .or_else(|| sugar_proof_envelope::member_field(env, "name"))
                 })
                 .and_then(|v| v.as_str());
 
@@ -1383,7 +1381,7 @@ mod tests {
     #[test]
     fn pin_invariant_v11_flat_shape_roundtrip() {
         // v1.1 flat shape: no envelope wrapper, fields live in evidence.body.
-        // This exercises the fallback path in memento_body_field that reads
+        // This exercises the fallback path in member_field that reads
         // from /evidence/body instead of /header and /metadata.
         let mut pool = MementoPool::default();
         let fc = "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";

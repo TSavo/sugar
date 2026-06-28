@@ -56,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
-    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
-    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
-    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
-    SourceMemento, WitnessMemento,
+    build_proof_envelope, ed25519_pubkey_string, member_field, member_kind, proof_filename,
+    AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
+    ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
+    FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput,
+    ProofGraph, SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -4768,8 +4768,7 @@ mod tests {
         assert_eq!(view.kind().as_deref(), Some("library-sugar-binding-entry"));
         let envelope: Value = serde_json::from_slice(view.bytes()).expect("member JSON");
         assert_eq!(
-            envelope
-                .pointer("/body/target_library_tag")
+            member_field(&envelope, "target_library_tag")
                 .and_then(|v| v.as_str()),
             Some("requests")
         );
@@ -4853,7 +4852,7 @@ mod tests {
             .mementos
             .values()
             .find(|env| {
-                env.pointer("/header/name").and_then(|value| value.as_str())
+                member_field(env, "name").and_then(|value| value.as_str())
                     == Some("body_graph_contract")
             })
             .expect("loaded contract memento");
@@ -5199,8 +5198,7 @@ mod tests {
                 Some("implication") => {
                     implication_count += 1;
                     let envelope = view.json();
-                    let inputs = envelope
-                        .pointer("/header/inputCids")
+                    let inputs = member_field(&envelope, "inputCids")
                         .and_then(|v| v.as_array())
                         .expect("implication inputCids");
                     assert_eq!(inputs.len(), 2);
@@ -5398,15 +5396,13 @@ mod tests {
         let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
 
         // The tie is recorded in the bundle metadata, sorted+deduped.
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode");
+        let catalog =
+            sugar_proof_envelope::ProofCatalog::read(&minted.bytes).expect("read catalog");
         let conjoined = catalog
-            .as_map()
-            .and_then(|m| m.get("metadata"))
-            .and_then(|v| v.as_map())
-            .and_then(|m| m.get("sugar.conjoinedImports"))
-            .and_then(|v| v.as_tstr())
+            .metadata
+            .get("sugar.conjoinedImports")
             .expect("conjoinedImports metadata");
-        assert_eq!(conjoined, format!("{dep_a},{dep_b}"), "sorted dep CID set");
+        assert_eq!(conjoined, &format!("{dep_a},{dep_b}"), "sorted dep CID set");
 
         // THE DIFFERENTIAL: change the dependency set -> the vendor bundle CID
         // MUST move. This is the a->b->c identity's enforcement: a bundle
@@ -5442,9 +5438,10 @@ mod tests {
             true,
         )
         .expect("leaf mint");
-        let leaf_cat = sugar_verifier::cbor_decode::decode(&leaf.bytes).expect("decode leaf");
+        let leaf_cat =
+            sugar_proof_envelope::ProofCatalog::read(&leaf.bytes).expect("read leaf catalog");
         assert!(
-            leaf_cat.as_map().and_then(|m| m.get("metadata")).is_none(),
+            leaf_cat.metadata.is_empty(),
             "a leaf with no imports carries no conjoined-imports tie"
         );
     }
@@ -5527,27 +5524,23 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(|v| v.as_str()),
+            member_kind(memento),
             Some("source-memento")
         );
         assert_eq!(
-            memento
-                .pointer("/header/contractName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "contractName").and_then(|v| v.as_str()),
             Some(contract_name)
         );
         assert_eq!(
-            memento
-                .pointer("/header/claimName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "claimName").and_then(|v| v.as_str()),
             Some(contract_name)
         );
         assert_eq!(
-            memento.pointer("/header/role").and_then(|v| v.as_str()),
+            member_field(memento, "role").and_then(|v| v.as_str()),
             Some("java.strong-universe")
         );
         assert_eq!(
-            memento.pointer("/header/file").and_then(|v| v.as_str()),
+            member_field(memento, "file").and_then(|v| v.as_str()),
             Some("src/Codec.java")
         );
         assert_eq!(
@@ -5602,19 +5595,15 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento
-                .pointer("/header/claimName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "claimName").and_then(|v| v.as_str()),
             Some("Codec.encode#euf#c:callresult_encode_a1(s:bar)::assertion")
         );
         assert_eq!(
-            memento.pointer("/header/role").and_then(|v| v.as_str()),
+            member_field(memento, "role").and_then(|v| v.as_str()),
             Some("java.fact")
         );
         assert_eq!(
-            memento
-                .pointer("/header/sourceCid")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "sourceCid").and_then(|v| v.as_str()),
             Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
         );
 
@@ -5644,11 +5633,11 @@ mod tests {
 
         assert!(plan_atoms.is_empty());
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(&envelope),
             Some("plan-memento")
         );
         assert_eq!(
-            envelope.pointer("/header/planCid").and_then(Value::as_str),
+            member_field(&envelope, "planCid").and_then(Value::as_str),
             Some(body_cid.as_str()),
             "the letter CID belongs in the envelope header"
         );
@@ -5754,7 +5743,7 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(memento),
             Some("plan-memento")
         );
         assert_eq!(
@@ -5849,7 +5838,7 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(memento),
             Some("factory-walk-memento")
         );
         assert_eq!(
@@ -6342,32 +6331,24 @@ mod tests {
             report.errors
         );
 
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let root = catalog.as_map().expect("catalog map");
-        let proof_signer = root
-            .get("signer")
-            .and_then(|v| v.as_tstr())
-            .expect("proof signer");
+        let catalog =
+            sugar_proof_envelope::ProofCatalog::read(&bytes).expect("read proof catalog");
+        let proof_signer = catalog.signer.as_str();
         assert!(proof_signer.starts_with("blake3-512:"));
 
-        let members = root
-            .get("members")
-            .and_then(|v| v.as_map())
-            .expect("proof members");
         let mut authority = None;
         let mut authority_member_cid = None;
         let mut contract = None;
-        for (cid, member) in members {
-            let bytes = member.as_bstr().expect("member bytes");
-            let envelope: Value = serde_json::from_slice(bytes).expect("member JSON");
-            match envelope.pointer("/header/kind").and_then(|v| v.as_str()) {
+        for view in catalog.graph.members_view() {
+            let cid = view.cid().as_str();
+            let envelope = view.json();
+            match member_kind(&envelope) {
                 Some("authority")
-                    if envelope
-                        .pointer("/header/principal")
+                    if member_field(&envelope, "principal")
                         .and_then(|v| v.as_str())
                         == Some("bridgeworks.software") =>
                 {
-                    authority_member_cid = Some(cid.clone());
+                    authority_member_cid = Some(cid.to_string());
                     authority = Some(envelope);
                 }
                 Some("contract") => contract = Some(envelope),
@@ -6377,20 +6358,19 @@ mod tests {
         let authority = authority.expect("authority memento");
         let authority_member_cid = authority_member_cid.expect("authority member cid");
         let contract = contract.expect("contract memento");
-        let authority_key = authority
-            .pointer("/header/key")
+        let authority_key = member_field(&authority, "key")
             .and_then(|v| v.as_str())
             .expect("authority key");
 
         assert_eq!(
-            contract
-                .pointer("/header/inputCids/0")
+            member_field(&contract, "inputCids")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
                 .and_then(|v| v.as_str()),
             Some(authority_member_cid.as_str())
         );
         assert_eq!(
-            contract
-                .pointer("/envelope/signer")
+            sugar_proof_envelope::member_signer(&contract)
                 .and_then(|v| v.as_str()),
             Some(authority_key)
         );

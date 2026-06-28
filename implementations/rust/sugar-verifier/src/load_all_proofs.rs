@@ -258,10 +258,8 @@ fn load_catalog_bytes(
         // Tag-dispatch on whichever signature field is present.
         // v1.1 flat shape: `producerSignature` at top level.
         // v1.2 layered shape: `envelope.signature`.
-        let sig_str_opt = env
-            .pointer("/envelope/signature")
-            .and_then(|v| v.as_str())
-            .or_else(|| env.get("producerSignature").and_then(|v| v.as_str()));
+        let sig_str_opt =
+            sugar_proof_envelope::member_signature(&env).and_then(|v| v.as_str());
         if let Some(sig) = sig_str_opt {
             if !sig.starts_with(SIG_TAG_PREFIX) {
                 pool.load_errors.push(LoadError {

@@ -115,6 +115,7 @@ use std::collections::HashSet;
 
 use serde_json::Value as Json;
 use sugar_ir_types::IrTerm;
+use sugar_proof_envelope;
 
 use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
@@ -182,10 +183,7 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
         Some(b) => b,
         None => return false, // no bridge → no body contract → wp will refuse
     };
-    let bbody = bridge.get("evidence").and_then(|e| e.get("body"));
-    let target_cid = bbody
-        .and_then(|b| b.get("targetContractCid"))
-        .or_else(|| bridge.pointer("/header/targetContractCid"))
+    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str());
     let target_cid = match target_cid {
         Some(c) => c,

@@ -31,7 +31,7 @@ use sugar_claim_envelope::{
     mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
 };
 use sugar_proof_envelope::{
-    ed25519_pubkey_string, ed25519_verify_string, ContractMementoRef, Ed25519Seed,
+    ed25519_pubkey_string, ed25519_verify_string, member_body, ContractMementoRef, Ed25519Seed,
 };
 
 fn seed() -> Ed25519Seed {
@@ -173,7 +173,7 @@ fn contract_envelope_has_exactly_signer_declared_at_signature() {
 fn contract_header_carries_kind_and_substrate_fields() {
     let m = mint_contract(&contract_args()).expect("mint");
     let env: Json = serde_json::from_slice(&m.canonical_bytes).expect("json");
-    let header = env.pointer("/header").expect("header").as_object().unwrap();
+    let header = member_body(&env).expect("header").as_object().unwrap();
 
     // Universal header fields (spec §1).
     assert_eq!(
@@ -228,12 +228,10 @@ fn signature_covers_header_and_metadata_via_jcs() {
     let env: Json = serde_json::from_slice(&m.canonical_bytes).expect("json");
     let header = env.get("header").expect("header").clone();
     let metadata = env.get("metadata").expect("metadata").clone();
-    let signer = env
-        .pointer("/envelope/signer")
+    let signer = sugar_proof_envelope::member_signer(&env)
         .and_then(|v| v.as_str())
         .expect("envelope.signer");
-    let sig = env
-        .pointer("/envelope/signature")
+    let sig = sugar_proof_envelope::member_signature(&env)
         .and_then(|v| v.as_str())
         .expect("envelope.signature");
 
@@ -276,13 +274,11 @@ fn body_tamper_invalidates_signature() {
     // provenance."
     let m = mint_contract(&contract_args()).expect("mint");
     let mut env: Json = serde_json::from_slice(&m.canonical_bytes).expect("json");
-    let signer = env
-        .pointer("/envelope/signer")
+    let signer = sugar_proof_envelope::member_signer(&env)
         .and_then(|v| v.as_str())
         .expect("signer")
         .to_string();
-    let sig = env
-        .pointer("/envelope/signature")
+    let sig = sugar_proof_envelope::member_signature(&env)
         .and_then(|v| v.as_str())
         .expect("signature")
         .to_string();
@@ -333,7 +329,7 @@ fn bridge_memento_has_layered_shape() {
     keys.sort();
     assert_eq!(keys, vec!["envelope", "header", "metadata"]);
 
-    let header = env.pointer("/header").unwrap().as_object().unwrap();
+    let header = member_body(&env).unwrap().as_object().unwrap();
     assert_eq!(
         header.get("schemaVersion").and_then(|v| v.as_str()),
         Some("2")

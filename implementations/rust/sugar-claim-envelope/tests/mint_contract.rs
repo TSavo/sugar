@@ -17,7 +17,7 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_claim_envelope::{
     contract_cid, mint_contract, Authoring, ClaimEnvelopeError, MintContractArgs, MintedEnvelope,
 };
-use sugar_proof_envelope::Ed25519Seed;
+use sugar_proof_envelope::{member_field, Ed25519Seed};
 
 fn seed() -> Ed25519Seed {
     [0x42u8; 32]
@@ -387,8 +387,7 @@ fn source_warrants_round_trip_without_changing_contract_cid() {
     let minted = mint_contract(&args).expect("mint");
     assert_eq!(minted.contract_cid, cid_without_warrant);
     let env = parse_envelope(&minted);
-    let warrants = env
-        .pointer("/header/sourceWarrants")
+    let warrants = member_field(&env, "sourceWarrants")
         .and_then(|v| v.as_array())
         .expect("sourceWarrants header array");
     assert_eq!(warrants.len(), 1);
@@ -414,7 +413,7 @@ fn pre_hash_is_blake3_of_jcs_encoded_pre() {
         .expect("preHash present");
     let expected = blake3_512_of(
         encode_jcs(&json_to_value(
-            env.pointer("/header/pre").expect("canonical header pre"),
+            member_field(&env, "pre").expect("canonical header pre"),
         ))
         .as_bytes(),
     );
@@ -485,8 +484,7 @@ fn property_hash_is_blake3_of_jcs_pre_post_inv_outbinding() {
     ))
     .expect("mint");
     let env = parse_envelope(&m);
-    let claimed = env
-        .pointer("/header/propertyHash")
+    let claimed = member_field(&env, "propertyHash")
         .and_then(|v| v.as_str())
         .expect("propertyHash");
 
@@ -514,8 +512,8 @@ fn property_hash_alpha_invariant_under_pre_rename() {
     let m_m = mint_contract(&args_with(Some(forall_gt_0("m")), None, None)).expect("mint m");
 
     let ph = |m: &MintedEnvelope| {
-        parse_envelope(m)
-            .pointer("/header/propertyHash")
+        let env = parse_envelope(m);
+        member_field(&env, "propertyHash")
             .and_then(|v| v.as_str())
             .expect("propertyHash")
             .to_string()
@@ -527,13 +525,13 @@ fn property_hash_alpha_invariant_under_pre_rename() {
     );
 
     // And the whole contract identity (header.cid) is alpha-invariant too.
+    let env_n = parse_envelope(&m_n);
+    let env_m = parse_envelope(&m_m);
     assert_eq!(
-        parse_envelope(&m_n)
-            .pointer("/header/cid")
+        member_field(&env_n, "cid")
             .and_then(|v| v.as_str())
             .unwrap(),
-        parse_envelope(&m_m)
-            .pointer("/header/cid")
+        member_field(&env_m, "cid")
             .and_then(|v| v.as_str())
             .unwrap(),
         "alpha-equivalent contracts must share a header CID"
@@ -544,12 +542,10 @@ fn property_hash_alpha_invariant_under_pre_rename() {
 fn binding_hash_is_blake3_of_jcs_producer_id_contract_name_property_hash() {
     let m = mint_contract(&args_with(Some(pre_n_gt_0()), None, None)).expect("mint");
     let env = parse_envelope(&m);
-    let property_hash = env
-        .pointer("/header/propertyHash")
+    let property_hash = member_field(&env, "propertyHash")
         .and_then(|v| v.as_str())
         .unwrap();
-    let claimed = env
-        .pointer("/header/bindingHash")
+    let claimed = member_field(&env, "bindingHash")
         .and_then(|v| v.as_str())
         .expect("bindingHash");
 
@@ -596,12 +592,10 @@ fn changing_contract_name_changes_binding_hash() {
 
     let env_a = parse_envelope(&a);
     let env_b = parse_envelope(&b);
-    let bh_a = env_a
-        .pointer("/header/bindingHash")
+    let bh_a = member_field(&env_a, "bindingHash")
         .and_then(|v| v.as_str())
         .unwrap();
-    let bh_b = env_b
-        .pointer("/header/bindingHash")
+    let bh_b = member_field(&env_b, "bindingHash")
         .and_then(|v| v.as_str())
         .unwrap();
     assert_ne!(bh_a, bh_b);
@@ -616,21 +610,17 @@ fn changing_producer_id_changes_binding_hash_but_not_property_hash() {
 
     let env_a = parse_envelope(&a);
     let env_b = parse_envelope(&b);
-    let ph_a = env_a
-        .pointer("/header/propertyHash")
+    let ph_a = member_field(&env_a, "propertyHash")
         .and_then(|v| v.as_str())
         .unwrap();
-    let ph_b = env_b
-        .pointer("/header/propertyHash")
+    let ph_b = member_field(&env_b, "propertyHash")
         .and_then(|v| v.as_str())
         .unwrap();
     assert_eq!(ph_a, ph_b, "propertyHash must be producer-independent");
-    let bh_a = env_a
-        .pointer("/header/bindingHash")
+    let bh_a = member_field(&env_a, "bindingHash")
         .and_then(|v| v.as_str())
         .unwrap();
-    let bh_b = env_b
-        .pointer("/header/bindingHash")
+    let bh_b = member_field(&env_b, "bindingHash")
         .and_then(|v| v.as_str())
         .unwrap();
     assert_ne!(bh_a, bh_b, "bindingHash must depend on producerId");

@@ -682,6 +682,72 @@ pub fn member_field<'a>(envelope: &'a Json, name: &str) -> Option<&'a Json> {
     }
 }
 
+/// Shape-agnostic signer of a member envelope. v1.2 layered: `/envelope/signer`;
+/// v1.1 flat: top-level `signer`. The api owner's reader so consumers stop
+/// hand-fishing the envelope's provenance.
+pub fn member_signer(envelope: &Json) -> Option<&Json> {
+    envelope
+        .pointer("/envelope/signer")
+        .or_else(|| envelope.get("signer"))
+}
+
+/// Shape-agnostic signature of a member envelope. v1.2 layered:
+/// `/envelope/signature`; v1.1 flat: `producerSignature` (or `signature`).
+pub fn member_signature(envelope: &Json) -> Option<&Json> {
+    envelope
+        .pointer("/envelope/signature")
+        .or_else(|| envelope.get("producerSignature"))
+        .or_else(|| envelope.get("signature"))
+}
+
+/// A `.proof` catalog read through the api: the envelope identity + metadata
+/// that are NOT graph content, plus the reconstructed `ProofGraph`. Consumers
+/// that need catalog-level fields (signer, declaredAt, metadata) read them here
+/// instead of decoding the CBOR catalog by hand.
+#[derive(Clone, Debug)]
+pub struct ProofCatalog {
+    pub name: String,
+    pub version: String,
+    pub signer: String,
+    pub declared_at: String,
+    pub metadata: BTreeMap<String, String>,
+    pub graph: ProofGraph,
+}
+
+impl ProofCatalog {
+    pub fn read(bytes: &[u8]) -> Result<ProofCatalog, crate::ProofEnvelopeError> {
+        use crate::cbor_decode::{decode, CborValue};
+        use crate::ProofEnvelopeError::Other;
+        let catalog = decode(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
+        let map = catalog
+            .as_map()
+            .ok_or_else(|| Other("catalog root is not a CBOR map".into()))?;
+        let tstr = |key: &str| {
+            map.get(key)
+                .and_then(CborValue::as_tstr)
+                .unwrap_or("")
+                .to_string()
+        };
+        let metadata = map
+            .get("metadata")
+            .and_then(CborValue::as_map)
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_tstr().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(ProofCatalog {
+            name: tstr("name"),
+            version: tstr("version"),
+            signer: tstr("signer"),
+            declared_at: tstr("declaredAt"),
+            metadata,
+            graph: ProofGraph::read(bytes)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProofGraph {
     atoms: BTreeMap<String, FlatAtom>,

@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string, MemberView, ProofGraph};
+use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string, member_field, MemberView, ProofGraph};
 
 use crate::cbor_decode::{decode, CborValue};
 
@@ -445,8 +445,7 @@ fn verify_member_signature(env: &Json) -> Result<(), String> {
     let Some(sig) = env.get("producerSignature").and_then(|v| v.as_str()) else {
         return Err("legacy envelope producerSignature missing".to_string());
     };
-    let Some(pubkey) = env
-        .pointer("/evidence/body/producerPubkey")
+    let Some(pubkey) = member_field(env, "producerPubkey")
         .and_then(|v| v.as_str())
     else {
         return Err("legacy envelope has no embedded producerPubkey".to_string());

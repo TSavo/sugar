@@ -1673,6 +1673,7 @@ pub fn mint_effect_site_annotation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sugar_proof_envelope::{member_field, member_kind};
 
     fn dummy_seed() -> Ed25519Seed {
         [0x42; 32]
@@ -1958,8 +1959,7 @@ mod tests {
         let m = mint_contract(&args).expect("mint");
         let env: serde_json::Value =
             serde_json::from_slice(&m.canonical_bytes).expect("parse memento");
-        let actual = env
-            .pointer("/header/propertyHash")
+        let actual = member_field(&env, "propertyHash")
             .and_then(|v| v.as_str())
             .expect("header.propertyHash");
 
@@ -1985,27 +1985,27 @@ mod tests {
             serde_json::from_slice(&minted.canonical_bytes).expect("parse authority");
 
         assert_eq!(
-            env.pointer("/header/kind").and_then(|v| v.as_str()),
+            member_kind(&env),
             Some("authority")
         );
         assert_eq!(
-            env.pointer("/header/principal").and_then(|v| v.as_str()),
+            member_field(&env, "principal").and_then(|v| v.as_str()),
             Some("bridgeworks.software")
         );
         assert_eq!(
-            env.pointer("/header/key").and_then(|v| v.as_str()),
+            member_field(&env, "key").and_then(|v| v.as_str()),
             Some(authority_key.as_str())
         );
         assert_eq!(
-            env.pointer("/header/scopeKind").and_then(|v| v.as_str()),
+            member_field(&env, "scopeKind").and_then(|v| v.as_str()),
             Some("contract")
         );
         assert_eq!(
-            env.pointer("/header/scope").and_then(|v| v.as_str()),
+            member_field(&env, "scope").and_then(|v| v.as_str()),
             Some("checked_add_u8.postcondition")
         );
         assert_eq!(
-            env.pointer("/header/inputCids/0").and_then(|v| v.as_str()),
+            member_field(&env, "inputCids").and_then(|v| v.get(0)).and_then(|v| v.as_str()),
             Some("blake3-512:parent")
         );
         assert!(minted.cid.starts_with("blake3-512:"));
@@ -2020,43 +2020,43 @@ mod tests {
             serde_json::from_slice(&minted.canonical_bytes).expect("parse annotation");
 
         assert_eq!(
-            env.pointer("/header/kind").and_then(|v| v.as_str()),
+            member_kind(&env),
             Some("effect-site-annotation")
         );
         assert_eq!(
-            env.pointer("/header/effectKind").and_then(|v| v.as_str()),
+            member_field(&env, "effectKind").and_then(|v| v.as_str()),
             Some("panic-freedom")
         );
         assert_eq!(
-            env.pointer("/header/file").and_then(|v| v.as_str()),
+            member_field(&env, "file").and_then(|v| v.as_str()),
             Some("src/lib.rs")
         );
         assert_eq!(
-            env.pointer("/header/line").and_then(|v| v.as_u64()),
+            member_field(&env, "line").and_then(|v| v.as_u64()),
             Some(42)
         );
         assert_eq!(
-            env.pointer("/header/callee").and_then(|v| v.as_str()),
+            member_field(&env, "callee").and_then(|v| v.as_str()),
             Some("method:unwrap")
         );
         assert_eq!(
-            env.pointer("/header/status").and_then(|v| v.as_str()),
+            member_field(&env, "status").and_then(|v| v.as_str()),
             Some("residue")
         );
         assert_eq!(
-            env.pointer("/header/category").and_then(|v| v.as_str()),
+            member_field(&env, "category").and_then(|v| v.as_str()),
             Some("lock_poisoning_residue")
         );
         assert_eq!(
-            env.pointer("/header/tierToClose").and_then(|v| v.as_str()),
+            member_field(&env, "tierToClose").and_then(|v| v.as_str()),
             Some("irreducible")
         );
         assert_eq!(
-            env.pointer("/header/reason").and_then(|v| v.as_str()),
+            member_field(&env, "reason").and_then(|v| v.as_str()),
             Some("lock poisoning is runtime residue")
         );
         assert_eq!(
-            env.pointer("/header/inputCids/0").and_then(|v| v.as_str()),
+            member_field(&env, "inputCids").and_then(|v| v.get(0)).and_then(|v| v.as_str()),
             Some("blake3-512:input")
         );
         assert!(minted.cid.starts_with("blake3-512:"));
@@ -2078,8 +2078,8 @@ mod tests {
 
         assert_eq!(first.cid, second.cid);
         assert_eq!(
-            first_env.pointer("/header/cid"),
-            second_env.pointer("/header/cid")
+            member_field(&first_env, "cid"),
+            member_field(&second_env, "cid")
         );
     }
 
@@ -2259,7 +2259,7 @@ mod tests {
             serde_json::from_slice(&minted.canonical_bytes).expect("parse memento");
 
         assert_eq!(
-            env.pointer("/header/post"),
+            member_field(&env, "post"),
             Some(&serde_json::to_value(expected_canonical).expect("canonical formula serializes")),
             "the verifier reads header.post, so the stored formula must match the canonicalized CID/propertyHash form"
         );
