@@ -11,7 +11,6 @@ from typing import Any
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.context import ReduceContext
-from sugar_lift_py_tests.factory import FactoryBuildContext, SourceSite
 from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -24,20 +23,23 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar.list_sugar import list_sugar
-from sugar_lift_py_tests.sugar.map_sugar import MapSugar
+
+from .factory_build_context import FactoryBuildContext
+from .source_site import SourceSite
+from .sugar_constructors import build_map_sugar
 
 
 @dataclass(frozen=True)
-class ArrayMapLift:
+class SourceReportBuild:
     payload: LiftReportPayloadDto
 
 
-def lift_array_map_assertions(
+def build_array_map_report(
     *,
     source: str,
     filename: str,
     memento_file: str | None = None,
-) -> ArrayMapLift | None:
+) -> SourceReportBuild | None:
     tree = ast.parse(source, filename=filename)
     lines = source.splitlines(keepends=True)
     contracts: list[BodyUniverseDto] = []
@@ -70,7 +72,7 @@ def lift_array_map_assertions(
             call_edges.extend(edges)
     if not contracts:
         return None
-    return ArrayMapLift(
+    return SourceReportBuild(
         LiftReportPayloadDto(
             ir=contracts,
             source_mementos=source_mementos,
@@ -150,13 +152,9 @@ def _lift_fluent_array_map_assert(
     receiver = factory_ctx.build_body(call.func.value, SugarRole.TERM)
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
-    mapper = factory_ctx.build_body(call.args[0], SugarRole.TERM)
-    map_sugar = MapSugar.from_site(
-        SourceSite.from_node(call, filename),
-        receiver=receiver,
-        mapper=mapper,
-    )
-    if map_sugar is None:
+    try:
+        map_sugar = build_map_sugar(SourceSite.from_node(call, filename), factory_ctx)
+    except TypeError:
         return None
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
     if expected_sugar is None:
