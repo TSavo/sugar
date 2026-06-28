@@ -6,8 +6,7 @@
 use serde_json::Value as Json;
 
 use crate::types::{
-    memento_body, memento_kind, CallSite, LoadError, MementoPool, ObligationVerdict, Report,
-    ReportRow, ToolchainPlanReport,
+    CallSite, LoadError, MementoPool, ObligationVerdict, Report, ReportRow, ToolchainPlanReport,
 };
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
@@ -168,20 +167,28 @@ pub fn add_toolchain_plans(pool: &MementoPool, r: &mut Report) {
 
 pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
     let mut witness_outputs = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if memento_kind(envelope) != Some("witness-memento") {
+    for (cid, _) in &pool.mementos {
+        if pool.member_kind(cid) != Some("witness-memento") {
             continue;
         }
-        let Some(body) = memento_body(envelope) else {
-            continue;
-        };
-        let actual = string_array(body, "actualOutputCids")
-            .or_else(|| string_array(body, "actual_output_cids"))
+        let actual = pool
+            .member_field(cid, "actualOutputCids")
+            .and_then(json_str_vec)
+            .or_else(|| {
+                pool.member_field(cid, "actual_output_cids")
+                    .and_then(json_str_vec)
+            })
             .unwrap_or_default();
         if actual.is_empty() {
             continue;
         }
-        let plan_cid = string_field(body, "planCid").or_else(|| string_field(body, "plan_cid"));
+        let plan_cid = pool
+            .member_field(cid, "planCid")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .or_else(|| {
+                pool.member_field(cid, "plan_cid")
+                    .and_then(|v| v.as_str().map(str::to_string))
+            });
         witness_outputs.push(WitnessOutputs {
             memento_cid: cid.clone(),
             plan_cid,
@@ -190,19 +197,21 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
     }
 
     let mut rows = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if memento_kind(envelope) != Some("plan-memento") {
+    for (cid, _) in &pool.mementos {
+        if pool.member_kind(cid) != Some("plan-memento") {
             continue;
         }
-        let plan_cid = envelope
-            .pointer("/header/planCid")
+        let plan_cid = pool
+            .member_field(cid, "planCid")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let expected = memento_body(envelope)
-            .and_then(|body| {
-                string_array(body, "expectedOutputCids")
-                    .or_else(|| string_array(body, "expected_output_cids"))
+        let expected = pool
+            .member_field(cid, "expectedOutputCids")
+            .and_then(json_str_vec)
+            .or_else(|| {
+                pool.member_field(cid, "expected_output_cids")
+                    .and_then(json_str_vec)
             })
             .unwrap_or_default();
         let plan_specific: Vec<&WitnessOutputs> = witness_outputs
@@ -311,14 +320,9 @@ fn decision(
     }
 }
 
-fn string_field(body: &Json, field: &str) -> Option<String> {
-    body.get(field)?.as_str().map(str::to_string)
-}
-
-fn string_array(body: &Json, field: &str) -> Option<Vec<String>> {
+fn json_str_vec(val: &Json) -> Option<Vec<String>> {
     Some(
-        body.get(field)?
-            .as_array()?
+        val.as_array()?
             .iter()
             .filter_map(|value| value.as_str().map(str::to_string))
             .collect(),

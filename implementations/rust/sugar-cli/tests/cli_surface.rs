@@ -714,21 +714,18 @@ done
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
         )
     });
-    let target_cid = sugar_verifier::types::memento_body_field(bridge, "targetContractCid")
+    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge targetContractCid");
-    let target = pool
-        .mementos
-        .get(target_cid)
-        .unwrap_or_else(|| panic!("bridge target cid {target_cid} must resolve in same proof"));
-    assert_eq!(
-        sugar_verifier::types::memento_kind(target).as_deref(),
-        Some("contract")
+    assert!(
+        pool.mementos.contains_key(target_cid),
+        "bridge target cid {target_cid} must resolve in same proof"
     );
+    assert_eq!(pool.member_kind(target_cid), Some("contract"));
     let implication_count = pool
         .mementos
-        .values()
-        .filter(|env| sugar_verifier::types::memento_kind(env).as_deref() == Some("implication"))
+        .keys()
+        .filter(|cid| pool.member_kind(cid) == Some("implication"))
         .count();
     assert_eq!(
         implication_count, 1,

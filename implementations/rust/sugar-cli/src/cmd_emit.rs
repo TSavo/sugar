@@ -558,26 +558,18 @@ mod tests {
             .path()
             .join(sugar_proof_envelope::proof_filename(&minted.filename_cid));
         let proof_bytes = std::fs::read(proof_file).expect("read witness proof");
-        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
+        let graph = sugar_proof_envelope::ProofGraph::read(&proof_bytes).expect("decode proof");
+        let members: Vec<_> = graph.members_view().collect();
         assert_eq!(members.len(), 1);
-        let member_bytes = members
-            .values()
-            .next()
-            .and_then(|member| member.as_bstr())
-            .expect("member bytes");
-        let envelope: Json = serde_json::from_slice(member_bytes).expect("member JSON");
+        let view = &members[0];
+        let envelope: Json = serde_json::from_slice(view.bytes()).expect("member JSON");
 
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(Json::as_str),
+            view.kind().as_deref(),
             Some("witness-memento")
         );
         assert_eq!(
-            envelope.pointer("/body/verifierCid").and_then(Json::as_str),
+            view.field("verifierCid").as_deref(),
             Some("builtin:test-verifier")
         );
         assert!(

@@ -69,3 +69,7 @@ pub use solvers::{
     SolverInvocation, SolverPlan, SolversConfig, StubSolver, SubprocessSolver,
 };
 pub use types::*;
+// Re-export the api owner's shape-agnostic member readers so crates that
+// depend on the verifier (but not directly on sugar-proof-envelope) read
+// member shapes through the api instead of the deleted memento_* accessors.
+pub use sugar_proof_envelope::{member_body, member_field, member_kind};

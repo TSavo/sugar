@@ -1222,17 +1222,16 @@ fn verify_contract_self_posts(
     registry: &HashMap<String, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
-    use crate::types::memento_kind;
-
-    let contracts: Vec<(&String, &Json)> = pool
+    let contracts: Vec<&String> = pool
         .mementos
-        .iter()
-        .filter(|(_, env)| memento_kind(env) == Some("contract"))
+        .keys()
+        .filter(|cid| pool.member_kind(cid) == Some("contract"))
         .collect();
 
     contracts
         .par_iter()
-        .filter_map(|(cid, env)| {
+        .filter_map(|cid| {
+            let env = pool.mementos.get(*cid)?;
             let body = pool.resolve_contract_body(env)?;
             // Body-derived contracts carry `formals` + `post`. A contract
             // without `post` (or without a result equation) has no

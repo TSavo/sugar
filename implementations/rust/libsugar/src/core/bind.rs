@@ -1172,10 +1172,7 @@ mod tests {
                 .expect("bind_function_bridge");
 
         // Op-contract carries the body-derived post + formals.
-        let oc = members
-            .op_contract
-            .envelope
-            .pointer("/evidence/body")
+        let oc = sugar_proof_envelope::member_body(&members.op_contract.envelope)
             .unwrap();
         assert_eq!(oc.get("contractName").unwrap(), "double");
         assert_eq!(oc.get("formals").unwrap(), &json!(["x"]));
@@ -1184,7 +1181,7 @@ mod tests {
         assert_eq!(value_expr.get("name").unwrap(), "*");
 
         // The bridge points at the op-contract member CID and pins the bundle.
-        let br = members.bridge.envelope.pointer("/evidence/body").unwrap();
+        let br = sugar_proof_envelope::member_body(&members.bridge.envelope).unwrap();
         assert_eq!(br.get("sourceSymbol").unwrap(), "double");
         assert_eq!(
             br.get("targetContractCid").unwrap().as_str().unwrap(),

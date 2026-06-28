@@ -99,12 +99,13 @@
 use serde_json::Value as Json;
 
 use libsugar::core::types::Term;
+use sugar_proof_envelope;
 use libsugar::wp::{
     self, value_expr_of_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
 };
 use sugar_ir_types::{IrFormula, IrTerm};
 
-use crate::types::{memento_kind, CallSite, MementoPool};
+use crate::types::{CallSite, MementoPool};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -140,7 +141,7 @@ pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(env) = pool.mementos.get(&cs.bridge_target_cid) else {
         return false;
     };
-    if memento_kind(env) != Some("contract") {
+    if pool.member_kind(&cs.bridge_target_cid) != Some("contract") {
         return false;
     }
     let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
@@ -193,15 +194,10 @@ impl<'a> CatalogResolver<'a> {
     /// the target memento is not a contract.
     fn target_contract_body(&self, op_name: &str) -> Option<Json> {
         let bridge = self.pool.bridges_by_symbol.get(op_name)?;
-        let bbody = bridge.get("evidence").and_then(|e| e.get("body"));
-        // v1.2-layered bridges carry the fields on `header`; v1.1-flat on
-        // `evidence.body`. Try flat first, then the header form.
-        let target_cid = bbody
-            .and_then(|b| b.get("targetContractCid"))
-            .or_else(|| bridge.pointer("/header/targetContractCid"))
+        let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
             .and_then(|v| v.as_str())?;
         let env = self.pool.mementos.get(target_cid)?;
-        if memento_kind(env) != Some("contract") {
+        if self.pool.member_kind(target_cid) != Some("contract") {
             return None;
         }
         self.pool
@@ -810,11 +806,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         };
         b
     };
-    let Some(target_cid) = bridge
-        .get("evidence")
-        .and_then(|e| e.get("body"))
-        .and_then(|b| b.get("targetContractCid"))
-        .or_else(|| bridge.pointer("/header/targetContractCid"))
+    let Some(target_cid) = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
     else {
         gdbg!("REJECT cond2: bridge for {ctor_name} has no targetContractCid");
@@ -825,10 +817,10 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         gdbg!("REJECT cond2: target contract {target_cid} not in pool.mementos");
         return None;
     };
-    if memento_kind(env) != Some("contract") {
+    if pool.member_kind(target_cid) != Some("contract") {
         gdbg!(
             "REJECT cond2: target {target_cid} kind != contract ({:?})",
-            memento_kind(env)
+            pool.member_kind(target_cid)
         );
         return None;
     }

@@ -31,7 +31,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_proof_envelope::ed25519_verify_string;
 
-use crate::cbor_decode::decode;
+use sugar_proof_envelope::ProofGraph;
 
 /// Outcome of a handshake attempt.
 #[derive(Debug, Clone)]
@@ -133,12 +133,12 @@ pub fn locate_producer_post(
     // flat path alone meant the producer post never resolved for harvested
     // calls, so the callsite fell through to the bare `instantiate` form
     // instead of the real `producer_post -> consumer_pre` implication.
-    let bridge_body = crate::types::memento_body(producer_bridge)?;
+    let bridge_body = sugar_proof_envelope::member_body(producer_bridge)?;
     let target_cid = bridge_body
         .get("targetContractCid")
         .and_then(|v| v.as_str())?;
     let producer_contract = pool_mementos.get(target_cid)?;
-    let producer_body = crate::types::memento_body(producer_contract)?;
+    let producer_body = sugar_proof_envelope::member_body(producer_contract)?;
     let post = producer_body
         .get("post")
         .filter(|v| v.is_object())
@@ -237,19 +237,11 @@ pub fn try_tier2(
 
 fn scan_proof_for_implication(path: &Path, want_property_hash: &str) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
-    let v = decode(&bytes).ok()?;
-    let root = v.as_map()?;
-    let members = root.get("members")?.as_map()?;
-    for (cid, env_v) in members {
-        let cid = cid.clone();
-        let env_bytes = env_v.as_bstr()?;
-        let env_text = std::str::from_utf8(env_bytes).ok()?;
-        let env: Json = serde_json::from_str(env_text).ok()?;
+    let graph = ProofGraph::read(&bytes).ok()?;
+    for view in graph.implications() {
+        let cid = view.cid().as_str().to_string();
+        let env: Json = serde_json::from_slice(view.bytes()).ok()?;
 
-        // Only consider implication mementos.
-        if env.pointer("/evidence/kind").and_then(|v| v.as_str()) != Some("implication") {
-            continue;
-        }
         let prop = env.get("propertyHash").and_then(|v| v.as_str())?;
         if prop != want_property_hash {
             continue;
@@ -266,10 +258,8 @@ fn scan_proof_for_implication(path: &Path, want_property_hash: &str) -> Option<S
         // (we don't have a key store here yet; for the demo the
         // implication memento embeds `producerPubkey` in its body
         // when minted by `cache_implication_memento`).
-        let pubkey_str = env
-            .pointer("/evidence/body/producerPubkey")
-            .and_then(|v| v.as_str())?;
-        if !ed25519_verify_string(pubkey_str, sig, unsigned_bytes.as_bytes()) {
+        let pubkey = view.field("producerPubkey")?;
+        if !ed25519_verify_string(&pubkey, sig, unsigned_bytes.as_bytes()) {
             continue;
         }
         return Some(cid);

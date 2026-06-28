@@ -34,10 +34,13 @@ pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
     AssertionSurfaceMemento, AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef,
-    BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractMemento,
-    ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
-    ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento, ProofGraph,
-    ProofRunMemento, SourceMemento, StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
+    BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractEntry,
+    ContractMemento, ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
+    member_body, member_field, member_kind, member_signature, member_signer, ImplicationMemento,
+    LibrarySugarBindingMemento,
+    MemberView, MementoCid, PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento,
+    SourceMemento,
+    StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,

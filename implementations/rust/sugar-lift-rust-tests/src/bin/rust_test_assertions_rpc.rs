@@ -22,7 +22,7 @@ use sugar_lift_rust_tests::{
     ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
     MacroRegistry, TargetCfg,
 };
-use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
+use sugar_verifier::{member_body, member_field};
 use syn::parse::Parser;
 use tracing::{debug, info, warn};
 
@@ -3540,17 +3540,17 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             let Some(bridge_env) = pool.bridges_by_symbol.get(source_symbol) else {
                 continue;
             };
-            let bridge_source_symbol = memento_body_field(bridge_env, "sourceSymbol")
+            let bridge_source_symbol = member_field(bridge_env, "sourceSymbol")
                 .and_then(Value::as_str)
                 .unwrap_or(source_symbol);
-            let target_cid = memento_body_field(bridge_env, "targetContractCid")
+            let target_cid = member_field(bridge_env, "targetContractCid")
                 .and_then(Value::as_str)
                 .unwrap_or_else(|| {
                     panic!(
                         "kit referenced bridge `{bridge_source_symbol}` without targetContractCid"
                     )
                 });
-            let proof_cid = memento_body_field(bridge_env, "targetProofCid")
+            let proof_cid = member_field(bridge_env, "targetProofCid")
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .or_else(|| {
@@ -3564,10 +3564,10 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
                 )
             });
-            if memento_kind(target_env) != Some("contract") {
+            if pool.member_kind(target_cid) != Some("contract") {
                 continue;
             }
-            let Some(target_body) = memento_body(target_env) else {
+            let Some(target_body) = member_body(target_env) else {
                 continue;
             };
             let Some(post) = target_body
@@ -3856,8 +3856,8 @@ fn source_memento_member_for_contract(
         .and_then(|name| name.strip_prefix("rust-source::").or(Some(name)))
         .map(str::to_string);
 
-    for env in pool.mementos.values() {
-        if memento_kind(env) != Some("source-memento") {
+    for (cid, env) in &pool.mementos {
+        if pool.member_kind(cid) != Some("source-memento") {
             continue;
         }
         let Some(payload) = source_memento_payload(env) else {
@@ -3880,7 +3880,7 @@ fn source_memento_member_for_contract(
 }
 
 fn source_memento_payload(env: &Value) -> Option<&Value> {
-    env.get("body").or_else(|| memento_body(env))
+    env.get("body").or_else(|| member_body(env))
 }
 
 fn factory_audit_row(

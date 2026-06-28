@@ -50,32 +50,37 @@ impl WitnessVerifyResult {
 pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessVerifyResult> {
     let mut out = Vec::new();
     let resolvers = find_resolvers(project_root);
-    for env in pool.mementos.values() {
-        if env.pointer("/header/kind").and_then(|v| v.as_str()) != Some("witness-memento") {
+    for (cid, env) in &pool.mementos {
+        if pool.member_kind(cid) != Some("witness-memento") {
             continue;
         }
         // The envelope separates METADATA from CONTENT. Route + index by the
         // HEADER (the metadata: kind, witnessCid, signer); verify the BODY (the
         // signed content). The witness's actual run-body is resolved separately
         // from the package -- the deepest content/metadata split.
-        let witness_cid = env
-            .pointer("/header/witnessCid")
+        let witness_cid = pool
+            .member_field(cid, "witnessCid")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let signer = env
-            .pointer("/header/signer")
+        let signer = pool
+            .member_field(cid, "signer")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        // body is kept as-is: no pool-level full-body accessor exists, and
+        // the kit oracle resolver requires the whole body object.
         let body = env.get("body").cloned().unwrap_or(Value::Null);
-        let signature = body.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+        let signature = pool
+            .member_field(cid, "signature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let mut checks: Vec<String> = Vec::new();
 
         // ENVELOPE INTEGRITY: the content must match its metadata. The body's
         // own witness_cid must equal the header's witnessCid, or the envelope
         // was tampered (content swapped under unchanged metadata).
-        let body_cid = body
-            .get("witness_cid")
+        let body_cid = pool
+            .member_field(cid, "witness_cid")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if body_cid != witness_cid {
@@ -108,8 +113,8 @@ pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessV
         //
         // `witness_attestation_payload` is the single source of truth shared
         // with the mint path (cmd_verify) for the postmark bytes.
-        let observed_at = body
-            .get("observed_at")
+        let observed_at = pool
+            .member_field(cid, "observed_at")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let signature_ok = if witness_cid.is_empty() {
@@ -136,7 +141,7 @@ pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessV
         // OUTCOME: a witness recording a FAILED run is not a discharge, even with
         // a valid CID + signature. Refuse it. Witnesses with no `outcome` (a poem,
         // a CI log, a compiler report) skip this check and proceed to recompute.
-        if body.get("outcome").and_then(|v| v.as_str()) == Some("failed") {
+        if pool.member_field(cid, "outcome").and_then(|v| v.as_str()) == Some("failed") {
             out.push(WitnessVerifyResult {
                 witness_cid,
                 verdict: "refused".to_string(),
@@ -198,8 +203,8 @@ pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessV
 /// True when the pool carries at least one `witness-memento`.
 pub fn has_witnesses(pool: &MementoPool) -> bool {
     pool.mementos
-        .values()
-        .any(|e| e.pointer("/header/kind").and_then(|v| v.as_str()) == Some("witness-memento"))
+        .keys()
+        .any(|cid| pool.member_kind(cid) == Some("witness-memento"))
 }
 
 /// Scan `.sugar/lift/*/manifest.toml` for EVERY kit that declares a

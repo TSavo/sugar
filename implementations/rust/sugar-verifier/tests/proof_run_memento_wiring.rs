@@ -9,7 +9,6 @@ use sugar_ir_types::{ProofRunMemento, StageReceipt};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
 };
-use sugar_verifier::cbor_decode::decode;
 use sugar_verifier::load_all_proofs;
 use sugar_verifier::{Runner, RunnerConfig, VERIFIER_STAGE_VOCABULARY};
 
@@ -44,15 +43,10 @@ fn write_empty_fixture_proof(project_root: &Path) -> String {
 
 fn read_members(path: &Path) -> BTreeMap<String, Vec<u8>> {
     let bytes = fs::read(path).expect("read proof run bundle");
-    let catalog = decode(&bytes).expect("decode proof run bundle");
-    let members = catalog
-        .as_map()
-        .and_then(|root| root.get("members"))
-        .and_then(|members| members.as_map())
-        .expect("members map");
-    members
-        .iter()
-        .map(|(cid, value)| (cid.clone(), value.as_bstr().expect("member bytes").to_vec()))
+    let graph = ProofGraph::read(&bytes).expect("decode proof run bundle");
+    graph
+        .members_view()
+        .map(|view| (view.cid().as_str().to_string(), view.bytes().to_vec()))
         .collect()
 }
 

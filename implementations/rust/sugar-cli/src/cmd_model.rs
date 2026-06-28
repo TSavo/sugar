@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use owo_colors::OwoColorize;
 use serde_json::Value as Json;
-use sugar_verifier::cbor_decode::decode;
+use sugar_proof_envelope::ProofGraph;
 
 use sugar_ir_compiler_smt_lib::derive_query::{
     emit_blocks_derive_query, emit_derive_query, parse_model_string,
@@ -481,14 +481,8 @@ fn run_blocks_derive(args: &ModelArgs, payload_json: &str) -> u8 {
 /// ever the lifted universe expression.
 fn extract_bv_tree_from_proof(path: &PathBuf) -> Result<Json, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let catalog = decode(&bytes).map_err(|e| format!("CBOR decode {}: {e}", path.display()))?;
-    let map = catalog
-        .as_map()
-        .ok_or_else(|| "catalog root is not a CBOR map".to_string())?;
-    let members = map
-        .get("members")
-        .and_then(|v| v.as_map())
-        .ok_or_else(|| "catalog has no `members` map".to_string())?;
+    let graph = ProofGraph::read(&bytes)
+        .map_err(|e| format!("CBOR decode {}: {e}", path.display()))?;
 
     // Collect EVERY int32.eq-bv-expr universe bv_tree across all members. We
     // never first-match: ambiguity must refuse. Note one universe is often
@@ -497,16 +491,8 @@ fn extract_bv_tree_from_proof(path: &PathBuf) -> Result<Json, String> {
     // that matters is the DISTINCT universe DEFINITION. So we dedup by structure
     // and require exactly one distinct bv_tree.
     let mut trees: Vec<Json> = Vec::new();
-    for (_cid, val) in members {
-        let bytes = match val.as_bstr() {
-            Some(b) => b,
-            None => continue,
-        };
-        let txt = match std::str::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let parsed: Json = match serde_json::from_str(txt) {
+    for view in graph.members_view() {
+        let parsed: Json = match serde_json::from_slice(view.bytes()) {
             Ok(v) => v,
             Err(_) => continue,
         };

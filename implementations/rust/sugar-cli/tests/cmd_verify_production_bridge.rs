@@ -347,7 +347,7 @@ fn mint_auto_writes_body_discharge_bridge() {
         )
     });
 
-    let target_cid = sugar_verifier::types::memento_body_field(bridge, "targetContractCid")
+    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge must carry targetContractCid")
         .to_string();
@@ -355,18 +355,18 @@ fn mint_auto_writes_body_discharge_bridge() {
     // That target CID must resolve (by member-CID key, exactly as
     // CatalogResolver does) to a contract carrying the body-derived
     // formals + post.
-    let target = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let _ = pool.mementos.get(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
     assert_eq!(
-        sugar_verifier::types::memento_kind(target),
+        pool.member_kind(&target_cid),
         Some("contract"),
         "bridge target must be a contract memento"
     );
-    let formals = sugar_verifier::types::memento_body_field(target, "formals")
+    let formals = pool.member_field(&target_cid, "formals")
         .and_then(|v| v.as_array())
         .expect("tool-written op-contract must carry formals (delta 2)");
     assert_eq!(
@@ -375,7 +375,7 @@ fn mint_auto_writes_body_discharge_bridge() {
         "op-contract formals must be [x]"
     );
     assert!(
-        sugar_verifier::types::memento_body_field(target, "post").is_some(),
+        pool.member_field(&target_cid, "post").is_some(),
         "op-contract must carry the body-derived post"
     );
 
@@ -398,17 +398,17 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         )
     });
 
-    let target_cid = sugar_verifier::types::memento_body_field(bridge, "targetContractCid")
+    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge must carry targetContractCid")
         .to_string();
-    let target = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let _ = pool.mementos.get(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let formals = sugar_verifier::types::memento_body_field(target, "formals")
+    let formals = pool.member_field(&target_cid, "formals")
         .and_then(|v| v.as_array())
         .expect("zero-arg op-contract must carry an explicit formals array");
     assert!(
@@ -416,7 +416,7 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         "zero-arg op-contract formals must stay empty; got {formals:?}"
     );
     assert!(
-        sugar_verifier::types::memento_body_field(target, "post").is_some(),
+        pool.member_field(&target_cid, "post").is_some(),
         "zero-arg op-contract must carry the body-derived post"
     );
 

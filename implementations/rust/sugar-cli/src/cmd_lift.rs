@@ -1519,7 +1519,7 @@ fn source_report_from_proof_pool(
     let mut contracts = Vec::new();
     let mut contract_names_by_cid = BTreeMap::new();
     for (cid, envelope) in &pool.mementos {
-        if sugar_verifier::memento_kind(envelope) != Some("contract") {
+        if pool.member_kind(cid) != Some("contract") {
             continue;
         }
         let mut contract = proof_contract_value(pool, cid, envelope);
@@ -1536,11 +1536,11 @@ fn source_report_from_proof_pool(
     }
 
     let mut source_mementos = Vec::new();
-    for envelope in pool.mementos.values() {
-        if sugar_verifier::memento_kind(envelope) != Some("source-memento") {
+    for (cid, envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("source-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !proof_source_memento_matches_filter(body, filter))
@@ -1551,11 +1551,11 @@ fn source_report_from_proof_pool(
     }
 
     let mut factory_walk = Vec::new();
-    for envelope in pool.mementos.values() {
-        if sugar_verifier::memento_kind(envelope) != Some("factory-walk-memento") {
+    for (cid, envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("factory-walk-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !factory_audit_matches_filter(body, filter)) {
@@ -1565,11 +1565,11 @@ fn source_report_from_proof_pool(
     }
 
     let mut assertion_surface_audits = Vec::new();
-    for envelope in pool.mementos.values() {
-        if sugar_verifier::memento_kind(envelope) != Some("assertion-surface-memento") {
+    for (cid, envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("assertion-surface-memento") {
             continue;
         }
-        let Some(body) = sugar_verifier::memento_body(envelope) else {
+        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
             continue;
         };
         if contract_filter
@@ -1581,8 +1581,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut plan_mementos = Vec::new();
-    for envelope in pool.mementos.values() {
-        if sugar_verifier::memento_kind(envelope) != Some("plan-memento") {
+    for (cid, envelope) in &pool.mementos {
+        if pool.member_kind(cid) != Some("plan-memento") {
             continue;
         }
         if let Some(plan) = proof_plan_memento_with_atoms(pool, envelope) {
@@ -1600,13 +1600,13 @@ fn source_report_from_proof_pool(
         .collect::<Vec<_>>();
     let implication_count = pool
         .mementos
-        .values()
-        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("implication"))
+        .iter()
+        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("implication"))
         .count();
     let witness_count = pool
         .mementos
-        .values()
-        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("witness-memento"))
+        .iter()
+        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("witness-memento"))
         .count();
     if implication_count > 0 && call_edges.is_empty() {
         call_edges.push(serde_json::json!({
@@ -1652,20 +1652,21 @@ fn proof_implication_call_edges(
     contract_names_by_cid: &BTreeMap<String, String>,
 ) -> Vec<Value> {
     pool.mementos
-        .values()
-        .filter(|envelope| sugar_verifier::memento_kind(envelope) == Some("implication"))
-        .filter_map(|envelope| proof_implication_call_edge(envelope, contract_names_by_cid))
+        .iter()
+        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("implication"))
+        .filter_map(|(cid, _)| proof_implication_call_edge(pool, cid, contract_names_by_cid))
         .collect()
 }
 
 fn proof_implication_call_edge(
-    envelope: &Value,
+    pool: &sugar_verifier::types::MementoPool,
+    cid: &str,
     contract_names_by_cid: &BTreeMap<String, String>,
 ) -> Option<Value> {
     let antecedent_cid =
-        sugar_verifier::memento_body_field(envelope, "antecedentCid").and_then(Value::as_str)?;
+        pool.member_field(cid, "antecedentCid").and_then(|v| v.as_str())?;
     let consequent_cid =
-        sugar_verifier::memento_body_field(envelope, "consequentCid").and_then(Value::as_str)?;
+        pool.member_field(cid, "consequentCid").and_then(|v| v.as_str())?;
     let source = contract_names_by_cid
         .get(antecedent_cid)
         .cloned()
@@ -1674,11 +1675,11 @@ fn proof_implication_call_edge(
         .get(consequent_cid)
         .cloned()
         .unwrap_or_else(|| consequent_cid.to_string());
-    let source_slot = sugar_verifier::memento_body_field(envelope, "antecedentSlot")
-        .and_then(Value::as_str)
+    let source_slot = pool.member_field(cid, "antecedentSlot")
+        .and_then(|v| v.as_str())
         .unwrap_or("post");
-    let target_slot = sugar_verifier::memento_body_field(envelope, "consequentSlot")
-        .and_then(Value::as_str)
+    let target_slot = pool.member_field(cid, "consequentSlot")
+        .and_then(|v| v.as_str())
         .unwrap_or("pre");
     let mut edge = serde_json::json!({
         "kind": "implication",
@@ -1695,7 +1696,7 @@ fn proof_implication_call_edge(
         ("proofWitness", "proofWitness"),
         ("smtLibInput", "smtLibInput"),
     ] {
-        if let Some(value) = sugar_verifier::memento_body_field(envelope, field).cloned() {
+        if let Some(value) = pool.member_field(cid, field).cloned() {
             edge[out_field] = value;
         }
     }
@@ -1971,9 +1972,9 @@ fn proof_contract_value(
     cid: &str,
     envelope: &Value,
 ) -> Value {
-    let name = sugar_verifier::memento_body_field(envelope, "contractName")
-        .or_else(|| sugar_verifier::memento_body_field(envelope, "name"))
-        .and_then(Value::as_str)
+    let name = pool.member_field(cid, "contractName")
+        .or_else(|| pool.member_field(cid, "name"))
+        .and_then(|v| v.as_str())
         .unwrap_or("<unknown contract>");
     let mut contract = serde_json::json!({
         "kind": "contract",
@@ -2021,7 +2022,7 @@ fn proof_plan_memento_with_atoms(
     pool: &sugar_verifier::types::MementoPool,
     envelope: &Value,
 ) -> Option<Value> {
-    let mut body = sugar_verifier::memento_body(envelope)?.clone();
+    let mut body = sugar_proof_envelope::member_body(envelope)?.clone();
     let refs = body
         .get("planAtoms")
         .or_else(|| body.get("plan_atoms"))
@@ -4361,7 +4362,7 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
 }
 
 fn plan_body_from_memento(value: &Value) -> Option<&Value> {
-    if value.pointer("/header/kind").and_then(Value::as_str) == Some("plan-memento") {
+    if sugar_proof_envelope::member_kind(value) == Some("plan-memento") {
         return value.get("body");
     }
     if value.get("kind").and_then(Value::as_str) == Some("component-plan") {
@@ -9649,10 +9650,10 @@ mod tests {
             "fn sample() { let x = 1 + 2; let y = runtime(); }\n",
         )
         .expect("write source");
-        let source: syn::File = syn::parse_file(
-            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
-        )
-        .expect("parse source");
+        let foo_source =
+            std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source");
+        let source: syn::File =
+            syn::parse_file(&foo_source).expect("parse source");
         let syn::Item::Fn(item) = &source.items[0] else {
             panic!("expected function");
         };
@@ -9662,26 +9663,28 @@ mod tests {
         let syn::Stmt::Local(second) = &item.block.stmts[1] else {
             panic!("expected second let");
         };
+        // to_json_stamped stamps sourceOracle.source so resolve_factory_walk_term
+        // can resolve the term text without an RPC oracle round-trip.
         let first_memento = sugar_walk::source_oracle::source_memento_of_term_span(
             "tests/foo.rs",
-            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
+            &foo_source,
             first.init.as_ref().expect("first init").expr.span(),
             "sample",
             &item.sig,
             &item.block,
         )
         .expect("first term memento")
-        .to_json();
+        .to_json_stamped(&foo_source);
         let second_memento = sugar_walk::source_oracle::source_memento_of_term_span(
             "tests/foo.rs",
-            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
+            &foo_source,
             second.init.as_ref().expect("second init").expr.span(),
             "sample",
             &item.sig,
             &item.block,
         )
         .expect("second term memento")
-        .to_json();
+        .to_json_stamped(&foo_source);
         let response = serde_json::json!({
             "kind": "ir-document",
             "ir": [

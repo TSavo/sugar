@@ -48,8 +48,6 @@ use libsugar::core::{
     PathDocument, Term, Verb, Verdict,
 };
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
-#[cfg(test)]
-use sugar_claim_envelope::mint_contract;
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields, compute_contract_set_cid, contract_cid, mint_authority,
     mint_bridge, mint_contract_with_body_cid, mint_implication, Authoring,
@@ -58,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
-    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
-    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
-    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
-    SourceMemento, WitnessMemento,
+    build_proof_envelope, ed25519_pubkey_string, member_field, member_kind, proof_filename,
+    AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
+    ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
+    FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput,
+    ProofGraph, SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1250,7 +1248,6 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     let mut pool = sugar_verifier::types::MementoPool::default();
     sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, &mut pool);
 
-    use sugar_verifier::types::{memento_body_field, memento_kind};
     // member CID -> the `.proof` bundle CID it was loaded from. This is the
     // `targetProofCid` a cross-crate bridge must pin so the verifier enforces
     // ConsequentBundlePinned (the contract member MUST come from THIS bundle,
@@ -1292,25 +1289,23 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         ),
     > = std::collections::BTreeMap::new();
     for (cid, env) in &pool.mementos {
-        if memento_kind(env) != Some("contract") {
+        if pool.member_kind(cid) != Some("contract") {
             continue;
         }
-        let name = match env
-            .pointer("/header/contractName")
-            .or_else(|| env.pointer("/header/name"))
-            .or_else(|| env.pointer("/evidence/body/contractName"))
-            .or_else(|| env.pointer("/evidence/body/name"))
+        let name = match pool
+            .member_field(cid, "contractName")
+            .or_else(|| pool.member_field(cid, "name"))
             .and_then(|v| v.as_str())
         {
             Some(n) => n.to_string(),
             None => continue,
         };
         let body_policy = body_discharge_policy_from_fields(
-            memento_body_field(env, "bodyDischargeEligible")
-                .or_else(|| memento_body_field(env, "body_discharge_eligible")),
-            memento_body_field(env, "bodyDischargeRefusalReason")
-                .or_else(|| memento_body_field(env, "body_discharge_refusal_reason")),
-            memento_body_field(env, "dischargePolicy"),
+            pool.member_field(cid, "bodyDischargeEligible")
+                .or_else(|| pool.member_field(cid, "body_discharge_eligible")),
+            pool.member_field(cid, "bodyDischargeRefusalReason")
+                .or_else(|| pool.member_field(cid, "body_discharge_refusal_reason")),
+            pool.member_field(cid, "dischargePolicy"),
         );
         log_body_discharge_policy_warnings(
             "mint-dependency-contract-binding",
@@ -1321,7 +1316,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let body_discharge_refusal_reason = body_policy.body_discharge_refusal_reason;
         // The dependency crate this contract belongs to (the lifter stamped it
         // at mint, the CLI forwards it opaquely).
-        let library = memento_body_field(env, "library")
+        let library = pool.member_field(cid, "library")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
@@ -1330,7 +1325,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             .as_ref()
             .and_then(|body| body.get("pre"))
             .is_some_and(has_nontrivial_pre_json);
-        let has_post = memento_body_field(env, "postHash").is_some();
+        let has_post = pool.member_field(cid, "postHash").is_some();
         let body_bearing = (has_pre || has_post) && body_discharge_eligible;
         let bundle = member_to_bundle.get(cid.as_str()).map(|b| b.to_string());
         let key = (library, name);
@@ -4766,23 +4761,14 @@ mod tests {
         assert!(filename_cid.starts_with("blake3-512:"));
         assert_eq!(contract_set_cid, compute_contract_set_cid(vec![]));
 
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        assert_eq!(members.len(), 1);
-        let member = members.values().next().expect("library binding member");
-        let envelope: Value =
-            serde_json::from_slice(member.as_bstr().expect("member bytes")).expect("member JSON");
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        let all_members: Vec<_> = graph.members_view().collect();
+        assert_eq!(all_members.len(), 1);
+        let view = all_members.into_iter().next().expect("library binding member");
+        assert_eq!(view.kind().as_deref(), Some("library-sugar-binding-entry"));
+        let envelope: Value = serde_json::from_slice(view.bytes()).expect("member JSON");
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(|v| v.as_str()),
-            Some("library-sugar-binding-entry")
-        );
-        assert_eq!(
-            envelope
-                .pointer("/body/target_library_tag")
+            member_field(&envelope, "target_library_tag")
                 .and_then(|v| v.as_str()),
             Some("requests")
         );
@@ -4838,8 +4824,8 @@ mod tests {
         })];
 
         let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let header = contract_header(&catalog, "body_graph_contract");
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let header = contract_header(&graph, "body_graph_contract");
         let body_cid = header
             .get("bodyCid")
             .and_then(|value| value.as_str())
@@ -4848,13 +4834,8 @@ mod tests {
             header.get("post").is_none(),
             "contract formulas must live in catalog body/atoms, not inline header fields"
         );
-        let bodies = catalog
-            .as_map()
-            .and_then(|root| root.get("body"))
-            .and_then(|body| body.as_map())
-            .expect("catalog body map");
         assert!(
-            bodies.contains_key(body_cid),
+            graph.bodies().any(|b| b.cid().as_str() == body_cid),
             "catalog body map must contain contract bodyCid {body_cid}"
         );
 
@@ -4871,7 +4852,7 @@ mod tests {
             .mementos
             .values()
             .find(|env| {
-                env.pointer("/header/name").and_then(|value| value.as_str())
+                member_field(env, "name").and_then(|value| value.as_str())
                     == Some("body_graph_contract")
             })
             .expect("loaded contract memento");
@@ -4926,82 +4907,34 @@ mod tests {
         })
     }
 
-    fn contract_header(catalog: &sugar_verifier::cbor_decode::CborValue, name: &str) -> Value {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .find_map(|envelope| {
-                let is_contract =
-                    envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("contract");
-                let has_name = envelope
-                    .pointer("/header/name")
-                    .or_else(|| envelope.pointer("/header/contractName"))
-                    .and_then(|v| v.as_str())
-                    == Some(name);
+    fn contract_header(graph: &ProofGraph, name: &str) -> Value {
+        graph
+            .members_view()
+            .find_map(|view| {
+                let is_contract = view.kind().as_deref() == Some("contract");
+                let has_name = view.field("name").as_deref() == Some(name)
+                    || view.field("contractName").as_deref() == Some(name);
                 (is_contract && has_name).then(|| {
-                    envelope
-                        .pointer("/header")
-                        .expect("contract header")
-                        .clone()
+                    let envelope = view.json();
+                    envelope.get("header").expect("contract header").clone()
                 })
             })
             .unwrap_or_else(|| panic!("contract header `{name}` not found"))
     }
 
-    fn source_memento_members(catalog: &sugar_verifier::cbor_decode::CborValue) -> Vec<Value> {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .filter(|envelope| {
-                envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("source-memento")
-            })
-            .collect()
+    fn source_memento_members(graph: &ProofGraph) -> Vec<Value> {
+        graph.sources().map(|view| view.json()).collect()
     }
 
-    fn plan_memento_members(catalog: &sugar_verifier::cbor_decode::CborValue) -> Vec<Value> {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .filter(|envelope| {
-                envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("plan-memento")
-            })
-            .collect()
+    fn plan_memento_members(graph: &ProofGraph) -> Vec<Value> {
+        graph.plans().map(|view| view.json()).collect()
     }
 
-    fn factory_walk_memento_members(
-        catalog: &sugar_verifier::cbor_decode::CborValue,
-    ) -> Vec<Value> {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .filter(|envelope| {
-                envelope.pointer("/header/kind").and_then(|v| v.as_str())
-                    == Some("factory-walk-memento")
-            })
+    fn factory_walk_memento_members(graph: &ProofGraph) -> Vec<Value> {
+        graph
+            .members_view()
+            .filter(|v| v.kind().as_deref() == Some("factory-walk-memento"))
+            .map(|view| view.json())
             .collect()
     }
 
@@ -5016,23 +4949,16 @@ mod tests {
             true,
         )
         .expect("mint function contract");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        contract_header(&catalog, "panic_locus_subject")
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        contract_header(&graph, "panic_locus_subject")
     }
 
-    fn bridge_header(catalog: &sugar_verifier::cbor_decode::CborValue) -> Value {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .find_map(|envelope| {
-                (envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("bridge"))
-                    .then(|| envelope.pointer("/header").expect("bridge header").clone())
+    fn bridge_header(graph: &ProofGraph) -> Value {
+        graph
+            .bridges()
+            .find_map(|view| {
+                let env = view.json();
+                env.pointer("/header").cloned()
             })
             .expect("bridge header")
     }
@@ -5206,8 +5132,8 @@ mod tests {
             true,
         )
         .expect("well-formed bridge callsite must mint");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let header = bridge_header(&catalog);
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        let header = bridge_header(&graph);
         assert_eq!(
             header.get("callsite"),
             Some(&json!({
@@ -5259,26 +5185,20 @@ mod tests {
             true,
         )
         .expect("mint contracts plus implication");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
+        let all_members: Vec<_> = graph.members_view().collect();
 
-        assert_eq!(members.len(), 3);
+        assert_eq!(all_members.len(), 3);
 
         let mut contract_count = 0;
         let mut implication_count = 0;
-        for member in members.values() {
-            let bytes = member.as_bstr().expect("member bytes");
-            let envelope: Value = serde_json::from_slice(bytes).expect("member JSON");
-            match envelope.pointer("/header/kind").and_then(|v| v.as_str()) {
+        for view in &all_members {
+            match view.kind().as_deref() {
                 Some("contract") => contract_count += 1,
                 Some("implication") => {
                     implication_count += 1;
-                    let inputs = envelope
-                        .pointer("/header/inputCids")
+                    let envelope = view.json();
+                    let inputs = member_field(&envelope, "inputCids")
                         .and_then(|v| v.as_array())
                         .expect("implication inputCids");
                     assert_eq!(inputs.len(), 2);
@@ -5432,34 +5352,17 @@ mod tests {
         let (bytes, _, _) =
             mint_from_ir_document(&ir, None, None, None, Path::new("."), Path::new("."), true)
                 .expect("mint contract plus explicit bridge");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
+        let graph = ProofGraph::read(&bytes).expect("decode proof");
 
         let mut contract_count = 0;
         let mut bridge_count = 0;
-        for member in members.values() {
-            let bytes = member.as_bstr().expect("member bytes");
-            let envelope: Value = serde_json::from_slice(bytes).expect("member JSON");
-            match envelope.pointer("/header/kind").and_then(|v| v.as_str()) {
+        for view in graph.members_view() {
+            match view.kind().as_deref() {
                 Some("contract") => contract_count += 1,
                 Some("bridge") => {
                     bridge_count += 1;
-                    assert_eq!(
-                        envelope
-                            .pointer("/header/targetContractCid")
-                            .and_then(|v| v.as_str()),
-                        Some(target_cid)
-                    );
-                    assert_eq!(
-                        envelope
-                            .pointer("/header/sourceSymbol")
-                            .and_then(|v| v.as_str()),
-                        Some("callee")
-                    );
+                    assert_eq!(view.field("targetContractCid").as_deref(), Some(target_cid));
+                    assert_eq!(view.field("sourceSymbol").as_deref(), Some("callee"));
                 }
                 other => panic!("unexpected member kind {other:?}"),
             }
@@ -5493,15 +5396,13 @@ mod tests {
         let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
 
         // The tie is recorded in the bundle metadata, sorted+deduped.
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode");
+        let catalog =
+            sugar_proof_envelope::ProofCatalog::read(&minted.bytes).expect("read catalog");
         let conjoined = catalog
-            .as_map()
-            .and_then(|m| m.get("metadata"))
-            .and_then(|v| v.as_map())
-            .and_then(|m| m.get("sugar.conjoinedImports"))
-            .and_then(|v| v.as_tstr())
+            .metadata
+            .get("sugar.conjoinedImports")
             .expect("conjoinedImports metadata");
-        assert_eq!(conjoined, format!("{dep_a},{dep_b}"), "sorted dep CID set");
+        assert_eq!(conjoined, &format!("{dep_a},{dep_b}"), "sorted dep CID set");
 
         // THE DIFFERENTIAL: change the dependency set -> the vendor bundle CID
         // MUST move. This is the a->b->c identity's enforcement: a bundle
@@ -5537,9 +5438,10 @@ mod tests {
             true,
         )
         .expect("leaf mint");
-        let leaf_cat = sugar_verifier::cbor_decode::decode(&leaf.bytes).expect("decode leaf");
+        let leaf_cat =
+            sugar_proof_envelope::ProofCatalog::read(&leaf.bytes).expect("read leaf catalog");
         assert!(
-            leaf_cat.as_map().and_then(|m| m.get("metadata")).is_none(),
+            leaf_cat.metadata.is_empty(),
             "a leaf with no imports carries no conjoined-imports tie"
         );
     }
@@ -5567,25 +5469,16 @@ mod tests {
             .expect("producer binding");
         assert_eq!(binding["library"], "libsugar");
 
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        let contract = members
-            .values()
-            .filter_map(|member| member.as_bstr())
-            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-            .find(|env| {
-                env.pointer("/header/name")
-                    .or_else(|| env.pointer("/header/contractName"))
-                    .and_then(|v| v.as_str())
-                    == Some("qualified.callee")
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let view = graph
+            .members_view()
+            .find(|v| {
+                v.field("name").as_deref() == Some("qualified.callee")
+                    || v.field("contractName").as_deref() == Some("qualified.callee")
             })
             .expect("contract envelope");
         assert_eq!(
-            contract
+            view.json()
                 .pointer("/metadata/library")
                 .and_then(|v| v.as_str()),
             Some("libsugar")
@@ -5620,38 +5513,34 @@ mod tests {
 
         let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
             .expect("mint ir-document");
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let header = contract_header(&catalog, contract_name);
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let header = contract_header(&graph, contract_name);
         assert!(
             header.get("sourceWarrants").is_none(),
             "source mementos belong in the proof envelope, not the contract header: {header:#?}"
         );
 
-        let mementos = source_memento_members(&catalog);
+        let mementos = source_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(|v| v.as_str()),
+            member_kind(memento),
             Some("source-memento")
         );
         assert_eq!(
-            memento
-                .pointer("/header/contractName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "contractName").and_then(|v| v.as_str()),
             Some(contract_name)
         );
         assert_eq!(
-            memento
-                .pointer("/header/claimName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "claimName").and_then(|v| v.as_str()),
             Some(contract_name)
         );
         assert_eq!(
-            memento.pointer("/header/role").and_then(|v| v.as_str()),
+            member_field(memento, "role").and_then(|v| v.as_str()),
             Some("java.strong-universe")
         );
         assert_eq!(
-            memento.pointer("/header/file").and_then(|v| v.as_str()),
+            member_field(memento, "file").and_then(|v| v.as_str()),
             Some("src/Codec.java")
         );
         assert_eq!(
@@ -5701,24 +5590,20 @@ mod tests {
             true,
         )
         .expect("mint ir-document");
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let mementos = source_memento_members(&catalog);
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let mementos = source_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento
-                .pointer("/header/claimName")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "claimName").and_then(|v| v.as_str()),
             Some("Codec.encode#euf#c:callresult_encode_a1(s:bar)::assertion")
         );
         assert_eq!(
-            memento.pointer("/header/role").and_then(|v| v.as_str()),
+            member_field(memento, "role").and_then(|v| v.as_str()),
             Some("java.fact")
         );
         assert_eq!(
-            memento
-                .pointer("/header/sourceCid")
-                .and_then(|v| v.as_str()),
+            member_field(memento, "sourceCid").and_then(|v| v.as_str()),
             Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
         );
 
@@ -5748,11 +5633,11 @@ mod tests {
 
         assert!(plan_atoms.is_empty());
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(&envelope),
             Some("plan-memento")
         );
         assert_eq!(
-            envelope.pointer("/header/planCid").and_then(Value::as_str),
+            member_field(&envelope, "planCid").and_then(Value::as_str),
             Some(body_cid.as_str()),
             "the letter CID belongs in the envelope header"
         );
@@ -5853,12 +5738,12 @@ mod tests {
             true,
         )
         .expect("mint ir-document");
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let mementos = plan_memento_members(&catalog);
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let mementos = plan_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(memento),
             Some("plan-memento")
         );
         assert_eq!(
@@ -5947,13 +5832,13 @@ mod tests {
             mint_lift_response(&root, &out_dir, true, lift_response).expect("mint lift response");
         let proof_file = result.proof_file.expect("proof path");
         let proof_bytes = std::fs::read(&proof_file).expect("read proof");
-        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
-        let mementos = factory_walk_memento_members(&catalog);
+        let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
+        let mementos = factory_walk_memento_members(&graph);
 
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert_eq!(
-            memento.pointer("/header/kind").and_then(Value::as_str),
+            member_kind(memento),
             Some("factory-walk-memento")
         );
         assert_eq!(
@@ -6027,20 +5912,15 @@ mod tests {
             true,
         )
         .expect("mint ir-document");
-        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
-        let atoms = catalog
-            .as_map()
-            .and_then(|root| root.get("atoms"))
-            .and_then(|atoms| atoms.as_map())
-            .expect("catalog atoms map");
-        let stored = atoms
-            .get(expected_atom.cid().as_str())
-            .and_then(|value| value.as_bstr())
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let stored_json: Value = graph
+            .atoms()
+            .find(|a| a.cid().as_str() == expected_atom.cid().as_str())
+            .map(|a| serde_json::from_slice(a.bytes()).expect("plan atom json"))
             .expect("plan atom is stored in catalog atoms");
-        let stored_json: Value = serde_json::from_slice(stored).expect("plan atom json");
         assert_eq!(stored_json["kind"], "plan-atom");
         assert_eq!(stored_json["surface"], "rust-fn-contracts");
-        let memento = plan_memento_members(&catalog).pop().expect("plan memento");
+        let memento = plan_memento_members(&graph).pop().expect("plan memento");
         assert_eq!(
             memento
                 .pointer("/body/planAtoms/0/atomCid")
@@ -6319,74 +6199,36 @@ mod tests {
         let root = temp_workspace("dependency_contract_discharge_policy_refused");
         let imports_dir = root.join(".sugar").join("imports");
         std::fs::create_dir_all(&imports_dir).expect("create imports dir");
-        let signer_seed: Ed25519Seed = [0x42; 32];
-        let produced_at = "2026-06-01T00:00:00.000Z".to_string();
-        let contract = mint_contract(&MintContractArgs {
-            evidence_term: None,
-            contract_name: "new_policy_dep".to_string(),
-            pre: None,
-            post: Some(json_to_cvalue(&json!({
+        // Use mint_from_ir_document so the proof carries a body-graph-backed
+        // contract (bodyCid present); the new load_catalog_bytes rejects the old
+        // inline (ClaimContractMemento / no bodyCid) format.
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "new_policy_dep",
+            "outBinding": "result",
+            "post": {
                 "kind": "atomic",
                 "name": "=",
                 "args": [
                     {"kind": "var", "name": "result"},
                     {"kind": "var", "name": "x"}
                 ]
-            }))),
-            inv: None,
-            out_binding: "result".to_string(),
-            produced_by: "test".to_string(),
-            produced_at: produced_at.clone(),
-            input_cids: Vec::new(),
-            authoring: Authoring::KitAuthor {
-                author: "test".to_string(),
-                note: None,
             },
-            signer_seed,
-            formals: vec!["x".to_string()],
-            emit_empty_formals: false,
-            formal_sorts: Vec::new(),
-            library: Some("dep_lib".to_string()),
-            body_discharge_eligible: true,
-            body_discharge_refusal_reason: None,
-            panic_loci: Vec::new(),
-            class_shapes: Vec::new(),
-            source_warrants: Vec::new(),
-        })
-        .expect("mint contract");
-        let mut env: Value =
-            serde_json::from_slice(&contract.canonical_bytes).expect("parse memento");
-        env.pointer_mut("/metadata")
-            .and_then(|v| v.as_object_mut())
-            .expect("metadata object")
-            .insert(
-                "dischargePolicy".to_string(),
-                json!({
-                    "bodyReduction": {
-                        "status": "refused",
-                        "reason": "totality-axiom"
-                    }
-                }),
-            );
-
-        let contract_bytes = serde_json::to_vec(&env).expect("serialize mutated memento");
-        let contract_memento = ClaimContractMemento::new(contract_bytes);
-        assert_eq!(contract_memento.cid().as_str(), contract.cid);
-        let mut graph = ProofGraph::new();
-        graph.push_claim_contract(contract_memento);
-        let proof = build_proof_envelope(&ProofEnvelopeInput {
-            name: "dependency-policy-fixture".to_string(),
-            version: "1.0.0".to_string(),
-            binary_cid: None,
-            metadata: None,
-            graph,
-            signer_cid: ed25519_pubkey_string(&signer_seed),
-            signer_seed,
-            declared_at: produced_at,
-        });
+            "library": "dep_lib",
+            "dischargePolicy": {
+                "bodyReduction": {
+                    "status": "refused",
+                    "reason": "totality-axiom"
+                }
+            }
+        })];
+        let (proof_bytes, proof_cid, _) = mint_from_ir_document(
+            &ir, None, None, None, &root, &root, false,
+        )
+        .expect("mint dependency proof");
         std::fs::write(
-            imports_dir.join(format!("{}.proof", proof.cid)),
-            proof.bytes,
+            imports_dir.join(format!("{proof_cid}.proof")),
+            &proof_bytes,
         )
         .expect("write dependency proof");
 
@@ -6489,32 +6331,24 @@ mod tests {
             report.errors
         );
 
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode proof");
-        let root = catalog.as_map().expect("catalog map");
-        let proof_signer = root
-            .get("signer")
-            .and_then(|v| v.as_tstr())
-            .expect("proof signer");
+        let catalog =
+            sugar_proof_envelope::ProofCatalog::read(&bytes).expect("read proof catalog");
+        let proof_signer = catalog.signer.as_str();
         assert!(proof_signer.starts_with("blake3-512:"));
 
-        let members = root
-            .get("members")
-            .and_then(|v| v.as_map())
-            .expect("proof members");
         let mut authority = None;
         let mut authority_member_cid = None;
         let mut contract = None;
-        for (cid, member) in members {
-            let bytes = member.as_bstr().expect("member bytes");
-            let envelope: Value = serde_json::from_slice(bytes).expect("member JSON");
-            match envelope.pointer("/header/kind").and_then(|v| v.as_str()) {
+        for view in catalog.graph.members_view() {
+            let cid = view.cid().as_str();
+            let envelope = view.json();
+            match member_kind(&envelope) {
                 Some("authority")
-                    if envelope
-                        .pointer("/header/principal")
+                    if member_field(&envelope, "principal")
                         .and_then(|v| v.as_str())
                         == Some("bridgeworks.software") =>
                 {
-                    authority_member_cid = Some(cid.clone());
+                    authority_member_cid = Some(cid.to_string());
                     authority = Some(envelope);
                 }
                 Some("contract") => contract = Some(envelope),
@@ -6524,20 +6358,19 @@ mod tests {
         let authority = authority.expect("authority memento");
         let authority_member_cid = authority_member_cid.expect("authority member cid");
         let contract = contract.expect("contract memento");
-        let authority_key = authority
-            .pointer("/header/key")
+        let authority_key = member_field(&authority, "key")
             .and_then(|v| v.as_str())
             .expect("authority key");
 
         assert_eq!(
-            contract
-                .pointer("/header/inputCids/0")
+            member_field(&contract, "inputCids")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
                 .and_then(|v| v.as_str()),
             Some(authority_member_cid.as_str())
         );
         assert_eq!(
-            contract
-                .pointer("/envelope/signer")
+            sugar_proof_envelope::member_signer(&contract)
                 .and_then(|v| v.as_str()),
             Some(authority_key)
         );
@@ -6631,37 +6464,22 @@ mod tests {
             mint_from_ir_document(&ir, None, None, None, Path::new("."), tempdir.path(), true)
                 .expect("mint should succeed");
         // Decode and find the contract member.
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode catalog");
-        let members = catalog
-            .as_map()
-            .expect("catalog map")
-            .get("members")
-            .expect("members")
-            .as_map()
-            .expect("members map");
-        let contract_entries: Vec<_> = members
-            .values()
-            .filter_map(|v| {
-                let text = v.as_bstr().and_then(|b| std::str::from_utf8(b).ok())?;
-                let env: serde_json::Value = serde_json::from_str(text).ok()?;
-                let h = env.get("header")?;
-                if h.get("kind").and_then(|k| k.as_str()) == Some("contract") {
-                    Some(env)
-                } else {
-                    None
-                }
-            })
+        let graph = ProofGraph::read(&bytes).expect("decode catalog");
+        let contract_cids: Vec<_> = graph
+            .members_view()
+            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .map(|v| v.cid().clone())
             .collect();
         // POSITIVE: exactly one contract (the two were coalesced, not doubled)
         assert_eq!(
-            contract_entries.len(),
+            contract_cids.len(),
             1,
-            "expected one conjoined contract, got {}: {contract_entries:#?}",
-            contract_entries.len()
+            "expected one conjoined contract, got {}",
+            contract_cids.len()
         );
         // STRUCTURAL: the inv must be an `and` with two operands
-        let inv = contract_entries[0]
-            .pointer("/header/inv")
+        let inv = graph
+            .contract_slot_json(&contract_cids[0], "inv")
             .expect("contract must have inv");
         assert_eq!(
             inv.get("kind").and_then(|k| k.as_str()),
@@ -6701,37 +6519,22 @@ mod tests {
         let (bytes, _, _) =
             mint_from_ir_document(&ir, None, None, None, Path::new("."), tempdir.path(), true)
                 .expect("mint should succeed");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode catalog");
-        let members = catalog
-            .as_map()
-            .expect("catalog map")
-            .get("members")
-            .expect("members")
-            .as_map()
-            .expect("members map");
-        let contract_entries: Vec<_> = members
-            .values()
-            .filter_map(|v| {
-                let text = v.as_bstr().and_then(|b| std::str::from_utf8(b).ok())?;
-                let env: serde_json::Value = serde_json::from_str(text).ok()?;
-                let h = env.get("header")?;
-                if h.get("kind").and_then(|k| k.as_str()) == Some("contract") {
-                    Some(env)
-                } else {
-                    None
-                }
-            })
+        let graph = ProofGraph::read(&bytes).expect("decode catalog");
+        let contract_cids: Vec<_> = graph
+            .members_view()
+            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .map(|v| v.cid().clone())
             .collect();
         // POSITIVE: exactly one contract (deduped, not doubled)
         assert_eq!(
-            contract_entries.len(),
+            contract_cids.len(),
             1,
             "identical inv must yield one deduped contract, got {}",
-            contract_entries.len()
+            contract_cids.len()
         );
         // DISCRIMINATION: inv is NOT an `and` — it is just the original atomic
-        let inv = contract_entries[0]
-            .pointer("/header/inv")
+        let inv = graph
+            .contract_slot_json(&contract_cids[0], "inv")
             .expect("contract must have inv");
         assert_ne!(
             inv.get("kind").and_then(|k| k.as_str()),
@@ -6765,38 +6568,23 @@ mod tests {
         let (bytes, _, _) =
             mint_from_ir_document(&ir, None, None, None, Path::new("."), tempdir.path(), true)
                 .expect("mint should succeed");
-        let catalog = sugar_verifier::cbor_decode::decode(&bytes).expect("decode catalog");
-        let members = catalog
-            .as_map()
-            .expect("catalog map")
-            .get("members")
-            .expect("members")
-            .as_map()
-            .expect("members map");
-        let contract_entries: Vec<_> = members
-            .values()
-            .filter_map(|v| {
-                let text = v.as_bstr().and_then(|b| std::str::from_utf8(b).ok())?;
-                let env: serde_json::Value = serde_json::from_str(text).ok()?;
-                let h = env.get("header")?;
-                if h.get("kind").and_then(|k| k.as_str()) == Some("contract") {
-                    Some(env)
-                } else {
-                    None
-                }
-            })
+        let graph = ProofGraph::read(&bytes).expect("decode catalog");
+        let contract_cids: Vec<_> = graph
+            .members_view()
+            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .map(|v| v.cid().clone())
             .collect();
         // DISCRIMINATION: pre-bearing contract must NOT be merged with inv-only.
         // Both must survive (different shapes).
         assert_eq!(
-            contract_entries.len(), 2,
-            "pre-bearing + inv-only must both survive (no cross-shape merge), got {}:\n{contract_entries:#?}",
-            contract_entries.len()
+            contract_cids.len(), 2,
+            "pre-bearing + inv-only must both survive (no cross-shape merge), got {}",
+            contract_cids.len()
         );
         // The pre-bearing one must still carry `pre`
-        let has_pre_bearing = contract_entries
+        let has_pre_bearing = contract_cids
             .iter()
-            .any(|env| env.pointer("/header/pre").is_some());
+            .any(|cid| graph.contract_slot_json(cid, "pre").is_some());
         assert!(
             has_pre_bearing,
             "pre-bearing contract must not be merged away"

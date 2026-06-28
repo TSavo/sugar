@@ -402,34 +402,21 @@ mod tests {
         .expect("report witness minted");
 
         let proof_bytes = std::fs::read(&minted.proof_file).expect("read witness proof");
-        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        assert_eq!(members.len(), 1);
-        let member_bytes = members
-            .values()
-            .next()
-            .and_then(|member| member.as_bstr())
-            .expect("member bytes");
-        let envelope: Json = serde_json::from_slice(member_bytes).expect("member JSON");
+        let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
+        assert_eq!(graph.members_view().count(), 1);
+        let view = graph.members_view().next().expect("member view");
+        let envelope: Json = serde_json::from_slice(view.bytes()).expect("member JSON");
 
         assert_eq!(
-            envelope.pointer("/header/kind").and_then(Json::as_str),
+            view.kind().as_deref(),
             Some("witness-memento")
         );
         assert_eq!(
-            envelope
-                .pointer("/header/witnessCid")
-                .and_then(Json::as_str),
+            view.field("witnessCid").as_deref(),
             Some(minted.witness_cid.as_str())
         );
         assert_eq!(
-            envelope
-                .pointer("/body/evidenceRootCid")
-                .and_then(Json::as_str),
+            view.field("evidenceRootCid").as_deref(),
             Some(minted.evidence_cid.as_str())
         );
         assert!(
@@ -480,21 +467,12 @@ mod tests {
         .expect("toolchain witness minted");
 
         let proof_bytes = std::fs::read(&minted.proof_file).expect("read witness proof");
-        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        let member_bytes = members
-            .values()
-            .next()
-            .and_then(|member| member.as_bstr())
-            .expect("member bytes");
-        let envelope: Json = serde_json::from_slice(member_bytes).expect("member JSON");
+        let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
+        let view = graph.members_view().next().expect("member view");
+        let envelope: Json = serde_json::from_slice(view.bytes()).expect("member JSON");
 
         assert_eq!(
-            envelope.pointer("/body/planCid").and_then(Json::as_str),
+            view.field("planCid").as_deref(),
             Some(plan_cid.as_str())
         );
         assert_eq!(

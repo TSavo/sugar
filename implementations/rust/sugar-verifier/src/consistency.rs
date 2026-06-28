@@ -68,7 +68,7 @@ use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
 use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
-use crate::types::{memento_body_field, memento_kind, MementoPool, ObligationVerdict};
+use crate::types::{MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
@@ -1634,7 +1634,7 @@ struct LinkedPostInstance {
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let mut posts = Vec::new();
     for (indexed_symbol, bridge_env) in &pool.bridges_by_symbol {
-        let source_symbol = memento_body_field(bridge_env, "sourceSymbol")
+        let source_symbol = sugar_proof_envelope::member_field(bridge_env, "sourceSymbol")
             .and_then(|v| v.as_str())
             .unwrap_or(indexed_symbol)
             .to_string();
@@ -1642,14 +1642,14 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             continue;
         }
         let Some(target_cid) =
-            memento_body_field(bridge_env, "targetContractCid").and_then(|v| v.as_str())
+            sugar_proof_envelope::member_field(bridge_env, "targetContractCid").and_then(|v| v.as_str())
         else {
             continue;
         };
         let Some(contract_env) = pool.mementos.get(target_cid) else {
             continue;
         };
-        if memento_kind(contract_env) != Some("contract") {
+        if pool.member_kind(target_cid) != Some("contract") {
             continue;
         }
         let Some(body) = pool
@@ -1683,7 +1683,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             .filter(|s| !s.is_empty())
             .unwrap_or("out")
             .to_string();
-        let target_proof_cid = memento_body_field(bridge_env, "targetProofCid")
+        let target_proof_cid = sugar_proof_envelope::member_field(bridge_env, "targetProofCid")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
@@ -1837,7 +1837,7 @@ pub fn verify_consistency(
     let candidates: Vec<(String, Json)> = pool
         .mementos
         .iter()
-        .filter(|(_, env)| memento_kind(env) == Some("contract"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("contract"))
         .filter_map(|(cid, env)| {
             pool.resolve_contract_body(env)
                 .map(|body| (cid.clone(), body))
