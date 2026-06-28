@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name = "python-pytest-witness"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = [
+    "/usr/bin/env",
+    "PYTHONPATH=implementations/python/sugar-lift-py-pytest-witness/src:implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src",
+    "python3",
+    "-m",
+    "sugar_pytest_witness.lift_lsp",
+]
+working_dir = "../../.."

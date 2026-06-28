@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, List, Optional
 
 from sugar_lift_py_tests.ir import (
@@ -33,6 +34,11 @@ KIT_ID = "python-pytest-witness"
 KIT_VERSION = "0.1.0"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 RESOLVE_WITNESS_RPC_METHOD = "sugar.plugin.resolve_witness"
+COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
+COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
+LIFT_PROTOCOL_VERSION = "pep/1.7.0"
+PYTEST_WITNESS_SURFACE = "python-pytest-witness"
+PYTEST_WITNESS_LIFT_NAME = "pytest-witness-lift"
 
 
 def _send(obj: dict) -> None:
@@ -63,6 +69,126 @@ def _iter_python_files(workspace_root: str, source_paths: List[str]) -> List[str
                 if fn.endswith(".py"):
                     out.append(os.path.join(dirpath, fn))
     return sorted(set(out))
+
+
+def _items_from_params(params: dict) -> List[dict]:
+    out: List[dict] = []
+    for evidence_key in (
+        "project_forensics",
+        "projectForensics",
+        "workspace_evidence",
+        "workspaceEvidence",
+    ):
+        evidence = params.get(evidence_key)
+        if not isinstance(evidence, dict):
+            continue
+        items = evidence.get("items")
+        if isinstance(items, list):
+            out.extend(item for item in items if isinstance(item, dict))
+    return out
+
+
+def _is_python_test_path(path: Any) -> bool:
+    text = str(path)
+    return text.endswith(".py") and os.path.basename(text).startswith("test_")
+
+
+def _item_is_python_test(item: dict) -> bool:
+    language = item.get("language_hint", item.get("languageHint"))
+    return (
+        language == "python" or str(item.get("path", "")).endswith(".py")
+    ) and _is_python_test_path(item.get("path", ""))
+
+
+def _first_pytest_claim(params: dict, workspace_root: str) -> Optional[str]:
+    for item in _items_from_params(params):
+        if not _item_is_python_test(item):
+            continue
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            return item_id
+        path = item.get("path")
+        if isinstance(path, str) and path:
+            return f"file:{path}"
+
+    root = Path(workspace_root)
+    if root.is_dir():
+        for path in sorted(root.rglob("test_*.py")):
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                relative = path
+            return f"file:{relative.as_posix()}"
+    return None
+
+
+def _runtime_pythonpath() -> str:
+    here = Path(__file__).resolve()
+    witness_src = here.parents[1]
+    python_impl = here.parents[3]
+    py_tests_src = python_impl / "sugar-lift-py-tests" / "src"
+    py_source_src = python_impl / "sugar-lift-python-source" / "src"
+    paths = [str(witness_src), str(py_tests_src), str(py_source_src)]
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        paths.append(existing)
+    return os.pathsep.join(paths)
+
+
+def _runtime_module_command(module: str) -> List[str]:
+    return [
+        "/usr/bin/env",
+        f"PYTHONPATH={_runtime_pythonpath()}",
+        sys.executable,
+        "-m",
+        module,
+    ]
+
+
+def component_plan_result(params: dict) -> dict:
+    workspace_root = str(params.get("workspace_root", "."))
+    claim_item = _first_pytest_claim(params, workspace_root)
+    if claim_item is None:
+        return {
+            "decision": "decline",
+            "reason": "no Python pytest test evidence",
+        }
+
+    lift_command = _runtime_module_command("sugar_pytest_witness.lift_lsp")
+    discharge_command = _runtime_module_command("sugar_pytest_witness.discharge_cli")
+    return {
+        "decision": "claim",
+        "claims": [
+            {
+                "item": claim_item,
+                "role": "witness-producer",
+                "surface": PYTEST_WITNESS_SURFACE,
+            }
+        ],
+        "plugins": [
+            {
+                "name": PYTEST_WITNESS_LIFT_NAME,
+                "kind": "lift",
+                "surface": PYTEST_WITNESS_SURFACE,
+            }
+        ],
+        "lift_manifests": [
+            {
+                "surface": PYTEST_WITNESS_SURFACE,
+                "name": PYTEST_WITNESS_LIFT_NAME,
+                "version": KIT_VERSION,
+                "protocol_version": LIFT_PROTOCOL_VERSION,
+                "kind": "lift",
+                "command": lift_command,
+                "discharge_command": discharge_command,
+                "witness_tool": "pytest",
+                "resolve_witness_command": lift_command,
+                "resolve_witness_method": RESOLVE_WITNESS_RPC_METHOD,
+                "working_dir": ".",
+            }
+        ],
+        "diagnostics": [],
+    }
 
 
 def handle_lift(msg_id: Any, params: dict) -> None:
@@ -224,11 +350,15 @@ def main() -> None:
                 "kit": {"id": KIT_ID, "language": "python", "version": KIT_VERSION},
                 "rpc": {"methods": [{"name": "initialize", "required": True},
                                     {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
+                                    {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                                     {"name": "lift", "required": True},
                                     {"name": RESOLVE_WITNESS_RPC_METHOD, "required": False},
                                     {"name": "shutdown", "required": False}]},
                 "proofResolution": {"strategy": "pip"}, "effectKinds": [], "effectLeaves": [],
                 "guardPredicates": [], "controlCarriers": [], "residueCategories": []}})
+        elif method == COMPONENT_PLAN_RPC_METHOD:
+            _send({"jsonrpc": "2.0", "id": mid,
+                   "result": component_plan_result(msg.get("params", {}))})
         elif method == "lift":
             handle_lift(mid, msg.get("params", {}))
         elif method == RESOLVE_WITNESS_RPC_METHOD:

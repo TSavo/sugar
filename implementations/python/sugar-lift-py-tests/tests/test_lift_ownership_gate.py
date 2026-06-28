@@ -32,7 +32,7 @@ _SOLVER_MODULES = frozenset({"z3", "z3solver", "cvc5", "pysmt", "pysat"})
 # recorded commit. 0 is the target -- the lift emits bit-vector IR terms and the
 # rust verify stage owns the solver. A PR that raises it reached back across the
 # ownership line.
-_SOLVER_CEILING = 1
+_SOLVER_CEILING = 0
 
 
 def _root(name: str | None) -> str:

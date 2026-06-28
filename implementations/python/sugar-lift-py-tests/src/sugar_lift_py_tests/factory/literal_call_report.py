@@ -14,7 +14,7 @@ from sugar_lift_py_tests.factory.array_map_report import (
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
-from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, str_const
+from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, make_var, str_const
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     CallsiteFactDto,
@@ -123,12 +123,19 @@ def _lift_assert(
     expected_sugar = string_literal_sugar(comparison.comparators[0])
     if expected_sugar is None:
         return None
-    actual = complete_value(call_sugar.desugar(), owner="literal function call actual")
     expected = complete_value(expected_sugar.desugar(), owner="literal call expected")
 
     target_fn = functions_by_name[call_sugar.target_name]
     body_steps = call_sugar.factory_steps(target_fn)
-    body_formulas = call_sugar.constraint_formulas(actual)
+    try:
+        actual = complete_value(call_sugar.desugar(), owner="literal function call actual")
+    except TypeError:
+        actual = None
+        body_formulas = call_sugar.constraint_formulas()
+        assertion_formula = and_([*body_formulas, eq(make_var("out"), str_const(expected.value))])
+    else:
+        body_formulas = call_sugar.constraint_formulas(actual)
+        assertion_formula = eq(str_const(actual.value), str_const(expected.value))
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
     function_post = (
         body_formula_values[0]
@@ -175,7 +182,7 @@ def _lift_assert(
         role="python.literal-call-sugar",
     )
 
-    assertion_inv = _formula_to_rpc(eq(str_const(actual.value), str_const(expected.value)))
+    assertion_inv = _formula_to_rpc(assertion_formula)
     function_contract = BodyUniverseDto(
         name=function_contract_name,
         out_binding="out",

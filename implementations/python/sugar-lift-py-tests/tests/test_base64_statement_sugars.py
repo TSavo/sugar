@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import json
 
 import pytest
 
+from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryBuildContext, SourceSite, default_catalog
 from sugar_lift_py_tests.factory.sugar_constructors import (
@@ -11,6 +13,7 @@ from sugar_lift_py_tests.factory.sugar_constructors import (
     build_function_call_sugar,
 )
 from sugar_lift_py_tests.floor import StringValue, TermValue
+from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.alphabet_literal_sugar import (
     BASE64_ALPHABET,
@@ -119,9 +122,69 @@ def test_base64_body_sugar_is_site_born_without_raw_function_storage() -> None:
     assert sugar is not None
     assert sugar.parameter == "value"
     assert not hasattr(sugar, "function")
-    assert complete_value(sugar.apply(StringValue("abc")), owner="body") == StringValue(
-        "YWJj"
-    )
+    with pytest.raises(TypeError, match="lowers to ProofIR"):
+        sugar.apply(StringValue("abc"))
+    formulas = [
+        json.loads(encode_jcs(formula_to_value(formula)))
+        for formula in sugar.constraint_formulas(StringValue("abc"))
+    ]
+    assert formulas[:4] == [
+        {
+            "args": [
+                {"kind": "var", "name": "alphabet"},
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "String"},
+                    "value": BASE64_ALPHABET,
+                },
+            ],
+            "kind": "atomic",
+            "name": "=",
+        },
+        {
+            "args": [
+                {"kind": "var", "name": "b0"},
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "Int"},
+                    "value": 97,
+                },
+            ],
+            "kind": "atomic",
+            "name": "=",
+        },
+        {
+            "args": [
+                {"kind": "var", "name": "b1"},
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "Int"},
+                    "value": 98,
+                },
+            ],
+            "kind": "atomic",
+            "name": "=",
+        },
+        {
+            "args": [
+                {"kind": "var", "name": "b2"},
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "Int"},
+                    "value": 99,
+                },
+            ],
+            "kind": "atomic",
+            "name": "=",
+        },
+    ]
+    atom = formulas[4]
+    assert atom["name"] == "str.eq-bv-blocks"
+    payload = json.loads(atom["args"][1]["value"])
+    assert payload["input_bytes"] == [97, 98, 99]
+    assert payload["vars"] == ["b0", "b1", "b2"]
+    assert len(payload["per_char"]) == 4
+    assert payload["table"] == [ord(ch) for ch in BASE64_ALPHABET]
 
 
 def test_base64_body_sugar_requires_factory_built_children() -> None:
@@ -143,14 +206,26 @@ def test_bitwise_base64_sugar_is_site_born_without_raw_return_storage() -> None:
 
     assert sugar is not None
     assert not hasattr(sugar, "stmt")
-    assert complete_value(
-        sugar.apply(
+    payload = json.loads(
+        sugar.payload_json(
+            input_value="abc",
+            alphabet=BASE64_ALPHABET,
+            alphabet_name="alphabet",
+            byte_names=["b0", "b1", "b2"],
+        )
+    )
+    assert payload["input_bytes"] == [97, 98, 99]
+    assert payload["vars"] == ["b0", "b1", "b2"]
+    assert payload["table"] == [ord(ch) for ch in BASE64_ALPHABET]
+    assert payload["per_char"][0] == {
+        "args": [
+            {"kind": "var", "name": "b0"},
             {
-                "alphabet": BASE64_ALPHABET,
-                "b0": 97,
-                "b1": 98,
-                "b2": 99,
-            }
-        ),
-        owner="bitwise base64",
-    ) == StringValue("YWJj")
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": 2,
+            },
+        ],
+        "kind": "ctor",
+        "name": "bv32.lshr",
+    }

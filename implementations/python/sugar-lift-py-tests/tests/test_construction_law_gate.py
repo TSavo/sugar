@@ -20,6 +20,7 @@ Seven crimes, named after the base64 disaster that motivated the gate:
   E. package-root side-door lifter    -- root lifter claims source before factory
   F. router claims before factory     -- ``lib.py`` calls a bespoke lifter first
   G. child sugar self-assembly        -- a sugar calls another sugar's from_site
+  H. Python-side solver dependency    -- ``import z3`` in the kit
 
 Green is the only way to ship. A vendor fingerprint with a private interpreter
 cannot pass it, and neither can a sugar that assembles itself instead of being
@@ -154,6 +155,7 @@ def all_crimes() -> list[str]:
     for path in _linted_files():
         crimes.extend(crimes_in(path, root))
     crimes.extend(side_door_crimes(root))
+    crimes.extend(python_solver_crimes(root))
     return crimes
 
 
@@ -180,6 +182,31 @@ def side_door_crimes(root: Path) -> list[str]:
                     f"`{node.func.id}(...)` -- `lift_source` must delegate to the "
                     "factory, not a bespoke pre-factory lifter."
                 )
+    return crimes
+
+
+def python_solver_crimes(root: Path) -> list[str]:
+    crimes: list[str] = []
+    for path in sorted(_KIT_SRC.rglob("*.py")):
+        rel = path.relative_to(root)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "z3" or alias.name.startswith("z3."):
+                        crimes.append(
+                            f"{rel}:{node.lineno}: CRIME H (Python-side solver dependency) "
+                            "`import z3` -- the Python kit lowers ProofIR; SMT solving belongs "
+                            "to the registered compiler/verifier path."
+                        )
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "z3" or module.startswith("z3."):
+                    crimes.append(
+                        f"{rel}:{node.lineno}: CRIME H (Python-side solver dependency) "
+                        f"`from {module} import ...` -- the Python kit lowers ProofIR; "
+                        "SMT solving belongs to the registered compiler/verifier path."
+                    )
     return crimes
 
 
