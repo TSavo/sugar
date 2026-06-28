@@ -64,14 +64,16 @@ one lean `.proof`, with zero changes to numpy and no hand-written shim:
 examples/numpy-vendor/run.sh        # provisions a venv on first run
 ```
 
-Real output (numpy 2.4.6):
+Real output (the member count tracks the installed numpy — ~2900 on 2.4.6):
 
 ```
-numpy.proof:  13M, 2909 sugar members
+numpy.proof:  13M  (every module-level numpy function, lifted)
 witness: passed blake3-512:049e169f... -> .sugar/witnesses/<cid>.witness
 oracle resolved via package; rust recomputed the CID and it matched
-pass
 ```
+
+> Reproduced locally 2026-06-28 (numpy 2.5.0): 13M `.proof`, witness CID
+> `049e169f…` verified, consumer `verify` recomputed via package and **matched**.
 
 The verb underneath is **`sugar mint`**: it dispatches the configured lift plugins
 and writes the signed `.proof`. (`sugar lift` is the lower-level step that stops at
@@ -108,6 +110,8 @@ caught the instant it contradicts it:
 implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py
 #   parametrized: consumer-agrees-PROVEN, consumer-contradicts-REFUSED
 ```
+
+> Reproduced locally 2026-06-28 (numpy 2.5.0 venv): `2 passed`.
 
 Contracts key to the **callsite**, not the test, and the verifier conjoins
 same-named contracts across `.proof` files before the SAT check. That is the
