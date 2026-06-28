@@ -90,6 +90,8 @@ pub struct ConsistencyResult {
 
 const CONSISTENT_REASON: &str = "test assertions mutually consistent about callsite";
 const CONTRADICTORY_REASON: &str = "test assertions contradictory about callsite";
+const VACUOUS_SINGLE_REASON: &str =
+    "consistency check vacuous: single constraint has no sibling to contradict — not a substantive discharge";
 
 /// Does this contract carry asserted axioms that must be checked for
 /// satisfiability against the local universe? We approximate the boundary
@@ -1007,6 +1009,23 @@ fn consistency_verification_detail(
     })
 }
 
+/// Count the number of independent top-level atomic constraints in `inv`.
+/// An `and([a, b, ...])` contributes its operand count; any other shape
+/// (bare atomic, forall, implies, ctor equality, etc.) contributes 1.
+/// Used to gate the consistency-SAT check: a lone constraint with no sibling
+/// is trivially satisfiable (any uninterpreted callsite satisfies it) and must
+/// NOT count as a substantive discharge — there is nothing to contradict it.
+fn count_top_level_constraints(inv: &Json) -> usize {
+    if inv.get("kind").and_then(|k| k.as_str()) == Some("and") {
+        inv.get("operands")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(1)
+    } else {
+        1
+    }
+}
+
 /// Run the raw-satisfiability consistency check on a single `inv` and label it.
 /// Shared by the per-contract path and the cross-proof conjoined path.
 fn check_inv_consistency(
@@ -1021,6 +1040,31 @@ fn check_inv_consistency(
     let t_local = std::time::Instant::now();
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
     let local_inst_us = t_local.elapsed().as_micros();
+    // VACUITY GUARD. A lone constraint (count < 2) has no sibling to contradict.
+    // Any uninterpreted callsite trivially satisfies it under bare SAT, giving a
+    // Discharged verdict that is NOT entailed — there is no universe forcing the
+    // value. Refuse early so a lone opaque equality like `=(call:foo(x), 99)` is
+    // never counted as a substantive discharge. Conjunctions (count >= 2) proceed:
+    // two constraints CAN contradict each other, making SAT genuinely informative.
+    if count_top_level_constraints(&inv) < 2 {
+        let verdict = ObligationVerdict::Refused;
+        return ConsistencyResult {
+            contract_cid: cid,
+            property_name: property_name.to_string(),
+            verdict,
+            reason: format!("{VACUOUS_SINGLE_REASON} `{property_name}`"),
+            witnessed: false,
+            verification: Some(consistency_verification_detail(
+                property_name,
+                &inv,
+                &linked_posts,
+                None,
+                verdict,
+                Some(VACUOUS_SINGLE_REASON),
+                &[],
+            )),
+        };
+    }
     if let Some(reason) = structural_contradiction_reason(&inv) {
         let verdict = ObligationVerdict::Unsatisfied;
         return ConsistencyResult {
@@ -2257,12 +2301,16 @@ mod tests {
             "consistent conjunction must stay proven (no false refusal): {res:?}"
         );
 
-        // a LONE contract is untouched -> PROVEN
+        // a LONE contract has no sibling to contradict -> REFUSED (vacuous)
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:solo", name, eqf(var("r"), int(5)));
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
-        assert_eq!(res[0].verdict, ObligationVerdict::Discharged);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "lone constraint has no sibling to contradict — must be Refused (vacuous), not Discharged: {res:?}"
+        );
     }
 
     /// CONGRUENCE TEETH on a PURE nullary callsite (the cardinal-sin guard).
@@ -2677,15 +2725,15 @@ mod tests {
         });
         let name = "loop.rs::t::assertion";
 
-        // The universal alone is consistent (PROVEN).
+        // The universal alone has no sibling to contradict -> REFUSED (vacuous).
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fa", name, forall.clone());
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
-            ObligationVerdict::Discharged,
-            "bounded universal alone must be consistent: {res:?}"
+            ObligationVerdict::Refused,
+            "lone universal has no sibling to contradict — must be Refused (vacuous), not Discharged: {res:?}"
         );
 
         // Conjoined with f(2)==2 (an in-range contradiction): REFUTED.
@@ -2763,8 +2811,8 @@ mod tests {
             .expect("loop row present");
         assert_eq!(
             loop_row.verdict,
-            ObligationVerdict::Discharged,
-            "the loop universal alone is consistent: {res:?}"
+            ObligationVerdict::Refused,
+            "lone loop universal has no sibling to contradict — must be Refused (vacuous), not Discharged: {res:?}"
         );
     }
 
@@ -3346,7 +3394,9 @@ mod tests {
             eqf(var("r"), int(6)),
         );
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
-        // per-contract: each is internally satisfiable -> both Discharged, none refused.
+        // per-contract: each is a lone constraint (vacuous) -> both Refused, none Discharged.
+        // The key guarantee: bare names are NOT conjoined — the two rows stay separate and
+        // do NOT combine into one obligation that could falsely refuse.
         assert_eq!(
             res.len(),
             2,
@@ -3354,8 +3404,8 @@ mod tests {
         );
         assert!(
             res.iter()
-                .all(|r| r.verdict == ObligationVerdict::Discharged),
-            "independent same-test-name contracts must not be conjoined: {res:?}"
+                .all(|r| r.verdict == ObligationVerdict::Refused),
+            "independent same-test-name lone contracts must be Refused (vacuous), not conjoined or Discharged: {res:?}"
         );
     }
 
@@ -3436,7 +3486,8 @@ mod tests {
 
     #[test]
     fn consistent_assertions_prove_consistent() {
-        // assert x is not None  (single satisfiable fact) -> ≠(x, None) -> SAT
+        // assert x is not None  (single satisfiable fact) -> ≠(x, None) -> lone constraint
+        // Under the vacuity guard a lone constraint is Refused (no sibling to contradict).
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
@@ -3444,13 +3495,13 @@ mod tests {
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
-            ObligationVerdict::Discharged,
-            "consistent inv must be PROVEN-consistent; reason: {}",
+            ObligationVerdict::Refused,
+            "lone constraint has no sibling — must be Refused (vacuous); reason: {}",
             results[0].reason
         );
         assert!(
-            results[0].reason.contains("mutually consistent"),
-            "claim must be labeled consistency, got: {}",
+            results[0].reason.contains("single constraint has no sibling"),
+            "vacuous-refused reason must cite the single-constraint guard, got: {}",
             results[0].reason
         );
     }
@@ -3573,10 +3624,11 @@ mod tests {
     #[test]
     fn assertion_contract_remains_a_consistency_candidate() {
         // The `::assertion` contract carries the asserted property and MUST
-        // still be checked. Guards against an over-broad `::facts` filter
-        // (substring match would wrongly catch `::facts-implies-assertion`,
-        // but that is an implication decl, not a contract; the asserted
-        // property contract ends in `::assertion`).
+        // still be checked (not filtered out). Guards against an over-broad
+        // `::facts` filter (substring match would wrongly catch
+        // `::facts-implies-assertion`). A lone constraint has no sibling to
+        // contradict and is Refused (vacuous) — the check is "is it a
+        // candidate?" (len==1), not what verdict it gets.
         let inv = ne(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
@@ -3586,7 +3638,11 @@ mod tests {
             1,
             "::assertion contract must remain a consistency candidate"
         );
-        assert_eq!(results[0].verdict, ObligationVerdict::Discharged);
+        assert_eq!(
+            results[0].verdict,
+            ObligationVerdict::Refused,
+            "lone constraint has no sibling — Refused (vacuous); was Discharged pre-vacuity-fix"
+        );
     }
 
     #[test]
@@ -3614,9 +3670,12 @@ mod tests {
 
     #[test]
     fn single_string_equality_asserted_is_consistent() {
-        // POSITIVE: `assert r == '{"a":1}'` — a single string-equality assertion
-        // is satisfiable (consistent). Before the fix: UNDECIDABLE (parse error).
-        // After fix: PROVEN-consistent (raw sat from z3).
+        // POSITIVE: `assert r == '{"a":1}'` — a single string-equality assertion.
+        // Before vacuity fix: UNDECIDABLE (parse error pre-string fix) then
+        // PROVEN-consistent (raw sat from z3 post-string fix).
+        // After vacuity fix: REFUSED (lone constraint, no sibling to contradict).
+        // The key guarantee: NOT UNDECIDABLE (encoding STOP). Refused is honest;
+        // Discharged without a universe was a falsePass.
         let inv = eqf(var("r"), string_const(r#"{"a":1}"#));
         let pool = pool_with_contract("encode_jcs::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
@@ -3624,8 +3683,8 @@ mod tests {
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
-            ObligationVerdict::Discharged,
-            "single string-equality inv must be PROVEN-consistent (not UNDECIDABLE); \
+            ObligationVerdict::Refused,
+            "single string-equality lone constraint must be Refused (vacuous — no sibling); \
              reason: {}",
             results[0].reason
         );
