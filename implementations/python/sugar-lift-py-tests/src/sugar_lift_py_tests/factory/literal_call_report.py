@@ -483,6 +483,210 @@ def _resolve_np_array_element(
     return None
 
 
+def _index_nested(value: object, indices: list[int]) -> int | None:
+    """Walk a nested list of ints by ``indices`` and return the int leaf.
+    Returns None if any index is out-of-range, the path bottoms out early (int
+    where a list was expected), the path is under-indexed (a list remains), or
+    the leaf is not a plain int (bool excluded)."""
+    cur: object = value
+    for idx in indices:
+        if not isinstance(cur, list):
+            return None
+        if idx < 0 or idx >= len(cur):
+            return None
+        cur = cur[idx]
+    if not isinstance(cur, int) or isinstance(cur, bool):
+        return None
+    return cur
+
+
+def _is_2d_int_matrix(m: object) -> bool:
+    """True iff ``m`` is a non-empty list of equal-length lists of plain ints."""
+    if not isinstance(m, list) or len(m) == 0:
+        return False
+    ncols = None
+    for row in m:
+        if not isinstance(row, list):
+            return False
+        if ncols is None:
+            ncols = len(row)
+        elif len(row) != ncols:
+            return False
+        for el in row:
+            if not isinstance(el, int) or isinstance(el, bool):
+                return False
+    return True
+
+
+def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
+    """Recursively resolve a numpy value expression to a nested Python list of
+    ints (or a bare int) that exactly mirrors the numpy array's contents.
+
+    Returns None (opaque — never guesses) for anything unrecognised, any
+    non-int leaf, a shape mismatch, or an out-of-range operation.
+
+    Supported shapes:
+    - ``np.array(<nested int literal>)``          -> the nested list
+    - ``np.arange(n)``                            -> [0, 1, ..., n-1]
+    - ``np.arange(start, stop)``                  -> [start, ..., stop-1]
+    - ``np.arange(start, stop, step)``            -> [start, start+step, ...]
+    - ``np.rot90(x)`` or ``np.rot90(x, k)``      -> 2-D CCW rotation (ints)
+    - ``np.transpose(x)``                         -> 2-D transpose
+    - ``x.T``  (ast.Attribute .T)                 -> 2-D transpose
+    - ``x.reshape(R, C)``                         -> row-major reshape to 2-D
+    - ``ast.Name``                                -> look up single assignment
+                                                     in fn.body, recurse
+    """
+    # --- np.array(<nested int literal>) ---
+    np_arr = _np_array_nested_int(node)
+    if np_arr is not None:
+        return np_arr
+
+    # --- Raw nested int literal: ast.Constant (int) or ast.List ---
+    raw = _nested_int_literal(node)
+    if raw is not None:
+        return raw
+
+    # --- ast.Name: look up in fn.body ---
+    if isinstance(node, ast.Name):
+        name = node.id
+        found = None
+        count = 0
+        for stmt in fn.body:
+            if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+                continue
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name) and target.id == name:
+                found = stmt.value
+                count += 1
+        if count != 1 or found is None:
+            return None
+        return _resolve_value(found, fn)
+
+    # --- ast.Call: dispatch on callee ---
+    if isinstance(node, ast.Call):
+        func = node.func
+
+        # np.<something>(...)
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "np"
+        ):
+            op = func.attr
+
+            # np.arange(n) / np.arange(a, b) / np.arange(a, b, s)
+            if op == "arange":
+                args = node.args
+                if len(args) == 1:
+                    n = _const_int(args[0])
+                    if n is None or n < 0:
+                        return None
+                    return list(range(n))
+                if len(args) == 2:
+                    a, b = _const_int(args[0]), _const_int(args[1])
+                    if a is None or b is None:
+                        return None
+                    return list(range(a, b))
+                if len(args) == 3:
+                    a, b, s = _const_int(args[0]), _const_int(args[1]), _const_int(args[2])
+                    if a is None or b is None or s is None or s == 0:
+                        return None
+                    return list(range(a, b, s))
+                return None
+
+            # np.rot90(x) or np.rot90(x, k)
+            if op == "rot90":
+                if len(node.args) < 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                # k defaults to 1 (CCW 90°); may be positional or keyword
+                k = 1
+                if len(node.args) >= 2:
+                    k_val = _const_int(node.args[1])
+                    if k_val is None:
+                        return None
+                    k = k_val
+                else:
+                    for kw in node.keywords:
+                        if kw.arg == "k":
+                            k_val = _const_int(kw.value)
+                            if k_val is None:
+                                return None
+                            k = k_val
+                            break
+                k = k % 4
+                m = src  # type: ignore[assignment]
+                for _ in range(k):
+                    R = len(m)
+                    C = len(m[0])
+                    # CCW 90°: result[i][j] = m[j][C-1-i], result is C×R
+                    m = [[m[j][C - 1 - i] for j in range(R)] for i in range(C)]
+                return m
+
+            # np.transpose(x)
+            if op == "transpose":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                R = len(src)
+                C = len(src[0])
+                return [[src[i][j] for i in range(R)] for j in range(C)]
+
+            # np.array already handled above by _np_array_nested_int
+            return None
+
+        # x.reshape(R, C)  — method call on some value expression
+        if isinstance(func, ast.Attribute) and func.attr == "reshape":
+            if len(node.args) != 2:
+                return None
+            R, C = _const_int(node.args[0]), _const_int(node.args[1])
+            if R is None or C is None or R < 0 or C < 0:
+                return None
+            src = _resolve_value(func.value, fn)
+            if src is None:
+                return None
+            # Flatten row-major
+            flat: list[int] = []
+            _flatten(src, flat)
+            if len(flat) != R * C:
+                return None
+            return [[flat[i * C + j] for j in range(C)] for i in range(R)]
+
+        return None
+
+    # --- x.T (Attribute access, not a Call) ---
+    if isinstance(node, ast.Attribute) and node.attr == "T":
+        src = _resolve_value(node.value, fn)
+        if src is None or not _is_2d_int_matrix(src):
+            return None
+        R = len(src)
+        C = len(src[0])
+        return [[src[i][j] for i in range(R)] for j in range(C)]
+
+    return None
+
+
+def _flatten(value: object, out: list) -> None:
+    """Recursively flatten a nested list of ints into ``out`` (row-major)."""
+    if isinstance(value, list):
+        for el in value:
+            _flatten(el, out)
+    elif isinstance(value, int) and not isinstance(value, bool):
+        out.append(value)
+
+
+def _const_int(node: ast.AST) -> int | None:
+    """Return the int value of a bare int ast.Constant, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    return None
+
+
 def _lift_subscript_assertion(
     stmt: ast.Assert,
     *,
@@ -513,6 +717,8 @@ def _lift_subscript_assertion(
             )
         indices.insert(0, idx.value)
         node = node.value
+    # Keep root_node for recursive resolution; derive root_name for the IR term.
+    root_node = node
     if isinstance(node, ast.Name):
         root_name: str = node.id
     elif isinstance(node, ast.Call):
@@ -525,12 +731,15 @@ def _lift_subscript_assertion(
                 fix="lift subscript whose root call has no resolvable callee name",
             )
         root_name = callee  # type: ignore[possibly-undefined]
+    elif isinstance(node, ast.Attribute):
+        # e.g. x.T  — attr name is the IR label
+        root_name = node.attr
     else:
         _panic_no_sugar(
             node, memento_file,
             observed=f"subscript-root:{type(node).__name__}",
             requested="SubscriptNameRoot",
-            fix="lift subscript whose root is not a plain name or call",
+            fix="lift subscript whose root is not a plain name, call, or attribute",
         )
 
     # Build expected IR term (string or numeric).
@@ -562,10 +771,12 @@ def _lift_subscript_assertion(
         role="python.literal-call-sugar",
     )
 
-    # Attempt to resolve the literal element from an np.array binding in fn.body.
+    # Attempt to resolve the literal element via recursive value resolution.
+    # _resolve_value handles np.array, np.arange, np.rot90, np.transpose,
+    # x.T, x.reshape, and ast.Name bindings recursively.
     # Only conjoin when we can GUARANTEE the element value from the literal --
     # any ambiguity falls back to the single-operand opaque obligation.
-    resolved_element: int | None = _resolve_np_array_element(fn, root_name, indices)
+    resolved_element: int | None = _index_nested(_resolve_value(root_node, fn), indices)
     if resolved_element is not None:
         # Conjoin: eq(subscript, expected) AND eq(subscript, literal-element).
         # The literal-element closes the universe; expected==element -> DISCHARGED,
