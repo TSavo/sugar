@@ -7187,9 +7187,16 @@ def handle_resolve_dependency_proofs(msg_id: Any, params: dict) -> None:
                 continue
             with open(path, "rb") as fh:
                 proof_bytes = fh.read()
+            # Normalize the on-disk filename stem (blake3-512_<hex>) to the
+            # canonical colon form (blake3-512:<hex>) so the Rust verifier's
+            # Rule-1 check (expected_cid == blake3_512_of(bytes)) compares
+            # apples-to-apples.  The filename uses underscore for Windows
+            # path-safety; the in-memory CID always uses colon.
+            stem = name[: -len(".proof")]
+            cid = stem.replace("blake3-512_", "blake3-512:", 1) if stem.startswith("blake3-512_") else stem
             proofs.append(
                 {
-                    "cid": name[: -len(".proof")],
+                    "cid": cid,
                     "bytes_base64": base64.b64encode(proof_bytes).decode("ascii"),
                     "source": f"sugar-imports:{name}",
                 }

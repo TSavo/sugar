@@ -56,7 +56,12 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _run(args, cwd):
-    env = dict(os.environ, PYTHONPATH=_PYSRC)
+    # SUGAR_COMPONENT_PATH: expose the worktree's smt-lib ir-compiler component so
+    # the sugar CLI discovers it even when the project lives in tmp_path (outside
+    # the worktree's ancestor chain).  The manifest uses paths relative to its own
+    # directory, so discovery via this env var resolves correctly.
+    _COMPONENTS = str(_REPO / ".sugar" / "components")
+    env = dict(os.environ, PYTHONPATH=_PYSRC, SUGAR_COMPONENT_PATH=_COMPONENTS)
     return subprocess.run(
         [str(_BIN), *args], cwd=str(cwd), env=env, capture_output=True, text=True
     )
