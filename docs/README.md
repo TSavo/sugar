@@ -40,7 +40,7 @@ is the map.
 - [how-to/behavioral-semver.md](how-to/behavioral-semver.md) — catch behavior drift on upgrade: `sugar diff --require`/`--frozen`, `cargo sugar` in CI, the `sugar-check` pre-commit hook.
 - [reference/cli.md](reference/cli.md) — the full CLI surface (all 21 verbs), grounded against the dispatch table.
 - [`.proof` file format](../protocol/specs/2026-04-30-proof-file-format.md) — the canonical spec: what's in a `.proof`, the integrity rules, walking one.
-- *Returning:* per-language status — deliberately not written from prose (that's how the old one drifted); it needs a fresh audit grounded in what actually runs.
+- [reference/per-language-status.md](reference/per-language-status.md) — the kits and the runnable evidence per language (no coverage numbers; the examples are the test of record).
 
 ### Extending Sugar (a new kit, lifter, or backend)
 - [contributing/overview.md](contributing/overview.md) — the lay of the land.
