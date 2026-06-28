@@ -3200,6 +3200,68 @@ mod b64_strong_tests {
         );
     }
 
+    fn run_compiled_claim(claim: &str) -> String {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let out = Term::Var { name: "out".into() };
+        let formula = Formula::And {
+            operands: vec![
+                Formula::Atomic {
+                    name: "str.eq-bv-blocks".into(),
+                    args: vec![out.clone(), bar_payload()],
+                },
+                Formula::Atomic {
+                    name: "=".into(),
+                    args: vec![
+                        out,
+                        Term::Const {
+                            value: serde_json::Value::String(claim.into()),
+                            sort: s("String"),
+                        },
+                    ],
+                },
+            ],
+        };
+        let parts = compile_asserted_formula(&formula);
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let mut child = Command::new("z3")
+            .args(["-smt2", "-in"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn z3");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn compiled_var_subject_equality_routes_to_string_theory() {
+        use std::process::Command;
+        if Command::new("z3").arg("--version").output().is_err() {
+            eprintln!("z3 absent: skipping compiled b64 z3 integration test");
+            return;
+        }
+
+        let good = run_compiled_claim("YmFy");
+        assert!(
+            good.starts_with("sat"),
+            "compiled GOOD claim YmFy must be sat; got: {good}"
+        );
+        let bad = run_compiled_claim("ZmFy");
+        assert!(
+            bad.starts_with("unsat"),
+            "compiled wrong ZmFy claim must be unsat; got: {bad}"
+        );
+    }
+
     // ── PHASE 2: mod-3 tail emitter (sextet chars + AST-resolved '=' pad) ──
     // A 2-byte tail ("ba") emits 3 sextet chars over (b0,b1) + 1 pad char; a
     // 1-byte tail ("f") emits 2 sextet chars over (b0) + 2 pad chars. The sextet

@@ -336,9 +336,12 @@ impl LiteralConstants {
 //      against each other and z3 errors instead of refuting.
 //
 // DELIBERATE EXCLUSIONS (the legacy Python regime is preserved bit-for-bit):
-//   - `=` over a free VAR (`r == "a"`) stays opaque-Int: the Python kit's
-//     cross-type consistency (`r == "a" ∧ r == 1` -> UNSAT via distinctness)
-//     depends on every literal living in the Int universe.
+//   - `=` over an untainted free VAR (`r == "a"`) stays opaque-Int: the
+//     Python kit's cross-type consistency (`r == "a" ∧ r == 1` -> UNSAT via
+//     distinctness) depends on every literal living in the Int universe.
+//     A VAR already forced into string theory by a sibling string predicate
+//     (`str.eq-bv-blocks(out, ...)`, charset, regex, ...) is routable, because
+//     its sworn equality must meet the same `String`-sorted subject.
 //   - `=` against the `None` ctor stays opaque-Int: `None != "x"` is enforced
 //     by the distinctness axiom, which string theory cannot express over an
 //     uninterpreted String const (it would freely model `None == "x"`).
@@ -400,12 +403,13 @@ pub(crate) fn routes_to_string_theory(name: &str, args: &[Term]) -> bool {
     };
     let is_string_like_const = |t: &Term| is_string_const(t) || is_bytes_wrapped_string_const(t);
     let is_routable_subject = |t: &Term| {
-        // A string const is always a String. A CTOR subject string-routes only
-        // when it is string-tainted (appears in a string-theory predicate);
+        // A string const is always a String. A CTOR or VAR subject string-routes
+        // only when it is string-tainted (appears in a string-theory predicate);
         // otherwise it stays opaque-Int, consistent with its other uses.
         is_string_const(t)
             || matches!(t, Term::Ctor { name, args }
                 if !(name == "None" && args.is_empty()) && ctor_subject_is_tainted(t))
+            || matches!(t, Term::Var { .. } if term_is_string_tainted(t))
     };
     (is_string_like_const(&args[0]) && is_routable_subject(&args[1]))
         || (is_string_like_const(&args[1]) && is_routable_subject(&args[0]))
@@ -479,6 +483,7 @@ fn is_string_theory_atomic_predicate(name: &str) -> bool {
             | "str.is_ascii_control"
             | "str.chars-in-set"
             | "str.chars-not-in-set"
+            | "str.eq-bv-blocks"
             | "str.in-regex"
     )
 }

@@ -69,19 +69,51 @@ def _write_literal_base64_twin(project: Path, expected: str) -> None:
     )
 
 
-def _single_equality_status(contract: dict) -> str:
-    inv = contract["inv"]
-    assert inv["kind"] == "atomic"
-    assert inv["name"] == "="
-    left, right = inv["args"]
-    return "sat" if left["value"] == right["value"] else "unsat"
-
-
 def _eq_name_value(formula: dict) -> tuple[str, object]:
     assert formula["kind"] == "atomic"
     assert formula["name"] == "="
     left, right = formula["args"]
     return left["name"], right["value"]
+
+
+def _eq_var_const(formula: dict, name: str, value: object) -> None:
+    assert formula["kind"] == "atomic"
+    assert formula["name"] == "="
+    left, right = formula["args"]
+    assert left == {"kind": "var", "name": name}
+    assert right["value"] == value
+
+
+def _base64_payload(formula: dict) -> dict:
+    assert formula["kind"] == "atomic"
+    assert formula["name"] == "str.eq-bv-blocks"
+    subject, payload = formula["args"]
+    assert subject == {"kind": "var", "name": "out"}
+    assert payload["sort"] == {"kind": "primitive", "name": "String"}
+    return json.loads(payload["value"])
+
+
+def _assert_base64_payload(formula: dict) -> None:
+    payload = _base64_payload(formula)
+    assert payload["input_bytes"] == [97, 98, 99]
+    assert payload["vars"] == ["b0", "b1", "b2"]
+    assert len(payload["per_char"]) == 4
+    assert payload["table"] == [
+        ord(ch) for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    ]
+
+
+def _assert_assertion_inv(contract: dict, expected: str) -> None:
+    inv = contract["inv"]
+    assert inv["kind"] == "and"
+    operands = inv["operands"]
+    assert len(operands) == 6
+    _eq_var_const(operands[0], "alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    _eq_var_const(operands[1], "b0", 97)
+    _eq_var_const(operands[2], "b1", 98)
+    _eq_var_const(operands[3], "b2", 99)
+    _assert_base64_payload(operands[4])
+    _eq_var_const(operands[5], "out", expected)
 
 
 def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -> None:
@@ -100,13 +132,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     ]
     function_contract, assertion_contract = good_doc["ir"]
     assert function_contract["post"]["kind"] == "and"
-    assert [_eq_name_value(formula) for formula in function_contract["post"]["operands"]] == [
+    post_operands = function_contract["post"]["operands"]
+    assert [_eq_name_value(formula) for formula in post_operands[:4]] == [
         ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
         ("b0", 97),
         ("b1", 98),
         ("b2", 99),
-        ("out", "YWJj"),
     ]
+    _assert_base64_payload(post_operands[4])
     assert function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
@@ -116,8 +149,8 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
     assert assertion_contract["warrantedBy"]["contractName"] == function_contract["name"]
     assert assertion_contract["warrantedBy"]["callsite"] == "test_base64.py:14:11"
-    assert _single_equality_status(assertion_contract) == "sat"
-    assert _single_equality_status(bad_doc["ir"][1]) == "unsat"
+    _assert_assertion_inv(assertion_contract, "YWJj")
+    _assert_assertion_inv(bad_doc["ir"][1], "AAAA")
     assert good_doc["callEdges"] == [
         {
             "kind": "call-edge",
@@ -145,14 +178,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     ]
     assert [
         _eq_name_value(row["emittedFormula"])
-        for row in good_doc["factoryAuditSummary"]["factoryWalk"][:5]
+        for row in good_doc["factoryAuditSummary"]["factoryWalk"][:4]
     ] == [
         ("alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
         ("b0", 97),
         ("b1", 98),
         ("b2", 99),
-        ("out", "YWJj"),
     ]
+    _assert_base64_payload(good_doc["factoryAuditSummary"]["factoryWalk"][4]["emittedFormula"])
     assert (
         good_doc["factoryAuditSummary"]["factoryWalk"][5]["emittedFormula"]
         == assertion_contract["inv"]

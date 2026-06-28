@@ -191,6 +191,61 @@ def _rpc(method, params):
     raise AssertionError(f"no JSON-RPC reply; stderr={proc.stderr}")
 
 
+def test_component_plan_claims_python_pytest_project(tmp_path):
+    (tmp_path / "test_base64.py").write_text("def test_ok():\n    assert 1 == 1\n")
+    reply = _rpc("sugar.component.plan", {
+        "workspace_root": str(tmp_path),
+        "project_forensics": {
+            "items": [
+                {
+                    "id": "file:test_base64.py",
+                    "kind": "source-file",
+                    "path": "test_base64.py",
+                    "language_hint": "python",
+                    "reason": "python source file",
+                }
+            ]
+        },
+    })
+
+    result = reply["result"]
+    assert result["decision"] == "claim"
+    assert result["claims"] == [
+        {
+            "item": "file:test_base64.py",
+            "role": "witness-producer",
+            "surface": "python-pytest-witness",
+        }
+    ]
+    manifest = result["lift_manifests"][0]
+    assert manifest["surface"] == "python-pytest-witness"
+    assert manifest["witness_tool"] == "pytest"
+    assert manifest["resolve_witness_method"] == "sugar.plugin.resolve_witness"
+    assert manifest["command"]
+    assert manifest["discharge_command"]
+    assert manifest["resolve_witness_command"]
+
+
+def test_component_plan_declines_python_project_without_pytest_tests(tmp_path):
+    (tmp_path / "app.py").write_text("def f():\n    return 1\n")
+    reply = _rpc("sugar.component.plan", {
+        "workspace_root": str(tmp_path),
+        "project_forensics": {
+            "items": [
+                {
+                    "id": "file:app.py",
+                    "kind": "source-file",
+                    "path": "app.py",
+                    "language_hint": "python",
+                    "reason": "python source file",
+                }
+            ]
+        },
+    })
+
+    assert reply["result"]["decision"] == "decline"
+
+
 def test_resolve_witness_rpc_returns_body_that_addresses_to_cid_from_package(tmp_path):
     import base64
     from sugar_pytest_witness import write_witness_package

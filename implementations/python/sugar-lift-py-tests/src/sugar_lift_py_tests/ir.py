@@ -152,6 +152,26 @@ def ctor(name: str, args: List[Term]) -> Term:
     return _Ctor(name, tuple(args))
 
 
+def bvand(left: Term, right: Term) -> Term:
+    return ctor("bv32.and", [left, right])
+
+
+def bvor(left: Term, right: Term) -> Term:
+    return ctor("bv32.or", [left, right])
+
+
+def bvshl(left: Term, right: Term) -> Term:
+    return ctor("bv32.shl", [left, right])
+
+
+def bvlshr(left: Term, right: Term) -> Term:
+    return ctor("bv32.lshr", [left, right])
+
+
+def bvadd(left: Term, right: Term) -> Term:
+    return ctor("bv32.add", [left, right])
+
+
 # Formula -------------------------------------------------------------------
 
 

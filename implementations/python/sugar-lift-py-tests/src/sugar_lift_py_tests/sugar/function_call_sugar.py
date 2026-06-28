@@ -49,19 +49,20 @@ class FunctionCallSugar:
     def desugar(self, ctx=None) -> Outcome:
         if isinstance(self.body, SugarBody):
             return self.body.reduce(ctx)
-        argument = complete_value(
-            self.argument.reduce(ctx),
-            owner="FunctionCallSugar argument",
+        raise TypeError(
+            "FunctionCallSugar with Base64BodySugar lowers to ProofIR; call "
+            "constraint_formulas instead of computing in Python"
         )
-        return self.body.apply(argument)
 
     def factory_steps(self, function: ast.FunctionDef) -> list[tuple[str, str, ast.stmt, str]]:
         if isinstance(self.body, SugarBody):
             return [("StringLiteralSugar", "Constant", function.body[0], "StringValue")]
         return self.body.factory_steps(function)
 
-    def constraint_formulas(self, output: StringValue) -> list[Formula]:
+    def constraint_formulas(self, output: StringValue | None = None) -> list[Formula]:
         if isinstance(self.body, SugarBody):
+            if output is None:
+                raise ValueError("FunctionCallSugar simple body requires an output value")
             return [eq(make_var("out"), str_const(output.value))]
         argument = complete_value(
             self.argument.reduce(None),
@@ -69,4 +70,4 @@ class FunctionCallSugar:
         )
         if not isinstance(argument, StringValue):
             raise ValueError("write more Floor for FunctionCallSugar argument")
-        return self.body.constraint_formulas(argument, output)
+        return self.body.constraint_formulas(argument)

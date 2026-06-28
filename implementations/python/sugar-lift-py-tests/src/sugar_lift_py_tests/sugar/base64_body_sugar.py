@@ -4,8 +4,8 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor import StringValue, TermValue
-from sugar_lift_py_tests.ir import Formula, eq, make_var, num, str_const
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.ir import Formula, atomic, eq, make_var, num, str_const
+from sugar_lift_py_tests.outcome import complete_value
 
 from .alphabet_literal_sugar import AlphabetLiteralSugar
 from .bitwise_base64_sugar import BitwiseBase64Sugar
@@ -49,21 +49,12 @@ class Base64BodySugar:
             return_sugar=return_sugar,
         )
 
-    def apply(self, argument: StringValue) -> Outcome:
-        alphabet = complete_value(self.alphabet.desugar(), owner="Base64BodySugar alphabet")
-        env: dict[str, int | str] = {
-            self.parameter: argument.value,
-            self.alphabet.name: alphabet.value,
-        }
-        for ord_sugar in self.ords:
-            value = complete_value(
-                ord_sugar.apply(argument),
-                owner=f"Base64BodySugar {ord_sugar.target}",
-            )
-            if not isinstance(value, TermValue):
-                raise ValueError(f"write more Floor for `{ord_sugar.target}`")
-            env[ord_sugar.target] = value.value
-        return self.return_sugar.apply(env)
+    def apply(self, argument: StringValue):
+        del argument
+        raise TypeError(
+            "Base64BodySugar lowers to ProofIR; call constraint_formulas instead of "
+            "computing base64 in Python"
+        )
 
     def factory_steps(self, function: ast.FunctionDef) -> list[tuple[str, str, ast.stmt, str]]:
         return [
@@ -75,13 +66,19 @@ class Base64BodySugar:
             ("BitwiseBase64Sugar", "Return", function.body[4], "StringValue"),
         ]
 
-    def constraint_formulas(self, argument: StringValue, output: StringValue) -> list[Formula]:
+    def constraint_formulas(self, argument: StringValue) -> list[Formula]:
         alphabet = complete_value(self.alphabet.desugar(), owner="Base64BodySugar alphabet")
+        payload = self.return_sugar.payload_json(
+            input_value=argument.value,
+            alphabet=alphabet.value,
+            alphabet_name=self.alphabet.name,
+            byte_names=[ord_sugar.target for ord_sugar in self.ords],
+        )
         return [
             eq(make_var(self.alphabet.name), str_const(alphabet.value)),
             *[
                 eq(make_var(ord_sugar.target), num(ord(argument.value[ord_sugar.index])))
                 for ord_sugar in self.ords
             ],
-            eq(make_var("out"), str_const(output.value)),
+            atomic("str.eq-bv-blocks", [make_var("out"), str_const(payload)]),
         ]

@@ -1,32 +1,40 @@
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from sugar_lift_py_tests.bitvector_solver import solve_bitvector_binary
-from sugar_lift_py_tests.floor import StringValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.canonicalizer import encode_jcs
+from sugar_lift_py_tests.ir import Term, bvadd, bvand, bvlshr, bvor, bvshl, make_var, num, term_to_value
 
 
 class Base64Expr(Protocol):
-    def evaluate(self, env: dict[str, int | str]) -> int | str: ...
+    def bv_term(self) -> Term: ...
+
+    def output_indices(self, alphabet_name: str) -> list[Term]: ...
 
 
 @dataclass(frozen=True)
 class NameExpr:
     name: str
 
-    def evaluate(self, env: dict[str, int | str]) -> int | str:
-        return env[self.name]
+    def bv_term(self) -> Term:
+        return make_var(self.name)
+
+    def output_indices(self, alphabet_name: str) -> list[Term]:
+        raise ValueError(f"base64 output expected alphabet subscript, got `{self.name}`")
 
 
 @dataclass(frozen=True)
 class IntExpr:
     value: int
 
-    def evaluate(self, _env: dict[str, int | str]) -> int:
-        return self.value
+    def bv_term(self) -> Term:
+        return num(self.value)
+
+    def output_indices(self, alphabet_name: str) -> list[Term]:
+        raise ValueError("base64 output expected alphabet subscript, got int literal")
 
 
 @dataclass(frozen=True)
@@ -34,12 +42,13 @@ class SubscriptExpr:
     receiver: Base64Expr
     index: Base64Expr
 
-    def evaluate(self, env: dict[str, int | str]) -> str:
-        receiver = self.receiver.evaluate(env)
-        index = self.index.evaluate(env)
-        if not isinstance(receiver, str) or not isinstance(index, int):
-            raise ValueError("base64 subscript requires string receiver and int index")
-        return receiver[index]
+    def bv_term(self) -> Term:
+        raise ValueError("base64 alphabet subscript is a string output, not a bv32 term")
+
+    def output_indices(self, alphabet_name: str) -> list[Term]:
+        if not isinstance(self.receiver, NameExpr) or self.receiver.name != alphabet_name:
+            raise ValueError("base64 output subscript must index the alphabet literal")
+        return [self.index.bv_term()]
 
 
 @dataclass(frozen=True)
@@ -48,14 +57,15 @@ class BinaryExpr:
     left: Base64Expr
     right: Base64Expr
 
-    def evaluate(self, env: dict[str, int | str]) -> int | str:
-        left = self.left.evaluate(env)
-        right = self.right.evaluate(env)
-        if self.operator == "+":
-            return _add(left, right)
-        if not isinstance(left, int) or not isinstance(right, int):
-            raise ValueError("base64 bitvector operands must be integers")
-        return solve_bitvector_binary(self.operator, left, right)
+    def bv_term(self) -> Term:
+        return _bv_operator(self.operator, self.left.bv_term(), self.right.bv_term())
+
+    def output_indices(self, alphabet_name: str) -> list[Term]:
+        if self.operator != "+":
+            raise ValueError("base64 output must concatenate alphabet subscripts")
+        return self.left.output_indices(alphabet_name) + self.right.output_indices(
+            alphabet_name
+        )
 
 
 @dataclass(frozen=True)
@@ -73,8 +83,23 @@ class BitwiseBase64Sugar:
             return None
         return cls(expression=expression)
 
-    def apply(self, env: dict[str, int | str]) -> Outcome:
-        return Complete(StringValue(str(self.expression.evaluate(env))))
+    def payload_json(
+        self, *, input_value: str, alphabet: str, alphabet_name: str, byte_names: list[str]
+    ) -> str:
+        if len(input_value) != len(byte_names):
+            raise ValueError("base64 payload requires one byte name per input character")
+        input_bytes = [ord(ch) for ch in input_value]
+        if any(byte < 0 or byte > 255 for byte in input_bytes):
+            raise ValueError("base64 payload currently requires byte-sized characters")
+        payload = {
+            "input_bytes": input_bytes,
+            "vars": byte_names,
+            "per_char": [
+                _term_json(term) for term in self.expression.output_indices(alphabet_name)
+            ],
+            "table": [ord(ch) for ch in alphabet],
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _lower_expr(node: ast.AST) -> Base64Expr:
@@ -113,9 +138,19 @@ def _operator(op: ast.operator) -> str | None:
     return None
 
 
-def _add(left: int | str, right: int | str) -> int | str:
-    if isinstance(left, str) and isinstance(right, str):
-        return left + right
-    if isinstance(left, int) and isinstance(right, int):
-        return left + right
-    raise ValueError("base64 addition requires matching operand types")
+def _bv_operator(operator: str, left: Term, right: Term) -> Term:
+    if operator == "&":
+        return bvand(left, right)
+    if operator == "|":
+        return bvor(left, right)
+    if operator == "<<":
+        return bvshl(left, right)
+    if operator == ">>":
+        return bvlshr(left, right)
+    if operator == "+":
+        return bvadd(left, right)
+    raise ValueError(f"unsupported base64 bv operator `{operator}`")
+
+
+def _term_json(term: Term) -> dict:
+    return json.loads(encode_jcs(term_to_value(term)))
