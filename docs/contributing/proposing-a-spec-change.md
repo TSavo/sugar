@@ -1,5 +1,9 @@
 # Proposing a spec change
 
+> ⚠️ **One stale reference (2026-06-28):** the mention of `sugar verify-protocol`
+> below names a **removed** command — it is no longer a CLI subcommand. The
+> catalog-mismatch behavior it described still holds; the verb to invoke it is gone.
+
 A spec change is any change to a document in `protocol/specs/`. It alters the protocol's content-addressed substrate. Because each spec is content-addressed, a change always changes a CID, which always cascades into kit re-mints, fixture updates, and an eventual catalog version bump.
 
 This is the most consequential kind of contribution. This doc walks the process.

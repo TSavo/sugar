@@ -380,9 +380,6 @@ authoritative list; the current subcommands include:
   pipeline against arbitrary user code).
 - `sugar emit`: emit target/framework test artifacts from neutral contract
   predicates.
-- `sugar protocol` / `sugar verify-protocol`: work with protocol catalog
-  evolution artifacts, and confirm the local install conforms to its embedded
-  protocol-catalog CID.
 - `sugar doctor`: validate a kit's config and manifest wiring before a run.
 - `sugar init`: scaffold a project (`sugar.toml`, `.sugar/`, sample
   invariant, GitHub Action).
@@ -403,16 +400,23 @@ work. The current install path is:
 cargo install --path implementations/rust/sugar-cli
 ```
 
-Verify the installed CLI's embedded protocol catalog:
+Confirm it installed:
 
 ```sh
-sugar verify-protocol
+sugar --version
 ```
 
-For a first run, work through the demos in [examples/](examples/); each one has a
-`run.sh` that mints, proves, and verifies end to end. If you are working on Sugar
-itself, see [docs/contributing/build.md](docs/contributing/build.md) for the
-polyglot Make targets, system dependencies, and per-implementation build commands.
+For a first run, build the workspace binaries the demos invoke (each `run.sh` calls
+`implementations/rust/target/debug/…` directly, so `cargo install` alone is not
+enough), then work through the demos in [examples/](examples/); each `run.sh` mints,
+proves, and verifies end to end:
+
+```sh
+(cd implementations/rust && cargo build)
+```
+
+If you are working on Sugar itself, see [docs/contributing/build.md](docs/contributing/build.md)
+for the polyglot Make targets, system dependencies, and per-implementation build commands.
 
 ## Run the demos
 
@@ -421,7 +425,7 @@ The numpy demos provision their own venv on first run.
 | Demo | What it shows | Path |
 |---|---|---|
 | Vendor a whole library | ~2900 numpy functions sugar-lifted into one `.proof`, no shim, witness package, consumer `verify` recomputes | [examples/numpy-vendor/](examples/numpy-vendor/) |
-| Discharge two ways | one operation, `numpy.add`, proven consistent (z3) AND witnessed (recompute); `discharged: 2` | [examples/numpy-showcase/](examples/numpy-showcase/) |
+| Discharge two ways | one operation, `numpy.rot90`: consistency discharged (z3) and the degenerate twin refused both ways (z3 UNSAT + witness recompute) | [examples/numpy-showcase/](examples/numpy-showcase/) |
 | Inheritance capstone | a consumer inherits numpy's contract and is refused when it contradicts it | [test_inheritance_e2e.py](implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py) |
 
 ## Current status
@@ -450,14 +454,17 @@ The numpy demos provision their own venv on first run.
 The user-facing docs were written ahead of the implementation and described
 installers and per-language flows that do not exist, so they were removed rather
 than left as fiction. What remains is real: the runnable demos, the code, the
-vocabulary, and the papers. Honest usage docs return when there is a path that
-runs end to end to document.
+vocabulary, and the papers. The honest usage docs now return as each end-to-end
+path lands — **[docs/getting-started.md](docs/getting-started.md) is the first one
+back**, built only on demos that run today. The full map is [docs/](docs/).
 
 | Goal | Read |
 |---|---|
+| Get from clone to a verified `.proof` | [docs/getting-started.md](docs/getting-started.md) |
 | Run the headline demo | [examples/numpy-vendor/](examples/numpy-vendor/) |
 | See everything that runs today | [examples/](examples/) |
 | Learn the vocabulary | [SHARED-LANGUAGE.md](SHARED-LANGUAGE.md) |
+| Browse all docs | [docs/](docs/) |
 | Build Sugar from source | [docs/contributing/build.md](docs/contributing/build.md) |
 | Read the paper ladder | [docs/papers/README.md](docs/papers/README.md) |
 
