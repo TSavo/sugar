@@ -360,11 +360,6 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
     if not isinstance(contract_bindings, list):
         contract_bindings = []
     try:
-        with open("/tmp/dbg_b.txt", "a") as _d:  # DEBUG: bindings arrival + name shape
-            _d.write(
-                f"lift n_bindings={len(contract_bindings)} "
-                f"names={[b.get('name') for b in contract_bindings if isinstance(b, dict)][:5]}\n"
-            )
         payload = LiftReportPayloadDto(source_ledger={})
         root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
