@@ -9,10 +9,12 @@ def lift_source(
     source: str,
     *,
     memento_file: str | None = None,
+    contract_bindings: list | None = None,
 ) -> object:
     return build_next(
         source=source,
         filename=path,
         role=SugarRole.TERM,
         memento_file=memento_file,
+        contract_bindings=contract_bindings,
     )

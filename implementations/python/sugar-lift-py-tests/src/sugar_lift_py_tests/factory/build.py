@@ -41,11 +41,13 @@ def build_next(
     memento_file: str | None = None,
     catalog: Optional[SugarCatalog] = None,
     ctx: Optional[FactoryBuildContext] = None,
+    contract_bindings: list | None = None,
 ) -> FactoryBuildResult | object:
     report = _build_source_report(
         source=source,
         filename=filename,
         memento_file=memento_file,
+        contract_bindings=contract_bindings,
     )
     if report is not None:
         return report
@@ -72,6 +74,7 @@ def _build_source_report(
     source: str,
     filename: str,
     memento_file: str | None,
+    contract_bindings: list | None = None,
 ):
     from .array_map_report import build_array_map_report
     from .literal_call_report import build_literal_call_report
@@ -87,6 +90,7 @@ def _build_source_report(
         source=source,
         filename=filename,
         memento_file=memento_file,
+        contract_bindings=contract_bindings,
     )
 
 

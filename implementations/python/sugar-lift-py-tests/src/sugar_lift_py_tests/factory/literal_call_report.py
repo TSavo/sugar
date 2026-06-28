@@ -35,11 +35,58 @@ class SourceReportBuild:
     payload: LiftReportPayloadDto
 
 
+def _contracts_by_callee(contract_bindings: list | None) -> dict[str, dict[str, Any]]:
+    """A vendor contract is in scope, keyed by the callee name (qualified + simple).
+    Mirrors lsp.py `_contract_bindings_by_callee` so the factory resolves an
+    imported call to the vendor `.proof` contract instead of a local body."""
+    out: dict[str, dict[str, Any]] = {}
+    for binding in contract_bindings or []:
+        if not isinstance(binding, dict):
+            continue
+        name = binding.get("name")
+        if not isinstance(name, str):
+            continue
+        stem = name.split("@", 1)[0].split("(", 1)[0].strip()
+        if stem:
+            out.setdefault(stem, binding)
+            simple = stem.rsplit(".", 1)[-1]
+            if simple:
+                out.setdefault(simple, binding)
+    return out
+
+
+def _imports_by_name(tree: ast.Module) -> dict[str, str]:
+    """Map an imported symbol to its module stem, so the consumer can NAME the
+    vendor universe contract: `from base64vendor import encodeBase64` lets us target
+    `base64vendor::encodeBase64::callable` -- the vendor's `{stem}::{fn}::callable`."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            module = node.module.rsplit(".", 1)[-1]
+            for alias in node.names:
+                out[alias.asname or alias.name] = module
+    return out
+
+
+def _is_free_var_definition(formula_value: dict[str, Any], bound: set[str]) -> bool:
+    """An `eq(var, _)` whose var is neither a formal nor `out` -- a free-variable
+    definition that would leave an exported universe post OPEN, so the verifier's
+    `linked_ambient_post_instances_for_inv` skips it. The str.eq-bv-blocks relation
+    carries the alphabet as a constant payload, so dropping the definition is safe."""
+    if not isinstance(formula_value, dict) or formula_value.get("name") != "=":
+        return False
+    args = formula_value.get("args")
+    if not isinstance(args, list) or len(args) != 2 or not isinstance(args[0], dict):
+        return False
+    return args[0].get("kind") == "var" and args[0].get("name") not in bound
+
+
 def build_literal_call_report(
     *,
     source: str,
     filename: str,
     memento_file: str | None = None,
+    contract_bindings: list | None = None,
 ) -> SourceReportBuild | None:
     tree = ast.parse(source, filename=filename)
     lines = source.splitlines(keepends=True)
@@ -52,6 +99,8 @@ def build_literal_call_report(
     functions_by_name = {
         node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
     }
+    contracts_by_callee = _contracts_by_callee(contract_bindings)
+    imports_by_name = _imports_by_name(tree)
     for fn in functions_by_name.values():
         for stmt in fn.body:
             if not isinstance(stmt, ast.Assert):
@@ -63,6 +112,8 @@ def build_literal_call_report(
                 memento_file=rel_file,
                 source_lines=lines,
                 functions_by_name=functions_by_name,
+                contracts_by_callee=contracts_by_callee,
+                imports_by_name=imports_by_name,
             )
             if lifted is None:
                 continue
@@ -94,6 +145,8 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, ast.FunctionDef],
+    contracts_by_callee: dict[str, dict[str, Any]] | None = None,
+    imports_by_name: dict[str, str] | None = None,
 ) -> tuple[
     list[BodyUniverseDto],
     list[SourceMementoDto],
@@ -106,6 +159,34 @@ def _lift_assert(
         return None
     if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
         return None
+    # Cross-project: an IMPORTED callee whose vendor contract is in scope joins the
+    # vendor universe by CID, rather than re-lifting a body that isn't local.
+    callee_name = _callee_name(comparison.left)
+    try:
+        with open("/tmp/dbg_fed.txt", "a") as _d:  # DEBUG: does the federation branch fire?
+            _d.write(
+                f"{memento_file}: callee={callee_name!r} "
+                f"local={callee_name in functions_by_name} "
+                f"fed_fires={bool(callee_name and callee_name not in functions_by_name)}\n"
+            )
+    except Exception:
+        pass
+    if callee_name and callee_name not in functions_by_name:
+        # Imported callee: emit the consumer's fact + a call-edge that the verifier
+        # resolves to the vendor contract (by CID if a binding is in scope, else by
+        # symbol against the proofs loaded from .sugar/imports/).
+        binding = (contracts_by_callee or {}).get(callee_name)
+        return _lift_federated_assert(
+            stmt,
+            comparison=comparison,
+            callee_name=callee_name,
+            binding=binding,
+            fn=fn,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            imports_by_name=imports_by_name,
+        )
     from .build import default_catalog
 
     factory_ctx = FactoryBuildContext(
@@ -150,10 +231,23 @@ def _lift_assert(
         if len(callsite_fact_formulas) == 1
         else _formula_to_rpc(and_(callsite_fact_formulas))
     )
+    # The exported universe keeps `out` as its out-binding: the verifier's
+    # `linked_ambient_post_instances_for_inv` substitutes `out_binding -> callsite`
+    # and `formals -> call args`, turning `str.eq-bv-blocks(out, value, ...)` into
+    # `str.eq-bv-blocks(call:enc(xyz), xyz, ...)` specialized at the consumer's call.
+    # It must be CLOSED after those substitutions or the verifier skips it as "open",
+    # so drop free-var DEFINITIONS (`eq(alphabet, "..")` whose var is neither a formal
+    # nor `out`); the str.eq-bv-blocks payload already carries the alphabet constant.
+    _universe_bound = {arg.arg for arg in target_fn.args.args} | {"out"}
+    _universe_formulas = [
+        f
+        for f, fv in zip(body_formulas, body_formula_values)
+        if not _is_free_var_definition(fv, _universe_bound)
+    ]
     function_post = (
-        body_formula_values[0]
-        if len(body_formulas) == 1
-        else _formula_to_rpc(and_(body_formulas))
+        _formula_to_rpc(_universe_formulas[0])
+        if len(_universe_formulas) == 1
+        else _formula_to_rpc(and_(_universe_formulas))
     )
     function_contract_name = f"{Path(memento_file).stem}::{target_fn.name}::callable"
     assertion_contract_name = (
@@ -201,6 +295,11 @@ def _lift_assert(
         out_binding="out",
         post=function_post,
         source_warrants=[function_memento],
+        formals=[arg.arg for arg in target_fn.args.args],
+        kind="function-contract",
+        # Must equal the callsite ctor name (`linked_ambient_post_instances_for_inv`
+        # matches `post.source_symbol == callsite.name`), which is `call:<callee>`.
+        bridge_source_symbol=f"call:{target_fn.name}",
     )
     callsite = _callsite_string(memento_file, comparison.left)
     assertion_contract = BodyUniverseDto(
@@ -278,6 +377,96 @@ def _lift_assert(
             }
         ],
     )
+
+
+def _callee_name(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _lift_federated_assert(
+    stmt: ast.Assert,
+    *,
+    comparison: ast.Compare,
+    callee_name: str,
+    binding: dict[str, Any] | None,
+    fn: ast.FunctionDef,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    imports_by_name: dict[str, str] | None = None,
+):
+    """The user's `encodeBase64("xyz") == "eHl6"` lifts to an EUF callsite obligation
+    `callresult_encodeBase64_a1("xyz") == "eHl6"`, contract-named
+    `encodeBase64#euf#<arg_sig>::assertion`. The consistency pass groups obligations
+    by the `#euf#` scope and specializes the vendor's universe post (a forall over the
+    same callresult ctor) into this one, so z3 decides `and(universe, fact)` -- no body
+    re-lifted, no test run. Only concrete-literal args take this path; a symbolic arg
+    falls back (returns None)."""
+    del binding, imports_by_name  # composition is by #euf# name, not a bridge/CID
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.layer2 import _canonical_term_sig
+
+    expected_sugar = string_literal_sugar(comparison.comparators[0])
+    if expected_sugar is None:
+        return None
+    expected = complete_value(expected_sugar.desugar(), owner="federated call expected")
+    call_node = comparison.left
+    arg_terms = []
+    for arg_node in call_node.args:
+        arg_sugar = string_literal_sugar(arg_node)
+        if arg_sugar is None:
+            return None  # non-literal arg: outside the factory euf path
+        arg_value = complete_value(arg_sugar.desugar(), owner="federated call arg")
+        arg_terms.append(str_const(arg_value.value))
+    # `call:<callee>` is the callsite-ctor form the verifier recognizes
+    # (`is_callsite_ctor_term` requires the `call:` prefix); the universe post
+    # below uses the same head so the ambient specialization matches.
+    euf_term = ctor(f"call:{callee_name}", arg_terms)
+    assertion_contract_name = (
+        f"{callee_name}#euf#{_canonical_term_sig(euf_term)}::assertion"
+    )
+    assertion_memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=assertion_contract_name,
+        role="python.literal-call-sugar",
+    )
+    assertion_inv = _formula_to_rpc(eq(euf_term, str_const(expected.value)))
+    assertion_contract = BodyUniverseDto(
+        name=assertion_contract_name,
+        out_binding="out",
+        inv=assertion_inv,
+        source_warrants=[assertion_memento],
+    )
+    walk = _walk_row(
+        "FunctionCallSugar",
+        "Call",
+        stmt,
+        filename,
+        assertion_memento,
+        "predicate",
+        requested_role="AssertionSurface",
+        emitted_formula=assertion_inv,
+    )
+    audit = _source_audit(
+        fn,
+        stmt,
+        memento_file,
+        assertion_contract_name,
+        assertion_memento,
+        role="python.literal-call-sugar",
+        ast_kind="Assert",
+    )
+    return ([assertion_contract], [assertion_memento], [audit], [walk], [])
 
 
 def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
