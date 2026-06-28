@@ -92,9 +92,9 @@ def row(doc, needle):
         raise SystemExit(f"FAIL({twin}): missing row containing {needle}")
     return matches[0]
 
-assertion = row(prove, "literal-call-sugar::assertion")
+assertion = row(prove, "#euf#")
 witness = row(prove, "witness-package")
-v_assertion = row(verify, "literal-call-sugar::assertion")
+v_assertion = row(verify, "#euf#")
 v_witness = row(verify, "witness-package")
 dim = verify.get("witnessDimension") or {}
 seen = dim.get("witnesses") or []

@@ -105,23 +105,18 @@ def _assert_base64_payload(formula: dict) -> None:
 
 
 def _assert_assertion_inv(contract: dict, expected: str) -> None:
+    # The unified lift: every assertion is the euf callsite obligation
+    # `eq(call:encodeBase64("abc"), expected)`. The universe (the body relation) is a
+    # separate function-contract the verifier specializes onto this callsite -- it is
+    # NOT inlined into the inv anymore.
     inv = contract["inv"]
-    assert inv["kind"] == "and"
-    operands = inv["operands"]
-    assert len(operands) == 4
-    _eq_var_const(operands[0], "alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
-    _assert_base64_payload(operands[1])
-    _eq_var_const(operands[2], "value", "abc")
-    _eq_var_const(operands[3], "out", expected)
-
-
-def _assert_callsite_fact(contract: dict, expected: str) -> None:
-    fact = contract["warrantedBy"]["fact"]
-    assert fact["kind"] == "and"
-    operands = fact["operands"]
-    assert len(operands) == 2
-    _eq_var_const(operands[0], "value", "abc")
-    _eq_var_const(operands[1], "out", expected)
+    assert inv["kind"] == "atomic"
+    assert inv["name"] == "="
+    call_term, expected_term = inv["args"]
+    assert call_term["kind"] == "ctor"
+    assert call_term["name"] == "call:encodeBase64"
+    assert [arg["value"] for arg in call_term["args"]] == ["abc"]
+    assert expected_term["value"] == expected
 
 
 def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -> None:
@@ -136,14 +131,13 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     names = [contract["name"] for contract in good_doc["ir"]]
     assert names == [
         "test_base64::encodeBase64::callable",
-        "test_base64::test_encode_base64::literal-call-sugar::assertion",
+        "encodeBase64#euf#c:call:encodeBase64(s:'abc')::assertion",
     ]
     function_contract, assertion_contract = good_doc["ir"]
-    assert function_contract["post"]["kind"] == "and"
-    post_operands = function_contract["post"]["operands"]
-    assert len(post_operands) == 2
-    _eq_var_const(post_operands[0], "alphabet", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
-    _assert_base64_payload(post_operands[1])
+    # The exported universe post is the single str.eq-bv-blocks relation; the free-var
+    # `alphabet` definition is dropped (the payload carries the alphabet as a constant),
+    # which keeps the post CLOSED for the verifier's ambient-post specialization.
+    _assert_base64_payload(function_contract["post"])
     assert function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
@@ -151,21 +145,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     )
     assert assertion_contract["sourceWarrants"][0]["role"] == "python.literal-call-sugar"
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
-    assert assertion_contract["warrantedBy"]["contractName"] == function_contract["name"]
-    assert assertion_contract["warrantedBy"]["callsite"] == "test_base64.py:14:11"
-    _assert_callsite_fact(assertion_contract, "YWJj")
+    # No warrantedBy / callsite-fact anymore: the euf inv IS the fact, and the universe
+    # composes via ambient-post specialization rather than a bespoke warrant.
+    assert "warrantedBy" not in assertion_contract
     _assert_assertion_inv(assertion_contract, "YWJj")
     _assert_assertion_inv(bad_doc["ir"][1], "AAAA")
-    _assert_callsite_fact(bad_doc["ir"][1], "AAAA")
-    assert good_doc["callEdges"] == [
-        {
-            "kind": "call-edge",
-            "sourceContract": function_contract["name"],
-            "targetSymbol": "encodeBase64",
-            "targetContract": assertion_contract["name"],
-            "callsite": "test_base64.py:14:11",
-        }
-    ]
+    # The dig emits no call-edge: composition is ambient-post specialization keyed on
+    # the `call:` ctor head, which needs no explicit edge.
+    assert good_doc["callEdges"] == []
     assert [row["selected"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
         "AlphabetLiteralSugar",
         "OrdSugar",
