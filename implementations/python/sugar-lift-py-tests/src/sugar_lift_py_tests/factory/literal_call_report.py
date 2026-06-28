@@ -6,14 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sugar_lift_py_tests.array_map_lifter import (
+from sugar_lift_py_tests.factory.array_map_report import (
     _callsite_string,
     _function_source_memento,
     _source_ledger,
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory import FactoryBuildContext, SourceSite, default_catalog
 from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
 from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, str_const
 from sugar_lift_py_tests.kit_rpc import (
@@ -27,18 +26,21 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
 
+from .factory_build_context import FactoryBuildContext
+from .source_site import SourceSite
+
 
 @dataclass(frozen=True)
-class LiteralCallLift:
+class SourceReportBuild:
     payload: LiftReportPayloadDto
 
 
-def lift_literal_call_assertions(
+def build_literal_call_report(
     *,
     source: str,
     filename: str,
     memento_file: str | None = None,
-) -> LiteralCallLift | None:
+) -> SourceReportBuild | None:
     tree = ast.parse(source, filename=filename)
     lines = source.splitlines(keepends=True)
     rel_file = memento_file or filename
@@ -72,7 +74,7 @@ def lift_literal_call_assertions(
             call_edges.extend(edges)
     if not contracts:
         return None
-    return LiteralCallLift(
+    return SourceReportBuild(
         LiftReportPayloadDto(
             ir=contracts,
             source_mementos=source_mementos,
@@ -104,6 +106,8 @@ def _lift_assert(
         return None
     if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
         return None
+    from .build import default_catalog
+
     factory_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),

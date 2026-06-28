@@ -38,9 +38,18 @@ def build_next(
     source: str,
     filename: str,
     role: SugarRole,
+    memento_file: str | None = None,
     catalog: Optional[SugarCatalog] = None,
     ctx: Optional[FactoryBuildContext] = None,
-) -> FactoryBuildResult:
+) -> FactoryBuildResult | object:
+    report = _build_source_report(
+        source=source,
+        filename=filename,
+        memento_file=memento_file,
+    )
+    if report is not None:
+        return report
+
     site = SourceSiteStack.from_source(source, filename).pop()
     if site is None:
         raise ValueError("factory source contained no source sites")
@@ -55,6 +64,29 @@ def build_next(
             filename=filename,
             catalog=catalog,
         ),
+    )
+
+
+def _build_source_report(
+    *,
+    source: str,
+    filename: str,
+    memento_file: str | None,
+):
+    from .array_map_report import build_array_map_report
+    from .literal_call_report import build_literal_call_report
+
+    array_map = build_array_map_report(
+        source=source,
+        filename=filename,
+        memento_file=memento_file,
+    )
+    if array_map is not None:
+        return array_map
+    return build_literal_call_report(
+        source=source,
+        filename=filename,
+        memento_file=memento_file,
     )
 
 
