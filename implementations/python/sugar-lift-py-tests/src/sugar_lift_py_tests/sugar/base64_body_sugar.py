@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.factory import SourceSite
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.ir import Formula, eq, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -20,37 +19,33 @@ class Base64BodySugar:
     ords: tuple[OrdSugar, OrdSugar, OrdSugar]
     return_sugar: BitwiseBase64Sugar
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.alphabet, AlphabetLiteralSugar):
+            raise TypeError("Base64BodySugar alphabet must be factory-built")
+        if len(self.ords) != 3 or not all(isinstance(ord_, OrdSugar) for ord_ in self.ords):
+            raise TypeError("Base64BodySugar ords must be factory-built")
+        if not isinstance(self.return_sugar, BitwiseBase64Sugar):
+            raise TypeError("Base64BodySugar return sugar must be factory-built")
+
     @classmethod
-    def from_site(cls, site, _ctx=None) -> "Base64BodySugar | None":
+    def from_site(
+        cls,
+        site,
+        *,
+        alphabet: AlphabetLiteralSugar,
+        ords: tuple[OrdSugar, OrdSugar, OrdSugar],
+        return_sugar: BitwiseBase64Sugar,
+    ) -> "Base64BodySugar | None":
         function = site.node
         if not isinstance(function, ast.FunctionDef):
             return None
         if len(function.args.args) != 1 or len(function.body) != 5:
             return None
         parameter = function.args.args[0].arg
-        alphabet = AlphabetLiteralSugar.from_site(
-            SourceSite.from_node(function.body[0], "<base64-body>")
-        )
-        if alphabet is None:
-            return None
-        ords = tuple(
-            OrdSugar.from_site(
-                SourceSite.from_node(stmt, "<base64-body>"),
-                source_name=parameter,
-            )
-            for stmt in function.body[1:4]
-        )
-        if not all(ords):
-            return None
-        return_sugar = BitwiseBase64Sugar.from_site(
-            SourceSite.from_node(function.body[4], "<base64-body>")
-        )
-        if return_sugar is None:
-            return None
         return cls(
             parameter=parameter,
             alphabet=alphabet,
-            ords=ords,  # type: ignore[arg-type]
+            ords=ords,
             return_sugar=return_sugar,
         )
 

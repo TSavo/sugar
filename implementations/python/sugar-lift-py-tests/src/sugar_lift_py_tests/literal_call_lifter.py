@@ -13,7 +13,8 @@ from sugar_lift_py_tests.array_map_lifter import (
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory import SourceSite
+from sugar_lift_py_tests.factory import FactoryBuildContext, SourceSite, default_catalog
+from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
 from sugar_lift_py_tests.ir import Formula, and_, eq, formula_to_value, str_const
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -24,7 +25,6 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
 from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
 
 
@@ -104,11 +104,17 @@ def _lift_assert(
         return None
     if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
         return None
-    call_sugar = FunctionCallSugar.from_site(
-        SourceSite.from_node(comparison.left, filename),
-        functions_by_name=functions_by_name,
+    factory_ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=default_catalog(),
+        name_resolver=functions_by_name,
     )
-    if call_sugar is None:
+    try:
+        call_sugar = build_function_call_sugar(
+            SourceSite.from_node(comparison.left, filename),
+            factory_ctx,
+        )
+    except TypeError:
         return None
     expected_sugar = string_literal_sugar(comparison.comparators[0])
     if expected_sugar is None:
