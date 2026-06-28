@@ -940,6 +940,16 @@ fn verify_one_claim(
                     );
                     return result;
                 }
+                if resolved.target_has_post {
+                    result.reason = format!(
+                        "vacuous-door: refuse: target `{}` carries a `post` but \
+                         no `pre` and no `formals`; a lone opaque equality \
+                         obligation has no constraining universe at this tier \
+                         and must not vacuously discharge",
+                        cs.bridge_ir_name
+                    );
+                    return result;
+                }
                 result.verdict = ObligationVerdict::Discharged;
                 result.reason = "vacuous: target carries no precondition".to_string();
                 result.obligation_class = "vacuous".to_string();

@@ -153,11 +153,20 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     // A genuinely non-body-bearing target (e.g. a LIA refinement contract)
     // carries no `formals` key at all, so it stays on the legitimate path.
     let target_is_body_bearing = body.get("formals").and_then(|v| v.as_array()).is_some();
+    // A post-only contract whose `post` field is present makes an
+    // obligation-carrying claim about its output value. The vacuous discharge
+    // shortcut ("no pre => nothing to prove") is NOT legitimate here because
+    // the `post` asserts a specific value (e.g. `eq(out, "AAAA")`). If this
+    // marker is set the caller MUST NOT emit a vacuous Discharged; it must
+    // return Undecidable. The vacuous path is only for truly claim-free
+    // targets (no pre AND no post).
+    let target_has_post = body.get("post").is_some();
     debug!(
         bridge = %cs.bridge_ir_name,
         target_cid = %cs.bridge_target_cid,
         body_bearing = target_is_body_bearing,
         has_pre = ir_formula.is_some(),
+        has_post = target_has_post,
         "resolve_target: accepted"
     );
     Ok(ResolvedProperty {
@@ -167,6 +176,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
         formal_names,
         formal_sorts,
         target_is_body_bearing,
+        target_has_post,
     })
 }
 

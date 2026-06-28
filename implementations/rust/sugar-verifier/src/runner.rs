@@ -1397,11 +1397,24 @@ fn work_one(
     if resolved.ir_formula.is_none() {
         // HONESTY BOUNDARY (mirrors cmd_verify::verify_one_claim). The
         // vacuous-discharge shortcut ("no precondition => nothing to prove")
-        // is legitimate ONLY for a genuinely non-body-bearing target. A
-        // target carrying `formals` is a body-derived op-contract: its `post`
-        // describes a body whose obligation the runner does NOT reduce here,
-        // so vacuous-passing it would be a false green. Refuse instead
-        // (Undecidable): not discharged, no witness.
+        // is legitimate ONLY for a genuinely non-body-bearing, claim-free
+        // target. Two shapes are refused before reaching the vacuous branch:
+        //
+        // 1. Body-bearing (carries `formals`): a body-derived op-contract
+        //    whose obligation the runner did NOT reduce. Vacuous-passing it
+        //    would be a false green.
+        //
+        // 2. Post-bearing (carries `post` but no `formals` and no `pre`):
+        //    a "publisher post-only" contract that asserts a specific output
+        //    value (e.g. `eq(out, "AAAA")`). This is an obligation-carrying
+        //    shape — the post makes a factual claim that must be verified
+        //    against the callsite, not skipped. A FALSE claim (e.g.
+        //    encodeVendor(abc)=="AAAA" when the real encoding is "YWJj")
+        //    must NOT vacuously discharge; it must be Undecidable (no
+        //    universe supplied to refute or confirm it at this tier).
+        //
+        // The vacuous path is only legitimate for targets that are truly
+        // claim-free: no pre, no post (e.g. a bare structural marker).
         if resolved.target_is_body_bearing {
             n_residue.fetch_add(1, Ordering::Relaxed);
             return (
@@ -1412,6 +1425,22 @@ fn work_one(
                      (carries `formals`) but the runner did not reduce its \
                      obligation and it has no precondition; refusing rather \
                      than reporting a vacuous pass",
+                    cs.bridge_ir_name
+                ),
+                None,
+                None,
+            );
+        }
+        if resolved.target_has_post {
+            n_residue.fetch_add(1, Ordering::Relaxed);
+            return (
+                cs.clone(),
+                ObligationVerdict::Undecidable,
+                format!(
+                    "vacuous-door: refuse: target `{}` carries a `post` but \
+                     no `pre` and no `formals`; a lone opaque equality \
+                     obligation has no constraining universe at this tier \
+                     and must not vacuously discharge",
                     cs.bridge_ir_name
                 ),
                 None,
