@@ -415,6 +415,74 @@ def _numeric_const_term(value: int | float):
     return real_lit(str(decimal.Decimal(str(value))))
 
 
+def _nested_int_literal(node: ast.AST):
+    """An ast node -> a nested Python list of ints (or a bare int), or None.
+    A leaf is an int `ast.Constant` (bool excluded); a branch is an `ast.List`
+    whose every element is itself a nested-int-literal. Any non-int leaf,
+    a non-List/non-Constant node, or a mixed shape -> None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.List):
+        out: list = []
+        for el in node.elts:
+            v = _nested_int_literal(el)
+            if v is None:
+                return None
+            out.append(v)
+        return out
+    return None
+
+
+def _np_array_nested_int(node: ast.AST):
+    """If `node` is `np.array(<nested int literal>)` of ANY rank (1-D, 2-D, ...),
+    return the nested Python list (or bare int); else None."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "array"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "np"
+        and len(node.args) == 1
+    ):
+        return None
+    return _nested_int_literal(node.args[0])
+
+
+def _resolve_np_array_element(
+    fn: ast.FunctionDef,
+    root_name: str,
+    indices: list[int],
+) -> int | None:
+    """Walk fn.body for `root_name = np.array(<nested int literal>)` of ANY rank,
+    then index the nested literal by the FULL integer path (1-D `a[i]`, 2-D
+    `r[i][j]`, 3-D, ...).
+
+    Returns the resolved integer element, or None (opaque fallback) for ANY
+    ambiguity: no binding / non-simple binding, a non-literal value, an
+    out-of-range or over/under-indexed path, or a non-int leaf. Never guesses.
+    """
+    for stmt in fn.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name) or target.id != root_name:
+            continue
+        nested = _np_array_nested_int(stmt.value)
+        if nested is None:
+            # Bound, but not to a resolvable np.array int literal -- opaque.
+            return None
+        cur: object = nested
+        for idx in indices:
+            if not isinstance(cur, list) or idx < 0 or idx >= len(cur):
+                return None  # out of range, or indexing past a scalar
+            cur = cur[idx]
+        if not isinstance(cur, int) or isinstance(cur, bool):
+            return None  # under-indexed (still a list) or non-int leaf
+        return cur
+    # No assignment found for root_name -- opaque.
+    return None
+
+
 def _lift_subscript_assertion(
     stmt: ast.Assert,
     *,
@@ -493,7 +561,23 @@ def _lift_subscript_assertion(
         contract_name=assertion_contract_name,
         role="python.literal-call-sugar",
     )
-    assertion_inv = _formula_to_rpc(eq(subscript_term, expected_ir))  # type: ignore[possibly-undefined]
+
+    # Attempt to resolve the literal element from an np.array binding in fn.body.
+    # Only conjoin when we can GUARANTEE the element value from the literal --
+    # any ambiguity falls back to the single-operand opaque obligation.
+    resolved_element: int | None = _resolve_np_array_element(fn, root_name, indices)
+    if resolved_element is not None:
+        # Conjoin: eq(subscript, expected) AND eq(subscript, literal-element).
+        # The literal-element closes the universe; expected==element -> DISCHARGED,
+        # expected!=element -> REFUTED. Two operands pass the vacuity guard.
+        assertion_formula = and_([
+            eq(subscript_term, expected_ir),  # type: ignore[possibly-undefined]
+            eq(subscript_term, num(resolved_element)),
+        ])
+    else:
+        # Opaque: no literal universe; honestly stays Refused.
+        assertion_formula = eq(subscript_term, expected_ir)  # type: ignore[possibly-undefined]
+    assertion_inv = _formula_to_rpc(assertion_formula)
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
