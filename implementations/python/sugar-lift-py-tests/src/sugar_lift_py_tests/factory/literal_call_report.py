@@ -89,8 +89,8 @@ def build_literal_call_report(
                 source_lines=lines,
                 functions_by_name=functions_by_name,
             )
-            if lifted is None:
-                continue
+            # _lift_assert never returns None now: it lifts the assert or PANICS
+            # (FactoryGap). A silent skip here would be the cardinal crime.
             lifted_contracts, mementos, audits, rows, edges = lifted
             contracts.extend(lifted_contracts)
             source_mementos.extend(mementos)
@@ -136,13 +136,29 @@ def _lift_assert(
     imported) to the fact and z3 decides `and(universe, fact)`."""
     comparison = stmt.test
     if not isinstance(comparison, ast.Compare) or len(comparison.ops) != 1:
-        return None
+        _panic_no_sugar(
+            stmt, memento_file,
+            observed=f"assert-test:{type(comparison).__name__}",
+            requested="EqualityAssertion",
+            fix="lift this assertion shape (only `call(...) == literal` is covered)",
+        )
     if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
-        return None
+        _panic_no_sugar(
+            stmt, memento_file,
+            observed=f"assert-compare-op:{type(comparison.ops[0]).__name__}",
+            requested="EqualityAssertion",
+            fix="lift non-`==` comparison assertions",
+        )
     callee_name = _callee_name(comparison.left)
     if callee_name is None:
-        return None
+        _panic_no_sugar(
+            comparison.left, memento_file,
+            observed=f"assert-eq-lhs:{type(comparison.left).__name__}",
+            requested="CallsiteEquality",
+            fix="lift `<lhs> == literal` where the lhs is not a call",
+        )
 
+    # _lift_callsite_assertion lifts or PANICS; it never returns None.
     assertion = _lift_callsite_assertion(
         stmt,
         comparison=comparison,
@@ -152,8 +168,6 @@ def _lift_assert(
         memento_file=memento_file,
         source_lines=source_lines,
     )
-    if assertion is None:
-        return None  # non-literal args/expected: outside the factory euf path
 
     universe: LiftResult | None = None
     if callee_name in functions_by_name:
@@ -185,13 +199,23 @@ def _lift_callsite_assertion(
     returns None."""
     expected_sugar = string_literal_sugar(comparison.comparators[0])
     if expected_sugar is None:
-        return None
+        _panic_no_sugar(
+            comparison.comparators[0], memento_file,
+            observed=f"callsite-expected:{type(comparison.comparators[0]).__name__}",
+            requested="StringLiteralExpected",
+            fix="lift non-string-literal expected (e.g. numeric `== 32`, list `== [..]`)",
+        )
     expected = complete_value(expected_sugar.desugar(), owner="callsite assertion expected")
     arg_terms = []
     for arg_node in comparison.left.args:
         arg_sugar = string_literal_sugar(arg_node)
         if arg_sugar is None:
-            return None  # non-literal arg: outside the factory euf path
+            _panic_no_sugar(
+                arg_node, memento_file,
+                observed=f"callsite-arg:{type(arg_node).__name__}",
+                requested="StringLiteralArg",
+                fix="lift non-string-literal call args (e.g. variables, arrays, numerics)",
+            )
         arg_value = complete_value(arg_sugar.desugar(), owner="callsite assertion arg")
         arg_terms.append(str_const(arg_value.value))
     euf_term = ctor(f"call:{callee_name}", arg_terms)
@@ -259,8 +283,13 @@ def _dig_universe(
             SourceSite.from_node(call_node, filename),
             factory_ctx,
         )
-    except TypeError:
-        return None
+    except TypeError as exc:
+        _panic_no_sugar(
+            call_node, memento_file,
+            observed=f"dig-body:{type(call_node).__name__}",
+            requested="FunctionBodyConstraint",
+            fix=f"lift this function body for the dig ({exc})",
+        )
     target_fn = functions_by_name[call_sugar.target_name]
     body_steps = call_sugar.factory_steps(target_fn)
     body_formulas = call_sugar.constraint_formulas()
@@ -356,6 +385,37 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
         return assertion
     return tuple(  # type: ignore[return-value]
         [*u, *a] for u, a in zip(universe, assertion)
+    )
+
+
+def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
+    """The mouth. The lifter saw an assertion it could not lift and REFUSES to drop it
+    silently -- it PANICS, naming the AST shape and the sugar that is missing. A silent
+    `return None` here would be the cardinal crime (un-done work disguised as done), so
+    the design forbids it: every give-up on a claim is a FactoryGap, never a None."""
+    from .factory_audit_row import FactoryAuditRow
+    from .factory_gap import FactoryGap
+    from .factory_gap_info import FactoryGapInfo
+
+    blame = f"{memento_file}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}"
+    info = FactoryGapInfo(
+        owner="python.factory.literal-call",
+        blame=blame,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
+    raise FactoryGap(
+        info,
+        FactoryAuditRow(
+            role=requested,
+            status="sugar-gap",
+            observed=observed,
+            blame=blame,
+            selected=None,
+            candidates=[],
+            message=info.message,
+        ),
     )
 
 
