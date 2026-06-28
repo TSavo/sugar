@@ -1,5 +1,13 @@
 # Release process
 
+> ⚠️ **Stale — needs re-grounding (2026-06-28).** The `sugar protocol` /
+> `sugar verify-protocol` command family this doc's steps are built on was
+> **removed** from the CLI (it is not among the current subcommands; run
+> `sugar --help`). The catalog itself is alive — `protocol/specs/…-protocol-catalog.json`,
+> signed and content-addressed — and the live tooling is `scripts/spec-cid-lint.sh`
+> plus the `protocol/evolution/` artifacts. Treat the `sugar protocol …` steps
+> below as historical until this workflow is re-grounded against current tooling.
+
 This describes how a Sugar protocol release is cut: catalog version bump, kit re-mints, conformance harness updates, multi-package distribution.
 
 This document is for protocol maintainers. End users should never need it; adapter authors usually don't either.
