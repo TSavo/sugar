@@ -22,7 +22,7 @@ use sugar_lift_rust_tests::{
     ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
     MacroRegistry, TargetCfg,
 };
-use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
+use sugar_verifier::types::{memento_body, memento_body_field};
 use syn::parse::Parser;
 use tracing::{debug, info, warn};
 
@@ -3564,7 +3564,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
                 )
             });
-            if memento_kind(target_env) != Some("contract") {
+            if pool.member_kind(target_cid) != Some("contract") {
                 continue;
             }
             let Some(target_body) = memento_body(target_env) else {
@@ -3856,8 +3856,8 @@ fn source_memento_member_for_contract(
         .and_then(|name| name.strip_prefix("rust-source::").or(Some(name)))
         .map(str::to_string);
 
-    for env in pool.mementos.values() {
-        if memento_kind(env) != Some("source-memento") {
+    for (cid, env) in &pool.mementos {
+        if pool.member_kind(cid) != Some("source-memento") {
             continue;
         }
         let Some(payload) = source_memento_payload(env) else {

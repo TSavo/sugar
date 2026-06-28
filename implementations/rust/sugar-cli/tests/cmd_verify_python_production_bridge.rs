@@ -415,27 +415,50 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         pool.load_errors
     );
 
-    let bridge = pool.bridges_by_symbol.get("double").unwrap_or_else(|| {
-        panic!(
-            "mint must auto-write + index a bridge with sourceSymbol=double; indexed: {:?}",
-            pool.bridges_by_symbol.keys().collect::<Vec<_>>()
-        )
-    });
+    // Validate the bridge was indexed by sourceSymbol (keeps error message listing indexed symbols).
+    assert!(
+        pool.bridges_by_symbol.contains_key("double"),
+        "mint must auto-write + index a bridge with sourceSymbol=double; indexed: {:?}",
+        pool.bridges_by_symbol.keys().collect::<Vec<_>>()
+    );
 
-    let target_cid = sugar_verifier::types::memento_body_field(bridge, "targetContractCid")
+    // bridges_by_symbol stores Json values, not CIDs, so find the bridge CID via the
+    // typed pool accessors (pool.member_kind / pool.member_field require a CID).
+    let bridge_cid = pool
+        .mementos
+        .keys()
+        .find(|cid| {
+            pool.member_kind(cid) == Some("bridge")
+                && pool
+                    .member_field(cid, "sourceSymbol")
+                    .and_then(|v| v.as_str())
+                    == Some("double")
+        })
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "bridge for sourceSymbol=double not found in pool mementos; bridges: {:?}",
+                pool.bridges_by_symbol.keys().collect::<Vec<_>>()
+            )
+        });
+
+    let target_cid = pool
+        .member_field(&bridge_cid, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge must carry targetContractCid")
         .to_string();
 
-    let target = pool.mementos.get(&target_cid).unwrap_or_else(|| {
-        panic!("bridge.targetContractCid {target_cid} must resolve to a member")
-    });
+    assert!(
+        pool.mementos.contains_key(&target_cid),
+        "bridge.targetContractCid {target_cid} must resolve to a member"
+    );
     assert_eq!(
-        sugar_verifier::types::memento_kind(target),
+        pool.member_kind(&target_cid),
         Some("contract"),
         "bridge target must be a contract memento"
     );
-    let formals = sugar_verifier::types::memento_body_field(target, "formals")
+    let formals = pool
+        .member_field(&target_cid, "formals")
         .and_then(|v| v.as_array())
         .expect("tool-written op-contract must carry formals");
     assert_eq!(
@@ -444,7 +467,7 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         "op-contract formals must be [x]"
     );
     assert!(
-        sugar_verifier::types::memento_body_field(target, "post").is_some(),
+        pool.member_field(&target_cid, "post").is_some(),
         "op-contract must carry the body-derived post"
     );
 

@@ -85,6 +85,42 @@ impl SourceMemento {
         value
     }
 
+    /// Extract the source text this memento's span refers to from a full source
+    /// file string. Returns `None` when the line/column indices are out of range
+    /// or the byte slice is not valid UTF-8.
+    ///
+    /// Span coordinates: `start_line` / `end_line` are 1-indexed; `start_col`
+    /// / `end_col` are 0-indexed byte offsets within the line (exclusive end),
+    /// matching proc_macro2 / syn conventions.
+    pub fn extract_term_source<'a>(&self, source_text: &'a str) -> Option<&'a str> {
+        if self.span.start_line == 0 || self.span.start_line != self.span.end_line {
+            return None; // absent or multi-line: not supported
+        }
+        let line = source_text.lines().nth(self.span.start_line - 1)?; // 1→0 indexed
+        let bytes = line.as_bytes();
+        let start = self.span.start_col.min(bytes.len());
+        let end = self.span.end_col.min(bytes.len());
+        if start >= end {
+            return None;
+        }
+        std::str::from_utf8(&bytes[start..end]).ok()
+    }
+
+    /// Like `to_json` but stamps a `sourceOracle.source` field with the term
+    /// text extracted from `source_text` at the stored span. Consumers that
+    /// have the source text in scope (e.g. test helpers, CLI renderers) call
+    /// this instead of a separate oracle RPC round-trip.
+    pub fn to_json_stamped(&self, source_text: &str) -> Value {
+        let mut value = self.to_json();
+        if let Some(source) = self.extract_term_source(source_text) {
+            value["sourceOracle"] = json!({
+                "status": "resolved",
+                "source": source,
+            });
+        }
+        value
+    }
+
     pub fn to_body_source_json(&self) -> Value {
         json!({
             "file": self.file,

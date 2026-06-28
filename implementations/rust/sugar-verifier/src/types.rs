@@ -264,6 +264,24 @@ impl MementoPool {
         self.verify_by_hash(&cid)
     }
 
+    /// Return the kind discriminator of a stored member by CID. Covers all
+    /// envelope shapes (v1.2 layered, lean header/body, v1.1 flat). Typed
+    /// accessor so callers write `pool.member_kind(cid)` instead of
+    /// `memento_kind(pool.mementos.get(cid))`.
+    pub fn member_kind(&self, cid: &str) -> Option<&str> {
+        self.mementos.get(cid).and_then(memento_kind)
+    }
+
+    /// Return the JSON value of a kind-specific field from a stored member,
+    /// regardless of envelope shape. Typed accessor so callers write
+    /// `pool.member_field(cid, "postHash")` instead of
+    /// `memento_body_field(pool.mementos.get(cid), "postHash")`.
+    pub fn member_field<'a>(&'a self, cid: &str, name: &str) -> Option<&'a Json> {
+        self.mementos
+            .get(cid)
+            .and_then(|env| memento_body_field(env, name))
+    }
+
     /// Return the semantic contract body for a loaded contract memento.
     ///
     /// Modern `.proof` catalogs store formula leaves in `atoms` and body
@@ -440,9 +458,9 @@ impl MementoPool {
         // kinds (implication, etc.) sometimes have a header.name field
         // but it's not a contract identity, so indexing them would
         // mis-resolve call edges.
-        let env_for_name = self.mementos.get(&memento_cid);
-        let is_contract = env_for_name.and_then(memento_kind) == Some("contract");
+        let is_contract = self.member_kind(&memento_cid) == Some("contract");
         if is_contract {
+            let env_for_name = self.mementos.get(&memento_cid);
             let name = env_for_name
                 .and_then(|env| {
                     env.pointer("/header/contractName")
@@ -468,14 +486,10 @@ impl MementoPool {
                 // only for genuinely ambiguous same-tier collisions.
                 if let Some(existing) = self.name_to_cid.get(&n).cloned() {
                     if existing != memento_cid {
+                        let new_has_pre = self.member_field(&memento_cid, "preHash").is_some();
+                        let existing_has_pre = self.member_field(&existing, "preHash").is_some();
                         let new_env = self.mementos.get(&memento_cid);
                         let existing_env = self.mementos.get(&existing);
-                        let new_has_pre = new_env
-                            .and_then(|e| memento_body_field(e, "preHash"))
-                            .is_some();
-                        let existing_has_pre = existing_env
-                            .and_then(|e| memento_body_field(e, "preHash"))
-                            .is_some();
                         if new_has_pre && !existing_has_pre {
                             // Upgrade: pre-bearing newcomer beats post-only incumbent.
                             self.cid_to_name.remove(&existing);
@@ -539,81 +553,87 @@ impl MementoPool {
         // OpacityMementoLookup queries are O(log n) BTreeMap lookups rather
         // than a full pool scan.
         //
-        // Both v1.1 flat (evidence.body.*) and v1.2 layered (header.*) shapes
-        // are covered by memento_body_field / memento_kind.
-        let kind = self
-            .mementos
-            .get(&memento_cid)
-            .and_then(|e| memento_kind(e))
-            .map(str::to_string);
+        // member_kind / member_field cover both v1.1 flat (evidence.body.*)
+        // and v1.2 layered (header.*) shapes without call-site branching.
+        // The `.map(str::to_string)` at each field lookup converts the
+        // borrowed &str to an owned String before the mutable index entry,
+        // avoiding a simultaneous shared+mutable borrow on self.
+        let kind = self.member_kind(&memento_cid).map(str::to_string);
         match kind.as_deref() {
             Some("loop-invariant") => {
                 // header.loopCid (v1.2) or evidence.body.loopCid (v1.1)
-                if let Some(env) = self.mementos.get(&memento_cid) {
-                    if let Some(loop_cid) =
-                        memento_body_field(env, "loopCid").and_then(|v| v.as_str())
-                    {
-                        self.loop_cid_to_memento
-                            .entry(loop_cid.to_string())
-                            .or_insert(memento_cid.clone());
-                    }
+                if let Some(loop_cid) = self
+                    .member_field(&memento_cid, "loopCid")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                {
+                    self.loop_cid_to_memento
+                        .entry(loop_cid)
+                        .or_insert(memento_cid.clone());
                 }
             }
             Some("try-branch") => {
                 // header.tryCid (v1.2) or evidence.body.tryCid (v1.1)
-                if let Some(env) = self.mementos.get(&memento_cid) {
-                    if let Some(try_cid) =
-                        memento_body_field(env, "tryCid").and_then(|v| v.as_str())
-                    {
-                        self.try_cid_to_memento
-                            .entry(try_cid.to_string())
-                            .or_insert(memento_cid.clone());
-                    }
+                if let Some(try_cid) = self
+                    .member_field(&memento_cid, "tryCid")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                {
+                    self.try_cid_to_memento
+                        .entry(try_cid)
+                        .or_insert(memento_cid.clone());
                 }
             }
             Some("closure-binding") => {
                 // header.bodyFnCid (v1.2) or evidence.body.bodyFnCid (v1.1)
-                if let Some(env) = self.mementos.get(&memento_cid) {
-                    if let Some(body_fn_cid) =
-                        memento_body_field(env, "bodyFnCid").and_then(|v| v.as_str())
-                    {
-                        self.body_fn_cid_to_memento
-                            .entry(body_fn_cid.to_string())
-                            .or_insert(memento_cid.clone());
-                    }
+                if let Some(body_fn_cid) = self
+                    .member_field(&memento_cid, "bodyFnCid")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                {
+                    self.body_fn_cid_to_memento
+                        .entry(body_fn_cid)
+                        .or_insert(memento_cid.clone());
                 }
             }
             Some("aliasing-memento") => {
                 // header.formal_a and header.formal_b (v1.2) or evidence.body.formal_a/formal_b (v1.1)
-                // Index by the sorted (formal_a, formal_b) pair
-                if let Some(env) = self.mementos.get(&memento_cid) {
-                    if let (Some(formal_a), Some(formal_b)) = (
-                        memento_body_field(env, "formal_a").and_then(|v| v.as_str()),
-                        memento_body_field(env, "formal_b").and_then(|v| v.as_str()),
-                    ) {
-                        let mut pair = (formal_a.to_string(), formal_b.to_string());
-                        // Sort the pair for canonical ordering
-                        if pair.0 > pair.1 {
-                            pair = (pair.1, pair.0);
-                        }
-                        self.aliasing_pair_to_memento
-                            .entry(pair)
-                            .or_insert(memento_cid.clone());
+                // Index by the sorted (formal_a, formal_b) pair. Convert to owned
+                // Strings before the mutable entry borrow.
+                let formal_a = self
+                    .member_field(&memento_cid, "formal_a")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let formal_b = self
+                    .member_field(&memento_cid, "formal_b")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                if let (Some(formal_a), Some(formal_b)) = (formal_a, formal_b) {
+                    let mut pair = (formal_a, formal_b);
+                    // Sort the pair for canonical ordering
+                    if pair.0 > pair.1 {
+                        pair = (pair.1, pair.0);
                     }
+                    self.aliasing_pair_to_memento
+                        .entry(pair)
+                        .or_insert(memento_cid.clone());
                 }
             }
             Some("pin-invariant") => {
                 // header.functionCid + header.pinnedTarget -> composite key
-                if let Some(env) = self.mementos.get(&memento_cid) {
-                    let function_cid =
-                        memento_body_field(env, "functionCid").and_then(|v| v.as_str());
-                    let target = memento_body_field(env, "pinnedTarget").and_then(|v| v.as_str());
-                    if let (Some(fc), Some(t)) = (function_cid, target) {
-                        let key = format!("{}\x00{}", fc, t);
-                        self.pin_invariant_to_memento
-                            .entry(key)
-                            .or_insert(memento_cid.clone());
-                    }
+                let function_cid = self
+                    .member_field(&memento_cid, "functionCid")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let target = self
+                    .member_field(&memento_cid, "pinnedTarget")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                if let (Some(fc), Some(t)) = (function_cid, target) {
+                    let key = format!("{}\x00{}", fc, t);
+                    self.pin_invariant_to_memento
+                        .entry(key)
+                        .or_insert(memento_cid.clone());
                 }
             }
             _ => {}

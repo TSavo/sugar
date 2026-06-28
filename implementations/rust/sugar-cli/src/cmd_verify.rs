@@ -60,7 +60,7 @@ use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
 use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
-    classify, enumerate_callsites, instantiate, load_all_proofs, memento_body, memento_kind,
+    classify, enumerate_callsites, instantiate, load_all_proofs,
     resolve_target, run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool,
     ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
 };
@@ -711,23 +711,31 @@ fn build_plan_and_registry(
 
 fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim> {
     let mut out = Vec::new();
-    for (cid, env) in &pool.mementos {
-        if memento_kind(env) != Some("contract") {
+    for (cid, _) in &pool.mementos {
+        if pool.member_kind(cid) != Some("contract") {
             continue;
         }
-        let Some(body) = memento_body(env) else {
-            continue;
-        };
-        if body.get("invVerification").and_then(Json::as_str) != Some("obligation") {
+        if pool
+            .member_field(cid, "invVerification")
+            .and_then(|v| v.as_str())
+            != Some("obligation")
+        {
             continue;
         }
-        let Some(formula) = body.get("inv").filter(|v| v.is_object()).cloned() else {
+        let Some(formula) = pool
+            .member_field(cid, "inv")
+            .filter(|v| v.is_object())
+            .cloned()
+        else {
             continue;
         };
-        let property_name = body
-            .get("name")
-            .and_then(Json::as_str)
-            .or_else(|| body.get("contractName").and_then(Json::as_str))
+        let property_name = pool
+            .member_field(cid, "name")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                pool.member_field(cid, "contractName")
+                    .and_then(|v| v.as_str())
+            })
             .unwrap_or("<unnamed>")
             .to_string();
         out.push(DirectFormulaClaim {

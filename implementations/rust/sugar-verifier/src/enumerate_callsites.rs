@@ -10,7 +10,7 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{memento_body, memento_kind, AttributeSafetyObligation, CallSite, MementoPool};
+use crate::types::{memento_body, AttributeSafetyObligation, CallSite, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -28,10 +28,10 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         // v1.1-flat carry them on `evidence.kind` / `evidence.body`. The
         // production harvest path (`mint_contract`) emits v1.2; reading
         // only `evidence.body` here meant harvested calls never enumerated.
-        if memento_kind(env) != Some("contract") {
+        if pool.member_kind(cid) != Some("contract") {
             continue;
         }
-        let body = match memento_body(env) {
+        let body = match pool.resolve_contract_body(env) {
             Some(v) if v.is_object() => v,
             _ => continue,
         };
@@ -55,7 +55,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         // contract, and match an occurrence to its locus by the lifted argument
         // term (see `panic_line_for`). Absent/empty -> panic sites in this
         // contract carry no line (honestly undecidable), never a collapsed one.
-        let panic_loci = panic_loci_from_body(body);
+        let panic_loci = panic_loci_from_body(&body);
         for slot in ["pre", "post", "inv"] {
             if let Some(f) = body.get(slot) {
                 if f.is_object() {
@@ -806,10 +806,7 @@ fn bridge_formal_actuals_match_arg_terms(
     else {
         return false;
     };
-    let Some(target_body) = pool.mementos.get(target_cid).and_then(memento_body) else {
-        return false;
-    };
-    let Some(formals) = target_body.get("formals").and_then(|v| v.as_array()) else {
+    let Some(formals) = pool.member_field(target_cid, "formals").and_then(|v| v.as_array()) else {
         return false;
     };
     if formals.len() != arg_terms.len() {

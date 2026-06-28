@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string};
+use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string, MemberView, ProofGraph};
 
 use crate::cbor_decode::{decode, CborValue};
 
@@ -128,6 +128,10 @@ pub fn validate_proof_bytes(path: &Path, bytes: &[u8]) -> ProofFileConformanceRe
 
     check_filename_cid(path, &file_cid, &mut report);
 
+    // Catalog-level CBOR validation (PFCP-R2, PFCP-R3, PFCP-R7, PFCP-R8, PFCP-R9).
+    // ProofGraph::read() does not expose catalog-level fields (signer, declaredAt,
+    // signature, kind, metadata), so cbor_decode::decode is retained here for those
+    // checks and for the deterministic re-encoding comparison.
     let catalog = match decode(bytes) {
         Ok(catalog) => catalog,
         Err(e) => {
@@ -182,19 +186,31 @@ pub fn validate_proof_bytes(path: &Path, bytes: &[u8]) -> ProofFileConformanceRe
         None => {}
     }
 
-    let members = match root.get("members").and_then(CborValue::as_map) {
-        Some(members) => members,
-        None => {
-            report.push_error(PFCP_R4_MEMBERS_MAP, "catalog has no `members` map");
+    if root.get("members").and_then(CborValue::as_map).is_none() {
+        report.push_error(PFCP_R4_MEMBERS_MAP, "catalog has no `members` map");
+        return report;
+    }
+
+    // Parse the typed graph for member-level validation.  ProofGraph::read() gives
+    // typed MemberView iterators that replace the manual val.as_bstr() / from_utf8 /
+    // pointer("/header/...") bypasses in the old code.
+    let graph = match ProofGraph::read(bytes) {
+        Ok(g) => g,
+        Err(e) => {
+            report.push_error(
+                PFCP_R4_MEMBERS_MAP,
+                format!("typed graph read failed: {e}"),
+            );
             return report;
         }
     };
-    report.member_count = members.len();
 
-    validate_catalog_signature(root, members, &mut report);
+    report.member_count = graph.members_view().count();
 
-    for (cid, val) in members {
-        validate_member(cid, val, &file_cid, &mut report);
+    validate_catalog_signature(root, &graph, &mut report);
+
+    for view in graph.members_view() {
+        validate_member_view(&view, &file_cid, &mut report);
     }
 
     report
@@ -202,7 +218,7 @@ pub fn validate_proof_bytes(path: &Path, bytes: &[u8]) -> ProofFileConformanceRe
 
 fn validate_catalog_signature(
     root: &BTreeMap<String, CborValue>,
-    members: &BTreeMap<String, CborValue>,
+    graph: &ProofGraph,
     report: &mut ProofFileConformanceReport,
 ) {
     let Some(signer) = root.get("signer").and_then(CborValue::as_tstr) else {
@@ -233,7 +249,7 @@ fn validate_catalog_signature(
     let signer_key = if signer.starts_with("ed25519:") {
         signer.to_string()
     } else if signer.starts_with(HASH_TAG_PREFIX) {
-        match authority_key_for_catalog_signer(signer, members) {
+        match authority_key_for_catalog_signer(signer, graph) {
             Ok(key) => key,
             Err(error) => {
                 report.push_error(PFCP_R9_CATALOG_SIGNATURE, error);
@@ -261,31 +277,26 @@ fn validate_catalog_signature(
 
 fn authority_key_for_catalog_signer(
     signer: &str,
-    members: &BTreeMap<String, CborValue>,
+    graph: &ProofGraph,
 ) -> Result<String, String> {
-    let member = members
-        .get(signer)
+    let view = graph
+        .members_view()
+        .find(|v| v.cid().as_str() == signer)
         .ok_or_else(|| format!("catalog signer authority `{signer}` is not in members"))?;
-    let bytes = member.as_bstr().ok_or_else(|| {
-        format!("catalog signer authority `{signer}` member is not a byte string")
-    })?;
-    let env: Json = serde_json::from_slice(bytes)
-        .map_err(|e| format!("catalog signer authority `{signer}` JSON parse failed: {e}"))?;
-    if env.pointer("/header/kind").and_then(|v| v.as_str()) != Some("authority") {
+    if view.kind().as_deref() != Some("authority") {
         return Err(format!(
             "catalog signer `{signer}` does not resolve to an authority memento"
         ));
     }
-    let key = env
-        .pointer("/header/key")
-        .and_then(|v| v.as_str())
+    let key = view
+        .field("key")
         .ok_or_else(|| format!("catalog signer authority `{signer}` is missing header.key"))?;
     if !key.starts_with("ed25519:") {
         return Err(format!(
             "catalog signer authority `{signer}` header.key is not an inline ed25519 key"
         ));
     }
-    Ok(key.to_string())
+    Ok(key)
 }
 
 fn empty_report(path: &Path, file_cid: &str) -> ProofFileConformanceReport {
@@ -337,12 +348,13 @@ fn check_filename_cid(path: &Path, file_cid: &str, report: &mut ProofFileConform
     }
 }
 
-fn validate_member(
-    cid: &str,
-    val: &CborValue,
+fn validate_member_view(
+    view: &MemberView<'_>,
     enclosing_file_cid: &str,
     report: &mut ProofFileConformanceReport,
 ) {
+    let cid = view.cid().as_str().to_string();
+
     if !cid.starts_with(HASH_TAG_PREFIX) {
         report.push_error(
             PFCP_R5_MEMBER_CID,
@@ -351,24 +363,7 @@ fn validate_member(
         return;
     }
 
-    let Some(bytes) = val.as_bstr() else {
-        report.push_error(
-            PFCP_R4_MEMBERS_MAP,
-            format!("member {cid}: value is not bstr"),
-        );
-        return;
-    };
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(e) => {
-            report.push_error(
-                PFCP_R5_MEMBER_CID,
-                format!("member {cid}: bytes are not UTF-8: {e}"),
-            );
-            return;
-        }
-    };
-    let env: Json = match serde_json::from_str(text) {
+    let env: Json = match serde_json::from_slice(view.bytes()) {
         Ok(env) => env,
         Err(e) => {
             report.push_error(

@@ -68,7 +68,7 @@ use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
 use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
-use crate::types::{memento_body_field, memento_kind, MementoPool, ObligationVerdict};
+use crate::types::{memento_body_field, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
@@ -1649,7 +1649,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         let Some(contract_env) = pool.mementos.get(target_cid) else {
             continue;
         };
-        if memento_kind(contract_env) != Some("contract") {
+        if pool.member_kind(target_cid) != Some("contract") {
             continue;
         }
         let Some(body) = pool
@@ -1837,7 +1837,7 @@ pub fn verify_consistency(
     let candidates: Vec<(String, Json)> = pool
         .mementos
         .iter()
-        .filter(|(_, env)| memento_kind(env) == Some("contract"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("contract"))
         .filter_map(|(cid, env)| {
             pool.resolve_contract_body(env)
                 .map(|body| (cid.clone(), body))

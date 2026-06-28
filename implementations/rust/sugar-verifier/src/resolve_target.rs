@@ -13,7 +13,7 @@
 use serde_json::{json, Value as Json};
 use tracing::{debug, warn};
 
-use crate::types::{memento_kind, CallSite, MementoPool, ResolvedProperty};
+use crate::types::{CallSite, MementoPool, ResolvedProperty};
 
 pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String> {
     debug!(
@@ -39,7 +39,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
         );
         format!("bridge target CID {} not in pool", cs.bridge_target_cid)
     })?;
-    if memento_kind(env) != Some("contract") {
+    if pool.member_kind(&cs.bridge_target_cid) != Some("contract") {
         warn!(
             bridge = %cs.bridge_ir_name,
             target_cid = %cs.bridge_target_cid,

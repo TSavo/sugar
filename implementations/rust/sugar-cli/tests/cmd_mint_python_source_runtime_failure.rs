@@ -684,9 +684,9 @@ fn run_mint(project: &Path) {
 
 fn contract_runtime_failure_loci(pool: &sugar_verifier::types::MementoPool) -> Vec<Json> {
     pool.mementos
-        .values()
-        .filter(|env| sugar_verifier::types::memento_kind(env) == Some("contract"))
-        .filter_map(|env| sugar_verifier::types::memento_body_field(env, "panicLoci"))
+        .keys()
+        .filter(|cid| pool.member_kind(cid) == Some("contract"))
+        .filter_map(|cid| pool.member_field(cid, "panicLoci"))
         .filter_map(|value| value.as_array())
         .flat_map(|items| items.iter().cloned())
         .collect()

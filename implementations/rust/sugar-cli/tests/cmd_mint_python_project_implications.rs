@@ -203,12 +203,15 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
         "conjoined Python proof must load cleanly: {:?}",
         pool.load_errors
     );
-    let saw_implication_bridge = pool.mementos.values().any(|env| {
-        sugar_verifier::types::memento_kind(env).as_deref() == Some("bridge")
-            && sugar_verifier::types::memento_body_field(env, "sourceSymbol")
+    let saw_implication_bridge = pool.mementos.keys().any(|cid| {
+        pool.member_kind(cid) == Some("bridge")
+            && pool
+                .member_field(cid, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 == Some("callee")
-            && sugar_verifier::types::memento_body_field(env, "notes").and_then(|v| v.as_str())
+            && pool
+                .member_field(cid, "notes")
+                .and_then(|v| v.as_str())
                 == Some("implication-lifted callsite bridge")
     });
     assert!(

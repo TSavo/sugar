@@ -563,25 +563,12 @@ fn binding_templates_from_proof(path: &Path) -> Result<Vec<RecognizeBindingTempl
     let bytes = std::fs::read(path)
         .map_err(|error| format!("read Rust recognizer proof {}: {error}", path.display()))?;
     let proof_cid = blake3_512_of(&bytes);
-    let catalog = sugar_proof_envelope::cbor_decode(&bytes)
+    let graph = sugar_proof_envelope::ProofGraph::read(&bytes)
         .map_err(|error| format!("decode Rust recognizer proof {}: {error}", path.display()))?;
-    let members = catalog
-        .as_map()
-        .and_then(|root| root.get("members"))
-        .and_then(sugar_proof_envelope::CborValue::as_map)
-        .ok_or_else(|| {
-            format!(
-                "decode Rust recognizer proof {}: missing members map",
-                path.display()
-            )
-        })?;
 
     let mut bindings = Vec::new();
-    for member in members.values() {
-        let Some(member_bytes) = member.as_bstr() else {
-            continue;
-        };
-        let Ok(parsed) = serde_json::from_slice::<Value>(member_bytes) else {
+    for view in graph.members_view() {
+        let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
             continue;
         };
         let body = parsed.get("body").unwrap_or(&parsed);
@@ -605,28 +592,15 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     let bytes = std::fs::read(path)
         .map_err(|error| format!("read Rust vendor proof {}: {error}", path.display()))?;
     let proof_cid = blake3_512_of(&bytes);
-    let catalog = sugar_proof_envelope::cbor_decode(&bytes)
+    let graph = sugar_proof_envelope::ProofGraph::read(&bytes)
         .map_err(|error| format!("decode Rust vendor proof {}: {error}", path.display()))?;
-    let members = catalog
-        .as_map()
-        .and_then(|root| root.get("members"))
-        .and_then(sugar_proof_envelope::CborValue::as_map)
-        .ok_or_else(|| {
-            format!(
-                "decode Rust vendor proof {}: missing members map",
-                path.display()
-            )
-        })?;
 
     let mut parsed_members: Vec<(String, Value)> = Vec::new();
-    for member in members.values() {
-        let Some(member_bytes) = member.as_bstr() else {
+    for view in graph.members_view() {
+        let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
             continue;
         };
-        let Ok(parsed) = serde_json::from_slice::<Value>(member_bytes) else {
-            continue;
-        };
-        parsed_members.push((blake3_512_of(member_bytes), parsed));
+        parsed_members.push((view.cid().as_str().to_string(), parsed));
     }
 
     let mut bridge_source_by_target: HashMap<String, String> = HashMap::new();
@@ -5073,21 +5047,11 @@ fn vendor_bindings_from_proofs(project_root: &Path) -> Result<Vec<VendorBinding>
             Ok(b) => b,
             Err(_) => continue,
         };
-        let Ok(catalog) = sugar_proof_envelope::cbor_decode(&bytes) else {
+        let Ok(graph) = sugar_proof_envelope::ProofGraph::read(&bytes) else {
             continue;
         };
-        let Some(members) = catalog
-            .as_map()
-            .and_then(|root| root.get("members"))
-            .and_then(sugar_proof_envelope::CborValue::as_map)
-        else {
-            continue;
-        };
-        for member in members.values() {
-            let Some(member_bytes) = member.as_bstr() else {
-                continue;
-            };
-            let Ok(parsed) = serde_json::from_slice::<Value>(member_bytes) else {
+        for view in graph.members_view() {
+            let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
                 continue;
             };
             let body = parsed.get("body").unwrap_or(&parsed);

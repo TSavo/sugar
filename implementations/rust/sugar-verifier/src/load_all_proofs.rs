@@ -21,19 +21,18 @@
 // Both shapes coexist; the catalog cut elsewhere bumps the per-memento
 // `schemaVersion` from "1" to "2".
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use tracing::{debug, info, warn};
 
-use crate::cbor_decode::{decode, CborValue};
+use sugar_proof_envelope::ProofGraph;
+
 use crate::types::{
     memento_body, memento_body_field, memento_kind, EffectSiteAnnotation, LoadError, MementoPool,
 };
 
-const HASH_TAG_PREFIX: &str = "blake3-512:";
 const SIG_TAG_PREFIX: &str = "ed25519:";
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
@@ -201,6 +200,7 @@ fn load_catalog_bytes(
     bytes: &[u8],
     pool: &mut MementoPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Rule 1: content hash matches the expected CID (if given).
     let derived_full = blake3_512_of(bytes);
     if let Some(expected_cid) = expected_cid {
         if expected_cid != derived_full {
@@ -214,51 +214,40 @@ fn load_catalog_bytes(
         }
     }
 
-    let catalog = decode(bytes)?;
-    let m_root = catalog.as_map().ok_or("catalog is not a map")?.clone();
-
-    load_catalog_cid_map(
-        &source_label,
-        &m_root,
-        "atoms",
-        &mut pool.atoms,
-        &mut pool.load_errors,
-    );
-    load_catalog_cid_map(
-        &source_label,
-        &m_root,
-        "body",
-        &mut pool.body,
-        &mut pool.load_errors,
-    );
-
-    let members = m_root
-        .get("members")
-        .ok_or("catalog has no `members` map")?;
-    let members_map = members.as_map().ok_or("catalog `members` is not a map")?;
-
-    for (cid, val) in members_map {
-        if !cid.starts_with(HASH_TAG_PREFIX) {
+    // Parse the CBOR catalog into a typed ProofGraph. This validates atom
+    // and body CID integrity by recomputation; a mismatch rejects the whole
+    // catalog (a partially-corrupted proof file is invalid in its entirety).
+    let graph = match ProofGraph::read(bytes) {
+        Ok(g) => g,
+        Err(e) => {
             pool.load_errors.push(LoadError {
-                proof_path: source_label.clone(),
-                reason: format!(
-                    "member {cid}: unsupported hash tag; v1.1.0 requires `{HASH_TAG_PREFIX}`"
-                ),
+                proof_path: source_label,
+                reason: format!("graph read: {e}"),
             });
-            continue;
+            return Ok(());
         }
-        let env_bytes = match val.as_bstr() {
-            Some(b) => b,
-            None => {
-                pool.load_errors.push(LoadError {
-                    proof_path: source_label.clone(),
-                    reason: format!("member {cid}: value is not bstr"),
-                });
-                continue;
-            }
-        };
-        let env_text = std::str::from_utf8(env_bytes)?;
-        let env: Json = match serde_json::from_str(env_text) {
+    };
+
+    // Atoms -> pool: CIDs already verified by ProofGraph::read().
+    for atom in graph.atoms() {
+        pool.atoms
+            .entry(atom.cid().as_str().to_string())
+            .or_insert_with(|| atom.bytes().to_vec());
+    }
+
+    // Bodies -> pool: CIDs already verified by ProofGraph::read().
+    for body in graph.bodies() {
+        pool.body
+            .entry(body.cid().as_str().to_string())
+            .or_insert_with(|| body.bytes().to_vec());
+    }
+
+    // Members -> pool: per-member validation (signature tag, CID recomputation,
+    // contract body-pointer resolution) then indexing. ProofGraph::read()
+    // guarantees all member CIDs carry the `blake3-512:` prefix.
+    for view in graph.members_view() {
+        let cid = view.cid().as_str().to_string();
+        let env: Json = match serde_json::from_slice(view.bytes()) {
             Ok(v) => v,
             Err(e) => {
                 pool.load_errors.push(LoadError {
@@ -290,7 +279,7 @@ fn load_catalog_bytes(
         // StageReceipt are header-addressed artifacts, unlike older
         // v1.2 mementos whose member identity is the envelope CID.
         let derived = compute_member_cid(&env);
-        if derived != *cid {
+        if derived != cid {
             pool.load_errors.push(LoadError {
                 proof_path: source_label.clone(),
                 reason: format!("rule 2: member {cid} derives to {derived}"),
@@ -332,63 +321,52 @@ fn load_catalog_bytes(
             .entry(derived_full.clone())
             .or_default()
             .insert(cid.clone());
-        index_effect_site_annotation(&source_label, &derived_full, cid, &env, pool);
+        index_effect_site_annotation(&source_label, &derived_full, &cid, &env, pool);
 
-        // Bridge indexing. Same dual-shape rule:
-        //   v1.1: evidence.kind == "bridge", evidence.body.sourceSymbol
-        //   v1.2: header.kind == "bridge",   header.sourceSymbol
-        let (bridge_kind, source_symbol) = if env.get("envelope").is_some() {
-            (
-                env.pointer("/header/kind").and_then(|k| k.as_str()),
-                env.pointer("/header/sourceSymbol").and_then(|v| v.as_str()),
-            )
-        } else {
-            (
-                env.pointer("/evidence/kind").and_then(|k| k.as_str()),
-                env.pointer("/evidence/body/sourceSymbol")
-                    .and_then(|v| v.as_str()),
-            )
-        };
-        if bridge_kind == Some("bridge") {
-            if let Some(sym) = source_symbol {
-                if !sym.is_empty() {
-                    pool.bridges_by_symbol.insert(sym.to_string(), env.clone());
-                    // Record the bundle this bridge was loaded from so the
-                    // self-pinned (no targetProofCid) case can be enforced as
-                    // same-bundle co-membership. `derived_full` is this
-                    // `.proof`'s content CID (the bundle CID).
-                    pool.bridge_self_bundle_by_symbol
-                        .insert(sym.to_string(), derived_full.clone());
-                    // Callsite-scoped index. A bridge whose body carries a
-                    // `callsite` with file + line is the producer guarantee for
-                    // a SPECIFIC call (not just the symbol). Keying it by
-                    // `(bundle, file, line, symbol)` lets a panic obligation
-                    // whose arg is itself a call select the producer post that
-                    // governs THAT call, rather than whichever same-symbol
-                    // bridge won the per-symbol slot. Bundle scoping is required
-                    // for soundness: relative paths (`src/lib.rs`) collide
-                    // across crates. First-writer wins per full key.
-                    if let Some(body) = crate::types::memento_body(&env) {
-                        let cs = body.get("callsite");
-                        let file = cs
-                            .and_then(|v| v.get("file"))
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty());
-                        let line = cs
-                            .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
-                            .and_then(|v| v.as_u64())
-                            .map(|n| n as usize);
-                        if let (Some(file), Some(line)) = (file, line) {
-                            let key = (
-                                derived_full.clone(),
-                                file.to_string(),
-                                line,
-                                sym.to_string(),
-                            );
-                            pool.bridges_by_callsite
-                                .entry(key)
-                                .or_insert_with(|| env.clone());
-                        }
+        // Bridge indexing. Shape-aware helpers (memento_kind / memento_body_field)
+        // cover both v1.1 (evidence.kind / evidence.body.sourceSymbol) and v1.2
+        // (header.kind / header.sourceSymbol) without branching at the call site.
+        if memento_kind(&env) == Some("bridge") {
+            if let Some(sym) = memento_body_field(&env, "sourceSymbol")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                pool.bridges_by_symbol.insert(sym.to_string(), env.clone());
+                // Record the bundle this bridge was loaded from so the
+                // self-pinned (no targetProofCid) case can be enforced as
+                // same-bundle co-membership. `derived_full` is this
+                // `.proof`'s content CID (the bundle CID).
+                pool.bridge_self_bundle_by_symbol
+                    .insert(sym.to_string(), derived_full.clone());
+                // Callsite-scoped index. A bridge whose body carries a
+                // `callsite` with file + line is the producer guarantee for
+                // a SPECIFIC call (not just the symbol). Keying it by
+                // `(bundle, file, line, symbol)` lets a panic obligation
+                // whose arg is itself a call select the producer post that
+                // governs THAT call, rather than whichever same-symbol
+                // bridge won the per-symbol slot. Bundle scoping is required
+                // for soundness: relative paths (`src/lib.rs`) collide
+                // across crates. First-writer wins per full key.
+                if let Some(body) = memento_body(&env) {
+                    let cs = body.get("callsite");
+                    let file = cs
+                        .and_then(|v| v.get("file"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty());
+                    let line = cs
+                        .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize);
+                    if let (Some(file), Some(line)) = (file, line) {
+                        let key = (
+                            derived_full.clone(),
+                            file.to_string(),
+                            line,
+                            sym.to_string(),
+                        );
+                        pool.bridges_by_callsite
+                            .entry(key)
+                            .or_insert_with(|| env.clone());
                     }
                 }
             }
@@ -397,53 +375,6 @@ fn load_catalog_bytes(
     Ok(())
 }
 
-fn load_catalog_cid_map(
-    source_label: &str,
-    root: &BTreeMap<String, CborValue>,
-    section: &str,
-    out: &mut BTreeMap<String, Vec<u8>>,
-    load_errors: &mut Vec<LoadError>,
-) {
-    let Some(value) = root.get(section) else {
-        return;
-    };
-    let Some(map) = value.as_map() else {
-        load_errors.push(LoadError {
-            proof_path: source_label.to_string(),
-            reason: format!("catalog `{section}` is not a map"),
-        });
-        return;
-    };
-    for (cid, val) in map {
-        if !cid.starts_with(HASH_TAG_PREFIX) {
-            load_errors.push(LoadError {
-                proof_path: source_label.to_string(),
-                reason: format!(
-                    "{section} {cid}: unsupported hash tag; catalog graph maps require `{HASH_TAG_PREFIX}`"
-                ),
-            });
-            continue;
-        }
-        let Some(bytes) = val.as_bstr() else {
-            load_errors.push(LoadError {
-                proof_path: source_label.to_string(),
-                reason: format!("{section} {cid}: value is not bstr"),
-            });
-            continue;
-        };
-        let derived = blake3_512_of(bytes);
-        if derived != *cid {
-            load_errors.push(LoadError {
-                proof_path: source_label.to_string(),
-                reason: format!(
-                    "{section} {cid}: graph entry derives to {derived}; graph leaves must be flat CID-addressed bytes"
-                ),
-            });
-            continue;
-        }
-        out.entry(cid.clone()).or_insert_with(|| bytes.to_vec());
-    }
-}
 
 fn index_effect_site_annotation(
     source_label: &str,

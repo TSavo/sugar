@@ -534,6 +534,106 @@ impl From<&ContractMemento> for ContractMementoRef {
     }
 }
 
+/// A contract behavior read out of the graph: its name, the body CID it
+/// resolves to, and its own member CID. The behavior IS `body_cid` -- a rename
+/// keeps it, a body change moves it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractEntry {
+    pub cid: String,
+    pub name: String,
+    pub body_cid: String,
+}
+
+/// The envelope identity a graph needs to become a signed `.proof`: everything
+/// a catalog carries that is NOT graph content. `read` recovers these from the
+/// bytes; `write` requires them because the bare graph does not hold them.
+#[derive(Clone, Debug)]
+pub struct ProofIdentity {
+    pub name: String,
+    pub version: String,
+    pub binary_cid: Option<String>,
+    pub metadata: Option<BTreeMap<String, String>>,
+    pub signer_cid: String,
+    pub signer_seed: Ed25519Seed,
+    pub declared_at: String,
+}
+
+/// A typed, read-only view of a member memento. The graph resolves the kind and
+/// body pointer out of the member bytes so consumers read members out loud
+/// without hand-parsing the catalog.
+pub struct MemberView<'a> {
+    cid: &'a MementoCid,
+    bytes: &'a [u8],
+}
+
+impl<'a> MemberView<'a> {
+    pub fn cid(&self) -> &MementoCid {
+        self.cid
+    }
+
+    /// Raw member bytes (JCS-JSON), for verbatim rendering.
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    /// The member's kind discriminator. Covers all envelope shapes:
+    ///
+    /// * v1.2 layered: `header.kind`
+    /// * lean header/body: `header.kind`
+    /// * v1.1 flat: `evidence.kind`
+    pub fn kind(&self) -> Option<String> {
+        let v: Json = serde_json::from_slice(self.bytes).ok()?;
+        v.pointer("/header/kind")
+            .or_else(|| v.pointer("/envelope/header/kind"))
+            .or_else(|| v.pointer("/evidence/kind"))
+            .and_then(Json::as_str)
+            .map(str::to_string)
+    }
+
+    /// The body CID this member points at, if it carries one (contracts).
+    pub fn body_cid(&self) -> Option<String> {
+        let v: Json = serde_json::from_slice(self.bytes).ok()?;
+        v.pointer("/header/bodyCid")
+            .and_then(Json::as_str)
+            .map(str::to_string)
+    }
+
+    /// Look up a string-valued kind-specific field from the body or header,
+    /// regardless of memento shape. Mirrors `memento_body_field` from the
+    /// verifier so consumers need no envelope-shape knowledge:
+    ///
+    /// * v1.2 layered (`envelope` present): `header.<name>`, then
+    ///   `metadata.<name>`, then `envelope.header.<name>`.
+    /// * lean header/body (no `envelope`, but `header` or `body` present):
+    ///   `header.<name>`, then `body.<name>`, then `metadata.<name>`.
+    /// * v1.1 flat: `evidence.body.<name>`.
+    ///
+    /// Returns `None` when the field is absent or its value is not a string.
+    pub fn field(&self, name: &str) -> Option<String> {
+        let v: Json = serde_json::from_slice(self.bytes).ok()?;
+        let found = if v.get("envelope").is_some() {
+            v.pointer("/header")
+                .and_then(|h| h.get(name))
+                .or_else(|| v.pointer("/metadata").and_then(|m| m.get(name)))
+                .or_else(|| v.pointer("/envelope/header").and_then(|h| h.get(name)))
+                .or_else(|| v.pointer("/envelope/metadata").and_then(|m| m.get(name)))
+        } else if v.get("header").is_some() || v.get("body").is_some() {
+            v.pointer("/header")
+                .and_then(|h| h.get(name))
+                .or_else(|| v.pointer("/body").and_then(|b| b.get(name)))
+                .or_else(|| v.pointer("/metadata").and_then(|m| m.get(name)))
+        } else {
+            v.pointer("/evidence/body").and_then(|b| b.get(name))
+        };
+        found.and_then(Json::as_str).map(str::to_string)
+    }
+
+    /// The member's content as JSON, for structured rendering.
+    pub fn json(&self) -> Json {
+        serde_json::from_slice(self.bytes).unwrap_or(Json::Null)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProofGraph {
     atoms: BTreeMap<String, FlatAtom>,
@@ -552,6 +652,224 @@ impl ProofGraph {
 
     pub fn empty() -> Self {
         Self::new()
+    }
+
+    /// Read a `.proof` catalog back into a strongly typed graph: the inverse
+    /// of the `atoms -> bodies -> mementos -> catalog` construction. Atoms and
+    /// bodies are reconstructed by recomputation (their CIDs are re-derived and
+    /// checked against the catalog keys), and members are restored as typed
+    /// records. Each member resolves its body by CID lookup against the graph;
+    /// nothing is inlined. Source/witness leaves are never in the catalog --
+    /// those resolve through kit-driven oracles, off this graph.
+    pub fn read(bytes: &[u8]) -> Result<ProofGraph, crate::ProofEnvelopeError> {
+        use crate::cbor_decode::{decode, CborValue};
+        use crate::ProofEnvelopeError::Other;
+
+        let catalog = decode(bytes).map_err(|e| Other(format!("CBOR decode catalog: {e:?}")))?;
+        let map = catalog
+            .as_map()
+            .ok_or_else(|| Other("catalog root is not a CBOR map".into()))?;
+
+        let mut graph = ProofGraph::new();
+
+        // 1. Atoms: the data leaves. The content-addressed hash is lossless over
+        //    the store, so we restore by recomputation -- re-derive each FlatAtom
+        //    from its bytes and check the CID matches the catalog key.
+        if let Some(atoms) = map.get("atoms").and_then(CborValue::as_map) {
+            for (cid, val) in atoms {
+                let raw = val
+                    .as_bstr()
+                    .ok_or_else(|| Other(format!("atom {cid} is not a byte string")))?;
+                let json: Json = serde_json::from_slice(raw)
+                    .map_err(|e| Other(format!("atom {cid} bytes not JSON: {e}")))?;
+                let atom = FlatAtom::new(json_to_canonical_value(&json));
+                if atom.cid().as_str() != cid {
+                    return Err(Other(format!(
+                        "atom CID mismatch: catalog key {cid} != recomputed {}",
+                        atom.cid().as_str()
+                    )));
+                }
+                graph.atoms.insert(cid.clone(), atom);
+            }
+        }
+
+        // 2. Bodies: relationships, by CID only. A body holds atom-memento
+        //    references, never inline atom data -- resolve each atomCid out of
+        //    the atoms map and rebuild from slots, then recompute the CID.
+        if let Some(bodies) = map.get("body").and_then(CborValue::as_map) {
+            for (cid, val) in bodies {
+                let raw = val
+                    .as_bstr()
+                    .ok_or_else(|| Other(format!("body {cid} is not a byte string")))?;
+                let json: Json = serde_json::from_slice(raw)
+                    .map_err(|e| Other(format!("body {cid} bytes not JSON: {e}")))?;
+                let slots = json
+                    .get("body")
+                    .and_then(Json::as_object)
+                    .ok_or_else(|| Other(format!("body {cid} has no `body` object")))?;
+                let mut atom_mementos: Vec<(String, AtomMemento)> = Vec::with_capacity(slots.len());
+                for (slot, slot_val) in slots {
+                    let atom_cid = slot_val
+                        .get("atomCid")
+                        .and_then(Json::as_str)
+                        .ok_or_else(|| Other(format!("body {cid} slot {slot} missing atomCid")))?;
+                    let atom = graph.atoms.get(atom_cid).ok_or_else(|| {
+                        Other(format!("body {cid} references unknown atom {atom_cid}"))
+                    })?;
+                    atom_mementos.push((slot.clone(), AtomMemento::new(atom)));
+                }
+                let body = ContractBody::from_slots(
+                    atom_mementos.iter().map(|(s, m)| (s.as_str(), m)).collect(),
+                );
+                if body.cid().as_str() != cid {
+                    return Err(Other(format!(
+                        "body CID mismatch: catalog key {cid} != recomputed {}",
+                        body.cid().as_str()
+                    )));
+                }
+                graph.bodies.insert(cid.clone(), body);
+            }
+        }
+
+        // 3. Members: signed mementos, kept as records. Each resolves its body
+        //    lazily by CID lookup when asked (see `contract_body_of`); source and
+        //    witness leaves are never stored here -- those resolve off-graph
+        //    through kit-driven oracles.
+        if let Some(members) = map.get("members").and_then(CborValue::as_map) {
+            for (cid, val) in members {
+                // Gracefully reject unsupported hash-tag prefixes rather than
+                // panicking inside `MementoCid::new`. This ensures callers can
+                // surface a typed error instead of an unwind.
+                if !cid.starts_with("blake3-512:") {
+                    return Err(Other(format!(
+                        "member {cid}: unsupported hash tag; requires `blake3-512:` prefix"
+                    )));
+                }
+                let raw = val
+                    .as_bstr()
+                    .ok_or_else(|| Other(format!("member {cid} is not a byte string")))?;
+                graph.insert_member(MemberRecord::new(
+                    MementoCid::new(cid.clone()),
+                    raw.to_vec(),
+                ));
+            }
+        }
+
+        Ok(graph)
+    }
+
+    /// Resolve a contract member's body by following its `bodyCid` into the
+    /// graph's body map. The member stores the reference, never the body.
+    pub fn contract_body_of(&self, member: &MementoCid) -> Option<&ContractBody> {
+        let record = self.members.get(member.as_str())?;
+        let value: Json = serde_json::from_slice(&record.bytes).ok()?;
+        let body_cid = value
+            .pointer("/header/bodyCid")
+            .and_then(Json::as_str)?;
+        self.bodies.get(body_cid)
+    }
+
+    /// Resolve a named body slot (`"inv"`, `"pre"`, `"post"`) for the
+    /// contract identified by `member` and return its formula as JSON.
+    ///
+    /// Graph walk: `member` → `/header/bodyCid` → body bytes
+    ///   → `body.<slot>.atomCid` → atom bytes → formula JSON.
+    ///
+    /// Returns `None` when the member has no body pointer, the body is absent,
+    /// the slot does not exist in the body, or the atom bytes are not valid JSON.
+    pub fn contract_slot_json(&self, member: &MementoCid, slot: &str) -> Option<Json> {
+        let body = self.contract_body_of(member)?;
+        let body_json: Json = serde_json::from_slice(body.bytes()).ok()?;
+        let atom_cid = body_json
+            .get("body")
+            .and_then(|b| b.get(slot))
+            .and_then(|s| s.get("atomCid"))
+            .and_then(Json::as_str)?;
+        let atom = self.atoms.get(atom_cid)?;
+        serde_json::from_slice(atom.bytes()).ok()
+    }
+
+    /// Read every contract behavior out of the graph: `(name -> bodyCid)`,
+    /// resolved lazily from each contract member's typed header. This is what a
+    /// behavior diff compares -- nothing is hand-parsed by the caller.
+    pub fn contracts(&self) -> Vec<ContractEntry> {
+        self.members
+            .iter()
+            .filter_map(|(cid, record)| {
+                let v: Json = serde_json::from_slice(&record.bytes).ok()?;
+                let body_cid = v.pointer("/header/bodyCid").and_then(Json::as_str)?;
+                let name = v
+                    .pointer("/header/name")
+                    .or_else(|| v.pointer("/header/contractName"))
+                    .and_then(Json::as_str)?;
+                Some(ContractEntry {
+                    cid: cid.clone(),
+                    name: name.to_string(),
+                    body_cid: body_cid.to_string(),
+                })
+            })
+            .collect()
+    }
+
+    /// View every member typed -- the inverse direction of `read`'s member
+    /// reconstruction, handed to callers so they never parse member bytes.
+    pub fn members_view(&self) -> impl Iterator<Item = MemberView<'_>> {
+        self.members.values().map(|record| MemberView {
+            cid: &record.cid,
+            bytes: record.bytes.as_slice(),
+        })
+    }
+
+    /// Typed iterator over bridge members only.
+    pub fn bridges(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("bridge"))
+    }
+
+    /// Typed iterator over implication members only.
+    pub fn implications(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("implication"))
+    }
+
+    /// Typed iterator over source-memento members only.
+    pub fn sources(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("source-memento"))
+    }
+
+    /// Typed iterator over witness-memento members only.
+    pub fn witnesses(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("witness-memento"))
+    }
+
+    /// Typed iterator over plan-memento members only.
+    pub fn plans(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("plan-memento"))
+    }
+
+    /// Typed iterator over effect-site-annotation members only.
+    pub fn effect_site_annotations(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
+        self.members_view()
+            .filter(|v| v.kind().as_deref() == Some("effect-site-annotation"))
+    }
+
+    /// Write this graph to a signed `.proof` envelope -- the inverse of `read`.
+    /// The graph carries the content; `identity` carries the envelope fields
+    /// (name/version/signer/declaredAt) that are not graph content.
+    pub fn write(&self, identity: &ProofIdentity) -> crate::ProofEnvelopeOutput {
+        crate::build_proof_envelope(&crate::ProofEnvelopeInput {
+            name: identity.name.clone(),
+            version: identity.version.clone(),
+            binary_cid: identity.binary_cid.clone(),
+            metadata: identity.metadata.clone(),
+            graph: self.clone(),
+            signer_cid: identity.signer_cid.clone(),
+            signer_seed: identity.signer_seed,
+            declared_at: identity.declared_at.clone(),
+        })
     }
 
     pub fn register_atom(&mut self, atom: FlatAtom) -> AtomMemento {
@@ -822,5 +1140,125 @@ mod tests {
             malformed.is_err(),
             "typed memento refs must reject untagged raw strings at construction"
         );
+    }
+
+    #[test]
+    fn read_reconstructs_atoms_bodies_and_resolves_contract_body() {
+        use crate::{build_proof_envelope, ProofEnvelopeInput};
+
+        // Write a catalog by construction: atom -> body -> contract.
+        let mut graph = ProofGraph::new();
+        let atom = FlatAtom::result_eq_int(7);
+        let post = graph.register_atom(atom.clone());
+        let metadata_atom = FlatAtom::empty_metadata();
+        let metadata = graph.register_atom(metadata_atom.clone());
+        let body = graph.register_body(ContractBody::new(&post));
+        let contract = ContractMemento::new_with_metadata_at(
+            "crate::f",
+            &body,
+            &metadata,
+            [0x42; 32],
+            "2026-04-30T00:00:00.000Z",
+        );
+        graph.register_contract(contract.clone());
+
+        let out = build_proof_envelope(&ProofEnvelopeInput {
+            name: "@x/y".into(),
+            version: "0.0.1".into(),
+            binary_cid: None,
+            metadata: None,
+            graph,
+            signer_cid: "blake3-512:bb".into(),
+            signer_seed: [0x11; 32],
+            declared_at: "2026-04-30T00:00:00.000Z".into(),
+        });
+
+        // Read the catalog back into a strongly typed graph.
+        let read = ProofGraph::read(&out.bytes).expect("read catalog");
+
+        // Atoms reconstructed as typed FlatAtoms, by recomputation.
+        let mut got: Vec<String> = read.atoms().map(|a| a.cid().as_str().to_string()).collect();
+        got.sort();
+        let mut want = vec![
+            atom.cid().as_str().to_string(),
+            metadata_atom.cid().as_str().to_string(),
+        ];
+        want.sort();
+        assert_eq!(got, want, "read graph reconstructs the atom leaves");
+
+        // Body reconstructed; it carries the relationship by CID, resolving its
+        // atom out of the atoms map -- never inlining atom data.
+        let read_body = read.bodies().next().expect("one reconstructed body");
+        assert_eq!(
+            read_body.cid().as_str(),
+            body.cid().as_str(),
+            "body CID round-trips"
+        );
+        let body_atoms: Vec<String> =
+            read_body.atoms().map(|a| a.cid().as_str().to_string()).collect();
+        assert_eq!(
+            body_atoms,
+            vec![atom.cid().as_str().to_string()],
+            "body resolves its atom by CID"
+        );
+
+        // Contract member resolves its body by bodyCid lookup.
+        let resolved = read
+            .contract_body_of(contract.cid())
+            .expect("contract resolves its body");
+        assert_eq!(
+            resolved.cid().as_str(),
+            body.cid().as_str(),
+            "contract -> body by lookup"
+        );
+
+        // Contracts read out of the graph as (name -> bodyCid): the behavior
+        // table a diff compares.
+        let contracts = read.contracts();
+        assert_eq!(contracts.len(), 1, "one contract behavior in the graph");
+        assert_eq!(contracts[0].name.as_str(), "crate::f");
+        assert_eq!(contracts[0].body_cid.as_str(), body.cid().as_str());
+        assert_eq!(contracts[0].cid.as_str(), contract.cid().as_str());
+    }
+
+    #[test]
+    fn write_is_the_inverse_of_read_and_members_view_is_typed() {
+        let mut graph = ProofGraph::new();
+        let post = graph.register_atom(FlatAtom::result_eq_int(7));
+        let metadata = graph.register_atom(FlatAtom::empty_metadata());
+        let body = graph.register_body(ContractBody::new(&post));
+        let contract = ContractMemento::new_with_metadata_at(
+            "crate::f",
+            &body,
+            &metadata,
+            [0x42; 32],
+            "2026-04-30T00:00:00.000Z",
+        );
+        graph.register_contract(contract.clone());
+
+        // write by method (the symmetric pair with read), not the free fn.
+        let out = graph.write(&ProofIdentity {
+            name: "@x/y".to_string(),
+            version: "0.0.1".to_string(),
+            binary_cid: None,
+            metadata: None,
+            signer_cid: "blake3-512:bb".to_string(),
+            signer_seed: [0x11; 32],
+            declared_at: "2026-04-30T00:00:00.000Z".to_string(),
+        });
+        let read = ProofGraph::read(&out.bytes).expect("read what write produced");
+
+        // write∘read is identity over the behavior.
+        let contracts = read.contracts();
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(contracts[0].name.as_str(), "crate::f");
+        assert_eq!(contracts[0].body_cid.as_str(), body.cid().as_str());
+
+        // members are viewable typed -- kind + bodyCid -- with no caller parse.
+        let views: Vec<_> = read.members_view().collect();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].kind().as_deref(), Some("contract"));
+        assert_eq!(views[0].body_cid().as_deref(), Some(body.cid().as_str()));
+        assert_eq!(views[0].cid().as_str(), contract.cid().as_str());
     }
 }

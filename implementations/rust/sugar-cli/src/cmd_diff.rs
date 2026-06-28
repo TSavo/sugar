@@ -31,7 +31,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use clap::Args;
-use sugar_verifier::{load_all_proofs, MementoPool};
+use sugar_proof_envelope::ProofGraph;
 
 use crate::{EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
@@ -94,8 +94,42 @@ fn invert(t: &Table) -> ByCid {
     m
 }
 
-fn diff_table(pool: &MementoPool) -> &Table {
-    &pool.name_to_body_cid
+/// Read every `.proof` under `dir` into a behavior table (`name -> bodyCid`) by
+/// asking the typed graph for its contracts. Dead dumb: `ProofGraph::read` owns
+/// reconstruction; diff just reads the contracts out and tabulates them. No
+/// hand-decoding, no `MementoPool` detour.
+fn behavior_table_from_dir(dir: &Path) -> Result<Table, String> {
+    let mut table = Table::new();
+    for path in proof_files(dir) {
+        let bytes =
+            std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let graph = ProofGraph::read(&bytes)
+            .map_err(|e| format!("read proof graph {}: {e}", path.display()))?;
+        for c in graph.contracts() {
+            table.insert(c.name, c.body_cid);
+        }
+    }
+    Ok(table)
+}
+
+/// Recursively collect `*.proof` files under `dir`.
+fn proof_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("proof") {
+                out.push(p);
+            }
+        }
+    }
+    out
 }
 
 /// The behavior delta between two proof sets, keyed by CID.
@@ -545,7 +579,7 @@ fn sanitize(s: &str) -> String {
 
 /// Extract `rev:path` from `repo` into a temp dir via `git archive | tar`, load
 /// its proofs, and clean up. No worktree state, no checkout of the live tree.
-fn load_git(repo: &str, rev: &str, path: &str, label: &str) -> Result<MementoPool, String> {
+fn load_git(repo: &str, rev: &str, path: &str, label: &str) -> Result<Table, String> {
     let tmp = std::env::temp_dir().join(format!("sugar-diff-{label}-{}", sanitize(rev)));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir {}: {e}", tmp.display()))?;
@@ -579,39 +613,33 @@ fn load_git(repo: &str, rev: &str, path: &str, label: &str) -> Result<MementoPoo
         return Err(format!("tar extract failed for {treeish}"));
     }
 
-    let pool = load_all_proofs::run(&tmp);
+    let table = behavior_table_from_dir(&tmp)?;
     let _ = std::fs::remove_dir_all(&tmp);
-    Ok(pool)
+    Ok(table)
 }
 
 pub fn run(args: DiffArgs) -> u8 {
-    let (before, after) = if args.git {
-        let repo = match git_toplevel() {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: {e}");
-                return EXIT_USER_ERROR;
-            }
-        };
-        let pair = load_git(&repo, &args.before, &args.path, "before")
-            .and_then(|b| load_git(&repo, &args.after, &args.path, "after").map(|a| (b, a)));
-        match pair {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("error: {e}");
-                return EXIT_USER_ERROR;
-            }
+    let loaded = if args.git {
+        match git_toplevel() {
+            Ok(repo) => load_git(&repo, &args.before, &args.path, "before")
+                .and_then(|b| load_git(&repo, &args.after, &args.path, "after").map(|a| (b, a))),
+            Err(e) => Err(e),
         }
     } else {
-        (
-            load_all_proofs::run(Path::new(&args.before)),
-            load_all_proofs::run(Path::new(&args.after)),
-        )
+        behavior_table_from_dir(Path::new(&args.before))
+            .and_then(|b| behavior_table_from_dir(Path::new(&args.after)).map(|a| (b, a)))
+    };
+    let (before, after) = match loaded {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return EXIT_USER_ERROR;
+        }
     };
 
     let markdown = args.format == DiffFormat::Markdown;
 
-    let s = summarize(diff_table(&before), diff_table(&after));
+    let s = summarize(&before, &after);
     if !markdown {
         for line in &s.lines {
             println!("{line}");
@@ -1322,39 +1350,30 @@ mod tests {
         let after_dir = tmp.join("after");
         use sugar_proof_envelope::{AtomMemento, ContractBody, ContractMemento, FlatAtom};
         let atom = FlatAtom::result_eq_int(7);
-        let atom_bytes = atom.bytes().to_vec();
-        let atom_cid = atom.cid().as_str().to_string();
         let atom_memento = AtomMemento::new(&atom);
         let body = ContractBody::new(&atom_memento);
-        let body_bytes = body.bytes().to_vec();
         let body_cid = body.cid().as_str().to_string();
         let before_contract = ContractMemento::new("src/lib.rs::diff::old_name", &body, [0x42; 32]);
         let after_contract = ContractMemento::new("src/lib.rs::diff::new_name", &body, [0x42; 32]);
         write_graph_contract_proof(&before_dir, vec![before_contract]);
         write_graph_contract_proof(&after_dir, vec![after_contract]);
 
-        let before = load_all_proofs::run(&before_dir);
-        let after = load_all_proofs::run(&after_dir);
-        assert!(
-            before.load_errors.is_empty() && after.load_errors.is_empty(),
-            "before={:?} after={:?}",
-            before.load_errors,
-            after.load_errors
-        );
+        // diff reads behaviors by asking ProofGraph::read for the contracts --
+        // the typed bodyCid pointer, not a hand-stripped envelope field.
+        let before = behavior_table_from_dir(&before_dir).expect("read before");
+        let after = behavior_table_from_dir(&after_dir).expect("read after");
         assert_eq!(
-            before.name_to_body_cid.get("src/lib.rs::diff::old_name"),
+            before.get("src/lib.rs::diff::old_name"),
             Some(&body_cid),
-            "diff must read the contract memento's typed bodyCid pointer"
+            "diff must read the contract memento's typed bodyCid pointer out of the graph"
         );
         assert_eq!(
-            after.name_to_body_cid.get("src/lib.rs::diff::new_name"),
+            after.get("src/lib.rs::diff::new_name"),
             Some(&body_cid),
             "a rename preserves behavior when the contract body pointer is unchanged"
         );
-        assert_eq!(before.atoms.get(&atom_cid), Some(&atom_bytes));
-        assert_eq!(before.body.get(&body_cid), Some(&body_bytes));
 
-        let s = summarize(diff_table(&before), diff_table(&after));
+        let s = summarize(&before, &after);
         let _ = std::fs::remove_dir_all(&tmp);
 
         assert_eq!(
@@ -1418,13 +1437,7 @@ mod tests {
         let repo = tmp.to_string_lossy().to_string();
         let before = load_git(&repo, "HEAD~1", "proj", "test_before").expect("load before");
         let after = load_git(&repo, "HEAD", "proj", "test_after").expect("load after");
-        assert!(
-            before.load_errors.is_empty() && after.load_errors.is_empty(),
-            "before={:?} after={:?}",
-            before.load_errors,
-            after.load_errors
-        );
-        let s = summarize(diff_table(&before), diff_table(&after));
+        let s = summarize(&before, &after);
         let _ = std::fs::remove_dir_all(&tmp);
 
         // the two proof sets denote different behaviors, so the cross-ref diff
