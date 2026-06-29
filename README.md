@@ -198,13 +198,10 @@ A `.proof` is discharged **two independent ways, and both must agree**:
   `verify` recomputes it. A witness that does not reproduce its pinned CID is
   refused.
 
-The numpy showcase (`examples/numpy-showcase/`) discharges both on a real
-library operation. `sugar prove` reports `discharged: 2`: one obligation
-"test assertions mutually consistent ... [solver 'z3' returned sat]", one
-"witnessed by recompute (kit): re-ran on pinned code; assertions held; witness
-CID reproduced." A `np.add(2,3)` asserted both `== 5` and `== 6` is refused
-both ways: z3 finds the conjunction UNSAT, and the actual run yields `5`, so the
-`== 6` witness fails.
+The numpy showcase (`examples/numpy-showcase/`) exercises both on a real library
+operation: a self-contradictory assertion is refused **both ways** — z3 finds the
+conjunction UNSAT, and the witnessed re-run fails to reproduce it. The demo is the
+receipt; run it for the current output.
 
 ## First principle: supra omnia, rectum (above all, correctness)
 
@@ -240,24 +237,16 @@ all of numpy inside it.
 `examples/numpy-vendor/` is the headline demo. The universal lifter reads
 numpy's installed python source and sugar-lifts **every module-level function**
 (the symbol is its qualified path, e.g. `lib._function_base_impl.rot90`) into
-one lean `.proof`. On numpy 2.4.6 that is **2909 sugar members in a 13M
-`.proof`, ~16s, with no code changes to numpy and no hand-written shim.** The
-count is whatever the lifter finds in the installed numpy, so it tracks the
-numpy version. `numpy.add` is a C ufunc with no python body, so it is simply not
-among the python functions lifted; the thousands that are python all lift.
+one lean `.proof` — **no code changes to numpy and no hand-written shim.** The
+member count is whatever the lifter finds in the installed numpy, so it tracks the
+numpy version (`numpy.add` is a C ufunc with no python body, so it is not among the
+python functions lifted; the thousands that are python all lift).
 
 The vendor ships the `.proof` plus a separately deployed witness package
 (`<cid>.witness`, the audit material). A consumer runs `sugar verify`, which
-recomputes everything:
-
-```
-numpy.proof:  13M, 2909 sugar members
-witness: passed blake3-512:049e169f... -> .sugar/witnesses/<cid>.witness
-oracle resolved via package; rust recomputed the CID and it matched
-pass
-```
-
-Run it with `examples/numpy-vendor/run.sh` (builds a venv on first run).
+recomputes everything — resolving the source and witness bodies through the package
+and re-checking every CID. Run it with `examples/numpy-vendor/run.sh` (builds a venv
+on first run); the demo prints the live output.
 
 ## The capstone: correctness is inheritable, and composition failures are caught
 
@@ -424,7 +413,7 @@ The numpy demos provision their own venv on first run.
 
 | Demo | What it shows | Path |
 |---|---|---|
-| Vendor a whole library | ~2900 numpy functions sugar-lifted into one `.proof`, no shim, witness package, consumer `verify` recomputes | [examples/numpy-vendor/](examples/numpy-vendor/) |
+| Vendor a whole library | every module-level numpy function lifted into one `.proof`, no shim; witness package; consumer `verify` recomputes | [examples/numpy-vendor/](examples/numpy-vendor/) |
 | Discharge two ways | one operation, `numpy.rot90`: consistency discharged (z3) and the degenerate twin refused both ways (z3 UNSAT + witness recompute) | [examples/numpy-showcase/](examples/numpy-showcase/) |
 | Inheritance capstone | a consumer inherits numpy's contract and is refused when it contradicts it | [test_inheritance_e2e.py](implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py) |
 
