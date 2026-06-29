@@ -5,10 +5,10 @@ from enum import Enum
 
 class SugarRole(str, Enum):
     TERM = "term"
-    # An inert statement -- present in the source, no first-order logic, no scope.
-    # The factory composes a Support sugar so the audit records it (it is never a
-    # silent skip and never a refusal).
-    SUPPORT = "support"
+    # A statement -- a member of a block (suite). Comment, Return, Assign, If, ...
+    # each own their statement shape. Their OUTCOME is a category (a comment's is
+    # Support); the role is just the dispatch key, parallel to TERM for expressions.
+    STATEMENT = "statement"
 
     def __str__(self) -> str:
         return self.value
