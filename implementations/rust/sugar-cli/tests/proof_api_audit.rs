@@ -8,11 +8,15 @@
 // The owner crate (`sugar-proof-envelope`) is exempt -- it IS the api and is the
 // one place allowed to touch CBOR/member bytes directly.
 //
-// Axes (keep separate; do not hide gaps in one number). These measure the
-// TRUE bypass -- touching catalog/member bytes by hand. `MementoPool` mentions
-// are NOT counted: a pool BUILT from `ProofGraph::read` uses the api, and its
-// downstream usage is legitimate. The bypass is exactly:
-//   decode  catalog decoded by hand        -> ProofGraph::read / graph.write
+// DECODE AXIS IS COMPILER-ENFORCED: `cbor_decode::decode` is now `pub(crate)`
+// in sugar-proof-envelope. Any external call to `cbor_decode::decode` or the
+// former `sugar_proof_envelope::cbor_decode(` alias is a compile error. The
+// one sanctioned raw site is `sugar_proof_envelope::decode_for_conformance`,
+// used only by sugar-verifier/proof_conformance.rs for protocol-encoding checks
+// (deterministic re-encoding comparison, raw signature/kind/metadata). No grep
+// needed here; the compiler is exhaustive.
+//
+// Remaining axis (still grep-enforced; compiler cannot catch stringly patterns):
 //   member  member shape parsed by hand    -> MemberView::{kind,body_cid,json} / contracts()
 //             (memento_kind/body(_field), or /header//evidence//envelope pointer fishing)
 
@@ -44,15 +48,15 @@ fn rust_sources(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Classify a source line as an api-bypass offender on one of the three axes.
+/// Classify a source line as an api-bypass offender on the member axis.
+/// The decode axis is compiler-enforced (cbor_decode::decode is pub(crate));
+/// only the stringly member-shape patterns still require grep.
 fn offending_axis(line: &str) -> Option<&'static str> {
     let t = line.trim();
     if t.starts_with("//") || t.starts_with('*') || t.starts_with("//!") {
         return None;
     }
-    if t.contains("cbor_decode::decode") || t.contains("sugar_proof_envelope::cbor_decode(") {
-        Some("decode")
-    } else if t.contains("memento_kind(")
+    if t.contains("memento_kind(")
         || t.contains("memento_body(")
         || t.contains("memento_body_field(")
         || t.contains(".pointer(\"/header/")
@@ -107,8 +111,8 @@ fn every_consumer_uses_the_proof_graph_api() {
             "\nR = {total} api-bypass offenders across {} files. \
              Everything must read/write .proof catalogs through the ProofGraph api.\n\
              Per axis: {:?}\n\
-             Replacements: decode -> ProofGraph::read/graph.write; \
-             member -> MemberView::{{kind,body_cid,json}} / contracts()\n\n",
+             Replacement: member -> MemberView::{{kind,body_cid,json}} / contracts()\n\
+             (decode axis is compiler-enforced; any new raw decode is a build error)\n\n",
             per_file.len(),
             per_axis
         ));
