@@ -503,6 +503,60 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
         C = len(src[0])
         return [[src[i][j] for i in range(R)] for j in range(C)]
 
+    # --- df.values -> row-major 2-D int matrix ---
+    if isinstance(node, ast.Attribute) and node.attr == "values":
+        src = _resolve_value(node.value, fn)
+        if not isinstance(src, dict):
+            return None
+        cols = list(src.keys())
+        if not cols:
+            return None
+        col_lists = [src[c] for c in cols]
+        nrows = len(col_lists[0])
+        # All columns must be equal-length lists of plain ints
+        for col in col_lists:
+            if not isinstance(col, list) or len(col) != nrows:
+                return None
+            if not all(isinstance(x, int) and not isinstance(x, bool) for x in col):
+                return None
+        return [[col_lists[j][i] for j in range(len(cols))] for i in range(nrows)]
+
+    # --- df.shape -> [nrows, ncols] ---
+    if isinstance(node, ast.Attribute) and node.attr == "shape":
+        src = _resolve_value(node.value, fn)
+        if not isinstance(src, dict):
+            return None
+        cols = list(src.keys())
+        if not cols:
+            return None
+        col_lists = [src[c] for c in cols]
+        nrows = len(col_lists[0])
+        for col in col_lists:
+            if not isinstance(col, list) or len(col) != nrows:
+                return None
+            if not all(isinstance(x, int) and not isinstance(x, bool) for x in col):
+                return None
+        return [nrows, len(cols)]
+
+    # --- x.iloc -> row-major 2-D (DataFrame) or the list itself (Series) ---
+    if isinstance(node, ast.Attribute) and node.attr == "iloc":
+        src = _resolve_value(node.value, fn)
+        if isinstance(src, dict):
+            cols = list(src.keys())
+            if not cols:
+                return None
+            col_lists = [src[c] for c in cols]
+            nrows = len(col_lists[0])
+            for col in col_lists:
+                if not isinstance(col, list) or len(col) != nrows:
+                    return None
+                if not all(isinstance(x, int) and not isinstance(x, bool) for x in col):
+                    return None
+            return [[col_lists[j][i] for j in range(len(cols))] for i in range(nrows)]
+        if isinstance(src, list):
+            return src
+        return None
+
     return None
 
 
