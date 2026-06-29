@@ -190,11 +190,90 @@ def build_function_call_sugar(site, ctx):
     return sugar
 
 
+def _cf_operand(node):
+    from sugar_lift_py_tests.ir import make_var, num, str_const
+
+    if isinstance(node, ast.Name):
+        return make_var(node.id)
+    if isinstance(node, ast.Constant) and not isinstance(node.value, bool):
+        if isinstance(node.value, int):
+            return num(node.value)
+        if isinstance(node.value, str):
+            return str_const(node.value)
+    raise TypeError(f"control-flow operand shape `{type(node).__name__}`")
+
+
+def _cf_guard(test):
+    from sugar_lift_py_tests.ir import eq, gt, lt, ne
+
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+        left = _cf_operand(test.left)
+        right = _cf_operand(test.comparators[0])
+        op = test.ops[0]
+        if isinstance(op, ast.Eq):
+            return eq(left, right)
+        if isinstance(op, ast.NotEq):
+            return ne(left, right)
+        if isinstance(op, ast.Gt):
+            return gt(left, right)
+        if isinstance(op, ast.Lt):
+            return lt(left, right)
+    raise TypeError(f"control-flow guard shape `{type(test).__name__}`")
+
+
+def _walk_control_flow(stmts, guards, paths):
+    from sugar_lift_py_tests.ir import not_
+
+    # `fall_through` accumulates the negated guards of prior terminal `if`s on this
+    # level: a statement reached after `if cond: return ...` is only live when
+    # `not cond` held, so it inherits that guard.
+    fall_through = list(guards)
+    for stmt in stmts:
+        if isinstance(stmt, ast.Return):
+            if stmt.value is None:
+                raise TypeError("control-flow: bare return")
+            paths.append((tuple(fall_through), _cf_operand(stmt.value)))
+            return  # statements after a return are unreachable on this path
+        if isinstance(stmt, ast.If):
+            guard = _cf_guard(stmt.test)
+            _walk_control_flow(stmt.body, tuple(fall_through) + (guard,), paths)
+            if stmt.orelse:
+                _walk_control_flow(stmt.orelse, tuple(fall_through) + (not_(guard),), paths)
+                return  # both branches handled; no fall-through past an if/else
+            fall_through.append(not_(guard))
+            continue
+        raise TypeError(f"control-flow statement `{type(stmt).__name__}`")
+
+
+def build_control_flow_body_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
+
+    function = site.node
+    if not isinstance(function, ast.FunctionDef):
+        raise TypeError("ControlFlowBodySugar claim built a non-function")
+    if not function.args.args:
+        raise TypeError("ControlFlowBodySugar requires at least one parameter")
+    paths: list = []
+    _walk_control_flow(function.body, (), paths)
+    if not paths:
+        raise TypeError("ControlFlowBodySugar found no return paths")
+    return ControlFlowBodySugar(
+        parameter=function.args.args[0].arg,
+        paths=tuple(paths),
+        formals=tuple(a.arg for a in function.args.args),
+        statement_count=len(function.body),
+    )
+
+
 def _function_call_body(function: ast.FunctionDef, ctx):
     if len(function.body) == 1:
         body = function.body[0]
         if isinstance(body, ast.Return) and body.value is not None:
             return ctx.build_body(body.value, SugarRole.TERM)
+    if any(isinstance(stmt, ast.If) for stmt in function.body):
+        return build_control_flow_body_sugar(
+            SourceSite.from_node(function, ctx.filename), ctx
+        )
     return build_generic_body_sugar(SourceSite.from_node(function, ctx.filename), ctx)
 
 
