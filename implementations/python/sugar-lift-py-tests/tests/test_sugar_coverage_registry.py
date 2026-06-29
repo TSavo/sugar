@@ -38,7 +38,6 @@ COVERAGE: dict[str, list[str]] = {
     "string_subscript_sugar": ["test_string_subscript_sugar.py"],
     "ord_sugar": ["test_ord_sugar.py"],
     "encoder_body_sugar": ["test_encoder_body_sugar.py"],
-    "generic_body_sugar": ["test_generic_body_sugar.py"],
     # array-map path -- leaves + the composer
     "add_sugar": ["test_add_sugar.py"],
     "lambda_sugar": ["test_lambda_sugar.py"],

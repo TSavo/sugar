@@ -10,12 +10,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 from .control_flow_body_sugar import ControlFlowBodySugar
 from .encoder_body_sugar import EncoderBodySugar
-from .generic_body_sugar import GenericBodySugar
 
-FunctionCallBody = (
-    SugarBody | GenericBodySugar | ControlFlowBodySugar | EncoderBodySugar
-)
-_BODY_TYPES = (SugarBody, GenericBodySugar, ControlFlowBodySugar, EncoderBodySugar)
+FunctionCallBody = SugarBody | ControlFlowBodySugar | EncoderBodySugar
+_BODY_TYPES = (SugarBody, ControlFlowBodySugar, EncoderBodySugar)
 
 
 def callee_target(node: ast.Call) -> str | None:
@@ -68,7 +65,7 @@ class FunctionCallSugar:
         if isinstance(self.body, SugarBody):
             return self.body.reduce(ctx)
         raise TypeError(
-            "FunctionCallSugar with GenericBodySugar lowers to ProofIR; call "
+            "FunctionCallSugar with a body sugar lowers to ProofIR; call "
             "constraint_formulas instead of computing in Python"
         )
 

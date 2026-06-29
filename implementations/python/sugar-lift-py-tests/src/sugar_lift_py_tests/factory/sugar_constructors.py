@@ -76,66 +76,6 @@ def build_string_subscript_sugar(site, ctx):
     return sugar
 
 
-def build_generic_body_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.generic_body_sugar import GenericBodySugar
-    from sugar_lift_py_tests.sugar.ord_sugar import OrdSugar
-    from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
-
-    function = site.node
-    if not isinstance(function, ast.FunctionDef):
-        raise TypeError("GenericBodySugar claim built a non-function")
-    if not function.args.args:
-        raise TypeError("GenericBodySugar requires at least one parameter")
-    # The lifted value binds to the first positional parameter; any others carry
-    # their own defaults (e.g. rot90's k, axes) and are not part of the value.
-    parameter = function.args.args[0].arg
-    if len(function.body) < 2:
-        raise TypeError("GenericBodySugar requires assignments and a return")
-    *assign_stmts, ret = function.body
-    if not isinstance(ret, ast.Return) or ret.value is None:
-        raise TypeError("GenericBodySugar requires a return statement")
-    table_name: str | None = None
-    table_value: str | None = None
-    ord_bytes: list[tuple[int, str]] = []
-    assign_kinds: list[str] = []
-    for stmt in assign_stmts:
-        if (
-            not isinstance(stmt, ast.Assign)
-            or len(stmt.targets) != 1
-            or not isinstance(stmt.targets[0], ast.Name)
-        ):
-            raise TypeError("GenericBodySugar assignment must bind a single name")
-        ord_sugar = OrdSugar.from_site(
-            SourceSite.from_node(stmt, ctx.filename), source_name=parameter
-        )
-        if ord_sugar is not None:
-            ord_bytes.append((ord_sugar.index, ord_sugar.target))
-            assign_kinds.append("ord")
-            continue
-        literal = string_literal_sugar(stmt.value)
-        if literal is not None:
-            if table_name is not None:
-                raise TypeError("GenericBodySugar expects a single table literal")
-            table_name = stmt.targets[0].id
-            table_value = literal.value
-            assign_kinds.append("table")
-            continue
-        raise TypeError("GenericBodySugar assignment is neither a table literal nor an ord byte")
-    if table_name is None or not ord_bytes:
-        raise TypeError("GenericBodySugar needs a table literal and at least one ord byte")
-    byte_names = tuple(target for _, target in sorted(ord_bytes, key=lambda pair: pair[0]))
-    return_body = ctx.build_body(ret.value, SugarRole.TERM)
-    return GenericBodySugar(
-        parameter=parameter,
-        table_name=table_name,
-        table_value=table_value,
-        byte_names=byte_names,
-        assign_kinds=tuple(assign_kinds),
-        return_body=return_body,
-        build_ctx=ctx,
-    )
-
-
 def build_builder_ctor_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.builder_ctor_sugar import BuilderCtorSugar
 
