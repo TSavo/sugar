@@ -8,9 +8,11 @@ from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
+from .control_flow_body_sugar import ControlFlowBodySugar
 from .generic_body_sugar import GenericBodySugar
 
-FunctionCallBody = SugarBody | GenericBodySugar
+FunctionCallBody = SugarBody | GenericBodySugar | ControlFlowBodySugar
+_BODY_TYPES = (SugarBody, GenericBodySugar, ControlFlowBodySugar)
 
 
 def callee_target(node: ast.Call) -> str | None:
@@ -34,7 +36,7 @@ class FunctionCallSugar:
     def __post_init__(self) -> None:
         if not isinstance(self.argument, SugarBody):
             raise TypeError("FunctionCallSugar argument must be factory-built")
-        if not isinstance(self.body, (SugarBody, GenericBodySugar)):
+        if not isinstance(self.body, _BODY_TYPES):
             raise TypeError("FunctionCallSugar body must be factory-built")
 
     @classmethod
