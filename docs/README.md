@@ -49,6 +49,7 @@ is the map.
 - [contributing/writing-a-lift-adapter/](contributing/writing-a-lift-adapter/) — lift a native surface into ProofIR (the mechanics).
 - **[contributing/lifting-rules.md](contributing/lifting-rules.md)** — the soundness laws a lifter must obey; read before shipping a kit/lifter.
 - [contributing/lifting-vocabulary.md](contributing/lifting-vocabulary.md) — the lifting ontology (fact, dig, effect, bridge, implication, source oracle, mementos, atoms) and how each lands in ProofIR.
+- [contributing/proofir-z3-dialect.md](contributing/proofir-z3-dialect.md) — the exact ProofIR subset the z3/SMT-LIB backend accepts and the SMT-LIB it lowers to (the deepest reference).
 - [contributing/factory-sugar-floor.md](contributing/factory-sugar-floor.md) — the recommended lifter shape (design guideline) that satisfies those laws cleanly.
 - [contributing/writing-a-prover-backend.md](contributing/writing-a-prover-backend.md) — add an IR-compiler backend.
 - [contributing/writing-an-LSP-plugin.md](contributing/writing-an-LSP-plugin.md) · [contributing/porting-to-a-new-language.md](contributing/porting-to-a-new-language.md)
