@@ -16,7 +16,8 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string, member_field, MemberView, ProofGraph};
 
-use crate::cbor_decode::{decode, CborValue};
+use crate::cbor_decode::CborValue;
+use sugar_proof_envelope::decode_for_conformance;
 
 const HASH_TAG_PREFIX: &str = "blake3-512:";
 
@@ -132,7 +133,7 @@ pub fn validate_proof_bytes(path: &Path, bytes: &[u8]) -> ProofFileConformanceRe
     // ProofGraph::read() does not expose catalog-level fields (signer, declaredAt,
     // signature, kind, metadata), so cbor_decode::decode is retained here for those
     // checks and for the deterministic re-encoding comparison.
-    let catalog = match decode(bytes) {
+    let catalog = match decode_for_conformance(bytes) {
         Ok(catalog) => catalog,
         Err(e) => {
             report.push_error(

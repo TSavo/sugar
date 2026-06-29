@@ -30,7 +30,16 @@ pub use cbor::{
     cbor_encode_array_head, cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr,
     cbor_encode_uint, CborMajor,
 };
-pub use cbor_decode::{decode as cbor_decode, CborDecodeError, CborValue};
+pub use cbor_decode::{CborDecodeError, CborValue};
+
+/// The SOLE sanctioned raw-CBOR catalog read. For PROTOCOL-CONFORMANCE encoding
+/// checks ONLY (deterministic re-encoding comparison, raw signature/kind/metadata).
+/// To read the proof GRAPH (atoms/bodies/members/contracts) use ProofGraph::read /
+/// ProofCatalog::read — NOT this. Hand-decoding the catalog to read members is the
+/// crime this gate prevents.
+pub fn decode_for_conformance(bytes: &[u8]) -> Result<CborValue, CborDecodeError> {
+    crate::cbor_decode::decode(bytes)
+}
 pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{

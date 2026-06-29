@@ -1004,7 +1004,7 @@ mod tests {
     use std::sync::Arc;
 
     use sugar_canonicalizer::Value;
-    use sugar_proof_envelope::{cbor_decode, CborValue};
+    use sugar_proof_envelope::ProofGraph;
 
     fn tempdir() -> tempdir_compat::TempDir {
         tempdir_compat::TempDir::new("sugar-lift-test").unwrap()
@@ -1147,16 +1147,11 @@ fn answer_is_42(x: i64) -> i64 {{ x }}
     }
 
     fn proof_member_headers(minted: &MintOutput) -> Vec<serde_json::Value> {
-        let catalog = cbor_decode(&minted.bytes).expect("decode proof envelope");
-        let members = catalog
-            .as_map()
-            .and_then(|root| root.get("members"))
-            .and_then(CborValue::as_map)
-            .expect("proof members map");
-        let mut headers: Vec<_> = members
-            .values()
-            .map(|member| {
-                serde_json::from_slice::<serde_json::Value>(member.as_bstr().expect("member bytes"))
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof envelope");
+        let mut headers: Vec<_> = graph
+            .members_view()
+            .map(|mv| {
+                serde_json::from_slice::<serde_json::Value>(mv.bytes())
                     .expect("member is JSON")
                     .get("header")
                     .expect("layered member header")

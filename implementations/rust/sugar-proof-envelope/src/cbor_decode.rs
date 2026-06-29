@@ -53,7 +53,7 @@ impl CborValue {
     }
 }
 
-pub fn decode(bytes: &[u8]) -> Result<CborValue, CborDecodeError> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<CborValue, CborDecodeError> {
     let mut idx = 0;
     let v = decode_value(bytes, &mut idx)?;
     Ok(v)
