@@ -370,6 +370,45 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
             # np.array already handled above by _np_array_nested_int
             return None
 
+        # pd.<something>(...)
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "pd"
+        ):
+            pd_op = func.attr
+
+            # pd.DataFrame({"col": [ints], ...})  -> dict {col: list[int]}
+            if pd_op == "DataFrame":
+                if len(node.args) != 1 or not isinstance(node.args[0], ast.Dict):
+                    return None
+                d = node.args[0]
+                result_dict: dict[str, list[int]] = {}
+                for k_node, v_node in zip(d.keys, d.values):
+                    if not (isinstance(k_node, ast.Constant) and isinstance(k_node.value, str)):
+                        return None  # non-string key -> opaque
+                    col_name = k_node.value
+                    col_val = _nested_int_literal(v_node)
+                    if col_val is None or not isinstance(col_val, list):
+                        return None  # non-int-list column -> opaque
+                    if not all(isinstance(x, int) and not isinstance(x, bool) for x in col_val):
+                        return None
+                    result_dict[col_name] = col_val
+                return result_dict
+
+            # pd.Series([ints])  -> list[int]
+            if pd_op == "Series":
+                if len(node.args) != 1:
+                    return None
+                col_val = _nested_int_literal(node.args[0])
+                if col_val is None or not isinstance(col_val, list):
+                    return None
+                if not all(isinstance(x, int) and not isinstance(x, bool) for x in col_val):
+                    return None
+                return col_val
+
+            return None
+
         # x.reshape(R, C)  — method call on some value expression
         if isinstance(func, ast.Attribute) and func.attr == "reshape":
             if len(node.args) != 2:
@@ -442,7 +481,13 @@ class _SliceOp:
     step: int | None
 
 
-def _apply_ops(value: object, ops: list[_IndexOp | _SliceOp]) -> object:
+@dataclass(frozen=True)
+class _KeyOp:
+    """String key lookup: df[col]."""
+    key: str
+
+
+def _apply_ops(value: object, ops: list[_IndexOp | _SliceOp | _KeyOp]) -> object:
     """Apply a sequence of index/slice ops left-to-right to a resolved nested value.
 
     Returns the final value (int or list) after all ops, or None if anything
@@ -469,4 +514,10 @@ def _apply_ops(value: object, ops: list[_IndexOp | _SliceOp]) -> object:
             if st is not None and st != 1:
                 return None
             cur = cur[lo:hi]  # Python slice semantics match numpy on int lists
+        elif isinstance(op, _KeyOp):
+            if not isinstance(cur, dict):
+                return None
+            if op.key not in cur:
+                return None  # missing column -> opaque
+            cur = cur[op.key]
     return cur
