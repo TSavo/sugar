@@ -68,7 +68,7 @@ from sugar_lift_py_tests.ir import (
     num,
     real_lit,
 )
-from sugar_lift_py_tests.factory.literal_call_report import (
+from sugar_lift_py_tests.factory.value_resolver import (
     _index_nested,
     _resolve_value,
 )
