@@ -318,6 +318,7 @@ SHOWCASE_RUNS = \
 	examples/python-urlsafe-seam/run.sh \
 	examples/python-literal-base64/run.sh \
 	examples/python-literal-base20/run.sh \
+	examples/python-base64-federation/run.sh \
 	examples/itsdangerous-token-padding/run.sh \
 	examples/forall-vampire-showcase/run.sh \
 	examples/url-showcase/run.sh \
