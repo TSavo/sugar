@@ -13,6 +13,18 @@ from .generic_body_sugar import GenericBodySugar
 FunctionCallBody = SugarBody | GenericBodySugar
 
 
+def callee_target(node: ast.Call) -> str | None:
+    """The callee name of a call, whether bare (`f(...)`) or attribute
+    (`np.rot90(...)`). The dig keys on this name and looks it up in the resolved
+    function map -- so an imported `np.rot90` digs just like a local `f`."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 @dataclass(frozen=True)
 class FunctionCallSugar:
     target_name: str
@@ -36,12 +48,13 @@ class FunctionCallSugar:
         node = site.node
         if not isinstance(node, ast.Call):
             return None
-        if not isinstance(node.func, ast.Name):
+        target = callee_target(node)
+        if target is None:
             return None
         if node.keywords or len(node.args) != 1:
             return None
         return cls(
-            target_name=node.func.id,
+            target_name=target,
             argument=argument,
             body=body,
         )
