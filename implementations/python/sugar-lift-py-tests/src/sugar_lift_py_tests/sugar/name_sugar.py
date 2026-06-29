@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
 
@@ -19,7 +20,12 @@ class NameSugar:
         return cls(identifier=site.node.id, blame=site.blame)
 
     def desugar(self, ctx) -> Outcome:
-        return Complete(ctx.temporal.value_for(self.identifier))
+        value = ctx.temporal.value_for(self.identifier)
+        if isinstance(value, BoundVar):
+            # the name aliases an expression -- recompose the source so the reference
+            # IS that expression (reached through the alias).
+            return value.source.reduce(ctx)
+        return Complete(value)
 
 
 def _owns(site) -> bool:

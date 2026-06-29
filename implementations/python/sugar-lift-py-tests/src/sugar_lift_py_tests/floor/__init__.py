@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from .array_literal import ArrayLiteral
-from .binding_value import BindingValue
 from .block_value import BlockValue
+from .bound_var import BoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .encoded_string_value import EncodedStringValue
@@ -18,8 +18,8 @@ from .term_value import TermValue
 
 __all__ = [
     "ArrayLiteral",
-    "BindingValue",
     "BlockValue",
+    "BoundVar",
     "BuilderState",
     "Bv32Value",
     "EncodedStringValue",
