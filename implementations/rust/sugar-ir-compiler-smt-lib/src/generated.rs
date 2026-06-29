@@ -51,6 +51,12 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             if name == "str.len" && args.len() == 1 {
                 return format!("(str.len {})", emit_string_term(&args[0]));
             }
+            if name.starts_with("bv32.") {
+                let subst = std::collections::HashMap::new();
+                if let Some(rendered) = emit_bv32_term(term, &subst) {
+                    return rendered;
+                }
+            }
             if args.is_empty() {
                 if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
                     return smt_quote(OPT_NONE_OPTION);
@@ -935,7 +941,13 @@ fn emit_bv32_term(
     subst: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
     match term {
-        Term::Var { name } => subst.get(name.as_str()).cloned(),
+        Term::Var { name } => {
+            // Prefer the substitution (used when vars are let-bound to bv32 hex
+            // literals in the strong-universe path). Fall back to the raw SMT
+            // symbol so `emit_bv32_term` can be called from `emit_term` with an
+            // empty substitution for symbolic bv32 sub-expressions.
+            Some(subst.get(name.as_str()).cloned().unwrap_or_else(|| smt_quote(name)))
+        }
         Term::Const { value, .. } => {
             let v = match value {
                 serde_json::Value::Number(n) => n.as_i64()?,

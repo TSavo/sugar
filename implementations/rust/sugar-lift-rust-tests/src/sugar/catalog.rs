@@ -13,7 +13,7 @@ use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
     assign_op, atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path,
-    call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
+    bv_binop, call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
     char_range_filter_map, closure_iter_advance_body, closure_mutating_body,
     closure_opaque_accessor, closure_runtime_receiver, closure_term, closure_tls_accessor, collect,
     collection_literal, compute_float, concat_macro, conditional, const_block, const_if,
@@ -169,6 +169,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &field_term::EXPR_SUGAR,
     &index::EXPR_SUGAR,
     &string_add::EXPR_SUGAR,
+    &bv_binop::EXPR_SUGAR,
     &binop::EXPR_SUGAR,
     &const_if::EXPR_SUGAR,
     &value_if::EXPR_SUGAR,
