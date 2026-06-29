@@ -21,6 +21,7 @@ from sugar_lift_py_tests.factory.value_resolver import (
     _index_nested,
     _IndexOp,
     _is_2d_int_matrix,
+    _KeyOp,
     _nested_int_literal,
     _np_array_nested_int,
     _resolve_np_array_element,
@@ -445,7 +446,7 @@ def _lift_subscript_assertion(
     index literals or integer-bounded slices. Non-integer/non-slice indices
     or a non-Name root PANIC."""
     node = comparison.left
-    ops: list[_IndexOp | _SliceOp] = []
+    ops: list[_IndexOp | _SliceOp | _KeyOp] = []
     # For the IR term we still want integer indices only (slices narrow arrays
     # and reduce to a subsequent integer index before reaching a scalar).
     # We collect ALL ops for value-resolution and separate index-ops for the term.
@@ -456,6 +457,8 @@ def _lift_subscript_assertion(
             idx = idx.value  # type: ignore[attr-defined]
         if isinstance(idx, ast.Constant) and isinstance(idx.value, int) and not isinstance(idx.value, bool):
             ops.insert(0, _IndexOp(idx.value))
+        elif isinstance(idx, ast.Constant) and isinstance(idx.value, str):
+            ops.insert(0, _KeyOp(idx.value))
         elif isinstance(idx, ast.Slice):
             lo = _const_int(idx.lower) if idx.lower is not None else None
             hi = _const_int(idx.upper) if idx.upper is not None else None
@@ -530,9 +533,11 @@ def _lift_subscript_assertion(
     def _enc_bound(x: int | None) -> object:
         return num(x) if x is not None else ctor("none", [])
 
-    def _op_term(op: _IndexOp | _SliceOp) -> object:
+    def _op_term(op: _IndexOp | _SliceOp | _KeyOp) -> object:
         if isinstance(op, _IndexOp):
             return num(op.i)
+        if isinstance(op, _KeyOp):
+            return str_const(op.key)
         return ctor("slice", [_enc_bound(op.lower), _enc_bound(op.upper), _enc_bound(op.step)])
 
     all_op_terms = [_op_term(op) for op in ops]
