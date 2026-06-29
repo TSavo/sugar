@@ -24,6 +24,7 @@ SUGAR_DIR = HERE.parent / "src" / "sugar_lift_py_tests" / "sugar"
 # sugar module (without .py) -> test file(s) that pin its Python->ProofIR behavior.
 COVERAGE: dict[str, list[str]] = {
     # base64 / default-catalog leaf reductions -- dedicated per-sugar pins
+    "comment_sugar": ["test_comment_sugar.py"],
     "primitive_literal_sugar": ["test_primitive_literal_sugar.py"],
     "string_literal_sugar": ["test_string_literal_sugar.py"],
     "name_sugar": ["test_name_sugar.py"],
