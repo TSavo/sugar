@@ -637,6 +637,61 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
                 C = len(src[0])
                 return [[src[i][j] for i in range(R)] for j in range(C)]
 
+            # np.flip(x) — reverse all axes (2-D)
+            if op == "flip":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                R = len(src)
+                C = len(src[0])
+                return [[src[R - 1 - i][C - 1 - j] for j in range(C)] for i in range(R)]
+
+            # np.fliplr(x) — reverse columns
+            if op == "fliplr":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                R = len(src)
+                C = len(src[0])
+                return [[src[i][C - 1 - j] for j in range(C)] for i in range(R)]
+
+            # np.flipud(x) — reverse rows
+            if op == "flipud":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                R = len(src)
+                C = len(src[0])
+                return [[src[R - 1 - i][j] for j in range(C)] for i in range(R)]
+
+            # np.diagonal(x) — main diagonal of a 2-D matrix -> 1-D list
+            if op == "diagonal":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None or not _is_2d_int_matrix(src):
+                    return None
+                R = len(src)
+                C = len(src[0])
+                return [src[i][i] for i in range(min(R, C))]
+
+            # np.ravel(x) — row-major flatten -> 1-D list
+            if op == "ravel":
+                if len(node.args) != 1:
+                    return None
+                src = _resolve_value(node.args[0], fn)
+                if src is None:
+                    return None
+                flat_r: list[int] = []
+                _flatten(src, flat_r)
+                return flat_r
+
             # np.array already handled above by _np_array_nested_int
             return None
 
@@ -656,6 +711,17 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
             if len(flat) != R * C:
                 return None
             return [[flat[i * C + j] for j in range(C)] for i in range(R)]
+
+        # x.ravel() / x.flatten() — method call, row-major flatten -> 1-D list
+        if isinstance(func, ast.Attribute) and func.attr in ("ravel", "flatten"):
+            if len(node.args) != 0:
+                return None
+            src = _resolve_value(func.value, fn)
+            if src is None:
+                return None
+            flat_m: list[int] = []
+            _flatten(src, flat_m)
+            return flat_m
 
         return None
 
@@ -687,6 +753,50 @@ def _const_int(node: ast.AST) -> int | None:
     return None
 
 
+@dataclass(frozen=True)
+class _IndexOp:
+    """Single integer index: a[i]."""
+    i: int
+
+
+@dataclass(frozen=True)
+class _SliceOp:
+    """Integer-bounded slice: a[lo:hi:step] with None meaning omitted."""
+    lower: int | None
+    upper: int | None
+    step: int | None
+
+
+def _apply_ops(value: object, ops: list[_IndexOp | _SliceOp]) -> object:
+    """Apply a sequence of index/slice ops left-to-right to a resolved nested value.
+
+    Returns the final value (int or list) after all ops, or None if anything
+    goes wrong (out-of-range, wrong type, symbolic bound, etc.).  The caller
+    is responsible for checking that the final value is a scalar int.
+    """
+    cur: object = value
+    for op in ops:
+        if isinstance(op, _IndexOp):
+            if not isinstance(cur, list):
+                return None
+            if op.i < 0 or op.i >= len(cur):
+                return None
+            cur = cur[op.i]
+        elif isinstance(op, _SliceOp):
+            if not isinstance(cur, list):
+                return None
+            # Negative indices or step != 1 (and step != None) treated as opaque.
+            lo = op.lower
+            hi = op.upper
+            st = op.step
+            if (lo is not None and lo < 0) or (hi is not None and hi < 0):
+                return None
+            if st is not None and st != 1:
+                return None
+            cur = cur[lo:hi]  # Python slice semantics match numpy on int lists
+    return cur
+
+
 def _lift_subscript_assertion(
     stmt: ast.Assert,
     *,
@@ -700,22 +810,42 @@ def _lift_subscript_assertion(
     `eq(ctor("subscript:<root>", [num(i0), num(i1), ...]), expected_term)`.
 
     Walks the Subscript chain to the root ast.Name and collects integer
-    index literals. Non-integer indices or a non-Name root PANIC."""
+    index literals or integer-bounded slices. Non-integer/non-slice indices
+    or a non-Name root PANIC."""
     node = comparison.left
-    indices: list[int] = []
+    ops: list[_IndexOp | _SliceOp] = []
+    # For the IR term we still want integer indices only (slices narrow arrays
+    # and reduce to a subsequent integer index before reaching a scalar).
+    # We collect ALL ops for value-resolution and separate index-ops for the term.
     while isinstance(node, ast.Subscript):
         idx = node.slice
         # Python >=3.9: slice IS the index node directly.
         if isinstance(idx, ast.Index):  # Python 3.8 compat
             idx = idx.value  # type: ignore[attr-defined]
-        if not isinstance(idx, ast.Constant) or not isinstance(idx.value, int):
+        if isinstance(idx, ast.Constant) and isinstance(idx.value, int) and not isinstance(idx.value, bool):
+            ops.insert(0, _IndexOp(idx.value))
+        elif isinstance(idx, ast.Slice):
+            lo = _const_int(idx.lower) if idx.lower is not None else None
+            hi = _const_int(idx.upper) if idx.upper is not None else None
+            st = _const_int(idx.step) if idx.step is not None else None
+            # If any bound is present but non-constant-int, panic.
+            if (idx.lower is not None and lo is None) or \
+               (idx.upper is not None and hi is None) or \
+               (idx.step is not None and st is None):
+                _panic_no_sugar(
+                    idx, memento_file,
+                    observed="subscript-index:Slice:non-constant-bound",
+                    requested="ConstantSliceBounds",
+                    fix="lift slice with non-integer-literal bounds",
+                )
+            ops.insert(0, _SliceOp(lo, hi, st))
+        else:
             _panic_no_sugar(
                 idx, memento_file,
                 observed=f"subscript-index:{type(idx).__name__}",
                 requested="IntegerSubscriptIndex",
                 fix="lift subscript with non-integer-literal index",
             )
-        indices.insert(0, idx.value)
         node = node.value
     # Keep root_node for recursive resolution; derive root_name for the IR term.
     root_node = node
@@ -759,9 +889,11 @@ def _lift_subscript_assertion(
         exp_val = complete_value(expected_sugar.desugar(), owner="subscript assertion expected")
         expected_ir = str_const(exp_val.value)
 
-    index_terms = [num(i) for i in indices]
+    # Build IR term using only integer-index ops (slices are intermediate
+    # narrowing steps; the final subscript signature uses the integer indices).
+    index_terms = [num(op.i) for op in ops if isinstance(op, _IndexOp)]
     subscript_term = ctor(f"subscript:{root_name}", index_terms)
-    assertion_contract_name = f"{root_name}#subscript#{_canonical_term_sig(subscript_term)}::assertion"
+    assertion_contract_name = f"{fn.name}#{root_name}#subscript#{_canonical_term_sig(subscript_term)}::assertion"
     assertion_memento = _statement_source_memento(
         stmt,
         fn,
@@ -776,7 +908,8 @@ def _lift_subscript_assertion(
     # x.T, x.reshape, and ast.Name bindings recursively.
     # Only conjoin when we can GUARANTEE the element value from the literal --
     # any ambiguity falls back to the single-operand opaque obligation.
-    resolved_element: int | None = _index_nested(_resolve_value(root_node, fn), indices)
+    _resolved_raw = _apply_ops(_resolve_value(root_node, fn), ops)
+    resolved_element: int | None = _resolved_raw if (isinstance(_resolved_raw, int) and not isinstance(_resolved_raw, bool)) else None
     if resolved_element is not None:
         # Conjoin: eq(subscript, expected) AND eq(subscript, literal-element).
         # The literal-element closes the universe; expected==element -> DISCHARGED,
