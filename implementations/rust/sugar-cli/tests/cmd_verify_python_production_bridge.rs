@@ -422,19 +422,18 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         pool.bridges_by_symbol.keys().collect::<Vec<_>>()
     );
 
-    // bridges_by_symbol stores Json values, not CIDs, so find the bridge CID via the
-    // typed pool accessors (pool.member_kind / pool.member_field require a CID).
+    // Find bridge CID by scanning mementos for kind=bridge + sourceSymbol=double.
     let bridge_cid = pool
         .mementos
-        .keys()
-        .find(|cid| {
-            pool.member_kind(cid) == Some("bridge")
-                && pool
-                    .member_field(cid, "sourceSymbol")
-                    .and_then(|v| v.as_str())
-                    == Some("double")
+        .iter()
+        .find(|(_, env)| {
+            if let Ok(sugar_proof_envelope::Member::Bridge(b)) = sugar_proof_envelope::Member::from_value(env) {
+                b.source_symbol == "double"
+            } else {
+                false
+            }
         })
-        .cloned()
+        .map(|(cid, _)| cid.clone())
         .unwrap_or_else(|| {
             panic!(
                 "bridge for sourceSymbol=double not found in pool mementos; bridges: {:?}",
@@ -442,32 +441,31 @@ fn python_mint_auto_writes_body_discharge_bridge() {
             )
         });
 
-    let target_cid = pool
-        .member_field(&bridge_cid, "targetContractCid")
-        .and_then(|v| v.as_str())
-        .expect("bridge must carry targetContractCid")
-        .to_string();
+    let bridge_env = pool.mementos.get(&bridge_cid)
+        .expect("bridge CID must exist in pool");
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) = sugar_proof_envelope::Member::from_value(bridge_env) else {
+        panic!("bridge must parse as typed BridgeMember");
+    };
+    let target_cid = bridge_m.target_contract_cid.as_str().to_string();
 
     assert!(
         pool.mementos.contains_key(&target_cid),
         "bridge.targetContractCid {target_cid} must resolve to a member"
     );
-    assert_eq!(
-        pool.member_kind(&target_cid),
-        Some("contract"),
-        "bridge target must be a contract memento"
-    );
-    let formals = pool
-        .member_field(&target_cid, "formals")
-        .and_then(|v| v.as_array())
+    let target_env = pool.mementos.get(&target_cid)
+        .expect("bridge target must exist in pool");
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) = sugar_proof_envelope::Member::from_value(target_env) else {
+        panic!("bridge target must be a contract memento");
+    };
+    let formals = target_contract.formals.as_ref()
         .expect("tool-written op-contract must carry formals");
     assert_eq!(
-        formals.first().and_then(|v| v.as_str()),
+        formals.first().map(|s| s.as_str()),
         Some("x"),
         "op-contract formals must be [x]"
     );
     assert!(
-        pool.member_field(&target_cid, "post").is_some(),
+        target_contract.post.is_some(),
         "op-contract must carry the body-derived post"
     );
 

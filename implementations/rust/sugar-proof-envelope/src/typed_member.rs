@@ -788,20 +788,22 @@ pub enum Member {
 }
 
 impl Member {
-    /// Parse raw member bytes (JCS-JSON) into a typed `Member`.
+    /// Parse an already-deserialized member envelope `Value` into a typed `Member`.
+    ///
+    /// This is the core dispatch.  `parse` delegates here after deserializing
+    /// raw bytes; callers that already hold a `serde_json::Value` (e.g. after
+    /// reading a JSON array of members) can call this directly without
+    /// re-serializing to bytes.
     ///
     /// Returns `Err` when:
-    /// - The bytes are not valid JSON.
     /// - No kind discriminator can be extracted.
     /// - The kind is known but a required field is missing or has the wrong type.
     /// - A CID-typed field does not carry the `blake3-512:` tag.
     ///
-    /// Does NOT return `Err` for unknown kinds — those are surfaced as
-    /// `MemberError::UnknownKind` so callers can choose to skip or fail.
-    pub fn parse(bytes: &[u8]) -> Result<Self, MemberError> {
-        let v: Json =
-            serde_json::from_slice(bytes).map_err(|e| MemberError::JsonParse(e.to_string()))?;
-        let nb = normalize(&v)?;
+    /// Unknown kinds surface as `MemberError::UnknownKind` so callers can choose
+    /// to skip or fail.
+    pub fn from_value(value: &Json) -> Result<Self, MemberError> {
+        let nb = normalize(value)?;
         match nb.kind {
             "contract" => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
             "bridge" => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
@@ -837,6 +839,24 @@ impl Member {
             )?)),
             other => Err(MemberError::UnknownKind(other.to_string())),
         }
+    }
+
+    /// Parse raw member bytes (JCS-JSON) into a typed `Member`.
+    ///
+    /// Deserializes the bytes as JSON, then delegates to [`Member::from_value`].
+    ///
+    /// Returns `Err` when:
+    /// - The bytes are not valid JSON.
+    /// - No kind discriminator can be extracted.
+    /// - The kind is known but a required field is missing or has the wrong type.
+    /// - A CID-typed field does not carry the `blake3-512:` tag.
+    ///
+    /// Does NOT return `Err` for unknown kinds — those are surfaced as
+    /// `MemberError::UnknownKind` so callers can choose to skip or fail.
+    pub fn parse(bytes: &[u8]) -> Result<Self, MemberError> {
+        let v: Json =
+            serde_json::from_slice(bytes).map_err(|e| MemberError::JsonParse(e.to_string()))?;
+        Self::from_value(&v)
     }
 
     /// The wire kind string for this member.
@@ -1495,6 +1515,62 @@ mod tests {
                 assert!(pm.expected_output_cids.is_none());
             }
             other => panic!("expected PlanMemento, got {:?}", other.kind()),
+        }
+    }
+
+    // ── from_value agrees with parse(bytes) ──────────────────────────────────
+
+    /// `Member::from_value` and `Member::parse(bytes)` must produce identical
+    /// results for the same envelope.  Both paths share `normalize()` and the
+    /// per-kind dispatch; the only difference is that `parse` first deserialises
+    /// raw bytes.  This test exercises a full authority envelope (lean shape) so
+    /// that CID newtypes, required string fields, and optional arrays are all
+    /// exercised.
+    #[test]
+    fn from_value_and_parse_bytes_agree() {
+        let wire = serde_json::json!({
+            "header": {
+                "kind": "authority",
+                "cid": "blake3-512:aabbccdd",
+                "principal": "test-principal",
+                "key": "test-key",
+                "scopeKind": "library",
+                "scope": "my-lib",
+                "verdict": "discharged",
+                "inputCids": ["blake3-512:input1", "blake3-512:input2"]
+            },
+            "schemaVersion": "1"
+        });
+
+        // Path A: from already-parsed Value.
+        let from_val =
+            Member::from_value(&wire).expect("from_value: authority lean shape must parse");
+
+        // Path B: serialize to bytes then parse.
+        let bytes = wire.to_string().into_bytes();
+        let from_bytes =
+            Member::parse(&bytes).expect("parse(bytes): authority lean shape must parse");
+
+        // Both must produce the same kind.
+        assert_eq!(from_val.kind(), from_bytes.kind());
+
+        // Both must carry identical field values — unpack both.
+        let (a_val, a_bytes) = match (&from_val, &from_bytes) {
+            (Member::Authority(a), Member::Authority(b)) => (a, b),
+            _ => panic!("expected Authority from both paths"),
+        };
+
+        assert_eq!(a_val.cid.as_str(), a_bytes.cid.as_str());
+        assert_eq!(a_val.principal, a_bytes.principal);
+        assert_eq!(a_val.key, a_bytes.key);
+        assert_eq!(a_val.scope_kind, a_bytes.scope_kind);
+        assert_eq!(a_val.scope, a_bytes.scope);
+        assert_eq!(a_val.verdict, a_bytes.verdict);
+        let cids_val = a_val.input_cids.as_ref().expect("inputCids present");
+        let cids_bytes = a_bytes.input_cids.as_ref().expect("inputCids present");
+        assert_eq!(cids_val.len(), cids_bytes.len());
+        for (cv, cb) in cids_val.iter().zip(cids_bytes.iter()) {
+            assert_eq!(cv.as_str(), cb.as_str());
         }
     }
 }

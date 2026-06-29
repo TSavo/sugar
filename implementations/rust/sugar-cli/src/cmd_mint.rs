@@ -56,7 +56,7 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, member_field, member_kind, proof_filename,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename,
     AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
     ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
     FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput,
@@ -2550,6 +2550,9 @@ fn mint_bridge_from_decl(
 }
 
 #[cfg(test)]
+use sugar_proof_envelope::{member_field, member_kind, Member};
+
+#[cfg(test)]
 fn mint_from_ir_document(
     ir: &[Value],
     authorities: Option<&Vec<Value>>,
@@ -4767,11 +4770,10 @@ mod tests {
         let view = all_members.into_iter().next().expect("library binding member");
         assert_eq!(view.kind().as_deref(), Some("library-sugar-binding-entry"));
         let envelope: Value = serde_json::from_slice(view.bytes()).expect("member JSON");
-        assert_eq!(
-            member_field(&envelope, "target_library_tag")
-                .and_then(|v| v.as_str()),
-            Some("requests")
-        );
+        let Ok(Member::LibrarySugarBindingEntry(lsbe)) = Member::from_value(&envelope) else {
+            panic!("expected library-sugar-binding-entry member");
+        };
+        assert_eq!(lsbe.target_library_tag.as_str(), "requests");
     }
 
     #[test]
@@ -5198,9 +5200,10 @@ mod tests {
                 Some("implication") => {
                     implication_count += 1;
                     let envelope = view.json();
-                    let inputs = member_field(&envelope, "inputCids")
-                        .and_then(|v| v.as_array())
-                        .expect("implication inputCids");
+                    let Ok(Member::Implication(imp)) = Member::from_value(&envelope) else {
+                        panic!("expected implication member");
+                    };
+                    let inputs = imp.input_cids.as_ref().expect("implication inputCids");
                     assert_eq!(inputs.len(), 2);
                 }
                 other => panic!("unexpected member kind {other:?}"),
@@ -5523,26 +5526,13 @@ mod tests {
         let mementos = source_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
-        assert_eq!(
-            member_kind(memento),
-            Some("source-memento")
-        );
-        assert_eq!(
-            member_field(memento, "contractName").and_then(|v| v.as_str()),
-            Some(contract_name)
-        );
-        assert_eq!(
-            member_field(memento, "claimName").and_then(|v| v.as_str()),
-            Some(contract_name)
-        );
-        assert_eq!(
-            member_field(memento, "role").and_then(|v| v.as_str()),
-            Some("java.strong-universe")
-        );
-        assert_eq!(
-            member_field(memento, "file").and_then(|v| v.as_str()),
-            Some("src/Codec.java")
-        );
+        let Ok(Member::SourceMemento(sm)) = Member::from_value(memento) else {
+            panic!("expected source-memento member, got {:?}", memento.get("kind"));
+        };
+        assert_eq!(sm.contract_name.as_deref(), Some(contract_name));
+        assert_eq!(sm.claim_name.as_deref(), Some(contract_name));
+        assert_eq!(sm.role.as_deref(), Some("java.strong-universe"));
+        assert_eq!(sm.file.as_deref(), Some("src/Codec.java"));
         assert_eq!(
             memento.pointer("/body/source_cid").and_then(|v| v.as_str()),
             Some(format!("blake3-512:{}", "a".repeat(128)).as_str())
@@ -5594,17 +5584,17 @@ mod tests {
         let mementos = source_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
+        let Ok(Member::SourceMemento(sm)) = Member::from_value(memento) else {
+            panic!("expected source-memento member");
+        };
         assert_eq!(
-            member_field(memento, "claimName").and_then(|v| v.as_str()),
+            sm.claim_name.as_deref(),
             Some("Codec.encode#euf#c:callresult_encode_a1(s:bar)::assertion")
         );
+        assert_eq!(sm.role.as_deref(), Some("java.fact"));
         assert_eq!(
-            member_field(memento, "role").and_then(|v| v.as_str()),
-            Some("java.fact")
-        );
-        assert_eq!(
-            member_field(memento, "sourceCid").and_then(|v| v.as_str()),
-            Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
+            sm.source_cid.as_str(),
+            format!("blake3-512:{}", "c".repeat(128)).as_str()
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -5632,13 +5622,12 @@ mod tests {
         let envelope_canonical = encode_jcs(json_to_cvalue(&envelope).as_ref());
 
         assert!(plan_atoms.is_empty());
+        let Ok(Member::PlanMemento(pm)) = Member::from_value(&envelope) else {
+            panic!("expected plan-memento member, got {:?}", envelope.get("kind"));
+        };
         assert_eq!(
-            member_kind(&envelope),
-            Some("plan-memento")
-        );
-        assert_eq!(
-            member_field(&envelope, "planCid").and_then(Value::as_str),
-            Some(body_cid.as_str()),
+            pm.plan_cid.as_str(),
+            body_cid.as_str(),
             "the letter CID belongs in the envelope header"
         );
         assert_eq!(
@@ -5742,9 +5731,9 @@ mod tests {
         let mementos = plan_memento_members(&graph);
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
-        assert_eq!(
-            member_kind(memento),
-            Some("plan-memento")
+        assert!(
+            matches!(Member::from_value(memento), Ok(Member::PlanMemento(_))),
+            "expected plan-memento member, got {:?}", memento.get("kind")
         );
         assert_eq!(
             memento
@@ -5837,9 +5826,9 @@ mod tests {
 
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
-        assert_eq!(
-            member_kind(memento),
-            Some("factory-walk-memento")
+        assert!(
+            matches!(Member::from_value(memento), Ok(Member::FactoryWalkMemento(_))),
+            "expected factory-walk-memento member, got {:?}", memento.get("kind")
         );
         assert_eq!(
             memento.pointer("/body/kind").and_then(Value::as_str),
@@ -6361,7 +6350,6 @@ mod tests {
         let authority_key = member_field(&authority, "key")
             .and_then(|v| v.as_str())
             .expect("authority key");
-
         assert_eq!(
             member_field(&contract, "inputCids")
                 .and_then(|v| v.as_array())

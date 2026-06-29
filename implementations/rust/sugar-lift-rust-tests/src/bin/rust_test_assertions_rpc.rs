@@ -22,7 +22,7 @@ use sugar_lift_rust_tests::{
     ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
     MacroRegistry, TargetCfg,
 };
-use sugar_verifier::{member_body, member_field};
+use sugar_verifier::member_body;
 use syn::parse::Parser;
 use tracing::{debug, info, warn};
 
@@ -3540,19 +3540,19 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             let Some(bridge_env) = pool.bridges_by_symbol.get(source_symbol) else {
                 continue;
             };
-            let bridge_source_symbol = member_field(bridge_env, "sourceSymbol")
-                .and_then(Value::as_str)
-                .unwrap_or(source_symbol);
-            let target_cid = member_field(bridge_env, "targetContractCid")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "kit referenced bridge `{bridge_source_symbol}` without targetContractCid"
-                    )
-                });
-            let proof_cid = member_field(bridge_env, "targetProofCid")
-                .and_then(Value::as_str)
-                .map(str::to_string)
+            // bridges_by_symbol is populated only when Member::from_value succeeds as Bridge;
+            // the _ arm is unreachable in practice but preserves old stringly control flow
+            // (sourceSymbol → source_symbol fallback, targetContractCid absent → panic).
+            let bridge_m = match sugar_proof_envelope::Member::from_value(bridge_env) {
+                Ok(sugar_proof_envelope::Member::Bridge(b)) => b,
+                _ => continue,
+            };
+            let bridge_source_symbol: &str = bridge_m.source_symbol.as_str();
+            let target_cid: &str = bridge_m.target_contract_cid.as_str();
+            let proof_cid = bridge_m
+                .target_proof_cid
+                .as_ref()
+                .map(|c| c.as_str().to_string())
                 .or_else(|| {
                     pool.bridge_self_bundle_by_symbol
                         .get(bridge_source_symbol)

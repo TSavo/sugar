@@ -603,72 +603,92 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
         parsed_members.push((view.cid().as_str().to_string(), parsed));
     }
 
+    // First pass: collect bridge members that map a source symbol to a target contract CID.
+    // A bridge qualifies when it has no callsite (pure symbol-level bridge), points from
+    // sourceLayer="source" to targetLayer="kit", and carries non-empty sourceSymbol /
+    // targetContractCid values.  Member::from_value is STRICT — any Err (missing required
+    // field, bad CID format, unknown kind) is treated as "not a qualifying bridge" and the
+    // member is skipped, matching the old stringly None path exactly.
     let mut bridge_source_by_target: HashMap<String, String> = HashMap::new();
     for (_cid, member) in &parsed_members {
-        if rust_proof_member_kind(member) != Some("bridge") {
-            continue;
-        }
-        if rust_proof_member_field(member, "callsite").is_some() {
-            continue;
-        }
-        if rust_proof_member_field(member, "sourceLayer").and_then(Value::as_str) != Some("source")
-        {
-            continue;
-        }
-        if rust_proof_member_field(member, "targetLayer").and_then(Value::as_str) != Some("kit") {
-            continue;
-        }
-        let Some(source_symbol) = rust_proof_member_field(member, "sourceSymbol")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        else {
-            continue;
+        let bridge = match sugar_proof_envelope::Member::from_value(member) {
+            Ok(sugar_proof_envelope::Member::Bridge(b)) => b,
+            _ => continue,
         };
-        let Some(target_cid) = rust_proof_member_field(member, "targetContractCid")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        else {
+        if bridge.callsite.is_some() {
             continue;
-        };
+        }
+        if bridge.source_layer.as_deref() != Some("source") {
+            continue;
+        }
+        if bridge.target_layer.as_deref() != Some("kit") {
+            continue;
+        }
+        // sourceSymbol is a required String in BridgeMember; preserve the old empty filter.
+        if bridge.source_symbol.trim().is_empty() {
+            continue;
+        }
+        // targetContractCid is a required MementoCid; the blake3-512: prefix check already
+        // rejected empty/malformed CIDs during from_value, but keep an explicit guard to
+        // match the old filter(|s| !s.trim().is_empty()) exactly.
+        let target_cid = bridge.target_contract_cid.as_str();
+        if target_cid.trim().is_empty() {
+            continue;
+        }
         bridge_source_by_target
             .entry(target_cid.to_string())
-            .or_insert_with(|| source_symbol.to_string());
+            .or_insert_with(|| bridge.source_symbol.clone());
     }
 
+    // Second pass: collect contract members that have a matching bridge.
+    // Member::from_value Err (unknown kind, missing required field) → skip, same as old.
     let mut bindings = Vec::new();
     for (member_cid, member) in parsed_members {
-        if rust_proof_member_kind(&member) != Some("contract") {
-            continue;
-        }
-        let Some(name) = rust_proof_member_field(&member, "name")
-            .or_else(|| rust_proof_member_field(&member, "contractName"))
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        else {
-            continue;
+        let contract = match sugar_proof_envelope::Member::from_value(&member) {
+            Ok(sugar_proof_envelope::Member::Contract(c)) => c,
+            _ => continue,
+        };
+        // Preserve old fallback: try `name` first, then `contractName`; skip if both empty.
+        // In the typed model both are required String fields, so both are present when
+        // from_value succeeds; we still mirror the priority and empty filter.
+        let name = {
+            let primary = contract.name.trim();
+            if !primary.is_empty() {
+                primary.to_string()
+            } else {
+                let fallback = contract.contract_name.trim();
+                if fallback.is_empty() {
+                    continue;
+                }
+                fallback.to_string()
+            }
         };
         let Some(bridge_source_symbol) = bridge_source_by_target.get(&member_cid).cloned() else {
             continue;
         };
-        let Some(formals) = rust_proof_member_field(&member, "formals").cloned() else {
+        // formals is Option<Vec<String>> on ContractMember; None → skip (same as old).
+        let Some(formals_vec) = contract.formals else {
             continue;
         };
-        let has_pre = rust_proof_member_field(&member, "pre").is_some_and(has_nontrivial_pre_json);
-        let has_post = rust_proof_member_field(&member, "post").is_some()
-            || rust_proof_member_field(&member, "postHash").is_some();
+        let formals_value = Value::Array(formals_vec.into_iter().map(Value::String).collect());
+        let has_pre = contract.pre.as_ref().is_some_and(has_nontrivial_pre_json);
+        let has_post = contract.post.is_some() || contract.post_hash.is_some();
         if !has_pre && !has_post {
             continue;
         }
 
         let body_policy_input = json!({
-            "bodyDischargeEligible": rust_proof_member_field(&member, "bodyDischargeEligible").cloned().unwrap_or(Value::Null),
-            "bodyDischargeRefusalReason": rust_proof_member_field(&member, "bodyDischargeRefusalReason").cloned().unwrap_or(Value::Null),
-            "dischargePolicy": rust_proof_member_field(&member, "dischargePolicy").cloned().unwrap_or(Value::Null),
+            // Option<bool> → Value::Bool | Value::Null (same wire semantics as old cloned().unwrap_or(Null))
+            "bodyDischargeEligible": contract.body_discharge_eligible.map(Value::Bool).unwrap_or(Value::Null),
+            // Option<String> → Value::String | Value::Null
+            "bodyDischargeRefusalReason": contract.body_discharge_refusal_reason.clone().map(Value::String).unwrap_or(Value::Null),
+            // Option<Json> → Value | Value::Null
+            "dischargePolicy": contract.discharge_policy.clone().unwrap_or(Value::Null),
         });
         let body_policy = body_discharge_policy_from_object(&body_policy_input);
         log_body_discharge_policy_warnings(
             "walk-rust-vendor-proof-contract-binding",
-            name,
+            &name,
             &body_policy.warnings,
         );
         let body_bearing = (has_pre || has_post) && body_policy.body_discharge_eligible;
@@ -683,39 +703,16 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
             "bodyDischargeRefusalReason": body_policy.body_discharge_refusal_reason,
             "bridgeSourceSymbol": bridge_source_symbol,
             "target_proof_cid": proof_cid,
-            "formals": formals,
-            "library": rust_proof_member_field(&member, "library").cloned().unwrap_or(Value::Null),
+            "formals": formals_value,
+            "library": contract.library.clone().map(Value::String).unwrap_or(Value::Null),
         });
-        if let Some(formal_sorts) = rust_proof_member_field(&member, "formalSorts").cloned() {
-            binding["formalSorts"] = formal_sorts;
+        if let Some(formal_sorts) = contract.formal_sorts {
+            binding["formalSorts"] = Value::Array(formal_sorts);
         }
         bindings.push(binding);
     }
 
     Ok(bindings)
-}
-
-fn rust_proof_member_kind(member: &Value) -> Option<&str> {
-    rust_proof_member_field(member, "kind").and_then(Value::as_str)
-}
-
-fn rust_proof_member_field<'a>(member: &'a Value, key: &str) -> Option<&'a Value> {
-    member
-        .get("header")
-        .and_then(|header| header.get(key))
-        .or_else(|| member.get("body").and_then(|body| body.get(key)))
-        .or_else(|| {
-            member
-                .get("evidence")
-                .and_then(|evidence| evidence.get("body"))
-                .and_then(|body| body.get(key))
-        })
-        .or_else(|| {
-            member
-                .get("metadata")
-                .and_then(|metadata| metadata.get(key))
-        })
-        .or_else(|| member.get(key))
 }
 
 fn binding_template_from_sugar_entry(
