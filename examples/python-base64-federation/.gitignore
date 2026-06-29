@@ -1,0 +1,8 @@
+*/.sugar/runs/
+*/.sugar/witnesses/
+*/.sugar/imports/*.proof
+*/__pycache__/
+*/.pytest_cache/
+*/blake3-512_*.proof
+*/.prove*.json
+*/.prove*.raw
