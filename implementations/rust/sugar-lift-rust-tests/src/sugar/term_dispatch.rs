@@ -824,7 +824,7 @@ mod tests {
             name: "cmp:eq".to_string(),
             args: vec![
                 Rc::new(Term::Ctor {
-                    name: "bit-and".to_string(),
+                    name: "bv32.and".to_string(),
                     args: vec![
                         Rc::new(Term::Ctor {
                             name: "deref".to_string(),

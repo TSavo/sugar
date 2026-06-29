@@ -47,6 +47,7 @@ pub mod sugar {
     pub mod bool_predicate;
     pub mod bound;
     pub mod bound_path;
+    pub mod bv_binop;
     pub mod call;
     pub mod callsite;
     pub mod cast_term;
@@ -198,8 +199,10 @@ pub mod sugar {
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
+    pub mod generic_body_sugar;
     pub mod step_by;
     pub mod str_method;
+    pub mod str_table_select;
     pub mod string_add;
     pub mod string_predicate;
     pub mod struct_term;
@@ -6024,6 +6027,37 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
         }
     }
     match term.as_ref() {
+        // bv32 bit-operation ctors: fold with u32 wrapping semantics, returning
+        // the result as i128 so the surrounding const_fold_int_term callers
+        // (comparisons, literal predicates) can compare values.
+        Term::Ctor { name, args }
+            if name.starts_with("bv32.") && args.len() == 2 =>
+        {
+            fn bv_arg_i128(t: &Rc<Term>) -> Option<u32> {
+                match t.as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(n),
+                        ..
+                    } => u32::try_from(*n).ok(),
+                    _ => None,
+                }
+            }
+            let a = bv_arg_i128(&args[0])
+                .or_else(|| u32::try_from(const_fold_int_term(&args[0])?).ok())?;
+            let b = bv_arg_i128(&args[1])
+                .or_else(|| u32::try_from(const_fold_int_term(&args[1])?).ok())?;
+            let result: u32 = match name.as_str() {
+                "bv32.shl" => a.wrapping_shl(b),
+                "bv32.lshr" => a.wrapping_shr(b),
+                "bv32.and" => a & b,
+                "bv32.or" => a | b,
+                "bv32.xor" => a ^ b,
+                "bv32.add" => a.wrapping_add(b),
+                "bv32.mul" => a.wrapping_mul(b),
+                _ => return None,
+            };
+            Some(i128::from(result))
+        }
         Term::Ctor { name, args } if args.len() == 2 => {
             let a = const_fold_int_term(&args[0])?;
             let b = const_fold_int_term(&args[1])?;
@@ -6045,11 +6079,6 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
                         a.checked_rem(b)
                     }
                 }
-                "shift-left" => u32::try_from(b).ok().and_then(|shift| a.checked_shl(shift)),
-                "shift-right" => u32::try_from(b).ok().and_then(|shift| a.checked_shr(shift)),
-                "bit-and" => Some(a & b),
-                "bit-or" => Some(a | b),
-                "bit-xor" => Some(a ^ b),
                 _ => None,
             }
         }
@@ -6128,6 +6157,36 @@ pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
                 _ => None,
             }
         }
+        // bv32 bit-operation ctors: ground-fold with u32 wrapping semantics.
+        // This arm fires BEFORE the general 2-arg arm so the early-exit guard
+        // (which requires at least one operand to already be a u128 term) does
+        // not block folding of bv32 const args whose sort is "u32" / "u8" etc.
+        // We extract the Int value from any Const node regardless of sort name.
+        Term::Ctor { name, args }
+            if name.starts_with("bv32.") && args.len() == 2 =>
+        {
+            fn bv_arg_as_u32(t: &Rc<Term>) -> Option<u32> {
+                match t.as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(n),
+                        ..
+                    } => u32::try_from(*n).ok(),
+                    _ => None,
+                }
+            }
+            let a = bv_arg_as_u32(&args[0])?;
+            let b = bv_arg_as_u32(&args[1])?;
+            match name.as_str() {
+                "bv32.shl" => Some(u128::from(a.wrapping_shl(b))),
+                "bv32.lshr" => Some(u128::from(a.wrapping_shr(b))),
+                "bv32.and" => Some(u128::from(a & b)),
+                "bv32.or" => Some(u128::from(a | b)),
+                "bv32.xor" => Some(u128::from(a ^ b)),
+                "bv32.add" => Some(u128::from(a.wrapping_add(b))),
+                "bv32.mul" => Some(u128::from(a.wrapping_mul(b))),
+                _ => None,
+            }
+        }
         Term::Ctor { name, args } if args.len() == 2 => {
             let left_u = const_fold_u128_term(&args[0]);
             let right_u = const_fold_u128_term(&args[1]);
@@ -6142,11 +6201,6 @@ pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
                 "*" => a.checked_mul(b),
                 "int-div" => (b != 0).then(|| a / b),
                 "int-rem" => (b != 0).then(|| a % b),
-                "shift-left" => u32::try_from(b).ok().and_then(|shift| a.checked_shl(shift)),
-                "shift-right" => u32::try_from(b).ok().and_then(|shift| a.checked_shr(shift)),
-                "bit-and" => Some(a & b),
-                "bit-or" => Some(a | b),
-                "bit-xor" => Some(a ^ b),
                 _ => None,
             }
         }
@@ -7199,11 +7253,6 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 BinOp::Add(_) => const_numeric_add(&l, &r),
                 BinOp::Sub(_) => const_numeric_sub(&l, &r),
                 BinOp::Mul(_) => const_numeric_mul(&l, &r),
-                BinOp::Shl(_) => const_numeric_shl(&l, &r),
-                BinOp::Shr(_) => const_numeric_shr(&l, &r),
-                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
-                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
-                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
                 BinOp::Div(_) => const_numeric_div(&l, &r),
                 BinOp::Rem(_) => const_numeric_rem(&l, &r),
                 // comparisons -> Bool (ints or chars).
@@ -7499,85 +7548,6 @@ fn const_numeric_rem(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
     (divisor != 0)
         .then(|| l.as_int()?.checked_rem(divisor).map(ConstVal::Int))
         .flatten()
-}
-
-fn const_numeric_shl(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
-    let shift = u32::try_from(r.as_u128()?).ok()?;
-    if let Some((lhs, _, kind)) = primitive_operands(l, r) {
-        if shift >= kind.bits {
-            return None;
-        }
-        return Some(ConstVal::PrimitiveInt {
-            raw: mask_raw(lhs.wrapping_shl(shift), kind.bits),
-            kind,
-        });
-    }
-    if matches!(l, ConstVal::UInt128(_)) {
-        return l.as_u128()?.checked_shl(shift).map(ConstVal::UInt128);
-    }
-    l.as_int()?.checked_shl(shift).map(ConstVal::Int)
-}
-
-fn const_numeric_shr(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
-    let shift = u32::try_from(r.as_u128()?).ok()?;
-    if let Some((lhs, _, kind)) = primitive_operands(l, r) {
-        if shift >= kind.bits {
-            return None;
-        }
-        let raw = if kind.signed {
-            let value = primitive_int_i128(lhs, kind)?;
-            (value >> shift) as u128
-        } else {
-            lhs >> shift
-        };
-        return Some(ConstVal::PrimitiveInt {
-            raw: mask_raw(raw, kind.bits),
-            kind,
-        });
-    }
-    if matches!(l, ConstVal::UInt128(_)) {
-        return l.as_u128()?.checked_shr(shift).map(ConstVal::UInt128);
-    }
-    l.as_int()?.checked_shr(shift).map(ConstVal::Int)
-}
-
-fn const_numeric_bitand(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
-    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
-        return Some(ConstVal::PrimitiveInt {
-            raw: mask_raw(lhs & rhs, kind.bits),
-            kind,
-        });
-    }
-    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
-        return Some(ConstVal::UInt128(l.as_u128()? & r.as_u128()?));
-    }
-    Some(ConstVal::Int(l.as_int()? & r.as_int()?))
-}
-
-fn const_numeric_bitor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
-    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
-        return Some(ConstVal::PrimitiveInt {
-            raw: mask_raw(lhs | rhs, kind.bits),
-            kind,
-        });
-    }
-    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
-        return Some(ConstVal::UInt128(l.as_u128()? | r.as_u128()?));
-    }
-    Some(ConstVal::Int(l.as_int()? | r.as_int()?))
-}
-
-fn const_numeric_bitxor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
-    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
-        return Some(ConstVal::PrimitiveInt {
-            raw: mask_raw(lhs ^ rhs, kind.bits),
-            kind,
-        });
-    }
-    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
-        return Some(ConstVal::UInt128(l.as_u128()? ^ r.as_u128()?));
-    }
-    Some(ConstVal::Int(l.as_int()? ^ r.as_int()?))
 }
 
 fn primitive_operands(l: &ConstVal, r: &ConstVal) -> Option<(u128, u128, PrimitiveIntKind)> {
@@ -8099,11 +8069,6 @@ fn const_eval_u128_shift(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Optio
                 BinOp::Add(_) => const_numeric_add(&l, &r),
                 BinOp::Sub(_) => const_numeric_sub(&l, &r),
                 BinOp::Mul(_) => const_numeric_mul(&l, &r),
-                BinOp::Shl(_) => const_numeric_shl(&l, &r),
-                BinOp::Shr(_) => const_numeric_shr(&l, &r),
-                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
-                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
-                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
                 BinOp::Div(_) => const_numeric_div(&l, &r),
                 BinOp::Rem(_) => const_numeric_rem(&l, &r),
                 BinOp::Eq(_) => const_eq(&l, &r).map(ConstVal::Bool),
@@ -20171,11 +20136,6 @@ fn term_binop_name(op: &BinOp) -> Option<&'static str> {
         BinOp::Mul(_) => Some("*"),
         BinOp::Div(_) => Some("int-div"),
         BinOp::Rem(_) => Some("int-rem"),
-        BinOp::BitAnd(_) => Some("bit-and"),
-        BinOp::BitOr(_) => Some("bit-or"),
-        BinOp::BitXor(_) => Some("bit-xor"),
-        BinOp::Shl(_) => Some("shift-left"),
-        BinOp::Shr(_) => Some("shift-right"),
         // NOTE: comparisons (`==`/`!=`/`<`/`<=`/`>`/`>=`) are deliberately NOT
         // arithmetic term binops -- they are bool-VALUED, not Int-valued. A
         // TOP-LEVEL or negated comparison must route to the relation-ATOM path

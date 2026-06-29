@@ -159,6 +159,18 @@ pub fn broad_functional_warrant(
 ) -> Option<ContractDecl> {
     let assertion_decl = emit_source_assertion_contract(name, block);
     let callable_pre_decl = emit_callable_param_precondition_contract(name, sig, block);
+    // Try encoder body Sugar (str.eq-bv-blocks) BEFORE the generic structural
+    // lift. This produces strong symbolic teeth for functional string-encoder
+    // bodies (const table + ord byte-assigns + subscript-concat return).
+    if let Some(encoder_atom) =
+        super::generic_body_sugar::recognize_and_emit_encoder_contract(name, sig, block)
+    {
+        let mut decl = source_value_contract(name, encoder_atom);
+        if let Some(ref pre_decl) = callable_pre_decl {
+            decl.pre = pre_decl.pre.clone();
+        }
+        return Some(decl);
+    }
     if let Some(mut value_decl) = emit_value_contract(name, block) {
         if let Some(assertion_decl) = assertion_decl {
             let mut atoms = Vec::new();

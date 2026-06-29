@@ -250,7 +250,11 @@ impl LiteralConstants {
 
     fn collect_term_for_legacy_literals(&mut self, term: &Term) {
         match term {
-            Term::Ctor { name, .. } if name == "str.len" || name == "str.++" => {}
+            Term::Ctor { name, .. }
+                if name == "str.len"
+                    || name == "str.++"
+                    || name == "str.from_code"
+                    || name == "str.table-select" => {}
             Term::Ctor { name, args } => {
                 if name == "None" && args.is_empty() {
                     self.opaque_symbols.insert(NONE_SYMBOL.to_string());
@@ -407,6 +411,11 @@ pub(crate) fn routes_to_string_theory(name: &str, args: &[Term]) -> bool {
         // only when it is string-tainted (appears in a string-theory predicate);
         // otherwise it stays opaque-Int, consistent with its other uses.
         is_string_const(t)
+            // String-building ctors are inherently String-sorted: str.++ always
+            // returns String, str.from_code returns a one-char String.  Route them
+            // through string theory unconditionally without requiring taint tracking.
+            // Sound: these SMT operators always return String, never opaque-Int.
+            || matches!(t, Term::Ctor { name, .. } if name == "str.++" || name == "str.from_code")
             || matches!(t, Term::Ctor { name, args }
                 if !(name == "None" && args.is_empty()) && ctor_subject_is_tainted(t))
             || matches!(t, Term::Var { .. } if term_is_string_tainted(t))

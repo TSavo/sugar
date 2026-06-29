@@ -13,7 +13,7 @@ use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
     assign_op, atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path,
-    call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
+    bv_binop, call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
     char_range_filter_map, closure_iter_advance_body, closure_mutating_body,
     closure_opaque_accessor, closure_runtime_receiver, closure_term, closure_tls_accessor, collect,
     collection_literal, compute_float, concat_macro, conditional, const_block, const_if,
@@ -35,7 +35,7 @@ use crate::sugar::{
     slice_chunk_window, slice_index, slice_search, source_location, statement_async_future,
     statement_control_flow, statement_future_handoff, statement_loop_advance,
     statement_nested_assertion, statement_reflection, statement_runtime_expr, step_by, str_method,
-    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
+    str_table_select, string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
     transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
     unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, write_macro, zip,
 };
@@ -167,8 +167,10 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &range_term::EXPR_SUGAR,
     &range_construct::EXPR_SUGAR,
     &field_term::EXPR_SUGAR,
+    &str_table_select::EXPR_SUGAR,
     &index::EXPR_SUGAR,
     &string_add::EXPR_SUGAR,
+    &bv_binop::EXPR_SUGAR,
     &binop::EXPR_SUGAR,
     &const_if::EXPR_SUGAR,
     &value_if::EXPR_SUGAR,
