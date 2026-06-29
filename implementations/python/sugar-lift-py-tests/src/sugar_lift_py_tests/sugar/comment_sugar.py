@@ -43,11 +43,11 @@ def _owns(site) -> bool:
     return is_comment_node(site.node)
 
 
-# A CommentSugar carries the Support role: the factory classifies the comment as
-# Support (the inert source-audit category), not TERM.
+# A comment is a STATEMENT (a member of a block); its OUTCOME is Support. The role
+# is the dispatch key (parallel to TERM for expressions), not the category.
 COMMENT_CLAIM = SugarClaim(
     name="CommentSugar",
-    role=SugarRole.SUPPORT,
+    role=SugarRole.STATEMENT,
     owns=_owns,
     build=build_comment_sugar,
 )

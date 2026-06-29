@@ -16,7 +16,7 @@ from sugar_lift_py_tests.sugar.comment_sugar import CommentSugar
 def _support_candidates(stmt_src: str) -> list[str]:
     node = ast.parse(stmt_src).body[0]
     site = SourceSite.from_node(node, "c.py")
-    return [c.name for c in default_catalog().candidates_for(SugarRole.SUPPORT, site)]
+    return [c.name for c in default_catalog().candidates_for(SugarRole.STATEMENT, site)]
 
 
 def test_factory_classifies_a_comment_as_support():

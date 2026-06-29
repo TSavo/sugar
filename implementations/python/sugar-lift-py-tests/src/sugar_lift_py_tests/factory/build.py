@@ -216,6 +216,7 @@ def default_catalog() -> SugarCatalog:
     from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
         PRIMITIVE_LITERAL_CLAIM,
     )
+    from sugar_lift_py_tests.sugar.block_sugar import BLOCK_CLAIM
     from sugar_lift_py_tests.sugar.comment_sugar import COMMENT_CLAIM
     from sugar_lift_py_tests.sugar.string_subscript_sugar import STRING_SUBSCRIPT_CLAIM
 
@@ -228,5 +229,6 @@ def default_catalog() -> SugarCatalog:
             NAME_CLAIM,
             STRING_SUBSCRIPT_CLAIM,
             COMMENT_CLAIM,
+            BLOCK_CLAIM,
         ]
     )

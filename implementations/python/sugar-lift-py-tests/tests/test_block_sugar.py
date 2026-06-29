@@ -9,10 +9,28 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.block import Block
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.source_site_stack import SourceSiteStack
+from sugar_lift_py_tests.floor import BlockValue
+from sugar_lift_py_tests.outcome import complete_value
 
 FUNCTION = "def f(x):\n    'doc'\n    return x\n"
+
+
+def _compose_block(body_src: str):
+    """Compose a function-body suite through the factory at the STATEMENT role: the
+    factory dispatches the Block to BlockSugar, which composes the statements."""
+    fn = ast.parse(f"def f(x):\n{body_src}").body[0]
+    block = Block.of(fn.body)
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    result = build_node(block, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
+    return complete_value(result.sugar.desugar(ctx), owner="block")
 
 
 def test_stack_pushes_a_block_for_a_suite():
@@ -42,3 +60,17 @@ def test_block_carries_its_statements_in_order():
         and any(isinstance(stmt, ast.Return) for stmt in s.node.body)
     )
     assert [type(stmt).__name__ for stmt in block.body] == ["Expr", "Return"]
+
+
+def test_block_sugar_absorbs_comments_into_an_empty_block():
+    # a body of only comments composes to an empty block -- each comment is Support
+    # and contributes nothing.
+    assert _compose_block('    "doc one"\n    "doc two"\n') == BlockValue(())
+
+
+def test_block_sugar_panics_on_a_statement_with_no_sugar_yet():
+    # an assignment has no statement sugar yet -> the block's composition asks the
+    # catalog, finds nothing, and the factory panics (names the next sugar). Never
+    # an ad-hoc raise, never a silent skip.
+    with pytest.raises(FactoryGap):
+        _compose_block('    "doc"\n    x = 1\n')

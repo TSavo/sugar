@@ -326,6 +326,22 @@ def build_list_literal_sugar(site, ctx):
     return sugar
 
 
+def build_block_sugar(site, ctx):
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+
+    block = site.node
+    if not isinstance(block, Block):
+        raise TypeError("BlockSugar claim built a non-block")
+    # The factory builds each statement child (by `owns` at the STATEMENT role) and
+    # hands the sub-bodies to BlockSugar -- composition, not a walk.
+    return BlockSugar(
+        statements=tuple(
+            ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in block.body
+        )
+    )
+
+
 def build_map_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 
