@@ -6,8 +6,8 @@ from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.sugar_constructors import build_block_sugar
 from sugar_lift_py_tests.floor import (
-    BindingValue,
     BlockValue,
+    BoundVar,
     GuardedReturn,
     ReturnValue,
     SupportValue,
@@ -37,11 +37,12 @@ class BlockSugar:
             value = complete_value(child.reduce(ctx), owner="block statement")
             if isinstance(value, SupportValue):
                 continue  # Support (a comment) is inert -- absorbed
-            if isinstance(value, BindingValue):
-                # an assignment: thread the binding into scope so LATER statements
-                # in this block resolve the name (a let-binding).
+            if isinstance(value, BoundVar):
+                # an assignment: thread the bound var into scope so LATER statements
+                # resolve the name. The BoundVar itself is bound (not its collapsed
+                # value), keeping the aliased source recoverable.
                 ctx = replace(
-                    ctx, temporal=ctx.temporal.bind_value(value.name, value.value)
+                    ctx, temporal=ctx.temporal.bind_value(value.name, value)
                 )
                 continue
             if isinstance(value, ReturnValue):
