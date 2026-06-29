@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass
 
 import json as _json
@@ -299,6 +300,7 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
     if isinstance(node, ast.Name):
         name = node.id
         found = None
+        found_tuple_idx: int | None = None
         count = 0
         for stmt in fn.body:
             if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -306,10 +308,24 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
             target = stmt.targets[0]
             if isinstance(target, ast.Name) and target.id == name:
                 found = stmt.value
+                found_tuple_idx = None
                 count += 1
+            elif isinstance(target, ast.Tuple):
+                for i, elt in enumerate(target.elts):
+                    if isinstance(elt, ast.Name) and elt.id == name:
+                        found = stmt.value
+                        found_tuple_idx = i
+                        count += 1
+                        break
         if count != 1 or found is None:
             return None
-        return _resolve_value(found, fn)
+        resolved = _resolve_value(found, fn)
+        if found_tuple_idx is not None:
+            # Tuple-unpack: index into the resolved RHS at position found_tuple_idx.
+            if not isinstance(resolved, list) or found_tuple_idx >= len(resolved):
+                return None
+            return resolved[found_tuple_idx]
+        return resolved
 
     # --- ast.Call: dispatch on callee ---
     if isinstance(node, ast.Call):
@@ -595,6 +611,141 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
             flat_m: list[int] = []
             _flatten(src, flat_m)
             return flat_m
+
+        # train_test_split(arr, shuffle=False, test_size=T|train_size=S)
+        # -> [train_list, test_list] using sklearn ceiling/floor rule.
+        # ONLY when shuffle=False is explicitly given; otherwise opaque.
+        if (
+            (isinstance(func, ast.Name) and func.id == "train_test_split")
+            or (isinstance(func, ast.Attribute) and func.attr == "train_test_split")
+        ):
+            if len(node.args) < 1:
+                return None
+            data = _resolve_value(node.args[0], fn)
+            if not isinstance(data, list):
+                return None
+            if not all(isinstance(x, int) and not isinstance(x, bool) for x in data):
+                return None
+            n = len(data)
+            shuffle_explicit_false = False
+            test_size_type: str | None = None  # 'f' or 'i'
+            test_size_num: float | int | None = None
+            train_size_type: str | None = None
+            train_size_num: float | int | None = None
+            for kw in node.keywords:
+                if kw.arg == "shuffle":
+                    if isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                        shuffle_explicit_false = True
+                    else:
+                        return None  # shuffle=True or non-literal -> opaque
+                elif kw.arg == "test_size":
+                    if isinstance(kw.value, ast.Constant):
+                        v = kw.value.value
+                        if isinstance(v, float) and not isinstance(v, bool):
+                            test_size_type = 'f'
+                            test_size_num = v
+                        elif isinstance(v, int) and not isinstance(v, bool):
+                            test_size_type = 'i'
+                            test_size_num = v
+                        else:
+                            return None
+                    else:
+                        return None
+                elif kw.arg == "train_size":
+                    if isinstance(kw.value, ast.Constant):
+                        v = kw.value.value
+                        if isinstance(v, float) and not isinstance(v, bool):
+                            train_size_type = 'f'
+                            train_size_num = v
+                        elif isinstance(v, int) and not isinstance(v, bool):
+                            train_size_type = 'i'
+                            train_size_num = v
+                        else:
+                            return None
+                    else:
+                        return None
+                # random_state, stratify, etc. -> ignore (don't affect shuffle=False)
+            if not shuffle_explicit_false:
+                return None  # opaque: shuffle omitted or True
+            # Compute n_test using sklearn ceiling rule for float, exact for int.
+            if test_size_type == 'f':
+                n_test: int | None = math.ceil(float(test_size_num) * n)
+            elif test_size_type == 'i':
+                n_test = int(test_size_num)  # type: ignore[arg-type]
+            else:
+                # test_size is None
+                if train_size_type is None:
+                    # Both None: default_test_size = 0.25
+                    n_test = math.ceil(0.25 * n)
+                else:
+                    n_test = None  # will compute from n_train below
+            # Compute n_train using sklearn floor rule for float, exact for int.
+            if train_size_type == 'f':
+                n_train: int | None = math.floor(float(train_size_num) * n)
+            elif train_size_type == 'i':
+                n_train = int(train_size_num)  # type: ignore[arg-type]
+            else:
+                n_train = None
+            # Fill in missing side
+            if n_test is None and n_train is not None:
+                n_test = n - n_train
+            elif n_train is None and n_test is not None:
+                n_train = n - n_test
+            if n_test is None or n_train is None:
+                return None
+            if n_train < 0 or n_test < 0 or n_train + n_test > n:
+                return None
+            train_arr = data[:n_train]
+            test_arr = data[n_train:n_train + n_test]
+            return [train_arr, test_arr]
+
+        # confusion_matrix(y_true_literal, y_pred_literal, labels=...) -> 2-D int matrix.
+        # labels sorted ascending (int) or lexicographic (str) when not given explicitly.
+        if (
+            (isinstance(func, ast.Name) and func.id == "confusion_matrix")
+            or (isinstance(func, ast.Attribute) and func.attr == "confusion_matrix")
+        ):
+            if len(node.args) < 2:
+                return None
+            yt = _literal_label_list(node.args[0])
+            yp = _literal_label_list(node.args[1])
+            if yt is None or yp is None:
+                return None
+            if len(yt) != len(yp):
+                return None
+            if not yt:
+                return None
+            # Both must be same homogeneous type (all int or all str).
+            yt_type = type(yt[0])
+            yp_type = type(yp[0])
+            if yt_type is not yp_type:
+                return None
+            # Handle optional labels= keyword.
+            cm_labels: list | None = None
+            for kw in node.keywords:
+                if kw.arg == "labels":
+                    cm_labels = _literal_label_list(kw.value)
+                    if cm_labels is None:
+                        return None  # non-literal labels -> opaque
+            if cm_labels is None:
+                cm_labels = sorted(set(yt) | set(yp))
+            n_labels = len(cm_labels)
+            label_idx = {lbl: idx for idx, lbl in enumerate(cm_labels)}
+            C = [[0] * n_labels for _ in range(n_labels)]
+            for yt_val, yp_val in zip(yt, yp):
+                if yt_val not in label_idx or yp_val not in label_idx:
+                    return None  # label outside matrix -> opaque
+                C[label_idx[yt_val]][label_idx[yp_val]] += 1
+            return C
+
+        # NOTE: accuracy_score is intentionally NOT handled here. Its result is a
+        # bare scalar, so the only assertion forms (`assert accuracy_score(...) == n`
+        # and `a = accuracy_score(...); assert a == n`) reach the factory's
+        # callsite-equality / scalar-name paths, both of which currently PANIC
+        # (observed=callsite-arg:List / assert-eq-lhs:Name) before _resolve_value is
+        # ever consulted. A _resolve_value arm here would be dead code. It is also
+        # semantically float: accuracy_score(..., normalize=False) returns 2.0, not
+        # int 2. Grounding the scalar-equality surface is a separate future round.
 
         # LabelEncoder().fit_transform([labels])  — inline form
         # le.fit_transform([labels])              — bound form (le = LabelEncoder())
