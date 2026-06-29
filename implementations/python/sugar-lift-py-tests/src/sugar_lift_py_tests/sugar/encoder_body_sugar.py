@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.floor import EncodedStringValue
 from sugar_lift_py_tests.ir import Formula, atomic, make_var, str_const, term_to_value
+from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _term_json(term) -> dict:
@@ -38,7 +40,7 @@ def _byte_vars(indices: tuple) -> list[str]:
 
 
 @dataclass(frozen=True)
-class EncoderBodySugar:
+class EncoderBodySugar(FunctionBodyUniverse):
     """A string-encoder body, composed through the Block to an EncodedStringValue, and
     lowered to the existing `str.eq-bv-blocks` atom.
 
@@ -46,12 +48,13 @@ class EncoderBodySugar:
     `b_i = ord(value[i])` a BoundVar aliasing a symbolic byte, and the return composed
     (BitwiseOp / StringSubscript / BinOp) into the (table, per-char index) encoding.
     This sugar just reads that EncodedStringValue and emits the predicate -- the byte
-    vars come from the indices, in byte order. No base64 special case, no compiler
-    change; the encoder is a recognized leaf inside the one Block path."""
+    vars come from the indices, in byte order. The per-line walk is inherited. No base64
+    special case, no compiler change; the encoder is a recognized leaf in the one path.
+    """
 
     parameter: str
     encoded: EncodedStringValue
-    statement_count: int
+    statements: tuple[SugarBody, ...] = ()
 
     def constraint_formulas(self) -> list[Formula]:
         payload = json.dumps(
@@ -69,11 +72,3 @@ class EncoderBodySugar:
                 [make_var("out"), make_var(self.parameter), str_const(payload)],
             )
         ]
-
-    def factory_steps(self, function) -> list[tuple[str, str, object, str]]:
-        # the whole encoder universe is the body composed as one Block.
-        return [("BlockSugar", "Block", function, "EncodedStringValue")]
-
-    def constraint_formula_steps(self) -> list[Formula | None]:
-        # one walk row (the Block), carrying the str.eq-bv-blocks it emitted.
-        return [self.constraint_formulas()[0]]

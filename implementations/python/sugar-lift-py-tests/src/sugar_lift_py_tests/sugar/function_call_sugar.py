@@ -8,11 +8,12 @@ from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-from .control_flow_body_sugar import ControlFlowBodySugar
-from .encoder_body_sugar import EncoderBodySugar
+from .function_body_universe import FunctionBodyUniverse
 
-FunctionCallBody = SugarBody | ControlFlowBodySugar | EncoderBodySugar
-_BODY_TYPES = (SugarBody, ControlFlowBodySugar, EncoderBodySugar)
+# A function body is either a single TERM expression (a SugarBody -- `return <expr>`)
+# or a multi-statement universe (FunctionBodyUniverse -- control flow / encoder).
+FunctionCallBody = SugarBody | FunctionBodyUniverse
+_BODY_TYPES = (SugarBody, FunctionBodyUniverse)
 
 
 def callee_target(node: ast.Call) -> str | None:

@@ -634,7 +634,10 @@ def _walk_row(
         requested_role=requested_role,
         ast_kind=ast_kind,
         selected=selected,
-        status="warranted",
+        # warrant vs support is the line's tie to the .proof: a line that emitted a
+        # constraint is warranted; one accounted for but emitting nothing (a docstring,
+        # a let inlined into the universe) is support.
+        status="warranted" if emitted_formula is not None else "support",
         output=output,
         source_memento=memento,
         span=SourceSpanDto(

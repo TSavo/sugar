@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.ir import Formula, and_, eq, implies, make_var
+from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class ControlFlowBodySugar:
+class ControlFlowBodySugar(FunctionBodyUniverse):
     """A function body with branching returns, lifted as guarded implications.
 
     Control flow is NOT executed -- it becomes first-order logic. Each return path
@@ -20,18 +22,15 @@ class ControlFlowBodySugar:
 
     z3 does the branching for free: given the bound inputs, the guards resolve and
     the active path's `out == ...` is the live constraint. A single unguarded path
-    collapses to a plain equality (straight-line bodies are the degenerate case).
+    collapses to a plain equality (straight-line bodies are the degenerate case). The
+    per-line walk is inherited.
     """
 
     parameter: str
     # each path: (tuple of guard Formulas, the return-value Term)
     paths: tuple[tuple[tuple[Formula, ...], object], ...]
     formals: tuple[str, ...]
-    statement_count: int
-
-    def apply(self, argument):  # pragma: no cover - lowers to ProofIR
-        del argument
-        raise TypeError("ControlFlowBodySugar lowers to ProofIR; call constraint_formulas")
+    statements: tuple[SugarBody, ...] = ()
 
     def _clauses(self) -> list[Formula]:
         clauses: list[Formula] = []
@@ -48,12 +47,3 @@ class ControlFlowBodySugar:
     def constraint_formulas(self) -> list[Formula]:
         clauses = self._clauses()
         return [clauses[0] if len(clauses) == 1 else and_(clauses)]
-
-    def factory_steps(self, function) -> list[tuple[str, str, object, str]]:
-        return [
-            ("ControlFlowBodySugar", "Branch", stmt, "Formula") for stmt in function.body
-        ]
-
-    def constraint_formula_steps(self) -> list[Formula | None]:
-        # the whole branched universe is emitted once, on the final statement
-        return [None] * (self.statement_count - 1) + [self.constraint_formulas()[0]]

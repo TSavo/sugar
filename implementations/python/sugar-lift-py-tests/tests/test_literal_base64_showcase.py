@@ -156,25 +156,31 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # The dig emits no call-edge: composition is ambient-post specialization keyed on
     # the `call:` ctor head, which needs no explicit edge.
     assert good_doc["callEdges"] == []
-    # The base64 body lifts by composing through ONE Block: BlockSugar drives the
-    # generic catalog internally (AssignSugar / OrdByteSugar / BitwiseOp /
-    # StringSubscript / BinOp), and the string encoder is a recognized leaf INSIDE the
-    # Block, lowered to str.eq-bv-blocks -- no base64-specific dispatch path.
-    assert [row["selected"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
-        "BlockSugar",
+    # One row per source line, in build order, named by the sugar that owns it. The
+    # body composes through one Block (no base64-specific dispatch); the four lets are
+    # support (inert, inlined into the universe), the return emits the str.eq-bv-blocks
+    # universe, the assert row emits the inv.
+    walk = good_doc["factoryAuditSummary"]["factoryWalk"]
+    assert [row["selected"] for row in walk] == [
+        "AssignSugar",
+        "AssignSugar",
+        "AssignSugar",
+        "AssignSugar",
+        "ReturnSugar",
         "FunctionCallSugar",
     ]
-    assert [row["requested_role"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
-        "FunctionBodyConstraint",
+    assert [row["requested_role"] for row in walk] == [
+        *["FunctionBodyConstraint"] * 5,
         "AssertionSurface",
     ]
-    # The Block row emits the whole str.eq-bv-blocks universe; the call row emits the
-    # assertion inv. (Per-statement accounting -- one walk row per source line -- is
-    # the warrant/support ledger work still to come; today the Block is one row.)
-    _assert_base64_payload(good_doc["factoryAuditSummary"]["factoryWalk"][0]["emittedFormula"])
-    assert (
-        good_doc["factoryAuditSummary"]["factoryWalk"][1]["emittedFormula"]
-        == assertion_contract["inv"]
-    )
+    assert [row["status"] for row in walk] == [
+        *["support"] * 4,
+        "warranted",
+        "warranted",
+    ]
+    for support_row in walk[:4]:
+        assert "emittedFormula" not in support_row
+    _assert_base64_payload(walk[4]["emittedFormula"])
+    assert walk[5]["emittedFormula"] == assertion_contract["inv"]
     assert good_doc["sourceLedger"]["source_loci"] == 2
     assert good_doc["sourceLedger"]["source_warranted"] == 2
