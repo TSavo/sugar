@@ -30,8 +30,9 @@ Four claims. They read like four separate products. They are one move.
   function bodies are your stated contracts. No proof language, no annotations, no
   first-order logic.
 - **Zero code changes.** Not "no shim." *Nothing.* You change not one line and add
-  not one annotation; `cd` into a project, lift, and ship — and the next consumer,
-  in any language, conjoins their code against the result in three commands.
+  not one annotation. `cd` into a project and `sugar mint` writes a signed `.proof`
+  of what it does; the next consumer, in any language, drops that `.proof` in and
+  `sugar prove`s their own code against it.
 
 It holds because we **model nothing.** We never reimplement your function — that
 reimplementation is the unsound shim every other tool ships. We pin what you already
