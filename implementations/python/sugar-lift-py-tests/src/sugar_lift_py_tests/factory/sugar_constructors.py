@@ -221,7 +221,21 @@ def _cf_guard(test):
     raise TypeError(f"control-flow guard shape `{type(test).__name__}`")
 
 
-def _walk_control_flow(stmts, guards, paths):
+def _lift_cf_return(node, build_ctx, reduce_ctx):
+    """A return expression composes through the factory: the catalog builds it and
+    the sugars EMIT THE OPERATIONS (`+`, `bvand`, `str.++`, a callsite, ...). The
+    lift stays sort-silent -- the SMT compiler derives each variable's canonical
+    carrier from the operations it appears in."""
+    from sugar_lift_py_tests.outcome import complete_value
+
+    from .literal_call_report import _floor_to_term
+
+    body = build_ctx.build_body(node, SugarRole.TERM)
+    value = complete_value(body.reduce(reduce_ctx), owner="control-flow return")
+    return _floor_to_term(value)
+
+
+def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
     from sugar_lift_py_tests.ir import not_
 
     # `fall_through` accumulates the negated guards of prior terminal `if`s on this
@@ -232,13 +246,22 @@ def _walk_control_flow(stmts, guards, paths):
         if isinstance(stmt, ast.Return):
             if stmt.value is None:
                 raise TypeError("control-flow: bare return")
-            paths.append((tuple(fall_through), _cf_operand(stmt.value)))
+            term = _lift_cf_return(stmt.value, build_ctx, reduce_ctx)
+            paths.append((tuple(fall_through), term))
             return  # statements after a return are unreachable on this path
         if isinstance(stmt, ast.If):
             guard = _cf_guard(stmt.test)
-            _walk_control_flow(stmt.body, tuple(fall_through) + (guard,), paths)
+            _walk_control_flow(
+                stmt.body, tuple(fall_through) + (guard,), paths, build_ctx, reduce_ctx
+            )
             if stmt.orelse:
-                _walk_control_flow(stmt.orelse, tuple(fall_through) + (not_(guard),), paths)
+                _walk_control_flow(
+                    stmt.orelse,
+                    tuple(fall_through) + (not_(guard),),
+                    paths,
+                    build_ctx,
+                    reduce_ctx,
+                )
                 return  # both branches handled; no fall-through past an if/else
             fall_through.append(not_(guard))
             continue
@@ -246,15 +269,27 @@ def _walk_control_flow(stmts, guards, paths):
 
 
 def build_control_flow_body_sugar(site, ctx):
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
+    from sugar_lift_py_tests.temporal import TemporalContext
 
     function = site.node
     if not isinstance(function, ast.FunctionDef):
         raise TypeError("ControlFlowBodySugar claim built a non-function")
     if not function.args.args:
         raise TypeError("ControlFlowBodySugar requires at least one parameter")
+    # Bind each param to a sort-NEUTRAL symbolic term -- the lift commits to no
+    # sort. The return sugars compose operations over these vars; the SMT compiler
+    # derives each var's canonical carrier from the operations it appears in.
+    temporal = TemporalContext.empty()
+    for arg in function.args.args:
+        temporal = temporal.bind_value(arg.arg, SymbolicValue(make_var(arg.arg)))
+    reduce_ctx = replace(ctx, temporal=temporal)
     paths: list = []
-    _walk_control_flow(function.body, (), paths)
+    _walk_control_flow(function.body, (), paths, ctx, reduce_ctx)
     if not paths:
         raise TypeError("ControlFlowBodySugar found no return paths")
     return ControlFlowBodySugar(
