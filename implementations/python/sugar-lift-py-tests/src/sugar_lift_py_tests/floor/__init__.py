@@ -8,6 +8,7 @@ from .encoded_string_value import EncodedStringValue
 from .floor_value import FloorValue
 from .function_callable import FunctionCallable
 from .lambda_callable import LambdaCallable
+from .return_value import ReturnValue
 from .string_value import StringValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
@@ -22,6 +23,7 @@ __all__ = [
     "FloorValue",
     "FunctionCallable",
     "LambdaCallable",
+    "ReturnValue",
     "StringValue",
     "SupportValue",
     "SymbolicValue",

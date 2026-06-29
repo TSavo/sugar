@@ -18,6 +18,26 @@ from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
+def compose_block(body_src: str, binds: dict | None = None):
+    """Compose a function-body suite through the factory at the STATEMENT role: the
+    Block dispatches to BlockSugar, which composes its statement children. Returns the
+    BlockValue. `body_src` is the indented body of `def f(x): ...`."""
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.factory.build import build_node
+
+    fn = ast.parse(f"def f(x):\n{body_src}").body[0]
+    block = Block.of(fn.body)
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    if binds:
+        temporal = TemporalContext.empty()
+        for name, value in binds.items():
+            temporal = temporal.bind_value(name, value)
+        ctx = replace(ctx, temporal=temporal)
+    result = build_node(block, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
+    return complete_value(result.sugar.desugar(ctx), owner="block")
+
+
 def reduce_value(expr: str, binds: dict | None = None):
     """Feed a Python expression and return the raw Floor value it reduces to (before
     the ProofIR projection). Use when the value is not a plain term (e.g. an
