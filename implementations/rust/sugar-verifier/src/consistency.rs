@@ -1786,9 +1786,12 @@ fn linked_ambient_post_instances_for_inv(
         let Some(args) = callsite.get("args").and_then(|v| v.as_array()) else {
             continue;
         };
-        for post in ambient
-            .iter()
-            .filter(|post| post.source_symbol == name && post.formals.len() == args.len())
+        for post in ambient.iter().filter(|post| {
+            let bare =
+                name.strip_prefix("call:").or_else(|| name.strip_prefix("method:")).unwrap_or(name);
+            (post.source_symbol == name || post.source_symbol == bare)
+                && post.formals.len() == args.len()
+        })
         {
             let mut instance = post.post.clone();
             for (formal, actual) in post.formals.iter().zip(args.iter()) {
@@ -2560,8 +2563,12 @@ mod tests {
     fn vendor_function_post_is_linked_into_fresh_consumer_assertions() {
         let (plan, reg) = z3_plan_and_registry();
         let vendor_cid = "blake3-512:vendor-enc-contract";
-        let source_symbol = "call:enc";
-        let call_enc = |arg: Json| json!({"kind":"ctor","name":source_symbol,"args":[arg]});
+        // Production bridges store the BARE symbol name (no "call:" prefix).
+        // The callsite ctor uses the prefixed form "call:enc".
+        // This test exercises the production shape so the linker's strip logic is exercised.
+        let bridge_source_symbol = "enc"; // bare — what real bridges emit
+        let callsite_ctor_name = "call:enc"; // prefixed — what callsites emit
+        let call_enc = |arg: Json| json!({"kind":"ctor","name":callsite_ctor_name,"args":[arg]});
         let post = implies(
             eqf(var("input"), string_const("def")),
             eqf(var("out"), string_const("ghi")),
@@ -2586,14 +2593,14 @@ mod tests {
             "evidence": {
                 "kind": "bridge",
                 "body": {
-                    "sourceSymbol": source_symbol,
+                    "sourceSymbol": bridge_source_symbol,
                     "targetContractCid": vendor_cid,
                     "targetProofCid": "blake3-512:vendor-proof"
                 }
             }
         });
         pool.bridges_by_symbol
-            .insert(source_symbol.to_string(), bridge);
+            .insert(bridge_source_symbol.to_string(), bridge);
 
         insert_contract(
             &mut pool,
@@ -2626,7 +2633,7 @@ mod tests {
         assert_eq!(good_verification["kind"], "consistency");
         assert_eq!(
             good_verification["linkedPosts"][0]["sourceSymbol"],
-            source_symbol
+            bridge_source_symbol
         );
         assert_eq!(
             good_verification["linkedPosts"][0]["targetContractCid"],
