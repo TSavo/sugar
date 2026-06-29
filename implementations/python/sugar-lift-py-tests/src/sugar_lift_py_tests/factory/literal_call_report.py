@@ -198,12 +198,14 @@ def _lift_assert(
 def _floor_to_term(value: Any) -> Term:
     """Map a reduced Floor value to its ProofIR term. Composition-agnostic: it does
     not care WHICH sugar produced the value, only its Floor type."""
-    from sugar_lift_py_tests.floor import StringValue, TermValue
+    from sugar_lift_py_tests.floor import ArrayLiteral, StringValue, TermValue
 
     if isinstance(value, TermValue):
         return num(value.value)
     if isinstance(value, StringValue):
         return str_const(value.value)
+    if isinstance(value, ArrayLiteral):
+        return ctor("array", [_floor_to_term(item) for item in value.items])
     raise TypeError(
         f"write more Floor->Term for `{type(value).__name__}` in the callsite literal"
     )
@@ -243,18 +245,21 @@ def _lift_callsite_assertion(
     # int, ...). Anything the catalog can't build panics via its own mouth, which
     # names the next sugar -- no string-only special case here.
     expected_term = _lift_literal_via_factory(comparison.comparators[0], filename)
+    # Each arg composes through the factory's literal sugars (string, int, array,
+    # ...) -- the same path as the expected. A literal the catalog reduces but can't
+    # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
+    # naming the next sugar, not a crash.
     arg_terms = []
     for arg_node in comparison.left.args:
-        arg_sugar = string_literal_sugar(arg_node)
-        if arg_sugar is None:
+        try:
+            arg_terms.append(_lift_literal_via_factory(arg_node, filename))
+        except TypeError:
             _panic_no_sugar(
                 arg_node, memento_file,
-                observed=f"callsite-arg:{type(arg_node).__name__}",
-                requested="StringLiteralArg",
-                fix="lift non-string-literal call args (e.g. variables, arrays, numerics)",
+                observed=f"callsite-arg:{type(arg_node).__name__}-unliftable",
+                requested="LiftableCallArg",
+                fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
             )
-        arg_value = complete_value(arg_sugar.desugar(), owner="callsite assertion arg")
-        arg_terms.append(str_const(arg_value.value))
     euf_term = ctor(f"call:{callee_name}", arg_terms)
     assertion_contract_name = f"{callee_name}#euf#{_canonical_term_sig(euf_term)}::assertion"
     assertion_memento = _statement_source_memento(
