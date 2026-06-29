@@ -5,7 +5,13 @@ from dataclasses import dataclass, replace
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.sugar_constructors import build_block_sugar
-from sugar_lift_py_tests.floor import BindingValue, BlockValue, SupportValue
+from sugar_lift_py_tests.floor import (
+    BindingValue,
+    BlockValue,
+    GuardedReturn,
+    ReturnValue,
+    SupportValue,
+)
 # (BlockValue is also an if's outcome -- the guarded returns of its branches.)
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -26,6 +32,7 @@ class BlockSugar:
 
     def desugar(self, ctx) -> Outcome:
         outcomes: list[object] = []
+        pending: tuple = ()  # guards accumulated from prior fall-through ifs
         for child in self.statements:
             value = complete_value(child.reduce(ctx), owner="block statement")
             if isinstance(value, SupportValue):
@@ -37,13 +44,22 @@ class BlockSugar:
                     ctx, temporal=ctx.temporal.bind_value(value.name, value.value)
                 )
                 continue
+            if isinstance(value, ReturnValue):
+                # a return is live only if every prior fall-through guard held.
+                outcomes.append(
+                    GuardedReturn(pending, value.value) if pending else value
+                )
+                continue
             if isinstance(value, BlockValue):
-                # an `if`: its outcome is the guarded returns of its branches --
-                # flatten them into this block.
-                outcomes.extend(value.statements)
+                # an `if`: its guarded returns flatten in (under any pending guards),
+                # and its fall-through (a no-else if) extends the pending guards for
+                # the statements that come after it.
+                for gr in value.statements:
+                    outcomes.append(GuardedReturn(pending + gr.guards, gr.value))
+                pending = pending + value.fall_through
                 continue
             outcomes.append(value)
-        return Complete(BlockValue(tuple(outcomes)))
+        return Complete(BlockValue(tuple(outcomes), pending))
 
 
 def _owns(site) -> bool:

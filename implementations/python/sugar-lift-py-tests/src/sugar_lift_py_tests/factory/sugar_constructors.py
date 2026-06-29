@@ -288,8 +288,26 @@ def build_control_flow_body_sugar(site, ctx):
     for arg in function.args.args:
         temporal = temporal.bind_value(arg.arg, SymbolicValue(make_var(arg.arg)))
     reduce_ctx = replace(ctx, temporal=temporal)
+    # Compose the body as a Block (which absorbs docstrings/comments as Support) and
+    # read its return paths -- the same paths the ad-hoc walk produced, now obtained
+    # by composition through the factory.
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
+    from sugar_lift_py_tests.floor import GuardedReturn, ReturnValue
+    from sugar_lift_py_tests.outcome import complete_value
+
+    block = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT)
+    block_value = complete_value(block.reduce(reduce_ctx), owner="control-flow body")
     paths: list = []
-    _walk_control_flow(function.body, (), paths, ctx, reduce_ctx)
+    for outcome in block_value.statements:
+        if isinstance(outcome, ReturnValue):
+            paths.append(((), _floor_to_term(outcome.value)))
+        elif isinstance(outcome, GuardedReturn):
+            paths.append((tuple(outcome.guards), _floor_to_term(outcome.value)))
+        else:
+            raise TypeError(
+                f"control-flow body: unexpected outcome `{type(outcome).__name__}`"
+            )
     if not paths:
         raise TypeError("ControlFlowBodySugar found no return paths")
     return ControlFlowBodySugar(

@@ -37,7 +37,11 @@ class IfSugar:
             else_bv = complete_value(self.else_block.reduce(ctx), owner="if else-block")
             negated = (not_(self.test),)
             guarded.extend(_guard(stmt, negated) for stmt in else_bv.statements)
-        return Complete(BlockValue(tuple(guarded)))
+            # both branches accounted for -> exhaustive, no fall-through.
+            return Complete(BlockValue(tuple(guarded)))
+        # no else: execution falls through under `not test` -> the enclosing block
+        # guards the statements after this `if` by it.
+        return Complete(BlockValue(tuple(guarded), (not_(self.test),)))
 
 
 def _owns(site) -> bool:
