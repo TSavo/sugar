@@ -31,11 +31,12 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, Value as CValue};
 use sugar_claim_envelope::{
-    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
+    mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
+    MintedEnvelope,
 };
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
-    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, AtomMemento, BridgeMemento, ClaimContractMemento,
+    ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
 fn unique_dir(suffix: &str) -> PathBuf {
@@ -117,6 +118,32 @@ fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
     assert_eq!(memento.cid().as_str(), cid);
     graph.push_bridge(memento);
     cid
+}
+
+/// Build a body-graph contract body from pre/post/inv (mirrors the production
+/// `register_contract_body_graph`), register it, and return the `ContractBody`
+/// whose CID is the `bodyCid` pointer. Body-discharge `verify` resolves a
+/// contract's formulas via `bodyCid` (`resolve_contract_body`), so a fixture
+/// contract MUST be body-graph -- an inline `ClaimContractMemento` has no
+/// `bodyCid`, so `enumerate_callsites` skips it and verify finds zero claims.
+fn register_body_graph(
+    graph: &mut ProofGraph,
+    pre: Option<&Arc<CValue>>,
+    post: Option<&Arc<CValue>>,
+    inv: Option<&Arc<CValue>>,
+) -> ContractBody {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(f) = pre {
+        slots.push(("pre", graph.register_atom(FlatAtom::new(f.clone()))));
+    }
+    if let Some(f) = post {
+        slots.push(("post", graph.register_atom(FlatAtom::new(f.clone()))));
+    }
+    if let Some(f) = inv {
+        slots.push(("inv", graph.register_atom(FlatAtom::new(f.clone()))));
+    }
+    let slot_refs: Vec<(&str, &AtomMemento)> = slots.iter().map(|(s, a)| (*s, a)).collect();
+    graph.register_body(ContractBody::from_slots(slot_refs))
 }
 
 /// An Int constant IR term.
@@ -208,7 +235,7 @@ fn publish_double_project_with_formals(
 
     // The body-derived op-contract for `double`: carries `formals` (so it is
     // body-bearing) and the supplied `post`; NO `pre`.
-    let target_contract = mint_contract(&MintContractArgs {
+    let target_args = MintContractArgs {
         evidence_term: None,
         formals: formals_vec.clone(),
         emit_empty_formals: formals_vec.is_empty(),
@@ -232,13 +259,21 @@ fn publish_double_project_with_formals(
             note: None,
         },
         signer_seed,
-    })
-    .expect("mint target contract");
+    };
+    let target_body = register_body_graph(
+        &mut graph,
+        target_args.pre.as_ref(),
+        target_args.post.as_ref(),
+        target_args.inv.as_ref(),
+    );
+    let target_body_cid = target_body.cid().as_str().to_string();
+    let target_contract = mint_contract_with_body_cid(&target_args, Some(&target_body_cid))
+        .expect("mint target contract");
     let target_cid = push_claim_contract(&mut graph, target_contract);
 
     // The harvested test assertion in the source contract's `inv` slot
     // (one bridged callsite). The default is `=(double(3), 6)`.
-    let source_contract = mint_contract(&MintContractArgs {
+    let source_args = MintContractArgs {
         evidence_term: None,
         formals: Vec::new(),
         emit_empty_formals: false,
@@ -262,8 +297,16 @@ fn publish_double_project_with_formals(
             note: None,
         },
         signer_seed,
-    })
-    .expect("mint source contract");
+    };
+    let source_body = register_body_graph(
+        &mut graph,
+        source_args.pre.as_ref(),
+        source_args.post.as_ref(),
+        source_args.inv.as_ref(),
+    );
+    let source_body_cid = source_body.cid().as_str().to_string();
+    let source_contract = mint_contract_with_body_cid(&source_args, Some(&source_body_cid))
+        .expect("mint source contract");
     push_claim_contract(&mut graph, source_contract);
 
     // The bridge: double (sourceSymbol) -> the body-derived contract.
