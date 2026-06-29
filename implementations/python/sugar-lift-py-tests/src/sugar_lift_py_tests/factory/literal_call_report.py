@@ -14,21 +14,7 @@ from sugar_lift_py_tests.factory.array_map_report import (
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
-from sugar_lift_py_tests.factory.value_resolver import (
-    _apply_ops,
-    _const_int,
-    _flatten,
-    _index_nested,
-    _IndexOp,
-    _is_2d_int_matrix,
-    _KeyOp,
-    _nested_int_literal,
-    _np_array_nested_int,
-    _resolve_np_array_element,
-    _resolve_value,
-    _SliceOp,
-)
-from sugar_lift_py_tests.ir import Formula, and_, ctor, eq, formula_to_value, num, real_lit, str_const
+from sugar_lift_py_tests.ir import Formula, and_, ctor, eq, formula_to_value, str_const
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     FactoryWalkRowDto,
@@ -165,16 +151,6 @@ def _lift_assert(
         )
     callee_name = _callee_name(comparison.left)
     if callee_name is None:
-        # PIECE B: Subscript LHS -- route before panicking.
-        if isinstance(comparison.left, ast.Subscript):
-            return _lift_subscript_assertion(
-                stmt,
-                comparison=comparison,
-                fn=fn,
-                filename=filename,
-                memento_file=memento_file,
-                source_lines=source_lines,
-            )
         _panic_no_sugar(
             comparison.left, memento_file,
             observed=f"assert-eq-lhs:{type(comparison.left).__name__}",
@@ -223,21 +199,13 @@ def _lift_callsite_assertion(
     returns None."""
     expected_sugar = string_literal_sugar(comparison.comparators[0])
     if expected_sugar is None:
-        # PIECE A: numeric expected (int or float ast.Constant).
-        expected_node = comparison.comparators[0]
-        if isinstance(expected_node, ast.Constant) and isinstance(expected_node.value, (int, float)) and not isinstance(expected_node.value, bool):
-            expected_ir_term = _numeric_const_term(expected_node.value)
-        else:
-            _panic_no_sugar(
-                expected_node, memento_file,
-                observed=f"callsite-expected:{type(expected_node).__name__}",
-                requested="StringLiteralExpected",
-                fix="lift non-string-literal expected (e.g. numeric `== 32`, list `== [..]`)",
-            )
-        expected_value_for_inv = expected_ir_term  # type: ignore[possibly-undefined]
-    else:
-        expected = complete_value(expected_sugar.desugar(), owner="callsite assertion expected")
-        expected_value_for_inv = str_const(expected.value)
+        _panic_no_sugar(
+            comparison.comparators[0], memento_file,
+            observed=f"callsite-expected:{type(comparison.comparators[0]).__name__}",
+            requested="StringLiteralExpected",
+            fix="lift non-string-literal expected (e.g. numeric `== 32`, list `== [..]`)",
+        )
+    expected = complete_value(expected_sugar.desugar(), owner="callsite assertion expected")
     arg_terms = []
     for arg_node in comparison.left.args:
         arg_sugar = string_literal_sugar(arg_node)
@@ -260,7 +228,7 @@ def _lift_callsite_assertion(
         contract_name=assertion_contract_name,
         role="python.literal-call-sugar",
     )
-    assertion_inv = _formula_to_rpc(eq(euf_term, expected_value_for_inv))
+    assertion_inv = _formula_to_rpc(eq(euf_term, str_const(expected.value)))
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
@@ -418,185 +386,6 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
     return tuple(  # type: ignore[return-value]
         [*u, *a] for u, a in zip(universe, assertion)
     )
-
-
-def _numeric_const_term(value: int | float):
-    """Return the IR term for a numeric ast.Constant value (int or float)."""
-    if isinstance(value, int):
-        return num(value)
-    # float -> real_lit via canonical decimal string
-    import decimal
-    return real_lit(str(decimal.Decimal(str(value))))
-
-
-
-def _lift_subscript_assertion(
-    stmt: ast.Assert,
-    *,
-    comparison: ast.Compare,
-    fn: ast.FunctionDef,
-    filename: str,
-    memento_file: str,
-    source_lines: list[str],
-) -> LiftResult:
-    """PIECE B. Lift `r[i0][i1]... == expected` to
-    `eq(ctor("subscript:<root>", [num(i0), num(i1), ...]), expected_term)`.
-
-    Walks the Subscript chain to the root ast.Name and collects integer
-    index literals or integer-bounded slices. Non-integer/non-slice indices
-    or a non-Name root PANIC."""
-    node = comparison.left
-    ops: list[_IndexOp | _SliceOp | _KeyOp] = []
-    # For the IR term we still want integer indices only (slices narrow arrays
-    # and reduce to a subsequent integer index before reaching a scalar).
-    # We collect ALL ops for value-resolution and separate index-ops for the term.
-    while isinstance(node, ast.Subscript):
-        idx = node.slice
-        # Python >=3.9: slice IS the index node directly.
-        if isinstance(idx, ast.Index):  # Python 3.8 compat
-            idx = idx.value  # type: ignore[attr-defined]
-        if isinstance(idx, ast.Constant) and isinstance(idx.value, int) and not isinstance(idx.value, bool):
-            ops.insert(0, _IndexOp(idx.value))
-        elif isinstance(idx, ast.Constant) and isinstance(idx.value, str):
-            ops.insert(0, _KeyOp(idx.value))
-        elif isinstance(idx, ast.Slice):
-            lo = _const_int(idx.lower) if idx.lower is not None else None
-            hi = _const_int(idx.upper) if idx.upper is not None else None
-            st = _const_int(idx.step) if idx.step is not None else None
-            # If any bound is present but non-constant-int, panic.
-            if (idx.lower is not None and lo is None) or \
-               (idx.upper is not None and hi is None) or \
-               (idx.step is not None and st is None):
-                _panic_no_sugar(
-                    idx, memento_file,
-                    observed="subscript-index:Slice:non-constant-bound",
-                    requested="ConstantSliceBounds",
-                    fix="lift slice with non-integer-literal bounds",
-                )
-            ops.insert(0, _SliceOp(lo, hi, st))
-        else:
-            _panic_no_sugar(
-                idx, memento_file,
-                observed=f"subscript-index:{type(idx).__name__}",
-                requested="IntegerSubscriptIndex",
-                fix="lift subscript with non-integer-literal index",
-            )
-        node = node.value
-    # Keep root_node for recursive resolution; derive root_name for the IR term.
-    root_node = node
-    if isinstance(node, ast.Name):
-        root_name: str = node.id
-    elif isinstance(node, ast.Call):
-        callee = _callee_name(node)
-        if callee is None:
-            _panic_no_sugar(
-                node, memento_file,
-                observed=f"subscript-root-call:unknown-callee",
-                requested="SubscriptNameRoot",
-                fix="lift subscript whose root call has no resolvable callee name",
-            )
-        root_name = callee  # type: ignore[possibly-undefined]
-    elif isinstance(node, ast.Attribute):
-        # e.g. x.T  — attr name is the IR label
-        root_name = node.attr
-    else:
-        _panic_no_sugar(
-            node, memento_file,
-            observed=f"subscript-root:{type(node).__name__}",
-            requested="SubscriptNameRoot",
-            fix="lift subscript whose root is not a plain name, call, or attribute",
-        )
-
-    # Build expected IR term (string or numeric).
-    expected_node = comparison.comparators[0]
-    expected_sugar = string_literal_sugar(expected_node)
-    if expected_sugar is None:
-        if isinstance(expected_node, ast.Constant) and isinstance(expected_node.value, (int, float)) and not isinstance(expected_node.value, bool):
-            expected_ir = _numeric_const_term(expected_node.value)
-        else:
-            _panic_no_sugar(
-                expected_node, memento_file,
-                observed=f"subscript-expected:{type(expected_node).__name__}",
-                requested="StringOrNumericExpected",
-                fix="lift non-string/non-numeric expected in subscript assertion",
-            )
-    else:
-        exp_val = complete_value(expected_sugar.desugar(), owner="subscript assertion expected")
-        expected_ir = str_const(exp_val.value)
-
-    # Build IR term encoding ALL ops (both index and slice) so that distinct
-    # slices yield distinct terms and the round-3 collision is eliminated.
-    # _IndexOp(i)          -> num(i)
-    # _SliceOp(lo,hi,step) -> ctor("slice", [enc(lo), enc(hi), enc(step)])
-    #   where enc(x) = num(x) if x is not None else ctor("none", [])
-    # Integer-only paths are unchanged: _IndexOp still maps to num(i).
-    def _enc_bound(x: int | None) -> object:
-        return num(x) if x is not None else ctor("none", [])
-
-    def _op_term(op: _IndexOp | _SliceOp | _KeyOp) -> object:
-        if isinstance(op, _IndexOp):
-            return num(op.i)
-        if isinstance(op, _KeyOp):
-            return str_const(op.key)
-        return ctor("slice", [_enc_bound(op.lower), _enc_bound(op.upper), _enc_bound(op.step)])
-
-    all_op_terms = [_op_term(op) for op in ops]
-    subscript_term = ctor(f"subscript:{root_name}", all_op_terms)
-    assertion_contract_name = f"{fn.name}#{root_name}#subscript#{_canonical_term_sig(subscript_term)}::assertion"
-    assertion_memento = _statement_source_memento(
-        stmt,
-        fn,
-        memento_file,
-        source_lines,
-        contract_name=assertion_contract_name,
-        role="python.literal-call-sugar",
-    )
-
-    # Attempt to resolve the literal element via recursive value resolution.
-    # _resolve_value handles np.array, np.arange, np.rot90, np.transpose,
-    # x.T, x.reshape, and ast.Name bindings recursively.
-    # Only conjoin when we can GUARANTEE the element value from the literal --
-    # any ambiguity falls back to the single-operand opaque obligation.
-    _resolved_raw = _apply_ops(_resolve_value(root_node, fn), ops)
-    resolved_element: int | None = _resolved_raw if (isinstance(_resolved_raw, int) and not isinstance(_resolved_raw, bool)) else None
-    if resolved_element is not None:
-        # Conjoin: eq(subscript, expected) AND eq(subscript, literal-element).
-        # The literal-element closes the universe; expected==element -> DISCHARGED,
-        # expected!=element -> REFUTED. Two operands pass the vacuity guard.
-        assertion_formula = and_([
-            eq(subscript_term, expected_ir),  # type: ignore[possibly-undefined]
-            eq(subscript_term, num(resolved_element)),
-        ])
-    else:
-        # Opaque: no literal universe; honestly stays Refused.
-        assertion_formula = eq(subscript_term, expected_ir)  # type: ignore[possibly-undefined]
-    assertion_inv = _formula_to_rpc(assertion_formula)
-    assertion_contract = BodyUniverseDto(
-        name=assertion_contract_name,
-        out_binding="out",
-        inv=assertion_inv,
-        source_warrants=[assertion_memento],
-    )
-    walk = _walk_row(
-        "SubscriptSugar",
-        "Subscript",
-        stmt,
-        filename,
-        assertion_memento,
-        "predicate",
-        requested_role="AssertionSurface",
-        emitted_formula=assertion_inv,
-    )
-    audit = _source_audit(
-        fn,
-        stmt,
-        memento_file,
-        assertion_contract_name,
-        assertion_memento,
-        role="python.literal-call-sugar",
-        ast_kind="Assert",
-    )
-    return ([assertion_contract], [assertion_memento], [audit], [walk], [])
 
 
 def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
