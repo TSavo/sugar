@@ -92,6 +92,110 @@ def _np_array_nested_int(node: ast.AST):
     return _nested_int_literal(node.args[0])
 
 
+def _literal_label_list(node: ast.AST) -> "list | None":
+    """Extract a flat homogeneous list of str or int constants from an ast.List.
+
+    Rules:
+    - All elements must be ast.Constant of the same type (all str OR all int).
+    - bool is excluded even though bool is a subclass of int.
+    - Mixed types, empty lists, float/None/other leaves -> None (opaque).
+
+    Returns list[str] or list[int], never mixed.
+    """
+    if not isinstance(node, ast.List):
+        return None
+    if not node.elts:
+        return None  # empty -> opaque
+    result = []
+    elem_type = None  # str or int (type object)
+    for el in node.elts:
+        if not isinstance(el, ast.Constant):
+            return None
+        v = el.value
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, str):
+            if elem_type is None:
+                elem_type = str
+            elif elem_type is not str:
+                return None  # mixed
+        elif isinstance(v, int):
+            if elem_type is None:
+                elem_type = int
+            elif elem_type is not int:
+                return None  # mixed
+        else:
+            return None  # float, None, bytes, etc.
+        result.append(v)
+    return result
+
+
+def _is_label_encoder_call(node: ast.AST) -> bool:
+    """Return True iff ``node`` is a LabelEncoder() constructor call.
+
+    Recognises both:
+    - ``LabelEncoder()``                (ast.Name func)
+    - ``preprocessing.LabelEncoder()``  (ast.Attribute func, attr=="LabelEncoder")
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name) and func.id == "LabelEncoder":
+        return True
+    if isinstance(func, ast.Attribute) and func.attr == "LabelEncoder":
+        return True
+    return False
+
+
+def _find_label_encoder_labels(receiver_node: ast.AST, fn: ast.FunctionDef) -> "list | None":
+    """For a Name node that is bound to LabelEncoder(), find the literal labels
+    used in the single fit_transform([labels]) call in fn.body.
+
+    Returns the raw list[str|int] of labels (not yet sorted/encoded), or None
+    if any of these fail:
+    - receiver_node is not ast.Name
+    - the name is not bound exactly once to a LabelEncoder() constructor
+    - no unique fit_transform([literal-labels]) call on that name found in fn.body
+    """
+    if not isinstance(receiver_node, ast.Name):
+        return None
+    name = receiver_node.id
+    # Confirm single binding to LabelEncoder()
+    le_bound = None
+    le_count = 0
+    fit_labels = None
+    fit_count = 0
+    for stmt in fn.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id == name:
+            le_bound = stmt.value
+            le_count += 1
+            continue
+        # Check: some_var = le.fit_transform([...])
+        rhs = stmt.value
+        if (
+            isinstance(rhs, ast.Call)
+            and isinstance(rhs.func, ast.Attribute)
+            and rhs.func.attr == "fit_transform"
+            and isinstance(rhs.func.value, ast.Name)
+            and rhs.func.value.id == name
+            and len(rhs.args) == 1
+        ):
+            labels = _literal_label_list(rhs.args[0])
+            if labels is not None:
+                fit_labels = labels
+                fit_count += 1
+    if le_count != 1 or le_bound is None or not _is_label_encoder_call(le_bound):
+        return None
+    if fit_count != 1 or fit_labels is None:
+        return None
+    return fit_labels
+
+
 def _resolve_np_array_element(
     fn: ast.FunctionDef,
     root_name: str,
@@ -492,6 +596,41 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
             _flatten(src, flat_m)
             return flat_m
 
+        # LabelEncoder().fit_transform([labels])  — inline form
+        # le.fit_transform([labels])              — bound form (le = LabelEncoder())
+        # Returns list[int] encoding using sklearn's sorted-unique mapping:
+        #   classes = sorted(set(labels)); result[i] = classes.index(labels[i])
+        if isinstance(func, ast.Attribute) and func.attr == "fit_transform":
+            receiver = func.value
+            is_label_encoder = False
+            if _is_label_encoder_call(receiver):
+                # Inline: LabelEncoder().fit_transform(...)
+                is_label_encoder = True
+            elif isinstance(receiver, ast.Name):
+                # Bound: le = LabelEncoder(); le.fit_transform(...)
+                bound_val = None
+                bound_count = 0
+                for _stmt in fn.body:
+                    if not isinstance(_stmt, ast.Assign) or len(_stmt.targets) != 1:
+                        continue
+                    _target = _stmt.targets[0]
+                    if isinstance(_target, ast.Name) and _target.id == receiver.id:
+                        bound_val = _stmt.value
+                        bound_count += 1
+                if bound_count == 1 and bound_val is not None and _is_label_encoder_call(bound_val):
+                    is_label_encoder = True
+            if is_label_encoder:
+                if len(node.args) != 1:
+                    return None
+                labels = _literal_label_list(node.args[0])
+                if labels is None:
+                    return None  # empty, mixed, or non-literal -> opaque
+                # Sklearn semantics: sorted unique classes, then encode each label.
+                # sorted() works correctly for all-str or all-int (never mixed, enforced above).
+                classes = sorted(set(labels))
+                mapping = {c: i for i, c in enumerate(classes)}
+                return [mapping[x] for x in labels]
+
         return None
 
     # --- x.T (Attribute access, not a Call) ---
@@ -556,6 +695,18 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
         if isinstance(src, list):
             return src
         return None
+
+    # --- le.classes_ -> sorted unique labels list from a fitted LabelEncoder ---
+    # Works only for the bound form (le = LabelEncoder(); le.fit_transform([...]))
+    # because the inline form LabelEncoder().fit_transform(...) discards the object.
+    # Returns list[str] or list[int] (the sorted unique classes).
+    # Opaque for: non-LabelEncoder receiver, unfitted (no fit_transform found),
+    # ambiguous / multi-assignment, or non-literal label arguments.
+    if isinstance(node, ast.Attribute) and node.attr == "classes_":
+        labels = _find_label_encoder_labels(node.value, fn)
+        if labels is None:
+            return None
+        return sorted(set(labels))
 
     return None
 
