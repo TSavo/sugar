@@ -26,3 +26,16 @@ def test_ord_recognizes_byte_extraction_at_index():
 def test_non_ord_assignment_is_not_an_ord_byte():
     assert _from("t = value[0]", "value") is None
     assert _from('t = "ABC"', "value") is None
+
+
+def test_symbolic_ord_call_is_a_free_byte_var():
+    # `ord(value[i])` as a TERM (the rhs of `b0 = ord(value[0])`, recomposed through
+    # the BoundVar) is a free bv32 byte var. str.eq-bv-blocks constrains it to value's
+    # byte i; it is named by source+index so the same byte is the same var.
+    from factory_reduce import reduce_value
+
+    from sugar_lift_py_tests.floor import Bv32Value
+    from sugar_lift_py_tests.ir import make_var
+
+    assert reduce_value("ord(value[0])") == Bv32Value(make_var("byte_value_0"))
+    assert reduce_value("ord(value[2])") == Bv32Value(make_var("byte_value_2"))
