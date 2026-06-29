@@ -505,6 +505,35 @@ Sugar is not a promise that any current kit sees every useful contract in a
 codebase. Adapter coverage is empirical. Unknown, unsupported, or lossy surfaces
 must be reported honestly as residue, loss, or refusal.
 
+## Nine impossible things before breakfast
+
+So, in order:
+
+1. **Lift every language to first-order logic.** Rust, Python, Java. Tests, bodies,
+   annotations: all of it, into one logic a solver can read. This should be impossible.
+2. **Federate it across languages,** so a Rust vendor and a Python caller conjoin
+   contracts at the same callsite, neither one knowing the other exists. This, of
+   course, is impossible.
+3. **Unify all of it in one content-addressed space,** every term, contract, witness,
+   and source a single point you reach by its hash. This, naturally, is impossible.
+4. **Make the proof graph O(1),** so an unchanged commitment re-verifies as a 64-byte
+   `memcmp`, because identity *is* the hash. This is impossible, and now also fast.
+5. **Prove things while modeling nothing.** Never reimplement the function; just ask a
+   solver whether your claim could have come from it, and prove inputs nobody ever ran.
+   This is impossible, and the entire point.
+6. **Charge nothing for it:** no contracts, no annotations, no proof language, not one
+   line of your code changed. This is impossible, and a little rude.
+7. **Refuse to be trusted.** Every artifact recomputes from its own bytes, so even the
+   tool that minted the proof gets re-checked. This one is impossible on purpose.
+8. **Account for the dark,** every behavior lifted or refused by name, never silently,
+   so the ground nobody can prove gets a perimeter and a hash. This, you will have
+   noticed by now, is impossible.
+9. **Wrap the whole thing in a proof of itself and ship it.** The snake eats its
+   [tail](docs/self-application/2026-05-28-snake-eats-tail.md). This, in case you
+   haven't guessed yet, is quite impossible....
+
+The White Queen managed six impossible things before breakfast. We were hungry.
+
 ## License
 
 Source files use SPDX headers where present. A repository-level license file has
