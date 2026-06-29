@@ -4,61 +4,61 @@
 > **Sugar in, `.proof` out.**
 > One z3 check. Every language. Every surface you already wrote. Zero code changes.
 
-Sugar stops supply-chain attacks by federating correctness across every language, with zero changes to your code. It does that by doing nine impossible things. Here they are, in the order they had to happen. After each one we will tell you, plainly, that it is impossible. Then we will tell you how Sugar does it anyway.
+Sugar stops supply-chain attacks by federating correctness across every language, with zero changes to your code. It does that by doing nine impossible things — nine walls the normal approaches break against. Here is each wall, why it stands, and how Sugar walks through it.
 
-## 1. Lift every language into one logic.
+## 1. Lift every language into one logic
 
-That's impossible.
+To check a Rust library and a Python library with one tool, you need both in the same form. The textbook way is to *model* each language — its semantics, its standard library, its thousand corner cases — and those models rot, disagree, and never match the real thing. Forty years of formal methods says pick one language and go deep, or stay shallow and lie. Doing it faithfully for *every* language, from the code people already shipped, is impossible.
 
-Sugar reads the claims your code already makes. `assert encode("abc") == "def"` is a package swearing, in the language it shipped, that this call yields that result. Sugar treats that test as a **warrant**: it grows the one small universe the claim needs — the literals, the fixtures, the standard-library facts around that callsite — and lifts it into first-order logic. Rust, Python, Java: the surface differs, the logic underneath does not.
+So Sugar doesn't model the language. It reads a claim the code already makes. `assert encode("abc") == "def"` is the package swearing, in the language it shipped, that this call returns that value. Sugar treats it as a **warrant**, grows just the small universe that claim needs — the literals, the fixtures, the standard-library facts around that one callsite — and lifts *that* into first-order logic. Not the language. The claim. And a claim lifts the same out of Rust, Python, or Java.
 
-## 2. Throw away order.
+## 2. Throw away order
 
-That's impossible. A program is made of order: this line before that one, this write before that read.
+A program is made of order. This line before that one, this write before that read, this lock before that access. Order is the whole reason a program means anything; delete it and you don't get a faster program, you get an incident report. Every compiler engineer knows this, and every compiler engineer is right. Building something useful by throwing order away is, of course, impossible.
 
-So Sugar stops holding a program. Once a claim is lifted, what is left is a theory — `A ∧ B ∧ C` — and a conjunction does not care what order you read it in. Order is not lost; where it matters it becomes just another fact, `Before(write, read)`. An orderless theory is something you can canonicalize, hash, conjoin, and ship. A program is not. That is the whole move.
+We didn't know that. So we did it anyway, and the thing left in Sugar's hands was no longer a program. It was a *theory*: `A ∧ B ∧ C`, and a conjunction doesn't care what order you read it in. Order didn't vanish; where it genuinely matters it survives as a plain fact, `Before(write, read)`. It just stopped being the *structure*. And an orderless theory is everything a program can never be: canonical, hashable, conjoinable, shippable. The category error was the door.
 
-## 3. Give every behavior a name no one has to trust.
+## 3. Give every behavior a name no one has to trust
 
-That's impossible.
+You want to ask one question about a dependency: is this the same behavior as last week, or did something move? Names can't tell you — a name is a promise. Versions can't — SemVer is a social claim in a lab coat. Signatures can't — they vouch for bytes, not behavior. Every answer routes back to trusting *someone*. A name for behavior itself, that no human has to vouch for, is naturally impossible.
 
-Sugar hashes all of it. Every test, warrant, callsite, contract, witness, kit, and solver query gets a 512-bit name (BLAKE3-512; signatures are Ed25519); change one byte and the name changes. "Are we talking about the same universe?" stops being a database lookup, or a matter of trust, and becomes `memcmp(64)`. The `.proof` is a case file in which every exhibit names itself.
+So Sugar hashes the behavior. Every test, warrant, callsite, contract, and witness gets a 512-bit name (BLAKE3-512, signed with Ed25519); change one byte of what the code *does* and the name changes. "Same behavior?" stops being a database lookup or an act of faith and becomes `memcmp(64)`. The `.proof` is a case file where every exhibit names itself, and the name is the evidence.
 
-## 4. Prove what a function does without running it, while modeling nothing.
+## 4. Prove what a function does without running it, while modeling nothing
 
-That's impossible.
+Normally, to prove a function returns the right answer you have to know what it computes: reimplement it, model it, or run it on every input. Reimplement it and you've become a second, buggier copy of the thing you're checking. Run it and you only ever learn about the inputs you tried. Knowing what an arbitrary function does without doing either is quite impossible.
 
-Sugar never reimplements the function. It hands the solver your claim and the behavior you imported and asks one thing: can these coexist? The vendor's tests say `enc("abc") == "xyz"`; you say `enc("bby") == "chk"`; z3 answers SAT or UNSAT against the function's own lifted body. UNSAT means your claim could not have come from that function. You can prove an input the vendor never tested, and no unit test runs.
+So Sugar refuses the problem. It never reimplements the function and never runs your input. It hands z3 your claim and the function's *own* lifted body and asks one thing: can both be true at once? The vendor's tests say `enc("abc") == "xyz"`; you claim `enc("bby") == "chk"`; z3 answers SAT or UNSAT against the body itself. UNSAT means your claim could not have come from that function — proven, on an input nobody ever tested, with no test run. Sugar isn't searching for the answer. It already has it. It only asks whether you contradict it.
 
-## 5. Map a program without lying about the parts it cannot see.
+## 5. Map a program without lying about the parts you can't see
 
-That's impossible.
+Real code touches the world: the filesystem, the network, the clock, randomness, a subprocess, FFI into something no one can read. A tool that wants to map a program is tempted to model all of it too — and the moment it does, it's a hallucination with a CLI, confidently narrating an Internet it cannot see. Mapping a program *without* lying about the parts you can't model, drawing the edge of the known instead of painting past it, is impossible to do and stay honest.
 
-Pure code expands Sugar's universe; every effect has to earn its place. A file read pins a point and records the trace. A network call, a clock, randomness, FFI, a subprocess: each one stops the map and marks the edge. That edge is not a failure. It is the map saying *here be dragons*, drawn to scale, instead of a hallucination with a CLI pretending it modeled the Internet.
+So Sugar makes purity earn the map and makes every effect mark its own edge. Pure code expands the universe. A file read pins a point and records the trace; a network call, a clock, a coin flip, a subprocess each stop the map and post a sign. That sign is not a failure. It's the map saying *here be dragons*, drawn to scale — the only honest thing a map of real software can say.
 
-## 6. Sell uncertainty.
+## 6. Sell uncertainty
 
-That's impossible.
+Nobody buys "I don't know." Every tool in this space sells certainty: a green check, a passing suite, a clean scan, because certainty is what people think they want. But certainty about software is mostly a flattering lie, and the information that actually hurts you was never in the part that passed. Selling the *unknown itself* as the product is — in case you haven't guessed yet — quite impossible.
 
-Sugar does not sell certainty. It sells the exact shape of uncertainty. Every claim lands somewhere named: pinned, contradicted, witnessed, bounded, fixture-only, outside the membrane, or unknown. A green proof is the boring half. The product is the other one: the precise, enumerated list of behavior nobody ever swore to, per dependency, the empty set included and hashed. Unmarked uncertainty is the only enemy.
+So Sugar sells the exact shape of the unknown. Every claim lands somewhere named: pinned, contradicted, witnessed, bounded, fixture-only, outside the membrane, or unknown. The green proof is the boring half. The product is the other one — the precise, enumerated list of the behavior nobody ever swore to, per dependency, the empty set included and hashed. Certainty you can fake. The shape of your ignorance, drawn honestly, no one else will sell you.
 
-## 7. Do all of it with zero changes to your code.
+## 7. Do all of it with zero changes to your code
 
-That's impossible.
+Every verification tool in history charges a tax: write the spec, add the annotations, learn the proof language, contort the code until the prover can see it. That tax is why verification stayed in aerospace and out of your repo. A tool that asks for *nothing* — no spec, no annotation, no new dialect, not one changed line — shouldn't be able to know anything at all. That is impossible.
 
-A kit per language reads what is already there: tests, bodies, annotations, package metadata. Existing artifacts in, behavior map out. No specs. No annotations. No proof language. No asking maintainers to become logicians, no asking Python to stop being Python or C++ to stop being a haunted mansion full of knives. `cd` into a project and `sugar mint` writes a signed `.proof`; the next consumer, in any language, drops it in and `sugar prove`s their own code against it. The numpy demo lifts every module-level function with no code changes and no shim.
+Except the spec was already in your repo. Sugar's per-language kit reads what's there — tests, bodies, annotations, package metadata — and that's the entire input. `cd` into a project, `sugar mint`, and out comes a signed `.proof`; the next consumer, in any language, drops it in and `sugar prove`s their code against it. No specs, no logicians, no asking Python to stop being Python or C++ to stop being a haunted mansion full of knives. The numpy demo lifts every module-level function with zero code changes and no shim.
 
-## 8. Stop supply-chain attacks.
+## 8. Stop supply-chain attacks
 
-That's impossible. You cannot fix a trust problem by becoming one more vendor saying *trust us, we found the bad thing*.
+A supply-chain attack lives in the gap between what you installed and what behavior you agreed to run. The industry's answer is to add a trusted party to the chain — a scanner, a registry, a vendor saying *trust us, we found the bad thing* — which "solves" a trust problem by adding one more thing to trust. Closing that gap without becoming the next link to be compromised is, naturally, impossible.
 
-So Sugar owns none of it. You own your kit, your solver, your policy; every part is replaceable; Sugar hands you the claim, the warrant, the witness, the hash, and tells you to verify it yourself. That is federated correctness. An attack is a *behavior*, and behavior now has a hash: change what a package does and its root moves; reach outside the cage and the membrane breaks. SemVer says nothing important changed, promise; Sugar shows the behavioral diff. There is nowhere quiet left to hide.
+So Sugar owns nothing. You own your kit, your solver, your policy; every part is replaceable; Sugar just hands you the claim, the warrant, the witness, and the hash, and tells you to check it yourself. That's federated correctness. And because behavior now has a hash, the attack has nowhere to hide: change what a package does and its root moves, reach outside its cage and the membrane breaks, ship a quiet `minor` that does something new and the diff lights up. SemVer says nothing important changed. Sugar shows you whether that's true.
 
-## 9. Wrap the whole thing in a proof of itself and ship it.
+## 9. Wrap the whole thing in a proof of itself and ship it
 
-That's impossible.
+There is one honesty test a correctness tool cannot talk its way out of: turn it on itself. Most never do, because the machine that checks everything is usually the one thing nobody checked. Proving your own correctness engine with your own correctness engine, and shipping the result, is impossible, or at least deeply unwise.
 
-Sugar mints proof data from its own tests and assertions. The snake eats its [tail](docs/self-application/2026-05-28-snake-eats-tail.md). Sugar in, `.proof` out, all the way down.
+We didn't know that either. Sugar mints proof data from its own tests and assertions; the snake eats its [tail](docs/self-application/2026-05-28-snake-eats-tail.md). Sugar in, `.proof` out, all the way down.
 
 The White Queen managed to believe six impossible things before breakfast. Sugar does nine, and signs them.
 
