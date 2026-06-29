@@ -14,7 +14,16 @@ from sugar_lift_py_tests.factory.array_map_report import (
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
-from sugar_lift_py_tests.ir import Formula, and_, ctor, eq, formula_to_value, str_const
+from sugar_lift_py_tests.ir import (
+    Formula,
+    Term,
+    and_,
+    ctor,
+    eq,
+    formula_to_value,
+    num,
+    str_const,
+)
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     FactoryWalkRowDto,
@@ -186,6 +195,34 @@ def _lift_assert(
     return _merge_lifts(universe, assertion)
 
 
+def _floor_to_term(value: Any) -> Term:
+    """Map a reduced Floor value to its ProofIR term. Composition-agnostic: it does
+    not care WHICH sugar produced the value, only its Floor type."""
+    from sugar_lift_py_tests.floor import StringValue, TermValue
+
+    if isinstance(value, TermValue):
+        return num(value.value)
+    if isinstance(value, StringValue):
+        return str_const(value.value)
+    raise TypeError(
+        f"write more Floor->Term for `{type(value).__name__}` in the callsite literal"
+    )
+
+
+def _lift_literal_via_factory(node: ast.AST, filename: str) -> Term:
+    """Lift a literal operand of a callsite equality THROUGH THE FACTORY: the
+    catalog's literal sugars (PrimitiveLiteral, ...) build and reduce it, and an
+    unhandled shape panics via the catalog's own mouth. No special-casing per type."""
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.claim import SugarRole as _Role
+
+    from .build import default_catalog
+
+    ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    body = ctx.build_body(node, _Role.TERM)
+    return _floor_to_term(complete_value(body.reduce(ctx), owner="callsite literal"))
+
+
 def _lift_callsite_assertion(
     stmt: ast.Assert,
     *,
@@ -202,15 +239,10 @@ def _lift_callsite_assertion(
     (`is_callsite_ctor_term` requires the `call:` prefix) and the head the universe
     post specializes onto. Only concrete-literal args take this path; a symbolic arg
     returns None."""
-    expected_sugar = string_literal_sugar(comparison.comparators[0])
-    if expected_sugar is None:
-        _panic_no_sugar(
-            comparison.comparators[0], memento_file,
-            observed=f"callsite-expected:{type(comparison.comparators[0]).__name__}",
-            requested="StringLiteralExpected",
-            fix="lift non-string-literal expected (e.g. numeric `== 32`, list `== [..]`)",
-        )
-    expected = complete_value(expected_sugar.desugar(), owner="callsite assertion expected")
+    # The expected value composes through the factory's literal sugars (string,
+    # int, ...). Anything the catalog can't build panics via its own mouth, which
+    # names the next sugar -- no string-only special case here.
+    expected_term = _lift_literal_via_factory(comparison.comparators[0], filename)
     arg_terms = []
     for arg_node in comparison.left.args:
         arg_sugar = string_literal_sugar(arg_node)
@@ -233,7 +265,7 @@ def _lift_callsite_assertion(
         contract_name=assertion_contract_name,
         role="python.literal-call-sugar",
     )
-    assertion_inv = _formula_to_rpc(eq(euf_term, str_const(expected.value)))
+    assertion_inv = _formula_to_rpc(eq(euf_term, expected_term))
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
