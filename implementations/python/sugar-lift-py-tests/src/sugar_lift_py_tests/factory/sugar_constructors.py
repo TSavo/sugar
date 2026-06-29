@@ -159,17 +159,21 @@ def build_lambda_sugar(site, ctx):
 
 
 def build_function_call_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
+    from sugar_lift_py_tests.sugar.function_call_sugar import (
+        FunctionCallSugar,
+        callee_target,
+    )
 
     node = site.node
     if not isinstance(node, ast.Call):
         raise TypeError("FunctionCallSugar claim built a non-call")
-    if not isinstance(node.func, ast.Name):
-        raise TypeError("FunctionCallSugar claim built a non-name call")
+    target = callee_target(node)
+    if target is None:
+        raise TypeError("FunctionCallSugar claim built a non-name/attribute call")
     if node.keywords or len(node.args) != 1:
         raise TypeError("FunctionCallSugar claim built a non-unary call")
     functions_by_name = ctx.name_resolver or {}
-    function = functions_by_name.get(node.func.id)
+    function = functions_by_name.get(target)
     if function is None:
         raise TypeError("FunctionCallSugar claim built an unresolved function call")
     argument = ctx.build_body(node.args[0], SugarRole.TERM)
