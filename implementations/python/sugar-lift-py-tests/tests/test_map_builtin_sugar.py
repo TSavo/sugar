@@ -2,8 +2,24 @@ from __future__ import annotations
 
 import ast
 
+from factory_reduce import array_map_pairs
+
 from sugar_lift_py_tests.factory import SourceSite
 from sugar_lift_py_tests.sugar.map_builtin_sugar import MapBuiltinSugar
+
+
+def _native(call: str, expected: str):
+    return array_map_pairs(
+        f"def id(x):\n    return x\ndef t():\n    assert {call} == {expected}\n"
+    )
+
+
+def test_map_builtin_applies_the_ref_to_each_element_in_composition():
+    # map(id, range(1,4)) composes FunctionRef + Range: id applied pointwise to
+    # 1,2,3 -> the conjoined equalities all hold (sat).
+    assert all(left == right for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 3]"))
+    # a wrong expected leaves an unequal pair (unsat) -- no false discharge.
+    assert any(left != right for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 99]"))
 
 
 SOURCE = """
