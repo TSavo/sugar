@@ -326,6 +326,18 @@ def build_list_literal_sugar(site, ctx):
     return sugar
 
 
+def build_return_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+    node = site.node
+    if not isinstance(node, ast.Return):
+        raise TypeError("ReturnSugar claim built a non-return")
+    if node.value is None:
+        raise TypeError("ReturnSugar requires a return value")
+    # The factory builds the value expression (TERM) and hands it in.
+    return ReturnSugar(value=ctx.build_body(node.value, SugarRole.TERM))
+
+
 def build_block_sugar(site, ctx):
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
