@@ -692,6 +692,92 @@ def _resolve_value(node: ast.AST, fn: ast.FunctionDef) -> object:
                 _flatten(src, flat_r)
                 return flat_r
 
+            # np.concatenate / np.hstack / np.vstack / np.stack
+            if op in ("concatenate", "hstack", "vstack", "stack"):
+                if len(node.args) < 1 or not isinstance(node.args[0], ast.List):
+                    return None
+                parts = []
+                for elt in node.args[0].elts:
+                    v = _resolve_value(elt, fn)
+                    if v is None:
+                        return None
+                    parts.append(v)
+                if not parts:
+                    return None
+                # Classify each part: 1-D (list[int]) or 2-D (list[list[int]])
+                def _is_1d(p: object) -> bool:
+                    return (
+                        isinstance(p, list)
+                        and len(p) > 0
+                        and all(isinstance(e, int) and not isinstance(e, bool) for e in p)
+                    )
+                all_1d = all(_is_1d(p) for p in parts)
+                all_2d = all(_is_2d_int_matrix(p) for p in parts)
+                if not all_1d and not all_2d:
+                    return None  # mixed dims -> opaque
+
+                if op == "concatenate":
+                    if all_1d:
+                        # flat concat
+                        result: list = []
+                        for p in parts:
+                            result.extend(p)  # type: ignore[arg-type]
+                        return result
+                    else:
+                        # row concat (2-D)
+                        result = []
+                        for p in parts:
+                            result.extend(p)  # type: ignore[arg-type]
+                        if not _is_2d_int_matrix(result):
+                            return None
+                        return result
+
+                if op == "hstack":
+                    if all_1d:
+                        # same as concatenate 1-D
+                        result = []
+                        for p in parts:
+                            result.extend(p)  # type: ignore[arg-type]
+                        return result
+                    else:
+                        # column concat: result[i] = p0[i] ++ p1[i] ++ ...
+                        nrows = len(parts[0])  # type: ignore[arg-type]
+                        if any(len(p) != nrows for p in parts):  # type: ignore[arg-type]
+                            return None
+                        return [
+                            sum((p[i] for p in parts), [])  # type: ignore[index]
+                            for i in range(nrows)
+                        ]
+
+                if op == "vstack":
+                    if all_1d:
+                        # each 1-D part becomes a row; require equal lengths
+                        ncols = len(parts[0])  # type: ignore[arg-type]
+                        if any(len(p) != ncols for p in parts):  # type: ignore[arg-type]
+                            return None
+                        return [list(p) for p in parts]  # type: ignore[arg-type]
+                    else:
+                        # row concat (same as concatenate 2-D)
+                        result = []
+                        for p in parts:
+                            result.extend(p)  # type: ignore[arg-type]
+                        if not _is_2d_int_matrix(result):
+                            return None
+                        return result
+
+                if op == "stack":
+                    if all_1d:
+                        # new axis 0: [p0, p1, ...], require equal lengths
+                        ncols = len(parts[0])  # type: ignore[arg-type]
+                        if any(len(p) != ncols for p in parts):  # type: ignore[arg-type]
+                            return None
+                        return [list(p) for p in parts]  # type: ignore[arg-type]
+                    else:
+                        # 3-D result -> out of scope
+                        return None
+
+                return None  # unreachable but satisfies control flow
+
             # np.array already handled above by _np_array_nested_int
             return None
 
