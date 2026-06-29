@@ -2,18 +2,48 @@
 **Makes software honest.**
 
 > **Sugar in, `.proof` out.**
+> One z3 check. Every language. Every surface you already wrote. Zero code changes.
 
-Nobody depends on your code. They depend on what your code *does*. Sugar takes
-the ordinary surface you already write, the *sugar* (tests, assertions,
-contracts, schemas, validators, framework annotations, boundary and library
-bindings), and turns it into a signed, content-addressed `.proof` of the
-**behavior**: a portable claim other packages, tools, and languages can
-re-verify by recomputation, without trusting your test runner and without
-re-running your proof. It never asks anyone to rewrite code in a proof language.
-"Just sugar," the surface everyone waves off as not-the-real-thing, is exactly
-where correctness turns out to live.
+Nobody depends on your code. They depend on what your code *does* — and the only
+ways to know what it does have been to trust your tests or to rewrite your program
+in a proof language. Sugar does neither. It reads the surface you already wrote —
+your tests, your assertions, your function bodies — and turns *that* into
+machine-checked proof of behavior, in any language, with **zero changes to your
+code.** "Just sugar," the surface everyone waves off as not-the-real-thing, is
+exactly where correctness turns out to live.
 
-Sugar in, `.proof` out. CIDs are BLAKE3-512; signatures are Ed25519.
+## The whole trick: one z3 check, every language, zero code changes
+
+Four claims. They read like four separate products. They are one move.
+
+- **One z3 check.** Verifying isn't *searching* for a proof — it's one consistency
+  question. A vendor stated `enc("abc") == "xyz"`; you state `enc("bby") == "chk"`;
+  z3 is handed `and(their claim, your claim, the function's own body)` and answers
+  SAT or UNSAT. We throw the model away — we already have the answer, we only ask
+  whether you *contradict* it. You can prove an input the vendor never tested, and
+  **no unit test runs.**
+- **Every language.** z3 never sees your source. Rust, Python, Java all lift to one
+  content-addressed form, so a Rust vendor and a Python caller meet at the *same
+  callsite*. Cross-language isn't a feature we built; it's unavoidable once
+  everything is the one form.
+- **Every surface you already wrote.** Your unit tests are your stated facts; your
+  function bodies are your stated contracts. No proof language, no annotations, no
+  first-order logic.
+- **Zero code changes.** Not "no shim." *Nothing.* You change not one line and add
+  not one annotation; `cd` into a project, lift, and ship — and the next consumer,
+  in any language, conjoins their code against the result in three commands.
+
+It holds because we **model nothing.** We never reimplement your function — that
+reimplementation is the unsound shim every other tool ships. We pin what you already
+stated and ask z3 one forensic question: *could this new claim have come from this
+same function?* Check, don't synthesize. That single inversion is why it is sound,
+why it is cheap, why it crosses every language, and why it costs you nothing. The
+full mechanic is [bridges & composition](docs/contributing/bridges-and-composition.md).
+
+The artifact all of this produces is a **`.proof`**: a signed, content-addressed
+claim about behavior that other packages, tools, and languages re-verify by
+recomputation — without trusting your test runner, and without re-running your
+proof. CIDs are BLAKE3-512; signatures are Ed25519. Everything below is the breakdown.
 
 ## The part that should keep you up at night
 
@@ -421,9 +451,9 @@ The numpy demos provision their own venv on first run.
 
 - **Canonical implementation:** the Rust CLI in
   `implementations/rust/sugar-cli`.
-- **Protocol catalog:** embedded in the CLI and verified by `sugar
-  verify-protocol`. The binary is the live authority for the catalog CID; do not
-  trust a version written in prose.
+- **Protocol catalog:** embedded in the CLI and surfaced by `sugar self-check`.
+  The binary is the live authority for the catalog CID; do not trust a version
+  written in prose.
 - **Supported ecosystem surface:** coverage is empirical and uneven across
   languages, and it changes faster than prose can track. The runnable
   [examples/](examples/) are the honest picture of what works end to end today;
