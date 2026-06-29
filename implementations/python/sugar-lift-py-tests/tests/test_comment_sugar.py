@@ -23,9 +23,11 @@ def test_factory_classifies_a_comment_as_support():
     assert _support_candidates('"a docstring"') == ["CommentSugar"]
 
 
-def test_non_comment_statements_are_not_support():
-    assert _support_candidates("x = 1") == []
-    assert _support_candidates("5") == []  # a bare int is not a comment
+def test_non_comment_statements_get_their_own_sugar_not_comment():
+    # an assignment is a statement, but it dispatches to AssignSugar -- not Comment.
+    assert _support_candidates("x = 1") == ["AssignSugar"]
+    # a bare int expression is neither a comment nor any other statement sugar.
+    assert _support_candidates("5") == []
 
 
 def test_comment_desugars_to_support_and_always_completes():
