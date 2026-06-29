@@ -30,25 +30,29 @@ def test_expected_int_and_str_lift_through_the_catalog():
 
 
 def test_flat_list_arg_composes_through_the_factory():
-    # a flat list arg keys the callsite as `array(...)` -- composed via the
-    # catalog's ArrayLiteral sugar, not a string special case.
+    # A flat list arg keys the callsite as `array(...)` -- composed via the catalog's
+    # ArrayLiteral sugar, not a string special case. The callee is unresolvable (no
+    # import, no local def), so only the fact is lifted -- isolating the arg keying.
     rep = build_literal_call_report(
-        source="import numpy as np\ndef t():\n    assert np.cumsum([1, 2, 3]) == 6\n",
+        source="def t():\n    assert aggregate([1, 2, 3]) == 6\n",
         filename="t.py",
         memento_file="t.py",
     )
     euf = [c.name for c in rep.payload.ir if "euf" in c.name]
-    assert euf == ["cumsum#euf#c:call:cumsum(c:array(i:1,i:2,i:3))::assertion"]
+    assert euf == ["aggregate#euf#c:call:aggregate(c:array(i:1,i:2,i:3))::assertion"]
 
 
-def test_numeric_expected_advances_panic_past_the_expected():
-    # `== 5` no longer panics on the expected; a FLAT list arg composes through the
-    # factory, and a NESTED array is the next shape the mouth names (cleanly, not a
-    # crash) -- the worklist moving forward.
+def test_numeric_expected_and_nested_array_arg_are_handled_panic_is_downstream():
+    # For `np.rot90([[1,2],[3,4]]) == 5` the numeric expected AND the nested-array
+    # arg both compose through the factory now. Any remaining panic is DOWNSTREAM
+    # (the dig of numpy's imported source), never the expected or the args -- the
+    # worklist has moved past the callsite shape and into the body.
     with pytest.raises(FactoryGap) as raised:
         build_literal_call_report(
             source="import numpy as np\ndef t():\n    assert np.rot90([[1,2],[3,4]]) == 5\n",
             filename="t.py",
             memento_file="t.py",
         )
-    assert raised.value.info.get("observed") == "callsite-arg:List-unliftable"
+    observed = raised.value.info.get("observed", "")
+    assert observed != "callsite-expected:Constant"
+    assert not observed.startswith("callsite-arg")
