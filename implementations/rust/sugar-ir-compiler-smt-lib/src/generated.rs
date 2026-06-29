@@ -51,6 +51,64 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             if name == "str.len" && args.len() == 1 {
                 return format!("(str.len {})", emit_string_term(&args[0]));
             }
+            // ── Composable string-theory Ctor terms ───────────────────────────────────
+            // str.from_code, str.++, str.table-select are GENERAL SMT string-theory
+            // operations produced by the Sugar lift.  base64 discharge is a consequence
+            // of these general mechanisms; nothing here is base64-specific.
+            //
+            // str.from_code(arg) → one-char String from a codepoint Int.
+            // When the arg is a bv32 Ctor (name starts with "bv32."), bridge via
+            // bv2nat because str.from_code takes Int, not BitVec. For all other
+            // arg kinds (Int Const, str.table-select ite-chain output, Var declared
+            // Int) emit_term already produces the correct Int-sorted SMT expression.
+            if name == "str.from_code" && args.len() == 1 {
+                if matches!(&args[0], Term::Ctor { name: inner, .. } if inner.starts_with("bv32.")) {
+                    let empty = std::collections::HashMap::new();
+                    if let Some(bv_smt) = emit_bv32_term(&args[0], &empty) {
+                        return format!("(str.from_code (bv2nat {}))", bv_smt);
+                    }
+                }
+                return format!("(str.from_code {})", emit_term(&args[0]));
+            }
+            // str.++(left, right) → SMT string concatenation.
+            // Routes through emit_string_term so a composed string tree in term
+            // position stays in the string theory.
+            if name == "str.++" && args.len() == 2 {
+                return format!(
+                    "(str.++ {} {})",
+                    emit_string_term(&args[0]),
+                    emit_string_term(&args[1])
+                );
+            }
+            // str.table-select(alpha_str_const, bv32_index) →
+            //   nested (ite (= idx K) cp ...) codepoint-lookup chain.
+            // The alphabet string constant supplies the N-entry table; the bv32 index
+            // is a symbolic or concrete bitvector (e.g. a 6-bit sextet from base64
+            // bit-slicing, or any other bit-interleaved index into a byte table).
+            // Returns an Int codepoint; callers wrap with str.from_code to get a
+            // one-character String.  GENERAL: any String-valued alphabet table.
+            if name == "str.table-select" && args.len() == 2 {
+                if let Term::Const {
+                    value: serde_json::Value::String(alpha),
+                    ..
+                } = &args[0]
+                {
+                    let alpha = alpha.clone();
+                    let empty = std::collections::HashMap::new();
+                    if let Some(index_smt) = emit_bv32_term(&args[1], &empty) {
+                        let codepoints: Vec<i64> = alpha.chars().map(|c| c as i64).collect();
+                        // Build innermost-first (reverse order) so that element 0 is
+                        // the outermost ite, matching the ite-chain in
+                        // render_b64_blocks_body_with_input.
+                        let mut acc = "0".to_string();
+                        for (idx, &cp) in codepoints.iter().enumerate().rev() {
+                            let idx_hex = i32_to_bv32_hex(idx as i64);
+                            acc = format!("(ite (= {} {}) {} {})", index_smt, idx_hex, cp, acc);
+                        }
+                        return acc;
+                    }
+                }
+            }
             if name.starts_with("bv32.") {
                 let subst = std::collections::HashMap::new();
                 if let Some(rendered) = emit_bv32_term(term, &subst) {
@@ -2115,7 +2173,17 @@ fn collect_ctor_decls_formula(formula: &Formula, out: &mut BTreeMap<String, Ctor
 /// uninterpreted is the sound choice (the cardinal-sin guard). They keep
 /// getting declared uninterpreted, exactly as before.
 fn is_builtin_term_operator(name: &str) -> bool {
-    matches!(name, "+" | "-" | "*" | "str.len" | "str.++")
+    matches!(
+        name,
+        "+" | "-"
+            | "*"
+            | "str.len"
+            | "str.++"
+            // Composable string-theory Ctor terms: emitted inline by
+            // emit_term_with_expected, never as declared uninterpreted functions.
+            | "str.from_code"   // → (str.from_code <int>): SMT string theory builtin
+            | "str.table-select" // → ite-chain codepoint lookup: emitted inline
+    )
 }
 
 // ── Monadic Option/Result algebraic datatypes ──────────────────────────────
@@ -3602,6 +3670,236 @@ mod b64_strong_tests {
         assert!(
             run_tail_claim(tail1_payload(), "ZX==").starts_with("unsat"),
             "alphabet-valid-but-wrong padded ZX== must be unsat"
+        );
+    }
+}
+
+#[cfg(test)]
+mod str_table_select_tests {
+    //! Unit tests for the composable string-theory Ctor terms added to the SMT
+    //! backend: `str.table-select`, `str.from_code`, and `str.++`.
+    //!
+    //! These tests operate entirely at the SMT emission layer.  The z3 round-trip
+    //! tests (good/bad twins) verify that the SYMBOLIC TEETH work: the "good"
+    //! formula is SAT and the "bad" formula is UNSAT via the composed consistency
+    //! obligation -- NOT via a self-contradiction, NOT via the witness.
+    use super::*;
+    use sugar_ir_types::IrTerm as Term;
+
+    fn s(name: &str) -> Sort {
+        Sort::Primitive { name: name.into() }
+    }
+
+    /// Build a `str.table-select(alpha, const_sextet)` IrTerm.
+    fn table_select(alpha: &str, sextet: i64) -> Term {
+        Term::Ctor {
+            name: "str.table-select".into(),
+            args: vec![
+                Term::Const {
+                    value: serde_json::Value::String(alpha.to_string()),
+                    sort: s("String"),
+                },
+                Term::Const {
+                    value: serde_json::json!(sextet),
+                    sort: s("u32"),
+                },
+            ],
+        }
+    }
+
+    /// Build a `str.from_code(arg)` IrTerm.
+    fn from_code(arg: Term) -> Term {
+        Term::Ctor {
+            name: "str.from_code".into(),
+            args: vec![arg],
+        }
+    }
+
+    /// Build a `str.++(left, right)` IrTerm.
+    fn str_concat(left: Term, right: Term) -> Term {
+        Term::Ctor {
+            name: "str.++".into(),
+            args: vec![left, right],
+        }
+    }
+
+    // ── SMT emission shape tests ──────────────────────────────────────────────
+
+    #[test]
+    fn str_table_select_emits_ite_chain() {
+        // A 3-entry table with sextets [0, 1, 2] -> codepoints [65, 66, 67].
+        // sextet 1 => codepoint 66 ('B').
+        let alpha = "ABC";
+        let term = table_select(alpha, 1);
+        let smt = emit_term(&term);
+        // The ite chain must contain at least one (ite ...) expression.
+        assert!(smt.contains("ite"), "str.table-select must emit an ite chain, got: {smt}");
+        // It must compare against the sextet hex values.
+        assert!(
+            smt.contains("#x00000001"),
+            "ite chain must compare against idx #x00000001, got: {smt}"
+        );
+        // It must contain the codepoints.
+        assert!(smt.contains("66"), "ite chain must contain codepoint 66 ('B'), got: {smt}");
+    }
+
+    #[test]
+    fn str_from_code_with_int_arg_emits_str_from_code() {
+        // str.from_code with an Int const: -> (str.from_code 90)
+        let term = Term::Ctor {
+            name: "str.from_code".into(),
+            args: vec![Term::Const {
+                value: serde_json::json!(90i64),
+                sort: s("Int"),
+            }],
+        };
+        let smt = emit_term(&term);
+        assert_eq!(smt, "(str.from_code 90)", "Int-sorted str.from_code must emit directly");
+    }
+
+    #[test]
+    fn str_concat_emits_str_concat_smt() {
+        // str.++("hello", "world") -> (str.++ "hello" "world")
+        let term = str_concat(
+            Term::Const {
+                value: serde_json::Value::String("hello".into()),
+                sort: s("String"),
+            },
+            Term::Const {
+                value: serde_json::Value::String("world".into()),
+                sort: s("String"),
+            },
+        );
+        let smt = emit_term(&term);
+        assert_eq!(
+            smt, r#"(str.++ "hello" "world")"#,
+            "str.++ must emit as SMT string concatenation"
+        );
+    }
+
+    #[test]
+    fn str_table_select_not_declared_as_uninterpreted_fn() {
+        // str.table-select must be treated as a builtin -- it must NOT appear
+        // in the set of ctor declarations collected for uninterpreted functions.
+        let term = table_select("ABC", 1);
+        let mut decls = std::collections::BTreeMap::new();
+        collect_ctor_decls_term(&term, None, &mut decls);
+        assert!(
+            !decls.keys().any(|k| k.contains("str.table-select")),
+            "str.table-select must not be declared as uninterpreted fn, got decls: {decls:?}"
+        );
+    }
+
+    #[test]
+    fn str_from_code_not_declared_as_uninterpreted_fn() {
+        let term = from_code(Term::Const {
+            value: serde_json::json!(65i64),
+            sort: s("Int"),
+        });
+        let mut decls = std::collections::BTreeMap::new();
+        collect_ctor_decls_term(&term, None, &mut decls);
+        assert!(
+            !decls.keys().any(|k| k.contains("str.from_code")),
+            "str.from_code must not be declared as uninterpreted fn, got decls: {decls:?}"
+        );
+    }
+
+    // ── z3 round-trip: SYMBOLIC TEETH ────────────────────────────────────────
+    //
+    // "foo" (bytes 102, 111, 111) encodes to "Zm9v" in standard base64.
+    // Sextets: s0=25, s1=38, s2=61, s3=47.
+    //
+    // The GOOD formula `(= "Zm9v" (str.++ ...))` must be SAT (composed correctly).
+    // The BAD formula `(= "XXXX" (str.++ ...))` must be UNSAT (refuted by the
+    // composed consistency obligation, NOT by a self-contradiction or the witness).
+    // A SECOND wrong value ("AAAA") must also be UNSAT.
+
+    const STD_B64_ALPHA: &str =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    /// Build a 4-char base64 output term for input bytes (102,111,111) = "foo".
+    /// Uses concrete bv32 sextet constants -- no symbolic variables -- so the
+    /// formula is a pure arithmetic/string-theory SAT/UNSAT query.
+    fn foo_encode_term() -> Term {
+        // sextets for "foo": [25, 38, 61, 47]
+        let chars: Vec<Term> = [25i64, 38, 61, 47]
+            .iter()
+            .map(|&s| from_code(table_select(STD_B64_ALPHA, s)))
+            .collect();
+        // str.++(chars[0], str.++(chars[1], str.++(chars[2], chars[3])))
+        str_concat(
+            chars[0].clone(),
+            str_concat(
+                chars[1].clone(),
+                str_concat(chars[2].clone(), chars[3].clone()),
+            ),
+        )
+    }
+
+    fn run_str_formula(expected: &str, rhs_term: &Term) -> String {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let rhs_smt = emit_term(rhs_term);
+        let script = format!(
+            "(set-logic ALL)\n(assert (= \"{expected}\" {rhs_smt}))\n(check-sat)\n"
+        );
+        let mut child = Command::new("z3")
+            .args(["-smt2", "-in"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn z3");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout)
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn composed_foo_encode_good_twin_is_sat() {
+        use std::process::Command;
+        if Command::new("z3").arg("--version").output().is_err() {
+            eprintln!("z3 absent: skipping str_table_select z3 integration test");
+            return;
+        }
+        let rhs = foo_encode_term();
+        assert!(
+            run_str_formula("Zm9v", &rhs).starts_with("sat"),
+            "GOOD twin: encode(foo)==Zm9v must be SAT via composed str.table-select + str.from_code + str.++"
+        );
+    }
+
+    #[test]
+    fn composed_foo_encode_bad_twin_xxxx_is_unsat() {
+        use std::process::Command;
+        if Command::new("z3").arg("--version").output().is_err() {
+            eprintln!("z3 absent: skipping str_table_select z3 integration test");
+            return;
+        }
+        let rhs = foo_encode_term();
+        assert!(
+            run_str_formula("XXXX", &rhs).starts_with("unsat"),
+            "BAD twin: encode(foo)==XXXX must be UNSAT (refuted by composed consistency)"
+        );
+    }
+
+    #[test]
+    fn composed_foo_encode_bad_twin_aaaa_is_unsat() {
+        use std::process::Command;
+        if Command::new("z3").arg("--version").output().is_err() {
+            eprintln!("z3 absent: skipping str_table_select z3 integration test");
+            return;
+        }
+        let rhs = foo_encode_term();
+        assert!(
+            run_str_formula("AAAA", &rhs).starts_with("unsat"),
+            "BAD twin (different wrong value): encode(foo)==AAAA must be UNSAT"
         );
     }
 }

@@ -201,6 +201,7 @@ pub mod sugar {
     pub mod statement_runtime_expr;
     pub mod step_by;
     pub mod str_method;
+    pub mod str_table_select;
     pub mod string_add;
     pub mod string_predicate;
     pub mod struct_term;
