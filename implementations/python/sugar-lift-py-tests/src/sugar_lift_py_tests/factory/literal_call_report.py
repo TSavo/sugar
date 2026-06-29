@@ -198,12 +198,22 @@ def _lift_assert(
 def _floor_to_term(value: Any) -> Term:
     """Map a reduced Floor value to its ProofIR term. Composition-agnostic: it does
     not care WHICH sugar produced the value, only its Floor type."""
-    from sugar_lift_py_tests.floor import ArrayLiteral, StringValue, TermValue
+    from sugar_lift_py_tests.floor import (
+        ArrayLiteral,
+        Bv32Value,
+        StringValue,
+        SymbolicValue,
+        TermValue,
+    )
 
     if isinstance(value, TermValue):
         return num(value.value)
     if isinstance(value, StringValue):
         return str_const(value.value)
+    # A symbolic term (a bound variable or a composed operation over one) already
+    # IS its ProofIR term -- carry it through; the compiler sorts it.
+    if isinstance(value, (SymbolicValue, Bv32Value)):
+        return value.term
     if isinstance(value, ArrayLiteral):
         return ctor("array", [_floor_to_term(item) for item in value.items])
     raise TypeError(
