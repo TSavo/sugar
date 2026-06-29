@@ -4,360 +4,65 @@
 > **Sugar in, `.proof` out.**
 > One z3 check. Every language. Every surface you already wrote. Zero code changes.
 
-Nobody depends on your code. They depend on what your code *does* — and the only
-ways to know what it does have been to trust your tests or to rewrite your program
-in a proof language. Sugar does neither. It reads the surface you already wrote —
-your tests, your assertions, your function bodies — and turns *that* into
-machine-checked proof of behavior, in any language, with **zero changes to your
-code.** "Just sugar," the surface everyone waves off as not-the-real-thing, is
-exactly where correctness turns out to live.
-
-## The whole trick: one z3 check, every language, zero code changes
-
-Four claims. They read like four separate products. They are one move.
-
-- **One z3 check.** Verifying isn't *searching* for a proof — it's one consistency
-  question. A vendor stated `enc("abc") == "xyz"`; you state `enc("bby") == "chk"`;
-  z3 is handed `and(their claim, your claim, the function's own body)` and answers
-  SAT or UNSAT. We throw the model away — we already have the answer, we only ask
-  whether you *contradict* it. You can prove an input the vendor never tested, and
-  **no unit test runs.**
-- **Every language.** z3 never sees your source. Rust, Python, Java all lift to one
-  content-addressed form, so a Rust vendor and a Python caller meet at the *same
-  callsite*. Cross-language isn't a feature we built; it's unavoidable once
-  everything is the one form.
-- **Every surface you already wrote.** Your unit tests are your stated facts; your
-  function bodies are your stated contracts. No proof language, no annotations, no
-  first-order logic.
-- **Zero code changes.** Not "no shim." *Nothing.* You change not one line and add
-  not one annotation. `cd` into a project and `sugar mint` writes a signed `.proof`
-  of what it does; the next consumer, in any language, drops that `.proof` in and
-  `sugar prove`s their own code against it.
-
-It holds because we **model nothing.** We never reimplement your function — that
-reimplementation is the unsound shim every other tool ships. We pin what you already
-stated and ask z3 one forensic question: *could this new claim have come from this
-same function?* Check, don't synthesize. That single inversion is why it is sound,
-why it is cheap, why it crosses every language, and why it costs you nothing. The
-full mechanic is [bridges & composition](docs/contributing/bridges-and-composition.md).
-
-The artifact all of this produces is a **`.proof`**: a signed, content-addressed
-claim about behavior that other packages, tools, and languages re-verify by
-recomputation — without trusting your test runner, and without re-running your
-proof. CIDs are BLAKE3-512; signatures are Ed25519. Everything below is the breakdown.
-
-## The part that should keep you up at night
-
-Invert how you read a proof. Your `.proof` is not your *score* — it is your
-**safe ground**. It is the one part of your system where things are not going to
-go wrong, because it is the one part that cannot lie about itself. Everything
-outside it is not "untested." It is a **crime scene waiting to happen**: the
-staked-out territory where the next breach, the next silent regression, the next
-poisoned dependency already lives, because nothing there is holding it back.
-
-So a `.proof` is the easy half. The hard half — the half no other tool can
-print — is the **shape of what was never proven at all**: the exact outline of
-the ground you are standing on that has nothing underneath it.
-
-Sort every fact in a program into two piles. *Right by construction*: the things
-something **stated** and staked its name on — a compiler axiom, a sworn test, a
-walked implementation. These are recomputable, signed, and yours to check.
-*Right by convention*: everything else. The code that is "right" the way an
-unmarked intersection is "safe" — nothing certifies it, nothing contradicts it,
-and everyone drives through because driving-through is the convention. **It is
-right because nothing says it shouldn't be.** And almost all of the software
-running the banks, the hospitals, and the grid is this second kind: a tower of
-hot promises, twenty layers deep, with nothing tying any floor to the next.
-
-And here is the inversion that actually matters: **the value of the analysis is
-not in the satisfied. It is in the *these parts are undecided*.** A green proof
-is table stakes — honest software is mostly consistent, so the satisfied rows are
-the *expected* result, not the product. The product is the precise, enumerated
-list of the parts that are **not** decided: the ground with nothing under it,
-named.
-
-Because Sugar accounts for *everything* it reads — every statement lifted or
-refused **by name**, never silently — the unsworn remainder stops being a blur
-and acquires a perimeter. A coverage tool tells you 78% of your lines ran. Sugar
-tells you the one thing nobody has ever been able to print: **here is the exact
-list of behaviors no one ever promised you** — per dependency, drawn by the
-proofs around it. The empty set is an artifact too; it gets a hash.
-
-So the alarm inverts. Everyone else fires when something makes a noise. Sugar
-fires when something that should have testified, *didn't* — when a dependency
-updates and its entire behavioral delta lands in territory no one ever swore to.
-Not detection of the backdoor. Detection of the conditions that make backdoors
-the rational move. The dog that didn't bark — with a signature on the silence.
-
-The thing that flaps in the night was never the unit test. It is the **lack** of
-one. It is the API shape that lifts to `[]`. It is the endpoint with no `.proof`
-behind it — load-bearing, shipped, depended on by thousands, and warranted by
-absolutely nothing. That is the product. We do not sell *"here is a `.proof`
-file, and here is where it solves."* We sell:
-
-> **Here is the gap between what you hope is true, and what is completely without
-> warrant.**
-
-That is the vision. Not "we prove your code is correct." **We make software
-honest** — it can no longer claim more than it can prove, and it can no longer
-hide what it never swore.
-
-## Why a contract beats a test
-
-A test checks your code against the world *as it was the day you wrote the
-test* — the inputs in your fixtures, the dependency in your lockfile, the
-environment on your laptop.
-
-Here is the one no compiler and no test will catch. You depend on a library
-whose `search(q)` returns matches **sorted by score**, so your code takes
-`results[0]` as the best match — and has, correctly, for years. One release, the
-vendor drops the guarantee: *"results are no longer ordered; sort client-side if
-you need it."* It is right there in the changelog. They **advertised** it.
-
-Nothing in your code changes — nothing *can*. The type never moved: `Vec<Match>`
-before, `Vec<Match>` after; order was never in the type. And not one unit test
-turns red, because your tests run against the version in your lockfile — the old
-one, still sorted — so `results[0]` is still best, and green is green. The
-breaking change is real, shipped, and announced, and **completely invisible to
-your suite**, because your suite verifies your code against the dependency *as it
-sat in dev*, not as it now *is*.
-
-Then prod pulls the new release. `results[0]` is whatever came back first, and
-every user silently gets the wrong top result. Here is the part that should
-sting: **that same unit test, run in production against the new dependency, goes
-red.** The test was never wrong — it was running in the *wrong universe*, pinned
-to a behavior the world had already moved past.
-
-A type can't catch it: order is not a shape. A test can't catch it: it only ever
-saw the old behavior, in dev. What moved was the **contract** — a postcondition
-the vendor advertised away — and the contract is the one thing neither your
-compiler nor your test runner is even looking at.
-
-> **Tested says it didn't break here, now. Correct says it cannot break, anywhere.**
-
-That contract is what a `.proof` *is*: the dependency's behavior, pinned and
-content-addressed, that you compose against instead of trusting a version
-number. The day the vendor's behavior moves, its `.proof` moves with it — a new
-CID — and your composition stops verifying, **at the diff, in any environment,
-before prod ever pulls the release.** A passing test is an existence proof:
-*there exist* inputs, in dev, on which it worked. A `.proof` is a universal one:
-*for all* inputs, against the behavior as it actually is, it holds. One says it
-didn't break here. The other says it can't break anywhere — and trips the
-instant the ground moves under it.
-
-## Why it matters: the version lied, the behavior moved, Sugar saw it
-
-SemVer versions the *shadow*. It bumps when the bytes change and holds still when
-they don't, so it is jumpy about a rename and **stone blind to a backdoor**: a
-bugfix and a malicious patch are both "a patch." Nobody can read a version number
-and learn the one thing they actually need. Did the behavior move.
-
-Sugar versions the *object*. Lift any source and each behavior becomes a
-content-addressed contract; `sugar diff` compares two proof sets by behavior, not
-by text:
-
-- A rename, a reformat, a behavior-preserving refactor reads as `none`. No false
-  alarm, so you never train yourself to ignore the tool.
-- A behavior that appears or vanishes under a frozen version reads as `new` or
-  `lost`. That is the malicious patch the version number hid.
-
-You cannot bolt a credential harvester onto a package for free. New behavior means
-new effects (reads, writes, sockets), and effects cannot hide inside a fingerprint
-that records them: the CID moves, or the fingerprint is lying. This is the shape of
-the npm and PyPI supply-chain compromises that publish poisoned versions under
-continuous-looking version numbers. `sugar diff --frozen` fails on any behavior
-delta under a pinned dependency; `--require <bump>` turns the version from a
-promise a human types into a measurement derived from the proof delta, so a
-release that calls itself `minor` while a behavior was lost is refused at publish
-time.
-
-Honest scope: this works **today** as `cargo sugar` (Rust) and `sugar-check`
-(Python pre-commit hook). The npm/JS wedge is in progress; what is missing is the
-lifter, not the thesis.
-
-## What `sugar diff` measures: your coupling, their cohesion
-
-Upgrade a dependency and run `sugar diff`. You don't get the *"these bytes
-changed"* report — that's `git`, the shadow: blind to a backdoor, loud about a
-rename. You don't get the *"we think the API works this way now"* report —
-that's the changelog, prose, optimistic and unmapped to your code. You get the
-**"here be the new dragons"** report: the diff of the **behavior**, recomputed,
-intersected with exactly what your code leans on. Not *"the vendor changed
-`search`"* — *"your dependence on `search` returning sorted is now unproven."*
-The exact welds that broke. Your real blast radius, before prod.
-
-That is **cohesion and coupling, finally measured.** They have been the two axes
-of software quality since 1974, and for fifty years they were *adjectives* —
-eyeballed in review, approximated by what-imports-what. A `.proof` makes them
-data. The provider's `.proof` is a **cohesion surface**: the coherent set of
-behaviors it actually holds — *our surface is this.* Your composition is a
-**coupling**: the subset of that surface your code provably leans on — *you are
-coupled in this way.* Every dependency edge is a coupling aimed at a cohesion
-surface, and `sugar diff` is what happens when the surface moves under the
-coupling.
-
-Two levers fall out — the ones shape-based metrics could never hand you:
-
-- **Minimize coupling on purpose.** Depend on the smallest surface you can, and
-  your blast radius on *any* release is exactly the size of `your coupling ∩
-  their change` — a number you drive toward zero deliberately, instead of
-  praying through the upgrade.
-- **Publish cohesion, and be held to it.** A provider states their surface —
-  *this, and no more* — and a tight, honest surface is visibly safer to depend
-  on than a sprawling, accidental one, *before* you take the dependency.
-
-And it is the one report **no vendor can ship**, for a precise reason: the
-dragons are `your coupling ∩ their change`, and that needs **both halves at
-once**. The provider owns the cohesion surface and can publish it; only you own
-your coupling. Only you, at compose time, hold both — so the vendor has one side
-of the equation and cannot finish it. You have the other, and `sugar diff`
-completes it.
-
-## How a `.proof` works: the claim, formally
-
-Correctness is `k(I) = t`: a program `k` applied to an input/precondition `I`
-produces an output/postcondition `t`. A `.proof` is a kept promise made
-checkable. The program, the input, and the result are each content-addressed
-and pinned, so the claim names exactly what it is about and cannot be silently
-rebound. `sugar verify` lets a stranger recompute the guarantee.
-
-A `.proof` is discharged **two independent ways, and both must agree**:
-
-- **CONSISTENCY.** A solver (z3) proves the lifted contract is internally
-  satisfiable. A self-contradictory spec is refused without running anything.
-- **WITNESS.** The code is actually run, the run is content-addressed, and
-  `verify` recomputes it. A witness that does not reproduce its pinned CID is
-  refused.
-
-The numpy showcase (`examples/numpy-showcase/`) exercises both on a real library
-operation: a self-contradictory assertion is refused **both ways** — z3 finds the
-conjunction UNSAT, and the witnessed re-run fails to reproduce it. The demo is the
-receipt; run it for the current output.
-
-## First principle: supra omnia, rectum (above all, correctness)
-
-Every operation is exact, or loudly-bounded-lossy, or it refuses. Verification
-*is* recomputation: trust nothing, not even the kit that produced the proof.
-Where a lift, lower, or solver discharge cannot be exact, the loss is recorded,
-content-addressed, and named, never silent. "Loudly-bounded-lossy" is only
-honest if the bound is written down.
-
-## The oracle trio: a `.proof` carries identity, not bodies
-
-A `.proof` does not embed source code or test logs. It carries IDENTITY: CIDs,
-loci, and signatures. Bodies are resolved on demand and recompute-verified.
-This is what lets a 2909-function numpy `.proof` stay 13M instead of shipping
-all of numpy inside it.
-
-- **Source Oracle.** Given a locus plus a CID, return the on-disk source iff it
-  recomputes to that CID, else refuse loudly. `recognize` and `materialize`
-  both feed source through this one oracle.
-  (`implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py`.)
-- **Witness Oracle.** A witness is arbitrary signed content: a test run, a CI
-  log, a poem. The kit oracle (python/java) is UNTRUSTED. Over RPC it only
-  RESOLVES the witness body. The Rust CLI BLAKE3's the body itself and compares
-  to the pinned CID. A wrong body for a CID (broken oracle) is distinguished
-  from an honest re-run that differs (drift).
-  (`implementations/rust/sugar-cli/src/witness_verify.rs`,
-  `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py`.)
-- A contract is already a CID. So the `.proof` is pure correctness identity:
-  source, witness, and contract are all resolved-and-recomputed, never trusted.
-
-## Ship a `.proof` for a whole library, no shim
-
-`examples/numpy-vendor/` is the headline demo. The universal lifter reads
-numpy's installed python source and sugar-lifts **every module-level function**
-(the symbol is its qualified path, e.g. `lib._function_base_impl.rot90`) into
-one lean `.proof` — **no code changes to numpy and no hand-written shim.** The
-member count is whatever the lifter finds in the installed numpy, so it tracks the
-numpy version (`numpy.add` is a C ufunc with no python body, so it is not among the
-python functions lifted; the thousands that are python all lift).
-
-The vendor ships the `.proof` plus a separately deployed witness package
-(`<cid>.witness`, the audit material). A consumer runs `sugar verify`, which
-recomputes everything — resolving the source and witness bodies through the package
-and re-checking every CID. Run it with `examples/numpy-vendor/run.sh` (builds a venv
-on first run); the demo prints the live output.
-
-## The capstone: correctness is inheritable, and composition failures are caught
-
-The important failure mode is composition. A package can pass its tests, another
-package can pass its tests, and the assembled system can still contain
-contradictory behavioral claims. This is no longer aspirational. There is a
-working demo of catching exactly that.
-
-A numpy vendor mints a `.proof` carrying the callsite-keyed contract
-`np.add(2,3) == 5`. A consumer stages that `.proof` in `.sugar/imports/`,
-asserts something about the same call, and runs `prove`:
-
-- A consumer asserting `np.add(2,3) == 6` is **REFUSED**. It inherits numpy's
-  `== 5`; z3 finds `and(== 5, == 6)` UNSAT.
-- A consumer asserting `np.add(2,3) == 5` is **PROVEN**.
-
-This works because contracts key to the CALLSITE under test (e.g.
-`numpy.add#euf#...::assertion`), not to the test, and the verifier conjoins
-same-named contracts across proofs before the SAT check. The consumer inherits
-the vendor's correctness and is caught contradicting it.
-
-Verified end to end:
-`implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py`
-(parametrized: `consumer-agrees-PROVEN`, `consumer-contradicts-REFUSED`) and the
-unit test `cross_proof_same_named_contracts_are_conjoined` in
-`implementations/rust/sugar-verifier/src/consistency.rs`.
-
-## The shape: kits own language, the CLI owns proof
-
-Sugar has two deliberately separate responsibilities.
-
-**Kits own language reality.** A kit knows the language, package manager,
-compiler, test framework, annotation library, and ecosystem conventions. A Rust
-kit can walk Rust tests and contracts. A Java kit can read Bean Validation, JML,
-Spring, JUnit, and Maven-shaped package data. A TypeScript kit can read Zod,
-class-validator, fast-check, and npm-shaped package data. Kits **lift** native
-evidence into ProofIR, **lower** admitted claims back into native source when a
-workflow calls for it (the contract-facet of lower is an emitter, the
-sugar-facet is a materializer), and resolve dependency `.proof` artifacts
-through the package manager and filesystem rules of their ecosystem. Kits never
-verify: they only resolve bodies over RPC.
-
-**The CLI owns proof computation over normalized data.** The `sugar` CLI is
-language-agnostic. It loads `.proof` artifacts, speaks RPC to configured kits,
-normalizes claims, composes implications, conjoins same-named contracts, runs
-the solver, recomputes witnesses, and reports discharge status. The CLI does not
-know what a Maven classifier, npm workspace, Rust proc macro, or Spring
-annotation means. The kit translates those surfaces to proof data; the CLI
-computes over the proof data.
-
-That boundary is the product. Sugar is not "a better Rust verifier" or "a
-new test runner." It is the place where language-native evidence becomes a
-portable, recomputable claim that survives package boundaries. For the canonical
-definitions of sugar, boundary, lift, lower, concept, and contract, see
-[SHARED-LANGUAGE.md](SHARED-LANGUAGE.md).
-
-## The `.proof` DAG
-
-A `.proof` artifact is a signed, content-addressed bundle of proof data. It can
-contain contract mementos, source mementos, witness mementos, implication
-witnesses, bridge attestations, materialization receipts, package inspection
-claims, and policy-relevant metadata.
-
-The graph is a DAG because every claim names the exact content it depends on:
-contract CIDs, source CIDs, witness CIDs, attestation CIDs, contract-set CIDs,
-proof-bundle CIDs, binary CIDs, and protocol catalog CIDs. Old facts remain true
-about the old bytes that minted them. When code or claims change, new CIDs
-appear. Nothing needs a central invalidation service; unchanged commitments
-remain checkable by content identity.
-
-```text
-native evidence -> kit lift -> ProofIR / protocol claim
-               -> signed memento -> .proof DAG -> sugar prove / verify
-```
-
-Previously minted, unchanged commitments can often be checked cheaply by CID
-equality, signature checks, and graph walking. Semantic proving still happens
-when claims are minted, changed, or newly composed in a way the DAG does not
-already justify. Sugar does not make all proving constant-time. It amortizes
-expensive proof work by making prior commitments content-addressed and reusable.
+Sugar stops supply-chain attacks by federating correctness across every language, with zero changes to your code. It does that by doing nine impossible things. Here they are, in the order they had to happen. After each one we will tell you, plainly, that it is impossible. Then we will tell you how Sugar does it anyway.
+
+## 1. Lift every language into one logic.
+
+That's impossible.
+
+Sugar reads the claims your code already makes. `assert encode("abc") == "def"` is a package swearing, in the language it shipped, that this call yields that result. Sugar treats that test as a **warrant**: it grows the one small universe the claim needs — the literals, the fixtures, the standard-library facts around that callsite — and lifts it into first-order logic. Rust, Python, Java: the surface differs, the logic underneath does not.
+
+## 2. Throw away order.
+
+That's impossible. A program is made of order: this line before that one, this write before that read.
+
+So Sugar stops holding a program. Once a claim is lifted, what is left is a theory — `A ∧ B ∧ C` — and a conjunction does not care what order you read it in. Order is not lost; where it matters it becomes just another fact, `Before(write, read)`. An orderless theory is something you can canonicalize, hash, conjoin, and ship. A program is not. That is the whole move.
+
+## 3. Give every behavior a name no one has to trust.
+
+That's impossible.
+
+Sugar hashes all of it. Every test, warrant, callsite, contract, witness, kit, and solver query gets a 512-bit name (BLAKE3-512; signatures are Ed25519); change one byte and the name changes. "Are we talking about the same universe?" stops being a database lookup, or a matter of trust, and becomes `memcmp(64)`. The `.proof` is a case file in which every exhibit names itself.
+
+## 4. Prove what a function does without running it, while modeling nothing.
+
+That's impossible.
+
+Sugar never reimplements the function. It hands the solver your claim and the behavior you imported and asks one thing: can these coexist? The vendor's tests say `enc("abc") == "xyz"`; you say `enc("bby") == "chk"`; z3 answers SAT or UNSAT against the function's own lifted body. UNSAT means your claim could not have come from that function. You can prove an input the vendor never tested, and no unit test runs.
+
+## 5. Map a program without lying about the parts it cannot see.
+
+That's impossible.
+
+Pure code expands Sugar's universe; every effect has to earn its place. A file read pins a point and records the trace. A network call, a clock, randomness, FFI, a subprocess: each one stops the map and marks the edge. That edge is not a failure. It is the map saying *here be dragons*, drawn to scale, instead of a hallucination with a CLI pretending it modeled the Internet.
+
+## 6. Sell uncertainty.
+
+That's impossible.
+
+Sugar does not sell certainty. It sells the exact shape of uncertainty. Every claim lands somewhere named: pinned, contradicted, witnessed, bounded, fixture-only, outside the membrane, or unknown. A green proof is the boring half. The product is the other one: the precise, enumerated list of behavior nobody ever swore to, per dependency, the empty set included and hashed. Unmarked uncertainty is the only enemy.
+
+## 7. Do all of it with zero changes to your code.
+
+That's impossible.
+
+A kit per language reads what is already there: tests, bodies, annotations, package metadata. Existing artifacts in, behavior map out. No specs. No annotations. No proof language. No asking maintainers to become logicians, no asking Python to stop being Python or C++ to stop being a haunted mansion full of knives. `cd` into a project and `sugar mint` writes a signed `.proof`; the next consumer, in any language, drops it in and `sugar prove`s their own code against it. The numpy demo lifts every module-level function with no code changes and no shim.
+
+## 8. Stop supply-chain attacks.
+
+That's impossible. You cannot fix a trust problem by becoming one more vendor saying *trust us, we found the bad thing*.
+
+So Sugar owns none of it. You own your kit, your solver, your policy; every part is replaceable; Sugar hands you the claim, the warrant, the witness, the hash, and tells you to verify it yourself. That is federated correctness. An attack is a *behavior*, and behavior now has a hash: change what a package does and its root moves; reach outside the cage and the membrane breaks. SemVer says nothing important changed, promise; Sugar shows the behavioral diff. There is nowhere quiet left to hide.
+
+## 9. Wrap the whole thing in a proof of itself and ship it.
+
+That's impossible.
+
+Sugar mints proof data from its own tests and assertions. The snake eats its [tail](docs/self-application/2026-05-28-snake-eats-tail.md). Sugar in, `.proof` out, all the way down.
+
+The White Queen managed to believe six impossible things before breakfast. Sugar does nine, and signs them.
+
+The rest of this page is how you run it.
 
 ## What the CLI does
 
@@ -462,9 +167,6 @@ The numpy demos provision their own venv on first run.
 - **Proof artifacts:** `.proof` envelopes, signed mementos, source CIDs, witness
   CIDs, contract CIDs, attestation CIDs, contract-set CIDs, and protocol catalog
   CIDs are the durable units.
-- **Executable exhibits:** [menagerie/bug-zoo/](menagerie/bug-zoo/) runs checked
-  specimens where native checks pass while lifted cross-package or
-  cross-language obligations fail until the missing edge is closed.
 - **Self-application:** the CLI can mint proof data from its own assertions and
   tests; see
   [docs/self-application/2026-05-28-snake-eats-tail.md](docs/self-application/2026-05-28-snake-eats-tail.md).
@@ -504,35 +206,6 @@ convenience, but it is not the authority.
 Sugar is not a promise that any current kit sees every useful contract in a
 codebase. Adapter coverage is empirical. Unknown, unsupported, or lossy surfaces
 must be reported honestly as residue, loss, or refusal.
-
-## Nine impossible things before breakfast
-
-So, in order:
-
-1. **Lift every language to first-order logic.** Rust, Python, Java. Tests, bodies,
-   annotations: all of it, into one logic a solver can read. This should be impossible.
-2. **Federate it across languages,** so a Rust vendor and a Python caller conjoin
-   contracts at the same callsite, neither one knowing the other exists. This, of
-   course, is impossible.
-3. **Unify all of it in one content-addressed space,** every term, contract, witness,
-   and source a single point you reach by its hash. This, naturally, is impossible.
-4. **Make the proof graph O(1),** so an unchanged commitment re-verifies as a 64-byte
-   `memcmp`, because identity *is* the hash. This is impossible, and now also fast.
-5. **Prove things while modeling nothing.** Never reimplement the function; just ask a
-   solver whether your claim could have come from it, and prove inputs nobody ever ran.
-   This is impossible, and the entire point.
-6. **Charge nothing for it:** no contracts, no annotations, no proof language, not one
-   line of your code changed. This is impossible, and a little rude.
-7. **Refuse to be trusted.** Every artifact recomputes from its own bytes, so even the
-   tool that minted the proof gets re-checked. This one is impossible on purpose.
-8. **Account for the dark,** every behavior lifted or refused by name, never silently,
-   so the ground nobody can prove gets a perimeter and a hash. This, you will have
-   noticed by now, is impossible.
-9. **Wrap the whole thing in a proof of itself and ship it.** The snake eats its
-   [tail](docs/self-application/2026-05-28-snake-eats-tail.md). This, in case you
-   haven't guessed yet, is quite impossible....
-
-The White Queen managed six impossible things before breakfast. We were hungry.
 
 ## License
 
