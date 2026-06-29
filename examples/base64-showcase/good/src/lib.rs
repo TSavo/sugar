@@ -1,7 +1,85 @@
+// Base64-showcase good suite.
+//
+// MARQUEE: encode64("abc") == "YWJj"
+//
+// The two encoder functions below have bodies in EXACT GenericBodySugar shape:
+//   const TABLE: &[u8] = b"...";
+//   let bN = value.as_bytes()[N] as u32;
+//   ...
+//   [TABLE[(bv_expr) as usize] as char, ...].into_iter().collect()
+//
+// The RPC body lifter fires GenericBodySugar, emitting:
+//   function-contract { bridgeSourceSymbol: "call:encode64",
+//                       post: str.eq-bv-blocks(out, value, payload) }
+//
+// The consistency pass injects the function-contract post as an ambient post
+// into every EUF assertion about call:encode64. For marquee_encode64:
+//   inv = and([
+//     callresult = call:encode64("abc"),       -- EUF fact
+//     "YWJj" = callresult,                     -- assertion
+//     str.eq-bv-blocks(callresult,"abc",payload) -- ambient post (body)
+//   ])
+// Z3 raw-SAT on this conjunction: SAT -> DISCHARGED.
+//
+// For bad/src/lib.rs the same body is used with WRONG expected value "XXXX";
+// the body post forces callresult="YWJj", contradicting "XXXX" -> raw-UNSAT ->
+// UNSATISFIED.
+
+/// Standard base64 encoder -- 64-char alphabet, 3 bytes -> 4 chars.
+/// GenericBodySugar recognizer shape: const TABLE + as_bytes()[N] assigns + array.collect().
+fn encode64(value: &str) -> String {
+    const ALPHA: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let b0 = value.as_bytes()[0] as u32;
+    let b1 = value.as_bytes()[1] as u32;
+    let b2 = value.as_bytes()[2] as u32;
+    [
+        ALPHA[(b0 >> 2) as usize] as char,
+        ALPHA[(((b0 & 3) << 4) | (b1 >> 4)) as usize] as char,
+        ALPHA[(((b1 & 15) << 2) | (b2 >> 6)) as usize] as char,
+        ALPHA[(b2 & 63) as usize] as char,
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Second encoder (generality proof): 20-char alphabet, 1 byte -> 2 chars.
+/// Same GenericBodySugar code path, different table and byte count.
+fn encode20(value: &str) -> String {
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRST";
+    let b0 = value.as_bytes()[0] as u32;
+    [
+        ALPHA[(b0 & 15) as usize] as char,
+        ALPHA[((b0 >> 4) & 15) as usize] as char,
+    ]
+    .into_iter()
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use base64::decoded_len_estimate;
     use base64::encoded_len;
+
+    // ── Marquee: str.eq-bv-blocks consistency DISCHARGED ─────────────────────
+
+    #[test]
+    fn marquee_encode64() {
+        // encode64("abc") == "YWJj"
+        // Lifts via GenericBodySugar to str.eq-bv-blocks; consistency:
+        // body-post conjoined with assertion -> SAT -> DISCHARGED.
+        assert_eq!("YWJj", encode64("abc"));
+    }
+
+    #[test]
+    fn marquee_encode20() {
+        // encode20("a") == "BG"  (ord('a')=97: low-nibble=1->'B', high-nibble=6->'G')
+        // Same GenericBodySugar path, 20-char table, 1 byte: generality proof.
+        assert_eq!("BG", encode20("a"));
+    }
+
+    // ── base64 vendor rows (encoded_len / decoded_len_estimate) ──────────────
 
     #[test]
     fn test_encoded_len_unpadded_0_exact_row() {

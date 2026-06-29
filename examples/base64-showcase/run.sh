@@ -135,15 +135,36 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
   echo "   prove consistency statuses: $consistency_status"
   echo "   prove witness-package status: $witness_status"
 
-  # base64 byte/length values are not FOL-computable: symbolic consistency honestly
-  # refuses them (#2813 vacuity guard) and the TEETH live in the witness package
-  # (checked below -- re-running the tests). The consistency gate guards only against
-  # the one dishonest outcome: a TRUE assertion being falsely REFUTED (unsatisfied).
-  if [ "$expect_consistency" = "DISCHARGE" ] && echo "$consistency_status" | grep -q 'unsatisfied'; then
-    echo "FAIL[$suite]: a true assertion was refuted (unsatisfied): $consistency_status"; exit 1
+  # STRICT ENCODER GATE: the encode64 consistency row is str.eq-bv-blocks-teethed
+  # and must DISCHARGE (good) or be UNSATISFIED (bad).  This is the marquee claim.
+  local encoder64_status encoder20_status
+  encoder64_status="$(pyget "$prove_json" "
+next((r.get('status') for r in d.get('rows', []) if 'encode64#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
+")"
+  encoder20_status="$(pyget "$prove_json" "
+next((r.get('status') for r in d.get('rows', []) if 'encode20#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
+")"
+  echo "   encode64 consistency row: $encoder64_status"
+  echo "   encode20 consistency row: $encoder20_status"
+
+  if [ "$expect_consistency" = "DISCHARGE" ]; then
+    # Good suite: encoder row must be discharged (body + assertion are SAT).
+    [ "$encoder64_status" = "discharged" ] || {
+      echo "FAIL[$suite]: encode64 consistency row must be discharged, got $encoder64_status"; exit 1
+    }
+    [ "$encoder20_status" = "discharged" ] || {
+      echo "FAIL[$suite]: encode20 consistency row must be discharged, got $encoder20_status"; exit 1
+    }
+    # No other consistency row should be unsatisfied (no false refutations).
+    if echo "$consistency_status" | grep -q 'unsatisfied'; then
+      echo "FAIL[$suite]: a true assertion was refuted (unsatisfied): $consistency_status"; exit 1
+    fi
+  else
+    # Bad suite: encode64 row must be UNSATISFIED (body contradicts wrong assertion).
+    [ "$encoder64_status" = "unsatisfied" ] || {
+      echo "FAIL[$suite]: encode64 consistency row must be unsatisfied (refuted), got $encoder64_status"; exit 1
+    }
   fi
-  # else (bad suite): symbolic consistency is witness-deferred for base64; the witness
-  # package below carries the refutation of the wrong value.
 
   if [ "$expect_witness" = "DISCHARGE" ]; then
     [ "$witness_status" = "discharged" ] || { echo "FAIL[$suite]: expected witness discharge, got $witness_status"; exit 1; }
@@ -189,18 +210,35 @@ witness = [
     for r in rows
     if "witness-package" in (r.get("property") or "")
 ]
+encoder64_rows = [
+    r.get("status")
+    for r in rows
+    if "encode64#euf#" in (r.get("property") or "")
+    and "consistency:" in (r.get("property") or "")
+]
+encoder20_rows = [
+    r.get("status")
+    for r in rows
+    if "encode20#euf#" in (r.get("property") or "")
+    and "consistency:" in (r.get("property") or "")
+]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-# base64's byte/length values are not FOL-computable: the symbolic consistency check
-# honestly refuses them (#2813 vacuity guard), and the TEETH live in the witness
-# dimension (checked below -- re-running the tests). The consistency gate here only
-# guards against the one dishonest outcome: a TRUE assertion being falsely REFUTED
-# (unsatisfied). A refused-vacuous consistency row is honest, not a failure.
+
+# STRICT ENCODER GATE (marquee claim).
 if expect_consistency == "DISCHARGE":
+    # Good: encoder rows must be discharged, no other unsatisfied.
+    if encoder64_rows != ["discharged"]:
+        raise SystemExit(f"FAIL[{suite}]: encode64 durable consistency must be ['discharged'], got {encoder64_rows}")
+    if encoder20_rows != ["discharged"]:
+        raise SystemExit(f"FAIL[{suite}]: encode20 durable consistency must be ['discharged'], got {encoder20_rows}")
     if "unsatisfied" in consistency:
         raise SystemExit(f"FAIL[{suite}]: a true assertion was refuted (unsatisfied): {consistency}")
-# else (bad suite): symbolic consistency is witness-deferred for base64; the witness
-# dimension below carries the refutation of the wrong value.
+else:
+    # Bad: encode64 row must be unsatisfied (refuted by body post).
+    if encoder64_rows != ["unsatisfied"]:
+        raise SystemExit(f"FAIL[{suite}]: encode64 durable consistency must be ['unsatisfied'], got {encoder64_rows}")
+
 if expect_witness == "DISCHARGE":
     if witness != ["discharged"]:
         raise SystemExit(f"FAIL[{suite}]: durable witness statuses {witness}")
@@ -214,6 +252,8 @@ verified = any(
 if not verified:
     raise SystemExit(f"FAIL[{suite}]: witness dimension did not verify")
 print(f"   durable consistency statuses: {','.join(consistency)}")
+print(f"   encode64 consistency: {','.join(encoder64_rows)}")
+print(f"   encode20 consistency: {','.join(encoder20_rows)}")
 print(f"   durable witness statuses: {','.join(witness)}")
 print("   durable witness dimension: verified")
 PY

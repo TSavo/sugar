@@ -199,6 +199,7 @@ pub mod sugar {
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
+    pub mod generic_body_sugar;
     pub mod step_by;
     pub mod str_method;
     pub mod str_table_select;
