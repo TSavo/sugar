@@ -32,6 +32,7 @@ is the map.
 - [getting-started.md](getting-started.md) — produce → verify → inherit, on demos that run end to end.
 - [examples/](../examples/) — the runnable receipts (numpy-vendor headline, two-way discharge showcase, the inheritance capstone, and more).
 - [explanation/concepts.md](explanation/concepts.md) — the mental model (sugar & contract, lift/lower, the trinity, CID, the honest trichotomy), distilled from the dictionary.
+- [explanation/rendezvous.md](explanation/rendezvous.md) — how kits register interest in a project: census → discover → declare → component plan (the front of the pipeline).
 - *Returning:* the rest of `explanation/` — *why a contract beats a test*, the `sugar diff` dragons report (currently README sections, being extracted).
 
 ### Using Sugar on your code
