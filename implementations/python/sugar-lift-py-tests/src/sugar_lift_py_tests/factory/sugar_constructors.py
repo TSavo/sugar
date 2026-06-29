@@ -239,6 +239,10 @@ def build_control_flow_body_sugar(site, ctx):
     block = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT)
     block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
     stmts = block_value.statements
+    # The factory built one child per source statement as the Block composed; carry
+    # those composed lines (each a SugarBody with its audit row) so the body's walk is
+    # one row per line, read back off the objects.
+    statements = block.sugar.statements
     # Encoder body: the Block composed it to a single unguarded EncodedStringValue
     # return -> lower to the existing str.eq-bv-blocks atom (a recognized leaf, not a
     # separate dispatch path).
@@ -252,7 +256,7 @@ def build_control_flow_body_sugar(site, ctx):
         return EncoderBodySugar(
             parameter=function.args.args[0].arg,
             encoded=stmts[0].value,
-            statement_count=len(function.body),
+            statements=statements,
         )
     paths: list = []
     for outcome in stmts:
@@ -270,7 +274,7 @@ def build_control_flow_body_sugar(site, ctx):
         parameter=function.args.args[0].arg,
         paths=tuple(paths),
         formals=tuple(a.arg for a in function.args.args),
-        statement_count=len(function.body),
+        statements=statements,
     )
 
 

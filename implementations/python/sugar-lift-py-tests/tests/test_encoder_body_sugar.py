@@ -23,7 +23,7 @@ def test_encoder_lowers_to_str_eq_bv_blocks():
         table=(65, 66),
         indices=(make_var("byte_value_0"), make_var("byte_value_1")),
     )
-    sugar = EncoderBodySugar(parameter="value", encoded=encoded, statement_count=3)
+    sugar = EncoderBodySugar(parameter="value", encoded=encoded)
     formula = sugar.constraint_formulas()[0]
     rendered = json.loads(encode_jcs(formula_to_value(formula)))
     assert rendered["name"] == "str.eq-bv-blocks"
