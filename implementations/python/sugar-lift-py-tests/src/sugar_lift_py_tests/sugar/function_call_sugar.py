@@ -9,10 +9,13 @@ from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 from .control_flow_body_sugar import ControlFlowBodySugar
+from .encoder_body_sugar import EncoderBodySugar
 from .generic_body_sugar import GenericBodySugar
 
-FunctionCallBody = SugarBody | GenericBodySugar | ControlFlowBodySugar
-_BODY_TYPES = (SugarBody, GenericBodySugar, ControlFlowBodySugar)
+FunctionCallBody = (
+    SugarBody | GenericBodySugar | ControlFlowBodySugar | EncoderBodySugar
+)
+_BODY_TYPES = (SugarBody, GenericBodySugar, ControlFlowBodySugar, EncoderBodySugar)
 
 
 def callee_target(node: ast.Call) -> str | None:
