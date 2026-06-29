@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.sugar_constructors import build_binop_sugar
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import EncodedStringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -35,9 +35,15 @@ class BinOpSugar:
     def desugar(self, ctx) -> Outcome:
         left = complete_value(self.left.reduce(ctx), owner="BinOpSugar left")
         right = complete_value(self.right.reduce(ctx), owner="BinOpSugar right")
-        if not isinstance(left, TermValue) or not isinstance(right, TermValue):
-            raise TypeError("BinOpSugar + requires TermValue operands")
-        return Complete(TermValue(left.value + right.value))
+        if isinstance(left, EncodedStringValue) and isinstance(right, EncodedStringValue):
+            if left.table != right.table:
+                raise TypeError("BinOpSugar + concatenates encoded strings over one table")
+            return Complete(
+                EncodedStringValue(table=left.table, indices=left.indices + right.indices)
+            )
+        if isinstance(left, TermValue) and isinstance(right, TermValue):
+            return Complete(TermValue(left.value + right.value))
+        raise TypeError("BinOpSugar + requires TermValue or EncodedStringValue operands")
 
 
 def _owns(site) -> bool:

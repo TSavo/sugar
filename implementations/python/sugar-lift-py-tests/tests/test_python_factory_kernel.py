@@ -40,14 +40,14 @@ def test_python_lib_lift_source_delegates_to_factory_not_lsp(monkeypatch) -> Non
     )
 
     with pytest.raises(FactoryGap) as raised:
-        lib.lift_source("base64.py", "def encode_len(data):\n    return len(data)\n")
+        lib.lift_source("base64.py", "def encode_len(data):\n    return {}\n")
 
     assert raised.value.info == {
         "owner": "python.factory",
-        "blame": "base64.py:2:15",
-        "observed": "Name",
+        "blame": "base64.py:2:11",
+        "observed": "Dict",
         "requested": "term",
-        "fix": "create sugar_lift_py_tests.sugar.name.name_sugar",
+        "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
     }
 
 
@@ -62,7 +62,7 @@ def test_batch_lift_entrypoints_use_lift_rpc_not_lsp() -> None:
 
 def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     source = tmp_path / "base64.py"
-    source.write_text("def encode_len(data):\n    return len(data)\n", encoding="utf-8")
+    source.write_text("def encode_len(data):\n    return {}\n", encoding="utf-8")
     env = {
         **os.environ,
         "PYTHONPATH": str(PY_TESTS / "src"),
@@ -96,15 +96,15 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     assert lift_response["error"]["message"].startswith("write more Sugar for this AST")
     assert lift_response["error"]["data"]["info"] == {
         "owner": "python.factory",
-        "blame": str(source) + ":2:15",
-        "observed": "Name",
+        "blame": str(source) + ":2:11",
+        "observed": "Dict",
         "requested": "term",
-        "fix": "create sugar_lift_py_tests.sugar.name.name_sugar",
+        "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
     }
 
 
 def test_factory_without_sugar_panics_on_last_popped_source_site() -> None:
-    source = "def encode_len(data):\n    return len(data)\n"
+    source = "def encode_len(data):\n    return {}\n"
 
     with pytest.raises(FactoryGap) as raised:
         build_next(source, filename="base64.py", role=SugarRole.TERM)
@@ -113,17 +113,17 @@ def test_factory_without_sugar_panics_on_last_popped_source_site() -> None:
     assert str(gap).startswith("write more Sugar for this AST")
     assert gap.info == {
         "owner": "python.factory",
-        "blame": "base64.py:2:15",
-        "observed": "Name",
+        "blame": "base64.py:2:11",
+        "observed": "Dict",
         "requested": "term",
-        "fix": "create sugar_lift_py_tests.sugar.name.name_sugar",
+        "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
     }
     assert gap.audit_row.to_json() == {
         "kind": "factory-audit-row",
         "role": "term",
         "status": "sugar-gap",
-        "observed": "Name",
-        "blame": "base64.py:2:15",
+        "observed": "Dict",
+        "blame": "base64.py:2:11",
         "selected": None,
         "candidates": [],
         "message": str(gap),
