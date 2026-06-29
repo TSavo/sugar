@@ -74,10 +74,15 @@ def build_literal_call_report(
     source_audits: list[dict[str, Any]] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
-    functions_by_name = {
+    local_functions = {
         node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
     }
-    for fn in functions_by_name.values():
+    # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
+    # is not local, so the dig cannot see its body. Resolve each imported callee to
+    # its installed source FunctionDef so the SAME dig walks it like a local function.
+    # Locals win on name collision; the assert-iteration below stays local-only.
+    dig_functions = {**_resolve_imported_callees(tree), **local_functions}
+    for fn in local_functions.values():
         for stmt in fn.body:
             if not isinstance(stmt, ast.Assert):
                 continue
@@ -87,7 +92,7 @@ def build_literal_call_report(
                 filename=filename,
                 memento_file=rel_file,
                 source_lines=lines,
-                functions_by_name=functions_by_name,
+                functions_by_name=dig_functions,
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -291,6 +296,13 @@ def _dig_universe(
             fix=f"lift this function body for the dig ({exc})",
         )
     target_fn = functions_by_name[call_sugar.target_name]
+    # IMPORT SUGAR: an imported callee's body belongs to its OWN module source, not
+    # the file being lifted -- swap the provenance source so the dig's mementos
+    # resolve against the right lines instead of indexing past the importer's file.
+    _imported_source = getattr(target_fn, "_sugar_source", None)
+    if _imported_source is not None:
+        source_lines = _imported_source.splitlines(keepends=True)
+        memento_file = getattr(target_fn, "_sugar_file", memento_file)
     body_steps = call_sugar.factory_steps(target_fn)
     body_formulas = call_sugar.constraint_formulas()
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
@@ -417,6 +429,84 @@ def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
             message=info.message,
         ),
     )
+
+
+def _import_bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Scan a module's imports.
+
+    Returns ``(aliases, from_imports)`` where ``aliases`` maps a bound name to its
+    module (``import numpy as np`` -> ``{"np": "numpy"}``) and ``from_imports`` maps
+    a bound name to ``(module, attr)`` (``from numpy import rot90`` -> ``{"rot90":
+    ("numpy", "rot90")}``)."""
+    aliases: dict[str, str] = {}
+    from_imports: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                from_imports[alias.asname or alias.name] = (node.module, alias.name)
+    return aliases, from_imports
+
+
+def _source_funcdef(module_name: str, attr: str) -> ast.FunctionDef | None:
+    """Resolve ``module_name.attr`` to its installed-source ``FunctionDef``.
+
+    The callee must be importable in the lifter's environment and have readable
+    Python source. Decorators are dropped (the dig walks the body, not the
+    dispatch wrapper). Anything unresolvable returns None -- the dig then has no
+    universe for that callee, which is the honest outcome."""
+    import importlib
+    import inspect
+    import textwrap
+
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, attr)
+        source = textwrap.dedent(inspect.getsource(obj))
+        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
+    except (ImportError, AttributeError, OSError, TypeError):
+        return None
+    try:
+        parsed = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in parsed.body:
+        if isinstance(node, ast.FunctionDef) and node.name == attr:
+            node.decorator_list = []
+            # Carry the callee's OWN source so the dig's provenance mementos resolve
+            # against its module file, not the file that imported it.
+            node._sugar_source = source  # type: ignore[attr-defined]
+            node._sugar_file = sourcefile  # type: ignore[attr-defined]
+            return node
+    return None
+
+
+def _resolve_imported_callees(tree: ast.AST) -> dict[str, ast.FunctionDef]:
+    """For every callsite referencing an imported callee (``np.rot90(...)`` or a
+    ``from``-imported ``rot90(...)``), resolve its installed source to a
+    ``FunctionDef`` keyed by the callee name -- so the dig can walk it. The import
+    is the bridge from "the source is on disk" to "the dig can reach it"."""
+    aliases, from_imports = _import_bindings(tree)
+    resolved: dict[str, ast.FunctionDef] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        module_name: str | None = None
+        attr: str | None = None
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            module_name = aliases.get(func.value.id)
+            attr = func.attr
+        elif isinstance(func, ast.Name) and func.id in from_imports:
+            module_name, attr = from_imports[func.id]
+        if module_name is None or attr is None or attr in resolved:
+            continue
+        funcdef = _source_funcdef(module_name, attr)
+        if funcdef is not None:
+            resolved[attr] = funcdef
+    return resolved
 
 
 def _callee_name(node: ast.AST) -> str | None:
