@@ -521,10 +521,22 @@ def _lift_subscript_assertion(
         exp_val = complete_value(expected_sugar.desugar(), owner="subscript assertion expected")
         expected_ir = str_const(exp_val.value)
 
-    # Build IR term using only integer-index ops (slices are intermediate
-    # narrowing steps; the final subscript signature uses the integer indices).
-    index_terms = [num(op.i) for op in ops if isinstance(op, _IndexOp)]
-    subscript_term = ctor(f"subscript:{root_name}", index_terms)
+    # Build IR term encoding ALL ops (both index and slice) so that distinct
+    # slices yield distinct terms and the round-3 collision is eliminated.
+    # _IndexOp(i)          -> num(i)
+    # _SliceOp(lo,hi,step) -> ctor("slice", [enc(lo), enc(hi), enc(step)])
+    #   where enc(x) = num(x) if x is not None else ctor("none", [])
+    # Integer-only paths are unchanged: _IndexOp still maps to num(i).
+    def _enc_bound(x: int | None) -> object:
+        return num(x) if x is not None else ctor("none", [])
+
+    def _op_term(op: _IndexOp | _SliceOp) -> object:
+        if isinstance(op, _IndexOp):
+            return num(op.i)
+        return ctor("slice", [_enc_bound(op.lower), _enc_bound(op.upper), _enc_bound(op.step)])
+
+    all_op_terms = [_op_term(op) for op in ops]
+    subscript_term = ctor(f"subscript:{root_name}", all_op_terms)
     assertion_contract_name = f"{fn.name}#{root_name}#subscript#{_canonical_term_sig(subscript_term)}::assertion"
     assertion_memento = _statement_source_memento(
         stmt,
