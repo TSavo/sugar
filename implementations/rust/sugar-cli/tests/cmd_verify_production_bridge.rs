@@ -347,35 +347,32 @@ fn mint_auto_writes_body_discharge_bridge() {
         )
     });
 
-    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
-        .and_then(|v| v.as_str())
-        .expect("bridge must carry targetContractCid")
-        .to_string();
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) = sugar_proof_envelope::Member::from_value(bridge) else {
+        panic!("bridge must parse as typed BridgeMember");
+    };
+    let target_cid = bridge_m.target_contract_cid.as_str().to_string();
 
     // That target CID must resolve (by member-CID key, exactly as
     // CatalogResolver does) to a contract carrying the body-derived
     // formals + post.
-    let _ = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let target_env = pool.mementos.get(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    assert_eq!(
-        pool.member_kind(&target_cid),
-        Some("contract"),
-        "bridge target must be a contract memento"
-    );
-    let formals = pool.member_field(&target_cid, "formals")
-        .and_then(|v| v.as_array())
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) = sugar_proof_envelope::Member::from_value(target_env) else {
+        panic!("bridge target must be a contract memento");
+    };
+    let formals = target_contract.formals.as_ref()
         .expect("tool-written op-contract must carry formals (delta 2)");
     assert_eq!(
-        formals.first().and_then(|v| v.as_str()),
+        formals.first().map(|s| s.as_str()),
         Some("x"),
         "op-contract formals must be [x]"
     );
     assert!(
-        pool.member_field(&target_cid, "post").is_some(),
+        target_contract.post.is_some(),
         "op-contract must carry the body-derived post"
     );
 
@@ -398,25 +395,27 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         )
     });
 
-    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
-        .and_then(|v| v.as_str())
-        .expect("bridge must carry targetContractCid")
-        .to_string();
-    let _ = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m2)) = sugar_proof_envelope::Member::from_value(bridge) else {
+        panic!("bridge must parse as typed BridgeMember");
+    };
+    let target_cid = bridge_m2.target_contract_cid.as_str().to_string();
+    let target_env2 = pool.mementos.get(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let formals = pool.member_field(&target_cid, "formals")
-        .and_then(|v| v.as_array())
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract2)) = sugar_proof_envelope::Member::from_value(target_env2) else {
+        panic!("bridge target must be a contract memento");
+    };
+    let formals = target_contract2.formals.as_ref()
         .expect("zero-arg op-contract must carry an explicit formals array");
     assert!(
         formals.is_empty(),
         "zero-arg op-contract formals must stay empty; got {formals:?}"
     );
     assert!(
-        pool.member_field(&target_cid, "post").is_some(),
+        target_contract2.post.is_some(),
         "zero-arg op-contract must carry the body-derived post"
     );
 

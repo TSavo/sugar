@@ -716,16 +716,19 @@ done
     });
     let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
-        .expect("bridge targetContractCid");
+        .expect("bridge must have targetContractCid");
     assert!(
         pool.mementos.contains_key(target_cid),
         "bridge target cid {target_cid} must resolve in same proof"
     );
-    assert_eq!(pool.member_kind(target_cid), Some("contract"));
+    assert!(
+        pool.member_kind(target_cid) == Some("contract"),
+        "bridge target must be a contract"
+    );
     let implication_count = pool
         .mementos
         .keys()
-        .filter(|cid| pool.member_kind(cid) == Some("implication"))
+        .filter(|cid| pool.member_kind(cid.as_str()) == Some("implication"))
         .count();
     assert_eq!(
         implication_count, 1,

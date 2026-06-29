@@ -1673,7 +1673,7 @@ pub fn mint_effect_site_annotation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_proof_envelope::{member_field, member_kind};
+    use sugar_proof_envelope::{member_field, Member};
 
     fn dummy_seed() -> Ed25519Seed {
         [0x42; 32]
@@ -1984,28 +1984,19 @@ mod tests {
         let env: serde_json::Value =
             serde_json::from_slice(&minted.canonical_bytes).expect("parse authority");
 
+        let member = Member::from_value(&env).expect("parse authority member");
+        let a = match &member {
+            Member::Authority(a) => a,
+            other => panic!("expected authority, got {}", other.kind()),
+        };
+
+        assert_eq!(member.kind(), "authority");
+        assert_eq!(a.principal, "bridgeworks.software");
+        assert_eq!(a.key, authority_key.as_str());
+        assert_eq!(a.scope_kind, "contract");
+        assert_eq!(a.scope, "checked_add_u8.postcondition");
         assert_eq!(
-            member_kind(&env),
-            Some("authority")
-        );
-        assert_eq!(
-            member_field(&env, "principal").and_then(|v| v.as_str()),
-            Some("bridgeworks.software")
-        );
-        assert_eq!(
-            member_field(&env, "key").and_then(|v| v.as_str()),
-            Some(authority_key.as_str())
-        );
-        assert_eq!(
-            member_field(&env, "scopeKind").and_then(|v| v.as_str()),
-            Some("contract")
-        );
-        assert_eq!(
-            member_field(&env, "scope").and_then(|v| v.as_str()),
-            Some("checked_add_u8.postcondition")
-        );
-        assert_eq!(
-            member_field(&env, "inputCids").and_then(|v| v.get(0)).and_then(|v| v.as_str()),
+            a.input_cids.as_ref().and_then(|v| v.first()).map(|c| c.as_str()),
             Some("blake3-512:parent")
         );
         assert!(minted.cid.starts_with("blake3-512:"));
@@ -2019,44 +2010,23 @@ mod tests {
         let env: serde_json::Value =
             serde_json::from_slice(&minted.canonical_bytes).expect("parse annotation");
 
+        let member = Member::from_value(&env).expect("parse effect-site-annotation member");
+        let e = match &member {
+            Member::EffectSiteAnnotation(e) => e,
+            other => panic!("expected effect-site-annotation, got {}", other.kind()),
+        };
+
+        assert_eq!(member.kind(), "effect-site-annotation");
+        assert_eq!(e.effect_kind, "panic-freedom");
+        assert_eq!(e.file, "src/lib.rs");
+        assert_eq!(e.line, 42i64);
+        assert_eq!(e.callee, "method:unwrap");
+        assert_eq!(e.status, "residue");
+        assert_eq!(e.category, "lock_poisoning_residue");
+        assert_eq!(e.tier_to_close, "irreducible");
+        assert_eq!(e.reason, "lock poisoning is runtime residue");
         assert_eq!(
-            member_kind(&env),
-            Some("effect-site-annotation")
-        );
-        assert_eq!(
-            member_field(&env, "effectKind").and_then(|v| v.as_str()),
-            Some("panic-freedom")
-        );
-        assert_eq!(
-            member_field(&env, "file").and_then(|v| v.as_str()),
-            Some("src/lib.rs")
-        );
-        assert_eq!(
-            member_field(&env, "line").and_then(|v| v.as_u64()),
-            Some(42)
-        );
-        assert_eq!(
-            member_field(&env, "callee").and_then(|v| v.as_str()),
-            Some("method:unwrap")
-        );
-        assert_eq!(
-            member_field(&env, "status").and_then(|v| v.as_str()),
-            Some("residue")
-        );
-        assert_eq!(
-            member_field(&env, "category").and_then(|v| v.as_str()),
-            Some("lock_poisoning_residue")
-        );
-        assert_eq!(
-            member_field(&env, "tierToClose").and_then(|v| v.as_str()),
-            Some("irreducible")
-        );
-        assert_eq!(
-            member_field(&env, "reason").and_then(|v| v.as_str()),
-            Some("lock poisoning is runtime residue")
-        );
-        assert_eq!(
-            member_field(&env, "inputCids").and_then(|v| v.get(0)).and_then(|v| v.as_str()),
+            e.input_cids.first().map(|c| c.as_str()),
             Some("blake3-512:input")
         );
         assert!(minted.cid.starts_with("blake3-512:"));
@@ -2077,10 +2047,17 @@ mod tests {
             serde_json::from_slice(&second.canonical_bytes).expect("parse second");
 
         assert_eq!(first.cid, second.cid);
-        assert_eq!(
-            member_field(&first_env, "cid"),
-            member_field(&second_env, "cid")
-        );
+        let m1 = Member::from_value(&first_env).expect("parse first effect-site-annotation");
+        let m2 = Member::from_value(&second_env).expect("parse second effect-site-annotation");
+        let cid1 = match &m1 {
+            Member::EffectSiteAnnotation(e) => e.cid.as_str(),
+            other => panic!("expected effect-site-annotation, got {}", other.kind()),
+        };
+        let cid2 = match &m2 {
+            Member::EffectSiteAnnotation(e) => e.cid.as_str(),
+            other => panic!("expected effect-site-annotation, got {}", other.kind()),
+        };
+        assert_eq!(cid1, cid2);
     }
 
     #[test]

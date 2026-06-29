@@ -23,6 +23,7 @@ sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 # ProofIR through this compiler.
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
+sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 sugar-verifier = { path = "../sugar-verifier" }
 # Oracle slice: query the resident RA host (sugar-linkerd) for method-call
 # receiver/param mutability over RPC.

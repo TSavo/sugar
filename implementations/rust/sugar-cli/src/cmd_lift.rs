@@ -14,6 +14,7 @@ use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
+use sugar_proof_envelope::Member;
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
@@ -1570,8 +1571,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut source_mementos = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("source-memento") {
+    for (_, envelope) in &pool.mementos {
+        if !matches!(Member::from_value(envelope), Ok(Member::SourceMemento(_))) {
             continue;
         }
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1585,8 +1586,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut factory_walk = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("factory-walk-memento") {
+    for (_, envelope) in &pool.mementos {
+        if !matches!(Member::from_value(envelope), Ok(Member::FactoryWalkMemento(_))) {
             continue;
         }
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1599,8 +1600,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut assertion_surface_audits = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("assertion-surface-memento") {
+    for (_, envelope) in &pool.mementos {
+        if !matches!(Member::from_value(envelope), Ok(Member::AssertionSurfaceMemento(_))) {
             continue;
         }
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1615,8 +1616,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut plan_mementos = Vec::new();
-    for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("plan-memento") {
+    for (_, envelope) in &pool.mementos {
+        if !matches!(Member::from_value(envelope), Ok(Member::PlanMemento(_))) {
             continue;
         }
         if let Some(plan) = proof_plan_memento_with_atoms(pool, envelope) {
@@ -1663,14 +1664,11 @@ fn source_report_from_proof_pool(
     // when given a default_contract_name). Top-level sourceMementos[] entries do not
     // have contractName and are excluded here.
     let mut source_warrants_map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("source-memento") {
+    for (_, envelope) in &pool.mementos {
+        let Ok(Member::SourceMemento(sm)) = Member::from_value(envelope) else {
             continue;
-        }
-        let Some(contract_name) = pool
-            .member_field(cid, "contractName")
-            .and_then(|v| v.as_str())
-        else {
+        };
+        let Some(contract_name) = sm.contract_name.as_deref() else {
             continue;
         };
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1743,10 +1741,12 @@ fn proof_implication_call_edge(
         .get(consequent_cid)
         .cloned()
         .unwrap_or_else(|| consequent_cid.to_string());
-    let source_slot = pool.member_field(cid, "antecedentSlot")
+    let source_slot = pool
+        .member_field(cid, "antecedentSlot")
         .and_then(|v| v.as_str())
         .unwrap_or("post");
-    let target_slot = pool.member_field(cid, "consequentSlot")
+    let target_slot = pool
+        .member_field(cid, "consequentSlot")
         .and_then(|v| v.as_str())
         .unwrap_or("pre");
     let mut edge = serde_json::json!({
@@ -1759,13 +1759,9 @@ fn proof_implication_call_edge(
         "sourceContractCid": antecedent_cid,
         "targetContractCid": consequent_cid,
     });
-    for (field, out_field) in [
-        ("prover", "prover"),
-        ("proofWitness", "proofWitness"),
-        ("smtLibInput", "smtLibInput"),
-    ] {
+    for field in ["prover", "proofWitness", "smtLibInput"] {
         if let Some(value) = pool.member_field(cid, field).cloned() {
-            edge[out_field] = value;
+            edge[field] = value;
         }
     }
     Some(edge)
@@ -4504,7 +4500,7 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
 }
 
 fn plan_body_from_memento(value: &Value) -> Option<&Value> {
-    if sugar_proof_envelope::member_kind(value) == Some("plan-memento") {
+    if matches!(Member::from_value(value), Ok(Member::PlanMemento(_))) {
         return value.get("body");
     }
     if value.get("kind").and_then(Value::as_str) == Some("component-plan") {

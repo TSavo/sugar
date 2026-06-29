@@ -24,6 +24,7 @@ pub mod filename;
 pub mod proof;
 pub mod proof_graph;
 pub mod sign;
+pub mod typed_member;
 
 pub use cbor::{
     cbor_encode_array_head, cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr,
@@ -41,6 +42,12 @@ pub use proof_graph::{
     MemberView, MementoCid, PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento,
     SourceMemento,
     StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
+};
+pub use typed_member::{
+    AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContractMember,
+    EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
+    LibrarySugarBindingEntryMember, Member, MemberError, PlanMementoMember, ProofRunMember,
+    SourceMementoMember, StageReceiptMember, WitnessClaimMember, WitnessMementoMember,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
