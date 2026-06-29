@@ -61,17 +61,10 @@ from sugar_lift_py_tests.ir import (
     Formula,
     and_,
     ctor,
-    eq,
     gt,
     lt,
     make_var,
-    num,
     real_lit,
-)
-from sugar_lift_py_tests.factory.value_resolver import (
-    _encode_value_term,
-    _index_nested,
-    _resolve_value,
 )
 
 
@@ -179,47 +172,8 @@ def _read_int_literal_arg(call: ast.Call, kw_name: str, pos_index: int) -> Optio
     return None
 
 
-def _extract_subscript_indices(
-    node: ast.AST,
-) -> "Optional[Tuple[ast.AST, List[int]]]":
-    """If ``node`` is a chain of integer-literal subscript operations
-    (``a[i][j]...``), return ``(root_node, [i, j, ...])``.
-    ``root_node`` is the innermost base (the leftmost operand before any ``[…]``).
-    Returns ``None`` if any subscript key is not a plain int literal, or if the
-    chain is empty.
-
-    Examples:
-      ``r[0][0]``   -> ``(Name('r'), [0, 0])``
-      ``arr[1][2]`` -> ``(Name('arr'), [1, 2])``
-      ``r[i]``      -> ``None``  (non-literal index)
-    """
-    indices: List[int] = []
-    cur = node
-    while isinstance(cur, ast.Subscript):
-        sl = cur.slice
-        # Python 3.9+: slice is the node directly; earlier: may be ast.Index
-        if isinstance(sl, ast.Index):
-            sl = sl.value  # type: ignore[union-attr]
-        if not (
-            isinstance(sl, ast.Constant)
-            and isinstance(sl.value, int)
-            and not isinstance(sl.value, bool)
-        ):
-            return None
-        indices.append(sl.value)
-        cur = cur.value
-    if not indices:
-        return None
-    indices.reverse()
-    return (cur, indices)
-
-
 def _lift_assertion_scoped(
-    call: ast.Call,
-    scope: _ValueScope,
-    call_vars,
-    vocab: AssertionVocab,
-    fn: "Optional[ast.FunctionDef]" = None,
+    call: ast.Call, scope: _ValueScope, call_vars, vocab: AssertionVocab
 ) -> Formula:
     """Lift one vocabulary assertion call. Raises ValueError (loud, recorded as a
     skip) for approximate / relation-altering / unsupported forms so they are
@@ -243,43 +197,7 @@ def _lift_assertion_scoped(
                 )
         l = _translate_term_scoped(call.args[0], scope, call_vars)
         r = _translate_term_scoped(call.args[1], scope, call_vars)
-        obligation = _comparison_from_symbol(vocab.relation, l, r)
-        # Universe conjoin: if the LHS is a concrete subscript chain whose root
-        # resolves to a literal numpy value, ground it with the concrete element.
-        # and_([eq(l, expected), eq(l, num(element))]) gives the solver two
-        # grounded constraints: when expected==element both pass (substantive
-        # discharge); when expected!=element the conjunction is UNSAT (refuted).
-        # If the root does NOT resolve, keep the single obligation (honest -- no
-        # fake universe is ever emitted).
-        if fn is not None:
-            sub_info = _extract_subscript_indices(call.args[0])
-            if sub_info is not None:
-                root_node, indices = sub_info
-                resolved = _resolve_value(root_node, fn)
-                if resolved is not None:
-                    element = _index_nested(resolved, indices)
-                    if element is not None:
-                        universe_fact = eq(l, num(element))
-                        obligation = and_([obligation, universe_fact])
-            elif isinstance(call.args[0], ast.Name):
-                # Frame / Series grounding: both args are plain Name nodes bound to
-                # resolvable pd.DataFrame / pd.Series / np.array literals.  Resolve
-                # both sides; if both resolve to canonically-encodable terms, conjoin
-                # two grounding facts so the solver has a concrete universe:
-                #   eq(df_term, enc_l) ∧ eq(expected_term, enc_r) ∧ eq(df_term, expected_term)
-                # When enc_l == enc_r -> SAT, substantive discharge.
-                # When enc_l != enc_r -> UNSAT (the two grounding facts force
-                #   df_term != expected_term via transitivity), contradiction -> refuted.
-                # If either arg does NOT resolve to a literal value, the obligation
-                # stays ungrounded (honest -- no fake universe is ever emitted).
-                resolved_l = _resolve_value(call.args[0], fn)
-                resolved_r = _resolve_value(call.args[1], fn) if isinstance(call.args[1], ast.Name) else None
-                if resolved_l is not None and resolved_r is not None:
-                    enc_l = _encode_value_term(resolved_l)
-                    enc_r = _encode_value_term(resolved_r)
-                    if enc_l is not None and enc_r is not None:
-                        obligation = and_([obligation, eq(l, enc_l), eq(r, enc_r)])
-        return obligation
+        return _comparison_from_symbol(vocab.relation, l, r)
     if name in vocab.truth:
         if len(call.args) < 1:
             raise ValueError(f"{name} expects 1 positional arg")
@@ -375,7 +293,6 @@ def _classify(
     source_path: str,
     out: Layer2Output,
     vocab: AssertionVocab,
-    fn: "Optional[ast.FunctionDef]" = None,
 ) -> bool:
     if not any(_assertion_name(s, vocab) is not None for s in body):
         return False
@@ -414,7 +331,7 @@ def _classify(
         scope = _ValueScope(current=dict(ssa_current))
         try:
             if _assertion_name(stmt, vocab) is not None:
-                atom = _lift_assertion_scoped(stmt.value, scope, call_vars, vocab, fn=fn)
+                atom = _lift_assertion_scoped(stmt.value, scope, call_vars, vocab)
             else:
                 atom = _lift_assertion_stmt_scoped(stmt, scope, call_vars)
         except ValueError as e:
@@ -463,7 +380,7 @@ def lift_file_assertions(source: str, source_path: str, vocab: AssertionVocab) -
         for fn, class_name in _iter_test_functions(tree):
             test_name = f"{class_name}::{fn.name}" if class_name else fn.name
             body = _strip_self(fn.body, fn)
-            _classify(body, test_name, source_path, out, vocab, fn=fn)
+            _classify(body, test_name, source_path, out, vocab)
     finally:
         _l2._CURRENT_MODULE_ALIASES = prev_aliases
     return out
