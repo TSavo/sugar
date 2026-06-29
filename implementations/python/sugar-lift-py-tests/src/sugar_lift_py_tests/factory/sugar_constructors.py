@@ -293,13 +293,29 @@ def build_control_flow_body_sugar(site, ctx):
     # by composition through the factory.
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
-    from sugar_lift_py_tests.floor import GuardedReturn, ReturnValue
+    from sugar_lift_py_tests.floor import EncodedStringValue, GuardedReturn, ReturnValue
     from sugar_lift_py_tests.outcome import complete_value
 
     block = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT)
-    block_value = complete_value(block.reduce(reduce_ctx), owner="control-flow body")
+    block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
+    stmts = block_value.statements
+    # Encoder body: the Block composed it to a single unguarded EncodedStringValue
+    # return -> lower to the existing str.eq-bv-blocks atom (a recognized leaf, not a
+    # separate dispatch path).
+    if (
+        len(stmts) == 1
+        and isinstance(stmts[0], ReturnValue)
+        and isinstance(stmts[0].value, EncodedStringValue)
+    ):
+        from sugar_lift_py_tests.sugar.encoder_body_sugar import EncoderBodySugar
+
+        return EncoderBodySugar(
+            parameter=function.args.args[0].arg,
+            encoded=stmts[0].value,
+            statement_count=len(function.body),
+        )
     paths: list = []
-    for outcome in block_value.statements:
+    for outcome in stmts:
         if isinstance(outcome, ReturnValue):
             paths.append(((), _floor_to_term(outcome.value)))
         elif isinstance(outcome, GuardedReturn):
@@ -323,11 +339,12 @@ def _function_call_body(function: ast.FunctionDef, ctx):
         body = function.body[0]
         if isinstance(body, ast.Return) and body.value is not None:
             return ctx.build_body(body.value, SugarRole.TERM)
-    if any(isinstance(stmt, ast.If) for stmt in function.body):
-        return build_control_flow_body_sugar(
-            SourceSite.from_node(function, ctx.filename), ctx
-        )
-    return build_generic_body_sugar(SourceSite.from_node(function, ctx.filename), ctx)
+    # Every multi-statement body composes as one Block: control flow becomes guarded
+    # implications, a string encoder becomes str.eq-bv-blocks, docstrings are absorbed.
+    # One path -- GenericBodySugar's ad-hoc walk and the dispatch fork are gone.
+    return build_control_flow_body_sugar(
+        SourceSite.from_node(function, ctx.filename), ctx
+    )
 
 
 def build_list_literal_sugar(site, ctx):

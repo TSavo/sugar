@@ -27,14 +27,12 @@ def _lift(expected: str):
 
 def test_base20_lifts_by_generic_composition_not_a_base64_sugar() -> None:
     rep = _lift("BE")
-    # Each body node dispatches to a GENERIC catalog sugar; nothing base64-specific.
+    # The body composes as ONE Block through the generic catalog (BlockSugar drives
+    # AssignSugar / OrdByteSugar / BitwiseOp / StringSubscript / BinOp internally);
+    # nothing base64-specific. The string encoder is a recognized leaf INSIDE the
+    # Block, lowered to the same str.eq-bv-blocks relation -- not a separate dispatch.
     selected = [row.selected for row in rep.payload.factory_walk]
-    assert selected == [
-        "StringLiteralSugar",
-        "OrdSugar",
-        "BinOpSugar",
-        "FunctionCallSugar",
-    ]
+    assert selected == ["BlockSugar", "FunctionCallSugar"]
     names = [c.name for c in rep.payload.ir]
     assert names == [
         "test_base20::encode20::callable",

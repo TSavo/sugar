@@ -97,7 +97,10 @@ def _base64_payload(formula: dict) -> dict:
 def _assert_base64_payload(formula: dict) -> None:
     payload = _base64_payload(formula)
     assert "input_bytes" not in payload
-    assert payload["vars"] == ["b0", "b1", "b2"]
+    # The body composes through the Block: each `b_i = ord(value[i])` is a BoundVar
+    # aliasing a symbolic byte var named by source+index. The var names are internal
+    # (byte-identity is not the contract); str.eq-bv-blocks reads them in byte order.
+    assert payload["vars"] == ["byte_value_0", "byte_value_1", "byte_value_2"]
     assert len(payload["per_char"]) == 4
     assert payload["table"] == [
         ord(ch) for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -153,36 +156,24 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # The dig emits no call-edge: composition is ambient-post specialization keyed on
     # the `call:` ctor head, which needs no explicit edge.
     assert good_doc["callEdges"] == []
-    # The base64 body lifts by composing GENERIC catalog sugars -- no base64-specific
-    # sugar exists: the table is a StringLiteralSugar, each byte an OrdSugar, the
-    # subscript-concat return a BinOpSugar (over StringSubscriptSugar/BitwiseOpSugar).
+    # The base64 body lifts by composing through ONE Block: BlockSugar drives the
+    # generic catalog internally (AssignSugar / OrdByteSugar / BitwiseOp /
+    # StringSubscript / BinOp), and the string encoder is a recognized leaf INSIDE the
+    # Block, lowered to str.eq-bv-blocks -- no base64-specific dispatch path.
     assert [row["selected"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
-        "StringLiteralSugar",
-        "OrdSugar",
-        "OrdSugar",
-        "OrdSugar",
-        "BinOpSugar",
+        "BlockSugar",
         "FunctionCallSugar",
     ]
     assert [row["requested_role"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
         "FunctionBodyConstraint",
-        "FunctionBodyConstraint",
-        "FunctionBodyConstraint",
-        "FunctionBodyConstraint",
-        "FunctionBodyConstraint",
         "AssertionSurface",
     ]
-    _eq_var_const(
-        good_doc["factoryAuditSummary"]["factoryWalk"][0]["emittedFormula"],
-        "alphabet",
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-    )
-    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][1]
-    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][2]
-    assert "emittedFormula" not in good_doc["factoryAuditSummary"]["factoryWalk"][3]
-    _assert_base64_payload(good_doc["factoryAuditSummary"]["factoryWalk"][4]["emittedFormula"])
+    # The Block row emits the whole str.eq-bv-blocks universe; the call row emits the
+    # assertion inv. (Per-statement accounting -- one walk row per source line -- is
+    # the warrant/support ledger work still to come; today the Block is one row.)
+    _assert_base64_payload(good_doc["factoryAuditSummary"]["factoryWalk"][0]["emittedFormula"])
     assert (
-        good_doc["factoryAuditSummary"]["factoryWalk"][5]["emittedFormula"]
+        good_doc["factoryAuditSummary"]["factoryWalk"][1]["emittedFormula"]
         == assertion_contract["inv"]
     )
     assert good_doc["sourceLedger"]["source_loci"] == 2
