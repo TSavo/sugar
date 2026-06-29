@@ -69,6 +69,7 @@ from sugar_lift_py_tests.ir import (
     real_lit,
 )
 from sugar_lift_py_tests.factory.value_resolver import (
+    _encode_value_term,
     _index_nested,
     _resolve_value,
 )
@@ -260,6 +261,24 @@ def _lift_assertion_scoped(
                     if element is not None:
                         universe_fact = eq(l, num(element))
                         obligation = and_([obligation, universe_fact])
+            elif isinstance(call.args[0], ast.Name):
+                # Frame / Series grounding: both args are plain Name nodes bound to
+                # resolvable pd.DataFrame / pd.Series / np.array literals.  Resolve
+                # both sides; if both resolve to canonically-encodable terms, conjoin
+                # two grounding facts so the solver has a concrete universe:
+                #   eq(df_term, enc_l) ∧ eq(expected_term, enc_r) ∧ eq(df_term, expected_term)
+                # When enc_l == enc_r -> SAT, substantive discharge.
+                # When enc_l != enc_r -> UNSAT (the two grounding facts force
+                #   df_term != expected_term via transitivity), contradiction -> refuted.
+                # If either arg does NOT resolve to a literal value, the obligation
+                # stays ungrounded (honest -- no fake universe is ever emitted).
+                resolved_l = _resolve_value(call.args[0], fn)
+                resolved_r = _resolve_value(call.args[1], fn) if isinstance(call.args[1], ast.Name) else None
+                if resolved_l is not None and resolved_r is not None:
+                    enc_l = _encode_value_term(resolved_l)
+                    enc_r = _encode_value_term(resolved_r)
+                    if enc_l is not None and enc_r is not None:
+                        obligation = and_([obligation, eq(l, enc_l), eq(r, enc_r)])
         return obligation
     if name in vocab.truth:
         if len(call.args) < 1:

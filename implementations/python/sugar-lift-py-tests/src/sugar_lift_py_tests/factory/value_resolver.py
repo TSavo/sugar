@@ -3,6 +3,61 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
+import json as _json
+
+from sugar_lift_py_tests.ir import Term, ctor, num, str_const
+
+
+def _encode_value_term(value: object) -> "Term | None":
+    """Encode a resolved Python value as a canonical IR Term that z3 can
+    distinguish concretely using the String theory.
+
+    Encoding (all as ``str_const`` so the String theory's decidable equality
+    gives the solver real teeth — EUF uninterpreted-sort ctors are trivially
+    consistent and would only give undecidable/vacuous discharges):
+
+    - ``dict[str, list[int]]`` (pd.DataFrame) ->
+          str_const("pdframe:" + JSON of sorted-key dict)
+          e.g. str_const('pdframe:{"a":[1,2,3]}')
+    - ``list[int]`` (pd.Series / np array) ->
+          str_const("pdseries:" + JSON of list)
+          e.g. str_const('pdseries:[1,2,3]')
+    - ``int`` (bare scalar) -> num(value)
+
+    Returns None for anything else (honest -- no fake encoding).
+    The encoding is INJECTIVE: two distinct values produce distinct str_const
+    (sorted column order = canonical; different ints/lengths → different JSON).
+    In z3's String theory, distinct string literals are always distinct, so
+    two frames with different columns or values produce distinct constants and
+    the equality obligation becomes UNSAT when the frames differ, giving the
+    solver's UNSAT certificate real teeth.
+    """
+    if isinstance(value, dict):
+        # Must be dict[str, list[int]] -- DataFrame shape
+        for k, v in value.items():
+            if not isinstance(k, str):
+                return None
+            if not isinstance(v, list):
+                return None
+            if not all(isinstance(x, int) and not isinstance(x, bool) for x in v):
+                return None
+        # Sort keys for canonicality; JSON with compact separators for uniqueness.
+        canonical = _json.dumps(
+            {k: value[k] for k in sorted(value.keys())},
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return str_const("pdframe:" + canonical)
+    if isinstance(value, list):
+        # Must be list[int] -- Series/array shape
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in value):
+            return None
+        canonical = _json.dumps(value, separators=(",", ":"))
+        return str_const("pdseries:" + canonical)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return num(value)
+    return None
+
 
 def _nested_int_literal(node: ast.AST):
     """An ast node -> a nested Python list of ints (or a bare int), or None.
