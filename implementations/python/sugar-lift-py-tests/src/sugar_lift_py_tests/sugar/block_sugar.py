@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.sugar_constructors import build_block_sugar
-from sugar_lift_py_tests.floor import BlockValue, SupportValue
+from sugar_lift_py_tests.floor import BindingValue, BlockValue, SupportValue
+# (BlockValue is also an if's outcome -- the guarded returns of its branches.)
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -28,7 +29,19 @@ class BlockSugar:
         for child in self.statements:
             value = complete_value(child.reduce(ctx), owner="block statement")
             if isinstance(value, SupportValue):
-                continue  # Support is inert -- absorbed, contributes nothing
+                continue  # Support (a comment) is inert -- absorbed
+            if isinstance(value, BindingValue):
+                # an assignment: thread the binding into scope so LATER statements
+                # in this block resolve the name (a let-binding).
+                ctx = replace(
+                    ctx, temporal=ctx.temporal.bind_value(value.name, value.value)
+                )
+                continue
+            if isinstance(value, BlockValue):
+                # an `if`: its outcome is the guarded returns of its branches --
+                # flatten them into this block.
+                outcomes.extend(value.statements)
+                continue
             outcomes.append(value)
         return Complete(BlockValue(tuple(outcomes)))
 

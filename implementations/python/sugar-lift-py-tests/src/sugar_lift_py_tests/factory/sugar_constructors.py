@@ -338,6 +338,41 @@ def build_return_sugar(site, ctx):
     return ReturnSugar(value=ctx.build_body(node.value, SugarRole.TERM))
 
 
+def build_assign_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
+    node = site.node
+    if not (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ):
+        raise TypeError("AssignSugar claim built a non-single-name assignment")
+    # The factory builds the RHS (TERM) and hands it in.
+    return AssignSugar(
+        name=node.targets[0].id,
+        value=ctx.build_body(node.value, SugarRole.TERM),
+    )
+
+
+def build_if_sugar(site, ctx):
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+
+    node = site.node
+    if not isinstance(node, ast.If):
+        raise TypeError("IfSugar claim built a non-if")
+    # The test lifts to a guard Formula; the then/orelse suites are child Blocks the
+    # factory builds and hands in.
+    then_block = ctx.build_body(Block.of(node.body), SugarRole.STATEMENT)
+    else_block = (
+        ctx.build_body(Block.of(node.orelse), SugarRole.STATEMENT)
+        if node.orelse
+        else None
+    )
+    return IfSugar(test=_cf_guard(node.test), then=then_block, else_block=else_block)
+
+
 def build_block_sugar(site, ctx):
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
