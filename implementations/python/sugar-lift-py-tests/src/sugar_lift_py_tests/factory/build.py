@@ -210,9 +210,21 @@ def _raise_ambiguous_candidates(
 
 def default_catalog() -> SugarCatalog:
     from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
+    from sugar_lift_py_tests.sugar.binop_sugar import BINOP_CLAIM
     from sugar_lift_py_tests.sugar.bitwise_op_sugar import BITWISE_OP_CLAIM
+    from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM
     from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
         PRIMITIVE_LITERAL_CLAIM,
     )
+    from sugar_lift_py_tests.sugar.string_subscript_sugar import STRING_SUBSCRIPT_CLAIM
 
-    return SugarCatalog([PRIMITIVE_LITERAL_CLAIM, BITWISE_OP_CLAIM, ARRAY_LITERAL_CLAIM])
+    return SugarCatalog(
+        [
+            PRIMITIVE_LITERAL_CLAIM,
+            BITWISE_OP_CLAIM,
+            ARRAY_LITERAL_CLAIM,
+            BINOP_CLAIM,
+            NAME_CLAIM,
+            STRING_SUBSCRIPT_CLAIM,
+        ]
+    )

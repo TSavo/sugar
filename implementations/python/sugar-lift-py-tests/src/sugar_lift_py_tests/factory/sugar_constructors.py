@@ -60,67 +60,78 @@ def build_bitwise_op_sugar(site, ctx):
     return sugar
 
 
-def build_base64_body_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.base64_body_sugar import Base64BodySugar
+def build_string_subscript_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.string_subscript_sugar import StringSubscriptSugar
+
+    index_node = site.node.slice
+    if isinstance(index_node, ast.Index):  # py<3.9 compatibility
+        index_node = index_node.value
+    sugar = StringSubscriptSugar.from_site(
+        site,
+        receiver=ctx.build_body(site.node.value, SugarRole.TERM),
+        index=ctx.build_body(index_node, SugarRole.TERM),
+    )
+    if sugar is None:
+        raise TypeError("StringSubscriptSugar claim built a non-subscript")
+    return sugar
+
+
+def build_generic_body_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.generic_body_sugar import GenericBodySugar
+    from sugar_lift_py_tests.sugar.ord_sugar import OrdSugar
+    from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
 
     function = site.node
     if not isinstance(function, ast.FunctionDef):
-        raise TypeError("Base64BodySugar claim built a non-function")
-    if len(function.args.args) != 1 or len(function.body) != 5:
-        raise TypeError("Base64BodySugar claim built a non-base64 body")
-    source_name = function.args.args[0].arg
-    alphabet = build_alphabet_literal_sugar(
-        SourceSite.from_node(function.body[0], site.filename),
-        ctx,
-    )
-    ords = tuple(
-        build_ord_sugar(
-            SourceSite.from_node(stmt, site.filename),
-            ctx,
-            source_name=source_name,
+        raise TypeError("GenericBodySugar claim built a non-function")
+    if len(function.args.args) != 1:
+        raise TypeError("GenericBodySugar requires a unary function")
+    parameter = function.args.args[0].arg
+    if len(function.body) < 2:
+        raise TypeError("GenericBodySugar requires assignments and a return")
+    *assign_stmts, ret = function.body
+    if not isinstance(ret, ast.Return) or ret.value is None:
+        raise TypeError("GenericBodySugar requires a return statement")
+    table_name: str | None = None
+    table_value: str | None = None
+    ord_bytes: list[tuple[int, str]] = []
+    assign_kinds: list[str] = []
+    for stmt in assign_stmts:
+        if (
+            not isinstance(stmt, ast.Assign)
+            or len(stmt.targets) != 1
+            or not isinstance(stmt.targets[0], ast.Name)
+        ):
+            raise TypeError("GenericBodySugar assignment must bind a single name")
+        ord_sugar = OrdSugar.from_site(
+            SourceSite.from_node(stmt, ctx.filename), source_name=parameter
         )
-        for stmt in function.body[1:4]
+        if ord_sugar is not None:
+            ord_bytes.append((ord_sugar.index, ord_sugar.target))
+            assign_kinds.append("ord")
+            continue
+        literal = string_literal_sugar(stmt.value)
+        if literal is not None:
+            if table_name is not None:
+                raise TypeError("GenericBodySugar expects a single table literal")
+            table_name = stmt.targets[0].id
+            table_value = literal.value
+            assign_kinds.append("table")
+            continue
+        raise TypeError("GenericBodySugar assignment is neither a table literal nor an ord byte")
+    if table_name is None or not ord_bytes:
+        raise TypeError("GenericBodySugar needs a table literal and at least one ord byte")
+    byte_names = tuple(target for _, target in sorted(ord_bytes, key=lambda pair: pair[0]))
+    return_body = ctx.build_body(ret.value, SugarRole.TERM)
+    return GenericBodySugar(
+        parameter=parameter,
+        table_name=table_name,
+        table_value=table_value,
+        byte_names=byte_names,
+        assign_kinds=tuple(assign_kinds),
+        return_body=return_body,
+        build_ctx=ctx,
     )
-    return_sugar = build_bitwise_base64_sugar(
-        SourceSite.from_node(function.body[4], site.filename),
-        ctx,
-    )
-    sugar = Base64BodySugar.from_site(
-        site,
-        alphabet=alphabet,
-        ords=ords,
-        return_sugar=return_sugar,
-    )
-    if sugar is None:
-        raise TypeError("Base64BodySugar claim built a non-base64 body")
-    return sugar
-
-
-def build_alphabet_literal_sugar(site, _ctx):
-    from sugar_lift_py_tests.sugar.alphabet_literal_sugar import AlphabetLiteralSugar
-
-    sugar = AlphabetLiteralSugar.from_site(site)
-    if sugar is None:
-        raise TypeError("AlphabetLiteralSugar claim built a non-alphabet literal")
-    return sugar
-
-
-def build_ord_sugar(site, _ctx, *, source_name: str):
-    from sugar_lift_py_tests.sugar.ord_sugar import OrdSugar
-
-    sugar = OrdSugar.from_site(site, source_name=source_name)
-    if sugar is None:
-        raise TypeError("OrdSugar claim built a non-ord assignment")
-    return sugar
-
-
-def build_bitwise_base64_sugar(site, _ctx):
-    from sugar_lift_py_tests.sugar.bitwise_base64_sugar import BitwiseBase64Sugar
-
-    sugar = BitwiseBase64Sugar.from_site(site)
-    if sugar is None:
-        raise TypeError("BitwiseBase64Sugar claim built a non-base64 return")
-    return sugar
 
 
 def build_builder_ctor_sugar(site, ctx):
@@ -178,7 +189,7 @@ def _function_call_body(function: ast.FunctionDef, ctx):
         body = function.body[0]
         if isinstance(body, ast.Return) and body.value is not None:
             return ctx.build_body(body.value, SugarRole.TERM)
-    return build_base64_body_sugar(SourceSite.from_node(function, ctx.filename), ctx)
+    return build_generic_body_sugar(SourceSite.from_node(function, ctx.filename), ctx)
 
 
 def build_list_literal_sugar(site, ctx):

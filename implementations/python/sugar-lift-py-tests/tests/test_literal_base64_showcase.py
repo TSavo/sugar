@@ -153,12 +153,15 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # The dig emits no call-edge: composition is ambient-post specialization keyed on
     # the `call:` ctor head, which needs no explicit edge.
     assert good_doc["callEdges"] == []
+    # The base64 body lifts by composing GENERIC catalog sugars -- no base64-specific
+    # sugar exists: the table is a StringLiteralSugar, each byte an OrdSugar, the
+    # subscript-concat return a BinOpSugar (over StringSubscriptSugar/BitwiseOpSugar).
     assert [row["selected"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [
-        "AlphabetLiteralSugar",
+        "StringLiteralSugar",
         "OrdSugar",
         "OrdSugar",
         "OrdSugar",
-        "BitwiseBase64Sugar",
+        "BinOpSugar",
         "FunctionCallSugar",
     ]
     assert [row["requested_role"] for row in good_doc["factoryAuditSummary"]["factoryWalk"]] == [

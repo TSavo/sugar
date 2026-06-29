@@ -8,9 +8,9 @@ from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-from .base64_body_sugar import Base64BodySugar
+from .generic_body_sugar import GenericBodySugar
 
-FunctionCallBody = SugarBody | Base64BodySugar
+FunctionCallBody = SugarBody | GenericBodySugar
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class FunctionCallSugar:
     def __post_init__(self) -> None:
         if not isinstance(self.argument, SugarBody):
             raise TypeError("FunctionCallSugar argument must be factory-built")
-        if not isinstance(self.body, (SugarBody, Base64BodySugar)):
+        if not isinstance(self.body, (SugarBody, GenericBodySugar)):
             raise TypeError("FunctionCallSugar body must be factory-built")
 
     @classmethod
@@ -50,7 +50,7 @@ class FunctionCallSugar:
         if isinstance(self.body, SugarBody):
             return self.body.reduce(ctx)
         raise TypeError(
-            "FunctionCallSugar with Base64BodySugar lowers to ProofIR; call "
+            "FunctionCallSugar with GenericBodySugar lowers to ProofIR; call "
             "constraint_formulas instead of computing in Python"
         )
 
