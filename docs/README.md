@@ -33,12 +33,14 @@ is the map.
 - [examples/](../examples/) — the runnable receipts (numpy-vendor headline, two-way discharge showcase, the inheritance capstone, and more).
 - [explanation/concepts.md](explanation/concepts.md) — the mental model (sugar & contract, lift/lower, the trinity, CID, the honest trichotomy), distilled from the dictionary.
 - [explanation/rendezvous.md](explanation/rendezvous.md) — how kits register interest in a project: census → discover → declare → component plan (the front of the pipeline).
+- [explanation/witness-oracle.md](explanation/witness-oracle.md) — the back of the pipeline: capture → resolve → recompute; the kit resolves, the CLI recomputes, trust the recomputation never the resolver.
 - *Returning:* the rest of `explanation/` — *why a contract beats a test*, the `sugar diff` dragons report (currently README sections, being extracted).
 
 ### Using Sugar on your code
 - [examples/](../examples/) — start from the `run.sh` closest to your case; each mints, proves, and verifies end to end.
 - [how-to/publish-and-inherit-a-proof.md](how-to/publish-and-inherit-a-proof.md) — ship a `.proof` for your library; consume and inherit one, cross-language.
 - [how-to/behavioral-semver.md](how-to/behavioral-semver.md) — catch behavior drift on upgrade: `sugar diff --require`/`--frozen`, `cargo sugar` in CI, the `sugar-check` pre-commit hook.
+- [how-to/reading-a-refusal.md](how-to/reading-a-refusal.md) — interpret a non-green result: discharged/refused/refuted/unresolved/support, the discharge methods, and what to do about each.
 - [reference/cli.md](reference/cli.md) — the full CLI surface (all 21 verbs), grounded against the dispatch table.
 - [`.proof` file format](../protocol/specs/2026-04-30-proof-file-format.md) — the canonical spec: what's in a `.proof`, the integrity rules, walking one.
 - [reference/per-language-status.md](reference/per-language-status.md) — the kits and the runnable evidence per language (no coverage numbers; the examples are the test of record).
