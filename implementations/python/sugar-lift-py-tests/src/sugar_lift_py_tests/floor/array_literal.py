@@ -9,7 +9,8 @@ from .term_value import TermValue
 
 @dataclass(frozen=True)
 class ArrayLiteral(FloorValue):
-    items: tuple[TermValue, ...]
+    # Each item is a scalar (TermValue) or a nested array (ArrayLiteral).
+    items: tuple["TermValue | ArrayLiteral", ...]
 
     def map_with(self, operation: Any, ctx: Any) -> Any:
         return operation.map_array(self, ctx)

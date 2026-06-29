@@ -502,9 +502,15 @@ def _source_funcdef(module_name: str, attr: str) -> ast.FunctionDef | None:
         module = importlib.import_module(module_name)
         obj = getattr(module, attr)
         source = textwrap.dedent(inspect.getsource(obj))
-        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
     except (ImportError, AttributeError, OSError, TypeError):
         return None
+    # getsourcefile is best-effort: it raises TypeError on dispatch-wrapped callees
+    # (e.g. numpy's @array_function_dispatch) where getsource still works -- a failure
+    # here must NOT abort the resolution, only drop the filename label.
+    try:
+        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
+    except TypeError:
+        sourcefile = f"<{module_name}>"
     try:
         parsed = ast.parse(source)
     except SyntaxError:

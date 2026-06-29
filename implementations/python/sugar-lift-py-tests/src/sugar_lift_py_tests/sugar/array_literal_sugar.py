@@ -30,7 +30,7 @@ class ArrayLiteralSugar:
         return Complete(
             ArrayLiteral(
                 tuple(
-                    _term_value(
+                    _array_element(
                         complete_value(element.reduce(ctx), owner="ArrayLiteralSugar")
                     )
                     for element in self.elements
@@ -39,9 +39,14 @@ class ArrayLiteralSugar:
         )
 
 
-def _term_value(value) -> TermValue:
-    if not isinstance(value, TermValue):
-        raise TypeError("ArrayLiteralSugar elements must desugar to TermValue")
+def _array_element(value):
+    # An array element is either a scalar (TermValue) or a NESTED array
+    # (ArrayLiteral). Arrays composing with arrays is universal, so this is the
+    # same generic sugar -- there is no `[[...]]`-specific code.
+    if not isinstance(value, (TermValue, ArrayLiteral)):
+        raise TypeError(
+            "ArrayLiteralSugar elements must desugar to a scalar or a nested array"
+        )
     return value
 
 
