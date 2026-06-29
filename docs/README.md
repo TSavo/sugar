@@ -45,7 +45,9 @@ is the map.
 ### Extending Sugar (a new kit, lifter, or backend)
 - [contributing/overview.md](contributing/overview.md) — the lay of the land.
 - [contributing/writing-a-kit/](contributing/writing-a-kit/) — implement a language kit.
-- [contributing/writing-a-lift-adapter/](contributing/writing-a-lift-adapter/) — lift a native surface into ProofIR.
+- [contributing/writing-a-lift-adapter/](contributing/writing-a-lift-adapter/) — lift a native surface into ProofIR (the mechanics).
+- **[contributing/lifting-rules.md](contributing/lifting-rules.md)** — the soundness laws a lifter must obey; read before shipping a kit/lifter.
+- [contributing/factory-sugar-floor.md](contributing/factory-sugar-floor.md) — the recommended lifter shape (design guideline) that satisfies those laws cleanly.
 - [contributing/writing-a-prover-backend.md](contributing/writing-a-prover-backend.md) — add an IR-compiler backend.
 - [contributing/writing-an-LSP-plugin.md](contributing/writing-an-LSP-plugin.md) · [contributing/porting-to-a-new-language.md](contributing/porting-to-a-new-language.md)
 - [contributing/build.md](contributing/build.md) — build from source, polyglot Make targets, system deps.
