@@ -84,8 +84,10 @@ def build_generic_body_sugar(site, ctx):
     function = site.node
     if not isinstance(function, ast.FunctionDef):
         raise TypeError("GenericBodySugar claim built a non-function")
-    if len(function.args.args) != 1:
-        raise TypeError("GenericBodySugar requires a unary function")
+    if not function.args.args:
+        raise TypeError("GenericBodySugar requires at least one parameter")
+    # The lifted value binds to the first positional parameter; any others carry
+    # their own defaults (e.g. rot90's k, axes) and are not part of the value.
     parameter = function.args.args[0].arg
     if len(function.body) < 2:
         raise TypeError("GenericBodySugar requires assignments and a return")
