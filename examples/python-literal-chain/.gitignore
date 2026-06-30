@@ -1,0 +1,10 @@
+*/.sugar/runs/
+*/.sugar/witnesses/
+*/.sugar/lying-discharge.sh
+*/__pycache__/
+*/.pytest_cache/
+*/blake3-512_*.proof
+*/.prove*.json
+*/.prove*.raw
+*/.verify*.json
+*/.verify*.raw

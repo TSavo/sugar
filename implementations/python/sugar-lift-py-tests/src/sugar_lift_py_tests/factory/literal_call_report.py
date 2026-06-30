@@ -492,7 +492,9 @@ def _construct_callsite(
         # Emit the callee's ::callable UNIVERSE once -- the symbolic body walk, warranting each
         # source line (`return h(x)` -> `out == call:h(x)`, `return x+1` -> `out == +(x,1)`). The
         # construction below swears the concrete VALUE at the callsite; the universe warrants the
-        # body where its constraints originate, so the visual walk paints the body green too.
+        # body where its constraints originate, so the visual walk paints the body green too. The
+        # nested universe is KEPT (the call seam is preserved); the verifier reduces it through
+        # wp + EUF, as it already does for arithmetic bodies (`*(3,2)==6` -> z3).
         if cn not in universes_seen:
             universes_seen.add(cn)
             uni = _function_universe(
