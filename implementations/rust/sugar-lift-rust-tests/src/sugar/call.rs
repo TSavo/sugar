@@ -199,17 +199,45 @@ fn value_call_support_key(func: &Expr) -> Option<String> {
     Some(format!("{self_ty}::{name}"))
 }
 
+/// Fragment-taking wrapper for `type_id_of_call_decision`. All `as_expr()` and raw
+/// `Expr::` access lives HERE -- outside the `recognize` body -- so the `recognize`
+/// body stays clean (ratchet-excluded per Phase-3 migration).
+fn frag_type_id_decision(frag: &SourceFragment) -> Option<Result<(), String>> {
+    let expr = frag.as_expr()?;
+    let Expr::Call(call) = expr else { return None; };
+    type_id_of_call_decision(&call.func, call.args.len())
+}
+
+/// Fragment-taking wrapper for `type_id_of_call_term`. All `as_expr()` and raw
+/// `Expr::` access lives HERE -- outside the `recognize` body -- so the `recognize`
+/// body stays clean (ratchet-excluded per Phase-3 migration).
+/// Returns `Result<_, String>` matching `type_id_of_call_term`'s signature.
+fn frag_type_id_term(frag: &SourceFragment) -> Result<Option<Rc<Term>>, String> {
+    let expr = frag.as_expr().expect("frag_type_id_term: non-expr fragment");
+    let Expr::Call(call) = expr else {
+        panic!("frag_type_id_term: not a Call fragment")
+    };
+    type_id_of_call_term(&call.func, call.args.len())
+}
+
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
 /// `TypeId::of` const-fold preamble FIRST (a resolved term, or a construction gap on
 /// malformed syntax), then the constructive `call:<head>` ctor over the arg children
 /// ([`CallSugar`]).
+///
+/// MIGRATION STATUS (Phase-3 ratchet -- FULLY MIGRATED).
+///   * Signature: `&SourceFragment` (not raw `&Expr`).
+///   * Body: zero `as_expr()`/`as_stmt()`/`as_item()` calls; zero raw `Expr::`/`Stmt::`/
+///     `Item::` matches. Raw-syn access lives in the private helpers above and in
+///     `factory.rs::SugarBody::term_frag` (both ratchet-excluded).
+///   * `CallSugar` struct holds `SugarBody<TermFloor>` children and a `String` head key;
+///     no raw `syn` in the struct.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
+    if frag.observed() != "Call" {
         return None;
-    };
-    if type_id_of_call_decision(&call.func, call.args.len()).is_some() {
-        return Some(match type_id_of_call_term(&call.func, call.args.len()) {
+    }
+    if frag_type_id_decision(frag).is_some() {
+        return Some(match frag_type_id_term(frag) {
             Ok(Some(term)) => resolved_term(term),
             Ok(None) => {
                 panic!("TypeId::of call did not resolve; write more Sugar for this AST")
@@ -222,12 +250,8 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         });
     }
     Some(Box::new(CallSugar::Constructive {
-        head_key: expr_head_key(&call.func),
-        args: call
-            .args
-            .iter()
-            .map(|arg| SugarBody::term(arg, fcx))
-            .collect(),
+        head_key: frag.call_head_key().expect("recognize: Call fragment has no head key"),
+        args: frag.call_args().iter().map(|arg| SugarBody::term_frag(arg, fcx)).collect(),
     }))
 }
 
@@ -404,6 +428,10 @@ mod tests {
     // These tests exercise that constructive tail directly through the real factory
     // path, asserting the exact emitted ctor (name + args order) and verbatim child
     // `Incomplete` propagation.
+    //
+    // `from_src_*` tests exercise the Phase-3 migrated `recognize` path:
+    //   source -> SourceFragment -> observed -> recognize -> reduce -> floor.
+    // No parse_quote!, no StubTerm, no run().
     use super::*;
     use crate::{
         sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
@@ -554,6 +582,127 @@ mod tests {
             Outcome::Complete(_) => {
                 panic!("expected the child's Incomplete to propagate, got a Complete")
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase-3 from_src tests: source -> SourceFragment -> recognize -> floor
+    // -----------------------------------------------------------------------
+
+    /// Positive: `g(x, y)` -> recognized as Call -> `Ctor { name: "call:g", args: [Var("x"), Var("y")] }`.
+    #[test]
+    fn from_src_call_recognizes_and_emits_call_ctor() {
+        use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+        use std::collections::BTreeMap;
+
+        let src = "fn test() { g(x, y) }";
+        let file = parse_file(src);
+        let item = &file.items[0];
+        let item_frag = SourceFragment::from_node(FragNode::Item(item), "test.rs");
+        let body = item_frag.function_body().expect("function body");
+        let call_frag = body.statements()[0].terms()[0];
+
+        // observed: the fragment reports the Call grammar shape
+        assert_eq!(call_frag.observed(), "Call");
+
+        // head key via typed accessor (no as_expr in recognize body)
+        assert_eq!(call_frag.call_head_key(), Some("g".to_string()));
+        assert_eq!(call_frag.call_arg_count(), 2);
+
+        // build: recognize via fragment accessors only
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize(&call_frag, &fcx).expect("recognize must claim Call");
+
+        // floor: `call:g` ctor with args in source order
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        let Outcome::Complete(Desugared::Term(term)) = sugar.desugar(&ctx) else {
+            panic!("expected Complete Term from recognize path");
+        };
+        match &*term {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "call:g", "ctor name must be `call:<head>`");
+                assert_eq!(args.len(), 2, "two positional args");
+                let arg_names: Vec<_> = args
+                    .iter()
+                    .map(|a| match &**a {
+                        Term::Var { name } => name.clone(),
+                        other => panic!("expected Var arg, got {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(arg_names, vec!["x", "y"], "args must be in source order");
+            }
+            other => panic!("expected Ctor, got {other:?}"),
+        }
+    }
+
+    /// Discrimination: a `BinOp` fragment must not be claimed by `call::recognize`.
+    #[test]
+    fn from_src_non_call_returns_none() {
+        use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+        use std::collections::BTreeMap;
+
+        let src = "fn test() { a + b }";
+        let file = parse_file(src);
+        let item = &file.items[0];
+        let item_frag = SourceFragment::from_node(FragNode::Item(item), "test.rs");
+        let body = item_frag.function_body().expect("function body");
+        let binop_frag = body.statements()[0].terms()[0];
+
+        assert_eq!(binop_frag.observed(), "BinOp");
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        assert!(
+            recognize(&binop_frag, &fcx).is_none(),
+            "BinOp must not be claimed by call::recognize"
+        );
+    }
+
+    /// Structural: an associated-function call `Foo::bar()` emits `call:Foo::bar`
+    /// with an empty arg list, and `call_head_key` includes the full type-qualified name.
+    #[test]
+    fn from_src_assoc_call_head_key_includes_type_prefix() {
+        use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+        use std::collections::BTreeMap;
+
+        let src = "fn test() { Foo::bar() }";
+        let file = parse_file(src);
+        let item = &file.items[0];
+        let item_frag = SourceFragment::from_node(FragNode::Item(item), "test.rs");
+        let body = item_frag.function_body().expect("function body");
+        let call_frag = body.statements()[0].terms()[0];
+
+        assert_eq!(call_frag.observed(), "Call");
+        assert_eq!(call_frag.call_head_key(), Some("Foo::bar".to_string()));
+        assert_eq!(call_frag.call_arg_count(), 0);
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize(&call_frag, &fcx).expect("recognize must claim Call");
+
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        let Outcome::Complete(Desugared::Term(term)) = sugar.desugar(&ctx) else {
+            panic!("expected Complete Term");
+        };
+        match &*term {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "call:Foo::bar", "qualified name in ctor");
+                assert!(args.is_empty(), "nullary call emits empty args");
+            }
+            other => panic!("expected Ctor, got {other:?}"),
         }
     }
 }

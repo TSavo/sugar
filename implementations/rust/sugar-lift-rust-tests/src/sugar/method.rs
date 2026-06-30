@@ -11,7 +11,6 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
-use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
@@ -25,17 +24,13 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::MethodCall`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
+    let method = frag.call_method_key()?;
+    let receiver = frag.call_receiver()?;
+    let args = frag.call_args();
     Some(Box::new(MethodSugar::new(
-        method_key(call),
-        SugarBody::term(&call.receiver, fcx),
-        call.args
-            .iter()
-            .map(|arg| SugarBody::term(arg, fcx))
-            .collect(),
+        method,
+        SugarBody::term_frag(&receiver, fcx),
+        args.iter().map(|arg| SugarBody::term_frag(arg, fcx)).collect(),
     )))
 }
 
@@ -128,12 +123,13 @@ impl Sugar for MethodSugar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::source_fragment::{FragNode, SourceFragment};
     use crate::{
         sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
         TemporalPlan, TemporalScope,
     };
     use sugar_ir_symbolic::Term;
-    use syn::Item;
+    use syn::{Expr, Item};
 
     fn expr(src: &str) -> Expr {
         syn::parse_str(src).expect("parse expr")
@@ -284,5 +280,80 @@ mod tests {
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&node)));
         assert!(panic.is_err(), "non-term receiver must gap loudly");
+    }
+
+    // -- from_src tests: source -> SourceFragment -> observed -> recognize -> floor --------
+    // No parse_quote!, no StubTerm, no run() helper.
+
+    #[test]
+    fn from_src_builds_method_ctor_floor() {
+        // source -> SourceFragment -> observed -> recognize -> desugar -> Term floor
+        let e = expr("receiver.get(idx)");
+        let frag = SourceFragment::from_node(FragNode::Expr(&e), "<test>");
+
+        assert_eq!(frag.observed(), "MethodCall", "observed shape must be MethodCall");
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize(&frag, &fcx).expect("recognize must accept a MethodCall fragment");
+
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+
+        let Outcome::Complete(Desugared::Term(term)) = sugar.desugar(&ctx) else {
+            panic!("expected a Complete term from MethodCall");
+        };
+        let Term::Ctor { name, args } = &*term else {
+            panic!("expected a Ctor term, got {term:?}");
+        };
+        assert_eq!(name, "method:get");
+        assert_eq!(args.len(), 2, "receiver + one positional arg");
+    }
+
+    #[test]
+    fn from_src_turbofish_key_included() {
+        // turbofish: receiver.parse::<i32>() -> method key "parse::<i32>"
+        let e = expr("receiver.parse::<i32>()");
+        let frag = SourceFragment::from_node(FragNode::Expr(&e), "<test>");
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize(&frag, &fcx).expect("recognize must accept turbofish MethodCall");
+
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+
+        let Outcome::Complete(Desugared::Term(term)) = sugar.desugar(&ctx) else {
+            panic!("expected a Complete term from turbofish MethodCall");
+        };
+        let Term::Ctor { name, .. } = &*term else {
+            panic!("expected a Ctor term, got {term:?}");
+        };
+        assert_eq!(name, "method:parse::<i32>", "turbofish must appear in the method key");
+    }
+
+    #[test]
+    fn from_src_rejects_non_method_call() {
+        // discrimination: plain Call is NOT a MethodCall; recognize must return None.
+        let e = expr("foo(idx)");
+        let frag = SourceFragment::from_node(FragNode::Expr(&e), "<test>");
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "method recognizer must not claim a plain function Call"
+        );
     }
 }

@@ -7173,7 +7173,7 @@ pub(crate) fn term_contains_curry_param(term: &Rc<Term>) -> bool {
 /// runtime value, an unbound ident, an integer overflow, a division by zero.
 /// UNDER-evaluating is a safe under-claim; a wrong evaluation would be a fake-discharge,
 /// so we never guess.
-fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+pub(crate) fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => match lit {
             Lit::Int(i) if i.suffix() == "u128" => parse_u128_lit(i).ok().map(ConstVal::UInt128),
@@ -18926,7 +18926,7 @@ impl RelationOp {
     }
 }
 
-fn relation_from_binop(op: &BinOp) -> Option<RelationOp> {
+pub(crate) fn relation_from_binop(op: &BinOp) -> Option<RelationOp> {
     match op {
         BinOp::Eq(_) => Some(RelationOp::Eq),
         BinOp::Ne(_) => Some(RelationOp::Ne),
@@ -20231,7 +20231,7 @@ fn unwrap_paren_group(expr: &Expr) -> &Expr {
     }
 }
 
-fn term_binop_name(op: &BinOp) -> Option<&'static str> {
+pub(crate) fn term_binop_name(op: &BinOp) -> Option<&'static str> {
     match op {
         BinOp::Add(_) => Some("+"),
         BinOp::Sub(_) => Some("-"),
@@ -20252,7 +20252,7 @@ fn term_binop_name(op: &BinOp) -> Option<&'static str> {
     }
 }
 
-fn expr_head_key(expr: &Expr) -> String {
+pub(crate) fn expr_head_key(expr: &Expr) -> String {
     match expr {
         Expr::Path(path) => path_to_name(&path.path),
         Expr::Paren(paren) => expr_head_key(&paren.expr),
@@ -20281,7 +20281,7 @@ fn path_arguments_key(arguments: &syn::PathArguments) -> String {
     }
 }
 
-fn angle_args_key(args: &syn::AngleBracketedGenericArguments) -> String {
+pub(crate) fn angle_args_key(args: &syn::AngleBracketedGenericArguments) -> String {
     let inner = args
         .args
         .iter()

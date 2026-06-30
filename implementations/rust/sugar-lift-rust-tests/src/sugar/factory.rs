@@ -62,6 +62,7 @@ use tracing::{debug, warn};
 
 use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     refusal_disposition, token_key, AssertionFactKind, Desugared, DesugaredElem, Disposition,
     Effect, FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
@@ -136,6 +137,16 @@ impl SugarBody<TermFloor> {
         Self::from_node(build_term(expr, fcx))
     }
 
+    /// Build a `TermFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognizer bodies that
+    /// call this constructor stay clean -- no `as_expr()` in the recognize body.
+    pub(crate) fn term_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_term(
+            frag.as_expr().expect("term_frag: non-expr fragment"),
+            fcx,
+        ))
+    }
+
     pub(crate) fn synthesized_term(expr: &Expr, ctx: &SugarCtx) -> Self {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
@@ -154,17 +165,51 @@ impl SugarBody<IeeeFloatFloor> {
             expr, fcx, width_hint, operation,
         ))
     }
+
+    /// Build an `IeeeFloatFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn ieee_float_frag(
+        frag: &crate::sugar::source_fragment::SourceFragment,
+        fcx: &SugarBuildCtx,
+        width_hint: Option<crate::sugar::float_floor::IeeeFloatWidth>,
+        operation: &'static str,
+    ) -> Self {
+        Self::from_node(crate::sugar::float_floor::build_ieee_float(
+            frag.as_expr().expect("ieee_float_frag: non-expr fragment"),
+            fcx,
+            width_hint,
+            operation,
+        ))
+    }
 }
 
 impl SugarBody<BoolFloor> {
     pub(crate) fn bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_term(expr, fcx))
     }
+
+    /// Build a `BoolFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn bool_expr_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_term(
+            frag.as_expr().expect("bool_expr_frag: non-expr fragment"),
+            fcx,
+        ))
+    }
 }
 
 impl SugarBody<CompositeFloor> {
     pub(crate) fn composite(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_composite(expr, fcx))
+    }
+
+    /// Build a `CompositeFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn composite_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_composite(
+            frag.as_expr().expect("composite_frag: non-expr fragment"),
+            fcx,
+        ))
     }
 
     pub(crate) fn synthesized_composite(expr: &Expr, ctx: &SugarCtx) -> Self {
@@ -192,6 +237,15 @@ impl SugarBody<ConstraintFloor> {
         Self::from_node(build_constraint(expr, fcx))
     }
 
+    /// Build a `ConstraintFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn constraint_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_constraint(
+            frag.as_expr().expect("constraint_frag: non-expr fragment"),
+            fcx,
+        ))
+    }
+
     pub(crate) fn synthesized_constraint(expr: &Expr, ctx: &SugarCtx) -> Self {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
@@ -215,6 +269,15 @@ impl SugarBody<StatementEffectFloor> {
 impl SugarBody<TupleProducerFloor> {
     pub(crate) fn tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_tuple_producer(expr, fcx))
+    }
+
+    /// Build a `TupleProducerFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn tuple_producer_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_tuple_producer(
+            frag.as_expr().expect("tuple_producer_frag: non-expr fragment"),
+            fcx,
+        ))
     }
 }
 
@@ -538,6 +601,35 @@ pub(crate) fn build_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn 
 
 pub(crate) fn has_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     has_expr_role(expr, fcx, SugarRole::TupleProducer)
+}
+
+/// Fragment-based variant of `has_tuple_producer`. The `as_expr()` escape lives HERE
+/// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
+pub(crate) fn has_tuple_producer_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> bool {
+    match frag.as_expr() {
+        Some(expr) => has_tuple_producer(expr, fcx),
+        None => false,
+    }
+}
+
+/// Fragment-based variant of `build_term`. The `as_expr()` escape lives HERE
+/// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
+/// Used by transparent-passthrough recognizers that return a child Sugar directly.
+pub(crate) fn build_term_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    build_term(
+        frag.as_expr().expect("build_term_frag: non-expr fragment"),
+        fcx,
+    )
+}
+
+/// Fragment-based variant of `build_composite`. The `as_expr()` escape lives HERE
+/// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
+/// Used by transparent-passthrough recognizers that return a child Sugar directly.
+pub(crate) fn build_composite_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    build_composite(
+        frag.as_expr().expect("build_composite_frag: non-expr fragment"),
+        fcx,
+    )
 }
 
 pub(crate) struct FactoryAuditSeed {
