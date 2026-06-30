@@ -30,11 +30,11 @@ class FactoryBuildContext:
 
     def build_body(self, node, role: SugarRole):
         from sugar_lift_py_tests.factory.build import build_node
-        from sugar_lift_py_tests.factory.source_site import SourceSite
+        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
         from sugar_lift_py_tests.sugar_body import SugarBody
 
-        # Accept a SourceSite directly (idempotent) or an ast node.
-        if isinstance(node, SourceSite):
+        # Accept a SourceFragment directly (idempotent) or an ast node.
+        if isinstance(node, SourceFragment):
             site = node
             result = build_node(
                 site,

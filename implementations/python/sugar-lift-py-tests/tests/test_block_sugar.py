@@ -16,7 +16,7 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.source_site_stack import SourceSiteStack
+from sugar_lift_py_tests.factory.source_fragment_stack import SourceFragmentStack
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.outcome import complete_value
 
@@ -34,14 +34,14 @@ def _compose_block(body_src: str):
 
 
 def test_stack_pushes_a_block_for_a_suite():
-    sites = SourceSiteStack.from_source(FUNCTION, "f.py").sites
+    sites = SourceFragmentStack.from_source(FUNCTION, "f.py").sites
     assert "Block" in [s.observed for s in sites]
 
 
 def test_block_is_popped_after_its_statements_inside_out():
     # pop order is the build order: a statement of the suite is built BEFORE the
     # block that composes it.
-    sites = SourceSiteStack.from_source(FUNCTION, "f.py").sites
+    sites = SourceFragmentStack.from_source(FUNCTION, "f.py").sites
     kinds = [s.observed for s in sites]
     block_index = kinds.index("Block")
     # the block sits BEFORE its statements in the stack, so it POPS after them.
@@ -52,7 +52,7 @@ def test_block_is_popped_after_its_statements_inside_out():
 def test_block_carries_its_statements_in_order():
     # nested blocks: the module body is also a suite, so target the FUNCTION's block
     # (the one holding the Return).
-    sites = SourceSiteStack.from_source(FUNCTION, "f.py").sites
+    sites = SourceFragmentStack.from_source(FUNCTION, "f.py").sites
     block = next(
         s.node
         for s in sites

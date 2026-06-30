@@ -13,7 +13,7 @@ def _is_suite(value) -> bool:
 
 
 @dataclass(frozen=True)
-class SourceSite:
+class SourceFragment:
     """A fragment of source -- the one object the factory uses to talk to the AST.
 
     It holds the node and where it lives (so it owns `observed`/`blame`/the suggested
@@ -30,7 +30,7 @@ class SourceSite:
     col: int
 
     @classmethod
-    def from_node(cls, node: ast.AST, filename: str) -> "SourceSite":
+    def from_node(cls, node: ast.AST, filename: str) -> "SourceFragment":
         # A container node (Module) has no position; it is never a site itself, only a
         # source of fragments, so default its position rather than refuse to wrap it.
         return cls(
@@ -40,7 +40,7 @@ class SourceSite:
             col=getattr(node, "col_offset", 0),
         )
 
-    def fragments(self) -> List["SourceSite"]:
+    def fragments(self) -> List["SourceFragment"]:
         """The immediate child fragments, in source order. A `list[stmt]` suite (a
         `body`/`orelse`) becomes ONE Block fragment (it composes its own statements);
         every other AST child is its own fragment."""
@@ -48,22 +48,22 @@ class SourceSite:
 
         node = self.node
         if isinstance(node, Block):
-            return [SourceSite.from_node(stmt, self.filename) for stmt in node.body]
-        children: List[SourceSite] = []
+            return [SourceFragment.from_node(stmt, self.filename) for stmt in node.body]
+        children: List[SourceFragment] = []
         for _field, value in ast.iter_fields(node):
             if _is_suite(value):
-                children.append(SourceSite.from_node(Block.of(value), self.filename))
+                children.append(SourceFragment.from_node(Block.of(value), self.filename))
             elif isinstance(value, ast.AST):
-                children.append(SourceSite.from_node(value, self.filename))
+                children.append(SourceFragment.from_node(value, self.filename))
             elif isinstance(value, list):
                 children.extend(
-                    SourceSite.from_node(item, self.filename)
+                    SourceFragment.from_node(item, self.filename)
                     for item in value
                     if isinstance(item, ast.AST)
                 )
         return children
 
-    def statements(self) -> List["SourceSite"]:
+    def statements(self) -> List["SourceFragment"]:
         """This fragment as a series of source statements -- the statement children
         (a body's lines). A statement composes at the STATEMENT role."""
         from .block import Block
@@ -74,7 +74,7 @@ class SourceSite:
             if isinstance(child.node, (ast.stmt, Block))
         ]
 
-    def terms(self) -> List["SourceSite"]:
+    def terms(self) -> List["SourceFragment"]:
         """This (statement or term) fragment as a series of terms -- its expression
         children. A term composes at the TERM role."""
         return [child for child in self.fragments() if isinstance(child.node, ast.expr)]
@@ -109,7 +109,7 @@ class SourceSite:
         if not isinstance(self.node, kinds):
             expected = "/".join(k.__name__ for k in kinds)
             raise TypeError(
-                f"SourceSite accessor requires {expected}, got {type(self.node).__name__}"
+                f"SourceFragment accessor requires {expected}, got {type(self.node).__name__}"
                 f" at {self.blame}"
             )
 
@@ -133,11 +133,11 @@ class SourceSite:
         self._require(ast.Call)
         return isinstance(self.node.func, ast.Attribute)  # type: ignore[attr-defined]
 
-    def call_receiver(self) -> "SourceSite | None":
-        """Return a SourceSite for the Attribute.value receiver, or None if not a method call."""
+    def call_receiver(self) -> "SourceFragment | None":
+        """Return a SourceFragment for the Attribute.value receiver, or None if not a method call."""
         self._require(ast.Call)
         if isinstance(self.node.func, ast.Attribute):  # type: ignore[attr-defined]
-            return SourceSite.from_node(self.node.func.value, self.filename)  # type: ignore[attr-defined]
+            return SourceFragment.from_node(self.node.func.value, self.filename)  # type: ignore[attr-defined]
         return None
 
     def call_target_name(self) -> "str | None":
@@ -150,10 +150,10 @@ class SourceSite:
             return func.attr
         return None
 
-    def call_args(self) -> "list[SourceSite]":
-        """Return SourceSites for each positional argument of the Call."""
+    def call_args(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each positional argument of the Call."""
         self._require(ast.Call)
-        return [SourceSite.from_node(a, self.filename) for a in self.node.args]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(a, self.filename) for a in self.node.args]  # type: ignore[attr-defined]
 
     def call_arg_count(self) -> int:
         """Return the number of positional arguments."""
@@ -170,46 +170,46 @@ class SourceSite:
         self._require(ast.BinOp, ast.UnaryOp)
         return type(self.node.op).__name__  # type: ignore[attr-defined]
 
-    def binop_left(self) -> "SourceSite":
-        """Return a SourceSite for the left operand of a BinOp."""
+    def binop_left(self) -> "SourceFragment":
+        """Return a SourceFragment for the left operand of a BinOp."""
         self._require(ast.BinOp)
-        return SourceSite.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
 
-    def binop_right(self) -> "SourceSite":
-        """Return a SourceSite for the right operand of a BinOp."""
+    def binop_right(self) -> "SourceFragment":
+        """Return a SourceFragment for the right operand of a BinOp."""
         self._require(ast.BinOp)
-        return SourceSite.from_node(self.node.right, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.right, self.filename)  # type: ignore[attr-defined]
 
-    def subscript_receiver(self) -> "SourceSite":
-        """Return a SourceSite for the Subscript.value (the container)."""
+    def subscript_receiver(self) -> "SourceFragment":
+        """Return a SourceFragment for the Subscript.value (the container)."""
         self._require(ast.Subscript)
-        return SourceSite.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
-    def subscript_index(self) -> "SourceSite":
-        """Return a SourceSite for the Subscript index, unwrapping legacy ast.Index."""
+    def subscript_index(self) -> "SourceFragment":
+        """Return a SourceFragment for the Subscript index, unwrapping legacy ast.Index."""
         self._require(ast.Subscript)
         idx = self.node.slice  # type: ignore[attr-defined]
         # Python < 3.9 wraps the slice in ast.Index
         if hasattr(ast, "Index") and isinstance(idx, ast.Index):
             idx = idx.value  # type: ignore[attr-defined]
-        return SourceSite.from_node(idx, self.filename)
+        return SourceFragment.from_node(idx, self.filename)
 
-    def lambda_body(self) -> "SourceSite":
-        """Return a SourceSite for the body expression of a Lambda."""
+    def lambda_body(self) -> "SourceFragment":
+        """Return a SourceFragment for the body expression of a Lambda."""
         self._require(ast.Lambda)
-        return SourceSite.from_node(self.node.body, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.body, self.filename)  # type: ignore[attr-defined]
 
     def lambda_params(self) -> "list[str]":
         """Return the argument names for a Lambda node."""
         self._require(ast.Lambda)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
-    def return_value(self) -> "SourceSite | None":
-        """Return a SourceSite for the Return value, or None if bare return."""
+    def return_value(self) -> "SourceFragment | None":
+        """Return a SourceFragment for the Return value, or None if bare return."""
         self._require(ast.Return)
         if self.node.value is None:  # type: ignore[attr-defined]
             return None
-        return SourceSite.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
     def assign_target_name(self) -> "str | None":
         """Return the target name id for a single-Name Assign target, else None."""
@@ -219,25 +219,25 @@ class SourceSite:
             return targets[0].id
         return None
 
-    def assign_value(self) -> "SourceSite":
-        """Return a SourceSite for Assign.value."""
+    def assign_value(self) -> "SourceFragment":
+        """Return a SourceFragment for Assign.value."""
         self._require(ast.Assign)
-        return SourceSite.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
-    def if_test(self) -> "SourceSite":
-        """Return a SourceSite for the If test expression."""
+    def if_test(self) -> "SourceFragment":
+        """Return a SourceFragment for the If test expression."""
         self._require(ast.If)
-        return SourceSite.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
 
-    def if_body(self) -> "list[SourceSite]":
-        """Return SourceSites for the statements in the If body."""
+    def if_body(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the statements in the If body."""
         self._require(ast.If)
-        return [SourceSite.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
 
-    def if_orelse(self) -> "list[SourceSite]":
-        """Return SourceSites for the statements in the If orelse (else branch)."""
+    def if_orelse(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the statements in the If orelse (else branch)."""
         self._require(ast.If)
-        return [SourceSite.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
 
     def function_name(self) -> str:
         """Return the name string for a FunctionDef or AsyncFunctionDef."""
@@ -249,25 +249,25 @@ class SourceSite:
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
-    def function_body(self) -> "list[SourceSite]":
-        """Return SourceSites for the statements in a FunctionDef body."""
+    def function_body(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the statements in a FunctionDef body."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return [SourceSite.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
 
     def compare_ops(self) -> "list[str]":
         """Return the operator class names for a Compare node (e.g. ['Eq', 'Lt'])."""
         self._require(ast.Compare)
         return [type(op).__name__ for op in self.node.ops]  # type: ignore[attr-defined]
 
-    def compare_left(self) -> "SourceSite":
-        """Return a SourceSite for the left operand of a Compare."""
+    def compare_left(self) -> "SourceFragment":
+        """Return a SourceFragment for the left operand of a Compare."""
         self._require(ast.Compare)
-        return SourceSite.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(self.node.left, self.filename)  # type: ignore[attr-defined]
 
-    def compare_comparators(self) -> "list[SourceSite]":
-        """Return SourceSites for each comparator on the right side of a Compare."""
+    def compare_comparators(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each comparator on the right side of a Compare."""
         self._require(ast.Compare)
-        return [SourceSite.from_node(c, self.filename) for c in self.node.comparators]  # type: ignore[attr-defined]
+        return [SourceFragment.from_node(c, self.filename) for c in self.node.comparators]  # type: ignore[attr-defined]
 
     def function_name(self) -> str:
         """Return the name string for a FunctionDef or AsyncFunctionDef node."""

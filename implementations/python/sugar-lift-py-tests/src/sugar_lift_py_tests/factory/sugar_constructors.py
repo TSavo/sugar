@@ -4,7 +4,7 @@ import ast
 
 from sugar_lift_py_tests.claim import SugarRole
 
-from .source_site import SourceSite
+from .source_fragment import SourceFragment
 
 
 def build_add_sugar(site, ctx):
@@ -280,7 +280,7 @@ def _function_call_body(function: ast.FunctionDef, ctx):
     # implications, a string encoder becomes str.eq-bv-blocks, docstrings are absorbed.
     # One path -- GenericBodySugar's ad-hoc walk and the dispatch fork are gone.
     return build_control_flow_body_sugar(
-        SourceSite.from_node(function, ctx.filename), ctx
+        SourceFragment.from_node(function, ctx.filename), ctx
     )
 
 
@@ -347,7 +347,7 @@ def build_if_sugar(site, ctx):
         raise TypeError("IfSugar claim built a non-if")
     # The test lifts to a guard Formula; the then/orelse suites are child Blocks the
     # factory builds and hands in. site.statements() yields the Block-wrapped body and
-    # (if non-empty) orelse, each as a SourceSite; build_body accepts SourceSite directly.
+    # (if non-empty) orelse, each as a SourceFragment; build_body accepts SourceFragment directly.
     body_sites = site.statements()
     then_block = ctx.build_body(body_sites[0], SugarRole.STATEMENT)
     else_block = (

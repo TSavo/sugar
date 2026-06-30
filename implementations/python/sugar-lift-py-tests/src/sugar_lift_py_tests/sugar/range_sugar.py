@@ -24,12 +24,12 @@ class RangeSugar:
 def range_sugar(node) -> "RangeSugar | None":
     """Backward-compatible entry point that accepts a raw AST node.
 
-    Wraps the node in a SourceSite so callers that have not yet migrated off raw
+    Wraps the node in a SourceFragment so callers that have not yet migrated off raw
     AST (e.g. map_builtin_sugar) continue to work without importing ast themselves.
     """
-    from sugar_lift_py_tests.factory.source_site import SourceSite
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-    return _from_site(SourceSite.from_node(node, ""))
+    return _from_site(SourceFragment.from_node(node, ""))
 
 
 def range_sugar_from_site(site) -> "RangeSugar | None":
@@ -38,7 +38,7 @@ def range_sugar_from_site(site) -> "RangeSugar | None":
 
 
 def _from_site(site) -> "RangeSugar | None":
-    """Build a RangeSugar from a SourceSite using only SourceSite accessors."""
+    """Build a RangeSugar from a SourceFragment using only SourceFragment accessors."""
     if site.observed != "Call":
         return None
     if site.call_is_method_call() or site.call_target_name() != "range":

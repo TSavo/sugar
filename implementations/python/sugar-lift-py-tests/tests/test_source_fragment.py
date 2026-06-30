@@ -1,4 +1,4 @@
-"""SourceSite is THE source fragment -- the one object the factory uses to talk to the
+"""SourceFragment is THE source fragment -- the one object the factory uses to talk to the
 AST. Feed it Python and it breaks down the right way: a module into its body, a body
 into its statements, a statement into its terms, a term into its sub-terms. An `if`
 breaks into its test term and its branch blocks -- the shape IfSugar composes."""
@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import ast
 
-from sugar_lift_py_tests.factory.source_site import SourceSite
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
-def _module(src: str) -> SourceSite:
-    return SourceSite.from_node(ast.parse(src), "t.py")
+def _module(src: str) -> SourceFragment:
+    return SourceFragment.from_node(ast.parse(src), "t.py")
 
 
-def _function_body(src: str) -> SourceSite:
+def _function_body(src: str) -> SourceFragment:
     # module -> body Block -> the def -> the def's body Block
     fn = _module(src).fragments()[0].statements()[0]
     return next(f for f in fn.fragments() if f.observed == "Block")
@@ -57,12 +57,12 @@ def test_a_whole_function_body_decomposes_statements_then_terms():
 # Accessor tests
 # ------------------------------------------------------------------
 
-def _stmt(src: str) -> SourceSite:
-    """Return the first statement SourceSite from a one-liner."""
+def _stmt(src: str) -> SourceFragment:
+    """Return the first statement SourceFragment from a one-liner."""
     return _module(src).fragments()[0].statements()[0]
 
 
-def _expr(src: str) -> SourceSite:
+def _expr(src: str) -> SourceFragment:
     """Return the value/RHS expression of the first Assign statement."""
     return _stmt(src).assign_value()
 

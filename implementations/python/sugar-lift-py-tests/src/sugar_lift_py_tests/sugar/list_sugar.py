@@ -27,7 +27,7 @@ class ListSugar:
         functions_by_name: Optional[dict] = None,
         blame: Optional[str] = None,
     ) -> "ListSugar | None":
-        """Build from a SourceSite.
+        """Build from a SourceFragment.
 
         When ``body`` is supplied the factory already built the inner sugar --
         just validate the outer shape and wrap it.  When ``body`` is not
@@ -54,7 +54,7 @@ def list_sugar(
     *,
     blame: str,
 ) -> "ListSugar | None":
-    """Recognise list(map(...)) at a SourceSite.
+    """Recognise list(map(...)) at a SourceFragment.
 
     Returns None if the site is not that shape.
     """

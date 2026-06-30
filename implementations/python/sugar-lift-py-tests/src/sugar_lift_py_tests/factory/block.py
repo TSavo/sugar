@@ -13,7 +13,7 @@ class Block:
     stack walk would flatten it into loose statements with nothing to compose them.
     Block is the synthetic node that puts the suite ON the stack as a single
     composite, so the inside-out read composes its statements (a BlockSugar) instead
-    of an external loop faking it. It carries a position so it is a normal SourceSite.
+    of an external loop faking it. It carries a position so it is a normal SourceFragment.
     """
 
     body: tuple[ast.stmt, ...]

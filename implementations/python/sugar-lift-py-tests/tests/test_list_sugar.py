@@ -4,7 +4,7 @@ import ast
 
 from factory_reduce import array_map_pairs
 
-from sugar_lift_py_tests.factory import SourceSite
+from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.sugar.list_sugar import ListSugar
 from sugar_lift_py_tests.sugar.map_builtin_sugar import map_builtin_sugar
 
@@ -38,7 +38,7 @@ def test_list_sugar_is_site_born_without_raw_call_storage() -> None:
     assert isinstance(expr, ast.Expr)
 
     blame = "list_map.py:5:0"
-    outer_site = SourceSite.from_node(expr.value, "list_map.py")
+    outer_site = SourceFragment.from_node(expr.value, "list_map.py")
     # The body (inner map(...)) is built by the factory before constructing ListSugar.
     inner_site = outer_site.call_args()[0]
     body = map_builtin_sugar(inner_site, {"id": fn}, blame=blame)
