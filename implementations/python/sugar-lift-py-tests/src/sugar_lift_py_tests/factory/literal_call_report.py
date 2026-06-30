@@ -250,13 +250,28 @@ def _lift_assert(
 
     universe: LiftResult | None = None
     if callee_name in functions_by_name:
-        universe = _dig_universe(
+        # First try to CONSTRUCT: curry the callee over the concrete arg and slam to the
+        # floor. If it reduces to a literal we swear the Python value (verify). Only if the
+        # peel stops short -- a symbolic arg, an unfoldable op, an effect -- do we fall back
+        # to the symbolic universe (the irreducible residue, checked for consistency).
+        universe = _construct_callsite(
+            stmt,
             comparison_left,
-            functions_by_name=functions_by_name,
+            callee_name,
+            fn,
+            functions_by_name,
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
         )
+        if universe is None:
+            universe = _dig_universe(
+                comparison_left,
+                functions_by_name=functions_by_name,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
     return _merge_lifts(universe, assertion)
 
 
@@ -336,46 +351,145 @@ def _lift_callsite_assertion(
                 requested="LiftableCallArg",
                 fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
             )
+    return _emit_euf_fact(
+        stmt,
+        fn,
+        callee_name,
+        arg_terms,
+        expected_term,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
+
+
+def _emit_euf_fact(
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    callee_name: str,
+    arg_terms,
+    value_term,
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult:
+    """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
+
+    The SINGLE emitter for both the sworn facts in play: the VENDOR's stated value (the
+    assertion RHS) and the value WE construct by slamming the callee's body to the floor.
+    Both land under the same #euf# key, so they conjoin -- agreement discharges, disagreement
+    is UNSAT. One emitter means the key is spelled once: a vendor lie and a Python truth meet
+    on the same name or they never meet at all."""
     from sugar_lift_py_tests.sugar.call_sugar import AssertionFactStrategy
 
-    fact = AssertionFactStrategy(callee_name, tuple(arg_terms), expected_term)
-    euf_term = fact._euf_term()
-    assertion_contract_name = fact.contract_name()
-    assertion_memento = _statement_source_memento(
+    fact = AssertionFactStrategy(callee_name, tuple(arg_terms), value_term)
+    contract_name = fact.contract_name()
+    memento = _statement_source_memento(
         stmt,
         fn,
         memento_file,
         source_lines,
-        contract_name=assertion_contract_name,
+        contract_name=contract_name,
         role="python.literal-call-sugar",
     )
-    assertion_inv = _formula_to_rpc(fact.fact_formula())
-    assertion_contract = BodyUniverseDto(
-        name=assertion_contract_name,
+    inv = _formula_to_rpc(fact.fact_formula())
+    contract = BodyUniverseDto(
+        name=contract_name,
         out_binding="out",
-        inv=assertion_inv,
-        source_warrants=[assertion_memento],
+        inv=inv,
+        source_warrants=[memento],
     )
     walk = _walk_row(
         "CallSugar",
         "Call",
         stmt,
         filename,
-        assertion_memento,
+        memento,
         "predicate",
         requested_role="AssertionSurface",
-        emitted_formula=assertion_inv,
+        emitted_formula=inv,
     )
     audit = _source_audit(
         fn,
         stmt,
         memento_file,
-        assertion_contract_name,
-        assertion_memento,
+        contract_name,
+        memento,
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
-    return ([assertion_contract], [assertion_memento], [audit], [walk], [])
+    return ([contract], [memento], [audit], [walk], [])
+
+
+def _construct_callsite(
+    stmt: SourceFragment,
+    callsite: SourceFragment,
+    callee_name: str,
+    caller_fn: SourceFragment,
+    functions_by_name: dict[str, SourceFragment],
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult | None:
+    """Curry the resolved callee over the CONCRETE callsite arg and slam to the floor.
+
+    Bind the formal to the arg's value and reduce the body through the catalog -- every
+    operation delegates to Python (the reference), so the value we get IS Python's value,
+    leak-impossible by construction. If it slams to a concrete literal, we SWEAR
+    `call:callee(args) == <that literal>` -- a fact we computed, conjoined with the vendor's
+    assertion. A wrong vendor value then UNSATs (the symbolic universe could only check
+    consistency; this VERIFIES). Returns None -- defer to the symbolic universe -- when the
+    peel stops anywhere but a concrete literal: a symbolic arg, an op Python can't fold, or a
+    runtime effect (Incomplete). Irreducible, therefore axiomatic: the bridge stands."""
+    from .build import default_catalog
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.factory.block import Block
+    from sugar_lift_py_tests.floor import ReturnValue, TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    callee = functions_by_name.get(callee_name)
+    if callee is None or len(callee.function_params()) != 1 or callsite.call_arg_count() != 1:
+        return None
+    build_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    empty = ReduceContext(temporal=TemporalContext.empty())
+    # the concrete arg must itself slam to a literal (a symbolic arg leaves it irreducible)
+    try:
+        arg_outcome = build_ctx.build_body(callsite.call_args()[0], SugarRole.TERM).reduce(empty)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(arg_outcome, Complete) or not isinstance(arg_outcome.value, TermValue):
+        return None
+    # curry: bind the formal to the concrete arg, reduce the body (peel the sugar)
+    reduce_ctx = ReduceContext(
+        temporal=TemporalContext.empty().bind_value(callee.function_params()[0], arg_outcome.value)
+    )
+    try:
+        block_outcome = build_ctx.build_body(Block.of(callee.node.body), SugarRole.STATEMENT).reduce(
+            reduce_ctx
+        )
+    except (TypeError, ValueError):
+        return None  # an op/shape Python (via the catalog) cannot fold -> defer
+    if not isinstance(block_outcome, Complete):
+        return None  # a runtime effect (Incomplete) halted the peel
+    stmts = block_outcome.value.statements
+    if len(stmts) != 1 or not isinstance(stmts[0], ReturnValue) or not isinstance(
+        stmts[0].value, TermValue
+    ):
+        return None  # did not slam to a single concrete literal
+    arg_terms = [_lift_literal_via_factory(callsite.call_args()[0], filename)]
+    return _emit_euf_fact(
+        stmt,
+        caller_fn,
+        callee_name,
+        arg_terms,
+        _floor_to_term(stmts[0].value),
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
 
 
 def _dig_universe(
