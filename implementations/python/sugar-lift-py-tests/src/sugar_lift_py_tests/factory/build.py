@@ -209,40 +209,49 @@ def _raise_ambiguous_candidates(
     raise FactoryGap(info, audit_row)
 
 
-def default_catalog() -> SugarCatalog:
-    from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
-    from sugar_lift_py_tests.sugar.binop_sugar import BINOP_CLAIM
-    from sugar_lift_py_tests.sugar.bitwise_op_sugar import BITWISE_OP_CLAIM
-    from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM
-    from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
-        PRIMITIVE_LITERAL_CLAIM,
-    )
-    from sugar_lift_py_tests.sugar.assign_sugar import ASSIGN_CLAIM
-    from sugar_lift_py_tests.sugar.block_sugar import BLOCK_CLAIM
-    from sugar_lift_py_tests.sugar.if_sugar import IF_CLAIM
-    from sugar_lift_py_tests.sugar.ord_sugar import ORD_BYTE_CLAIM
-    from sugar_lift_py_tests.sugar.return_sugar import RETURN_CLAIM
-    from sugar_lift_py_tests.sugar.string_subscript_sugar import STRING_SUBSCRIPT_CLAIM
+_DEFAULT_CATALOG_SUGARS = {
+    "CommentSugar",
+    "PrimitiveLiteralSugar",
+    "BitwiseOpSugar",
+    "ArrayLiteralSugar",
+    "BinOpSugar",
+    "NameSugar",
+    "StringSubscriptSugar",
+    "BlockSugar",
+    "ReturnSugar",
+    "AssignSugar",
+    "IfSugar",
+    "OrdByteSugar",
+    "AddSugar",
+    "BuilderCtorSugar",
+    "LambdaSugar",
+    "MapSugar",
+    "ToListSugar",
+}
 
-    # Self-registering Sugar subclasses (migrated to the base class) contribute their
-    # claims by import side effect; the legacy CLAIM constants below are the not-yet-
-    # migrated sugars and are folded in until they move onto the base too.
-    from sugar_lift_py_tests.sugar import comment_sugar  # noqa: F401  registers CommentSugar
+
+def default_catalog() -> SugarCatalog:
+    # Import each sugar module so its class self-registers into the registry via
+    # Sugar.__init_subclass__. The explicit whitelist keeps the catalog stable
+    # regardless of which other sugar modules tests may have imported (the global
+    # registry accumulates across imports; filtering prevents unintended conflicts).
+    from sugar_lift_py_tests.sugar import add_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import array_literal_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import assign_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import binop_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import bitwise_op_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import block_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import builder_ctor_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import comment_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import if_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import lambda_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import map_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import name_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import ord_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import primitive_literal_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import return_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import string_subscript_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import to_list_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 
-    return SugarCatalog(
-        [
-            *registered_claims(),
-            PRIMITIVE_LITERAL_CLAIM,
-            BITWISE_OP_CLAIM,
-            ARRAY_LITERAL_CLAIM,
-            BINOP_CLAIM,
-            NAME_CLAIM,
-            STRING_SUBSCRIPT_CLAIM,
-            BLOCK_CLAIM,
-            RETURN_CLAIM,
-            ASSIGN_CLAIM,
-            IF_CLAIM,
-            ORD_BYTE_CLAIM,
-        ]
-    )
+    return SugarCatalog([c for c in registered_claims() if c.name in _DEFAULT_CATALOG_SUGARS])

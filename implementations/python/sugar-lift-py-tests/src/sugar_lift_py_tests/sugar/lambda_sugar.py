@@ -2,18 +2,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_lambda_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class LambdaSugar:
+class LambdaSugar(Sugar, role=SugarRole.TERM):
     parameter: str
     body: SugarBody
     blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "Lambda" and len(site.lambda_params()) == 1
+
+    @classmethod
+    def build(cls, site, ctx) -> "LambdaSugar":
+        sugar = cls.from_site(
+            site,
+            body=ctx.build_body(site.lambda_body(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("LambdaSugar claim built a non-lambda")
+        return sugar
 
     @classmethod
     def from_site(cls, site, *, body: SugarBody) -> "LambdaSugar | None":
@@ -32,13 +46,5 @@ class LambdaSugar:
         return Complete(LambdaCallable(parameter=self.parameter, body=self.body))
 
 
-def _owns(site) -> bool:
-    return site.observed == "Lambda" and len(site.lambda_params()) == 1
-
-
-LAMBDA_CLAIM = SugarClaim(
-    name="LambdaSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_lambda_sugar,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+LAMBDA_CLAIM = next(c for c in _rc() if c.name == "LambdaSugar")

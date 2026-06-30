@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import Bv32Value
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 @dataclass(frozen=True)
-class OrdByteSugar:
+class OrdByteSugar(Sugar, role=SugarRole.TERM):
     """`ord(source[index])` as a TERM -- value's byte at a fixed position, a free bv32
     var the encoder universe (str.eq-bv-blocks) constrains to that byte.
 
@@ -21,6 +22,19 @@ class OrdByteSugar:
 
     source: str
     index: int
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return _is_ord_byte(site)
+
+    @classmethod
+    def build(cls, site, ctx) -> "OrdByteSugar":
+        del ctx
+        sub = site.call_args()[0]
+        return cls(
+            source=sub.subscript_receiver().name_id(),
+            index=sub.subscript_index().literal_value(),
+        )
 
     def desugar(self, ctx) -> Outcome:
         del ctx  # the byte is symbolic -- a free var the universe constrains
@@ -43,20 +57,3 @@ def _is_ord_byte(site) -> bool:
         return False
     idx = sub.subscript_index()
     return idx.observed == "PrimitiveLiteral" and isinstance(idx.literal_value(), int)
-
-
-def _build_ord_byte(site, ctx) -> OrdByteSugar:
-    del ctx
-    sub = site.call_args()[0]
-    return OrdByteSugar(
-        source=sub.subscript_receiver().name_id(),
-        index=sub.subscript_index().literal_value(),
-    )
-
-
-ORD_BYTE_CLAIM = SugarClaim(
-    name="OrdByteSugar",
-    role=SugarRole.TERM,
-    owns=_is_ord_byte,
-    build=_build_ord_byte,
-)

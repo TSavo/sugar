@@ -2,19 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_add_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import AddOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class AddSugar:
+class AddSugar(Sugar, role=SugarRole.TERM):
     receiver: SugarBody
     operand: SugarBody
     blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return _is_add_call(site)
+
+    @classmethod
+    def build(cls, site, ctx) -> "AddSugar":
+        sugar = cls.from_site(
+            site,
+            receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
+            operand=ctx.build_body(site.call_args()[0], SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("AddSugar claim built a non-add call")
+        return sugar
 
     @classmethod
     def from_site(
@@ -45,21 +60,13 @@ class AddSugar:
         )
 
 
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc
+ADD_CLAIM = next(c for c in _rc() if c.name == "AddSugar")
+
+
 def _is_add_call(site) -> bool:
     return (
         site.observed == "Call"
         and site.call_is_method_call()
         and site.call_target_name() == "add"
     )
-
-
-def _owns(site) -> bool:
-    return _is_add_call(site)
-
-
-ADD_CLAIM = SugarClaim(
-    name="AddSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_add_sugar,
-)
