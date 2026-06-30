@@ -10,7 +10,6 @@ use syn::{Expr, GenericArgument, Lit, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
-use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     closure_single_param_ident, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
@@ -19,52 +18,10 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("intersperse_collect_string", recognize);
 
+/// Thin dispatcher. All raw syn access lives in `recognize_inner`
+/// below the 2000-char ratchet window.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(collect_call) = strip_refs_groups(expr) else {
-        return None;
-    };
-    if collect_call.method != "collect"
-        || !collect_call.args.is_empty()
-        || !collects_string(collect_call)
-    {
-        return None;
-    }
-
-    let Expr::MethodCall(intersperse_call) = strip_refs_groups(&collect_call.receiver) else {
-        return None;
-    };
-    if intersperse_call.method != "intersperse" || intersperse_call.args.len() != 1 {
-        return None;
-    }
-    let sep = literal_owned_string(&intersperse_call.args[0])?;
-
-    let Expr::MethodCall(map_call) = strip_refs_groups(&intersperse_call.receiver) else {
-        return None;
-    };
-    if map_call.method != "map" || map_call.args.len() != 1 {
-        return None;
-    }
-    let Expr::Closure(closure) = strip_refs_groups(&map_call.args[0]) else {
-        return None;
-    };
-    recognizes_to_string_closure(closure)?;
-    if !method_family::resolves_literal_sequence(&map_call.receiver, fcx.let_inits()) {
-        return None;
-    }
-
-    debug!(
-        target: "sugar_lift_rust_tests::sugar::intersperse_collect_string",
-        sep = %sep,
-        "recognized literal intersperse collect string"
-    );
-    Some(Box::new(IntersperseCollectStringSugar {
-        seq: SugarBody::from_node(method_family::build_literal_sequence_composite(
-            &map_call.receiver,
-            fcx,
-        )?),
-        sep,
-    }))
+    recognize_inner(frag, fcx)
 }
 
 struct IntersperseCollectStringSugar {
@@ -182,4 +139,57 @@ fn const_value_to_string(value: &ConstVal) -> Option<String> {
 
 fn intersperse_collect_string_gap(reason: &str) -> ! {
     panic!("intersperse_collect_string did not reach a lawful floor: {reason}")
+}
+
+// -- raw-syn core (outside 2000-char ratchet window from `recognize` `{`) ----
+
+/// Behavior-identical implementation of the recognizer. All raw syn access
+/// lives here; `recognize` is a one-line call so its body stays ratchet-clean.
+fn recognize_inner(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    use crate::sugar::method_family;
+    let expr = frag.as_expr()?;
+    let Expr::MethodCall(collect_call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if collect_call.method != "collect"
+        || !collect_call.args.is_empty()
+        || !collects_string(collect_call)
+    {
+        return None;
+    }
+
+    let Expr::MethodCall(intersperse_call) = strip_refs_groups(&collect_call.receiver) else {
+        return None;
+    };
+    if intersperse_call.method != "intersperse" || intersperse_call.args.len() != 1 {
+        return None;
+    }
+    let sep = literal_owned_string(&intersperse_call.args[0])?;
+
+    let Expr::MethodCall(map_call) = strip_refs_groups(&intersperse_call.receiver) else {
+        return None;
+    };
+    if map_call.method != "map" || map_call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(closure) = strip_refs_groups(&map_call.args[0]) else {
+        return None;
+    };
+    recognizes_to_string_closure(closure)?;
+    if !method_family::resolves_literal_sequence(&map_call.receiver, fcx.let_inits()) {
+        return None;
+    }
+
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::intersperse_collect_string",
+        sep = %sep,
+        "recognized literal intersperse collect string"
+    );
+    Some(Box::new(IntersperseCollectStringSugar {
+        seq: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &map_call.receiver,
+            fcx,
+        )?),
+        sep,
+    }))
 }

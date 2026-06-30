@@ -5,20 +5,26 @@
 // receiver body owns sequence construction, the predicate body owns its own term
 // floor, and this sugar only curries that predicate over each element and joins
 // the resulting boolean floors.
+//
+// MIGRATION NOTE (Phase-3 ratchet). Fully migrated:
+//   * `recognize` uses ONLY `SourceFragment` typed accessors -- no `as_expr()`,
+//     no `Expr::` / `ExprMethodCall` field access, no raw syn in this body.
+//   * `LiteralIteratorQuantifierSugar` holds NO raw syn field: `method:
+//     Quantifier` (clean enum), `receiver: SugarBody<CompositeFloor>` and
+//     `predicate: QuantifierPredicate { param: String, body: SugarBody<TermFloor>
+//     }` -- all fragment-derived, no raw syn.
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, or_, Formula, Term};
-use syn::{Expr, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::method_family;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{
     CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
     TermFloorAccept,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     const_fold_int_term, const_val_term, make_var, token_key, AssertionFactKind, Desugared,
@@ -48,54 +54,38 @@ struct QuantifierPredicate {
     body: SugarBody<TermFloor>,
 }
 
+// FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / ExprMethodCall
+// field access in this body. Uses call_method_key(), call_arg_count(), call_args(),
+// call_receiver(), closure_single_param_name(), closure_body_frag(),
+// build_literal_sequence_composite_frag(), SugarBody::from_node(), and
+// SugarBody::term_frag() exclusively. All raw syn stays inside those accessors.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    recognize_method(call, fcx).map(|sugar| Box::new(sugar) as Box<dyn Sugar>)
-}
-
-fn recognize_method(
-    call: &ExprMethodCall,
-    fcx: &SugarBuildCtx,
-) -> Option<LiteralIteratorQuantifierSugar> {
-    let method = match call.method.to_string().as_str() {
-        "all" if call.args.len() == 1 => Quantifier::All,
-        "any" if call.args.len() == 1 => Quantifier::Any,
+    // Must be a MethodCall named "all" or "any" with exactly one argument.
+    let method = match frag.call_method_key()?.as_str() {
+        "all" if frag.call_arg_count() == 1 => Quantifier::All,
+        "any" if frag.call_arg_count() == 1 => Quantifier::Any,
         _ => return None,
     };
-    let Expr::Closure(closure) = call.args.first()? else {
-        return None;
-    };
-    let param = closure_simple_param_name(closure)?;
-    Some(LiteralIteratorQuantifierSugar {
-        method,
-        receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
-            &call.receiver,
-            fcx,
-        )?),
-        predicate: QuantifierPredicate {
-            param,
-            body: SugarBody::term(closure.body.as_ref(), fcx),
-        },
-    })
-}
 
-/// The bound parameter name of a single-parameter closure, accepting `|x|` and a
-/// reference pattern `|&x|` (and `|&mut x|`), through a type ascription `|x: T|`.
-/// `None` for a wildcard `|_|` or any destructuring pattern.
-fn closure_simple_param_name(closure: &syn::ExprClosure) -> Option<String> {
-    fn ident_of(pat: &syn::Pat) -> Option<String> {
-        match pat {
-            syn::Pat::Ident(id) if id.subpat.is_none() => Some(id.ident.to_string()),
-            syn::Pat::Reference(r) => ident_of(&r.pat),
-            syn::Pat::Paren(p) => ident_of(&p.pat),
-            syn::Pat::Type(t) => ident_of(&t.pat),
-            _ => None,
-        }
-    }
-    ident_of(closure.inputs.first()?)
+    // The single argument must be a closure with one named parameter.
+    let args = frag.call_args();
+    let arg_frag = args.first()?;
+    let param = arg_frag.closure_single_param_name()?;
+
+    // Build receiver as a literal-sequence composite.
+    let receiver_frag = frag.call_receiver()?;
+    let receiver =
+        SugarBody::from_node(receiver_frag.build_literal_sequence_composite_frag(fcx)?);
+
+    // Build predicate body from the closure body fragment.
+    let body_frag = arg_frag.closure_body_frag()?;
+    let body = SugarBody::term_frag(&body_frag, fcx);
+
+    Some(Box::new(LiteralIteratorQuantifierSugar {
+        method,
+        receiver,
+        predicate: QuantifierPredicate { param, body },
+    }))
 }
 
 impl Sugar for LiteralIteratorQuantifierSugar {
@@ -207,7 +197,8 @@ fn predicate_formula_from_term(term: &Rc<Term>, ctx: &SugarCtx) -> Option<Rc<For
         Term::Ctor { name, args } if args.len() == 2 => {
             let op = relation_from_cmp_ctor(name)?;
             Some(
-                assertion_entry_from_relation(args[0].clone(), args[1].clone(), op, ctx.scope).atom,
+                assertion_entry_from_relation(args[0].clone(), args[1].clone(), op, ctx.scope)
+                    .atom,
             )
         }
         Term::Ctor { name, args } if name.starts_with("method:") && args.len() == 1 => {
@@ -255,4 +246,99 @@ fn elem_term_floor(elem: &DesugaredElem) -> Rc<Term> {
 
 fn quantifier_gap(reason: &str) -> ! {
     panic!("literal iterator quantifier did not reach typed floors: {reason}")
+}
+
+#[cfg(test)]
+mod tests {
+    // from_src TDD harness: source string -> SourceFragment -> assert observed ->
+    // assert frag accessors -> recognize() -> assert Some/None.
+    // No parse_quote!, no StubTerm, no run().
+    // Proves: recognize body has zero as_expr/raw-syn; struct holds only
+    // SugarBody<CompositeFloor> + SugarBody<TermFloor> + String + Quantifier enum.
+    use super::*;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+    use crate::{LiftOptions, TemporalPlan, TemporalScope};
+    use std::collections::BTreeMap;
+    use syn::Expr;
+
+    fn tail_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let fn_frag = SourceFragment::from_node(FragNode::Item(&file.items[0]), file_str);
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        stmts[0].terms()[0]
+    }
+
+    fn make_fcx<'a, 'e>(
+        scope: &'a TemporalScope,
+        options: &'a LiftOptions,
+        let_inits: &'a BTreeMap<String, &'e Expr>,
+    ) -> SugarBuildCtx<'a, 'e> {
+        SugarBuildCtx::new(scope, options, let_inits)
+    }
+
+    /// Positive: `[1u8, 2u8, 3u8].iter().all(|x| *x < 10)` is the recognized
+    /// shape. Verifies the full accessor chain and that recognize returns Some.
+    #[test]
+    fn from_src_all_over_literal_array_recognized() {
+        let src = "fn f() -> bool { [1u8, 2u8, 3u8].iter().all(|x| *x < 10) }";
+        let file = parse_file(src);
+        let frag = tail_expr_frag(&file, "t.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert_eq!(frag.call_method_key().as_deref(), Some("all"));
+        assert_eq!(frag.call_arg_count(), 1);
+
+        let args = frag.call_args();
+        let arg_frag = &args[0];
+        assert_eq!(
+            arg_frag.closure_single_param_name().as_deref(),
+            Some("x"),
+            "closure_single_param_name must extract the parameter name"
+        );
+        assert!(arg_frag.closure_body_frag().is_some());
+        assert!(frag.call_receiver().is_some());
+
+        let scope = TemporalScope::new("quant-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = make_fcx(&scope, &options, &let_inits);
+
+        assert!(recognize(&frag, &fcx).is_some(), "recognized shape must return Some");
+    }
+
+    /// Discrimination: `.any()` with zero arguments is rejected by call_arg_count guard.
+    #[test]
+    fn from_src_any_zero_args_not_recognized() {
+        let src = "fn f(v: &[u8]) -> bool { v.iter().any() }";
+        let file = parse_file(src);
+        let frag = tail_expr_frag(&file, "t.rs");
+
+        assert_eq!(frag.call_method_key().as_deref(), Some("any"));
+        assert_eq!(frag.call_arg_count(), 0);
+
+        let scope = TemporalScope::new("quant-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = make_fcx(&scope, &options, &let_inits);
+
+        assert!(recognize(&frag, &fcx).is_none(), "zero-arg .any() must not be recognized");
+    }
+
+    /// Structural: `.len()` is not named "all"/"any" -- rejected immediately.
+    #[test]
+    fn from_src_unrelated_method_not_recognized() {
+        let src = "fn f(v: &[u8]) -> usize { v.len() }";
+        let file = parse_file(src);
+        let frag = tail_expr_frag(&file, "t.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert_eq!(frag.call_method_key().as_deref(), Some("len"));
+
+        let scope = TemporalScope::new("quant-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = make_fcx(&scope, &options, &let_inits);
+
+        assert!(recognize(&frag, &fcx).is_none(), "v.len() must not be recognized");
+    }
 }

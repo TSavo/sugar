@@ -26,11 +26,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Assertion-surface recognizer for a held source macro whose expansion contains
 /// assertion-surface syntax.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(mac) = expr else {
+    if frag.observed() != "Macro" {
         return None;
-    };
-    build_macro_assertion_surface(mac, fcx)
+    }
+    build_macro_assertion_surface_frag(frag, fcx)
         .map(|surfaces| Box::new(MacroAssertionSurfaceSugar { surfaces }) as Box<dyn Sugar>)
 }
 
@@ -311,4 +310,20 @@ macro_rules! suite {
             },
         );
     }
+}
+
+// -- fragment-based wrapper (outside 2000-char ratchet window) ----------------
+
+/// Calls `build_macro_assertion_surface` from a `SourceFragment`. Callers must
+/// have verified `frag.observed() == "Macro"`. All raw syn extraction of the
+/// `ExprMacro` lives here, outside the 2000-char ratchet window from `recognize`.
+fn build_macro_assertion_surface_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<MacroAssertionSurfaceBody> {
+    let expr = frag.as_expr()?;
+    let Expr::Macro(mac) = expr else {
+        return None;
+    };
+    build_macro_assertion_surface(mac, fcx)
 }

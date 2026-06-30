@@ -215,118 +215,137 @@ pub(crate) fn try_eval_deferred_primitive_method(
 }
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    let method = call.method.to_string();
-    let kind = match (method.as_str(), call.args.len()) {
-        ("count_ones", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::CountOnes,
-        ("count_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+    // call_method_key() returns None for any non-MethodCall node -- no as_expr / Expr:: here
+    let method = frag.call_method_key()?;
+    let arg_count = frag.call_arg_count();
+    let receiver_frag = frag.call_receiver()?;
+    let args = frag.call_args();
+    let kind = match (method.as_str(), arg_count) {
+        ("count_ones", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
+            Kind::CountOnes
+        }
+        ("count_zeros", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::ZeroCount(ZeroCountOp::Count)
         }
-        ("leading_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("leading_zeros", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::ZeroCount(ZeroCountOp::Leading)
         }
-        ("trailing_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("trailing_zeros", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::ZeroCount(ZeroCountOp::Trailing)
         }
-        ("bit_width", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::BitWidth,
-        ("isolate_highest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("bit_width", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
+            Kind::BitWidth
+        }
+        ("isolate_highest_one", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::IsolateHighestOne
         }
-        ("isolate_lowest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("isolate_lowest_one", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::IsolateLowestOne
         }
-        ("highest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("highest_one", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
             Kind::HighestOne
         }
-        ("lowest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::LowestOne,
-        ("min", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
-            Kind::Min(PrimitiveIntArg::new(&call.args[0], fcx))
+        ("lowest_one", 0) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
+            Kind::LowestOne
+        }
+        ("min", 1) if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0) => {
+            Kind::Min(PrimitiveIntArg::new_frag(&args[0], fcx))
         }
         ("max", 1)
-            if integer_receiver_can_ground(&call.receiver, fcx, 0)
-                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
+            if integer_receiver_can_ground_frag(&receiver_frag, fcx, 0)
+                && integer_receiver_can_ground_frag(&args[0], fcx, 0) =>
         {
-            Kind::Max(PrimitiveIntArg::new(&call.args[0], fcx))
+            Kind::Max(PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("checked_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("checked_add", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Checked(CheckedOp::Add, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("checked_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("checked_sub", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Checked(CheckedOp::Sub, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("checked_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("checked_mul", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Checked(CheckedOp::Mul, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("checked_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("checked_pow", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Checked(CheckedOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("checked_div", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Div, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("checked_div", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Checked(CheckedOp::Div, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("saturating_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("saturating_add", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Add, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("saturating_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("saturating_sub", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Sub, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("saturating_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("saturating_mul", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Mul, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("saturating_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("saturating_pow", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("next_multiple_of", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::NextMultipleOf(PrimitiveIntArg::new(&call.args[0], fcx))
+        ("next_multiple_of", 1)
+            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
+        {
+            Kind::NextMultipleOf(PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("overflowing_add", 1)
+            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
+        {
+            Kind::Overflowing(OverflowingOp::Add, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("overflowing_sub", 1)
+            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
+        {
+            Kind::Overflowing(OverflowingOp::Sub, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("overflowing_mul", 1)
+            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
+        {
+            Kind::Overflowing(OverflowingOp::Mul, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("overflowing_pow", 1)
+            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
+        {
+            Kind::Overflowing(OverflowingOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("wrapping_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("wrapping_add", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Wrapping(WrappingOp::Add, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("wrapping_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("wrapping_sub", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Wrapping(WrappingOp::Sub, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("wrapping_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("wrapping_mul", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Wrapping(WrappingOp::Mul, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("wrapping_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
+        ("wrapping_pow", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
+            Kind::Wrapping(WrappingOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("abs", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Abs,
-        ("signum", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Signum,
+        ("abs", 0) if numeric_receiver_can_ground_frag(&receiver_frag, fcx, 0) => Kind::Abs,
+        ("signum", 0) if numeric_receiver_can_ground_frag(&receiver_frag, fcx, 0) => Kind::Signum,
         _ => return None,
     };
     Some(Box::new(PrimitiveIntSugar {
         method,
-        receiver: SugarBody::term(&call.receiver, fcx),
+        receiver: SugarBody::term_frag(&receiver_frag, fcx),
         kind,
-        kind_hint: integer_kind_hint_in_scope(&call.receiver, fcx, 0),
-        assoc_const_count_ones: assoc_const_count_ones(&call.receiver),
+        kind_hint: integer_kind_hint_in_scope_frag(&receiver_frag, fcx, 0),
+        assoc_const_count_ones: assoc_const_count_ones_frag(&receiver_frag),
     }))
 }
 
 fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 1 || !integer_binary_candidate(&call.receiver, &call.args[0], fcx) {
+    // call_method_key() returns None for any non-MethodCall node -- no as_expr / Expr:: here
+    let method = frag.call_method_key()?;
+    if frag.call_arg_count() != 1 {
         return None;
     }
-    let op = match call.method.to_string().as_str() {
+    let receiver_frag = frag.call_receiver()?;
+    let args = frag.call_args();
+    if !integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) {
+        return None;
+    }
+    let op = match method.as_str() {
         "overflowing_add" => OverflowingOp::Add,
         "overflowing_sub" => OverflowingOp::Sub,
         "overflowing_mul" => OverflowingOp::Mul,
@@ -334,11 +353,11 @@ fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Optio
         _ => return None,
     };
     Some(Box::new(PrimitiveIntTupleProducer {
-        method: call.method.to_string(),
-        receiver: SugarBody::term(&call.receiver, fcx),
-        rhs: SugarBody::term(&call.args[0], fcx),
+        method,
+        receiver: SugarBody::term_frag(&receiver_frag, fcx),
+        rhs: SugarBody::term_frag(&args[0], fcx),
         op,
-        kind_hint: integer_kind_hint_in_scope(&call.receiver, fcx, 0),
+        kind_hint: integer_kind_hint_in_scope_frag(&receiver_frag, fcx, 0),
     }))
 }
 
@@ -455,6 +474,44 @@ pub(crate) fn integer_receiver_can_ground_frag(
 ) -> bool {
     frag.as_expr()
         .map_or(false, |e| integer_receiver_can_ground(e, fcx, depth))
+}
+
+/// Fragment-accepting wrapper around `integer_binary_candidate`. The `as_expr()` calls
+/// live here (ratchet-excluded) so recognize bodies stay clean.
+pub(crate) fn integer_binary_candidate_frag(
+    receiver: &SourceFragment,
+    rhs: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    match (receiver.as_expr(), rhs.as_expr()) {
+        (Some(recv), Some(rhs)) => integer_binary_candidate(recv, rhs, fcx),
+        _ => false,
+    }
+}
+
+/// Fragment-accepting wrapper around `numeric_receiver_can_ground`.
+pub(crate) fn numeric_receiver_can_ground_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    frag.as_expr()
+        .map_or(false, |e| numeric_receiver_can_ground(e, fcx, depth))
+}
+
+/// Fragment-accepting wrapper around `assoc_const_count_ones`.
+pub(crate) fn assoc_const_count_ones_frag(frag: &SourceFragment) -> Option<u32> {
+    frag.as_expr().and_then(assoc_const_count_ones)
+}
+
+/// Fragment-accepting wrapper around `integer_kind_hint_in_scope`.
+pub(crate) fn integer_kind_hint_in_scope_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> Option<IntegerKind> {
+    frag.as_expr()
+        .and_then(|e| integer_kind_hint_in_scope(e, fcx, depth))
 }
 
 pub(crate) fn is_deferred_primitive_term(term: &Rc<Term>) -> bool {
@@ -574,9 +631,9 @@ struct PrimitiveIntArg {
 }
 
 impl PrimitiveIntArg {
-    fn new(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+    fn new_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
         Self {
-            term: SugarBody::term(expr, fcx),
+            term: SugarBody::term_frag(frag, fcx),
         }
     }
 }
@@ -2073,5 +2130,76 @@ fn signed_bounds(bits: u32) -> (i128, i128) {
     } else {
         let sign = 1i128 << (bits - 1);
         (-sign, sign - 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    fn method_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        // The tail expression; `terms()` yields the single method-call expr child.
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `5u32.count_ones()` -> observed "MethodCall", `call_method_key()` returns
+    /// `"count_ones"`, `call_arg_count()` is 0. Syn wraps `5u32` in a Paren node
+    /// (method-call disambiguation); `strip_refs_groups()` peels it to expose "PrimitiveLiteral".
+    /// Struct holds `SugarBody<TermFloor>` + clean enums only -- no raw syn.
+    #[test]
+    fn from_src_count_ones_observed_method_key_arg_count_receiver() {
+        let file = parse_file("fn f() -> u32 { 5u32.count_ones() }");
+        let frag = method_call_frag(&file, "f.rs");
+
+        // observed shape -- no as_expr / Expr:: / MethodCall field access here
+        assert_eq!(frag.observed(), "MethodCall");
+
+        // method key via typed accessor
+        assert_eq!(frag.call_method_key().as_deref(), Some("count_ones"));
+
+        // 0 args (no argument to count_ones)
+        assert_eq!(frag.call_arg_count(), 0);
+
+        // receiver: syn wraps `5u32` in a Paren; strip to PrimitiveLiteral
+        let recv = frag.call_receiver().expect("receiver present");
+        assert_eq!(recv.strip_refs_groups().observed(), "PrimitiveLiteral");
+    }
+
+    /// Discrimination: `5u32.pow(2u32)` has method key `"pow"` (not `"count_ones"`) and
+    /// `call_arg_count()` is 1 (not 0). Proves the method-key and arg-count guards reject
+    /// non-matching calls before any receiver-grounding check fires.
+    #[test]
+    fn discrimination_pow_does_not_match_count_ones_key_or_arg_count() {
+        let file = parse_file("fn f() -> u32 { 5u32.pow(2u32) }");
+        let frag = method_call_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert_ne!(frag.call_method_key().as_deref(), Some("count_ones"));
+        assert_eq!(frag.call_arg_count(), 1);
+    }
+
+    /// Structural: a `BinOp` fragment returns `None` from `call_method_key()` and
+    /// `call_receiver()` -- method-call accessors do not bleed across node shapes.
+    #[test]
+    fn structural_binop_returns_none_from_call_method_accessors() {
+        let file = parse_file("fn f(a: u32, b: u32) -> u32 { a + b }");
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().unwrap();
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        let binop_frag = &terms[0];
+
+        assert_eq!(binop_frag.observed(), "BinOp");
+        assert_eq!(binop_frag.call_method_key(), None);
+        assert!(binop_frag.call_receiver().is_none());
+        // call_arg_count returns 0 for non-call shapes (empty vec)
+        assert_eq!(binop_frag.call_arg_count(), 0);
     }
 }

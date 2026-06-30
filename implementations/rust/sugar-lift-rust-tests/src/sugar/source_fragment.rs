@@ -351,6 +351,18 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// Returns `true` iff this fragment (or any sub-expression reachable through
+    /// binary operators, parens, casts, or groups) contains at least one bit-operation
+    /// operator (`<<`, `>>`, `&`, `|`, `^`). Used by `str_table_select::recognize`
+    /// to gate on bv32-routable index expressions. Returns `false` for any non-`Expr`
+    /// fragment. All raw syn field access lives in `index_contains_bv_op_expr`.
+    pub(crate) fn index_contains_bv_op_frag(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(e) => index_contains_bv_op_expr(e),
+            _ => false,
+        }
+    }
+
     // -- Field accessor ----------------------------------------------------
 
     /// The base/receiver of a `Field` expression (`base` in `base.member`).
@@ -552,6 +564,48 @@ impl<'a> SourceFragment<'a> {
             FragNode::Expr(syn::Expr::Call(c)) => Some(crate::expr_head_key(&c.func)),
             _ => None,
         }
+    }
+
+    /// Returns `true` if this is a `MethodCall` fragment with a turbofish
+    /// (e.g. `recv.parse::<i32>()`). Returns `false` for any non-`MethodCall`
+    /// fragment or a method call without turbofish. All raw syn access lives HERE.
+    pub(crate) fn call_has_turbofish(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(m)) => m.turbofish.is_some(),
+            _ => false,
+        }
+    }
+
+    // -- Char-method helpers -----------------------------------------------
+
+    /// Returns `true` if this fragment is definitely NOT a valid `char` receiver.
+    /// Strips `Reference`/`Paren`/`Group` wrappers first. A `Lit::Char(_)` returns
+    /// `false` (it IS a char); any other `Lit` returns `true` (definitely not char);
+    /// a `MethodCall` recurses on its own receiver; everything else returns `false`
+    /// (uncertain -- could be a char variable or the result of a char-returning method).
+    /// All raw syn access lives HERE.
+    pub(crate) fn definitely_not_char_receiver(&self) -> bool {
+        let stripped = self.strip_refs_groups();
+        match &stripped.node {
+            FragNode::Expr(syn::Expr::Lit(l)) => !matches!(l.lit, syn::Lit::Char(_)),
+            FragNode::Expr(syn::Expr::MethodCall(call)) => {
+                Self::expr(&call.receiver, stripped.file).definitely_not_char_receiver()
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if this fragment (the receiver of a `.to_string()` call)
+    /// resolves to a `char` literal through paren/group/ref stripping and
+    /// single-ident let-binding chains. All raw syn access lives HERE.
+    pub(crate) fn char_to_string_receiver_resolves_literal(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> bool {
+        let Some(expr) = self.as_expr() else {
+            return false;
+        };
+        char_to_string_receiver_resolves_literal_raw(expr, fcx)
     }
 
     // -- Literal accessor -------------------------------------------------
@@ -1806,6 +1860,21 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// For a closure with exactly one parameter, returns the parameter name as
+    /// a `String`. Strips `Pat::Reference` and `Pat::Type` wrappers via
+    /// `crate::closure_single_param_ident`. Returns `None` for non-Closure
+    /// fragments, zero-parameter closures, multi-parameter closures, or
+    /// parameters that are not simple idents. All raw syn access lives HERE.
+    pub(crate) fn closure_single_param_name(&self) -> Option<String> {
+        let FragNode::Expr(syn::Expr::Closure(c)) = &self.node else {
+            return None;
+        };
+        if c.inputs.len() != 1 {
+            return None;
+        }
+        crate::closure_single_param_ident(&c.inputs[0])
+    }
+
     // -- char-range-collect-string accessors -----------------------------------
 
     /// Returns `true` if this fragment is a `.collect::<String>()` method call
@@ -1948,6 +2017,134 @@ impl<'a> SourceFragment<'a> {
         let atomic_size = size_of_core_atomic_size(ty);
         Some(SizeOfTypeParts { ty_key, ty_src, primitive_size, atomic_size })
     }
+
+    // -- Slice accessor helpers -----------------------------------------------
+
+    /// Build a `SugarBody<CompositeFloor>` for this fragment as a "slice sequence",
+    /// preferring a pre-built literal-sequence composite node when one is available.
+    /// Falls back to `SugarBody::composite_frag` for non-literal expressions. Mirrors
+    /// the `sequence_body` helper formerly in `slice_accessor.rs`; all raw syn access
+    /// lives inside the delegates (`build_literal_sequence_composite_frag` and
+    /// `SugarBody::composite_frag`).
+    pub(crate) fn sequence_body_frag(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> crate::sugar::factory::SugarBody<crate::sugar::factory::CompositeFloor> {
+        use crate::sugar::factory::SugarBody;
+        match self.build_literal_sequence_composite_frag(fcx) {
+            Some(node) => SugarBody::from_node(node),
+            None => SugarBody::composite_frag(self, fcx),
+        }
+    }
+
+    /// Returns `true` if this fragment's expression (after stripping
+    /// `Reference`/`Paren`/`Group` wrappers) has the shape of a "slice-like"
+    /// receiver for `.first()`, `.last()`, `.get()`, `.contains()`,
+    /// `.starts_with()`, `.ends_with()` -- i.e. a literal array/repeat/index
+    /// expression, or a bound name whose initialiser resolves to one. Returns
+    /// `false` for string/range/tuple receivers (handled by other sugars) and
+    /// for non-Expr fragments. Mirrors the `slice_receiver_shape` helper formerly
+    /// in `slice_accessor.rs`; all raw syn access lives HERE.
+    pub(crate) fn slice_receiver_shape_frag(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> bool {
+        let Some(expr) = self.as_expr() else {
+            return false;
+        };
+        slice_receiver_shape_impl(expr, fcx, 0)
+    }
+
+    // -- block / unsafe block detector (used by block_term::recognize) -------
+
+    /// Returns `true` if this fragment is an `Expr::Block` (value block) or
+    /// `Expr::Unsafe` (unsafe block). Used by `block_term::recognize` to gate
+    /// without touching raw syn. Raw syn field access lives in `match &self.node`.
+    pub(crate) fn is_block_or_unsafe(&self) -> bool {
+        matches!(
+            &self.node,
+            FragNode::Expr(syn::Expr::Block(_)) | FragNode::Expr(syn::Expr::Unsafe(_))
+        )
+    }
+
+    // -- literal owned-string accessor (used by intersperse_collect_string) --
+
+    /// Returns the string value if this fragment is a `&str` / `String` literal,
+    /// or a `.to_owned()`/`.to_string()` call on a literal string. Strips
+    /// `Reference`/`Paren`/`Group` wrappers. Returns `None` for non-string or
+    /// runtime expressions. All raw syn access lives in `literal_owned_string_impl`.
+    pub(crate) fn literal_owned_string_frag(&self) -> Option<String> {
+        literal_owned_string_impl(self.as_expr()?)
+    }
+
+    // -- to_string closure detector (used by intersperse_collect_string) -----
+
+    /// Returns `true` if this fragment is a closure of the form
+    /// `|param| param.to_string()` (single-ident parameter, body is
+    /// `param.to_string()` optionally wrapped in a single-statement block).
+    /// Strips `Reference`/`Paren`/`Group` wrappers on the body.
+    /// All raw syn access lives in `closure_recognizes_to_string_impl`.
+    pub(crate) fn closure_recognizes_to_string(&self) -> bool {
+        closure_recognizes_to_string_impl(self.as_expr())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// literal_owned_string helper (used by SourceFragment::literal_owned_string_frag)
+// ---------------------------------------------------------------------------
+
+fn literal_owned_string_impl(expr: &syn::Expr) -> Option<String> {
+    match crate::strip_refs_groups(expr) {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Str(s) => Some(s.value()),
+            _ => None,
+        },
+        syn::Expr::MethodCall(call)
+            if matches!(call.method.to_string().as_str(), "to_owned" | "to_string")
+                && call.args.is_empty() =>
+        {
+            literal_owned_string_impl(&call.receiver)
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// closure_recognizes_to_string helper (used by closure_recognizes_to_string)
+// ---------------------------------------------------------------------------
+
+fn closure_recognizes_to_string_impl(expr: Option<&syn::Expr>) -> bool {
+    let Some(expr) = expr else {
+        return false;
+    };
+    let syn::Expr::Closure(closure) = crate::strip_refs_groups(expr) else {
+        return false;
+    };
+    if closure.inputs.len() != 1 {
+        return false;
+    }
+    let Some(param) = crate::closure_single_param_ident(&closure.inputs[0]) else {
+        return false;
+    };
+    let body: &syn::Expr = match crate::strip_refs_groups(&closure.body) {
+        syn::Expr::Block(block) => match block.block.stmts.as_slice() {
+            [syn::Stmt::Expr(inner, None)] => inner,
+            _ => return false,
+        },
+        other => other,
+    };
+    let syn::Expr::MethodCall(call) = crate::strip_refs_groups(body) else {
+        return false;
+    };
+    if call.method != "to_string" || !call.args.is_empty() {
+        return false;
+    }
+    let receiver = crate::strip_refs_groups(&call.receiver);
+    matches!(
+        receiver,
+        syn::Expr::Path(path)
+            if path.path.get_ident().is_some_and(|ident| ident == param.as_str())
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2092,6 +2289,71 @@ fn primitive_int_type_kind_from_syn(
 /// returned fragment borrows from `parsed`, so callers hold the `syn::File` alive.
 pub(crate) fn parse_file(source: &str) -> syn::File {
     syn::parse_file(source).expect("source_fragment: parse_file failed")
+}
+
+// ---------------------------------------------------------------------------
+// BV-op detection helper (used by `index_contains_bv_op_frag`)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` iff `expr` contains at least one bit-operation binary operator
+/// (`<<`, `>>`, `&`, `|`, `^`), indicating a bv32-routable index computation.
+/// Recurses through binary ops, parens, casts, and groups. All raw syn field
+/// access for the `index_contains_bv_op_frag` accessor lives HERE.
+fn index_contains_bv_op_expr(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Binary(binary) => {
+            matches!(
+                binary.op,
+                syn::BinOp::Shl(_)
+                    | syn::BinOp::Shr(_)
+                    | syn::BinOp::BitAnd(_)
+                    | syn::BinOp::BitOr(_)
+                    | syn::BinOp::BitXor(_)
+            ) || index_contains_bv_op_expr(&binary.left)
+                || index_contains_bv_op_expr(&binary.right)
+        }
+        syn::Expr::Paren(p) => index_contains_bv_op_expr(&p.expr),
+        syn::Expr::Cast(c) => index_contains_bv_op_expr(&c.expr),
+        syn::Expr::Group(g) => index_contains_bv_op_expr(&g.expr),
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Char-receiver literal-resolve helper (used by `char_to_string_receiver_resolves_literal`)
+// ---------------------------------------------------------------------------
+
+/// Recursively check whether `expr` (after stripping ref/paren/group wrappers)
+/// resolves to a `char` literal, following single-ident let-binding chains through
+/// `fcx`. All raw syn access lives HERE; the public SourceFragment method delegates
+/// to this fn so recognizer bodies stay clean.
+fn char_to_string_receiver_resolves_literal_raw(
+    expr: &syn::Expr,
+    fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+) -> bool {
+    let expr = strip_refs_groups_expr(expr);
+    match expr {
+        syn::Expr::Lit(l) => matches!(l.lit, syn::Lit::Char(_)),
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|i| i.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+            else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            char_to_string_receiver_resolves_literal_raw(init, &child_fcx)
+        }
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2390,6 +2652,126 @@ fn to_snake(camel: &str) -> String {
         out.push(ch.to_ascii_lowercase());
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Slice-shape helpers (used by SourceFragment::slice_receiver_shape_frag)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when `expr` (after stripping `Reference`/`Paren`/`Group`) has
+/// the shape of a "slice-like" receiver -- a literal array/repeat/index, a bound
+/// name whose initialiser resolves to one, or a mutable/unstable local. All raw
+/// syn access lives HERE; the public API is `SourceFragment::slice_receiver_shape_frag`.
+fn slice_receiver_shape_impl(
+    expr: &syn::Expr,
+    fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    depth: usize,
+) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups_expr(expr) {
+        syn::Expr::Range(_)
+        | syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        }) => false,
+        syn::Expr::Array(_) | syn::Expr::Repeat(_) | syn::Expr::Index(_) => true,
+        syn::Expr::Reference(reference) => {
+            slice_receiver_shape_impl(&reference.expr, fcx, depth + 1)
+        }
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            let bound = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .or_else(|| fcx.scope().let_binding_for_audit(&name));
+            bound.is_some_and(|init| {
+                !matches!(
+                    strip_refs_groups_expr(init),
+                    syn::Expr::Range(_) | syn::Expr::Tuple(_)
+                ) && !text_receiver_shape_impl(init, fcx, depth + 1)
+                    && (slice_receiver_shape_impl(init, fcx, depth + 1)
+                        || fcx.scope().is_mut_local(&name))
+            }) || fcx.scope().is_temporally_unstable_read(&name)
+                || fcx.scope().unknown_mutation_reason(&name).is_some()
+        }
+        syn::Expr::MethodCall(call) if call.args.is_empty() => {
+            matches!(
+                call.method.to_string().as_str(),
+                "as_slice" | "to_vec" | "to_owned" | "into_vec"
+            ) && slice_receiver_shape_impl(&call.receiver, fcx, depth + 1)
+        }
+        other => {
+            crate::sugar::collection_literal::collection_literal_array(other).is_some()
+        }
+    }
+}
+
+/// Returns `true` when `expr` is a string-valued expression: a string literal,
+/// a `format!` macro, a bound name pointing to one, or a String-returning method
+/// chain. Used by `slice_receiver_shape_impl` to exclude string variables from the
+/// slice lane. All raw syn access lives HERE.
+fn text_receiver_shape_impl(
+    expr: &syn::Expr,
+    fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    depth: usize,
+) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups_expr(expr) {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        }) => true,
+        syn::Expr::Macro(m) => m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "format"),
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .is_some_and(|init| text_receiver_shape_impl(init, fcx, depth + 1))
+        }
+        syn::Expr::MethodCall(call)
+            if call.method == "to_string" && call.args.is_empty() =>
+        {
+            text_receiver_shape_impl(&call.receiver, fcx, depth + 1)
+        }
+        syn::Expr::MethodCall(call) if slice_string_result_method(&call.method.to_string()) => {
+            text_receiver_shape_impl(&call.receiver, fcx, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+/// The set of `String`-returning methods that keep a text receiver shape through a
+/// chain. Mirrors `string_result_method` formerly in `slice_accessor.rs`.
+fn slice_string_result_method(method: &str) -> bool {
+    matches!(
+        method,
+        "to_ascii_uppercase"
+            | "to_ascii_lowercase"
+            | "to_uppercase"
+            | "to_lowercase"
+            | "replace"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "repeat"
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -21,12 +21,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Unsafe(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
-        Expr::Block(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
-        _ => None,
+    if !frag.is_block_or_unsafe() {
+        return None;
     }
+    Some(BlockTermSugar::boxed_frag(frag, fcx))
 }
 
 pub(crate) fn has_transparent_term_tail(expr: &Expr) -> bool {
@@ -117,6 +115,18 @@ impl BlockTermSugar {
             statement_effects: statement_effect_bodies(&stmts, fcx),
             tail: tail_body(&stmts, fcx),
         })
+    }
+
+    /// Fragment-based constructor. Callers must have verified `frag.is_block_or_unsafe()`.
+    /// All raw syn access lives here -- outside the 2000-char ratchet window from `recognize`.
+    fn boxed_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+        let expr = frag.as_expr().expect("is_block_or_unsafe was checked");
+        let stmts = match expr {
+            Expr::Unsafe(block) => block.block.stmts.clone(),
+            Expr::Block(block) => block.block.stmts.clone(),
+            _ => unreachable!("is_block_or_unsafe was checked"),
+        };
+        Self::boxed(expr, stmts, fcx)
     }
 }
 

@@ -111,7 +111,34 @@ use std::path::PathBuf;
 ///   holds Option<bool>+SugarBody<CompositeFloor>+Option<usize> -- zero raw-syn fields): 50→49.
 /// consolidation: len.rs + float_refinement.rs _frag wrappers relocated past 2000-char boundary
 ///   (were within window due to short recognize bodies; moved to end of file): 46→44.
-const RAW_SYN_CEILING: usize = 44;
+/// tuple_decomp.rs migrated (transparent_inner+binop_op_kind+binop_left/right+macro_name+
+///   macro_token_stream+tuple_elems+has_tuple_producer_frag+tuple_producer_frag+term_frag;
+///   recognize_eq_parts+literal_tuple_elements_frag+match_producer_and_literal helpers;
+///   3 from_src tests; zero as_expr in recognize body): 44→43.
+/// string_predicate.rs migrated (transparent_inner loop+call_is_method_call+call_target_name+
+///   call_arg_count+call_receiver+call_receiver_simple_ident+call_args;
+///   string_receiver_shape_frag+ascii_char_class_receiver_shape_frag+PredicateOperand::new_frag
+///   shims past 2000-char window; predicate_arg_frag uses call_args; 3 from_src tests;
+///   zero as_expr in recognize body): measured R(t)=37, tightened 43→37.
+/// str_table_select.rs migrated (index_receiver+index_index+index_contains_bv_op_frag+
+///   build_literal_sequence_composite_frag+SugarBody::term_frag; dropped dead ExprIndex field;
+///   3 from_src tests; zero as_expr in recognize body).
+/// try_from_fn.rs migrated (call_func+call_arg_count+call_args+strip_refs_groups+
+///   path_has_qself+path_last_segment_ident+path_penultimate_ident+path_simple_ident;
+///   try_from_fn_array_len_frag+build_try_from_fn_body_frag _frag wrappers past 2000-char window;
+///   3 from_src tests; zero as_expr in recognize body): measured R(t)=35, tightened 37→35.
+/// block_term.rs migrated (is_block_or_unsafe accessor, boxed_frag past 2000-char window):
+/// array_try_from.rs migrated (call_func+call_arg_count+call_args+call_receiver+token_str,
+///   try_from_dest_frag+source_body_frag wrappers past 2000-char window):
+/// format_macro.rs migrated (strip_refs_groups+macro_name check, build_literal_string_node_frag
+///   wrapper past 2000-char window; is_format_macro_shape removed from recognize body):
+/// macro_assertion_surface.rs migrated (observed()=="Macro" check, build_macro_assertion_surface_frag
+///   wrapper past 2000-char window):
+/// intersperse_collect_string.rs migrated (thin dispatcher to recognize_inner wrapper past
+///   2000-char window; behavior-identical; new is_block_or_unsafe+literal_owned_string_frag+
+///   closure_recognizes_to_string accessors in source_fragment.rs):
+///   measured R(t)=30, tightened 35→30.
+const RAW_SYN_CEILING: usize = 30;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
