@@ -48,6 +48,7 @@ use crate::sugar::int_literal::{
     numeric_floor_from_term, ExactInt, IntKind as NumericIntKind, NumericFloor,
 };
 use crate::sugar::monadic::OPT_SOME;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{canonical_term_sig, token_key};
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{ConstValue, Term};
@@ -63,6 +64,28 @@ pub(crate) fn build_literal_string_term_node(expr: &Expr, fcx: &SugarBuildCtx) -
     Box::new(LiteralStringTermSugar {
         body: SugarBody::literal_string(expr, fcx),
     })
+}
+
+/// Frag-based wrapper for `is_factory_string_add_shape`. Raw syn is inside
+/// `as_expr()` + `is_factory_string_add_shape`; recognize bodies stay clean.
+pub(crate) fn is_factory_string_add_shape_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> bool {
+    match frag.as_expr() {
+        Some(expr) => is_factory_string_add_shape(expr, fcx),
+        None => false,
+    }
+}
+
+/// Frag-based wrapper for `build_literal_string_term_node`. Raw syn is inside
+/// `as_expr()`; recognize bodies stay clean.
+pub(crate) fn build_literal_string_term_node_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Box<dyn Sugar> {
+    build_literal_string_term_node(
+        frag.as_expr()
+            .expect("build_literal_string_term_node_frag: non-expr fragment"),
+        fcx,
+    )
 }
 
 pub(crate) fn build_format_template_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {

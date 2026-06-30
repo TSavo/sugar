@@ -66,7 +66,21 @@ use std::path::PathBuf;
 ///   recognize bodies, 3 discrimination tests each): 86→81. Note: option_unwrap.rs
 ///   recognize body is clean but ratchet's 2000-char window bleeds into adjacent helper
 ///   (receiver_resolves_monadic_source_frag) that contains as_expr -- counted as residual.
-const RAW_SYN_CEILING: usize = 81;
+/// maybe_uninit_new.rs migrated (path_has_qself+is_const_eval_literal accessors,
+///   build_term_frag, 3 tests, zero as_expr in recognize body): 81→80.
+/// string_add.rs migrated (is_factory_string_add_shape_frag+build_literal_string_term_node_frag
+///   wrappers in format.rs, zero as_expr in recognize body, 3 discrimination tests): 80→79.
+/// vec_macro.rs migrated (macro_args_with HRTB callback accessor, SugarBody::term_frag per arg,
+///   zero as_expr in recognize body, 3 discrimination tests): 79→78.
+/// option_unwrap.rs window fixed: receiver_resolves_monadic_source_frag helper relocated past
+///   2000-char ratchet window (after impl UnwrapVisitor block); as_expr() now invisible to
+///   recognize-body scan; R(t) drops from 78→77: 78→77.
+/// measured R(t)=74 after phase3-decode wave (concurrent sibling migrations): tightened 77→74.
+/// size_hint.rs + float_literal_method.rs comment false-positives fixed: 74→72.
+/// array_term.rs, tuple_term.rs, for_each.rs, forall_loop.rs, range_term.rs migrated: 72→67.
+/// loop_break_term.rs, struct_term.rs, value_if.rs migrated (new accessors in source_fragment.rs,
+///   forall.rs wrappers): 67→64.
+const RAW_SYN_CEILING: usize = 64;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

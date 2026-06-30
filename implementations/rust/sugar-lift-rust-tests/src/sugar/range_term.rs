@@ -11,30 +11,23 @@ use sugar_ir_symbolic::{make_var, num, Term};
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::sugar::int_literal::{numeric_floor_from_term, ExactInt, NumericFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
-use syn::Expr;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("range_term", recognize);
 
 /// TERM recognizer for `Expr::Range`.
+/// No `as_expr()`, `Expr::`, or raw syn in this function.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Range(range) = expr else {
-        return None;
-    };
-    let name = match range.limits {
-        syn::RangeLimits::HalfOpen(_) => "range",
-        syn::RangeLimits::Closed(_) => "range_incl",
-    };
-    let start = match range.start.as_deref() {
-        Some(expr) => SugarBody::term(expr, fcx),
+    let name = frag.range_limits_name()?;
+    let start = match frag.range_start_frag() {
+        Some(f) => SugarBody::term_frag(&f, fcx),
         None => SugarBody::from_node(resolved_term(num(0))),
     };
-    let end = match range.end.as_deref() {
-        Some(expr) => SugarBody::term(expr, fcx),
+    let end = match frag.range_end_frag() {
+        Some(f) => SugarBody::term_frag(&f, fcx),
         None => SugarBody::from_node(resolved_term(make_var("range_end_len"))),
     };
     Some(Box::new(CtorSugar::new(name, vec![start, end])))

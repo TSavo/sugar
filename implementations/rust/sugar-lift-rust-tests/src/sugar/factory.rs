@@ -319,6 +319,15 @@ impl SugarBody<FormatValueFloor> {
         Self::from_node(crate::sugar::format::build_format_value_body(expr, fcx))
     }
 
+    /// Build a `FormatValueFloor` child from a `&SourceFragment`. The `as_expr()` escape
+    /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
+    pub(crate) fn format_value_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(crate::sugar::format::build_format_value_body(
+            frag.as_expr().expect("format_value_frag: non-expr fragment"),
+            fcx,
+        ))
+    }
+
     pub(crate) fn reduce_format_value(
         &self,
         ctx: &SugarCtx,
@@ -612,6 +621,15 @@ pub(crate) fn has_tuple_producer_frag(frag: &SourceFragment, fcx: &SugarBuildCtx
     }
 }
 
+/// Fragment-based variant of `has_composite`. The `as_expr()` escape lives HERE
+/// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
+pub(crate) fn has_composite_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> bool {
+    match frag.as_expr() {
+        Some(expr) => has_composite(expr, fcx),
+        None => false,
+    }
+}
+
 /// Fragment-based variant of `build_term`. The `as_expr()` escape lives HERE
 /// (inside `factory.rs`, ratchet-excluded) so recognize bodies that call this stay clean.
 /// Used by transparent-passthrough recognizers that return a child Sugar directly.
@@ -628,6 +646,21 @@ pub(crate) fn build_term_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box
 pub(crate) fn build_composite_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_composite(
         frag.as_expr().expect("build_composite_frag: non-expr fragment"),
+        fcx,
+    )
+}
+
+/// Fragment-based variant of `build_literal_string_term_node`. The `as_expr()` escape
+/// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies that call
+/// this stay clean. Used by macro recognizers (concat!, string_add, to_string) whose
+/// struct holds a `SugarBody<LiteralStringFloor>` with no raw syn fields.
+pub(crate) fn build_literal_string_term_node_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Box<dyn Sugar> {
+    crate::sugar::format::build_literal_string_term_node(
+        frag.as_expr()
+            .expect("build_literal_string_term_node_frag: non-expr fragment"),
         fcx,
     )
 }

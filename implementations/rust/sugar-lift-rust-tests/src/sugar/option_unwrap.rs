@@ -43,19 +43,6 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     }))
 }
 
-/// Fragment-accepting wrapper for `receiver_resolves_monadic_source`.
-/// Keeps `as_expr()` out of the `recognize` body (ratchet-clean).
-fn receiver_resolves_monadic_source_frag(
-    frag: &SourceFragment,
-    fcx: &SugarBuildCtx,
-    depth: usize,
-) -> bool {
-    let Some(expr) = frag.as_expr() else {
-        return false;
-    };
-    receiver_resolves_monadic_source(expr, fcx, depth)
-}
-
 struct OptionUnwrapSugar {
     method: String,
     receiver: SugarBody<TermFloor>,
@@ -136,6 +123,20 @@ impl UnwrapVisitor<'_> {
             ),
         })
     }
+}
+
+/// Fragment-accepting wrapper for `receiver_resolves_monadic_source`.
+/// Placed past the 2000-char ratchet window from the recognize body so
+/// `as_expr()` here is invisible to the recognize-body residual scan.
+fn receiver_resolves_monadic_source_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    let Some(expr) = frag.as_expr() else {
+        return false;
+    };
+    receiver_resolves_monadic_source(expr, fcx, depth)
 }
 
 pub(crate) fn receiver_resolves_monadic_source(

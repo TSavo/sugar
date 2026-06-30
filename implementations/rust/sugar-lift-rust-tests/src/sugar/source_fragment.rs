@@ -654,6 +654,31 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// Returns `true` if this fragment is an `Expr::Path` with a qualified self
+    /// (`<T as Trait>::assoc` form). Returns `false` for plain paths and all
+    /// non-path nodes.
+    pub(crate) fn path_has_qself(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => p.qself.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if this fragment is a const-eval literal: an `Expr::Lit`
+    /// of any kind, or a negated integer/float literal (`-7`, `-1.0`). Does NOT
+    /// match paths to named consts, function calls, or any runtime expression.
+    /// Mirrors the `is_const_eval_literal` private helper formerly in
+    /// `maybe_uninit_new.rs`.
+    pub(crate) fn is_const_eval_literal(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Lit(_)) => true,
+            FragNode::Expr(syn::Expr::Unary(u)) => {
+                matches!(u.op, syn::UnOp::Neg(_)) && matches!(*u.expr, syn::Expr::Lit(_))
+            }
+            _ => false,
+        }
+    }
+
     // -- partition_point fold accessor ----------------------------------------
 
     /// For a `.partition_point(|param| pred)` method call whose receiver is a
@@ -833,8 +858,9 @@ impl<'a> SourceFragment<'a> {
     // -- Macro name accessor --------------------------------------------------
 
     /// For an `Expr::Macro` fragment, returns the last path-segment ident of
-    /// the macro path (e.g. `"panic"` for `panic!(...)`). Returns `None` for
-    /// any non-macro fragment.
+    /// the macro path (e.g. `"concat"` for `concat!(...)`). Returns `None` for
+    /// any non-macro fragment. Raw syn access lives here (ratchet-excluded);
+    /// recognizer bodies compare the returned `String` against a string literal.
     pub(crate) fn macro_name(&self) -> Option<String> {
         match &self.node {
             FragNode::Expr(syn::Expr::Macro(m)) => {
@@ -960,6 +986,34 @@ impl<'a> SourceFragment<'a> {
             }
             _ => None,
         }
+    }
+
+    // -- Macro args with callback ---------------------------------------------
+
+    /// For an `Expr::Macro` fragment, parse the macro token stream as
+    /// comma-separated expressions and invoke `f` once per argument with a
+    /// `SourceFragment` wrapping that argument expression. Returns `true` on
+    /// success (including an empty arg list); returns `false` if the fragment
+    /// is not an `Expr::Macro` or if the token stream does not parse as a
+    /// comma-separated expression list. All raw syn access (token parsing,
+    /// `syn::Expr` construction) stays inside this accessor -- callers see
+    /// only `SourceFragment`.
+    pub(crate) fn macro_args_with<F>(&self, mut f: F) -> bool
+    where
+        F: for<'e> FnMut(SourceFragment<'e>),
+    {
+        let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
+            return false;
+        };
+        let parser =
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        let Ok(punctuated) = syn::parse::Parser::parse2(parser, m.mac.tokens.clone()) else {
+            return false;
+        };
+        for expr in &punctuated {
+            f(SourceFragment::expr(expr, self.file));
+        }
+        true
     }
 
     // -- Const/Static item accessors (typed; no raw-syn in callers) -----------
@@ -1306,6 +1360,156 @@ impl<'a> SourceFragment<'a> {
         } else {
             None
         }
+    }
+
+    // -- Array / Tuple / Range accessors ------------------------------------
+
+    /// Elements of an `Expr::Array` literal as child fragments, in source order.
+    /// Returns `None` for any non-Array expression.
+    /// All raw syn field access lives HERE; callers see `Option<Vec<SourceFragment>>`.
+    pub(crate) fn array_elems(&self) -> Option<Vec<SourceFragment<'a>>> {
+        let FragNode::Expr(syn::Expr::Array(arr)) = &self.node else {
+            return None;
+        };
+        Some(arr.elems.iter().map(|e| Self::expr(e, self.file)).collect())
+    }
+
+    /// Elements of an `Expr::Tuple` literal as child fragments, in source order.
+    /// Returns `None` for any non-Tuple expression.
+    /// All raw syn field access lives HERE; callers see `Option<Vec<SourceFragment>>`.
+    pub(crate) fn tuple_elems(&self) -> Option<Vec<SourceFragment<'a>>> {
+        let FragNode::Expr(syn::Expr::Tuple(tup)) = &self.node else {
+            return None;
+        };
+        Some(tup.elems.iter().map(|e| Self::expr(e, self.file)).collect())
+    }
+
+    /// The ctor name for an `Expr::Range` literal: `"range"` for `a..b`,
+    /// `"range_incl"` for `a..=b`. Returns `None` for any non-Range fragment.
+    /// All raw syn field access lives HERE; callers see `Option<&'static str>`.
+    pub(crate) fn range_limits_name(&self) -> Option<&'static str> {
+        let FragNode::Expr(syn::Expr::Range(r)) = &self.node else {
+            return None;
+        };
+        Some(match r.limits {
+            syn::RangeLimits::HalfOpen(_) => "range",
+            syn::RangeLimits::Closed(_) => "range_incl",
+        })
+    }
+
+    /// Start fragment of an `Expr::Range`, if present.
+    /// Returns `None` for any non-Range fragment or an open-ended start (`..b`).
+    pub(crate) fn range_start_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::Range(r)) = &self.node else {
+            return None;
+        };
+        r.start.as_deref().map(|e| Self::expr(e, self.file))
+    }
+
+    /// End fragment of an `Expr::Range`, if present.
+    /// Returns `None` for any non-Range fragment or an open-ended end (`a..`).
+    pub(crate) fn range_end_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::Range(r)) = &self.node else {
+            return None;
+        };
+        r.end.as_deref().map(|e| Self::expr(e, self.file))
+    }
+
+    // -- Loop accessors -------------------------------------------------------
+
+    /// For a `loop { break <expr>; }` fragment: returns the break-payload
+    /// expression as a child fragment. Returns `None` if the fragment is not a
+    /// `Loop` with exactly one unlabeled `break <expr>;` statement.
+    /// All raw syn field access lives HERE; callers see `Option<SourceFragment>`.
+    pub(crate) fn loop_single_break_payload_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::Loop(loop_expr)) = &self.node else {
+            return None;
+        };
+        let [syn::Stmt::Expr(syn::Expr::Break(expr_break), _)] =
+            loop_expr.body.stmts.as_slice()
+        else {
+            return None;
+        };
+        if expr_break.label.is_some() {
+            return None;
+        }
+        expr_break.expr.as_deref().map(|e| Self::expr(e, self.file))
+    }
+
+    // -- Struct-literal accessors ---------------------------------------------
+
+    /// Returns `true` if this fragment is an `Expr::Struct` that has a `..rest`
+    /// tail (a struct-update expression). Returns `false` for any non-Struct or
+    /// a Struct without a rest clause.
+    pub(crate) fn struct_has_rest(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Struct(s)) => s.rest.is_some(),
+            _ => false,
+        }
+    }
+
+    /// The `struct:<path>` ctor name for an `Expr::Struct` fragment: path
+    /// segments joined with `"::"`. Returns `None` for any non-Struct fragment.
+    /// All raw syn field access lives HERE.
+    pub(crate) fn struct_path_variant_string(&self) -> Option<String> {
+        let FragNode::Expr(syn::Expr::Struct(s)) = &self.node else {
+            return None;
+        };
+        Some(
+            s.path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::"),
+        )
+    }
+
+    /// The named fields of an `Expr::Struct` literal as `(field_name, value_fragment)`
+    /// pairs. Returns an empty `Vec` for any non-Struct, or a Struct with a `..rest`
+    /// clause (where the rest makes the fields incomplete). All raw syn field access
+    /// lives HERE; callers see `Vec<(String, SourceFragment)>`.
+    pub(crate) fn struct_named_fields_frags(&self) -> Vec<(String, SourceFragment<'a>)> {
+        let FragNode::Expr(syn::Expr::Struct(s)) = &self.node else {
+            return Vec::new();
+        };
+        s.fields
+            .iter()
+            .map(|fv| {
+                let fname = match &fv.member {
+                    syn::Member::Named(id) => id.to_string(),
+                    syn::Member::Unnamed(idx) => idx.index.to_string(),
+                };
+                (fname, Self::expr(&fv.expr, self.file))
+            })
+            .collect()
+    }
+
+    // -- If-expression accessors ----------------------------------------------
+
+    /// Returns `true` if this fragment is an `Expr::If` whose condition is
+    /// side-effecting (calls `crate::closure_body_is_side_effecting`).
+    /// Returns `false` for any non-If fragment.
+    /// All raw syn field access lives HERE.
+    pub(crate) fn if_cond_is_side_effecting(&self) -> bool {
+        let FragNode::Expr(syn::Expr::If(if_expr)) = &self.node else {
+            return false;
+        };
+        crate::closure_body_is_side_effecting(&if_expr.cond)
+    }
+
+    /// For an `Expr::If`, the single tail expression of the then-branch block,
+    /// if the block contains exactly one expression statement (no semicolon).
+    /// Returns `None` for any non-If or a then-branch with more/fewer statements.
+    /// All raw syn field access lives HERE.
+    pub(crate) fn if_then_single_expr_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::If(if_expr)) = &self.node else {
+            return None;
+        };
+        let [syn::Stmt::Expr(e, None)] = if_expr.then_branch.stmts.as_slice() else {
+            return None;
+        };
+        Some(Self::expr(e, self.file))
     }
 }
 
