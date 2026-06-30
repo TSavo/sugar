@@ -547,6 +547,106 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- Async-block assertion check ------------------------------------------
+
+    /// Returns `true` if the fragment is an `Expr::Async` block whose body
+    /// contains at least one assertion surface (`count_asserts_in_stmts > 0`).
+    /// Used by `statement_async_future::recognize` without escaping to raw syn.
+    pub(crate) fn is_async_with_asserts(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Async(a)) => {
+                crate::count_asserts_in_stmts(&a.block.stmts) > 0
+            }
+            _ => false,
+        }
+    }
+
+    // -- Control-flow check ---------------------------------------------------
+
+    /// Returns `true` if this fragment is an expression that both carries at
+    /// least one assertion macro and contains a `.await` expression -- the
+    /// shape detected by `statement_control_flow`. Returns `false` for any
+    /// non-`Expr` fragment. Delegates to `statement_position::has_control_flow`
+    /// so the raw visitor logic stays out of recognizer bodies.
+    pub(crate) fn has_control_flow(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(e) => crate::sugar::statement_position::has_control_flow(e),
+            _ => false,
+        }
+    }
+
+    // -- Reflection-boundary check --------------------------------------------
+
+    /// Returns the reflection boundary string if this fragment is an assertion-bearing
+    /// `match` whose scrutinee is a `TypeId::of` / `Type::of` / `.info()` reflection
+    /// call, optionally wrapped in a `const { .. }` block. Mirrors
+    /// `statement_position::reflection_boundary` without escaping to raw syn. Returns
+    /// `None` for any other fragment shape (non-match, no assert, non-reflection
+    /// scrutinee).
+    pub(crate) fn reflection_boundary_str(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(e) => crate::sugar::statement_position::reflection_boundary(e),
+            _ => None,
+        }
+    }
+
+    // -- Future-handoff boundary check ----------------------------------------
+
+    /// Returns the future-handoff boundary string if this fragment matches the
+    /// `statement_position::future_handoff_boundary` shape (a call or method call
+    /// whose arguments contain an asserting async block). Delegates to
+    /// `statement_position::future_handoff_boundary` without exposing `&Expr`.
+    /// Returns `None` for any non-matching fragment.
+    pub(crate) fn future_handoff_boundary(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(e) => crate::sugar::statement_position::future_handoff_boundary(e),
+            _ => None,
+        }
+    }
+
+    // -- Loop-advance check ---------------------------------------------------
+
+    /// Returns `true` if this fragment is a loop-advance expression (contains
+    /// an iterator-advance call like `.size_hint()` inside a `loop` body).
+    /// Delegates to `statement_position::has_loop_advance` without exposing
+    /// `&Expr` to recognizer bodies.
+    pub(crate) fn is_loop_advance(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(e) => crate::sugar::statement_position::has_loop_advance(e),
+            _ => false,
+        }
+    }
+
+    // -- Assertion-surface macro check ----------------------------------------
+
+    /// Returns `true` if this fragment is an `Expr::Macro` that is an assertion
+    /// surface (e.g. `assert!`, `assert_eq!`, etc. as determined by
+    /// `macro_is_assertion_surface`). Returns `false` for any non-macro fragment.
+    pub(crate) fn is_assertion_surface_macro(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Macro(m)) => crate::macro_is_assertion_surface(&m.mac),
+            _ => false,
+        }
+    }
+
+    // -- Macro argument count -------------------------------------------------
+
+    /// For an `Expr::Macro` fragment, parse the macro token stream as
+    /// comma-separated expressions and return the count. Returns `None` for
+    /// non-macro fragments or if the tokens do not parse as a comma list.
+    pub(crate) fn macro_arg_count(&self) -> Option<usize> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Macro(m)) => {
+                let parser =
+                    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+                syn::parse::Parser::parse2(parser, m.mac.tokens.clone())
+                    .ok()
+                    .map(|p| p.len())
+            }
+            _ => None,
+        }
+    }
+
     // -- Scalar literal accessor (typed; no raw-syn in callers) ---------------
 
     /// Decode the scalar literal held by an `Expr::Lit` fragment into a

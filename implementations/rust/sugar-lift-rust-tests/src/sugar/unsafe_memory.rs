@@ -5,11 +5,9 @@
 // source literals. The method call owns the typed boundary; enclosing blocks only
 // bubble this effect.
 
-use syn::Expr;
-
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -22,19 +20,15 @@ pub(crate) const STATEMENT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 );
 
 pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
+    if !frag.call_is_method_call() {
         return None;
-    };
-    is_unsafe_memory_method(&call.method).then(|| {
-        Box::new(UnsafeMemorySugar {
-            boundary: token_key(expr),
-        }) as Box<dyn Sugar>
-    })
-}
-
-fn is_unsafe_memory_method(method: &syn::Ident) -> bool {
-    method == "clone_to_uninit"
+    }
+    if frag.call_target_name().as_deref() != Some("clone_to_uninit") {
+        return None;
+    }
+    Some(Box::new(UnsafeMemorySugar {
+        boundary: frag.token_str(),
+    }))
 }
 
 struct UnsafeMemorySugar {

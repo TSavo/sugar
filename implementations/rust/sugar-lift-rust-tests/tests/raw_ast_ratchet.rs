@@ -31,7 +31,12 @@ use std::path::PathBuf;
 /// no real function body).
 /// term_literal.rs migrated in this wave: ceiling lowered 124→123→122.
 /// dormant_mut_ref.rs, source_location.rs, panic_macro.rs, atomic_load.rs migrated: 122→118.
-const RAW_SYN_CEILING: usize = 118;
+/// statement_async_future.rs migrated: 118→117.
+/// statement_reflection.rs migrated: 117→116.
+/// statement_control_flow.rs migrated: 116→115.
+/// wave2 consolidation (unsafe_memory, statement_nested_assertion, statement_loop_advance,
+/// statement_future_handoff, write_macro, future_join): 115→109.
+const RAW_SYN_CEILING: usize = 109;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
