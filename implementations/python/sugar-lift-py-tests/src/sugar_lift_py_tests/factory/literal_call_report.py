@@ -33,7 +33,6 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.layer2 import _canonical_term_sig
 from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.string_literal_sugar import string_literal_sugar
 
 from .factory_build_context import FactoryBuildContext
 from .source_site import SourceSite

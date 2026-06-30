@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor import StringValue
@@ -13,23 +12,12 @@ class StringLiteralSugar:
 
     @classmethod
     def from_site(cls, site, _ctx=None) -> "StringLiteralSugar | None":
-        value = string_literal_value(site.node)
-        if value is None:
+        if site.observed != "PrimitiveLiteral":
+            return None
+        value = site.literal_value()
+        if not isinstance(value, str):
             return None
         return cls(value)
 
     def desugar(self) -> Outcome:
         return Complete(StringValue(self.value))
-
-
-def string_literal_value(node: ast.AST) -> str | None:
-    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-        return None
-    return node.value
-
-
-def string_literal_sugar(node: ast.AST) -> StringLiteralSugar | None:
-    value = string_literal_value(node)
-    if value is None:
-        return None
-    return StringLiteralSugar(value)
