@@ -90,7 +90,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = make_fcx(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "Foo with fields must be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "Foo with fields must be recognized"
+        );
     }
 
     /// Discrimination: `(1_i32, 2_i32)` is a Tuple, not a Struct.
@@ -106,7 +109,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = make_fcx(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "tuple must not be recognized as Struct");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "tuple must not be recognized as Struct"
+        );
     }
 
     /// Structural: field names are sorted alphabetically in the ctor.

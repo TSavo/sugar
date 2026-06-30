@@ -34,7 +34,9 @@ pub enum MemberError {
     #[error("{kind}: required array field `{field}` is absent or not an array")]
     MissingRequiredArray { kind: String, field: String },
 
-    #[error("{kind}: field `{field}` has invalid CID format (expected blake3-512: prefix): `{raw}`")]
+    #[error(
+        "{kind}: field `{field}` has invalid CID format (expected blake3-512: prefix): `{raw}`"
+    )]
     InvalidCidFormat {
         kind: String,
         field: String,
@@ -206,13 +208,15 @@ fn get_memento_cid(
 ) -> Result<Option<MementoCid>, MemberError> {
     match get_str(nb, name) {
         None => Ok(None),
-        Some(s) => MementoCid::try_parse(s)
-            .map(Some)
-            .map_err(|raw| MemberError::InvalidCidFormat {
-                kind: kind.to_string(),
-                field: name.to_string(),
-                raw,
-            }),
+        Some(s) => {
+            MementoCid::try_parse(s)
+                .map(Some)
+                .map_err(|raw| MemberError::InvalidCidFormat {
+                    kind: kind.to_string(),
+                    field: name.to_string(),
+                    raw,
+                })
+        }
     }
 }
 
@@ -807,7 +811,9 @@ impl Member {
         match nb.kind {
             "contract" => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
             "bridge" => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
-            "implication" => Ok(Member::Implication(ImplicationMember::from_normalized(&nb)?)),
+            "implication" => Ok(Member::Implication(ImplicationMember::from_normalized(
+                &nb,
+            )?)),
             "authority" => Ok(Member::Authority(AuthorityMember::from_normalized(&nb)?)),
             "witness" => Ok(Member::WitnessClaim(WitnessClaimMember::from_normalized(
                 &nb,
@@ -815,9 +821,9 @@ impl Member {
             "witness-memento" => Ok(Member::WitnessMemento(
                 WitnessMementoMember::from_normalized(&nb)?,
             )),
-            "source-memento" => Ok(Member::SourceMemento(
-                SourceMementoMember::from_normalized(&nb)?,
-            )),
+            "source-memento" => Ok(Member::SourceMemento(SourceMementoMember::from_normalized(
+                &nb,
+            )?)),
             "plan-memento" => Ok(Member::PlanMemento(PlanMementoMember::from_normalized(
                 &nb,
             )?)),
@@ -909,7 +915,10 @@ mod tests {
         assert_eq!(m.scope_kind, "library");
         assert_eq!(m.scope, "my-lib");
         assert_eq!(m.verdict.as_deref(), Some("discharged"));
-        let cids = m.input_cids.as_ref().expect("inputCids present in full wire");
+        let cids = m
+            .input_cids
+            .as_ref()
+            .expect("inputCids present in full wire");
         assert_eq!(cids.len(), 2);
         assert_eq!(cids[0].as_str(), "blake3-512:input1");
         assert_eq!(cids[1].as_str(), "blake3-512:input2");
@@ -1108,10 +1117,7 @@ mod tests {
                 let _: &Option<Vec<MementoCid>> = &b.input_cids;
                 assert_eq!(b.cid.as_str(), "blake3-512:bridgecid");
                 assert_eq!(b.target_contract_cid.as_str(), "blake3-512:contractcid");
-                assert_eq!(
-                    b.input_cids.as_ref().unwrap()[0].as_str(),
-                    "blake3-512:in1"
-                );
+                assert_eq!(b.input_cids.as_ref().unwrap()[0].as_str(), "blake3-512:in1");
             }
             other => panic!("expected Bridge, got {:?}", other.kind()),
         }
@@ -1143,10 +1149,7 @@ mod tests {
                 let _: &Option<AtomCid> = &wc.evidence_root_cid;
                 let _: &MementoCid = &wc.cid;
                 assert_eq!(wc.claim_body_cid.as_str(), "atom:claim");
-                assert_eq!(
-                    wc.verifier_cid.as_ref().unwrap().as_str(),
-                    "atom:verifier"
-                );
+                assert_eq!(wc.verifier_cid.as_ref().unwrap().as_str(), "atom:verifier");
             }
             other => panic!("expected WitnessClaim, got {:?}", other.kind()),
         }
@@ -1187,7 +1190,10 @@ mod tests {
         let result = Member::parse(&wire.to_string().into_bytes());
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("source-memento") || msg.contains("sourceCid"), "{msg}");
+        assert!(
+            msg.contains("source-memento") || msg.contains("sourceCid"),
+            "{msg}"
+        );
     }
 
     // ── factory-walk-memento and assertion-surface-memento (all-optional) ────
@@ -1267,7 +1273,10 @@ mod tests {
 
         // Second call returns the same Arc (pointer equality proves memoization).
         let arc2 = graph.typed_member(&source_cid).unwrap().unwrap();
-        assert!(Arc::ptr_eq(&arc_member, &arc2), "memoized: same Arc pointer");
+        assert!(
+            Arc::ptr_eq(&arc_member, &arc2),
+            "memoized: same Arc pointer"
+        );
 
         // typed_members_iter covers the one member.
         let all: Vec<_> = graph.typed_members_iter().collect();
@@ -1313,7 +1322,10 @@ mod tests {
                 assert!(c.body_cid.as_str().starts_with("blake3-512:"));
                 // kit-output fields are absent on the minimal builder → None
                 assert!(c.verdict.is_none(), "verdict absent on Rust-built minimal");
-                assert!(c.out_binding.is_none(), "outBinding absent on Rust-built minimal");
+                assert!(
+                    c.out_binding.is_none(),
+                    "outBinding absent on Rust-built minimal"
+                );
                 assert!(c.binding_hash.is_none());
                 assert!(c.property_hash.is_none());
                 assert!(c.input_cids.is_none());
@@ -1350,7 +1362,10 @@ mod tests {
             Member::Bridge(b) => {
                 assert_eq!(b.source_symbol, "my_fn");
                 assert_eq!(b.target_contract_cid.as_str(), "blake3-512:contractcid");
-                assert!(b.source_layer.is_none(), "sourceLayer absent on minimal bridge");
+                assert!(
+                    b.source_layer.is_none(),
+                    "sourceLayer absent on minimal bridge"
+                );
                 assert!(b.verdict.is_none(), "verdict absent on minimal bridge");
                 assert!(b.input_cids.is_none());
             }
@@ -1386,7 +1401,10 @@ mod tests {
             Member::Implication(imp) => {
                 assert_eq!(imp.antecedent_cid.as_str(), "blake3-512:antcid");
                 assert_eq!(imp.consequent_cid.as_str(), "blake3-512:concid");
-                assert!(imp.verdict.is_none(), "verdict absent on minimal implication");
+                assert!(
+                    imp.verdict.is_none(),
+                    "verdict absent on minimal implication"
+                );
                 assert!(imp.prover.is_none(), "prover absent on minimal implication");
                 assert!(imp.prover_run_ms.is_none());
                 assert!(imp.input_cids.is_none());
@@ -1426,7 +1444,10 @@ mod tests {
                 assert_eq!(a.principal, "my-principal");
                 assert_eq!(a.scope_kind, "library");
                 assert!(a.verdict.is_none(), "verdict absent on minimal authority");
-                assert!(a.input_cids.is_none(), "inputCids absent on minimal authority");
+                assert!(
+                    a.input_cids.is_none(),
+                    "inputCids absent on minimal authority"
+                );
             }
             other => panic!("expected Authority, got {:?}", other.kind()),
         }

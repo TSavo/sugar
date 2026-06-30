@@ -36,7 +36,10 @@ fn dump(path: &PathBuf, as_json: bool, quiet: bool) -> Result<()> {
         .map_err(|e| anyhow!("read proof graph from {}: {e}", path.display()))?;
 
     if as_json {
-        let atoms: Vec<String> = graph.atoms().map(|a| a.cid().as_str().to_string()).collect();
+        let atoms: Vec<String> = graph
+            .atoms()
+            .map(|a| a.cid().as_str().to_string())
+            .collect();
         let bodies: serde_json::Map<String, serde_json::Value> = graph
             .bodies()
             .map(|b| {

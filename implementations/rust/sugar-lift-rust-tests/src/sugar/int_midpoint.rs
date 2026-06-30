@@ -152,7 +152,10 @@ mod tests {
         assert_eq!(call.call_arg_count(), 2);
 
         let func_frag = call.call_func().expect("call has func");
-        assert_eq!(func_frag.path_last_segment_ident().as_deref(), Some("midpoint"));
+        assert_eq!(
+            func_frag.path_last_segment_ident().as_deref(),
+            Some("midpoint")
+        );
         assert_eq!(func_frag.path_penultimate_ident().as_deref(), Some("u32"));
         assert!(func_frag.path_qself_simple_type_name().is_none());
     }
@@ -164,8 +167,14 @@ mod tests {
         let call = tail_expr_frag(&file, "f.rs");
 
         let func_frag = call.call_func().expect("call has func");
-        assert_eq!(func_frag.path_last_segment_ident().as_deref(), Some("midpoint"));
-        assert_eq!(func_frag.path_qself_simple_type_name().as_deref(), Some("i32"));
+        assert_eq!(
+            func_frag.path_last_segment_ident().as_deref(),
+            Some("midpoint")
+        );
+        assert_eq!(
+            func_frag.path_qself_simple_type_name().as_deref(),
+            Some("i32")
+        );
         // qself path has no penultimate because the path only has "midpoint"
         assert!(func_frag.path_penultimate_ident().is_none());
     }
@@ -201,7 +210,10 @@ mod tests {
         let file = parse_file(src);
         let call = tail_expr_frag(&file, "f.rs");
         let func = call.call_func().unwrap();
-        assert!(midpoint_kind_frag(&func).is_none(), "u32::from must not match midpoint");
+        assert!(
+            midpoint_kind_frag(&func).is_none(),
+            "u32::from must not match midpoint"
+        );
     }
 
     #[test]
@@ -211,7 +223,10 @@ mod tests {
         let file = parse_file(src);
         let call = tail_expr_frag(&file, "f.rs");
         let func = call.call_func().unwrap();
-        assert!(midpoint_kind_frag(&func).is_none(), "unknown type must not match");
+        assert!(
+            midpoint_kind_frag(&func).is_none(),
+            "unknown type must not match"
+        );
     }
 
     #[test]

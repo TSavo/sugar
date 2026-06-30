@@ -8,8 +8,8 @@ use sugar_ir_symbolic::str_const;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::factory::{FormatValueFloor, SugarBody};
 use crate::sugar::format::display_format_value_floor;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -76,15 +76,22 @@ mod tests {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         // positive: bare to_string() with no args must recognize
-        assert!(recognize(&frag, &fcx).is_some(), "to_string() with no args must recognize");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "to_string() with no args must recognize"
+        );
         // negative: different method must not recognize
         let clone_expr: Expr = syn::parse_str("x.clone()").expect("parses");
-        assert!(recognize(&SourceFragment::expr(&clone_expr, "<test>"), &fcx).is_none(),
-            "clone() must not recognize");
+        assert!(
+            recognize(&SourceFragment::expr(&clone_expr, "<test>"), &fcx).is_none(),
+            "clone() must not recognize"
+        );
         // negative: to_string with extra args must not recognize
         let extra: Expr = syn::parse_str("x.to_string(extra)").expect("parses");
-        assert!(recognize(&SourceFragment::expr(&extra, "<test>"), &fcx).is_none(),
-            "to_string(arg) must not recognize");
+        assert!(
+            recognize(&SourceFragment::expr(&extra, "<test>"), &fcx).is_none(),
+            "to_string(arg) must not recognize"
+        );
     }
 
     fn run(src: &str) -> Outcome {
@@ -93,7 +100,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("to_string sugar should recognize");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("to_string sugar should recognize");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();
@@ -108,7 +119,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("to_string sugar should recognize");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("to_string sugar should recognize");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

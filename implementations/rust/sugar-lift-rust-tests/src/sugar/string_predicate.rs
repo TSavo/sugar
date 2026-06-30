@@ -11,8 +11,8 @@ use crate::sugar::factory::{FloorRead, FormatValueFloor, SugarBody, SugarBuildCt
 use crate::sugar::format::{FmtValue, IntKind};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared,
-    Effect, Outcome, Sugar, SugarCtx, Warrant,
+    callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,
+    Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, gte, lte, num, str_const, Formula, Term};
 use syn::{Expr, ExprLit, Lit};

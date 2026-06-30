@@ -26,8 +26,8 @@
 
 use crate::sugar::claim::ItemSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim =
     ItemSugarClaim::statement_item("impl_method", recognize);
@@ -76,11 +76,11 @@ impl Sugar for ImplMethodSugar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::source_fragment::{parse_file, SourceFragment};
     use crate::{
         sugar_ctx, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
         TemporalScope,
     };
-    use crate::sugar::source_fragment::{parse_file, SourceFragment};
 
     // -- from_src harness: source string -> SourceFragment -> assert observed -> build -> floor --
 

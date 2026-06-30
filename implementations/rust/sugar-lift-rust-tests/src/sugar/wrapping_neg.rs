@@ -13,8 +13,8 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, WrappingNegVisitor};
 use crate::sugar::primitive_int::deferred_primitive_method_term;
-use crate::{term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("wrapping_neg", SugarRole::Term, recognize);
@@ -125,6 +125,10 @@ mod tests {
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         let receiver = frag.call_receiver().expect("receiver must be present");
         // Expr::Path maps to "Name" in expr_kind()
-        assert_eq!(receiver.observed(), "Name", "receiver of x.wrapping_neg() is Expr::Path -> 'Name'");
+        assert_eq!(
+            receiver.observed(),
+            "Name",
+            "receiver of x.wrapping_neg() is Expr::Path -> 'Name'"
+        );
     }
 }

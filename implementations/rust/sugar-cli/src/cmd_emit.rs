@@ -564,10 +564,7 @@ mod tests {
         let view = &members[0];
         let envelope: Json = serde_json::from_slice(view.bytes()).expect("member JSON");
 
-        assert_eq!(
-            view.kind().as_deref(),
-            Some("witness-memento")
-        );
+        assert_eq!(view.kind().as_deref(), Some("witness-memento"));
         assert_eq!(
             view.field("verifierCid").as_deref(),
             Some("builtin:test-verifier")

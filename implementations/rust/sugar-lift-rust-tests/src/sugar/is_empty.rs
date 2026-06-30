@@ -298,7 +298,9 @@ fn static_collection_len_source_frag(
 /// Builds the `SugarBody<CompositeFloor>` for a receiver fragment. Delegates to
 /// `sequence_body`; raw syn lives there.
 fn sequence_body_frag(frag: SourceFragment<'_>, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
-    let expr = frag.as_expr().expect("sequence_body_frag requires an Expr fragment");
+    let expr = frag
+        .as_expr()
+        .expect("sequence_body_frag requires an Expr fragment");
     sequence_body(expr, fcx)
 }
 

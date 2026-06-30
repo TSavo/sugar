@@ -10,13 +10,16 @@ use quote::quote;
 use syn::{Expr, GenericArgument};
 
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
-use crate::{const_int, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{const_int, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("array_chunks", recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;

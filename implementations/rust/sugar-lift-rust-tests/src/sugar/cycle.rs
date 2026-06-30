@@ -10,13 +10,16 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::OVERSIZE_DOMAIN_REASON;
 use crate::sugar::method_family;
-use crate::{token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite_before("cycle_take", &["take"], recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     recognize_cycle_take_composite(expr, fcx)
 }

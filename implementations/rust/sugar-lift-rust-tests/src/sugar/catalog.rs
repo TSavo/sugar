@@ -8,38 +8,39 @@ use std::collections::BTreeMap;
 use syn::{Expr, Item, Stmt};
 
 use crate::sugar::backstop::unsupported;
-use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole};
+use crate::sugar::claim::{
+    ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole,
+};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::factory_gap_info::collect_gap;
 use crate::sugar::source_fragment::{FragNode, SourceFragment};
 use crate::sugar::{
-    assign_sugar, block_sugar, if_sugar, return_sugar,
     addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
-    assign_op, atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path,
-    bv_binop, call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
-    char_range_filter_map, closure_iter_advance_body, closure_mutating_body,
-    closure_opaque_accessor, closure_runtime_receiver, closure_term, closure_tls_accessor, collect,
-    collection_literal, compute_float, concat_macro, conditional, const_block, const_if,
-    const_item, const_path, constraint, control_flow_term, cstr, cycle, dormant_mut_ref,
-    duration_accessor, dyn_any, enumerate, field_term, filter, filter_map, flat_map, flatten,
-    float_literal_method, float_refinement, fold, for_each, for_loop_mutation, for_replay,
-    forall_loop, format_args, format_macro, from_bool, function_map, future_join, identity_map,
-    impl_method, index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt, integer_decode,
-    intersperse, intersperse_collect_string, intersperse_concat, into, ip_addr, is_empty,
-    is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
+    assign_op, assign_sugar, atomic_load, await_term, binop, block_sugar, block_term, bool_bitwise,
+    bool_method, bound_path, bv_binop, call, cast_term, cell_refcell, cfg_select, chain,
+    char_method, char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
+    closure_mutating_body, closure_opaque_accessor, closure_runtime_receiver, closure_term,
+    closure_tls_accessor, collect, collection_literal, compute_float, concat_macro, conditional,
+    const_block, const_if, const_item, const_path, constraint, control_flow_term, cstr, cycle,
+    dormant_mut_ref, duration_accessor, dyn_any, enumerate, field_term, filter, filter_map,
+    flat_map, flatten, float_literal_method, float_refinement, fold, for_each, for_loop_mutation,
+    for_replay, forall_loop, format_args, format_macro, from_bool, function_map, future_join,
+    identity_map, if_sugar, impl_method, index, infinity_eq, inspect, int_midpoint, int_pow,
+    int_sqrt, integer_decode, intersperse, intersperse_collect_string, intersperse_concat, into,
+    ip_addr, is_empty, is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
     literal_iterator_quantifier, literal_slice, loop_break_term, macro_assertion_surface,
     macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
     maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
     option_predicate, option_unwrap, panic_macro, partition_point, path, peekable, primitive_int,
     ptr_metadata, range_accessor, range_bounds_contains, range_construct, range_contains,
     range_term, raw_addr_term, raw_pointer_arithmetic, reference_sequence, reference_term,
-    regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
+    regex_match, repeat_term, result_predicate, result_transpose_collect, return_sugar, rev,
     runtime_iterator_source, scan, size_hint, sizeof, skip, skip_while, slice_accessor,
     slice_chunk_window, slice_index, slice_search, source_location, statement_async_future,
     statement_control_flow, statement_future_handoff, statement_loop_advance,
     statement_nested_assertion, statement_reflection, statement_runtime_expr, step_by, str_method,
-    str_table_select, string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
+    str_table_select, string_add, string_predicate, struct_term, take, take_while, term_literal,
+    to_string, transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
     unsafe_memory, value_if, vec_literal, vec_macro, wrapping_neg, write_macro, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
@@ -280,8 +281,12 @@ pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole)
         Some(index) => candidates.swap_remove(index).into_node(),
         None => {
             let frag = SourceFragment::expr(expr, "<factory>");
-            let gap  = collect_gap(&frag, &format!("{role:?}"));
-            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+            let gap = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!(
+                "{}\n  gap: {}",
+                seed.unresolved_reason(),
+                gap.message()
+            ))
         }
     };
     AccountedSugar::new(seed, node)
@@ -313,8 +318,12 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
         Some(index) => candidates.swap_remove(index).into_node(),
         None => {
             let frag = SourceFragment::from_node(FragNode::Item(item), "<factory>");
-            let gap  = collect_gap(&frag, &format!("{role:?}"));
-            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+            let gap = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!(
+                "{}\n  gap: {}",
+                seed.unresolved_reason(),
+                gap.message()
+            ))
         }
     };
     AccountedSugar::new(seed, node)
@@ -350,8 +359,12 @@ pub(crate) fn build_stmt_role(stmt: &Stmt, fcx: &SugarBuildCtx, role: SugarRole)
         Some(index) => candidates.swap_remove(index).into_node(),
         None => {
             let frag = SourceFragment::stmt(stmt, "<factory>");
-            let gap  = collect_gap(&frag, &format!("{role:?}"));
-            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+            let gap = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!(
+                "{}\n  gap: {}",
+                seed.unresolved_reason(),
+                gap.message()
+            ))
         }
     };
     AccountedSugar::new(seed, node)
@@ -503,7 +516,8 @@ mod tests {
     }
 
     fn recognize(frag: &SourceFragment, _: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-        frag.is_expr().then_some(Box::new(NoopSugar) as Box<dyn Sugar>)
+        frag.is_expr()
+            .then_some(Box::new(NoopSugar) as Box<dyn Sugar>)
     }
 
     fn candidate_names(expr: &Expr) -> Vec<&'static str> {

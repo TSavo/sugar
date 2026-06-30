@@ -11,13 +11,13 @@ use std::collections::BTreeMap;
 use syn::{Expr, Lit, UnOp};
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
     literal_byte_string_value, primitive_int_kind, strip_refs_groups, term_as_int, token_key,
     u128_expr, BoundedDomain, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
     PrimitiveIntKind, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
-use crate::sugar::source_fragment::SourceFragment;
 
 // ── NAMED-DRAGON reasons for the six unwarrantable literal SHAPES ─────────────────────
 //
@@ -52,7 +52,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// arm of the old fat `build_composite`. DISTINCT from the TERM-position `Expr::Array`
 /// (`literal_aggregate_term` ctor) — the two roles genuinely differ (a `Seq` domain vs
 /// a term aggregate).
-pub(crate) fn recognize_composite(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    _fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
         Expr::Array(_) | Expr::Range(_) => Some(Box::new(LiteralSugar { base: expr.clone() })),

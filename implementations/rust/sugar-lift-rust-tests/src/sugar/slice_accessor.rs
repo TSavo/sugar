@@ -21,8 +21,8 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::monadic;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, const_fold_int_term, const_val_term, num, strip_refs_groups,
-    ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, const_val_term, num, strip_refs_groups, ConstVal, Desugared,
+    DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =

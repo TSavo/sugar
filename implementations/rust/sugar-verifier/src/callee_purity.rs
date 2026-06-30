@@ -183,8 +183,8 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
         Some(b) => b,
         None => return false, // no bridge → no body contract → wp will refuse
     };
-    let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
-        .and_then(|v| v.as_str());
+    let target_cid =
+        sugar_proof_envelope::member_field(bridge, "targetContractCid").and_then(|v| v.as_str());
     let target_cid = match target_cid {
         Some(c) => c,
         None => return false,

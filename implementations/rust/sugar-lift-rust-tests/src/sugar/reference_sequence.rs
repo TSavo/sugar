@@ -16,8 +16,8 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family::build_literal_sequence_composite;
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 // GENERAL "reference to a literal sequence" catch. A `&[1, 2, 3]`
 // reference-to-slice-literal is also claimed by the specific `literal_slice`
@@ -29,7 +29,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize_composite,
     );
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     // Narrow to reference-shaped wrappers: array/range literals and `.iter()`-family
     // calls keep their own specific recognizers; only the reference position is claimed.

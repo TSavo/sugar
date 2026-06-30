@@ -1565,6 +1565,7 @@ impl TemporalRewriteState {
                 self.expr_for(&name)
             }
             Expr::Array(_) | Expr::Range(_) | Expr::Repeat(_) => Some(expr.clone()),
+            Expr::Index(index) => self.trackable_slice_expr(index),
             Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "vec") => Some(expr.clone()),
             Expr::Call(call) if collection_constructor_sequence(call) => Some(expr.clone()),
             Expr::Call(call) => self.trackable_ufcs_into_iter(call),
@@ -1582,6 +1583,15 @@ impl TemporalRewriteState {
             Expr::Group(group) => self.trackable_sequence_expr(&group.expr),
             _ => None,
         }
+    }
+
+    fn trackable_slice_expr(&self, index: &syn::ExprIndex) -> Option<Expr> {
+        let base = self.trackable_sequence_expr(&index.expr)?;
+        let (kind, elems) = aggregate_elems(&base)?;
+        let (start, end) = crate::sugar::literal_slice::slice_bounds(&index.index, elems.len())?;
+        let len = end.checked_sub(start)?;
+        let elems = elems.into_iter().skip(start).take(len).collect::<Vec<_>>();
+        Some(rebuild_aggregate(kind, elems))
     }
 
     fn trackable_ufcs_into_iter(&self, call: &syn::ExprCall) -> Option<Expr> {
@@ -2242,6 +2252,13 @@ fn trackable_sequence_method(method: &str) -> bool {
             | "flatten"
             | "flat_map"
             | "array_chunks"
+            | "chunks"
+            | "chunks_exact"
+            | "rchunks"
+            | "rchunks_exact"
+            | "windows"
+            | "intersperse"
+            | "intersperse_with"
     )
 }
 
@@ -2250,6 +2267,13 @@ fn trackable_sequence_args(call: &syn::ExprMethodCall) -> bool {
         "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "enumerate" | "rev"
         | "flatten" => call.args.is_empty(),
         "array_chunks" => call.args.is_empty() && array_chunks_const_width(call).is_some(),
+        "chunks" | "chunks_exact" | "rchunks" | "rchunks_exact" | "windows" => {
+            call.args.len() == 1 && call.args.first().and_then(const_int).is_some_and(|n| n > 0)
+        }
+        "intersperse" => call.args.len() == 1,
+        "intersperse_with" => {
+            call.args.len() == 1 && matches!(call.args.first(), Some(Expr::Closure(_)))
+        }
         "skip" | "take" | "step_by" => {
             call.args.len() == 1 && call.args.first().and_then(const_int).is_some()
         }

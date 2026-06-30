@@ -60,21 +60,21 @@ mod tests {
     /// enters the wrapper. Verifies observed() returns the ForLoop discriminant.
     #[test]
     fn from_src_for_loop_observed_is_forloop() {
-        let expr: Expr = syn::parse_str("for x in [1_i32, 2, 3] { let _ = x; }")
-            .expect("parse");
+        let expr: Expr = syn::parse_str("for x in [1_i32, 2, 3] { let _ = x; }").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
         // ForLoop maps to "Other:Expr:ForLoop" via the discriminant catch-all
         assert!(
             frag.observed().contains("ForLoop"),
-            "observed={}", frag.observed()
+            "observed={}",
+            frag.observed()
         );
     }
 
     /// Discrimination: a method call is not a ForLoop.
     #[test]
     fn from_src_method_call_not_for_loop() {
-        let expr: Expr = syn::parse_str("[1_i32].iter().for_each(|x| { let _ = x; })")
-            .expect("parse");
+        let expr: Expr =
+            syn::parse_str("[1_i32].iter().for_each(|x| { let _ = x; })").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert!(frag.call_is_method_call(), "must be MethodCall");
@@ -85,7 +85,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "method call must not be recognized as forall_loop");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "method call must not be recognized as forall_loop"
+        );
     }
 
     /// Structural: a BinOp is neither a ForLoop nor a MethodCall.
@@ -101,6 +104,9 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "BinOp must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "BinOp must not be recognized"
+        );
     }
 }

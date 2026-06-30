@@ -1172,8 +1172,7 @@ mod tests {
                 .expect("bind_function_bridge");
 
         // Op-contract carries the body-derived post + formals.
-        let oc = sugar_proof_envelope::member_body(&members.op_contract.envelope)
-            .unwrap();
+        let oc = sugar_proof_envelope::member_body(&members.op_contract.envelope).unwrap();
         assert_eq!(oc.get("contractName").unwrap(), "double");
         assert_eq!(oc.get("formals").unwrap(), &json!(["x"]));
         // post is `result == *(x, 2)`.

@@ -88,8 +88,14 @@ mod tests {
 
         assert_eq!(frag.observed(), "If");
         assert!(frag.if_test().is_some(), "must have condition");
-        assert!(!frag.if_cond_is_side_effecting(), "simple var cond is not side-effecting");
-        assert!(frag.if_then_single_expr_frag().is_some(), "single-expr then branch");
+        assert!(
+            !frag.if_cond_is_side_effecting(),
+            "simple var cond is not side-effecting"
+        );
+        assert!(
+            frag.if_then_single_expr_frag().is_some(),
+            "single-expr then branch"
+        );
         assert!(frag.if_orelse().is_some(), "must have else branch");
     }
 
@@ -107,14 +113,17 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "BinOp must not be recognized as value_if");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "BinOp must not be recognized as value_if"
+        );
     }
 
     /// Structural: `if cond { a; b }` (multi-stmt then branch) returns None.
     #[test]
     fn from_src_multi_stmt_then_branch_not_recognized() {
-        let expr: Expr = syn::parse_str("if x { let _a = 1_i32; 2_i32 } else { 3_i32 }")
-            .expect("parse");
+        let expr: Expr =
+            syn::parse_str("if x { let _a = 1_i32; 2_i32 } else { 3_i32 }").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert_eq!(frag.observed(), "If");
@@ -129,6 +138,9 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "multi-stmt then branch must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "multi-stmt then branch must not be recognized"
+        );
     }
 }

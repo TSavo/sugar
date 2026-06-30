@@ -17,8 +17,8 @@ use tracing::debug;
 
 use crate::sugar::claim::ItemSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim =
     ItemSugarClaim::statement_item("const_item", recognize);
@@ -78,20 +78,28 @@ mod tests {
 
         assert_eq!(frag.observed(), "Const");
 
-        let (kind, name) = frag.item_const_static_kind_and_name()
+        let (kind, name) = frag
+            .item_const_static_kind_and_name()
             .expect("Item::Const should give kind+name");
         assert_eq!(kind, "const");
         assert_eq!(name, "X");
 
-        assert!(!frag.item_const_static_initializer_has_asserts(),
-            "plain integer initializer has no asserts");
+        assert!(
+            !frag.item_const_static_initializer_has_asserts(),
+            "plain integer initializer has no asserts"
+        );
 
-        let initializer = frag.item_const_static_initializer_token_str()
+        let initializer = frag
+            .item_const_static_initializer_token_str()
             .expect("Item::Const should give initializer token str");
         assert_eq!(initializer, "42");
 
         // Build: struct holds only fragment-derived types -- zero raw syn.
-        let node = ConstItemSugar { kind, name: name.clone(), initializer: initializer.clone() };
+        let node = ConstItemSugar {
+            kind,
+            name: name.clone(),
+            initializer: initializer.clone(),
+        };
         assert_eq!(node.kind, "const");
         assert_eq!(node.name, "X");
         assert_eq!(node.initializer, "42");
@@ -106,18 +114,24 @@ mod tests {
 
         assert_eq!(frag.observed(), "Static");
 
-        let (kind, name) = frag.item_const_static_kind_and_name()
+        let (kind, name) = frag
+            .item_const_static_kind_and_name()
             .expect("Item::Static should give kind+name");
         assert_eq!(kind, "static");
         assert_eq!(name, "Y");
 
         assert!(!frag.item_const_static_initializer_has_asserts());
 
-        let initializer = frag.item_const_static_initializer_token_str()
+        let initializer = frag
+            .item_const_static_initializer_token_str()
             .expect("Item::Static should give initializer token str");
         assert_eq!(initializer, "99");
 
-        let node = ConstItemSugar { kind, name: name.clone(), initializer: initializer.clone() };
+        let node = ConstItemSugar {
+            kind,
+            name: name.clone(),
+            initializer: initializer.clone(),
+        };
         assert_eq!(node.kind, "static");
         assert_eq!(node.name, "Y");
         assert_eq!(node.initializer, "99");
@@ -132,13 +146,19 @@ mod tests {
         let frag = first_item_frag(&file, "test.rs");
 
         assert_eq!(frag.observed(), "FunctionDef");
-        assert!(frag.item_const_static_kind_and_name().is_none(),
-            "FunctionDef should not match const/static accessor");
+        assert!(
+            frag.item_const_static_kind_and_name().is_none(),
+            "FunctionDef should not match const/static accessor"
+        );
         // Accessor returns None => recognize() returns None (first gate is `?`)
-        assert!(frag.item_const_static_initializer_has_asserts() == false,
-            "non-item returns false for asserts check");
-        assert!(frag.item_const_static_initializer_token_str().is_none(),
-            "non-item returns None for initializer token str");
+        assert!(
+            frag.item_const_static_initializer_has_asserts() == false,
+            "non-item returns false for asserts check"
+        );
+        assert!(
+            frag.item_const_static_initializer_token_str().is_none(),
+            "non-item returns None for initializer token str"
+        );
     }
 
     /// Structural: initializer token str for a multi-token expression is

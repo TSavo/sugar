@@ -112,6 +112,7 @@ pub mod sugar {
     pub mod from_bool;
     pub mod function_map;
     pub mod future_join;
+    pub mod generic_body_sugar;
     pub mod identity;
     pub mod identity_map;
     pub mod impl_method;
@@ -201,7 +202,6 @@ pub mod sugar {
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
-    pub mod generic_body_sugar;
     pub mod step_by;
     pub mod str_method;
     pub mod str_table_select;
@@ -6077,9 +6077,7 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
         // bv32 bit-operation ctors: fold with u32 wrapping semantics, returning
         // the result as i128 so the surrounding const_fold_int_term callers
         // (comparisons, literal predicates) can compare values.
-        Term::Ctor { name, args }
-            if name.starts_with("bv32.") && args.len() == 2 =>
-        {
+        Term::Ctor { name, args } if name.starts_with("bv32.") && args.len() == 2 => {
             fn bv_arg_i128(t: &Rc<Term>) -> Option<u32> {
                 match t.as_ref() {
                     Term::Const {
@@ -6209,9 +6207,7 @@ pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
         // (which requires at least one operand to already be a u128 term) does
         // not block folding of bv32 const args whose sort is "u32" / "u8" etc.
         // We extract the Int value from any Const node regardless of sort name.
-        Term::Ctor { name, args }
-            if name.starts_with("bv32.") && args.len() == 2 =>
-        {
+        Term::Ctor { name, args } if name.starts_with("bv32.") && args.len() == 2 => {
             fn bv_arg_as_u32(t: &Rc<Term>) -> Option<u32> {
                 match t.as_ref() {
                     Term::Const {
@@ -8549,7 +8545,6 @@ pub(crate) enum Desugared {
     // seq / term / tuple contexts; all existing `into_seq` / `into_term` /
     // `into_tuple_components` / `as_string_literal` / `emit_desugared` arms
     // bail immediately (None / false) on these variants.
-
     /// A statement that produces no reducible value (inert support: mutable let,
     /// expression statement with no assertion shape, etc.).
     /// Mirrors Python `SupportValue`.

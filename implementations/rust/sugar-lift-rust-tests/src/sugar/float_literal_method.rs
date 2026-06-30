@@ -181,7 +181,10 @@ mod tests {
         let expr: Expr = syn::parse_str("f32::from_bits(0u32)").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
-        assert!(!frag.call_is_method_call(), "must be a plain Call, not MethodCall");
+        assert!(
+            !frag.call_is_method_call(),
+            "must be a plain Call, not MethodCall"
+        );
         assert_eq!(frag.call_arg_count(), 1);
         assert!(frag.call_func().is_some(), "func must be present");
 

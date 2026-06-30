@@ -16,10 +16,10 @@ use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind as int_literal_kind, typed_int_term, ExactInt,
     IntKind, IsqrtVisitor, NumericFloor, NumericSqrt, PowVisitor, WrappingNegVisitor,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, simple_path_name,
     strip_refs_groups, term_contains_curry_param, u128_term, Desugared, Effect, Outcome, Sugar,
@@ -284,29 +284,19 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         ("saturating_pow", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::Saturating(SaturatingOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("next_multiple_of", 1)
-            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
-        {
+        ("next_multiple_of", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::NextMultipleOf(PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_add", 1)
-            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
-        {
+        ("overflowing_add", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::Overflowing(OverflowingOp::Add, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_sub", 1)
-            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
-        {
+        ("overflowing_sub", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::Overflowing(OverflowingOp::Sub, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_mul", 1)
-            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
-        {
+        ("overflowing_mul", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::Overflowing(OverflowingOp::Mul, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
-        ("overflowing_pow", 1)
-            if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) =>
-        {
+        ("overflowing_pow", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {
             Kind::Overflowing(OverflowingOp::Pow, PrimitiveIntArg::new_frag(&args[0], fcx))
         }
         ("wrapping_add", 1) if integer_binary_candidate_frag(&receiver_frag, &args[0], fcx) => {

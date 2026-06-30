@@ -794,7 +794,9 @@ pub(crate) fn decompose_for_each_frag(
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<ForAllSugar> {
     let expr = frag.as_expr()?;
-    let Expr::MethodCall(_) = expr else { return None; };
+    let Expr::MethodCall(_) = expr else {
+        return None;
+    };
     decompose_for_each(expr, let_inits, fcx)
 }
 
@@ -808,7 +810,9 @@ pub(crate) fn decompose_for_loop_frag(
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<ForAllSugar> {
     let expr = frag.as_expr()?;
-    let Expr::ForLoop(f) = expr else { return None; };
+    let Expr::ForLoop(f) = expr else {
+        return None;
+    };
     decompose_for_loop(f, scope, let_inits, fcx)
 }
 

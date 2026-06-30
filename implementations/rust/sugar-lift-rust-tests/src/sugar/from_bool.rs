@@ -11,11 +11,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::int_literal::{
-    from_impl_exists, ExactInt, IntKind, NumericFloor,
-};
-use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::int_literal::{from_impl_exists, ExactInt, IntKind, NumericFloor};
 use crate::sugar::ip_addr::{primitive_int_from_literal_ip, LiteralIp};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 

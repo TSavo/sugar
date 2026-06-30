@@ -66,18 +66,19 @@ use crate::sugar::factory::{
     build_composite, desugar_build_ctx, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
     TermFloor,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::sequence_floor::reduce_sequence_elem_term_floor;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::fold_int_terms;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
     const_eval_binary_option_closure, const_eval_unary_closure, const_fold_acc_update,
     const_fold_int_term, const_int, const_int_acc_init, const_val_term, parse_int_lit,
-    refusal_disposition, simple_path_name, strip_refs_groups, token_key, ConstVal, Desugared,
-    DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx, TemporalScope,
+    receiver_is_versioned_iterator, refusal_disposition, simple_path_name, strip_refs_groups,
+    token_key, ConstVal, Desugared, DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx,
+    TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -145,6 +146,38 @@ enum Terminal {
 }
 
 impl Terminal {
+    fn method_name(&self) -> &'static str {
+        match self {
+            Terminal::Sum => "sum",
+            Terminal::Product => "product",
+            Terminal::Count => "count",
+            Terminal::Next => "next",
+            Terminal::NextBack => "next_back",
+            Terminal::Nth(_) => "nth",
+            Terminal::NthBack(_) => "nth_back",
+            Terminal::Last => "last",
+            Terminal::Min => "min",
+            Terminal::Max => "max",
+            Terminal::Any(_) => "any",
+            Terminal::All(_) => "all",
+            Terminal::Find(_) => "find",
+            Terminal::Position(_) => "position",
+            Terminal::AdvanceBy(_) => "advance_by",
+            Terminal::Reduce(_) => "reduce",
+            Terminal::Fold(_, _) => "fold",
+            Terminal::TryFold { reverse: true, .. } => "try_rfold",
+            Terminal::TryFold { reverse: false, .. } => "try_fold",
+        }
+    }
+
+    fn occurrence_fallback_args(&self) -> Option<Vec<Rc<Term>>> {
+        Some(match self {
+            Terminal::Next | Terminal::NextBack | Terminal::Last => Vec::new(),
+            Terminal::Nth(k) | Terminal::NthBack(k) => vec![num(*k as i128)],
+            _ => return None,
+        })
+    }
+
     fn returns_monadic_value(&self) -> bool {
         matches!(
             self,
@@ -770,6 +803,12 @@ impl IterTerminalSugar {
                     scope,
                 )
                 .is_some()
+                    || method_family::literal_sequence_static_len_in_scope(
+                        &self.receiver.source_expr,
+                        let_inits,
+                        scope,
+                    )
+                    .is_some()
                     || (matches!(self.terminal, Terminal::Count)
                         && method_family::literal_collection_adapter_static_len_in_scope(
                             &self.receiver.source_expr,
@@ -787,6 +826,28 @@ impl IterTerminalSugar {
             self.terminal,
             Terminal::Sum | Terminal::Product | Terminal::Count
         )
+    }
+
+    fn same_statement_consuming_occurrence_term(&self, ctx: &SugarCtx) -> Option<Rc<Term>> {
+        let method = self.terminal.method_name();
+        if !crate::is_consuming_iterator_method(method) {
+            return None;
+        }
+        let receiver_name = simple_path_name(&self.receiver.source_expr)?;
+        let receiver_name = ctx.scope.path_name_str(&receiver_name).ok()?;
+        if !receiver_is_versioned_iterator(&receiver_name, ctx.scope) {
+            return None;
+        }
+        let occurrence = ctx.scope.bump_consuming_occurrence(&receiver_name);
+        if occurrence == 0 {
+            return None;
+        }
+        let mut args = vec![make_var(format!("{receiver_name}@adv{occurrence}"))];
+        args.extend(self.terminal.occurrence_fallback_args()?);
+        Some(Rc::new(Term::Ctor {
+            name: format!("method:{method}"),
+            args,
+        }))
     }
 
     fn desugar_seq_candidate(
@@ -897,6 +958,9 @@ impl IterTerminalSugar {
     /// at desugar time: named `Incomplete`s propagate, while a generic structural bail takes the
     /// factory gap path. Never a guessed value: every `Complete` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(term) = self.same_statement_consuming_occurrence_term(ctx) {
+            return Outcome::Complete(Desugared::Term(term));
+        }
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
             .iter()

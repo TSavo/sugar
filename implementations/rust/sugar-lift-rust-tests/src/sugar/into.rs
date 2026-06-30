@@ -15,10 +15,10 @@ use crate::sugar::float_floor::{
     runtime_float, stable_width_from_type_key, IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor,
     IeeeFloatWidth,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::int_literal::{
     from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -244,6 +244,10 @@ mod tests {
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         let receiver = frag.call_receiver().expect("receiver must be present");
         // Expr::Path maps to "Name" in expr_kind()
-        assert_eq!(receiver.observed(), "Name", "receiver of x.into() is Expr::Path -> 'Name'");
+        assert_eq!(
+            receiver.observed(),
+            "Name",
+            "receiver of x.into() is Expr::Path -> 'Name'"
+        );
     }
 }

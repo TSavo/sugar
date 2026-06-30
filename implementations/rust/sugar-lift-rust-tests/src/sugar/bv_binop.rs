@@ -18,12 +18,9 @@
 use std::rc::Rc;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    const_fold_u128_term, u128_term, Desugared, Outcome, Sugar,
-    SugarCtx,
-};
+use crate::sugar::term_leaf::resolved_term;
+use crate::{const_fold_u128_term, u128_term, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("bv_binop", &["binop"], recognize);
@@ -65,18 +62,18 @@ impl Sugar for BvBinOpSugar {
         let lhs = match self.left.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => bv_binop_gap(
-                    "bv bit-op child completed as non-Term where a Term was required",
-                ),
+                None => {
+                    bv_binop_gap("bv bit-op child completed as non-Term where a Term was required")
+                }
             },
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let rhs = match self.right.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => bv_binop_gap(
-                    "bv bit-op child completed as non-Term where a Term was required",
-                ),
+                None => {
+                    bv_binop_gap("bv bit-op child completed as non-Term where a Term was required")
+                }
             },
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
@@ -133,7 +130,11 @@ mod from_src_tests {
         let frag = bv_binop_frag_from(&file, "f.rs");
 
         assert_eq!(frag.observed(), "BinOp");
-        assert_eq!(frag.binop_bv32_op_name(), None, "arithmetic + is not a bv32 op");
+        assert_eq!(
+            frag.binop_bv32_op_name(),
+            None,
+            "arithmetic + is not a bv32 op"
+        );
     }
 
     /// Structural: `a << 2` — left/right children are accessible via frag accessors.
@@ -148,7 +149,11 @@ mod from_src_tests {
         let left = frag.binop_left().expect("left child");
         let right = frag.binop_right().expect("right child");
         assert_eq!(left.observed(), "Name", "left `a` is a Name");
-        assert_eq!(right.observed(), "PrimitiveLiteral", "right `2` is a PrimitiveLiteral");
+        assert_eq!(
+            right.observed(),
+            "PrimitiveLiteral",
+            "right `2` is a PrimitiveLiteral"
+        );
     }
 }
 

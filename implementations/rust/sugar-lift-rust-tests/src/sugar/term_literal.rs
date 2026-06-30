@@ -231,15 +231,13 @@ fn int_radix_digits(token_text: &str, suffix: &str) -> (u32, String) {
 /// Parse `token_text`/`suffix` as `i128`. Mirrors `parse_int_lit`.
 fn decode_i128(token_text: &str, suffix: &str) -> Result<i128, String> {
     let (radix, digits) = int_radix_digits(token_text, suffix);
-    i128::from_str_radix(&digits, radix)
-        .map_err(|e| format!("int literal `{token_text}`: {e}"))
+    i128::from_str_radix(&digits, radix).map_err(|e| format!("int literal `{token_text}`: {e}"))
 }
 
 /// Parse `token_text`/`suffix` as `u128`. Mirrors `parse_u128_lit`.
 fn decode_u128(token_text: &str, suffix: &str) -> Result<u128, String> {
     let (radix, digits) = int_radix_digits(token_text, suffix);
-    u128::from_str_radix(&digits, radix)
-        .map_err(|e| format!("int literal `{token_text}`: {e}"))
+    u128::from_str_radix(&digits, radix).map_err(|e| format!("int literal `{token_text}`: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +324,10 @@ mod tests {
         // floor: identical term to translate_lit
         let term = scalar_lit_to_term(&lit).expect("42u8 lifts");
         match &*term {
-            Term::Const { value: ConstValue::Int(v), sort } => {
+            Term::Const {
+                value: ConstValue::Int(v),
+                sort,
+            } => {
                 assert_eq!(*v, 42);
                 assert_eq!(sort.name, "u8");
             }

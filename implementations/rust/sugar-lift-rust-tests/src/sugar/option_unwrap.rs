@@ -13,9 +13,9 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_unwrap", SugarRole::Term, recognize);
@@ -262,7 +262,11 @@ mod tests {
         let frag = SourceFragment::expr(&expr, "<src>");
 
         // accessor gates -- these are what the migrated recognize reads
-        assert_eq!(frag.call_method_key().as_deref(), Some("unwrap"), "method key");
+        assert_eq!(
+            frag.call_method_key().as_deref(),
+            Some("unwrap"),
+            "method key"
+        );
         assert_eq!(frag.call_arg_count(), 0, "unwrap: 0 args");
         assert!(frag.call_receiver().is_some(), "receiver present");
 
@@ -272,17 +276,26 @@ mod tests {
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
         // grounded monadic source -> recognized
-        assert!(recognize(&frag, &fcx).is_some(), "Some(42).unwrap() recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "Some(42).unwrap() recognized"
+        );
 
         // unresolvable path receiver -> NOT recognized
         let expr_no: Expr = syn::parse_str("runtime_value.unwrap()").expect("parse");
         let frag_no = SourceFragment::expr(&expr_no, "<src>");
-        assert!(recognize(&frag_no, &fcx).is_none(), "runtime receiver not recognized");
+        assert!(
+            recognize(&frag_no, &fcx).is_none(),
+            "runtime receiver not recognized"
+        );
 
         // non-method-call -> NOT recognized
         let expr_other: Expr = syn::parse_str("x + 1").expect("parse");
         let frag_other = SourceFragment::expr(&expr_other, "<src>");
-        assert!(recognize(&frag_other, &fcx).is_none(), "binop not recognized");
+        assert!(
+            recognize(&frag_other, &fcx).is_none(),
+            "binop not recognized"
+        );
     }
 
     #[test]
@@ -290,7 +303,11 @@ mod tests {
         let expr: Expr = syn::parse_str(r#"Some(42).expect("must be Some")"#).expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
-        assert_eq!(frag.call_method_key().as_deref(), Some("expect"), "method key");
+        assert_eq!(
+            frag.call_method_key().as_deref(),
+            Some("expect"),
+            "method key"
+        );
         assert_eq!(frag.call_arg_count(), 1, "expect: 1 arg");
         assert!(frag.call_receiver().is_some(), "receiver present");
 
@@ -299,11 +316,17 @@ mod tests {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "Some(42).expect(..) recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "Some(42).expect(..) recognized"
+        );
 
         // wrong arg count for expect -> NOT recognized
         let expr_bad: Expr = syn::parse_str("Some(42).expect()").expect("parse");
         let frag_bad = SourceFragment::expr(&expr_bad, "<src>");
-        assert!(recognize(&frag_bad, &fcx).is_none(), "expect() with 0 args not recognized");
+        assert!(
+            recognize(&frag_bad, &fcx).is_none(),
+            "expect() with 0 args not recognized"
+        );
     }
 }

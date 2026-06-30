@@ -30,7 +30,9 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     Some(Box::new(MethodSugar::new(
         method,
         SugarBody::term_frag(&receiver, fcx),
-        args.iter().map(|arg| SugarBody::term_frag(arg, fcx)).collect(),
+        args.iter()
+            .map(|arg| SugarBody::term_frag(arg, fcx))
+            .collect(),
     )))
 }
 
@@ -291,7 +293,11 @@ mod tests {
         let e = expr("receiver.get(idx)");
         let frag = SourceFragment::from_node(FragNode::Expr(&e), "<test>");
 
-        assert_eq!(frag.observed(), "MethodCall", "observed shape must be MethodCall");
+        assert_eq!(
+            frag.observed(),
+            "MethodCall",
+            "observed shape must be MethodCall"
+        );
 
         let scope = TemporalScope::new("test", TemporalPlan::default());
         let options = LiftOptions::default();
@@ -337,7 +343,10 @@ mod tests {
         let Term::Ctor { name, .. } = &*term else {
             panic!("expected a Ctor term, got {term:?}");
         };
-        assert_eq!(name, "method:parse::<i32>", "turbofish must appear in the method key");
+        assert_eq!(
+            name, "method:parse::<i32>",
+            "turbofish must appear in the method key"
+        );
     }
 
     #[test]

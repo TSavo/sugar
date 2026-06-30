@@ -4,8 +4,8 @@
 
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 /// Mutating body is the conservative verdict owner: Mutation never understates
 /// a write effect that an accessor verdict would. This mirrors

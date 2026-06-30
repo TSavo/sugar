@@ -74,8 +74,7 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
 
     // Build receiver as a literal-sequence composite.
     let receiver_frag = frag.call_receiver()?;
-    let receiver =
-        SugarBody::from_node(receiver_frag.build_literal_sequence_composite_frag(fcx)?);
+    let receiver = SugarBody::from_node(receiver_frag.build_literal_sequence_composite_frag(fcx)?);
 
     // Build predicate body from the closure body fragment.
     let body_frag = arg_frag.closure_body_frag()?;
@@ -197,8 +196,7 @@ fn predicate_formula_from_term(term: &Rc<Term>, ctx: &SugarCtx) -> Option<Rc<For
         Term::Ctor { name, args } if args.len() == 2 => {
             let op = relation_from_cmp_ctor(name)?;
             Some(
-                assertion_entry_from_relation(args[0].clone(), args[1].clone(), op, ctx.scope)
-                    .atom,
+                assertion_entry_from_relation(args[0].clone(), args[1].clone(), op, ctx.scope).atom,
             )
         }
         Term::Ctor { name, args } if name.starts_with("method:") && args.len() == 1 => {
@@ -303,7 +301,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = make_fcx(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "recognized shape must return Some");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "recognized shape must return Some"
+        );
     }
 
     /// Discrimination: `.any()` with zero arguments is rejected by call_arg_count guard.
@@ -321,7 +322,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = make_fcx(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "zero-arg .any() must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "zero-arg .any() must not be recognized"
+        );
     }
 
     /// Structural: `.len()` is not named "all"/"any" -- rejected immediately.
@@ -339,6 +343,9 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = make_fcx(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "v.len() must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "v.len() must not be recognized"
+        );
     }
 }

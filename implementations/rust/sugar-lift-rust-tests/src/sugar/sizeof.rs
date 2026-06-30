@@ -21,8 +21,8 @@ use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("sizeof", SugarRole::Term, recognize);
@@ -288,8 +288,8 @@ mod tests {
 
     #[test]
     fn from_src_size_of_u32_parts_and_recognize() {
-        use crate::{LiftOptions, TemporalPlan, TemporalScope};
         use crate::sugar::factory::SugarBuildCtx;
+        use crate::{LiftOptions, TemporalPlan, TemporalScope};
         use std::collections::BTreeMap;
         use syn::Expr;
 
@@ -312,7 +312,10 @@ mod tests {
         assert!(parts.atomic_size.is_none(), "u32 is not an atomic");
 
         // recognize returns Some
-        assert!(recognize(&frag, &fcx).is_some(), "mem::size_of::<u32>() recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "mem::size_of::<u32>() recognized"
+        );
 
         // Discrimination: call with arguments is rejected
         let expr_args: Expr = syn::parse_str("mem::size_of::<u32>(extra)").expect("parse");
@@ -321,7 +324,10 @@ mod tests {
             frag_args.call_size_of_type_parts(&fcx).is_none(),
             "call with extra arg must return None"
         );
-        assert!(recognize(&frag_args, &fcx).is_none(), "call with extra arg not recognized");
+        assert!(
+            recognize(&frag_args, &fcx).is_none(),
+            "call with extra arg not recognized"
+        );
 
         // Structural: a bare binop is not a size_of call
         let expr_binop: Expr = syn::parse_str("x + 1").expect("parse");
@@ -330,13 +336,16 @@ mod tests {
             frag_binop.call_size_of_type_parts(&fcx).is_none(),
             "binop must return None from call_size_of_type_parts"
         );
-        assert!(recognize(&frag_binop, &fcx).is_none(), "binop not recognized");
+        assert!(
+            recognize(&frag_binop, &fcx).is_none(),
+            "binop not recognized"
+        );
     }
 
     #[test]
     fn from_src_size_of_atomic_parts() {
-        use crate::{LiftOptions, TemporalPlan, TemporalScope};
         use crate::sugar::factory::SugarBuildCtx;
+        use crate::{LiftOptions, TemporalPlan, TemporalScope};
         use std::collections::BTreeMap;
         use syn::Expr;
 
@@ -352,7 +361,10 @@ mod tests {
             .call_size_of_type_parts(&fcx)
             .expect("core::mem::size_of::<AtomicU32>() must yield SizeOfTypeParts");
         assert_eq!(parts.ty_key, "AtomicU32", "ty_key for AtomicU32");
-        assert!(parts.primitive_size.is_none(), "AtomicU32 is not a primitive");
+        assert!(
+            parts.primitive_size.is_none(),
+            "AtomicU32 is not a primitive"
+        );
         assert_eq!(parts.atomic_size, Some(4), "AtomicU32 atomic size is 4");
     }
 

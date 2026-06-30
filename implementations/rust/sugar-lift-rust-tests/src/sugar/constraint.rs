@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::float_floor;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term, is_immutable_value_expr,
@@ -27,7 +28,6 @@ use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, For
 use syn::parse::{Parse, ParseStream};
 use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Item, Lit, Token, Type, UnOp};
 use tracing::debug;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "constraint_relation_macro",
@@ -155,7 +155,10 @@ struct BoundedLiteralMacroSugar {
     sources: Vec<String>,
 }
 
-fn recognize_bounded_literal_macro(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_bounded_literal_macro(
+    frag: &SourceFragment,
+    _fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;

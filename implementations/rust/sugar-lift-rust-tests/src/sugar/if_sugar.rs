@@ -34,11 +34,11 @@ use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::constraint::assertion_entry_with_audits;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_dispatch::translate_term_in_scope;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::term_dispatch::translate_term_in_scope;
 use crate::{
-    bool_const, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
-    sugar_ctx_with_factory_audits,
+    bool_const, sugar_ctx_with_factory_audits, Desugared, FloatWidthScope, LiftOptions, Outcome,
+    ReductionCtx, Sugar, SugarCtx,
 };
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("if_sugar", recognize);
@@ -92,8 +92,7 @@ impl Sugar for IfSugar {
             let items: Vec<Item> = Vec::new();
             let fcx = SugarBuildCtx::new(ctx.scope, &options, &let_inits);
             let then_node = build_stmt_role(&then_stmt, &fcx, SugarRole::Statement);
-            let reducer =
-                ReductionCtx::from_items_with_imports(&items, ctx.scope.macro_registry());
+            let reducer = ReductionCtx::from_items_with_imports(&items, ctx.scope.macro_registry());
             let mut fw = FloatWidthScope::new();
             let child_ctx = sugar_ctx_with_factory_audits(
                 ctx.scope,
@@ -104,9 +103,10 @@ impl Sugar for IfSugar {
                 ctx.factory_audits,
             );
             match then_node.reduce(&child_ctx) {
-                Outcome::Complete(Desugared::StmtBlock { guarded, fall_through }) => {
-                    (guarded, fall_through)
-                }
+                Outcome::Complete(Desugared::StmtBlock {
+                    guarded,
+                    fall_through,
+                }) => (guarded, fall_through),
                 Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
                 _ => panic!("if_sugar: then-branch did not reduce to StmtBlock"),
             }
@@ -150,9 +150,10 @@ impl Sugar for IfSugar {
                         ctx.factory_audits,
                     );
                     match else_node.reduce(&else_ctx) {
-                        Outcome::Complete(Desugared::StmtBlock { guarded, fall_through }) => {
-                            (guarded, fall_through)
-                        }
+                        Outcome::Complete(Desugared::StmtBlock {
+                            guarded,
+                            fall_through,
+                        }) => (guarded, fall_through),
                         Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
                         _ => panic!("if_sugar: else-branch did not reduce to StmtBlock"),
                     }

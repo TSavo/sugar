@@ -481,8 +481,8 @@ fn run_blocks_derive(args: &ModelArgs, payload_json: &str) -> u8 {
 /// ever the lifted universe expression.
 fn extract_bv_tree_from_proof(path: &PathBuf) -> Result<Json, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let graph = ProofGraph::read(&bytes)
-        .map_err(|e| format!("CBOR decode {}: {e}", path.display()))?;
+    let graph =
+        ProofGraph::read(&bytes).map_err(|e| format!("CBOR decode {}: {e}", path.display()))?;
 
     // Collect EVERY int32.eq-bv-expr universe bv_tree across all members. We
     // never first-match: ambiguity must refuse. Note one universe is often

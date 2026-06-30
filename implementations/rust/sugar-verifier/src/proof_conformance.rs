@@ -14,7 +14,9 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::{ed25519_verify_bytes, ed25519_verify_string, member_field, MemberView, ProofGraph};
+use sugar_proof_envelope::{
+    ed25519_verify_bytes, ed25519_verify_string, member_field, MemberView, ProofGraph,
+};
 
 use crate::cbor_decode::CborValue;
 use sugar_proof_envelope::decode_for_conformance;
@@ -198,10 +200,7 @@ pub fn validate_proof_bytes(path: &Path, bytes: &[u8]) -> ProofFileConformanceRe
     let graph = match ProofGraph::read(bytes) {
         Ok(g) => g,
         Err(e) => {
-            report.push_error(
-                PFCP_R4_MEMBERS_MAP,
-                format!("typed graph read failed: {e}"),
-            );
+            report.push_error(PFCP_R4_MEMBERS_MAP, format!("typed graph read failed: {e}"));
             return report;
         }
     };
@@ -276,10 +275,7 @@ fn validate_catalog_signature(
     }
 }
 
-fn authority_key_for_catalog_signer(
-    signer: &str,
-    graph: &ProofGraph,
-) -> Result<String, String> {
+fn authority_key_for_catalog_signer(signer: &str, graph: &ProofGraph) -> Result<String, String> {
     let view = graph
         .members_view()
         .find(|v| v.cid().as_str() == signer)
@@ -446,9 +442,7 @@ fn verify_member_signature(env: &Json) -> Result<(), String> {
     let Some(sig) = env.get("producerSignature").and_then(|v| v.as_str()) else {
         return Err("legacy envelope producerSignature missing".to_string());
     };
-    let Some(pubkey) = member_field(env, "producerPubkey")
-        .and_then(|v| v.as_str())
-    else {
+    let Some(pubkey) = member_field(env, "producerPubkey").and_then(|v| v.as_str()) else {
         return Err("legacy envelope has no embedded producerPubkey".to_string());
     };
     let mut unsigned = env.clone();

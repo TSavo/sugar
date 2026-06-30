@@ -9,11 +9,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, Term};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    is_unqualified_local_name, Effect, Outcome, Sugar, SugarCtx,
-};
+use crate::sugar::term_leaf::resolved_term;
+use crate::{is_unqualified_local_name, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);

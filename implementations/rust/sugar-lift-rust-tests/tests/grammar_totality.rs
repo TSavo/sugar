@@ -98,25 +98,25 @@ fn expr_shape(e: &syn::Expr) -> String {
             }
             _ => "Lit".into(),
         },
-        Array(_)      => "Array".into(),
-        Binary(_)     => "BinOp".into(),
-        Unary(_)      => "UnaryOp".into(),
-        Call(_)       => "Call".into(),
+        Array(_) => "Array".into(),
+        Binary(_) => "BinOp".into(),
+        Unary(_) => "UnaryOp".into(),
+        Call(_) => "Call".into(),
         MethodCall(_) => "MethodCall".into(),
-        Path(_)       => "Name".into(),
-        If(_)         => "If".into(),
-        Match(_)      => "Match".into(),
-        Block(_)      => "Block".into(),
-        Return(_)     => "Return".into(),
-        Index(_)      => "Index".into(),
-        Field(_)      => "Field".into(),
-        Reference(_)  => "Reference".into(),
-        Paren(_)      => "Paren".into(),
-        Cast(_)       => "Cast".into(),
-        Tuple(_)      => "Tuple".into(),
-        Range(_)      => "Range".into(),
-        Macro(_)      => "Macro".into(),
-        Assign(_)     => "Assign".into(),
+        Path(_) => "Name".into(),
+        If(_) => "If".into(),
+        Match(_) => "Match".into(),
+        Block(_) => "Block".into(),
+        Return(_) => "Return".into(),
+        Index(_) => "Index".into(),
+        Field(_) => "Field".into(),
+        Reference(_) => "Reference".into(),
+        Paren(_) => "Paren".into(),
+        Cast(_) => "Cast".into(),
+        Tuple(_) => "Tuple".into(),
+        Range(_) => "Range".into(),
+        Macro(_) => "Macro".into(),
+        Assign(_) => "Assign".into(),
         // #[non_exhaustive]: unhandled variants go to parametric bucket
         other => format!("Other:Expr:{}", expr_discriminant(other)),
     }
@@ -125,49 +125,49 @@ fn expr_shape(e: &syn::Expr) -> String {
 fn expr_discriminant(e: &syn::Expr) -> &'static str {
     use syn::Expr::*;
     match e {
-        Async(_)    => "Async",
-        Await(_)    => "Await",
-        Break(_)    => "Break",
-        Closure(_)  => "Closure",
-        Const(_)    => "Const",
+        Async(_) => "Async",
+        Await(_) => "Await",
+        Break(_) => "Break",
+        Closure(_) => "Closure",
+        Const(_) => "Const",
         Continue(_) => "Continue",
-        ForLoop(_)  => "ForLoop",
-        Group(_)    => "Group",
-        Infer(_)    => "Infer",
-        Let(_)      => "Let",
-        Loop(_)     => "Loop",
-        Repeat(_)   => "Repeat",
-        Struct(_)   => "Struct",
-        Try(_)      => "Try",
+        ForLoop(_) => "ForLoop",
+        Group(_) => "Group",
+        Infer(_) => "Infer",
+        Let(_) => "Let",
+        Loop(_) => "Loop",
+        Repeat(_) => "Repeat",
+        Struct(_) => "Struct",
+        Try(_) => "Try",
         TryBlock(_) => "TryBlock",
-        Unsafe(_)   => "Unsafe",
+        Unsafe(_) => "Unsafe",
         Verbatim(_) => "Verbatim",
-        While(_)    => "While",
-        Yield(_)    => "Yield",
+        While(_) => "While",
+        Yield(_) => "Yield",
         _ => "Unknown",
     }
 }
 
 fn stmt_shape(s: &syn::Stmt) -> &'static str {
     match s {
-        syn::Stmt::Local(_)                                  => "Assign",
-        syn::Stmt::Item(_)                                   => "Item",
-        syn::Stmt::Macro(_)                                  => "Macro",
-        syn::Stmt::Expr(syn::Expr::Return(_), _)             => "Return",
-        syn::Stmt::Expr(syn::Expr::If(_), _)                 => "If",
-        syn::Stmt::Expr(_, _)                                => "Expr",
+        syn::Stmt::Local(_) => "Assign",
+        syn::Stmt::Item(_) => "Item",
+        syn::Stmt::Macro(_) => "Macro",
+        syn::Stmt::Expr(syn::Expr::Return(_), _) => "Return",
+        syn::Stmt::Expr(syn::Expr::If(_), _) => "If",
+        syn::Stmt::Expr(_, _) => "Expr",
     }
 }
 
 fn item_shape(i: &syn::Item) -> &'static str {
     match i {
-        syn::Item::Fn(_)     => "FunctionDef",
-        syn::Item::Const(_)  => "Const",
-        syn::Item::Impl(_)   => "Impl",
+        syn::Item::Fn(_) => "FunctionDef",
+        syn::Item::Const(_) => "Const",
+        syn::Item::Impl(_) => "Impl",
         syn::Item::Struct(_) => "Struct",
-        syn::Item::Enum(_)   => "Enum",
-        syn::Item::Use(_)    => "Use",
-        _                    => "Other:Item",
+        syn::Item::Enum(_) => "Enum",
+        syn::Item::Use(_) => "Use",
+        _ => "Other:Item",
     }
 }
 
@@ -248,46 +248,66 @@ fn walk_expr(e: &syn::Expr, file: &str, map: &mut ShapeMap) {
         syn::Expr::Unary(u) => walk_expr(&u.expr, file, map),
         syn::Expr::Call(c) => {
             walk_expr(&c.func, file, map);
-            for a in &c.args { walk_expr(a, file, map); }
+            for a in &c.args {
+                walk_expr(a, file, map);
+            }
         }
         syn::Expr::MethodCall(m) => {
             walk_expr(&m.receiver, file, map);
-            for a in &m.args { walk_expr(a, file, map); }
+            for a in &m.args {
+                walk_expr(a, file, map);
+            }
         }
         syn::Expr::If(i) => {
             walk_expr(&i.cond, file, map);
-            for s in &i.then_branch.stmts { walk_stmt(s, file, map); }
+            for s in &i.then_branch.stmts {
+                walk_stmt(s, file, map);
+            }
             if let Some((_, else_e)) = &i.else_branch {
                 walk_expr(else_e, file, map);
             }
         }
         syn::Expr::Block(b) => {
-            for s in &b.block.stmts { walk_stmt(s, file, map); }
+            for s in &b.block.stmts {
+                walk_stmt(s, file, map);
+            }
         }
         syn::Expr::Return(r) => {
-            if let Some(inner) = &r.expr { walk_expr(inner, file, map); }
+            if let Some(inner) = &r.expr {
+                walk_expr(inner, file, map);
+            }
         }
-        syn::Expr::Cast(c)  => walk_expr(&c.expr, file, map),
+        syn::Expr::Cast(c) => walk_expr(&c.expr, file, map),
         syn::Expr::Index(i) => {
             walk_expr(&i.expr, file, map);
             walk_expr(&i.index, file, map);
         }
-        syn::Expr::Field(f)     => walk_expr(&f.base, file, map),
+        syn::Expr::Field(f) => walk_expr(&f.base, file, map),
         syn::Expr::Reference(r) => walk_expr(&r.expr, file, map),
-        syn::Expr::Paren(p)     => walk_expr(&p.expr, file, map),
+        syn::Expr::Paren(p) => walk_expr(&p.expr, file, map),
         syn::Expr::Array(a) => {
-            for elem in &a.elems { walk_expr(elem, file, map); }
+            for elem in &a.elems {
+                walk_expr(elem, file, map);
+            }
         }
         syn::Expr::Tuple(t) => {
-            for elem in &t.elems { walk_expr(elem, file, map); }
+            for elem in &t.elems {
+                walk_expr(elem, file, map);
+            }
         }
         syn::Expr::Range(r) => {
-            if let Some(s) = &r.start { walk_expr(s, file, map); }
-            if let Some(e) = &r.end   { walk_expr(e, file, map); }
+            if let Some(s) = &r.start {
+                walk_expr(s, file, map);
+            }
+            if let Some(e) = &r.end {
+                walk_expr(e, file, map);
+            }
         }
         syn::Expr::Match(m) => {
             walk_expr(&m.expr, file, map);
-            for arm in &m.arms { walk_expr(&arm.body, file, map); }
+            for arm in &m.arms {
+                walk_expr(&arm.body, file, map);
+            }
         }
         syn::Expr::Assign(a) => {
             walk_expr(&a.left, file, map);
@@ -295,17 +315,23 @@ fn walk_expr(e: &syn::Expr, file: &str, map: &mut ShapeMap) {
         }
         syn::Expr::ForLoop(f) => {
             walk_expr(&f.expr, file, map);
-            for s in &f.body.stmts { walk_stmt(s, file, map); }
+            for s in &f.body.stmts {
+                walk_stmt(s, file, map);
+            }
         }
         syn::Expr::While(w) => {
             walk_expr(&w.cond, file, map);
-            for s in &w.body.stmts { walk_stmt(s, file, map); }
+            for s in &w.body.stmts {
+                walk_stmt(s, file, map);
+            }
         }
         syn::Expr::Loop(l) => {
-            for s in &l.body.stmts { walk_stmt(s, file, map); }
+            for s in &l.body.stmts {
+                walk_stmt(s, file, map);
+            }
         }
         syn::Expr::Closure(c) => walk_expr(&c.body, file, map),
-        syn::Expr::Await(a)   => walk_expr(&a.base, file, map),
+        syn::Expr::Await(a) => walk_expr(&a.base, file, map),
         _ => {}
     }
 }
@@ -336,7 +362,9 @@ fn build_sugar_coverage() -> std::collections::HashSet<String> {
         for prefix in &["Expr::", "Stmt::", "Item::"] {
             let mut i = 0_usize;
             while i < src.len() {
-                let Some(rel) = src[i..].find(prefix) else { break };
+                let Some(rel) = src[i..].find(prefix) else {
+                    break;
+                };
                 let vstart = i + rel + prefix.len();
                 let vend = src[vstart..]
                     .find(|c: char| !c.is_alphanumeric() && c != '_')
@@ -344,7 +372,11 @@ fn build_sugar_coverage() -> std::collections::HashSet<String> {
                     .unwrap_or(src.len());
                 let variant = &src[vstart..vend];
                 if !variant.is_empty()
-                    && variant.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    && variant
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
                 {
                     covered.insert(format!("{prefix}{variant}"));
                 }
@@ -363,42 +395,42 @@ fn coverage_pattern(kind: &str, shape: &str) -> Option<String> {
     }
     let pat: &str = match (kind, shape) {
         // Expr shapes (named in expr_shape)
-        ("Expr", "BinOp")          => "Expr::Binary",
-        ("Expr", "UnaryOp")        => "Expr::Unary",
+        ("Expr", "BinOp") => "Expr::Binary",
+        ("Expr", "UnaryOp") => "Expr::Unary",
         ("Expr", "PrimitiveLiteral") | ("Expr", "Lit") => "Expr::Lit",
-        ("Expr", "Name")           => "Expr::Path",
-        ("Expr", "If")             => "Expr::If",
-        ("Expr", "Match")          => "Expr::Match",
-        ("Expr", "Block")          => "Expr::Block",
-        ("Expr", "Return")         => "Expr::Return",
-        ("Expr", "Call")           => "Expr::Call",
-        ("Expr", "MethodCall")     => "Expr::MethodCall",
-        ("Expr", "Index")          => "Expr::Index",
-        ("Expr", "Array")          => "Expr::Array",
-        ("Expr", "Field")          => "Expr::Field",
-        ("Expr", "Reference")      => "Expr::Reference",
-        ("Expr", "Paren")          => "Expr::Paren",
-        ("Expr", "Cast")           => "Expr::Cast",
-        ("Expr", "Tuple")          => "Expr::Tuple",
-        ("Expr", "Range")          => "Expr::Range",
-        ("Expr", "Macro")          => "Expr::Macro",
-        ("Expr", "Assign")         => "Expr::Assign",
+        ("Expr", "Name") => "Expr::Path",
+        ("Expr", "If") => "Expr::If",
+        ("Expr", "Match") => "Expr::Match",
+        ("Expr", "Block") => "Expr::Block",
+        ("Expr", "Return") => "Expr::Return",
+        ("Expr", "Call") => "Expr::Call",
+        ("Expr", "MethodCall") => "Expr::MethodCall",
+        ("Expr", "Index") => "Expr::Index",
+        ("Expr", "Array") => "Expr::Array",
+        ("Expr", "Field") => "Expr::Field",
+        ("Expr", "Reference") => "Expr::Reference",
+        ("Expr", "Paren") => "Expr::Paren",
+        ("Expr", "Cast") => "Expr::Cast",
+        ("Expr", "Tuple") => "Expr::Tuple",
+        ("Expr", "Range") => "Expr::Range",
+        ("Expr", "Macro") => "Expr::Macro",
+        ("Expr", "Assign") => "Expr::Assign",
         // Stmt shapes
-        ("Stmt", "Assign")         => "Stmt::Local",
-        ("Stmt", "Item")           => "Stmt::Item",
-        ("Stmt", "Macro")          => "Stmt::Macro",
-        ("Stmt", "Return")         => "Expr::Return",  // via expr recognizer
-        ("Stmt", "If")             => "Expr::If",       // via expr recognizer
-        ("Stmt", "Expr")           => "Stmt::Expr",
+        ("Stmt", "Assign") => "Stmt::Local",
+        ("Stmt", "Item") => "Stmt::Item",
+        ("Stmt", "Macro") => "Stmt::Macro",
+        ("Stmt", "Return") => "Expr::Return", // via expr recognizer
+        ("Stmt", "If") => "Expr::If",         // via expr recognizer
+        ("Stmt", "Expr") => "Stmt::Expr",
         // Item shapes
-        ("Item", "FunctionDef")    => "Item::Fn",
-        ("Item", "Const")          => "Item::Const",
-        ("Item", "Impl")           => "Item::Impl",
-        ("Item", "Struct")         => "Item::Struct",
-        ("Item", "Enum")           => "Item::Enum",
-        ("Item", "Use")            => "Item::Use",
-        ("Item", "Other:Item")     => return None,
-        _                          => return None,
+        ("Item", "FunctionDef") => "Item::Fn",
+        ("Item", "Const") => "Item::Const",
+        ("Item", "Impl") => "Item::Impl",
+        ("Item", "Struct") => "Item::Struct",
+        ("Item", "Enum") => "Item::Enum",
+        ("Item", "Use") => "Item::Use",
+        ("Item", "Other:Item") => return None,
+        _ => return None,
     };
     Some(pat.to_string())
 }
@@ -423,9 +455,12 @@ fn manifest_dir() -> PathBuf {
 
 fn repo_root() -> PathBuf {
     manifest_dir()
-        .parent().unwrap()  // rust/
-        .parent().unwrap()  // implementations/
-        .parent().unwrap()  // repo root
+        .parent()
+        .unwrap() // rust/
+        .parent()
+        .unwrap() // implementations/
+        .parent()
+        .unwrap() // repo root
         .to_path_buf()
 }
 
@@ -448,7 +483,7 @@ fn grammar_totality_ratchet() {
 
     // Inline fixtures
     walk_source(INLINE_CLOSURES, "<fixture:closures>", &mut shape_map);
-    walk_source(INLINE_CONTROL,  "<fixture:control>",  &mut shape_map);
+    walk_source(INLINE_CONTROL, "<fixture:control>", &mut shape_map);
 
     // Build coverage oracle
     let covered = build_sugar_coverage();
@@ -470,7 +505,9 @@ fn grammar_totality_ratchet() {
     eprintln!("--- grammar totality ratchet ---");
     eprintln!(
         "corpus unique shapes: {}  uncovered: {}  (ceiling = {}, target = 0)",
-        shape_map.len(), uncovered, UNCOVERED_CEILING,
+        shape_map.len(),
+        uncovered,
+        UNCOVERED_CEILING,
     );
     if !gaps.is_empty() {
         eprintln!("Uncovered shapes -- write a sugar for each:");

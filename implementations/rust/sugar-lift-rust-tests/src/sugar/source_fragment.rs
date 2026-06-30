@@ -14,8 +14,8 @@
 //!     new-shape detector, the analogue of Python's `non-return:<Stmt>` bucket.
 //!   * there is no `ast.iter_fields` reflection, so decomposition is hand-matched.
 
-use syn::spanned::Spanned;
 use quote;
+use syn::spanned::Spanned;
 
 /// A Python suite has no AST node; a Rust block (`{ stmt; stmt; }`) does, but a bare
 /// `&[Stmt]` (a function body, an `if`/`else` branch) does not. `Block` is the synthetic
@@ -89,7 +89,12 @@ pub(crate) enum ScalarLit {
 impl<'a> SourceFragment<'a> {
     pub(crate) fn from_node(node: FragNode<'a>, file: &'a str) -> Self {
         let (line, col) = node_position(&node);
-        Self { node, file, line, col }
+        Self {
+            node,
+            file,
+            line,
+            col,
+        }
     }
 
     pub(crate) fn expr(e: &'a syn::Expr, file: &'a str) -> Self {
@@ -152,9 +157,11 @@ impl<'a> SourceFragment<'a> {
             FragNode::Block(b) => b.stmts.iter().map(|s| Self::stmt(s, self.file)).collect(),
 
             // A File decomposes into Item fragments.
-            FragNode::File(f) => {
-                f.items.iter().map(|i| Self::from_node(FragNode::Item(i), self.file)).collect()
-            }
+            FragNode::File(f) => f
+                .items
+                .iter()
+                .map(|i| Self::from_node(FragNode::Item(i), self.file))
+                .collect(),
 
             // Items: function body is the only child we expose at this granularity.
             FragNode::Item(syn::Item::Fn(f)) => {
@@ -235,12 +242,14 @@ impl<'a> SourceFragment<'a> {
     /// The else branch of an `if`, if present.
     pub(crate) fn if_orelse(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
-            FragNode::Stmt(syn::Stmt::Expr(syn::Expr::If(i), _)) => {
-                i.else_branch.as_ref().map(|(_, e)| Self::expr(e, self.file))
-            }
-            FragNode::Expr(syn::Expr::If(i)) => {
-                i.else_branch.as_ref().map(|(_, e)| Self::expr(e, self.file))
-            }
+            FragNode::Stmt(syn::Stmt::Expr(syn::Expr::If(i), _)) => i
+                .else_branch
+                .as_ref()
+                .map(|(_, e)| Self::expr(e, self.file)),
+            FragNode::Expr(syn::Expr::If(i)) => i
+                .else_branch
+                .as_ref()
+                .map(|(_, e)| Self::expr(e, self.file)),
             _ => None,
         }
     }
@@ -429,9 +438,7 @@ impl<'a> SourceFragment<'a> {
     /// exact-or-bail `const_eval` + `const_val_term` path. Returns `None` for
     /// non-Binary fragments or expressions that contain non-const sub-expressions.
     /// Mirrors `const_folded_if_term` but for `Expr::Binary`.
-    pub(crate) fn binop_const_folded_term(
-        &self,
-    ) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
+    pub(crate) fn binop_const_folded_term(&self) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
         let e = match &self.node {
             FragNode::Expr(e @ syn::Expr::Binary(_)) => e,
             _ => return None,
@@ -656,9 +663,10 @@ impl<'a> SourceFragment<'a> {
     /// The initialiser expression of a `let` statement.
     pub(crate) fn assign_value(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
-            FragNode::Stmt(syn::Stmt::Local(l)) => {
-                l.init.as_ref().map(|init| Self::expr(&init.expr, self.file))
-            }
+            FragNode::Stmt(syn::Stmt::Local(l)) => l
+                .init
+                .as_ref()
+                .map(|init| Self::expr(&init.expr, self.file)),
             _ => None,
         }
     }
@@ -736,9 +744,13 @@ impl<'a> SourceFragment<'a> {
     /// Returns `None` for single-segment paths or non-path nodes.
     pub(crate) fn path_penultimate_ident(&self) -> Option<String> {
         match &self.node {
-            FragNode::Expr(syn::Expr::Path(p)) => {
-                p.path.segments.iter().rev().nth(1).map(|s| s.ident.to_string())
-            }
+            FragNode::Expr(syn::Expr::Path(p)) => p
+                .path
+                .segments
+                .iter()
+                .rev()
+                .nth(1)
+                .map(|s| s.ident.to_string()),
             _ => None,
         }
     }
@@ -789,8 +801,7 @@ impl<'a> SourceFragment<'a> {
         let syn::Expr::Closure(closure) = crate::strip_refs_groups(&call.args[0]) else {
             return None;
         };
-        let elems =
-            crate::scalar_literal_array_elems(crate::strip_refs_groups(&call.receiver))?;
+        let elems = crate::scalar_literal_array_elems(crate::strip_refs_groups(&call.receiver))?;
         let empty: std::collections::BTreeMap<String, crate::ConstVal> =
             std::collections::BTreeMap::new();
         let mut preds = Vec::with_capacity(elems.len());
@@ -821,16 +832,13 @@ impl<'a> SourceFragment<'a> {
     /// an `if`-without-else, or for any `If` whose condition or taken branch
     /// contains a non-const sub-expression. Callers see `Option<Rc<Term>>`; all
     /// raw `syn` evaluator logic stays in lib.rs.
-    pub(crate) fn const_folded_if_term(
-        &self,
-    ) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
+    pub(crate) fn const_folded_if_term(&self) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
         let e = match &self.node {
             FragNode::Expr(e @ syn::Expr::If(_)) => e,
             _ => return None,
         };
         use std::collections::BTreeMap;
-        crate::const_eval(e, &BTreeMap::new())
-            .and_then(|v| crate::const_val_term(&v))
+        crate::const_eval(e, &BTreeMap::new()).and_then(|v| crate::const_val_term(&v))
     }
 
     // -- Reference/paren/group stripping -------------------------------------
@@ -1163,8 +1171,7 @@ impl<'a> SourceFragment<'a> {
         let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
             return false;
         };
-        let parser =
-            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
         let Ok(punctuated) = syn::parse::Parser::parse2(parser, m.mac.tokens.clone()) else {
             return false;
         };
@@ -1181,12 +1188,8 @@ impl<'a> SourceFragment<'a> {
     /// Returns `None` for all other fragment kinds.
     pub(crate) fn item_const_static_kind_and_name(&self) -> Option<(&'static str, String)> {
         match &self.node {
-            FragNode::Item(syn::Item::Const(item)) => {
-                Some(("const", item.ident.to_string()))
-            }
-            FragNode::Item(syn::Item::Static(item)) => {
-                Some(("static", item.ident.to_string()))
-            }
+            FragNode::Item(syn::Item::Const(item)) => Some(("const", item.ident.to_string())),
+            FragNode::Item(syn::Item::Static(item)) => Some(("static", item.ident.to_string())),
             _ => None,
         }
     }
@@ -1197,9 +1200,7 @@ impl<'a> SourceFragment<'a> {
     /// assertion-free.
     pub(crate) fn item_const_static_initializer_has_asserts(&self) -> bool {
         match &self.node {
-            FragNode::Item(syn::Item::Const(item)) => {
-                crate::count_asserts_in_expr(&item.expr) != 0
-            }
+            FragNode::Item(syn::Item::Const(item)) => crate::count_asserts_in_expr(&item.expr) != 0,
             FragNode::Item(syn::Item::Static(item)) => {
                 crate::count_asserts_in_expr(&item.expr) != 0
             }
@@ -1212,12 +1213,8 @@ impl<'a> SourceFragment<'a> {
     /// `token_key`). Returns `None` for all other fragment kinds.
     pub(crate) fn item_const_static_initializer_token_str(&self) -> Option<String> {
         match &self.node {
-            FragNode::Item(syn::Item::Const(item)) => {
-                Some(crate::token_key(&*item.expr))
-            }
-            FragNode::Item(syn::Item::Static(item)) => {
-                Some(crate::token_key(&*item.expr))
-            }
+            FragNode::Item(syn::Item::Const(item)) => Some(crate::token_key(&*item.expr)),
+            FragNode::Item(syn::Item::Static(item)) => Some(crate::token_key(&*item.expr)),
             _ => None,
         }
     }
@@ -1231,16 +1228,14 @@ impl<'a> SourceFragment<'a> {
     /// All syn field access lives HERE -- recognizers see only the String.
     pub(crate) fn impl_item_asserting_method_name(&self) -> Option<String> {
         match &self.node {
-            FragNode::Item(syn::Item::Impl(imp)) => {
-                imp.items.iter().find_map(|it| {
-                    if let syn::ImplItem::Fn(m) = it {
-                        if crate::count_asserts_in_stmts(&m.block.stmts) > 0 {
-                            return Some(m.sig.ident.to_string());
-                        }
+            FragNode::Item(syn::Item::Impl(imp)) => imp.items.iter().find_map(|it| {
+                if let syn::ImplItem::Fn(m) = it {
+                    if crate::count_asserts_in_stmts(&m.block.stmts) > 0 {
+                        return Some(m.sig.ident.to_string());
                     }
-                    None
-                })
-            }
+                }
+                None
+            }),
             _ => None,
         }
     }
@@ -1464,9 +1459,7 @@ impl<'a> SourceFragment<'a> {
         if path.path.segments.len() == 2
             && matches!(path.path.segments[0].arguments, PathArguments::None)
         {
-            crate::sugar::int_literal::primitive_int_kind(
-                &path.path.segments[0].ident.to_string(),
-            )
+            crate::sugar::int_literal::primitive_int_kind(&path.path.segments[0].ident.to_string())
         } else {
             None
         }
@@ -1475,14 +1468,13 @@ impl<'a> SourceFragment<'a> {
     // -- For-loop mutation boundary ------------------------------------------
 
     /// Returns the `token_key` boundary string if this fragment is a `for` loop
-    /// that:
-    ///   (a) is NOT decomposable as a forall loop (i.e. `forall::decompose_for_loop`
-    ///       returns `None`), AND
-    ///   (b) carries a runtime mutation boundary in either the iterable expression
-    ///       or the loop body block (checked via `statement_position::has_runtime_boundary`).
-    /// Returns `None` for any non-`ForLoop` fragment, for a loop that IS a forall,
-    /// or for a for loop that has no mutation boundary. All raw syn field access
-    /// lives HERE; `for_loop_mutation::recognize` sees only the derived boundary string.
+    /// that carries a runtime mutation boundary in either the iterable expression
+    /// or the loop body block (checked via `statement_position::has_runtime_boundary`).
+    /// Mutation wins before forall decomposition: a side-effecting iterator domain is
+    /// runtime work even when its loop shape is otherwise forall-like. Returns `None`
+    /// for any non-`ForLoop` fragment or for a for loop that has no mutation boundary.
+    /// All raw syn field access lives HERE; `for_loop_mutation::recognize` sees only
+    /// the derived boundary string.
     pub(crate) fn for_loop_mutation_boundary(
         &self,
         fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
@@ -1490,8 +1482,20 @@ impl<'a> SourceFragment<'a> {
         let FragNode::Expr(syn::Expr::ForLoop(for_loop)) = &self.node else {
             return None;
         };
-        // If this for loop IS a forall, decline -- forall_loop owns it.
-        if crate::sugar::forall::decompose_for_loop(
+        // Check for runtime mutation boundary in the iterable expr or the body block.
+        let body_block_as_expr = syn::Expr::Block(syn::ExprBlock {
+            attrs: Vec::new(),
+            label: None,
+            block: for_loop.body.clone(),
+        });
+        let has_mutation = crate::sugar::statement_position::has_runtime_boundary(&for_loop.expr)
+            || crate::sugar::statement_position::has_runtime_boundary(&body_block_as_expr);
+        if has_mutation {
+            let FragNode::Expr(e) = &self.node else {
+                unreachable!()
+            };
+            Some(crate::token_key(e))
+        } else if crate::sugar::forall::decompose_for_loop(
             for_loop,
             fcx.scope(),
             fcx.let_inits(),
@@ -1499,22 +1503,7 @@ impl<'a> SourceFragment<'a> {
         )
         .is_some()
         {
-            return None;
-        }
-        // Check for runtime mutation boundary in the iterable expr or the body block.
-        let body_block_as_expr = syn::Expr::Block(syn::ExprBlock {
-            attrs: Vec::new(),
-            label: None,
-            block: for_loop.body.clone(),
-        });
-        let has_mutation =
-            crate::sugar::statement_position::has_runtime_boundary(&for_loop.expr)
-                || crate::sugar::statement_position::has_runtime_boundary(&body_block_as_expr);
-        if has_mutation {
-            let FragNode::Expr(e) = &self.node else {
-                unreachable!()
-            };
-            Some(crate::token_key(e))
+            None
         } else {
             None
         }
@@ -1631,7 +1620,7 @@ impl<'a> SourceFragment<'a> {
         crate::repeat_count_in_scope(&r.len, fcx.scope())
     }
 
-        // -- Loop accessors -------------------------------------------------------
+    // -- Loop accessors -------------------------------------------------------
 
     /// For a `loop { break <expr>; }` fragment: returns the break-payload
     /// expression as a child fragment. Returns `None` if the fragment is not a
@@ -1641,8 +1630,7 @@ impl<'a> SourceFragment<'a> {
         let FragNode::Expr(syn::Expr::Loop(loop_expr)) = &self.node else {
             return None;
         };
-        let [syn::Stmt::Expr(syn::Expr::Break(expr_break), _)] =
-            loop_expr.body.stmts.as_slice()
+        let [syn::Stmt::Expr(syn::Expr::Break(expr_break), _)] = loop_expr.body.stmts.as_slice()
         else {
             return None;
         };
@@ -1813,7 +1801,9 @@ impl<'a> SourceFragment<'a> {
         fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
         depth: usize,
     ) -> bool {
-        let Some(expr) = self.as_expr() else { return false; };
+        let Some(expr) = self.as_expr() else {
+            return false;
+        };
         crate::sugar::raw_pointer_arithmetic::raw_pointer_value_in_scope(expr, fcx, depth)
     }
 
@@ -1872,13 +1862,15 @@ impl<'a> SourceFragment<'a> {
     /// `Some(Err(msg))` when the body does not parse. The `syn::Error` is
     /// converted to a `String` so the caller sees no raw syn error type.
     /// All raw syn access lives HERE.
-    pub(crate) fn macro_parse_cfg_predicate(
-        &self,
-    ) -> Option<Result<crate::CfgPredicate, String>> {
+    pub(crate) fn macro_parse_cfg_predicate(&self) -> Option<Result<crate::CfgPredicate, String>> {
         let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
             return None;
         };
-        Some(m.mac.parse_body::<crate::CfgPredicate>().map_err(|e| e.to_string()))
+        Some(
+            m.mac
+                .parse_body::<crate::CfgPredicate>()
+                .map_err(|e| e.to_string()),
+        )
     }
 
     // -- closure accessors ----------------------------------------------------
@@ -1899,9 +1891,7 @@ impl<'a> SourceFragment<'a> {
     /// All raw syn access lives HERE.
     pub(crate) fn closure_body_frag(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
-            FragNode::Expr(syn::Expr::Closure(c)) => {
-                Some(Self::expr(c.body.as_ref(), self.file))
-            }
+            FragNode::Expr(syn::Expr::Closure(c)) => Some(Self::expr(c.body.as_ref(), self.file)),
             _ => None,
         }
     }
@@ -2038,7 +2028,10 @@ impl<'a> SourceFragment<'a> {
             return None;
         }
         // Callee: unqualified path only.
-        let syn::Expr::Path(syn::ExprPath { qself: None, path, .. }) = call.func.as_ref() else {
+        let syn::Expr::Path(syn::ExprPath {
+            qself: None, path, ..
+        }) = call.func.as_ref()
+        else {
             return None;
         };
         // Path must be a compiler size_of path.
@@ -2061,7 +2054,12 @@ impl<'a> SourceFragment<'a> {
         let ty_src = quote::ToTokens::to_token_stream(ty).to_string();
         let primitive_size = size_of_primitive_size(ty);
         let atomic_size = size_of_core_atomic_size(ty);
-        Some(SizeOfTypeParts { ty_key, ty_src, primitive_size, atomic_size })
+        Some(SizeOfTypeParts {
+            ty_key,
+            ty_src,
+            primitive_size,
+            atomic_size,
+        })
     }
 
     // -- Slice accessor helpers -----------------------------------------------
@@ -2309,9 +2307,7 @@ fn size_of_core_atomic_size(ty: &syn::Type) -> Option<i128> {
 /// Decode a `&syn::Type` to an `IntKind` for the qualified-self form
 /// `<IntT>::from`: the type must be a simple path (no qself, no args) whose
 /// last segment is a known primitive integer type name.
-fn primitive_int_type_kind_from_syn(
-    ty: &syn::Type,
-) -> Option<crate::sugar::int_literal::IntKind> {
+fn primitive_int_type_kind_from_syn(ty: &syn::Type) -> Option<crate::sugar::int_literal::IntKind> {
     use syn::PathArguments;
     let syn::Type::Path(path) = ty else {
         return None;
@@ -2442,7 +2438,7 @@ fn int_scalar_expr(expr: &syn::Expr) -> Option<i128> {
 fn scalar_ordered_value_expr(expr: &syn::Expr) -> Option<i128> {
     match strip_refs_groups_expr(expr) {
         syn::Expr::Lit(l) => match &l.lit {
-            syn::Lit::Int(i)  => i.base10_parse::<i128>().ok(),
+            syn::Lit::Int(i) => i.base10_parse::<i128>().ok(),
             syn::Lit::Byte(b) => Some(i128::from(b.value())),
             syn::Lit::Char(c) => Some(i128::from(u32::from(c.value()))),
             syn::Lit::Bool(b) => Some(i128::from(b.value)),
@@ -2652,8 +2648,18 @@ fn expr_child_fragments<'a>(e: &'a syn::Expr, file: &'a str) -> Vec<SourceFragme
             }
             out
         }
-        Block(b) => b.block.stmts.iter().map(|s| SourceFragment::stmt(s, file)).collect(),
-        Return(r) => r.expr.as_deref().map(|e| SourceFragment::expr(e, file)).into_iter().collect(),
+        Block(b) => b
+            .block
+            .stmts
+            .iter()
+            .map(|s| SourceFragment::stmt(s, file))
+            .collect(),
+        Return(r) => r
+            .expr
+            .as_deref()
+            .map(|e| SourceFragment::expr(e, file))
+            .into_iter()
+            .collect(),
         Field(f) => vec![SourceFragment::expr(&f.base, file)],
         Index(i) => vec![
             SourceFragment::expr(&i.expr, file),
@@ -2666,8 +2672,16 @@ fn expr_child_fragments<'a>(e: &'a syn::Expr, file: &'a str) -> Vec<SourceFragme
             SourceFragment::expr(&a.left, file),
             SourceFragment::expr(&a.right, file),
         ],
-        Array(a) => a.elems.iter().map(|e| SourceFragment::expr(e, file)).collect(),
-        Tuple(t) => t.elems.iter().map(|e| SourceFragment::expr(e, file)).collect(),
+        Array(a) => a
+            .elems
+            .iter()
+            .map(|e| SourceFragment::expr(e, file))
+            .collect(),
+        Tuple(t) => t
+            .elems
+            .iter()
+            .map(|e| SourceFragment::expr(e, file))
+            .collect(),
         Range(r) => {
             let mut out = Vec::new();
             if let Some(from) = &r.start {
@@ -2752,9 +2766,7 @@ fn slice_receiver_shape_impl(
                 "as_slice" | "to_vec" | "to_owned" | "into_vec"
             ) && slice_receiver_shape_impl(&call.receiver, fcx, depth + 1)
         }
-        other => {
-            crate::sugar::collection_literal::collection_literal_array(other).is_some()
-        }
+        other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }
 }
 
@@ -2791,9 +2803,7 @@ fn text_receiver_shape_impl(
                 .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
                 .is_some_and(|init| text_receiver_shape_impl(init, fcx, depth + 1))
         }
-        syn::Expr::MethodCall(call)
-            if call.method == "to_string" && call.args.is_empty() =>
-        {
+        syn::Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => {
             text_receiver_shape_impl(&call.receiver, fcx, depth + 1)
         }
         syn::Expr::MethodCall(call) if slice_string_result_method(&call.method.to_string()) => {
@@ -2841,9 +2851,8 @@ mod tests {
     /// raw-syn plumbing in the test (this is the Phase-4 per-sugar TDD harness in miniature).
     #[test]
     fn classify_body_decomposes_through_the_door() {
-        let file = parse_file(
-            "fn classify(n: u32) -> u32 {\n    if n > 5 { return 50; }\n    0\n}\n",
-        );
+        let file =
+            parse_file("fn classify(n: u32) -> u32 {\n    if n > 5 { return 50; }\n    0\n}\n");
         let root = SourceFragment::from_node(FragNode::File(&file), "classify.rs");
         // first item is the fn
         let item = match &root.node {

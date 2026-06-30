@@ -43,25 +43,24 @@ pub fn decode_for_conformance(bytes: &[u8]) -> Result<CborValue, CborDecodeError
 pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
+    member_body, member_field, member_kind, member_signature, member_signer,
     AssertionSurfaceMemento, AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef,
     BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractEntry,
     ContractMemento, ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
-    member_body, member_field, member_kind, member_signature, member_signer, ImplicationMemento,
-    LibrarySugarBindingMemento,
-    MemberView, MementoCid, PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento,
-    SourceMemento,
-    StageReceiptMemento, WitnessClaimMemento, WitnessMemento,
+    ImplicationMemento, LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemento,
+    ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento, StageReceiptMemento,
+    WitnessClaimMemento, WitnessMemento,
+};
+pub use sign::{
+    ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
+    ed25519_verify_string, Ed25519PublicKey, Ed25519Seed, Ed25519Signature, ED25519_KEY_PREFIX,
+    ED25519_SIG_PREFIX,
 };
 pub use typed_member::{
     AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContractMember,
     EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
     LibrarySugarBindingEntryMember, Member, MemberError, PlanMementoMember, ProofRunMember,
     SourceMementoMember, StageReceiptMember, WitnessClaimMember, WitnessMementoMember,
-};
-pub use sign::{
-    ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
-    ed25519_verify_string, Ed25519PublicKey, Ed25519Seed, Ed25519Signature, ED25519_KEY_PREFIX,
-    ED25519_SIG_PREFIX,
 };
 
 #[derive(Debug, thiserror::Error)]

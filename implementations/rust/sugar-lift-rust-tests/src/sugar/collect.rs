@@ -17,8 +17,8 @@ use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBui
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
-use crate::sugar::unit_path::unit_path_literal_name;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, closure_single_param_ident, const_eval, primitive_int_term,
     strip_refs_groups, u128_term, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar,

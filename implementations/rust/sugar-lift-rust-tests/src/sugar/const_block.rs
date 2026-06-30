@@ -7,10 +7,10 @@
 
 use crate::sugar::block_term::translate_expression_only_block_in_scope;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::unit_path::{unit_path_literal_name, unit_path_name};
 use crate::{make_var, scope_const_block_locals, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, Stmt};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("const_block", recognize);

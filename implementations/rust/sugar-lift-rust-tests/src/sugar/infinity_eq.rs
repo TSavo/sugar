@@ -43,8 +43,14 @@ struct InfinityEqSugar {
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
-        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
-        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
+        Expr::Paren(paren) => {
+            let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>");
+            recognize(&_frag, fcx)
+        }
+        Expr::Group(group) => {
+            let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>");
+            recognize(&_frag, fcx)
+        }
         Expr::Binary(binary) => recognize_binary(binary, fcx),
         Expr::Macro(expr_macro) => recognize_macro(expr_macro, fcx),
         _ => None,

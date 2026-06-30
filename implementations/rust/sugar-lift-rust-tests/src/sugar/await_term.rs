@@ -6,8 +6,8 @@
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("await_term", recognize);
@@ -36,8 +36,15 @@ mod tests {
         // Expr::Await is observed as "Other:Expr:Await" (not explicitly mapped in expr_kind)
         let expr = e("fut.await");
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
-        assert_eq!(frag.observed(), "Other:Expr:Await", "Await falls to Other bucket");
-        assert!(frag.await_base().is_some(), "await_base() must be Some for an Await fragment");
+        assert_eq!(
+            frag.observed(),
+            "Other:Expr:Await",
+            "Await falls to Other bucket"
+        );
+        assert!(
+            frag.await_base().is_some(),
+            "await_base() must be Some for an Await fragment"
+        );
     }
 
     #[test]
@@ -58,6 +65,10 @@ mod tests {
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         let base = frag.await_base().expect("await base must be present");
         // Expr::Path is observed as "Name" in expr_kind
-        assert_eq!(base.observed(), "Name", "base of `fut.await` should be a Name (Expr::Path)");
+        assert_eq!(
+            base.observed(),
+            "Name",
+            "base of `fut.await` should be a Name (Expr::Path)"
+        );
     }
 }

@@ -25,14 +25,20 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     let elems = frag.tuple_elems()?;
     Some(Box::new(LiteralAggregateTermSugar::new(
         "Tuple",
-        elems.iter().map(|ef| SugarBody::term_frag(ef, fcx)).collect(),
+        elems
+            .iter()
+            .map(|ef| SugarBody::term_frag(ef, fcx))
+            .collect(),
     )))
 }
 
 fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let elems = frag.tuple_elems()?;
     Some(Box::new(LiteralTupleProducer {
-        elems: elems.iter().map(|ef| SugarBody::term_frag(ef, fcx)).collect(),
+        elems: elems
+            .iter()
+            .map(|ef| SugarBody::term_frag(ef, fcx))
+            .collect(),
     }))
 }
 
@@ -91,14 +97,20 @@ mod tests {
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert_eq!(frag.observed(), "Array");
-        assert!(frag.tuple_elems().is_none(), "array must not have tuple_elems");
+        assert!(
+            frag.tuple_elems().is_none(),
+            "array must not have tuple_elems"
+        );
 
         let scope = TemporalScope::new("tuple-term-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "array must not be recognized as Tuple");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "array must not be recognized as Tuple"
+        );
     }
 
     /// Structural: empty tuple `()` has 0 elements and is recognized.
@@ -108,7 +120,9 @@ mod tests {
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert_eq!(frag.observed(), "Tuple");
-        let elems = frag.tuple_elems().expect("unit tuple must have tuple_elems");
+        let elems = frag
+            .tuple_elems()
+            .expect("unit tuple must have tuple_elems");
         assert_eq!(elems.len(), 0, "unit tuple has 0 elements");
 
         let scope = TemporalScope::new("tuple-term-test", TemporalPlan::default());
@@ -116,6 +130,9 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "() must be recognized as Tuple");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "() must be recognized as Tuple"
+        );
     }
 }

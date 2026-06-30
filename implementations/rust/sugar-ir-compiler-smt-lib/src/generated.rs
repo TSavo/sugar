@@ -62,7 +62,8 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             // arg kinds (Int Const, str.table-select ite-chain output, Var declared
             // Int) emit_term already produces the correct Int-sorted SMT expression.
             if name == "str.from_code" && args.len() == 1 {
-                if matches!(&args[0], Term::Ctor { name: inner, .. } if inner.starts_with("bv32.")) {
+                if matches!(&args[0], Term::Ctor { name: inner, .. } if inner.starts_with("bv32."))
+                {
                     let empty = std::collections::HashMap::new();
                     if let Some(bv_smt) = emit_bv32_term(&args[0], &empty) {
                         return format!("(str.from_code (bv2nat {}))", bv_smt);
@@ -1004,7 +1005,12 @@ fn emit_bv32_term(
             // literals in the strong-universe path). Fall back to the raw SMT
             // symbol so `emit_bv32_term` can be called from `emit_term` with an
             // empty substitution for symbolic bv32 sub-expressions.
-            Some(subst.get(name.as_str()).cloned().unwrap_or_else(|| smt_quote(name)))
+            Some(
+                subst
+                    .get(name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| smt_quote(name)),
+            )
         }
         Term::Const { value, .. } => {
             let v = match value {
@@ -3733,14 +3739,20 @@ mod str_table_select_tests {
         let term = table_select(alpha, 1);
         let smt = emit_term(&term);
         // The ite chain must contain at least one (ite ...) expression.
-        assert!(smt.contains("ite"), "str.table-select must emit an ite chain, got: {smt}");
+        assert!(
+            smt.contains("ite"),
+            "str.table-select must emit an ite chain, got: {smt}"
+        );
         // It must compare against the sextet hex values.
         assert!(
             smt.contains("#x00000001"),
             "ite chain must compare against idx #x00000001, got: {smt}"
         );
         // It must contain the codepoints.
-        assert!(smt.contains("66"), "ite chain must contain codepoint 66 ('B'), got: {smt}");
+        assert!(
+            smt.contains("66"),
+            "ite chain must contain codepoint 66 ('B'), got: {smt}"
+        );
     }
 
     #[test]
@@ -3754,7 +3766,10 @@ mod str_table_select_tests {
             }],
         };
         let smt = emit_term(&term);
-        assert_eq!(smt, "(str.from_code 90)", "Int-sorted str.from_code must emit directly");
+        assert_eq!(
+            smt, "(str.from_code 90)",
+            "Int-sorted str.from_code must emit directly"
+        );
     }
 
     #[test]
@@ -3814,8 +3829,7 @@ mod str_table_select_tests {
     // composed consistency obligation, NOT by a self-contradiction or the witness).
     // A SECOND wrong value ("AAAA") must also be UNSAT.
 
-    const STD_B64_ALPHA: &str =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const STD_B64_ALPHA: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     /// Build a 4-char base64 output term for input bytes (102,111,111) = "foo".
     /// Uses concrete bv32 sextet constants -- no symbolic variables -- so the
@@ -3840,9 +3854,8 @@ mod str_table_select_tests {
         use std::io::Write;
         use std::process::{Command, Stdio};
         let rhs_smt = emit_term(rhs_term);
-        let script = format!(
-            "(set-logic ALL)\n(assert (= \"{expected}\" {rhs_smt}))\n(check-sat)\n"
-        );
+        let script =
+            format!("(set-logic ALL)\n(assert (= \"{expected}\" {rhs_smt}))\n(check-sat)\n");
         let mut child = Command::new("z3")
             .args(["-smt2", "-in"])
             .stdin(Stdio::piped())

@@ -13,8 +13,8 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic::{err_term, ok_term};
-use crate::{const_val_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{const_val_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("array_try_from", &["try_from", "call"], recognize);
@@ -147,10 +147,7 @@ fn array_dest(ty: &Type, fcx: &SugarBuildCtx) -> Option<(Dest, usize)> {
 
 /// Resolves the TryFrom destination type and array shape from a `call_func` fragment.
 /// All raw syn access lives here; `recognize` sees only `Option<(Dest, usize)>`.
-fn try_from_dest_frag(
-    func_frag: &SourceFragment,
-    fcx: &SugarBuildCtx,
-) -> Option<(Dest, usize)> {
+fn try_from_dest_frag(func_frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<(Dest, usize)> {
     let func = func_frag.as_expr()?;
     let dst = try_from_destination(func)?;
     array_dest(dst, fcx)
@@ -159,10 +156,9 @@ fn try_from_dest_frag(
 /// Builds the composite `SugarBody` for an array TryFrom source argument.
 /// All raw syn access lives inside `source_body`; `recognize` sees only
 /// `SugarBody<CompositeFloor>`.
-fn source_body_frag(
-    arg_frag: &SourceFragment,
-    fcx: &SugarBuildCtx,
-) -> SugarBody<CompositeFloor> {
-    let expr = arg_frag.as_expr().expect("call_args() returned a valid Expr fragment");
+fn source_body_frag(arg_frag: &SourceFragment, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
+    let expr = arg_frag
+        .as_expr()
+        .expect("call_args() returned a valid Expr fragment");
     source_body(expr, fcx)
 }

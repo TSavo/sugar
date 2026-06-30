@@ -56,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename,
-    AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
-    ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
-    FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput,
-    ProofGraph, SourceMemento, WitnessMemento,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
+    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
+    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
+    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
+    SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1316,7 +1316,8 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let body_discharge_refusal_reason = body_policy.body_discharge_refusal_reason;
         // The dependency crate this contract belongs to (the lifter stamped it
         // at mint, the CLI forwards it opaquely).
-        let library = pool.member_field(cid, "library")
+        let library = pool
+            .member_field(cid, "library")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
@@ -4767,7 +4768,10 @@ mod tests {
         let graph = ProofGraph::read(&bytes).expect("decode proof");
         let all_members: Vec<_> = graph.members_view().collect();
         assert_eq!(all_members.len(), 1);
-        let view = all_members.into_iter().next().expect("library binding member");
+        let view = all_members
+            .into_iter()
+            .next()
+            .expect("library binding member");
         assert_eq!(view.kind().as_deref(), Some("library-sugar-binding-entry"));
         let envelope: Value = serde_json::from_slice(view.bytes()).expect("member JSON");
         let Ok(Member::LibrarySugarBindingEntry(lsbe)) = Member::from_value(&envelope) else {
@@ -5527,7 +5531,10 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         let Ok(Member::SourceMemento(sm)) = Member::from_value(memento) else {
-            panic!("expected source-memento member, got {:?}", memento.get("kind"));
+            panic!(
+                "expected source-memento member, got {:?}",
+                memento.get("kind")
+            );
         };
         assert_eq!(sm.contract_name.as_deref(), Some(contract_name));
         assert_eq!(sm.claim_name.as_deref(), Some(contract_name));
@@ -5623,7 +5630,10 @@ mod tests {
 
         assert!(plan_atoms.is_empty());
         let Ok(Member::PlanMemento(pm)) = Member::from_value(&envelope) else {
-            panic!("expected plan-memento member, got {:?}", envelope.get("kind"));
+            panic!(
+                "expected plan-memento member, got {:?}",
+                envelope.get("kind")
+            );
         };
         assert_eq!(
             pm.plan_cid.as_str(),
@@ -5733,7 +5743,8 @@ mod tests {
         let memento = &mementos[0];
         assert!(
             matches!(Member::from_value(memento), Ok(Member::PlanMemento(_))),
-            "expected plan-memento member, got {:?}", memento.get("kind")
+            "expected plan-memento member, got {:?}",
+            memento.get("kind")
         );
         assert_eq!(
             memento
@@ -5827,8 +5838,12 @@ mod tests {
         assert_eq!(mementos.len(), 1);
         let memento = &mementos[0];
         assert!(
-            matches!(Member::from_value(memento), Ok(Member::FactoryWalkMemento(_))),
-            "expected factory-walk-memento member, got {:?}", memento.get("kind")
+            matches!(
+                Member::from_value(memento),
+                Ok(Member::FactoryWalkMemento(_))
+            ),
+            "expected factory-walk-memento member, got {:?}",
+            memento.get("kind")
         );
         assert_eq!(
             memento.pointer("/body/kind").and_then(Value::as_str),
@@ -6211,15 +6226,11 @@ mod tests {
                 }
             }
         })];
-        let (proof_bytes, proof_cid, _) = mint_from_ir_document(
-            &ir, None, None, None, &root, &root, false,
-        )
-        .expect("mint dependency proof");
-        std::fs::write(
-            imports_dir.join(format!("{proof_cid}.proof")),
-            &proof_bytes,
-        )
-        .expect("write dependency proof");
+        let (proof_bytes, proof_cid, _) =
+            mint_from_ir_document(&ir, None, None, None, &root, &root, false)
+                .expect("mint dependency proof");
+        std::fs::write(imports_dir.join(format!("{proof_cid}.proof")), &proof_bytes)
+            .expect("write dependency proof");
 
         let bindings = contract_bindings_from_dependency_proofs(&root);
         let binding = bindings
@@ -6320,8 +6331,7 @@ mod tests {
             report.errors
         );
 
-        let catalog =
-            sugar_proof_envelope::ProofCatalog::read(&bytes).expect("read proof catalog");
+        let catalog = sugar_proof_envelope::ProofCatalog::read(&bytes).expect("read proof catalog");
         let proof_signer = catalog.signer.as_str();
         assert!(proof_signer.starts_with("blake3-512:"));
 
@@ -6333,8 +6343,7 @@ mod tests {
             let envelope = view.json();
             match member_kind(&envelope) {
                 Some("authority")
-                    if member_field(&envelope, "principal")
-                        .and_then(|v| v.as_str())
+                    if member_field(&envelope, "principal").and_then(|v| v.as_str())
                         == Some("bridgeworks.software") =>
                 {
                     authority_member_cid = Some(cid.to_string());
@@ -6358,8 +6367,7 @@ mod tests {
             Some(authority_member_cid.as_str())
         );
         assert_eq!(
-            sugar_proof_envelope::member_signer(&contract)
-                .and_then(|v| v.as_str()),
+            sugar_proof_envelope::member_signer(&contract).and_then(|v| v.as_str()),
             Some(authority_key)
         );
     }
@@ -6565,7 +6573,8 @@ mod tests {
         // DISCRIMINATION: pre-bearing contract must NOT be merged with inv-only.
         // Both must survive (different shapes).
         assert_eq!(
-            contract_cids.len(), 2,
+            contract_cids.len(),
+            2,
             "pre-bearing + inv-only must both survive (no cross-shape merge), got {}",
             contract_cids.len()
         );

@@ -33,8 +33,8 @@ mod tests {
     /// Verifies that call_is_method_call() gates correctly.
     #[test]
     fn from_src_for_each_is_method_call() {
-        let expr: Expr = syn::parse_str("[1_i32].iter().for_each(|x| { let _ = x; })")
-            .expect("parse");
+        let expr: Expr =
+            syn::parse_str("[1_i32].iter().for_each(|x| { let _ = x; })").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
         assert!(frag.call_is_method_call(), "for_each must be a MethodCall");
         assert_eq!(frag.call_method_key().as_deref(), Some("for_each"));
@@ -46,14 +46,20 @@ mod tests {
         let expr: Expr = syn::parse_str("x + 1").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
-        assert!(!frag.call_is_method_call(), "binop must not be a MethodCall");
+        assert!(
+            !frag.call_is_method_call(),
+            "binop must not be a MethodCall"
+        );
 
         let scope = TemporalScope::new("for-each-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "BinOp must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "BinOp must not be recognized"
+        );
     }
 
     /// Structural: a method call with the wrong name (.map) is not recognized.
@@ -71,6 +77,9 @@ mod tests {
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
         // .map is not .for_each, so recognize returns None
-        assert!(recognize(&frag, &fcx).is_none(), ".map must not be recognized as for_each");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            ".map must not be recognized as for_each"
+        );
     }
 }

@@ -219,9 +219,7 @@ fn recognize_byte_assign(stmt: &Stmt, param_name: &str) -> Option<String> {
 fn is_as_bytes_call(expr: &Expr, param_name: &str) -> bool {
     match strip_parens(expr) {
         Expr::MethodCall(mc) => {
-            mc.method == "as_bytes"
-                && mc.args.is_empty()
-                && expr_is_path(&mc.receiver, param_name)
+            mc.method == "as_bytes" && mc.args.is_empty() && expr_is_path(&mc.receiver, param_name)
         }
         _ => false,
     }
@@ -247,8 +245,7 @@ fn reduce_encoded_string(
         Expr::Array(arr) => {
             let mut all_indices: Vec<Rc<Term>> = Vec::new();
             for elem in &arr.elems {
-                let floor =
-                    reduce_encoded_string(elem, table_name, table_bytes, byte_vars)?;
+                let floor = reduce_encoded_string(elem, table_name, table_bytes, byte_vars)?;
                 // Every element's table must match the outer binding.
                 if floor.table != table_bytes {
                     return None;
@@ -265,10 +262,8 @@ fn reduce_encoded_string(
         }
         Expr::Binary(bin) if matches!(bin.op, BinOp::Add(_)) => {
             // Rust string-concat: left + right, both must be table lookups.
-            let left =
-                reduce_encoded_string(&bin.left, table_name, table_bytes, byte_vars)?;
-            let right =
-                reduce_encoded_string(&bin.right, table_name, table_bytes, byte_vars)?;
+            let left = reduce_encoded_string(&bin.left, table_name, table_bytes, byte_vars)?;
+            let right = reduce_encoded_string(&bin.right, table_name, table_bytes, byte_vars)?;
             if left.table != right.table {
                 return None;
             }
@@ -301,9 +296,7 @@ fn reduce_encoded_string(
             //   `[...].iter().collect()`
             // The recognizer looks past these wrappers to the underlying array.
             let method = mc.method.to_string();
-            if mc.args.is_empty()
-                && matches!(method.as_str(), "into_iter" | "collect" | "iter")
-            {
+            if mc.args.is_empty() && matches!(method.as_str(), "into_iter" | "collect" | "iter") {
                 reduce_encoded_string(&mc.receiver, table_name, table_bytes, byte_vars)
             } else {
                 None
@@ -327,10 +320,7 @@ fn reduce_encoded_string(
 /// Mirrors `bv_binop.rs::bv32_op_name` exactly so the payload ctor names
 /// (`bv32.and/or/shl/lshr`) match what `render_bv_index_json` in
 /// `sugar-ir-compiler-smt-lib` expects.
-fn reduce_bv_index(
-    expr: &Expr,
-    byte_vars: &BTreeMap<String, Rc<Term>>,
-) -> Option<Rc<Term>> {
+fn reduce_bv_index(expr: &Expr, byte_vars: &BTreeMap<String, Rc<Term>>) -> Option<Rc<Term>> {
     match strip_parens(expr) {
         Expr::Binary(bin) => {
             let op_name = bv32_op_name(&bin.op)?;
@@ -381,11 +371,7 @@ fn bv32_op_name(op: &BinOp) -> Option<&'static str> {
 /// ctor names (`bv32.lshr` etc.) -- matching what `render_bv_index_json` in
 /// the SMT compiler expects.
 fn build_payload(byte_names: &[String], floor: &EncodedStringFloor) -> String {
-    let per_char: Vec<_> = floor
-        .indices
-        .iter()
-        .map(|t| term_to_value(t))
-        .collect();
+    let per_char: Vec<_> = floor.indices.iter().map(|t| term_to_value(t)).collect();
     let table: Vec<_> = floor
         .table
         .iter()
@@ -492,7 +478,10 @@ mod unit_tests {
             }
         };
         let result = call_recognizer(f);
-        assert!(result.is_some(), "str-param encoder with .as_bytes() and .collect() must be recognized");
+        assert!(
+            result.is_some(),
+            "str-param encoder with .as_bytes() and .collect() must be recognized"
+        );
     }
 
     #[test]

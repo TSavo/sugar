@@ -11,8 +11,8 @@
 use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
 use crate::sugar::array_repeat;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("repeat_term", recognize);
@@ -42,10 +42,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::source_fragment::{parse_file, SourceFragment};
     use crate::{
         sugar_ctx, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan, TemporalScope,
     };
-    use crate::sugar::source_fragment::{parse_file, SourceFragment};
     use std::collections::BTreeMap;
     use syn::{Expr, Item};
 
@@ -55,8 +55,12 @@ mod tests {
     #[test]
     fn from_src_repeat_literal_count_floor() {
         let file = parse_file("fn f() { let _ = [42u8; 3]; }");
-        let Item::Fn(ref f) = file.items[0] else { panic!("expected fn") };
-        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else { panic!("expected local") };
+        let Item::Fn(ref f) = file.items[0] else {
+            panic!("expected fn")
+        };
+        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else {
+            panic!("expected local")
+        };
         let repeat_expr = &*loc.init.as_ref().expect("no init").expr;
         let frag = SourceFragment::expr(repeat_expr, "<test>");
 
@@ -68,7 +72,9 @@ mod tests {
         );
 
         // Accessor gate: repeat_elem_frag returns the element.
-        let elem_frag = frag.repeat_elem_frag().expect("repeat_elem_frag must return Some");
+        let elem_frag = frag
+            .repeat_elem_frag()
+            .expect("repeat_elem_frag must return Some");
         assert_eq!(
             elem_frag.observed(),
             "PrimitiveLiteral",
@@ -106,8 +112,12 @@ mod tests {
     #[test]
     fn from_src_repeat_runtime_count_refusal() {
         let file = parse_file("fn f() { let _ = [0u8; N]; }");
-        let Item::Fn(ref f) = file.items[0] else { panic!("expected fn") };
-        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else { panic!("expected local") };
+        let Item::Fn(ref f) = file.items[0] else {
+            panic!("expected fn")
+        };
+        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else {
+            panic!("expected local")
+        };
         let repeat_expr = &*loc.init.as_ref().expect("no init").expr;
         let frag = SourceFragment::expr(repeat_expr, "<test>");
 

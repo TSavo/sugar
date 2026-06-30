@@ -23,9 +23,9 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_predicate", SugarRole::Term, recognize);
@@ -268,7 +268,10 @@ mod tests {
 
         // floor: the struct holds `method: String` -- a plain host string, not a syn node.
         // Mirrors what recognize stores: `method` comes straight from call_method_key().
-        assert_eq!(method, "is_some", "struct field `method` is a String, not syn::Ident");
+        assert_eq!(
+            method, "is_some",
+            "struct field `method` is a String, not syn::Ident"
+        );
     }
 
     /// Discrimination: `None.is_none()` -- same shape (zero-arg MethodCall) but

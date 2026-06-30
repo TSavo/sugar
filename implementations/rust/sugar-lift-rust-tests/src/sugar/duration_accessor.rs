@@ -42,8 +42,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 const NANOS_PER_SEC: u128 = 1_000_000_000;
 const NANOS_PER_MICRO: u128 = 1_000;
@@ -218,7 +218,10 @@ mod tests {
         assert_eq!(frag.call_arg_count(), 0);
 
         // Receiver is the Duration::from_millis(1500) Call expression.
-        let recv = frag.call_receiver().expect("has receiver").strip_refs_groups();
+        let recv = frag
+            .call_receiver()
+            .expect("has receiver")
+            .strip_refs_groups();
         assert_eq!(recv.observed(), "Call");
 
         // Fold receiver to total nanoseconds via duration_total_nanos.
@@ -230,7 +233,9 @@ mod tests {
         assert_eq!(n, 1_u128);
 
         // Build: struct holds only the computed i128 -- zero raw syn.
-        let sugar = DurationAccessorSugar { value: i128::try_from(n).unwrap() };
+        let sugar = DurationAccessorSugar {
+            value: i128::try_from(n).unwrap(),
+        };
         assert_eq!(sugar.value, 1_i128);
     }
 
@@ -272,7 +277,9 @@ mod tests {
         assert_eq!(n, 500_u128);
 
         // struct holds only the i128 result
-        let sugar = DurationAccessorSugar { value: i128::try_from(n).unwrap() };
+        let sugar = DurationAccessorSugar {
+            value: i128::try_from(n).unwrap(),
+        };
         assert_eq!(sugar.value, 500_i128);
 
         // as_nanos = total = 1_500_000_000

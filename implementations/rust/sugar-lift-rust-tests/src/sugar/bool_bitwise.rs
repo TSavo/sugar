@@ -8,9 +8,9 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 use sugar_ir_symbolic::{and_, or_, Formula};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_bool_bitwise", SugarRole::Constraint, recognize);
@@ -127,8 +127,14 @@ mod from_src_tests {
 
         assert_eq!(frag.observed(), "BinOp");
         assert_eq!(frag.binop_op_kind(), Some("BitAnd"));
-        assert!(frag.binop_left().is_some(), "BitAnd must have a left operand");
-        assert!(frag.binop_right().is_some(), "BitAnd must have a right operand");
+        assert!(
+            frag.binop_left().is_some(),
+            "BitAnd must have a left operand"
+        );
+        assert!(
+            frag.binop_right().is_some(),
+            "BitAnd must have a right operand"
+        );
     }
 
     /// `a | b` is observed as "BinOp", op_kind is "BitOr", and both children are present.
@@ -140,8 +146,14 @@ mod from_src_tests {
 
         assert_eq!(frag.observed(), "BinOp");
         assert_eq!(frag.binop_op_kind(), Some("BitOr"));
-        assert!(frag.binop_left().is_some(), "BitOr must have a left operand");
-        assert!(frag.binop_right().is_some(), "BitOr must have a right operand");
+        assert!(
+            frag.binop_left().is_some(),
+            "BitOr must have a left operand"
+        );
+        assert!(
+            frag.binop_right().is_some(),
+            "BitOr must have a right operand"
+        );
     }
 
     /// `(a & b)` -- strip_refs_groups peels the paren wrapper and exposes the BinOp.

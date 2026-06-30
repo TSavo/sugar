@@ -209,9 +209,7 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
                 .member_field(cid, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 == Some("callee")
-            && pool
-                .member_field(cid, "notes")
-                .and_then(|v| v.as_str())
+            && pool.member_field(cid, "notes").and_then(|v| v.as_str())
                 == Some("implication-lifted callsite bridge")
     });
     assert!(

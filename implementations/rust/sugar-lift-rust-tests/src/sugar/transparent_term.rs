@@ -6,8 +6,8 @@
 // factory.
 
 use crate::sugar::factory::{build_composite_frag, build_term_frag, SugarBuildCtx};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("transparent_term", recognize);
@@ -25,7 +25,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
 /// COMPOSITE recognizer for `Expr::Paren` / `Expr::Group`: recurse through to the inner
 /// expr's COMPOSITE Sugar. Byte-identical to the `Expr::Paren`/`Expr::Group` arms of the
 /// old fat `build_composite`.
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let inner = frag.transparent_inner()?;
     Some(build_composite_frag(&inner, fcx))
 }
@@ -45,10 +48,12 @@ mod tests {
         let expr = e("(42)");
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         assert_eq!(frag.observed(), "Paren", "observed must be Paren");
-        let inner = frag.transparent_inner()
+        let inner = frag
+            .transparent_inner()
             .expect("transparent_inner must be Some for Paren");
         assert_eq!(
-            inner.observed(), "PrimitiveLiteral",
+            inner.observed(),
+            "PrimitiveLiteral",
             "inner of (42) should be PrimitiveLiteral"
         );
     }

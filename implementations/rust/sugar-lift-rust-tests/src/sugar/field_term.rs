@@ -131,7 +131,11 @@ mod tests {
         let fn_frag = SourceFragment::from_node(FragNode::Item(item), file_str);
         let body = fn_frag.function_body().unwrap();
         let stmts = body.statements();
-        stmts[0].terms().into_iter().next().expect("term in first statement")
+        stmts[0]
+            .terms()
+            .into_iter()
+            .next()
+            .expect("term in first statement")
     }
 
     /// Positive: `s.x` -> observed "Field", attr_name "x", not unnamed, no tuple_index,
@@ -145,9 +149,14 @@ mod tests {
         assert_eq!(frag.observed(), "Field");
         assert_eq!(frag.attr_name().as_deref(), Some("x"));
         assert!(!frag.field_is_unnamed(), "named field must not be unnamed");
-        assert!(frag.field_tuple_index().is_none(), "named field has no tuple index");
+        assert!(
+            frag.field_tuple_index().is_none(),
+            "named field has no tuple index"
+        );
 
-        let base = frag.field_receiver().expect("field_receiver must return Some for Field node");
+        let base = frag
+            .field_receiver()
+            .expect("field_receiver must return Some for Field node");
         // The base of `s.x` is the path `s`.
         assert_eq!(base.observed(), "Name");
     }
@@ -163,9 +172,15 @@ mod tests {
         assert_eq!(frag.observed(), "Field");
         assert_eq!(frag.attr_name().as_deref(), Some("0"));
         assert!(frag.field_is_unnamed(), "tuple projection must be unnamed");
-        assert_eq!(frag.field_tuple_index(), Some(0), "tuple index must be 0 for .0");
+        assert_eq!(
+            frag.field_tuple_index(),
+            Some(0),
+            "tuple index must be 0 for .0"
+        );
 
-        let base = frag.field_receiver().expect("field_receiver must return Some");
+        let base = frag
+            .field_receiver()
+            .expect("field_receiver must return Some");
         assert_eq!(base.observed(), "Name");
     }
 
@@ -180,7 +195,13 @@ mod tests {
         assert_eq!(frag.observed(), "BinOp");
         assert!(frag.attr_name().is_none(), "BinOp has no attr_name");
         assert!(!frag.field_is_unnamed(), "BinOp must not be unnamed");
-        assert!(frag.field_tuple_index().is_none(), "BinOp has no tuple_index");
-        assert!(frag.field_receiver().is_none(), "BinOp has no field_receiver");
+        assert!(
+            frag.field_tuple_index().is_none(),
+            "BinOp has no tuple_index"
+        );
+        assert!(
+            frag.field_receiver().is_none(),
+            "BinOp has no field_receiver"
+        );
     }
 }

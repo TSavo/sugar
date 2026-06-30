@@ -51,8 +51,8 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    const_eval, const_fold_int_term, const_val_term, num, path_to_name,
-    ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    const_eval, const_fold_int_term, const_val_term, num, path_to_name, ConstVal, Desugared,
+    Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -102,7 +102,9 @@ impl IndexSugar {
     /// needs without storing raw syn in the struct.
     pub(crate) fn new(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
         let boundary_token_str = frag.token_str();
-        let receiver_frag = frag.index_receiver().expect("IndexSugar::new: missing receiver");
+        let receiver_frag = frag
+            .index_receiver()
+            .expect("IndexSugar::new: missing receiver");
         let index_frag = frag.index_index().expect("IndexSugar::new: missing index");
 
         // Pre-compute const int index value. as_expr() lives here (not in recognize body).
@@ -305,27 +307,27 @@ fn index_gap(reason: &str) -> ! {
 /// full-radix parsing (hex, octal, binary) via `int_lit_radix_digits` logic.
 fn const_int_from_expr(expr: &Expr) -> Option<i128> {
     match expr {
-        Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => {
             let mut text = i.to_string();
             let suffix = i.suffix();
             if !suffix.is_empty() && text.ends_with(suffix) {
                 text.truncate(text.len() - suffix.len());
             }
             let text = text.replace('_', "");
-            let (radix, digits) =
-                if let Some(r) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-                    (16u32, r.to_string())
-                } else if let Some(r) =
-                    text.strip_prefix("0o").or_else(|| text.strip_prefix("0O"))
-                {
-                    (8u32, r.to_string())
-                } else if let Some(r) =
-                    text.strip_prefix("0b").or_else(|| text.strip_prefix("0B"))
-                {
-                    (2u32, r.to_string())
-                } else {
-                    (10u32, text)
-                };
+            let (radix, digits) = if let Some(r) =
+                text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
+            {
+                (16u32, r.to_string())
+            } else if let Some(r) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+                (8u32, r.to_string())
+            } else if let Some(r) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+                (2u32, r.to_string())
+            } else {
+                (10u32, text)
+            };
             i128::from_str_radix(&digits, radix).ok()
         }
         Expr::Paren(p) => const_int_from_expr(&p.expr),
@@ -341,7 +343,11 @@ fn const_like_path_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Path(p) if p.qself.is_none() => {
             let name = path_to_name(&p.path);
-            if is_const_like_name(&name) { Some(name) } else { None }
+            if is_const_like_name(&name) {
+                Some(name)
+            } else {
+                None
+            }
         }
         Expr::Paren(p) => const_like_path_name(&p.expr),
         Expr::Group(g) => const_like_path_name(&g.expr),
@@ -356,7 +362,9 @@ fn is_const_like_name(name: &str) -> bool {
     let last = name.rsplit("::").next().unwrap_or(name).trim();
     !last.is_empty()
         && last.chars().any(|c| c.is_ascii_uppercase())
-        && last.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && last
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 #[cfg(test)]
@@ -376,8 +384,12 @@ mod tests {
     fn node_from_src(src: &str) -> IndexSugar {
         use crate::sugar::source_fragment::{parse_file, SourceFragment};
         let file = parse_file(&format!("fn f() {{ let _ = {src}; }}"));
-        let syn::Item::Fn(ref f) = file.items[0] else { panic!("expected fn") };
-        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else { panic!("expected local") };
+        let syn::Item::Fn(ref f) = file.items[0] else {
+            panic!("expected fn")
+        };
+        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else {
+            panic!("expected local")
+        };
         let index_expr = &*loc.init.as_ref().expect("no init").expr;
         let frag = SourceFragment::expr(index_expr, "<test>");
         let scope = TemporalScope::new("test", TemporalPlan::default());
@@ -408,8 +420,12 @@ mod tests {
 
         let src = "fn f() { let _ = a[i]; }";
         let file = parse_file(src);
-        let syn::Item::Fn(ref f) = file.items[0] else { panic!("expected fn") };
-        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else { panic!("expected local") };
+        let syn::Item::Fn(ref f) = file.items[0] else {
+            panic!("expected fn")
+        };
+        let syn::Stmt::Local(ref loc) = f.block.stmts[0] else {
+            panic!("expected local")
+        };
         let index_expr = &*loc.init.as_ref().expect("no init").expr;
         let frag = SourceFragment::expr(index_expr, "<test>");
 
@@ -439,10 +455,16 @@ mod tests {
         assert_eq!(args.len(), 2, "index ctor must have exactly 2 args");
 
         // Container is the FIRST arg, index the SECOND (order is significant).
-        let Term::Var { name: ref container_name } = *args[0] else {
+        let Term::Var {
+            name: ref container_name,
+        } = *args[0]
+        else {
             panic!("expected Var for container arg, got {:?}", args[0]);
         };
-        let Term::Var { name: ref index_name } = *args[1] else {
+        let Term::Var {
+            name: ref index_name,
+        } = *args[1]
+        else {
             panic!("expected Var for index arg, got {:?}", args[1]);
         };
         assert_eq!(container_name, "a");

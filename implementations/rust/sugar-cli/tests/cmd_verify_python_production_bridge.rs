@@ -427,7 +427,9 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .mementos
         .iter()
         .find(|(_, env)| {
-            if let Ok(sugar_proof_envelope::Member::Bridge(b)) = sugar_proof_envelope::Member::from_value(env) {
+            if let Ok(sugar_proof_envelope::Member::Bridge(b)) =
+                sugar_proof_envelope::Member::from_value(env)
+            {
                 b.source_symbol == "double"
             } else {
                 false
@@ -441,9 +443,13 @@ fn python_mint_auto_writes_body_discharge_bridge() {
             )
         });
 
-    let bridge_env = pool.mementos.get(&bridge_cid)
+    let bridge_env = pool
+        .mementos
+        .get(&bridge_cid)
         .expect("bridge CID must exist in pool");
-    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) = sugar_proof_envelope::Member::from_value(bridge_env) else {
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) =
+        sugar_proof_envelope::Member::from_value(bridge_env)
+    else {
         panic!("bridge must parse as typed BridgeMember");
     };
     let target_cid = bridge_m.target_contract_cid.as_str().to_string();
@@ -452,12 +458,18 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         pool.mementos.contains_key(&target_cid),
         "bridge.targetContractCid {target_cid} must resolve to a member"
     );
-    let target_env = pool.mementos.get(&target_cid)
+    let target_env = pool
+        .mementos
+        .get(&target_cid)
         .expect("bridge target must exist in pool");
-    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) = sugar_proof_envelope::Member::from_value(target_env) else {
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) =
+        sugar_proof_envelope::Member::from_value(target_env)
+    else {
         panic!("bridge target must be a contract memento");
     };
-    let formals = target_contract.formals.as_ref()
+    let formals = target_contract
+        .formals
+        .as_ref()
         .expect("tool-written op-contract must carry formals");
     assert_eq!(
         formals.first().map(|s| s.as_str()),

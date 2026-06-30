@@ -4,8 +4,8 @@
 // live here, ahead of the generic macro fallback.
 
 use crate::sugar::factory::{build_literal_string_term_node_frag, SugarBuildCtx};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -52,7 +52,10 @@ mod tests {
         assert_eq!(name.as_str(), "concat");
 
         // The struct field is a plain String, not a syn node.
-        assert_eq!(name, "concat", "macro_name() returns String, not syn::ExprMacro");
+        assert_eq!(
+            name, "concat",
+            "macro_name() returns String, not syn::ExprMacro"
+        );
     }
 
     /// Discrimination: `vec!["a"]` has macro_name "vec", not "concat".
@@ -72,7 +75,11 @@ mod tests {
 
         assert_eq!(frag.observed(), "Macro");
         let name = frag.macro_name().expect("vec! has a macro name");
-        assert_ne!(name.as_str(), "concat", "vec! must not pass the concat! guard");
+        assert_ne!(
+            name.as_str(),
+            "concat",
+            "vec! must not pass the concat! guard"
+        );
     }
 
     /// Structural: a plain string literal is not a macro; macro_name() returns None.

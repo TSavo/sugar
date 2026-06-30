@@ -19,9 +19,9 @@ use sugar_ir_symbolic::{num, Term};
 use syn::{BinOp, Expr, Pat, Stmt};
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{parse_int_lit, simple_path_name, strip_refs_groups, Sugar};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(

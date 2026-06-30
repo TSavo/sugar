@@ -15,8 +15,8 @@
 //   * `StatementAsyncFutureSugar` holds `boundary: String` -- zero raw-syn fields.
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::statement_effect("statement_async_future", recognize);
@@ -83,10 +83,15 @@ mod tests {
         // token_str() gives the boundary -- no raw-syn escape
         let boundary = frag.token_str();
         assert!(!boundary.is_empty(), "boundary must not be empty");
-        assert!(boundary.contains("async"), "boundary should contain 'async': {boundary}");
+        assert!(
+            boundary.contains("async"),
+            "boundary should contain 'async': {boundary}"
+        );
 
         // Build: struct holds only a String (the migration invariant)
-        let sugar = StatementAsyncFutureSugar { boundary: boundary.clone() };
+        let sugar = StatementAsyncFutureSugar {
+            boundary: boundary.clone(),
+        };
         assert_eq!(sugar.boundary, boundary);
     }
 

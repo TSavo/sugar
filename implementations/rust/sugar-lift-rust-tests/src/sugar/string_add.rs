@@ -5,8 +5,8 @@
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::format::{build_literal_string_term_node_frag, is_factory_string_add_shape_frag};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("string_add", &["binop"], recognize);

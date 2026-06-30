@@ -52,9 +52,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("path", recognize);
@@ -176,15 +176,22 @@ mod tests {
         assert_eq!(path_frag.observed(), "Name");
 
         // path_full_name gives the path key PathSugar will hold
-        let path_key = path_frag.path_full_name().expect("path_full_name on a Name frag");
+        let path_key = path_frag
+            .path_full_name()
+            .expect("path_full_name on a Name frag");
         assert_eq!(path_key, "x");
 
         // path_token_str gives the boundary string
-        let boundary = path_frag.path_token_str().expect("path_token_str on a Name frag");
+        let boundary = path_frag
+            .path_token_str()
+            .expect("path_token_str on a Name frag");
         assert_eq!(boundary, "x");
 
         // Build: PathSugar holds only Strings -- no raw syn field
-        let node = PathSugar { path_key: path_key.clone(), boundary: boundary.clone() };
+        let node = PathSugar {
+            path_key: path_key.clone(),
+            boundary: boundary.clone(),
+        };
         assert_eq!(node.path_key, "x");
         assert_eq!(node.boundary, "x");
     }

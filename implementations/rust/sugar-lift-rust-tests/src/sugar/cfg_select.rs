@@ -368,7 +368,8 @@ mod from_src_tests {
     /// macro_token_stream() returns Some (the arm tokens).
     #[test]
     fn from_src_cfg_select_macro_name_and_token_stream() {
-        let src = r#"fn f() { let _ = cfg_select! { debug_assertions => { assert!(true); } _ => {} }; }"#;
+        let src =
+            r#"fn f() { let _ = cfg_select! { debug_assertions => { assert!(true); } _ => {} }; }"#;
         let file = parse_file(src);
         let frag = macro_frag_from(&file, "f.rs");
 
@@ -408,7 +409,9 @@ mod from_src_tests {
         let item = &file.items[0];
         let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
         let body = frag.function_body().expect("fn body");
-        let call_frag = body.statements()[0].assign_value().expect("call assign val");
+        let call_frag = body.statements()[0]
+            .assign_value()
+            .expect("call assign val");
 
         assert_eq!(call_frag.observed(), "Call");
         assert!(

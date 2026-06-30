@@ -13,8 +13,8 @@ use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term_frag, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    cast_const_fold_value, const_fold_int_term,
-    str_const, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    cast_const_fold_value, const_fold_int_term, str_const, u128_term, Desugared, Effect, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -171,18 +171,12 @@ mod tests {
         let expr = e("x as u32");
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         assert_eq!(frag.observed(), "Cast");
-        assert!(
-            frag.cast_is_infer() == false,
-            "u32 cast must not be infer"
-        );
+        assert!(frag.cast_is_infer() == false, "u32 cast must not be infer");
         assert!(
             frag.cast_is_slice_ref() == false,
             "u32 cast is not a slice ref"
         );
-        assert!(
-            frag.cast_is_raw_ptr() == false,
-            "u32 cast is not a raw ptr"
-        );
+        assert!(frag.cast_is_raw_ptr() == false, "u32 cast is not a raw ptr");
         assert!(
             frag.cast_is_shared_dyn_any() == false,
             "u32 cast is not dyn Any"
@@ -193,7 +187,11 @@ mod tests {
             "scalar_type_key must be u32"
         );
         let inner = frag.cast_inner_frag().expect("inner must be Some for Cast");
-        assert_eq!(inner.observed(), "Name", "inner of `x as u32` is a path (Name)");
+        assert_eq!(
+            inner.observed(),
+            "Name",
+            "inner of `x as u32` is a path (Name)"
+        );
     }
 
     // --- discrimination: non-Cast returns None from cast_inner_frag ----------
@@ -203,7 +201,10 @@ mod tests {
         // discrimination: a BinOp fragment must return None from cast_inner_frag
         let expr = e("1 + 2");
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
-        assert!(frag.cast_inner_frag().is_none(), "BinOp must not have cast_inner_frag");
+        assert!(
+            frag.cast_inner_frag().is_none(),
+            "BinOp must not have cast_inner_frag"
+        );
         assert!(
             frag.cast_scalar_type_key().is_none(),
             "BinOp must not have a scalar cast key"
@@ -219,8 +220,14 @@ mod tests {
         let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
         assert_eq!(frag.observed(), "Cast");
         assert!(frag.cast_is_infer(), "x as _ must be cast_is_infer");
-        assert!(!frag.cast_is_slice_ref(), "x as _ must not be cast_is_slice_ref");
-        assert!(!frag.cast_is_raw_ptr(), "x as _ must not be cast_is_raw_ptr");
+        assert!(
+            !frag.cast_is_slice_ref(),
+            "x as _ must not be cast_is_slice_ref"
+        );
+        assert!(
+            !frag.cast_is_raw_ptr(),
+            "x as _ must not be cast_is_raw_ptr"
+        );
         assert!(frag.cast_inner_frag().is_some(), "inner must be present");
     }
 }

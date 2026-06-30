@@ -17,6 +17,7 @@ use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     canonical_term_sig, closure_body_is_side_effecting, closure_single_param_ident,
     collect_assertion_entries, const_acc_init_value, const_fold_acc_update_value,
@@ -26,7 +27,6 @@ use crate::{
     DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("fold", recognize_composite);
@@ -35,7 +35,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the
 /// walk falls through to the next method-call recognizer). Mirrors the FIRST arm of the
 /// old `build_method_call_composite` chain — BEFORE `for_each`.
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
         Expr::MethodCall(call) => {

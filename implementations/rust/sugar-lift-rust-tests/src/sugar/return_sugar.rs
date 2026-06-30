@@ -16,22 +16,26 @@
 
 use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("return_sugar", recognize);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Arm 1: explicit `return <expr>;` or `return <expr>` (with or without semicolon).
     if let Some(val_frag) = frag.return_value() {
-        return Some(Box::new(ReturnSugar { body: SugarBody::term_frag(&val_frag, fcx) }));
+        return Some(Box::new(ReturnSugar {
+            body: SugarBody::term_frag(&val_frag, fcx),
+        }));
     }
     // Arm 2: tail expression (no trailing semicolon) that is not a control-flow block.
     // `if`/`block`/`unsafe`/`return` blocks in tail position have their own claims or
     // are excluded by the accessor; ReturnSugar only takes over for "simple" tail values
     // (literals, calls, field accesses, binops, etc.).
     if let Some(tail_frag) = frag.stmt_tail_expr_noncf() {
-        return Some(Box::new(ReturnSugar { body: SugarBody::term_frag(&tail_frag, fcx) }));
+        return Some(Box::new(ReturnSugar {
+            body: SugarBody::term_frag(&tail_frag, fcx),
+        }));
     }
     None
 }
@@ -74,7 +78,11 @@ mod from_src_tests {
         let file = parse_file(src);
         let frag = first_stmt(&file);
 
-        assert_eq!(frag.observed(), "Return", "explicit return maps to stmt_kind Return");
+        assert_eq!(
+            frag.observed(),
+            "Return",
+            "explicit return maps to stmt_kind Return"
+        );
         assert!(
             frag.return_value().is_some(),
             "return_value() must be Some for `return 42;`"
@@ -114,7 +122,11 @@ mod from_src_tests {
         let file = parse_file(src);
         let frag = first_stmt(&file);
 
-        assert_eq!(frag.observed(), "Expr", "tail literal stmt is Expr in stmt_kind");
+        assert_eq!(
+            frag.observed(),
+            "Expr",
+            "tail literal stmt is Expr in stmt_kind"
+        );
         assert!(
             frag.return_value().is_none(),
             "return_value() must be None for a tail literal (not a Return stmt)"
