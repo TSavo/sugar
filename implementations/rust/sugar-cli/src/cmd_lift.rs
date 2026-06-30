@@ -7017,19 +7017,17 @@ fn generalized_formula_rows(formula: &Value) -> Vec<String> {
 }
 
 fn generalized_base64_block_formula(formula: &Value) -> Option<String> {
-    if formula.get("kind").and_then(Value::as_str) != Some("atomic")
-        || formula.get("name").and_then(Value::as_str) != Some("str.eq-bv-blocks")
-    {
-        return None;
-    }
-    let args = formula.get("args").and_then(Value::as_array)?;
-    if args.len() != 2 {
-        return None;
-    }
-    let payload = base64_payload_from_term(&args[1])?;
-    let vars = payload_vars(&payload);
-    let output = generalized_call_output(&args[0], &vars);
-    let blocks = format_base64_payload_with_input(&payload, &format!("[{}]", vars.join(", ")));
+    let parts = base64_block_formula_parts(formula)?;
+    let vars = payload_vars(&parts.payload);
+    let output = generalized_call_output(parts.subject, &vars);
+    let input = parts.input.map(proofir_term_to_fol).unwrap_or_else(|| {
+        if vars.is_empty() {
+            format_base64_payload_input(&parts.payload)
+        } else {
+            format!("[{}]", vars.join(", "))
+        }
+    });
+    let blocks = format_base64_payload_with_input(&parts.payload, &input);
     let quantifiers = vars
         .iter()
         .map(|name| format!("∀ {name}:Int. "))
@@ -7108,21 +7106,11 @@ fn format_formula_join_with_instances(operands: &[Value], separator: &str) -> St
 }
 
 fn instantiated_base64_block_formula(formula: &Value) -> Option<String> {
-    if formula.get("kind").and_then(Value::as_str) != Some("atomic")
-        || formula.get("name").and_then(Value::as_str) != Some("str.eq-bv-blocks")
-    {
-        return None;
-    }
-    let args = formula.get("args").and_then(Value::as_array)?;
-    if args.len() != 2 {
-        return None;
-    }
-    let payload = base64_payload_from_term(&args[1])?;
-    let instantiation = format_instantiation(&payload);
-    Some(format!(
-        "{instantiation} ⊢ {}",
-        proofir_formula_to_fol(formula)
-    ))
+    let parts = base64_block_formula_parts(formula)?;
+    let rendered = format_base64_block_formula(&parts);
+    format_instantiation(&parts.payload)
+        .map(|instantiation| format!("{instantiation} ⊢ {rendered}"))
+        .or(Some(rendered))
 }
 
 fn proofir_formula_to_fol(formula: &Value) -> String {
@@ -7140,6 +7128,11 @@ fn proofir_formula_to_fol(formula: &Value) -> String {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            if name == "str.eq-bv-blocks" {
+                if let Some(rendered) = format_base64_block_formula_from_formula(formula) {
+                    return rendered;
+                }
+            }
             if args.is_empty() {
                 return match name {
                     "true" | "⊤" => "⊤".to_string(),
@@ -7446,16 +7439,59 @@ fn render_embedded_proofir_json(value: &str) -> Option<String> {
 
 fn render_structured_payload(value: &Value) -> Option<String> {
     let payload = base64_payload_from_value(value)?;
-    let input = format_scalar_array(&payload.input_bytes);
+    let input = format_base64_payload_input(&payload);
     Some(format_base64_payload_with_input(&payload, &input))
 }
 
 #[derive(Debug, Clone)]
 struct Base64BlockPayload {
-    input_bytes: Vec<Value>,
+    input_bytes: Option<Vec<Value>>,
     vars: Vec<String>,
     per_char: Vec<Value>,
     table: Option<String>,
+}
+
+struct Base64BlockFormulaParts<'a> {
+    subject: &'a Value,
+    input: Option<&'a Value>,
+    payload: Base64BlockPayload,
+}
+
+fn base64_block_formula_parts(formula: &Value) -> Option<Base64BlockFormulaParts<'_>> {
+    if formula.get("kind").and_then(Value::as_str) != Some("atomic")
+        || formula.get("name").and_then(Value::as_str) != Some("str.eq-bv-blocks")
+    {
+        return None;
+    }
+    let args = formula.get("args").and_then(Value::as_array)?;
+    match args.as_slice() {
+        [subject, payload] => Some(Base64BlockFormulaParts {
+            subject,
+            input: None,
+            payload: base64_payload_from_term(payload)?,
+        }),
+        [subject, input, payload] => Some(Base64BlockFormulaParts {
+            subject,
+            input: Some(input),
+            payload: base64_payload_from_term(payload)?,
+        }),
+        _ => None,
+    }
+}
+
+fn format_base64_block_formula_from_formula(formula: &Value) -> Option<String> {
+    let parts = base64_block_formula_parts(formula)?;
+    Some(format_base64_block_formula(&parts))
+}
+
+fn format_base64_block_formula(parts: &Base64BlockFormulaParts<'_>) -> String {
+    let subject = proofir_term_to_fol(parts.subject);
+    let input = parts
+        .input
+        .map(proofir_term_to_fol)
+        .unwrap_or_else(|| format_base64_payload_input(&parts.payload));
+    let blocks = format_base64_payload_with_input(&parts.payload, &input);
+    format!("str.eq-bv-blocks({subject}, {blocks})")
 }
 
 fn base64_payload_from_term(term: &Value) -> Option<Base64BlockPayload> {
@@ -7465,7 +7501,7 @@ fn base64_payload_from_term(term: &Value) -> Option<Base64BlockPayload> {
 }
 
 fn base64_payload_from_value(value: &Value) -> Option<Base64BlockPayload> {
-    let input_bytes = value.get("input_bytes").and_then(Value::as_array)?.clone();
+    let input_bytes = value.get("input_bytes").and_then(Value::as_array).cloned();
     let per_char = value.get("per_char").and_then(Value::as_array)?.clone();
     let vars = value
         .get("vars")
@@ -7505,12 +7541,15 @@ fn format_base64_payload_with_input(payload: &Base64BlockPayload, input: &str) -
 }
 
 fn payload_vars(payload: &Base64BlockPayload) -> Vec<String> {
-    if payload.vars.len() == payload.input_bytes.len() && !payload.vars.is_empty() {
-        return payload.vars.clone();
+    if let Some(input_bytes) = payload.input_bytes.as_ref() {
+        if payload.vars.len() == input_bytes.len() && !payload.vars.is_empty() {
+            return payload.vars.clone();
+        }
+        return (0..input_bytes.len())
+            .map(|index| format!("b{index}"))
+            .collect();
     }
-    (0..payload.input_bytes.len())
-        .map(|index| format!("b{index}"))
-        .collect()
+    payload.vars.clone()
 }
 
 fn generalized_call_output(term: &Value, vars: &[String]) -> String {
@@ -7524,13 +7563,28 @@ fn generalized_call_output(term: &Value, vars: &[String]) -> String {
     "output".to_string()
 }
 
-fn format_instantiation(payload: &Base64BlockPayload) -> String {
-    payload_vars(payload)
-        .iter()
-        .zip(payload.input_bytes.iter())
-        .map(|(name, value)| format!("{name}={}", scalar_value_to_fol(value)))
-        .collect::<Vec<_>>()
-        .join(", ")
+fn format_instantiation(payload: &Base64BlockPayload) -> Option<String> {
+    let input_bytes = payload.input_bytes.as_ref()?;
+    Some(
+        payload_vars(payload)
+            .iter()
+            .zip(input_bytes.iter())
+            .map(|(name, value)| format!("{name}={}", scalar_value_to_fol(value)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn format_base64_payload_input(payload: &Base64BlockPayload) -> String {
+    if let Some(input_bytes) = payload.input_bytes.as_ref() {
+        return format_scalar_array(input_bytes);
+    }
+    let vars = payload_vars(payload);
+    if vars.is_empty() {
+        "?".to_string()
+    } else {
+        format!("[{}]", vars.join(", "))
+    }
 }
 
 fn format_scalar_array(values: &[Value]) -> String {
@@ -8756,6 +8810,34 @@ mod tests {
         assert_eq!(
             proofir_formula_to_fol(&formula),
             "str.eq-bv-blocks(call:encodeBase64String(\"foo\"), base64.blocks(input=[102, 111, 111], chars=[((bits >>> 18) & 63)], table=\"ABC+/\"))"
+        );
+    }
+
+    #[test]
+    fn proofir_fol_printer_summarizes_general_bv_blocks_payloads() {
+        let formula = serde_json::json!({
+            "kind": "atomic",
+            "name": "str.eq-bv-blocks",
+            "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "var", "name": "value"},
+                {
+                    "kind": "const",
+                    "value": "{\"per_char\":[{\"args\":[{\"kind\":\"var\",\"name\":\"byte_value_0\"},{\"kind\":\"const\",\"sort\":{\"kind\":\"primitive\",\"name\":\"Int\"},\"value\":15}],\"kind\":\"ctor\",\"name\":\"bv32.and\"}],\"table\":[65,66,67],\"vars\":[\"byte_value_0\"]}",
+                    "sort": {"kind": "primitive", "name": "String"}
+                }
+            ]
+        });
+
+        let rendered = proofir_formula_to_fol(&formula);
+
+        assert_eq!(
+            rendered,
+            "str.eq-bv-blocks(out, base64.blocks(input=value, chars=[(byte_value_0 & 15)], table=\"ABC\"))"
+        );
+        assert!(
+            !rendered.contains("\"per_char\"") && !rendered.contains("\"kind\""),
+            "general encoder visual FOL must not leak serialized payload JSON: {rendered}"
         );
     }
 
