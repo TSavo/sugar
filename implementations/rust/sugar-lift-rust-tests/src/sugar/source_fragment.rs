@@ -15,6 +15,7 @@
 //!   * there is no `ast.iter_fields` reflection, so decomposition is hand-matched.
 
 use syn::spanned::Spanned;
+use quote;
 
 /// A Python suite has no AST node; a Rust block (`{ stmt; stmt; }`) does, but a bare
 /// `&[Stmt]` (a function body, an `if`/`else` branch) does not. `Block` is the synthetic
@@ -46,6 +47,43 @@ pub(crate) struct SourceFragment<'a> {
     pub(crate) file: &'a str,
     pub(crate) line: usize,
     pub(crate) col: usize,
+}
+
+/// Data decoded from an `Expr::Lit` (`PrimitiveLiteral` / `Lit`) fragment,
+/// holding ONLY host-native types -- no raw `syn`. `CStr` is absent because
+/// it is not a scalar liftable by `TermLiteralSugar` (the recognizer returns
+/// `None` for it). `Other` captures `Verbatim` and any future non-exhaustive
+/// `syn::Lit` variants so the sugar can report a consistent gap panic.
+///
+/// All variants mirror the `syn::Lit` arms of `translate_lit` one-to-one;
+/// `scalar_lit_to_term` in `term_literal.rs` produces a byte-identical `Term`
+/// from this enum as `translate_lit` would from the original `&ExprLit`.
+#[derive(Clone, Debug)]
+pub(crate) enum ScalarLit {
+    /// A `syn::Lit::Int` literal.
+    ///
+    /// `token_text` is the full source token (`syn::LitInt::to_string()`),
+    /// e.g., `"42"`, `"0xFFu8"`, `"0b1010usize"`. `suffix` is the type
+    /// suffix (`syn::LitInt::suffix()`), e.g., `""`, `"u8"`, `"u128"`.
+    Int { token_text: String, suffix: String },
+    /// A `syn::Lit::Float` literal.
+    ///
+    /// `base10_digits` is `syn::LitFloat::base10_digits()` (no suffix;
+    /// may still contain `e`/`E` exponent markers and underscores).
+    Float { base10_digits: String },
+    /// A `syn::Lit::Str` literal. `value` is the unescaped string content.
+    Str(String),
+    /// A `syn::Lit::Char` literal.
+    Char(char),
+    /// A `syn::Lit::Bool` literal.
+    Bool(bool),
+    /// A `syn::Lit::ByteStr` literal (`b"…"`). `bytes` is the decoded byte vector.
+    ByteStr(Vec<u8>),
+    /// A `syn::Lit::Byte` literal (`b'x'`). `value` is the decoded byte.
+    Byte(u8),
+    /// Any other `syn::Lit` variant (e.g., `Verbatim`). `token` is the
+    /// token-stream string for the gap panic message.
+    Other(String),
 }
 
 impl<'a> SourceFragment<'a> {
@@ -378,6 +416,44 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- Path accessors ----------------------------------------------------
+
+    /// The full path name for an `Expr::Path` node -- segments joined with `::`,
+    /// argument keys included. For `x` this is `"x"`; for `Foo::BAR` it is
+    /// `"Foo::BAR"`. Equivalent to `crate::path_to_name` applied to the inner
+    /// `Path`. Returns `None` for non-path nodes.
+    pub(crate) fn path_full_name(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => Some(crate::path_to_name(&p.path)),
+            _ => None,
+        }
+    }
+
+    /// The token-stream string for an `Expr::Path` node (e.g. `"Foo :: BAR"`).
+    /// Used for diagnostic `boundary` strings in `AmbiguousTemporalIdentity`
+    /// effects. Returns `None` for non-path nodes.
+    pub(crate) fn path_token_str(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => {
+                Some(quote::ToTokens::to_token_stream(p).to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// For an `Expr::Path` with NO qualified self and a single bare ident,
+    /// returns that ident string. Returns `None` for qualified paths
+    /// (`<T as Trait>::Assoc`), multi-segment paths, or non-path nodes.
+    /// Differs from `name_id()` in that `qself` must be absent.
+    pub(crate) fn path_simple_ident(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) if p.qself.is_none() => {
+                p.path.get_ident().map(|i| i.to_string())
+            }
+            _ => None,
+        }
+    }
+
     // -- Escape-hatch accessors (transitional shim) -------------------------
 
     pub(crate) fn as_expr(&self) -> Option<&syn::Expr> {
@@ -397,6 +473,110 @@ impl<'a> SourceFragment<'a> {
     pub(crate) fn as_item(&self) -> Option<&syn::Item> {
         match &self.node {
             FragNode::Item(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    // -- Token-stream string accessor -----------------------------------------
+
+    /// Normalized token-stream string for this fragment (whitespace-collapsed).
+    /// Mirrors `token_key` in `lib.rs`: joins whitespace-split tokens with a
+    /// single space. Used to produce `boundary` strings without escaping to
+    /// raw syn in recognizer bodies.
+    pub(crate) fn token_str(&self) -> String {
+        let ts = match &self.node {
+            FragNode::Expr(e) => quote::ToTokens::to_token_stream(e),
+            FragNode::Stmt(s) => quote::ToTokens::to_token_stream(s),
+            FragNode::Item(i) => quote::ToTokens::to_token_stream(i),
+            FragNode::File(f) => quote::ToTokens::to_token_stream(f),
+            FragNode::Block(block) => {
+                let mut ts = proc_macro2::TokenStream::new();
+                for stmt in block.stmts {
+                    quote::ToTokens::to_tokens(stmt, &mut ts);
+                }
+                ts
+            }
+        };
+        ts.to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    // -- Source-location method check -----------------------------------------
+
+    /// Returns `Some(())` if the fragment is a `Location::caller().file()`,
+    /// `.line()`, or `.column()` call chain. Wraps the `source_location_runtime_reason`
+    /// check from `lib.rs` without exposing raw `&Expr` to callers.
+    pub(crate) fn source_location_method_check(&self) -> Option<()> {
+        match &self.node {
+            FragNode::Expr(e) => crate::source_location_runtime_reason(e).map(|_| ()),
+            _ => None,
+        }
+    }
+
+    // -- Macro name accessor --------------------------------------------------
+
+    /// For an `Expr::Macro` fragment, returns the last path-segment ident of
+    /// the macro path (e.g. `"panic"` for `panic!(...)`). Returns `None` for
+    /// any non-macro fragment.
+    pub(crate) fn macro_name(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Macro(m)) => {
+                m.mac.path.segments.last().map(|seg| seg.ident.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    // -- Atomic-load method check ---------------------------------------------
+
+    /// Returns `true` if the fragment is a `.load(ordering)` method call whose
+    /// receiver is NOT a simple local-ident path -- the shape of an atomic
+    /// field/deref load. The receiver check mirrors `simple_path_name` (recurses
+    /// through `Paren`/`Group`) so a parenthesised simple path is excluded just
+    /// as the original shim excluded it.
+    pub(crate) fn is_atomic_load_method(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(call)) => {
+                call.method == "load"
+                    && call.args.len() == 1
+                    && crate::simple_path_name(&call.receiver).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    // -- Scalar literal accessor (typed; no raw-syn in callers) ---------------
+
+    /// Decode the scalar literal held by an `Expr::Lit` fragment into a
+    /// [`ScalarLit`], holding only host-native types. Returns `None` for
+    /// `CStr` literals (not liftable as a scalar) and for any non-`Expr::Lit`
+    /// fragment. All syn field access lives HERE -- callers see only the enum.
+    pub(crate) fn scalar_lit(&self) -> Option<ScalarLit> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Lit(l)) => match &l.lit {
+                // CStr is not a scalar liftable by TermLiteralSugar.
+                syn::Lit::CStr(_) => None,
+                syn::Lit::Int(i) => Some(ScalarLit::Int {
+                    token_text: i.to_string(),
+                    suffix: i.suffix().to_string(),
+                }),
+                syn::Lit::Float(f) => Some(ScalarLit::Float {
+                    base10_digits: f.base10_digits().to_string(),
+                }),
+                syn::Lit::Str(s) => Some(ScalarLit::Str(s.value())),
+                syn::Lit::Char(c) => Some(ScalarLit::Char(c.value())),
+                syn::Lit::Bool(b) => Some(ScalarLit::Bool(b.value)),
+                syn::Lit::ByteStr(bs) => Some(ScalarLit::ByteStr(bs.value())),
+                syn::Lit::Byte(b) => Some(ScalarLit::Byte(b.value())),
+                // Verbatim or any future non-exhaustive syn::Lit variant.
+                other => {
+                    let mut ts = proc_macro2::TokenStream::new();
+                    quote::ToTokens::to_tokens(other, &mut ts);
+                    Some(ScalarLit::Other(ts.to_string()))
+                }
+            },
             _ => None,
         }
     }

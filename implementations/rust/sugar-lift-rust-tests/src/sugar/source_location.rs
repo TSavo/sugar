@@ -6,21 +6,20 @@
 // `Location::caller().file()` / `.line()` / `.column()` observe the runtime
 // callsite location and must not fall through to the generic method EUF bridge.
 
-use syn::Expr;
-
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{source_location_runtime_reason, token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("source_location", &["method"], recognize);
 
 pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    source_location_runtime_reason(expr)?;
+    // `source_location_method_check` wraps `source_location_runtime_reason` without
+    // exposing raw `&Expr` to this recognizer body.
+    frag.source_location_method_check()?;
     Some(Box::new(SourceLocationSugar {
-        boundary: token_key(expr),
+        boundary: frag.token_str(),
     }))
 }
 
@@ -42,6 +41,7 @@ mod tests {
     use crate::{
         sugar_ctx, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan, TemporalScope,
     };
+    use syn::Expr;
 
     fn run(src: &str) -> Outcome {
         let expr: Expr = syn::parse_str(src).expect("parse expr");

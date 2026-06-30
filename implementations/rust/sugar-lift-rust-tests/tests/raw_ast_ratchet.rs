@@ -29,7 +29,9 @@ use std::path::PathBuf;
 /// taking `&SourceFragment` but still shim via `as_expr()`/`as_stmt()`/
 /// `as_item()` in the body. factory.rs is excluded (doc comment only,
 /// no real function body).
-const RAW_SYN_CEILING: usize = 124;
+/// term_literal.rs migrated in this wave: ceiling lowered 124→123→122.
+/// dormant_mut_ref.rs, source_location.rs, panic_macro.rs, atomic_load.rs migrated: 122→118.
+const RAW_SYN_CEILING: usize = 118;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
