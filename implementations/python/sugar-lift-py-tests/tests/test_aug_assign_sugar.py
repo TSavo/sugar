@@ -3,16 +3,18 @@ no operator knowledge: it rewrites to a plain assign over the synthesized `x <op
 binop and hands it downstream, so each operator dispatches to its OWN binop sugar -- or
 the factory panics naming the gap.
 
-So the spec writes itself, one row per Python augmented operator:
-  * `+=` is GREEN -- the Add binop exists, so it composes (and reuses AssignSugar's bind,
-    which closes over its definition scope so the rebind reads the old x).
-  * `-=`, `*=`, `/=`, `//=`, `%=`, `**=` are RED -- their binops are not written yet, so
-    they panic. The red is the worklist: each failing row names the exact binop atom to
-    write next, and flips green the day it lands. We keep them red on purpose.
+So the spec writes itself, one row per Python augmented operator. The INTEGER ops (`+=`,
+`-=`, `*=`, `//=`, `%=`, `**=`) compose over Int-sorted TermValue. True division (`/=`)
+and any float literal are RESIDUAL -- floats are not modeled (see literal_encoding.rs:
+`3.0 == 3` is Python-true, so asserting `float != int` is a false distinctness that would
+manufacture a false refusal), so they are refused loudly, which is correct, not a rung.
 """
 from __future__ import annotations
 
+import pytest
+
 from factory_reduce import compose_block
+from sugar_lift_py_tests.factory import FactoryGap
 
 
 def _block(src: str):
@@ -49,19 +51,21 @@ def test_aug_mult_assign_equals_the_product():
 
 
 def test_aug_div_assign_equals_the_quotient():
-    # RED: true division is REAL, not Int -- 6/2 == 3.0. A real result is a canonical-
-    # decimal RealValue with possibly non-terminating division (1/3); that is the Real-
-    # arithmetic / tolerance rung (mirror the decimal-tolerance lift), not a float fold.
-    assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3.0\n")
+    # true division yields a float (6/2 == 3.0), and floats are RESIDUAL -- so it is
+    # correctly REFUSED, not modeled. The factory panics; that is the right behavior, not
+    # a worklist rung. (Modeling it would risk the false distinctness below.)
+    with pytest.raises(FactoryGap):
+        _block("    x = 6\n    x /= 2\n    return x\n")
 
 
-# --- GREEN now: the typed Real landed. float lifts to a RealValue (canonical decimal),
-# --- distinct from the Int-sorted TermValue, so 3.0 and 3 are no longer conflated.
+# --- floats are RESIDUAL, by the soundness principle in literal_encoding.rs: `3.0 == 3`
+# --- is Python-TRUE, so asserting `float != int` is a FALSE distinctness that would
+# --- manufacture a false refusal. So we do NOT model floats -- a float literal is refused
+# --- loudly, never folded into Int (which would lie) nor split off as Real (also a lie).
 
-def test_float_is_a_real_distinct_from_the_int():
-    # 3.0 is Real-sorted (RealValue), 3 is Int-sorted (TermValue) -- distinct Floor
-    # values, never conflated. This is the sort discipline the z3 compiler enforces.
-    assert _block("    return 3.0\n") != _block("    return 3\n")
+def test_float_literal_is_residual_and_is_refused_loudly():
+    with pytest.raises(FactoryGap):
+        _block("    return 3.0\n")
 
 
 def test_aug_floordiv_assign_equals_the_floor_quotient():

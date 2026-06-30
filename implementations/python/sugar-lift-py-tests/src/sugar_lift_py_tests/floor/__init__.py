@@ -10,7 +10,6 @@ from .floor_value import FloorValue
 from .function_callable import FunctionCallable
 from .guarded_return import GuardedReturn
 from .lambda_callable import LambdaCallable
-from .real_value import RealValue
 from .return_value import ReturnValue
 from .string_value import StringValue
 from .support_value import SupportValue
@@ -28,7 +27,6 @@ __all__ = [
     "FunctionCallable",
     "GuardedReturn",
     "LambdaCallable",
-    "RealValue",
     "ReturnValue",
     "StringValue",
     "SupportValue",
