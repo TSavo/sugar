@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class ToListSugar(Sugar, role=SugarRole.TERM):
+class ToListSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     receiver: SugarBody
     blame: str
 

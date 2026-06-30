@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class MapSugar(Sugar, role=SugarRole.TERM):
+class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     blame: str
     receiver: SugarBody
     mapper: SugarBody

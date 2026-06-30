@@ -25,6 +25,7 @@ SUGAR_DIR = HERE.parent / "src" / "sugar_lift_py_tests" / "sugar"
 COVERAGE: dict[str, list[str]] = {
     # block + statement composition (the suite as a composite)
     "assign_sugar": ["test_assign_sugar.py"],
+    "call_sugar": ["test_call_sugar.py"],
     "aug_assign_sugar": ["test_aug_assign_sugar.py"],
     "block_sugar": ["test_block_sugar.py"],
     "comment_sugar": ["test_comment_sugar.py"],

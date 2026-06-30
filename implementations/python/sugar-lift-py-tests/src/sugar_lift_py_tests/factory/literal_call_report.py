@@ -62,6 +62,26 @@ def _canonical_term_sig(term) -> str:
         return f"c:{term.name}({inner})"
     return f"?:{term!r}"
 
+
+def euf_call_term(callee_name: str, arg_terms):
+    """The EUF callsite term for ``callee(args)`` -- an uninterpreted ``call:<callee>``
+    ctor over the argument terms. The SINGLE constructor of the bridge term, so every
+    callsite of the same callee+args builds the byte-identical term that mint coalesces."""
+    return ctor(f"call:{callee_name}", arg_terms)
+
+
+def euf_callsite_name(callee_name: str, euf_term, *, suffix: str) -> str:
+    """The ONE canonical ``#euf#`` contract name -- the single speller of the join key.
+
+    ``suffix`` is ``"::assertion"`` (the sworn fact about a concrete call, keyed on its
+    concrete arg terms) or ``"::universe"`` (the dig: ``f(args)``, the function over its
+    formals, keyed on the callee). Byte-canonical by construction: cross-location facts
+    coalesce ONLY by exact name match, so one speller is soundness, not style -- a single
+    drifted byte sends a fact into a different universe and the contradiction is never
+    computed (a green proof that lies)."""
+    return f"{callee_name}#euf#{_canonical_term_sig(euf_term)}{suffix}"
+
+
 # One lift, returned as five parallel lists: (contracts, source_mementos,
 # source_audits, factory_walk_rows, call_edges).
 LiftResult = tuple[
@@ -297,8 +317,8 @@ def _lift_callsite_assertion(
                 requested="LiftableCallArg",
                 fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
             )
-    euf_term = ctor(f"call:{callee_name}", arg_terms)
-    assertion_contract_name = f"{callee_name}#euf#{_canonical_term_sig(euf_term)}::assertion"
+    euf_term = euf_call_term(callee_name, arg_terms)
+    assertion_contract_name = euf_callsite_name(callee_name, euf_term, suffix="::assertion")
     assertion_memento = _statement_source_memento(
         stmt,
         fn,

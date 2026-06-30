@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class AddSugar(Sugar, role=SugarRole.TERM):
+class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     receiver: SugarBody
     operand: SugarBody
     blame: str
@@ -69,4 +69,5 @@ def _is_add_call(site) -> bool:
         site.observed == "Call"
         and site.call_is_method_call()
         and site.call_target_name() == "add"
+        and site.call_arg_count() == 1
     )
