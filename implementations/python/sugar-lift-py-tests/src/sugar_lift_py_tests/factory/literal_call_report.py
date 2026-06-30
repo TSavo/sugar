@@ -429,10 +429,22 @@ def _dig_universe(
     if _imported_source is not None:
         source_lines = _imported_source.splitlines(keepends=True)
         memento_file = getattr(target_fn.node, "_sugar_file", memento_file)
-    body_steps = call_sugar.factory_steps(target_fn.node)
-    body_formulas = call_sugar.constraint_formulas()
+    # The dig walks the resolved body into the universe post. It handles control-flow and
+    # encoder bodies; a numeric simple body (`return <expr>`) is not covered yet. "Not
+    # covered" must speak through the MOUTH -- a named FactoryGap with blame -- never a raw
+    # ValueError escaping from BridgeStrategy. The floor is honest or it is a crash.
+    try:
+        body_steps = call_sugar.factory_steps(target_fn.node)
+        body_formulas = call_sugar.constraint_formulas()
+        body_step_formulas = call_sugar.constraint_formula_steps()
+    except ValueError as exc:
+        _panic_no_sugar(
+            target_fn, memento_file,
+            observed=f"dig-body:simple-{target_fn.function_name()}",
+            requested="NumericBodyConstraint",
+            fix=f"add the numeric simple-body dig (out == <return expr over the formal>): {exc}",
+        )
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
-    body_step_formulas = call_sugar.constraint_formula_steps()
     body_step_formula_values = [
         _formula_to_rpc(formula) if formula is not None else None
         for formula in body_step_formulas
