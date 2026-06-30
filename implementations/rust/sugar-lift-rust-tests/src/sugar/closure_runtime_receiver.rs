@@ -2,12 +2,10 @@
 //
 // Closure-adaptor runtime receiver sugar.
 
-use syn::Expr;
-
 use crate::sugar::claim::SugarRole;
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -18,8 +16,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let site = closure_adaptor::decompose_closure_adaptor(expr, fcx.let_inits())?;
+    let site = closure_adaptor::decompose_closure_adaptor_frag(frag, fcx.let_inits(), fcx.scope())?;
     site.has_runtime_receiver(fcx.scope())
         .then(|| Box::new(ClosureRuntimeReceiverSugar { site }) as Box<dyn Sugar>)
 }
@@ -32,7 +29,7 @@ impl Sugar for ClosureRuntimeReceiverSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if self.site.has_runtime_receiver(ctx.scope) {
             return Outcome::Incomplete(Effect::OpaqueRuntime {
-                boundary: token_key(self.site.expr()),
+                boundary: self.site.boundary().to_owned(),
                 accessor: false,
             });
         }

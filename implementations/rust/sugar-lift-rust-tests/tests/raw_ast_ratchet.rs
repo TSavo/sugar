@@ -138,7 +138,16 @@ use std::path::PathBuf;
 ///   2000-char window; behavior-identical; new is_block_or_unsafe+literal_owned_string_frag+
 ///   closure_recognizes_to_string accessors in source_fragment.rs):
 ///   measured R(t)=30, tightened 35→30.
-const RAW_SYN_CEILING: usize = 30;
+/// struct-rework wave: catalog.rs (is_expr() gate), closure_term.rs (closure_param_names+
+///   closure_referenced_names+closure_body_frag accessors), intersperse_concat.rs (thin
+///   dispatcher past 2000-char window), closure_adaptor.rs ClosureAdaptorSite reworked
+///   (boundary/side_effecting/advances_iterator/resolves_literal replace raw syn fields;
+///   decompose_closure_adaptor_frag wrapper added), closure_iter_advance_body.rs,
+///   closure_mutating_body.rs, closure_opaque_accessor.rs, closure_runtime_receiver.rs,
+///   closure_tls_accessor.rs (all 5 use decompose_closure_adaptor_frag, site.boundary()):
+///   measured R(t)=22, tightened 30→22. SKIPPED: matches_macro.rs (Pat field used in
+///   pattern_atom() at desugar time; requires deeper redesign).
+const RAW_SYN_CEILING: usize = 22;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

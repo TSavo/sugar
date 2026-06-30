@@ -4,7 +4,6 @@
 // its body text + the version-aware terms of its captured free vars; an ambiguous
 // capture refuses. Byte-identical to the `Expr::Closure` arm of the old fat factory.
 
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
@@ -13,10 +12,8 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    is_unqualified_local_name, names_referenced_in_expr, token_key, Effect, Outcome, Sugar,
-    SugarCtx,
+    is_unqualified_local_name, Effect, Outcome, Sugar, SugarCtx,
 };
-use syn::{Expr, Pat};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);
@@ -34,27 +31,16 @@ impl Sugar for ClosureAmbiguousCaptureSugar {
     }
 }
 
-/// TERM recognizer for `Expr::Closure`.
+/// TERM recognizer for `Expr::Closure`. All raw syn access lives in the typed
+/// accessors (`closure_body_frag`, `closure_param_names`, `closure_referenced_names`)
+/// on `SourceFragment`; the recognize body itself holds no raw syn.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Closure(closure) = expr else {
-        return None;
-    };
+    // Gates on Expr::Closure; returns None for any other fragment kind.
+    let body_key = frag.closure_body_frag()?.token_str();
     let scope = fcx.scope();
-    let params: BTreeSet<String> = closure
-        .inputs
-        .iter()
-        .filter_map(|p| match p {
-            Pat::Ident(id) => Some(id.ident.to_string()),
-            Pat::Type(t) => match &*t.pat {
-                Pat::Ident(id) => Some(id.ident.to_string()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let params = frag.closure_param_names();
     let mut args = Vec::new();
-    for name in names_referenced_in_expr(&closure.body) {
+    for name in frag.closure_referenced_names() {
         if params.contains(&name) {
             continue;
         }
@@ -72,7 +58,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         }
     }
     Some(resolved_term(Rc::new(Term::Ctor {
-        name: format!("closure:{}", token_key(&closure.body)),
+        name: format!("closure:{body_key}"),
         args,
     })))
 }
