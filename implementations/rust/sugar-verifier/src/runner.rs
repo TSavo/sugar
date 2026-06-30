@@ -340,11 +340,13 @@ impl Runner {
         let report_stage_capture = StageCapture::start("report", sorted_keys(&pool.mementos));
         let mut violations = 0usize;
         for (cs, verdict, reason, method, body_tier) in per_results {
-            if callsite_body_refusal_is_owned_by_consistency(&cs, verdict, &reason, &pool) {
+            if callsite_row_is_owned_by_consistency(&cs, &pool)
+                || callsite_row_is_owned_by_self_post(&cs, &pool)
+            {
                 debug!(
                     bridge = %cs.bridge_ir_name,
                     property = %cs.property_name,
-                    "verifier/linker: consistency owns body-bearing assertion callsite row"
+                    "verifier/linker: pool-level verifier owns body-bearing callsite row"
                 );
                 continue;
             }
@@ -633,11 +635,13 @@ impl Runner {
         // Aggregate report rows.
         let mut violations = 0usize;
         for (cs, verdict, reason, method, body_tier) in per_results {
-            if callsite_body_refusal_is_owned_by_consistency(&cs, verdict, &reason, &pool) {
+            if callsite_row_is_owned_by_consistency(&cs, &pool)
+                || callsite_row_is_owned_by_self_post(&cs, &pool)
+            {
                 debug!(
                     bridge = %cs.bridge_ir_name,
                     property = %cs.property_name,
-                    "verifier/linker: consistency owns body-bearing assertion callsite row"
+                    "verifier/linker: pool-level verifier owns body-bearing callsite row"
                 );
                 continue;
             }
@@ -1185,17 +1189,7 @@ type CallsiteResult = (
     Option<String>,
 );
 
-fn callsite_body_refusal_is_owned_by_consistency(
-    cs: &CallSite,
-    verdict: ObligationVerdict,
-    reason: &str,
-    pool: &MementoPool,
-) -> bool {
-    if verdict != ObligationVerdict::Undecidable
-        || !reason.starts_with("body-discharge: refuse: target")
-    {
-        return false;
-    }
+fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(body) = pool
         .mementos
         .get(&cs.property_cid)
@@ -1203,7 +1197,34 @@ fn callsite_body_refusal_is_owned_by_consistency(
     else {
         return false;
     };
+    // A consistency candidate with linked body posts is a pool-level EUF
+    // composition problem, not a set of independent per-callsite obligations.
+    // Body-discharge can reduce one local view to `call:h(5) == 6`, but only
+    // consistency owns the sibling facts/posts that define `call:h(5)`. Delegate
+    // every local row for that property, regardless of its local verdict; the
+    // consistency row below will add the authoritative pass or violation.
     crate::consistency::linked_post_instance_count(pool, &body) > 0
+}
+
+fn callsite_row_is_owned_by_self_post(cs: &CallSite, pool: &MementoPool) -> bool {
+    let Some(body) = pool
+        .mementos
+        .get(&cs.property_cid)
+        .and_then(|env| pool.resolve_contract_body(env))
+    else {
+        return false;
+    };
+    let body_derived_post = body.get("post").is_some_and(|v| v.is_object())
+        && body.get("formals").is_some_and(|v| v.is_array())
+        && !body.get("inv").is_some_and(|v| v.is_object());
+    if !body_derived_post {
+        return false;
+    }
+    // Calls inside a body-derived post are the universe's own expression
+    // (`out == call:h(x)`). The self-post pass owns that universe check. Keep
+    // effect/pre-bearing sites visible: a panic/partial call still needs the
+    // guard-discharge path, not a quiet self-post delegation.
+    !cs.panic_site && !body_discharge::target_has_nontrivial_pre(cs, pool)
 }
 
 /// Verify each body-derived contract's OWN postcondition. For a contract
@@ -2137,25 +2158,15 @@ mod consistency_owned_callsite_tests {
     }
 
     #[test]
-    fn linked_assertion_body_refusal_is_owned_by_consistency() {
+    fn linked_assertion_callsite_row_is_owned_by_consistency() {
         let (pool, cs) = linked_pool_and_callsite();
-        assert!(callsite_body_refusal_is_owned_by_consistency(
-            &cs,
-            ObligationVerdict::Undecidable,
-            "body-discharge: refuse: target `call:enc` is body-bearing",
-            &pool
-        ));
+        assert!(callsite_row_is_owned_by_consistency(&cs, &pool));
     }
 
     #[test]
-    fn unlinked_assertion_body_refusal_stays_visible() {
+    fn unlinked_assertion_callsite_row_stays_visible() {
         let (mut pool, cs) = linked_pool_and_callsite();
         pool.bridges_by_symbol.clear();
-        assert!(!callsite_body_refusal_is_owned_by_consistency(
-            &cs,
-            ObligationVerdict::Undecidable,
-            "body-discharge: refuse: target `call:enc` is body-bearing",
-            &pool
-        ));
+        assert!(!callsite_row_is_owned_by_consistency(&cs, &pool));
     }
 }
