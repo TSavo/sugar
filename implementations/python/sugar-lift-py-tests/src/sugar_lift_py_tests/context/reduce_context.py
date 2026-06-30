@@ -14,6 +14,11 @@ class ReduceContext:
     report_sink: Any = None
     factory_audit_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
+    # The DIG QUEUE. When BridgeStrategy.emit emits a bridge `call:h(args)`, it appends
+    # `(callee_name, arg_value)` here -- a bridge OBLIGATES the dig of the tower it points at
+    # (h now needs a universe). A bridge without its enqueued dig is a dangling uninterpreted
+    # symbol, a false discharge. None when no driver is draining (a plain reduce).
+    dig_sink: Any = None
 
     def record_operation(
         self, *, owner: str, method_name: str, operation: object
@@ -28,4 +33,5 @@ class ReduceContext:
             report_sink=self.report_sink,
             factory_audit_sink=self.factory_audit_sink,
             operation_log=self.operation_log,
+            dig_sink=self.dig_sink,
         )

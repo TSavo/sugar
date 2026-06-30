@@ -60,14 +60,21 @@ class BridgeStrategy:
             raise TypeError("BridgeStrategy body must be factory-built")
 
     def emit(self, sugar: "CallSugar", ctx) -> Outcome:
-        # The bridge term for an in-body callsite: `call:<callee>(<arg term>)`, an
-        # uninterpreted symbol the assert (or a binding through it) equates to the expected.
-        from sugar_lift_py_tests.factory.literal_call_report import euf_call_term
+        # Emit the bridge AND enqueue its dig -- one act. `call:<callee>(arg)` is a POINTER to
+        # the callee's tower; the instant we emit it, that tower is OWED a contract. A bridge
+        # with nothing defining `call:<callee>(arg)` is a dangling free symbol the ground-
+        # contradiction check cannot fold (a false discharge), so pointer and obligation are
+        # inseparable: we append the dig to the sink as we return the bridge term.
+        from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term, euf_call_term
 
         arg = complete_value(self.argument.reduce(ctx), owner="BridgeStrategy argument")
-        if not isinstance(arg, StringValue):
-            raise ValueError("write more Floor for BridgeStrategy argument")
-        return Complete(SymbolicValue(euf_call_term(self.target_name, [str_const(arg.value)])))
+        # Only a CONCRETE arg can be dug (curried over a value); a symbolic formal -- the
+        # universe build -- leaves the bridge symbolic and enqueues nothing.
+        if not isinstance(arg, SymbolicValue):
+            sink = getattr(ctx, "dig_sink", None)
+            if sink is not None:
+                sink.append((self.target_name, arg))
+        return Complete(SymbolicValue(euf_call_term(self.target_name, [_floor_to_term(arg)])))
 
     # --- the UNIVERSE (used by the dig in _dig_universe, via the catalog) -------------------
 
@@ -115,24 +122,32 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def build(cls, fragment, ctx) -> "CallSugar":
+        from dataclasses import replace
+
         from sugar_lift_py_tests.factory.sugar_constructors import build_bridge_body
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
         target = fragment.call_target_name()
         resolver = getattr(ctx, "name_resolver", None) or {}
         function_node = resolver.get(target)
-        # RESOLVED + unary (the dig can walk the body) -> the bridge carries its universe.
+        building = getattr(ctx, "building", frozenset())
+        # RESOLVED + unary + NOT already on the build stack -> the bridge carries its universe.
+        # The build-stack check is the recursion guard: eagerly building a callee already being
+        # built loops forever, and an infinite recursion is not finitely constructible. So a
+        # cycle refuses (clean, named) instead of hanging -- the bridge stays the vendor's axiom.
         if (
             function_node is not None
             and target is not None
+            and target not in building
             and not fragment.call_has_keywords()
             and fragment.call_arg_count() == 1
         ):
             argument = ctx.build_body(fragment.call_args()[0], SugarRole.TERM)
             function = SourceFragment.from_node(function_node, ctx.filename)
-            body = build_bridge_body(function, ctx)
+            body = build_bridge_body(function, replace(ctx, building=building | {target}))
             return cls(strategy=BridgeStrategy(target_name=target, argument=argument, body=body))
-        # Otherwise: a clean, named refusal (write the body/.proof/sugar), never a silent lift.
+        # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
+        # never a silent lift, never a hang.
         info = FactoryGapInfo(
             owner="python.factory", blame=fragment.blame, observed="Call", requested="term",
             fix=f"resolve call to '{target}' (local body, imported .proof, or a sugar)",
