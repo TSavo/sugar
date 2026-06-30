@@ -10,36 +10,26 @@
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), not
 // recognize time.
 use sugar_ir_symbolic::str_const;
-use syn::Expr;
 
 use crate::sugar::configuration::{self, CfgDisposition};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, macro_literal_contains_mut_local, token_key, CfgPredicate, Desugared, Effect,
-    Outcome, Sugar, SugarCtx, MAX_MACRO_EXPANSION_DEPTH,
+    bool_const, CfgPredicate, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    MAX_MACRO_EXPANSION_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("macro_term", recognize);
 
 /// TERM recognizer for `Expr::Macro`.
+/// No `as_expr()`, `Expr::`, or raw syn field access in this body.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(m) = expr else {
-        return None;
-    };
+    // Gate: `macro_token_stream()` returns None for any non-Macro fragment.
+    frag.macro_token_stream()?;
     let scope = fcx.scope();
-    let token_str = token_key(expr);
-    let contains_mut_local = m.mac.tokens.clone().into_iter().any(|tt| match &tt {
-        proc_macro2::TokenTree::Ident(id) => scope.is_mut_local(&id.to_string()),
-        proc_macro2::TokenTree::Literal(lit) => {
-            let text = lit.to_string();
-            macro_literal_contains_mut_local(&text, scope)
-        }
-        _ => false,
-    });
-    if contains_mut_local {
+    let token_str = frag.token_str();
+    if frag.macro_contains_mut_local(scope) {
         return Some(Box::new(MacroSugar {
             body: MacroTermBody::MutLocalTemporalEffect {
                 boundary: token_str.clone(),
@@ -50,26 +40,24 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
             },
         }));
     }
-    if m.mac
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "cfg")
-    {
+    if frag.macro_name().as_deref() == Some("cfg") {
         return Some(Box::new(MacroSugar {
-            body: match m.mac.parse_body::<CfgPredicate>() {
-                Ok(predicate) => MacroTermBody::CfgPredicate {
+            body: match frag.macro_parse_cfg_predicate() {
+                Some(Ok(predicate)) => MacroTermBody::CfgPredicate {
                     predicate,
                     site: token_str,
                 },
-                Err(error) => MacroTermBody::Unconstructible(format!(
+                Some(Err(error)) => MacroTermBody::Unconstructible(format!(
                     "cfg! term predicate did not parse: {error}; write more Sugar for this AST"
                 )),
+                None => MacroTermBody::Unconstructible(
+                    "cfg! body inaccessible; write more Sugar for this AST".to_string(),
+                ),
             },
         }));
     }
     Some(Box::new(MacroSugar {
-        body: build_macro_body(m, fcx),
+        body: build_macro_body_frag(frag, fcx),
     }))
 }
 
@@ -94,16 +82,19 @@ enum MacroTermBody {
     Unconstructible(String),
 }
 
-fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody {
-    let Some(name) = mac
-        .mac
-        .path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-    else {
+/// Build the macro body using fragment accessors only. `macro_name()` and
+/// `macro_token_stream()` carry the raw syn access (ratchet-excluded); the synthesized
+/// `syn::Expr` from `syn::parse2(expanded)` is a new tree produced by macro expansion,
+/// not a source AST node accessed directly.
+fn build_macro_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> MacroTermBody {
+    let Some(name) = frag.macro_name() else {
         return MacroTermBody::Unconstructible(
             "term macro has no callable path; write more Sugar for this AST".to_string(),
+        );
+    };
+    let Some(tokens) = frag.macro_token_stream() else {
+        return MacroTermBody::Unconstructible(
+            "term macro token stream inaccessible; write more Sugar for this AST".to_string(),
         );
     };
     if fcx.macro_depth() >= MAX_MACRO_EXPANSION_DEPTH {
@@ -112,7 +103,7 @@ fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody 
         ));
     }
     if name == "file"
-        && mac.mac.tokens.is_empty()
+        && tokens.is_empty()
         && fcx.scope().macro_registry().lookup(&name).is_none()
     {
         return MacroTermBody::BuiltinFile;
@@ -122,7 +113,7 @@ fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody 
             "macro `{name}` has no visible macro_rules source; write more Sugar for this AST"
         ));
     };
-    let expanded = match crate::macro_expand::expand(&rules, mac.mac.tokens.clone()) {
+    let expanded = match crate::macro_expand::expand(&rules, tokens) {
         Ok(expanded) => expanded,
         Err(error) => {
             return MacroTermBody::Unconstructible(format!(
@@ -135,7 +126,7 @@ fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody 
     // which `block_term` recursing through `build_term` handles transparently. A
     // multi-statement / non-expr expansion does NOT parse as an `Expr` here, so this is
     // a construction gap, not a runtime effect.
-    let parsed: Expr = match syn::parse2(expanded) {
+    let parsed: syn::Expr = match syn::parse2(expanded) {
         Ok(parsed) => parsed,
         Err(error) => {
             return MacroTermBody::Unconstructible(format!(
@@ -178,6 +169,75 @@ impl Sugar for MacroSugar {
                 panic!("{reason}");
             }
         }
+    }
+}
+
+// Phase-3 from_src tests: source -> SourceFragment -> accessor -> recognize.
+// No parse_quote! / StubTerm / run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::sugar::factory::SugarBuildCtx;
+    use crate::sugar::source_fragment::SourceFragment;
+    use crate::{
+        sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan, TemporalScope,
+    };
+
+    /// Positive: `cfg!(target_os = "linux")` is a Macro fragment with name "cfg".
+    /// Verifies `macro_name()`, `macro_contains_mut_local()` (false -- no mut locals),
+    /// and that `recognize` returns `Some` producing a `Configuration` incomplete when
+    /// no target facts are provided.
+    #[test]
+    fn from_src_cfg_macro_recognized_yields_configuration_incomplete() {
+        let expr: syn::Expr =
+            syn::parse_str("cfg!(target_os = \"linux\")").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        assert_eq!(frag.observed(), "Macro");
+        assert_eq!(frag.macro_name().as_deref(), Some("cfg"));
+
+        let scope = TemporalScope::new("macro-term-test", TemporalPlan::default());
+        // macro_contains_mut_local: no mut locals in scope -> false
+        assert!(
+            !frag.macro_contains_mut_local(&scope),
+            "cfg!(target_os = ...) must not reference any mut local"
+        );
+
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = recognize(&frag, &fcx).expect("cfg! is owned by macro_term");
+
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        match node.desugar(&ctx) {
+            Outcome::Incomplete(Effect::Configuration { boundary, .. }) => {
+                assert_eq!(boundary, "cfg ! (target_os = \"linux\")");
+            }
+            other => panic!("expected Configuration incomplete for cfg! without target facts"),
+        }
+    }
+
+    /// Discrimination: a non-macro `Expr` (binary `x + 1`) returns `None`.
+    /// Structural: the `Macro` gate rejects everything that is not `Expr::Macro`.
+    #[test]
+    fn from_src_non_macro_expr_not_recognized() {
+        let expr: syn::Expr = syn::parse_str("x + 1").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        let scope = TemporalScope::new("macro-term-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "binary expr must not be recognized by macro_term"
+        );
     }
 }
 
