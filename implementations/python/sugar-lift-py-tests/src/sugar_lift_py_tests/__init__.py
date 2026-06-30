@@ -75,7 +75,6 @@ from .ir import (
     term_to_value,
 )
 from .decorators import contract, ContractViolation, collect_module
-from .layer2 import ImplicationDecl, LiftWarning, Layer2Output, lift_file_layer2
 from .proof_envelope import ProofEnvelopeInput, envelope_body_to_value
 from .claim_envelope import (
     Authoring,
@@ -100,7 +99,6 @@ from .verifier import (
     HandshakeReport,
     VerifierNotFoundError,
 )
-from .walk import ProductionWalkOutput, lift_production_walk
 
 __all__ = [
     "Authoring",
@@ -121,13 +119,9 @@ __all__ = [
     "EvidenceTerm",
     "HandshakeReport",
     "Int",
-    "ImplicationDecl",
     "LAYERED_SCHEMA_VERSION",
-    "Layer2Output",
-    "LiftWarning",
     "Locus",
     "ProofEnvelopeInput",
-    "ProductionWalkOutput",
     "Real",
     "Signer",
     "Sort",
@@ -159,8 +153,6 @@ __all__ = [
     "gte",
     "implies",
     "jcs_hash",
-    "lift_file_layer2",
-    "lift_production_walk",
     "locus_to_value",
     "lt",
     "lte",
