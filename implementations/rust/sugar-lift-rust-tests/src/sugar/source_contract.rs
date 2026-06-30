@@ -17,8 +17,13 @@ use syn::{BinOp, Expr, ExprLit, Item, Lit, Pat, Stmt, Token, UnOp};
 use crate::{
     bool_const, parse_int_lit, path_to_variant_string, source_assertion_entries_in_stmts,
     subst_var_in_formula, subst_var_in_term, temporal_plan_for_stmts, translate_term_in_scope,
-    FloatWidthScope, LiftOptions, ReductionCtx, TemporalScope,
+    Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalScope,
+    sugar_ctx_with_factory_audits,
 };
+use crate::sugar::block_sugar::block_stmt_to_formula;
+use crate::sugar::catalog::build_stmt_role;
+use crate::sugar::claim::SugarRole;
+use crate::sugar::factory::SugarBuildCtx;
 
 // ── Source-audit value-contract emission ────────────────────────────────────
 // A source warrant is REAL only if the kit EMITS the ProofIR contract for the
@@ -320,8 +325,16 @@ pub fn warrant_conjoined_with_vendor_terms(
     }
 }
 
-/// The consistency `inv` for a block: a single tail expression (-> tail_inv) or a
-/// leading immutable-let prefix + any tail (-> let_prefix_inv).
+/// The consistency `inv` for a block.
+///
+/// Fast paths (in order):
+///   1. Single tail expression -> `tail_inv` (the most common case).
+///   2. Leading immutable `let` prefix + tail -> `let_prefix_inv`.
+///   3. Everything else (guard-clause, if/else, nested if, mixed stmts) ->
+///      `block_stmt_inv` which routes through the factory's BlockSugar.
+///
+/// Law: `block_inv` is the ONLY caller of `emit_guard_return_value`'s replacement
+/// (`block_stmt_inv`). No other function iterates stmts to build a Formula by hand.
 fn block_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
     if let [Stmt::Expr(tail, None)] = block.stmts.as_slice() {
         return tail_inv(tail, scope);
@@ -329,97 +342,40 @@ fn block_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
     if let Some(inv) = let_prefix_inv(block, scope) {
         return Some(inv);
     }
-    emit_guard_return_value(block, scope)
+    block_stmt_inv(block, scope)
 }
 
-/// A guard-clause body: `(if COND { return RET; })+ TAIL` -- one or more leading
-/// early-return guard clauses (the `?`/let-else family of bin-1) followed by a
-/// fall-through tail value. Semantically `if COND { RET } else { TAIL }`, so it
-/// reuses the value-`if` encoding: `out == RET` under `COND` (and the negation
-/// of every earlier guard), `out == TAIL` under all guards negated. Each guard's
-/// RET and the final TAIL must be EUF terms; the `if` must have NO `else` and a
-/// then-block that is exactly `return RET;`. Anything else -> None.
-fn emit_guard_return_value(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
-    let stmts = block.stmts.as_slice();
-    let mut clauses: Vec<(Rc<Formula>, Rc<Term>)> = Vec::new();
-    let mut negated: Vec<Rc<Formula>> = Vec::new();
-    let mut idx = 0;
-    while idx < stmts.len() {
-        let Stmt::Expr(Expr::If(if_expr), _) = &stmts[idx] else {
-            break;
-        };
-        if if_expr.else_branch.is_some() {
-            break;
+/// Factory-based block -> Formula conversion. Wraps the block as a
+/// `Stmt::Expr(Expr::Block(..))` and dispatches through `build_stmt_role` ->
+/// BlockSugar, then converts the resulting `StmtBlock { guarded, .. }` to a
+/// conjunction of `implies(guards, eq(out, term))` clauses.
+///
+/// This SUBSUMES `emit_guard_return_value`: the narrow guard-clause shape
+/// (`(if COND { return v; })+ tail`) is now just a special case of the general
+/// BlockSugar composition path, which also handles if/else and nested if.
+fn block_stmt_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let block_stmt = Stmt::Expr(
+        Expr::Block(syn::ExprBlock {
+            attrs: vec![],
+            label: None,
+            block: block.clone(),
+        }),
+        None,
+    );
+    let options = LiftOptions::default();
+    let let_inits = std::collections::BTreeMap::new();
+    let items: Vec<Item> = Vec::new();
+    let fcx = SugarBuildCtx::new(scope, &options, &let_inits);
+    let block_node = build_stmt_role(&block_stmt, &fcx, SugarRole::Statement);
+    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+    let mut float_widths = FloatWidthScope::new();
+    let ctx = sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut float_widths, 0, None);
+    match block_node.reduce(&ctx) {
+        Outcome::Complete(Desugared::StmtBlock { guarded, .. }) => {
+            block_stmt_to_formula(guarded)
         }
-        let Some(ret_expr) = then_block_single_return(&if_expr.then_branch) else {
-            break;
-        };
-        let ret_term = translate_term_in_scope(ret_expr, scope).ok()?;
-        if !term_is_euf_value(&ret_term) {
-            return None;
-        }
-        let cond = match crate::sugar::constraint::assertion_entry_with_audits(
-            &if_expr.cond,
-            scope,
-            &FloatWidthScope::new(),
-            None,
-        ) {
-            Ok(entry) => entry.atom,
-            Err(_) => {
-                let t = translate_term_in_scope(&if_expr.cond, scope).ok()?;
-                if !term_is_euf_value(&t) {
-                    return None;
-                }
-                eq(t, bool_const(true))
-            }
-        };
-        let mut gp = negated.clone();
-        gp.push(cond.clone());
-        let guard = if gp.len() == 1 {
-            gp.remove(0)
-        } else {
-            and_(gp)
-        };
-        clauses.push((guard, ret_term));
-        negated.push(not_(cond));
-        idx += 1;
+        _ => None,
     }
-    if clauses.is_empty() {
-        return None; // no leading guard clause -> not this shape
-    }
-    // The remaining statements are the fall-through tail value (under all guards
-    // negated). Reuse block_euf_term over a synthetic block of the rest.
-    let tail_block = syn::Block {
-        brace_token: block.brace_token,
-        stmts: stmts[idx..].to_vec(),
-    };
-    let tail_term = block_euf_term(&tail_block, scope)?;
-    let tail_guard = if negated.len() == 1 {
-        negated.remove(0)
-    } else {
-        and_(negated)
-    };
-    clauses.push((tail_guard, tail_term));
-    let out = make_var("out");
-    Some(and_(
-        clauses
-            .into_iter()
-            .map(|(guard, term)| implies(guard, eq(out.clone(), term)))
-            .collect(),
-    ))
-}
-
-/// The returned expression of a then-block that is exactly `return RET;` (or
-/// `{ return RET; }`). None if the block is not a single bare `return <expr>`.
-fn then_block_single_return(then_branch: &syn::Block) -> Option<&Expr> {
-    let [stmt] = then_branch.stmts.as_slice() else {
-        return None;
-    };
-    let ret = match stmt {
-        Stmt::Expr(Expr::Return(r), _) => r,
-        _ => return None,
-    };
-    ret.expr.as_deref()
 }
 
 /// The consistency `inv` for a SINGLE tail expression (no prefix). Tries, in

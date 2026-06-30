@@ -57,7 +57,7 @@ use quote::ToTokens;
 use sugar_canonicalizer::encode_jcs;
 use sugar_ir_symbolic::serialize::formula_to_value;
 use syn::spanned::Spanned;
-use syn::{Expr, Item};
+use syn::{Expr, Item, Stmt};
 use tracing::{debug, warn};
 
 use crate::sugar::catalog;
@@ -585,6 +585,24 @@ impl FactoryAuditSeed {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn stmt(
+        stmt: &Stmt,
+        requested_role: SugarRole,
+        selected: Option<&'static str>,
+        candidates: Vec<FactoryCandidateAudit>,
+    ) -> Self {
+        Self {
+            ast_kind: "stmt",
+            site: stmt.to_token_stream().to_string(),
+            line: stmt.span().start().line,
+            span: Some(factory_audit_span(stmt.span())),
+            requested_role: format!("{requested_role:?}"),
+            selected,
+            candidates,
+        }
+    }
+
     fn audit_result(&self, outcome: &Outcome) -> FactoryAudit {
         let (disposition, output, reason) = self.disposition_outcome(outcome);
         let emitted_formula = emitted_formula_jcs(outcome);
@@ -653,6 +671,23 @@ impl FactoryAuditSeed {
                 Some("inert: empty sequence; no obligation emitted".to_string()),
             ),
             Outcome::Complete(Desugared::Seq(_)) => (FactoryDisposition::Warranted, "sequence", None),
+            // Statement-composition floor variants: the factory marks them Support
+            // (inert) here; BlockSugar will consume and emit a Constraints internally.
+            Outcome::Complete(Desugared::StmtSupport) => {
+                (FactoryDisposition::Support, "stmt-support", None)
+            }
+            Outcome::Complete(Desugared::StmtBound { .. }) => {
+                (FactoryDisposition::Support, "stmt-bound", None)
+            }
+            Outcome::Complete(Desugared::StmtReturn(_)) => {
+                (FactoryDisposition::Warranted, "stmt-return", None)
+            }
+            Outcome::Complete(Desugared::StmtGuarded { .. }) => {
+                (FactoryDisposition::Warranted, "stmt-guarded", None)
+            }
+            Outcome::Complete(Desugared::StmtBlock { .. }) => {
+                (FactoryDisposition::Warranted, "stmt-block", None)
+            }
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 match refusal_disposition(&reason) {

@@ -3,7 +3,7 @@
 // Sugar-owned recognition claims. Each Sugar module exports the claim(s) for
 // the source positions it owns; the factory only brokers over these claims.
 
-use syn::{Expr, Item};
+use syn::{Expr, Item, Stmt};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::Sugar;
@@ -19,6 +19,7 @@ pub(crate) enum SugarRole {
     TupleProducer,
     SupportConstraint,
     StatementEffect,
+    Statement,
     ClosureAdaptorVerdict,
     MatchScrutineeVerdict,
     StatementItem,
@@ -26,6 +27,7 @@ pub(crate) enum SugarRole {
 
 type ExprRecognizer = fn(&Expr, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 type ItemRecognizer = fn(&Item, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
+type StmtRecognizer = fn(&Stmt, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
@@ -233,6 +235,92 @@ impl ItemSugarClaim {
         fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
         (self.recognize)(item, fcx).map(|node| SugarCandidate {
+            name: self.name,
+            role: self.role,
+            comes_before: self.comes_before,
+            fallback_well: self.fallback_well,
+            node,
+        })
+    }
+}
+
+/// A Sugar's claim that it knows how to recognize one source-statement position.
+/// The factory brokers over these exactly as it does `ExprSugarClaim`/`ItemSugarClaim`
+/// -- a statement is lifted ONLY through a claim, never by a hand-rolled block walker.
+#[derive(Clone, Copy)]
+pub(crate) struct StmtSugarClaim {
+    #[allow(dead_code)]
+    name: &'static str,
+    role: SugarRole,
+    comes_before: &'static [&'static str],
+    fallback_well: bool,
+    recognize: StmtRecognizer,
+}
+
+#[allow(dead_code)]
+impl StmtSugarClaim {
+    pub(crate) const fn new(
+        name: &'static str,
+        role: SugarRole,
+        recognize: StmtRecognizer,
+    ) -> Self {
+        Self::with_ordering(name, role, &[], recognize)
+    }
+
+    pub(crate) const fn with_ordering(
+        name: &'static str,
+        role: SugarRole,
+        comes_before: &'static [&'static str],
+        recognize: StmtRecognizer,
+    ) -> Self {
+        Self {
+            name,
+            role,
+            comes_before,
+            fallback_well: false,
+            recognize,
+        }
+    }
+
+    /// A statement-role claim (`return`, `let`, `if`, block) -- the Stmt analogue of
+    /// `ExprSugarClaim::statement_effect`, mirroring the Python `SugarRole.STATEMENT`.
+    pub(crate) const fn statement(name: &'static str, recognize: StmtRecognizer) -> Self {
+        Self::new(name, SugarRole::Statement, recognize)
+    }
+
+    pub(crate) const fn statement_before(
+        name: &'static str,
+        comes_before: &'static [&'static str],
+        recognize: StmtRecognizer,
+    ) -> Self {
+        Self::with_ordering(name, SugarRole::Statement, comes_before, recognize)
+    }
+
+    /// A catch-all fallback claim. The factory selects this only when no
+    /// non-fallback claim matched. Mirrors `ExprSugarClaim::fallback_term`.
+    pub(crate) const fn fallback_statement(
+        name: &'static str,
+        recognize: StmtRecognizer,
+    ) -> Self {
+        Self {
+            name,
+            role: SugarRole::Statement,
+            comes_before: &[],
+            fallback_well: true,
+            recognize,
+        }
+    }
+
+    pub(crate) fn role(&self) -> SugarRole {
+        self.role
+    }
+
+    pub(crate) fn candidate(
+        &'static self,
+        stmt: &Stmt,
+        fcx: &SugarBuildCtx,
+    ) -> Option<SugarCandidate> {
+        (self.recognize)(stmt, fcx).map(|node| SugarCandidate {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,

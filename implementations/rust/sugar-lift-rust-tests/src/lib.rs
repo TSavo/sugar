@@ -230,6 +230,11 @@ pub mod sugar {
     pub mod wrapping_neg;
     pub mod write_macro;
     pub mod zip;
+    // Statement-composition sugar (phase-3-decode)
+    pub mod assign_sugar;
+    pub mod block_sugar;
+    pub mod if_sugar;
+    pub mod return_sugar;
 }
 
 pub use crate::sugar::source_contract::{
@@ -8495,6 +8500,41 @@ pub(crate) enum Desugared {
     /// `tuple_decomp` consumes this to emit component-wise scalar equalities while
     /// the producer sugar owns the decomposition semantics.
     TupleComponents(Vec<Rc<Term>>),
+
+    // ── Statement-composition floor (phase-3 decode) ─────────────────────────
+    // These variants carry the result of reducing a single statement through the
+    // factory (build_stmt_role / SugarRole::Statement). They NEVER flow into
+    // seq / term / tuple contexts; all existing `into_seq` / `into_term` /
+    // `into_tuple_components` / `as_string_literal` / `emit_desugared` arms
+    // bail immediately (None / false) on these variants.
+
+    /// A statement that produces no reducible value (inert support: mutable let,
+    /// expression statement with no assertion shape, etc.).
+    /// Mirrors Python `SupportValue`.
+    StmtSupport,
+    /// An immutable `let name = rhs` binding. The rhs is NOT reduced here; it is
+    /// threaded into the `TemporalScope` so later statements in the same block can
+    /// resolve the name via `record_let_binding`.
+    /// Mirrors Python `BoundVar(name, rhs_source)`.
+    StmtBound { name: String, rhs: Expr },
+    /// A return statement or tail expression reduced to a single term.
+    /// Mirrors Python `ReturnValue(term)`.
+    StmtReturn(Rc<Term>),
+    /// A guarded return from an `if`-branch: the accumulated path guards that must
+    /// all hold, and the return term for that branch.
+    /// Mirrors Python `GuardedReturn(guards, term)`.
+    StmtGuarded {
+        guards: Vec<Rc<Formula>>,
+        term: Rc<Term>,
+    },
+    /// The composed result of a block (suite of statements): all guarded-return
+    /// pairs emitted by the block, plus the fall-through guard set left over by a
+    /// terminal `if`-without-else.
+    /// Mirrors Python `BlockValue(guarded_returns, fall_through)`.
+    StmtBlock {
+        guarded: Vec<(Vec<Rc<Formula>>, Rc<Term>)>,
+        fall_through: Vec<Rc<Formula>>,
+    },
 }
 
 impl Desugared {
@@ -8510,6 +8550,12 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
+            // Statement-composition floor variants never flow into seq contexts.
+            Desugared::StmtSupport
+            | Desugared::StmtBound { .. }
+            | Desugared::StmtReturn(_)
+            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtBlock { .. } => None,
         }
     }
 
@@ -8529,6 +8575,12 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
+            // Statement-composition floor variants never flow into term contexts.
+            Desugared::StmtSupport
+            | Desugared::StmtBound { .. }
+            | Desugared::StmtReturn(_)
+            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtBlock { .. } => None,
         }
     }
 
@@ -8542,6 +8594,12 @@ impl Desugared {
             | Desugared::LiteralString(_)
             | Desugared::LiteralCStr(_)
             | Desugared::FormatValue(_) => None,
+            // Statement-composition floor variants never flow into tuple contexts.
+            Desugared::StmtSupport
+            | Desugared::StmtBound { .. }
+            | Desugared::StmtReturn(_)
+            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtBlock { .. } => None,
         }
     }
 
@@ -8573,6 +8631,12 @@ impl Desugared {
             Desugared::TermSeq(_) => return None,
             Desugared::Constraints { .. } => return None,
             Desugared::TupleComponents(_) => return None,
+            // Statement-composition floor variants never carry a string literal.
+            Desugared::StmtSupport
+            | Desugared::StmtBound { .. }
+            | Desugared::StmtReturn(_)
+            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtBlock { .. } => return None,
         };
         let [only] = seq.as_slice() else {
             return None;
@@ -10416,6 +10480,13 @@ fn emit_desugared(
         Desugared::LiteralCStr(_) => false,
         Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
+        // Statement-composition floor variants are not emitted here; BlockSugar
+        // consumes them internally and emits a Constraints when it closes.
+        Desugared::StmtSupport
+        | Desugared::StmtBound { .. }
+        | Desugared::StmtReturn(_)
+        | Desugared::StmtGuarded { .. }
+        | Desugared::StmtBlock { .. } => false,
     }
 }
 
