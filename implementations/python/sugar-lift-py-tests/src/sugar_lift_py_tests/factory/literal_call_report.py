@@ -433,63 +433,109 @@ def _construct_callsite(
     memento_file: str,
     source_lines: list[str],
 ) -> LiftResult | None:
-    """Curry the resolved callee over the CONCRETE callsite arg and slam to the floor.
+    """Construct the callsite tower AND every tower it bridges to, transitively.
 
-    Bind the formal to the arg's value and reduce the body through the catalog -- every
-    operation delegates to Python (the reference), so the value we get IS Python's value,
-    leak-impossible by construction. If it slams to a concrete literal, we SWEAR
-    `call:callee(args) == <that literal>` -- a fact we computed, conjoined with the vendor's
-    assertion. A wrong vendor value then UNSATs (the symbolic universe could only check
-    consistency; this VERIFIES). Returns None -- defer to the symbolic universe -- when the
-    peel stops anywhere but a concrete literal: a symbolic arg, an op Python can't fold, or a
-    runtime effect (Incomplete). Irreducible, therefore axiomatic: the bridge stands."""
+    Curry the callee over the concrete arg and reduce the body through the catalog -- every
+    operation delegates to Python (the reference), leak-impossible by construction. The body
+    reaches one of two floors (the Outcome algebra):
+      * a LITERAL -> we swear `call:callee(arg) == <value>` (the leaf).
+      * a BRIDGE `call:h(arg2)` -> we swear `call:callee(arg) == call:h(arg2)` AND the reduce
+        ENQUEUED h's dig (emit's job: pointer + obligation are one act). h owes a tower, so we
+        drain it next -- the bridge's `vendor source` goes Resolved, not Absent.
+    The worklist drains transitively, cycle-guarded by the #euf# key so a tower never re-digs
+    itself (the fixpoint). A callee with no body, a symbolic arg, or a runtime effect leaves
+    the bridge as a dangling axiom and that branch defers; if NOTHING constructs, return None
+    and the symbolic universe / the mouth takes over."""
     from .build import default_catalog
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.factory.block import Block
-    from sugar_lift_py_tests.floor import ReturnValue, TermValue
+    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.floor import ReturnValue, SymbolicValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal import TemporalContext
 
-    callee = functions_by_name.get(callee_name)
-    if callee is None or len(callee.function_params()) != 1 or callsite.call_arg_count() != 1:
+    if callsite.call_arg_count() != 1:
         return None
-    build_ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
-    empty = ReduceContext(temporal=TemporalContext.empty())
-    # the concrete arg must itself slam to a literal (a symbolic arg leaves it irreducible)
-    try:
-        arg_outcome = build_ctx.build_body(callsite.call_args()[0], SugarRole.TERM).reduce(empty)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(arg_outcome, Complete) or not isinstance(arg_outcome.value, TermValue):
-        return None
-    # curry: bind the formal to the concrete arg, reduce the body (peel the sugar)
-    reduce_ctx = ReduceContext(
-        temporal=TemporalContext.empty().bind_value(callee.function_params()[0], arg_outcome.value)
+    resolver = {name: f.node for name, f in functions_by_name.items()}
+    build_ctx = FactoryBuildContext(
+        filename=filename, catalog=default_catalog(), name_resolver=resolver
     )
+    # The TOP arg must itself slam to a concrete value (a symbolic arg leaves the whole
+    # callsite irreducible -> defer to the symbolic universe).
     try:
-        block_outcome = build_ctx.build_body(Block.of(callee.node.body), SugarRole.STATEMENT).reduce(
-            reduce_ctx
+        top = build_ctx.build_body(callsite.call_args()[0], SugarRole.TERM).reduce(
+            ReduceContext(temporal=TemporalContext.empty())
         )
-    except (TypeError, ValueError):
-        return None  # an op/shape Python (via the catalog) cannot fold -> defer
-    if not isinstance(block_outcome, Complete):
-        return None  # a runtime effect (Incomplete) halted the peel
-    stmts = block_outcome.value.statements
-    if len(stmts) != 1 or not isinstance(stmts[0], ReturnValue) or not isinstance(
-        stmts[0].value, TermValue
-    ):
-        return None  # did not slam to a single concrete literal
-    arg_terms = [_lift_literal_via_factory(callsite.call_args()[0], filename)]
-    return _emit_euf_fact(
-        stmt,
-        caller_fn,
-        callee_name,
-        arg_terms,
-        _floor_to_term(stmts[0].value),
-        filename=filename,
-        memento_file=memento_file,
-        source_lines=source_lines,
-    )
+    except (TypeError, ValueError, FactoryGap):
+        return None
+    if not isinstance(top, Complete) or isinstance(top.value, SymbolicValue):
+        return None
+
+    def _euf_name(cn, arg_value):
+        return euf_callsite_name(
+            cn, euf_call_term(cn, [_floor_to_term(arg_value)]), suffix="::assertion"
+        )
+
+    seen: set[str] = set()
+    worklist: list[tuple[str, object]] = [(callee_name, top.value)]
+    facts: list[LiftResult] = []
+    while worklist:
+        cn, arg_value = worklist.pop()
+        key = _euf_name(cn, arg_value)
+        if key in seen:
+            continue  # fixpoint: this tower is already minted (cycle / shared callee)
+        seen.add(key)
+        callee = functions_by_name.get(cn)
+        if callee is None or len(callee.function_params()) != 1:
+            continue  # no tower to dig -> `call:cn(arg)` stays a dangling axiom (the vendor's word)
+        sink: list[tuple[str, object]] = []
+        reduce_ctx = ReduceContext(
+            temporal=TemporalContext.empty().bind_value(callee.function_params()[0], arg_value),
+            dig_sink=sink,
+        )
+        try:
+            outcome = build_ctx.build_body(Block.of(callee.node.body), SugarRole.STATEMENT).reduce(
+                reduce_ctx
+            )
+        except (TypeError, ValueError, FactoryGap):
+            continue  # a shape the catalog cannot peel -> leave the bridge as an axiom
+        if not isinstance(outcome, Complete):
+            continue  # a runtime effect (Incomplete): unclimbable here
+        body_stmts = outcome.value.statements
+        if len(body_stmts) != 1 or not isinstance(body_stmts[0], ReturnValue):
+            continue
+        result = body_stmts[0].value
+        if isinstance(result, TermValue):
+            value_term = _floor_to_term(result)  # reached a literal floor
+        elif isinstance(result, SymbolicValue):
+            value_term = result.term  # topped out at a bridge `call:h(arg2)` -- the pointer
+        else:
+            continue
+        if value_term == euf_call_term(cn, [_floor_to_term(arg_value)]):
+            # A reflexive self-bridge `call:f(arg) == call:f(arg)` is a recursion cycle: vacuous,
+            # and the tower is not finitely constructible. Skip it -> no fact; the callsite falls
+            # to the symbolic universe / the mouth, which refuses cleanly rather than swearing
+            # a tautology that defines nothing.
+            continue
+        facts.append(
+            _emit_euf_fact(
+                stmt,
+                caller_fn,
+                cn,
+                [_floor_to_term(arg_value)],
+                value_term,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
+        )
+        worklist.extend(sink)  # the bridges this body emitted now owe their own towers
+    if not facts:
+        return None
+    merged = facts[0]
+    for extra in facts[1:]:
+        merged = _merge_lifts(merged, extra)
+    return merged
 
 
 def _dig_universe(
