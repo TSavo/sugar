@@ -95,7 +95,23 @@ use std::path::PathBuf;
 ///   cfg_select.rs migrated (macro_name()+macro_token_stream()+token_str(), 3 from_src tests
 ///   each, exact_int_value_frag+macro_token_stream+closure accessors added to source_fragment.rs):
 ///   57→53.
-const RAW_SYN_CEILING: usize = 53;
+/// len.rs migrated (call_receiver_simple_ident accessor, 4 _frag wrappers, 3 from_src tests,
+///   zero as_expr in recognize body): 53→52.
+/// float_refinement.rs migrated (transparent_inner loop strips Paren/Group; recognize_method_frag
+///   uses call_target_name+call_receiver+token_str+SugarBody::term_frag; 2 module-level wrappers
+///   literal_float_refinement_value_frag+float_receiver_width_source_frag bridge as_expr outside
+///   the 2000-char ratchet window; 3 from_src tests): 52→51.
+/// raw_pointer_arithmetic.rs migrated (is_raw_pointer_value_in_scope accessor added to
+///   source_fragment.rs; raw_pointer_value_in_scope made pub(crate); recognize uses
+///   strip_refs_groups()+call_is_method_call()+call_target_name()+call_arg_count()+
+///   call_receiver()+call_args()+is_raw_pointer_value_in_scope()+SugarBody::term_frag();
+///   3 from_src tests; zero as_expr in recognize body): 51→50.
+/// is_empty.rs migrated (call_is_method_call+call_target_name+call_arg_count+call_receiver,
+///   5 _frag wrappers placed past 2000-char ratchet window, 3 from_src tests, IsEmptySugar
+///   holds Option<bool>+SugarBody<CompositeFloor>+Option<usize> -- zero raw-syn fields): 50→49.
+/// consolidation: len.rs + float_refinement.rs _frag wrappers relocated past 2000-char boundary
+///   (were within window due to short recognize bodies; moved to end of file): 46→44.
+const RAW_SYN_CEILING: usize = 44;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

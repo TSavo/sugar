@@ -15,41 +15,40 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use quote::ToTokens;
 use sugar_ir_symbolic::num;
-use syn::{Expr, ExprCall, ExprPath, GenericArgument, PathArguments, Type};
+use syn::{PathArguments, Type};
 use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("sizeof", SugarRole::Term, recognize);
 
+// No as_expr / Expr:: / raw syn in this body.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    let ty = size_of_type_arg(call, fcx)?;
+    let parts = frag.call_size_of_type_parts(fcx)?;
     Some(Box::new(SizeOfSugar {
-        ty: ty.clone(),
-        ty_key: type_key(ty),
-        ty_src: ty.to_token_stream().to_string(),
+        ty_key: parts.ty_key,
+        ty_src: parts.ty_src,
+        primitive_size: parts.primitive_size,
+        atomic_size: parts.atomic_size,
     }))
 }
 
+// No raw syn fields in this struct.
 struct SizeOfSugar {
-    ty: Type,
     ty_key: String,
     ty_src: String,
+    primitive_size: Option<i128>,
+    atomic_size: Option<i128>,
 }
 
 impl Sugar for SizeOfSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Some(size) = primitive_size_of(&self.ty) {
+        if let Some(size) = self.primitive_size {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::sizeof",
                 ty = self.ty_key.as_str(),
@@ -58,7 +57,7 @@ impl Sugar for SizeOfSugar {
             );
             return Outcome::Complete(Desugared::Term(num(size)));
         }
-        if let Some(size) = core_atomic_size_of(&self.ty) {
+        if let Some(size) = self.atomic_size {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::sizeof",
                 ty = self.ty_key.as_str(),
@@ -67,7 +66,7 @@ impl Sugar for SizeOfSugar {
             );
             return Outcome::Complete(Desugared::Term(num(size)));
         }
-        let prelude = ctx.scope.layout_prelude_for_type(&self.ty);
+        let prelude = ctx.scope.layout_prelude_for_type_src(&self.ty_src);
         if let Some(size) = rustc_size_of_type(&self.ty_key, &self.ty_src, &prelude) {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::sizeof",
@@ -88,81 +87,6 @@ impl Sugar for SizeOfSugar {
             boundary: format!("mem::size_of::<{}>()", self.ty_key),
         })
     }
-}
-
-fn size_of_type_arg<'a>(call: &'a ExprCall, fcx: &SugarBuildCtx) -> Option<&'a Type> {
-    if !call.args.is_empty() {
-        return None;
-    }
-    let Expr::Path(ExprPath {
-        qself: None, path, ..
-    }) = call.func.as_ref()
-    else {
-        return None;
-    };
-    if !is_compiler_size_of_path(path, fcx) {
-        return None;
-    }
-    let last = path.segments.last()?;
-    let PathArguments::AngleBracketed(args) = &last.arguments else {
-        return None;
-    };
-    if args.args.len() != 1 {
-        return None;
-    }
-    let Some(GenericArgument::Type(ty)) = args.args.first() else {
-        return None;
-    };
-    Some(ty)
-}
-
-fn is_compiler_size_of_path(path: &syn::Path, fcx: &SugarBuildCtx) -> bool {
-    let segments = path.segments.iter().collect::<Vec<_>>();
-    match segments.as_slice() {
-        [size_of] if size_of.ident == "size_of" => !fcx.scope().has_visible_fn("size_of"),
-        [mem, size_of] if mem.ident == "mem" && size_of.ident == "size_of" => true,
-        [std_or_core, mem, size_of]
-            if matches!(std_or_core.ident.to_string().as_str(), "std" | "core")
-                && mem.ident == "mem"
-                && size_of.ident == "size_of" =>
-        {
-            true
-        }
-        _ => false,
-    }
-}
-
-fn primitive_size_of(ty: &Type) -> Option<i128> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    if path.qself.is_some() || path.path.segments.len() != 1 {
-        return None;
-    }
-    let segment = path.path.segments.first()?;
-    if !matches!(segment.arguments, PathArguments::None) {
-        return None;
-    }
-    let size = match segment.ident.to_string().as_str() {
-        "bool" => std::mem::size_of::<bool>(),
-        "char" => std::mem::size_of::<char>(),
-        "i8" => std::mem::size_of::<i8>(),
-        "i16" => std::mem::size_of::<i16>(),
-        "i32" => std::mem::size_of::<i32>(),
-        "i64" => std::mem::size_of::<i64>(),
-        "i128" => std::mem::size_of::<i128>(),
-        "isize" => std::mem::size_of::<isize>(),
-        "u8" => std::mem::size_of::<u8>(),
-        "u16" => std::mem::size_of::<u16>(),
-        "u32" => std::mem::size_of::<u32>(),
-        "u64" => std::mem::size_of::<u64>(),
-        "u128" => std::mem::size_of::<u128>(),
-        "usize" => std::mem::size_of::<usize>(),
-        "f32" => std::mem::size_of::<f32>(),
-        "f64" => std::mem::size_of::<f64>(),
-        _ => return None,
-    };
-    Some(size as i128)
 }
 
 /// The `core::sync::atomic` types have a layout GUARANTEED by the standard library to
@@ -356,6 +280,80 @@ mod tests {
 
     fn ty(src: &str) -> Type {
         syn::parse_str::<Type>(src).expect("parse type")
+    }
+
+    // -- Phase-3 from_src test ------------------------------------------------
+    // source -> SourceFragment -> observed -> call_size_of_type_parts -> floor.
+    // No parse_quote! / StubTerm / run().
+
+    #[test]
+    fn from_src_size_of_u32_parts_and_recognize() {
+        use crate::{LiftOptions, TemporalPlan, TemporalScope};
+        use crate::sugar::factory::SugarBuildCtx;
+        use std::collections::BTreeMap;
+        use syn::Expr;
+
+        // Positive: mem::size_of::<u32>() is a Call fragment.
+        let expr: Expr = syn::parse_str("mem::size_of::<u32>()").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+        assert_eq!(frag.observed(), "Call", "size_of call observed as Call");
+
+        let scope = TemporalScope::new("sizeof-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        // accessor gate: type parts decoded correctly
+        let parts = frag
+            .call_size_of_type_parts(&fcx)
+            .expect("mem::size_of::<u32>() must yield SizeOfTypeParts");
+        assert_eq!(parts.ty_key, "u32", "ty_key");
+        assert_eq!(parts.primitive_size, Some(4), "primitive u32 size is 4");
+        assert!(parts.atomic_size.is_none(), "u32 is not an atomic");
+
+        // recognize returns Some
+        assert!(recognize(&frag, &fcx).is_some(), "mem::size_of::<u32>() recognized");
+
+        // Discrimination: call with arguments is rejected
+        let expr_args: Expr = syn::parse_str("mem::size_of::<u32>(extra)").expect("parse");
+        let frag_args = SourceFragment::expr(&expr_args, "<src>");
+        assert!(
+            frag_args.call_size_of_type_parts(&fcx).is_none(),
+            "call with extra arg must return None"
+        );
+        assert!(recognize(&frag_args, &fcx).is_none(), "call with extra arg not recognized");
+
+        // Structural: a bare binop is not a size_of call
+        let expr_binop: Expr = syn::parse_str("x + 1").expect("parse");
+        let frag_binop = SourceFragment::expr(&expr_binop, "<src>");
+        assert!(
+            frag_binop.call_size_of_type_parts(&fcx).is_none(),
+            "binop must return None from call_size_of_type_parts"
+        );
+        assert!(recognize(&frag_binop, &fcx).is_none(), "binop not recognized");
+    }
+
+    #[test]
+    fn from_src_size_of_atomic_parts() {
+        use crate::{LiftOptions, TemporalPlan, TemporalScope};
+        use crate::sugar::factory::SugarBuildCtx;
+        use std::collections::BTreeMap;
+        use syn::Expr;
+
+        let expr: Expr = syn::parse_str("core::mem::size_of::<AtomicU32>()").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        let scope = TemporalScope::new("sizeof-atomic-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        let parts = frag
+            .call_size_of_type_parts(&fcx)
+            .expect("core::mem::size_of::<AtomicU32>() must yield SizeOfTypeParts");
+        assert_eq!(parts.ty_key, "AtomicU32", "ty_key for AtomicU32");
+        assert!(parts.primitive_size.is_none(), "AtomicU32 is not a primitive");
+        assert_eq!(parts.atomic_size, Some(4), "AtomicU32 atomic size is 4");
     }
 
     #[test]

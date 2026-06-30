@@ -4871,6 +4871,17 @@ impl TemporalScope {
         self.layout_type_registry.prelude_for_type(ty)
     }
 
+    /// Like [`layout_prelude_for_type`] but accepts the type as a source-text
+    /// string (the `ty_src` token-stream form produced by `ToTokens`). The string
+    /// is parsed back to a `syn::Type`; if parsing fails an empty string is
+    /// returned. Used by `SizeOfSugar::desugar` so the struct need not store raw syn.
+    pub(crate) fn layout_prelude_for_type_src(&self, ty_src: &str) -> String {
+        let Ok(ty) = syn::parse_str::<Type>(ty_src) else {
+            return String::new();
+        };
+        self.layout_prelude_for_type(&ty)
+    }
+
     pub(crate) fn offset_prelude_for_type(&self, ty: &Type) -> String {
         self.layout_type_registry.offset_prelude_for_type(ty)
     }

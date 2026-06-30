@@ -514,6 +514,18 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// For a `MethodCall` fragment, returns the simple single-ident name of the
+    /// receiver, stripping `Paren` and `Group` wrappers (mirrors
+    /// `crate::simple_path_name(&call.receiver)`). Returns `None` for
+    /// non-`MethodCall` fragments or receivers that are not a bare identifier
+    /// path (possibly wrapped in parentheses/groups).
+    pub(crate) fn call_receiver_simple_ident(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(m)) => crate::simple_path_name(&m.receiver),
+            _ => None,
+        }
+    }
+
     /// Positional arguments for a `Call` or `MethodCall`.
     pub(crate) fn call_args(&self) -> Vec<SourceFragment<'a>> {
         match &self.node {
@@ -1688,6 +1700,23 @@ impl<'a> SourceFragment<'a> {
         crate::type_key(&cast.ty)
     }
 
+    // -- Raw-pointer value check -----------------------------------------------
+
+    /// Returns `true` if this fragment is a raw-pointer value in scope: a cast to
+    /// `*const T`/`*mut T`, a path whose let-binding is typed or initialised as a
+    /// raw pointer, or a `Paren`/`Group` wrapping thereof. Depth is bounded at 8
+    /// to prevent unbounded recursion through chained let-bindings. All raw syn
+    /// field access lives inside `raw_pointer_arithmetic::raw_pointer_value_in_scope`;
+    /// recognizer bodies see only `bool`.
+    pub(crate) fn is_raw_pointer_value_in_scope(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+        depth: usize,
+    ) -> bool {
+        let Some(expr) = self.as_expr() else { return false; };
+        crate::sugar::raw_pointer_arithmetic::raw_pointer_value_in_scope(expr, fcx, depth)
+    }
+
     // -- int-literal fold accessor (transitional; raw syn lives HERE) ----------
 
     /// Const-fold this fragment to an exact integer value through
@@ -1715,6 +1744,43 @@ impl<'a> SourceFragment<'a> {
         Some(m.mac.tokens.clone())
     }
 
+    // -- macro mut-local scan -------------------------------------------------
+
+    /// Returns `true` if the macro's token stream (for an `Expr::Macro` fragment)
+    /// contains an identifier that is a `mut` local in `scope`, or a string literal
+    /// whose `{…}` format holes name a `mut` local. Returns `false` for non-Macro
+    /// fragments. Mirrors the token scan in `macro_term::recognize`; all raw syn +
+    /// proc_macro2 access lives HERE.
+    pub(crate) fn macro_contains_mut_local(&self, scope: &crate::TemporalScope) -> bool {
+        let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
+            return false;
+        };
+        m.mac.tokens.clone().into_iter().any(|tt| match &tt {
+            proc_macro2::TokenTree::Ident(id) => scope.is_mut_local(&id.to_string()),
+            proc_macro2::TokenTree::Literal(lit) => {
+                let text = lit.to_string();
+                crate::macro_literal_contains_mut_local(&text, scope)
+            }
+            _ => false,
+        })
+    }
+
+    // -- macro cfg-predicate parse --------------------------------------------
+
+    /// For an `Expr::Macro` fragment, parse the macro body as a `CfgPredicate`.
+    /// Returns `None` for non-Macro fragments; `Some(Ok(predicate))` on success;
+    /// `Some(Err(msg))` when the body does not parse. The `syn::Error` is
+    /// converted to a `String` so the caller sees no raw syn error type.
+    /// All raw syn access lives HERE.
+    pub(crate) fn macro_parse_cfg_predicate(
+        &self,
+    ) -> Option<Result<crate::CfgPredicate, String>> {
+        let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
+            return None;
+        };
+        Some(m.mac.parse_body::<crate::CfgPredicate>().map_err(|e| e.to_string()))
+    }
+
     // -- closure accessors ----------------------------------------------------
 
     /// Returns `true` if this fragment is an `Expr::Closure` with zero input
@@ -1739,6 +1805,258 @@ impl<'a> SourceFragment<'a> {
             _ => None,
         }
     }
+
+    // -- char-range-collect-string accessors -----------------------------------
+
+    /// Returns `true` if this fragment is a `.collect::<String>()` method call
+    /// with exactly one turbofish generic argument that is a `Type::Path` whose
+    /// last segment ident is `"String"` and has no qualified self.
+    /// All raw syn access lives HERE; `char_range_collect_string::recognize`
+    /// sees only `bool`.
+    pub(crate) fn call_collects_string(&self) -> bool {
+        let FragNode::Expr(syn::Expr::MethodCall(call)) = &self.node else {
+            return false;
+        };
+        let Some(turbofish) = &call.turbofish else {
+            return false;
+        };
+        if turbofish.args.len() != 1 {
+            return false;
+        }
+        matches!(
+            turbofish.args.first(),
+            Some(syn::GenericArgument::Type(syn::Type::Path(path)))
+                if path.qself.is_none()
+                    && path.path.segments.last().is_some_and(|seg| seg.ident == "String")
+        )
+    }
+
+    /// Returns `Some(())` if this fragment is a `|param| param as char` closure:
+    /// exactly one single-ident input parameter, and a body (after stripping
+    /// `Expr::Block`/refs/parens/groups) that is a `Cast` of that same ident
+    /// to `char`. Handles both `|b| b as char` and `|b| { b as char }`.
+    /// All raw syn access lives HERE; `char_range_collect_string::recognize`
+    /// sees only `Option<()>`.
+    pub(crate) fn closure_recognizes_char_cast(&self) -> Option<()> {
+        let FragNode::Expr(syn::Expr::Closure(closure)) = &self.node else {
+            return None;
+        };
+        if closure.inputs.len() != 1 {
+            return None;
+        }
+        let param = crate::closure_single_param_ident(&closure.inputs[0])?;
+        // Handle both `|b| b as char` and `|b| { b as char }`.
+        let body_raw = crate::strip_refs_groups(&closure.body);
+        let body: &syn::Expr = match body_raw {
+            syn::Expr::Block(block) => match block.block.stmts.as_slice() {
+                [syn::Stmt::Expr(expr, None)] => expr,
+                _ => return None,
+            },
+            other => other,
+        };
+        let syn::Expr::Cast(cast) = crate::strip_refs_groups(body) else {
+            return None;
+        };
+        if !matches!(
+            crate::strip_refs_groups(&cast.expr),
+            syn::Expr::Path(path)
+                if path.path.get_ident().is_some_and(|ident| ident == param.as_str())
+        ) {
+            return None;
+        }
+        matches!(
+            cast.ty.as_ref(),
+            syn::Type::Path(path)
+                if path.qself.is_none()
+                    && path.path.segments.last().is_some_and(|seg| seg.ident == "char")
+        )
+        .then_some(())
+    }
+
+    /// Returns `true` if this fragment (as an expression) resolves to a literal
+    /// sequence via `method_family::resolves_literal_sequence`. Peels fold
+    /// adaptors and checks the base. All raw syn access lives in the delegate.
+    /// Returns `false` for non-Expr fragments.
+    pub(crate) fn resolves_literal_sequence_frag(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> bool {
+        let Some(expr) = self.as_expr() else {
+            return false;
+        };
+        crate::sugar::method_family::resolves_literal_sequence(expr, fcx.let_inits())
+    }
+
+    /// Builds the composite literal sequence `Sugar` for this fragment's expression.
+    /// Returns `None` if the fragment is not an expression, or does not resolve to
+    /// a literal sequence. Delegates to `method_family::build_literal_sequence_composite`;
+    /// all raw syn access lives in the delegate.
+    pub(crate) fn build_literal_sequence_composite_frag(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> Option<Box<dyn crate::Sugar>> {
+        let expr = self.as_expr()?;
+        crate::sugar::method_family::build_literal_sequence_composite(expr, fcx)
+    }
+
+    // -- size_of call accessor ------------------------------------------------
+
+    /// Decode a `[std|core::]mem::size_of::<T>()` call site. Returns `None` if:
+    ///   - the fragment is not an `Expr::Call`,
+    ///   - the call has positional arguments,
+    ///   - the callee is not an unqualified path whose final segment is `size_of`,
+    ///   - the path matches a user-defined `size_of` fn visible in scope, or
+    ///   - the last path segment has zero or >=2 generic type arguments.
+    ///
+    /// All raw syn field access lives HERE; recognizer bodies see only
+    /// `Option<SizeOfTypeParts>`.
+    pub(crate) fn call_size_of_type_parts(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> Option<SizeOfTypeParts> {
+        // Gate: must be an Expr::Call.
+        let syn::Expr::Call(call) = self.as_expr()? else {
+            return None;
+        };
+        // Zero positional arguments required.
+        if !call.args.is_empty() {
+            return None;
+        }
+        // Callee: unqualified path only.
+        let syn::Expr::Path(syn::ExprPath { qself: None, path, .. }) = call.func.as_ref() else {
+            return None;
+        };
+        // Path must be a compiler size_of path.
+        if !size_of_is_compiler_path(path, fcx) {
+            return None;
+        }
+        // Last segment must carry exactly one angle-bracketed type argument.
+        let last = path.segments.last()?;
+        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+            return None;
+        };
+        if args.args.len() != 1 {
+            return None;
+        }
+        let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
+            return None;
+        };
+        // Derive fragment-native data -- all raw syn access ends here.
+        let ty_key = crate::type_key(ty);
+        let ty_src = quote::ToTokens::to_token_stream(ty).to_string();
+        let primitive_size = size_of_primitive_size(ty);
+        let atomic_size = size_of_core_atomic_size(ty);
+        Some(SizeOfTypeParts { ty_key, ty_src, primitive_size, atomic_size })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// size_of type-parts data + helpers (used by call_size_of_type_parts)
+// ---------------------------------------------------------------------------
+
+/// Data decoded from a `mem::size_of::<T>()` call site. All raw syn access
+/// stays inside [`SourceFragment::call_size_of_type_parts`]; callers hold only
+/// host-native types.
+pub(crate) struct SizeOfTypeParts {
+    /// Canonical type key (as produced by `crate::type_key`).
+    pub ty_key: String,
+    /// Token-stream string for the type argument (e.g. `"u32"` or
+    /// `"std :: num :: NonZeroU32"`). Parseable back to `syn::Type`.
+    pub ty_src: String,
+    /// Precomputed size in bytes for a primitive type, or `None`.
+    pub primitive_size: Option<i128>,
+    /// Precomputed size in bytes for a `core::sync::atomic` type, or `None`.
+    pub atomic_size: Option<i128>,
+}
+
+/// Returns `true` when `path` is one of the compiler-owned `size_of` spellings:
+/// bare `size_of` (when no user `size_of` fn shadows it in scope),
+/// `mem::size_of`, `std::mem::size_of`, or `core::mem::size_of`.
+/// Raw syn access lives HERE.
+fn size_of_is_compiler_path(
+    path: &syn::Path,
+    fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+) -> bool {
+    let segments: Vec<_> = path.segments.iter().collect();
+    match segments.as_slice() {
+        [size_of] if size_of.ident == "size_of" => !fcx.scope().has_visible_fn("size_of"),
+        [mem, size_of] if mem.ident == "mem" && size_of.ident == "size_of" => true,
+        [std_or_core, mem, size_of]
+            if matches!(std_or_core.ident.to_string().as_str(), "std" | "core")
+                && mem.ident == "mem"
+                && size_of.ident == "size_of" =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Returns the host `mem::size_of` for a primitive Rust type (single-segment
+/// path, no qself, no generic args). Raw syn access lives HERE.
+fn size_of_primitive_size(ty: &syn::Type) -> Option<i128> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+    let segment = path.path.segments.first()?;
+    if !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    let size = match segment.ident.to_string().as_str() {
+        "bool" => std::mem::size_of::<bool>(),
+        "char" => std::mem::size_of::<char>(),
+        "i8" => std::mem::size_of::<i8>(),
+        "i16" => std::mem::size_of::<i16>(),
+        "i32" => std::mem::size_of::<i32>(),
+        "i64" => std::mem::size_of::<i64>(),
+        "i128" => std::mem::size_of::<i128>(),
+        "isize" => std::mem::size_of::<isize>(),
+        "u8" => std::mem::size_of::<u8>(),
+        "u16" => std::mem::size_of::<u16>(),
+        "u32" => std::mem::size_of::<u32>(),
+        "u64" => std::mem::size_of::<u64>(),
+        "u128" => std::mem::size_of::<u128>(),
+        "usize" => std::mem::size_of::<usize>(),
+        "f32" => std::mem::size_of::<f32>(),
+        "f64" => std::mem::size_of::<f64>(),
+        _ => return None,
+    };
+    Some(size as i128)
+}
+
+/// Returns the known size in bytes for a `core::sync::atomic` type via the
+/// documented layout guarantee (same size as underlying primitive). Recognises
+/// bare (`AtomicU32`) and fully-qualified spellings via the LAST path segment.
+/// Raw syn access lives HERE.
+fn size_of_core_atomic_size(ty: &syn::Type) -> Option<i128> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let segment = path.path.segments.last()?;
+    let ident = segment.ident.to_string();
+    let size = match ident.as_str() {
+        "AtomicBool" => std::mem::size_of::<bool>(),
+        "AtomicU8" | "AtomicI8" => std::mem::size_of::<u8>(),
+        "AtomicU16" | "AtomicI16" => std::mem::size_of::<u16>(),
+        "AtomicU32" | "AtomicI32" => std::mem::size_of::<u32>(),
+        "AtomicU64" | "AtomicI64" => std::mem::size_of::<u64>(),
+        "AtomicUsize" => std::mem::size_of::<usize>(),
+        "AtomicIsize" => std::mem::size_of::<isize>(),
+        "AtomicPtr" => std::mem::size_of::<*const ()>(),
+        _ => return None,
+    };
+    // Only `AtomicPtr` may carry a type argument; any other atomic with type
+    // arguments is a user type with the same name -> decline (finite-or-refuse).
+    if ident != "AtomicPtr" && !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    Some(size as i128)
 }
 
 // ---------------------------------------------------------------------------

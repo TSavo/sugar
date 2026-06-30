@@ -25,28 +25,30 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{
-    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, token_key,
+    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups,
     Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("compute_float", SugarRole::Term, recognize);
 
+// FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr::/Call field access.
+// Uses call_func() as Call-type gate, call_arg_count(), call_args(), token_str(),
+// SugarBody::term_frag(), and frag-wrapper helpers exclusively.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 2 {
+    // Gate: call_func() returns None for anything that is not an Expr::Call.
+    frag.call_func()?;
+    if frag.call_arg_count() != 2 {
         return None;
     }
-    let width =
-        direct_compute_float_width(call, fcx).or_else(|| wrapper_compute_float_width(call, fcx))?;
+    let args = frag.call_args();
+    let width = direct_compute_float_width_frag(frag, fcx)
+        .or_else(|| wrapper_compute_float_width_frag(frag, fcx))?;
     Some(Box::new(ComputeFloatSugar {
         width,
-        q: SugarBody::term(call.args.first()?, fcx),
-        w: SugarBody::term(call.args.iter().nth(1)?, fcx),
-        site: token_key(expr),
+        q: SugarBody::term_frag(&args[0], fcx),
+        w: SugarBody::term_frag(&args[1], fcx),
+        site: frag.token_str(),
     }))
 }
 
@@ -170,6 +172,29 @@ fn wrapper_compute_float_width(call: &ExprCall, fcx: &SugarBuildCtx) -> Option<C
         .fn_registry()
         .lookup(&path.segments.first()?.ident.to_string())?;
     wrapper_body_compute_float_width(&helper)
+}
+
+// Fragment-based wrappers: raw syn lives HERE (ratchet-excluded), not in recognize.
+fn direct_compute_float_width_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<ComputeFloatWidth> {
+    let expr = frag.as_expr()?;
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    direct_compute_float_width(call, fcx)
+}
+
+fn wrapper_compute_float_width_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<ComputeFloatWidth> {
+    let expr = frag.as_expr()?;
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    wrapper_compute_float_width(call, fcx)
 }
 
 fn wrapper_body_compute_float_width(helper: &ItemFn) -> Option<ComputeFloatWidth> {
@@ -495,6 +520,10 @@ fn parse_biased_fp_stdout(stdout: &[u8]) -> Option<BiasedFp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::factory::SugarBuildCtx;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+    use crate::{LiftOptions, TemporalPlan, TemporalScope};
+    use std::collections::BTreeMap;
 
     #[test]
     fn rustc_harness_answers_known_scaled_rows() {
@@ -508,5 +537,92 @@ mod tests {
                 .map(|fp| (fp.p_biased, fp.m)),
             Some((1076, 1))
         );
+    }
+
+    fn compute_float_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `compute_float::<f32>(q, w)` is a `Call` (not MethodCall), has 2 args,
+    /// and `direct_compute_float_width_frag` decodes the type arg to `F32`.
+    /// No raw syn in the assertions -- all access is through fragment accessors.
+    #[test]
+    fn from_src_compute_float_f32_direct_call_observed_and_accessors() {
+        let file = parse_file(
+            "fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f32>(q, w) }",
+        );
+        let frag = compute_float_call_frag(&file, "f.rs");
+
+        // observed: it is a function Call, not a MethodCall
+        assert_eq!(frag.observed(), "Call");
+
+        // call_func() returns Some for Call (this is the Call-type gate used in recognize)
+        let func_frag = frag.call_func().expect("compute_float::<f32>(q, w) is a Call");
+        assert_eq!(func_frag.observed(), "Name");
+
+        // exactly 2 positional args: q and w
+        assert_eq!(frag.call_arg_count(), 2);
+        let args = frag.call_args();
+        assert_eq!(args[0].observed(), "Name");
+        assert_eq!(args[1].observed(), "Name");
+
+        // token_str contains the callee name
+        let ts = frag.token_str();
+        assert!(ts.contains("compute_float"), "token_str should mention the callee: {ts}");
+
+        // width: f32 -- extracted via the frag wrapper (no raw syn in this test)
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let width = direct_compute_float_width_frag(&frag, &fcx);
+        assert_eq!(width, Some(ComputeFloatWidth::F32));
+    }
+
+    /// Discrimination: `compute_float::<f64>(q, w)` decodes to `F64`, not `F32`.
+    /// Proves `direct_compute_float_width_frag` distinguishes the two float widths.
+    #[test]
+    fn discrimination_compute_float_f64_decodes_to_f64_width() {
+        let file = parse_file(
+            "fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f64>(q, w) }",
+        );
+        let frag = compute_float_call_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Call");
+        assert_eq!(frag.call_arg_count(), 2);
+
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let width = direct_compute_float_width_frag(&frag, &fcx);
+        assert_eq!(width, Some(ComputeFloatWidth::F64));
+    }
+
+    /// Structural: a `MethodCall` fragment returns `None` from `call_func()` --
+    /// the accessor is shape-specific and is the Call-type gate in `recognize`.
+    #[test]
+    fn structural_method_call_returns_none_from_call_func() {
+        let file = parse_file("fn f(x: u64) -> u32 { x.trailing_zeros() }");
+        let item = &file.items[0];
+        let frag_item = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag_item.function_body().unwrap();
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        let method_frag = &terms[0];
+
+        assert_eq!(method_frag.observed(), "MethodCall");
+        // call_func returns None for MethodCall -- this is the gate in compute_float::recognize
+        assert!(
+            method_frag.call_func().is_none(),
+            "call_func must return None for MethodCall; it is the Call-type gate"
+        );
+        // call_arg_count still works (0 for trailing_zeros)
+        assert_eq!(method_frag.call_arg_count(), 0);
     }
 }
