@@ -91,6 +91,7 @@ pub mod sugar {
     pub mod enumerate;
     pub mod extract_if;
     pub mod factory;
+    pub mod factory_gap_info;
     pub mod field_term;
     pub mod filter;
     pub mod filter_map;
@@ -190,6 +191,7 @@ pub mod sugar {
     pub mod slice_index;
     pub mod slice_search;
     pub mod source_contract;
+    pub mod source_fragment;
     pub mod source_location;
     pub mod statement_async_future;
     pub mod statement_control_flow;
