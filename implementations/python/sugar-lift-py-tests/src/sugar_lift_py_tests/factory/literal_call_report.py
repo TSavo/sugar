@@ -477,6 +477,7 @@ def _construct_callsite(
         )
 
     seen: set[str] = set()
+    universes_seen: set[str] = set()
     worklist: list[tuple[str, object]] = [(callee_name, top.value)]
     facts: list[LiftResult] = []
     while worklist:
@@ -488,6 +489,18 @@ def _construct_callsite(
         callee = functions_by_name.get(cn)
         if callee is None or len(callee.function_params()) != 1:
             continue  # no tower to dig -> `call:cn(arg)` stays a dangling axiom (the vendor's word)
+        # Emit the callee's ::callable UNIVERSE once -- the symbolic body walk, warranting each
+        # source line (`return h(x)` -> `out == call:h(x)`, `return x+1` -> `out == +(x,1)`). The
+        # construction below swears the concrete VALUE at the callsite; the universe warrants the
+        # body where its constraints originate, so the visual walk paints the body green too.
+        if cn not in universes_seen:
+            universes_seen.add(cn)
+            uni = _function_universe(
+                callee, cn, functions_by_name=functions_by_name,
+                filename=filename, memento_file=memento_file, source_lines=source_lines,
+            )
+            if uni is not None:
+                facts.append(uni)
         sink: list[tuple[str, object]] = []
         reduce_ctx = ReduceContext(
             temporal=TemporalContext.empty().bind_value(callee.function_params()[0], arg_value),
@@ -536,6 +549,104 @@ def _construct_callsite(
     for extra in facts[1:]:
         merged = _merge_lifts(merged, extra)
     return merged
+
+
+def _function_universe(
+    callee: SourceFragment,
+    callee_name: str,
+    *,
+    functions_by_name: dict[str, SourceFragment],
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult | None:
+    """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
+
+    The construction swears the concrete VALUE at the callsite; this walks the body over its
+    formals into `out == <body>` and warrants each source LINE -- so the visual walk paints the
+    function body green where its constraints originate, not just the assertion. It calls the
+    control-flow walker DIRECTLY (which now lifts `return x + 1` to `out == +(x, 1)` via the
+    symbolic-op emission), bypassing build_bridge_body's string-only single-return shortcut.
+    Returns None if the body cannot be walked -- the construction still stands; only the
+    source-line warrant is absent."""
+    from .build import default_catalog
+    from .sugar_constructors import build_control_flow_body_sugar
+
+    build_ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=default_catalog(),
+        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+    )
+    try:
+        universe_sugar = build_control_flow_body_sugar(callee, build_ctx)
+        body_steps = universe_sugar.factory_steps(callee.node)
+        body_formulas = universe_sugar.constraint_formulas()
+        body_step_formulas = universe_sugar.constraint_formula_steps()
+    except (TypeError, ValueError, FactoryGap):
+        return None  # a body shape the walker cannot lift yet -> no warrant, construction stands
+
+    # IMPORT SUGAR: an imported callee's body lives in its OWN module source -- swap provenance
+    # (before the contract name, which keys on the stem) so the universe's mementos resolve
+    # against the right lines instead of indexing past the importer's file (as _dig_universe does).
+    _imported_source = getattr(callee.node, "_sugar_source", None)
+    if _imported_source is not None:
+        source_lines = _imported_source.splitlines(keepends=True)
+        memento_file = getattr(callee.node, "_sugar_file", memento_file)
+    body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
+    body_step_formula_values = [
+        _formula_to_rpc(formula) if formula is not None else None for formula in body_step_formulas
+    ]
+    _universe_bound = set(callee.function_params()) | {"out"}
+    _universe_formulas = [
+        f
+        for f, fv in zip(body_formulas, body_formula_values)
+        if not _is_free_var_definition(fv, _universe_bound)
+    ]
+    if not _universe_formulas:
+        return None
+    function_post = (
+        _formula_to_rpc(_universe_formulas[0])
+        if len(_universe_formulas) == 1
+        else _formula_to_rpc(and_(_universe_formulas))
+    )
+    function_contract_name = f"{Path(memento_file).stem}::{callee_name}::callable"
+    function_memento = _function_source_memento(
+        callee, memento_file, source_lines,
+        role="python.literal-call-sugar", contract_name=function_contract_name,
+    )
+    body_mementos = [
+        _statement_source_memento(
+            SourceFragment.from_node(step_stmt, memento_file), callee, memento_file, source_lines,
+            contract_name=function_contract_name, role="python.literal-call-sugar",
+        )
+        for _, _, step_stmt, _ in body_steps
+    ]
+    return_stmt_frag = SourceFragment.from_node(body_steps[-1][2], memento_file)
+    function_contract = BodyUniverseDto(
+        name=function_contract_name,
+        out_binding="out",
+        post=function_post,
+        source_warrants=[function_memento],
+        formals=callee.function_params(),
+        kind="function-contract",
+        bridge_source_symbol=f"call:{callee_name}",
+    )
+    audit = _source_audit(
+        callee, return_stmt_frag, memento_file, function_contract_name, body_mementos[-1],
+        role="python.literal-call-sugar", ast_kind="Return",
+    )
+    walk_rows = [
+        _walk_row(
+            selected, ast_kind, SourceFragment.from_node(step_stmt, memento_file), filename,
+            step_memento, output, requested_role="FunctionBodyConstraint",
+            emitted_formula=body_step_formula_values[index]
+            if index < len(body_step_formula_values) else None,
+        )
+        for index, ((selected, ast_kind, step_stmt, output), step_memento) in enumerate(
+            zip(body_steps, body_mementos)
+        )
+    ]
+    return ([function_contract], [function_memento, *body_mementos], [audit], walk_rows, [])
 
 
 def _dig_universe(

@@ -41,16 +41,17 @@ def test_chain_emits_a_tower_per_hop_and_no_bridge_dangles():
     assert referenced <= set(facts.keys()), f"dangling bridge(s): {referenced - set(facts)}"
 
 
-def test_self_recursion_refuses_cleanly_never_hangs():
-    # f calls f: an infinite recursion is not finitely constructible. The build-stack guard
-    # turns the cycle into a clean, NAMED refusal (a FactoryGap with blame) instead of a
-    # RecursionError -- the lifter never hangs, and the non-constructible tower is not faked.
-    with pytest.raises(FactoryGap):
-        build_literal_call_report(
-            source="def f(x):\n    return f(x)\ndef t():\n    assert f(5) == 5\n",
-            filename="t.py",
-            memento_file="t.py",
-        )
+def test_self_recursion_emits_an_honest_universe_never_hangs():
+    # f calls f: the build-stack guard prevents the hang (no RecursionError). The universe is
+    # HONEST -- `out == call:f(x)`, f really does return f(x) -- and f(5)'s VALUE is axiomatic:
+    # an infinite recursion is not finitely constructible, so it is the vendor's word
+    # (stated > derived), constrained by nothing the kit can refute. No hang, no false discharge.
+    rep = build_literal_call_report(
+        source="def f(x):\n    return f(x)\ndef t():\n    assert f(5) == 5\n",
+        filename="t.py",
+        memento_file="t.py",
+    )
+    assert "t::f::callable" in [c.name for c in rep.payload.ir]
 
 
 def test_a_lie_through_the_chain_is_present_in_the_contracts():
