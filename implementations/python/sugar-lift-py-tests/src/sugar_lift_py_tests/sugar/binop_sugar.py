@@ -9,6 +9,27 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
+# The integer-arithmetic operators BinOpSugar folds, AST-kind -> symbol -> fold. Add
+# also concatenates encoded strings (below). Div ('/') is deliberately ABSENT: Python
+# true-division yields a float, which needs float literals -- a separate atom, still red.
+_SYMBOL: dict[str, str] = {
+    "Add": "+",
+    "Sub": "-",
+    "Mult": "*",
+    "FloorDiv": "//",
+    "Mod": "%",
+    "Pow": "**",
+}
+_FOLD = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    "//": lambda a, b: a // b,
+    "%": lambda a, b: a % b,
+    "**": lambda a, b: a ** b,
+}
+
+
 @dataclass(frozen=True)
 class BinOpSugar(Sugar, role=SugarRole.TERM):
     operator: str
@@ -18,7 +39,7 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "BinOp" and site.operator_kind() == "Add"
+        return site.observed == "BinOp" and site.operator_kind() in _SYMBOL
 
     @classmethod
     def build(cls, site, ctx) -> "BinOpSugar":
@@ -28,19 +49,17 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
             right=ctx.build_body(site.binop_right(), SugarRole.TERM),
         )
         if sugar is None:
-            raise TypeError("BinOpSugar claim built a non-addition")
+            raise TypeError("BinOpSugar claim built a non-arithmetic binop")
         return sugar
 
     @classmethod
     def from_site(
         cls, site, *, left: SugarBody, right: SugarBody
     ) -> "BinOpSugar | None":
-        if site.observed != "BinOp":
-            return None
-        if site.operator_kind() != "Add":
+        if site.observed != "BinOp" or site.operator_kind() not in _SYMBOL:
             return None
         return cls(
-            operator="+",
+            operator=_SYMBOL[site.operator_kind()],
             left=left,
             right=right,
             blame=site.blame,
@@ -50,14 +69,18 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
         left = complete_value(self.left.reduce(ctx), owner="BinOpSugar left")
         right = complete_value(self.right.reduce(ctx), owner="BinOpSugar right")
         if isinstance(left, EncodedStringValue) and isinstance(right, EncodedStringValue):
+            if self.operator != "+":
+                raise TypeError("BinOpSugar only concatenates encoded strings with +")
             if left.table != right.table:
                 raise TypeError("BinOpSugar + concatenates encoded strings over one table")
             return Complete(
                 EncodedStringValue(table=left.table, indices=left.indices + right.indices)
             )
         if isinstance(left, TermValue) and isinstance(right, TermValue):
-            return Complete(TermValue(left.value + right.value))
-        raise TypeError("BinOpSugar + requires TermValue or EncodedStringValue operands")
+            return Complete(TermValue(_FOLD[self.operator](left.value, right.value)))
+        raise TypeError(
+            f"BinOpSugar {self.operator} requires TermValue or EncodedStringValue operands"
+        )
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
