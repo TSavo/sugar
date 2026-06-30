@@ -57,3 +57,27 @@ def test_a_lie_through_the_chain_is_present_in_the_contracts():
     facts = _facts(_CHAIN + "def t():\n    assert g(5) == 99\n")
     assert "call:h" in facts["call:g"] and 99 in facts["call:g"]
     assert facts["call:h"] == [6]  # construction says 6; mint sees 6 vs 99 under the chain -> UNSAT
+
+
+def test_multi_hop_chain_composes_every_call_backed_by_a_tower():
+    # f -> g -> h -> literal. Each hop bridges to the next; the leaf constructs. The EUF chain
+    # call:f == call:g == call:h == 10 closes, and EVERY call: is defined by a tower.
+    src = (
+        "def h(x):\n    return x * 2\ndef g(x):\n    return h(x)\ndef f(x):\n    return g(x)\n"
+        "def t():\n    assert f(5) == 10\n"
+    )
+    facts = _facts(src)
+    assert facts["call:h"] == [10]
+    assert "call:g" in facts["call:f"] and "call:h" in facts["call:g"]
+    referenced = {
+        v for vs in facts.values() for v in vs if isinstance(v, str) and v.startswith("call:")
+    }
+    assert referenced <= set(facts.keys()), f"dangling bridge(s): {referenced - set(facts)}"
+
+
+def test_unresolved_callee_is_axiomatic_not_a_crash():
+    # `foo` has no body and no import: it cannot be dug. Its bridge stays the vendor's AXIOM
+    # (an external function's result is stated, not derivable) -- a tower we never had, not a
+    # dangling one we dropped. No crash, no fabricated tower.
+    facts = _facts("def t():\n    assert foo(5) == 6\n")
+    assert facts["call:foo"] == [6]
