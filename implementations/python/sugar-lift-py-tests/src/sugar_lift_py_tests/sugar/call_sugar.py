@@ -141,3 +141,34 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx) -> Outcome:
         return self.strategy.emit(self, ctx)
+
+
+@dataclass(frozen=True)
+class AssertionFactStrategy:
+    """The SWORN FACT -- the vendor/test swearing 'it does this'. ``callee(args) == expected``
+    lifts to ``eq(call:callee(args), expected)``, contract-named ``<callee>#euf#...::assertion``.
+    The factory picks this strategy when it is FACT-seeking (an assertion subject), as opposed
+    to BridgeStrategy (universe-seeking, an in-body callsite). Both keys come from the ONE
+    canonical speller (euf_call_term / euf_callsite_name), so the fact's #euf# join is
+    byte-canonical -- the same name a vendor's proof emits for the same call."""
+
+    callee_name: str
+    arg_terms: tuple
+    expected_term: object
+
+    def _euf_term(self):
+        from sugar_lift_py_tests.factory.literal_call_report import euf_call_term
+
+        return euf_call_term(self.callee_name, list(self.arg_terms))
+
+    def contract_name(self) -> str:
+        from sugar_lift_py_tests.factory.literal_call_report import euf_callsite_name
+
+        return euf_callsite_name(self.callee_name, self._euf_term(), suffix="::assertion")
+
+    def fact_formula(self):
+        return eq(self._euf_term(), self.expected_term)
+
+    def emit(self, sugar, ctx) -> Outcome:
+        # The assertion subject, reduced as a term, IS the bridge `call:callee(args)`.
+        return Complete(SymbolicValue(self._euf_term()))

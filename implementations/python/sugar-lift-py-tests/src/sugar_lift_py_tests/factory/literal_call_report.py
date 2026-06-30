@@ -317,8 +317,11 @@ def _lift_callsite_assertion(
                 requested="LiftableCallArg",
                 fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
             )
-    euf_term = euf_call_term(callee_name, arg_terms)
-    assertion_contract_name = euf_callsite_name(callee_name, euf_term, suffix="::assertion")
+    from sugar_lift_py_tests.sugar.call_sugar import AssertionFactStrategy
+
+    fact = AssertionFactStrategy(callee_name, tuple(arg_terms), expected_term)
+    euf_term = fact._euf_term()
+    assertion_contract_name = fact.contract_name()
     assertion_memento = _statement_source_memento(
         stmt,
         fn,
@@ -327,7 +330,7 @@ def _lift_callsite_assertion(
         contract_name=assertion_contract_name,
         role="python.literal-call-sugar",
     )
-    assertion_inv = _formula_to_rpc(eq(euf_term, expected_term))
+    assertion_inv = _formula_to_rpc(fact.fact_formula())
     assertion_contract = BodyUniverseDto(
         name=assertion_contract_name,
         out_binding="out",
