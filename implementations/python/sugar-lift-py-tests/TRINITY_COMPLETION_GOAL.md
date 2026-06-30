@@ -86,26 +86,51 @@ EUF congruence on that string, in every layer.
    deliberate (re-pin, and say why). The kit cannot see a key drift — it is green — so the
    golden is the only thing that can.
 
-## The missing pillar, concretely
+## STATUS — within-proof Trinity: COMPLETE (PR #2919)
 
-Today `_emit_euf_fact` returns a `LiftResult` whose **call-edges list is empty**. The kit emits
-contracts but not the implication edges. The transitive construction driver (`_construct_callsite`)
-and the dig queue (`ReduceContext.dig_sink`, `BridgeStrategy.emit` enqueue) are the start of
-pillar three; they are not finished and not verified. Completing the Trinity means:
+Reading `consistency.rs` corrected the plan below. The **within-proof** composition does NOT
+go through explicit call-edges: `collect_ambient_ground_callsite_facts` gathers the `::assertion`
+ground facts and **EUF congruence on the shared `call:` symbol composes them** — `call:g(5)==call:h(5)`
+∧ `call:h(5)==6` ⟹ `call:g(5)==6`, with no bridge memento required. So for the construction path,
+the **implication pillar IS the ground fact** (`call:g == call:h`), which the chain test proves
+composes, no dangling.
 
-- **the edge is emitted.** When g bridges to h, the kit emits the call-edge / bridge memento
-  (resolve-half) into the `LiftResult` call-edges, so the linker can resolve g→h and the report
-  can audit it. The edge carries the same `#euf#` source symbol as the bridge term.
-- **the tower is minted.** The enqueued dig drains into h's own contract (the enumerate-half),
-  via the factory, with a byte-exact key that the bridge resolves to.
-- **the chain closes.** A multi-hop chain (`f→g→h→literal`) emits a contract per tower and an
-  edge per hop, cycle-guarded, every bridge `Resolved`.
+Done and merged (PR #2919), proven by `test_transitive_construction.py`:
+
+- **terms** — values, slammed to the floor through the catalog (Python's operators).
+- **contracts** — the `::assertion` towers, one per resolvable callsite, minted via the factory.
+- **implications** — the `call:` ground facts that EUF-compose: a multi-hop chain
+  `f→g→h→literal` emits a tower per hop, every `call:` defined by a tower (no `Absent`), the
+  chain closes; a lie UNSATs; an unresolved callee stays the vendor's **axiom** (a tower we never
+  had, not one we dropped); a recursion **refuses cleanly** (build-stack guard, no hang).
+
+The law holds: every callsite either completes its Trinity or refuses with a loud `FactoryGap`.
+No half-Trinity, no silent dangling.
+
+## The remaining pillar — explicit call-edges (universe-path + cross-proof)
+
+`_emit_euf_fact` still returns an empty call-edges list, and that is correct for the within-proof
+construction (EUF composes the facts). Explicit call-edge / bridge mementos are needed only for
+the **other** composition paths, which are a separate, clearly-scoped follow-up:
+
+- **the universe-instantiation path** — when a callsite must specialize a symbolic `::callable`
+  universe (`instantiate_ambient_foralls_for_inv`) instead of an EUF ground fact, the bridge
+  memento (resolve-half, same `#euf#` source symbol) connects the callsite to the universe.
+- **the cross-proof linker** — `sugar-linker` resolves a call-edge to a contract CID across kits
+  and discharges `post ⊃ pre`. Within one proof there is nothing to link.
+- **the report's edge view** — `sugar lift --report`'s "call edges observed" section visualizes
+  them; the within-proof teeth do not depend on it.
+
+This pillar is **out of scope for within-proof soundness** and stays a follow-up. It must, when
+done, obey every invariant above (one speller, byte-exact key, factory-only, no half-Trinity).
 
 ## DONE predicate (acceptance)
 
 1. A chained source — `def h(x): return x+1` / `def g(x): return h(x)` / `assert g(5)==6` —
-   emits: g's contract referencing `call:h(5)`, h's contract defining `call:h(5)==6`, **and**
-   the implication edge g→h. No emitted bridge is left without a defining tower.
+   emits: g's contract `call:g(5)==call:h(5)` (the implication, as the EUF ground fact, NOT an
+   inlined h), h's contract `call:h(5)==6`, and no emitted `call:` is left without a defining
+   tower. **MET** (PR #2919, `test_transitive_construction.py`). The explicit call-edge memento
+   is the universe-path/cross-proof follow-up, not required for this within-proof closure.
 2. The construction's `#euf#` name for a callsite is **byte-identical** to the vendor
    assertion's for the same callsite (they conjoin). Verified by a key-equality test, not by
    eye.
