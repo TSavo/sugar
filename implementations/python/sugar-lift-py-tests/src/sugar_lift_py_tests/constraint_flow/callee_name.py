@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import ast
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
-def callee_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = callee_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
+def callee_name(fragment: SourceFragment) -> str:
+    if fragment.observed == "Name":
+        return fragment.name_id()
+    if fragment.observed == "Attribute":
+        prefix = callee_name(fragment.attr_receiver())
+        return f"{prefix}.{fragment.attr_name()}" if prefix else fragment.attr_name()
     return ""

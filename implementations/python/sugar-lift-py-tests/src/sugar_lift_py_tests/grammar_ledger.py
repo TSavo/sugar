@@ -22,7 +22,7 @@ classified here into exactly one of THREE statuses — there is no fourth:
 Totality is STRUCTURAL, not asserted: the classifier's only non-named
 buckets are parametric over the interpreter's own grammar
 (``non-return:<stmt class>`` and ``return-other:<expr class>``), so at
-import time this module enumerates ast.stmt and ast.expr from the running
+import time this module enumerates all stmt and expr grammar classes from the running
 interpreter and refuses to import if any reachable bucket lacks a row.
 Grammar growth (a new Python release adding a node kind) is therefore a
 LOUD RuntimeError here, not a silent zero — the same floor as
@@ -36,11 +36,11 @@ the ranked debt worklist.
 
 from __future__ import annotations
 
-import ast
 import json
 from typing import Optional
 
 from .canonicalizer import blake3_512_of
+from .factory.source_fragment import grammar_stmt_classes, grammar_expr_classes
 
 from . import translate_universe as _walks
 
@@ -397,7 +397,7 @@ _RETURN_OTHER: dict = {
         "format family when reachable"
     ),
     "Ellipsis": _debt(
-        "legacy ast.Ellipsis compatibility class: parser-normalized "
+        "legacy Ellipsis compatibility class: parser-normalized "
         "ellipsis constants route through return-constant; if this alias "
         "ever reaches return-other as its own node, map it to the "
         "constant-singleton universe"
@@ -443,24 +443,14 @@ FLAG_LEDGER: dict = dict(_FLAGS)
 
 # ---------------------------------------------------------------------------
 # Import-time floor. Three checks, all structural:
-#   1) every ast.stmt class has a non-return row;
-#   2) every ast.expr class outside _NEVER_FALLS_THROUGH has a
+#   1) every stmt grammar class has a non-return row;
+#   2) every expr grammar class outside _NEVER_FALLS_THROUGH has a
 #      return-other row (and _NEVER_FALLS_THROUGH names only real classes);
 #   3) every row is well-formed (status vocabulary; debt has owes;
 #      membrane has reason; lifted has a symbol that RESOLVES in
 #      translate_universe — a lifted claim pointing at nothing refuses
 #      to import).
 # ---------------------------------------------------------------------------
-
-
-def _grammar_classes(base: type) -> frozenset:
-    return frozenset(
-        cls
-        for name in dir(ast)
-        if isinstance(cls := getattr(ast, name), type)
-        and issubclass(cls, base)
-        and cls is not base
-    )
 
 
 def unaccounted_buckets(
@@ -473,10 +463,10 @@ def unaccounted_buckets(
     holds. Parameterized so tests can feed synthetic grammar growth."""
     ledger = LEDGER if ledger is None else ledger
     stmt_classes = (
-        _grammar_classes(ast.stmt) if stmt_classes is None else stmt_classes
+        grammar_stmt_classes() if stmt_classes is None else stmt_classes
     )
     expr_classes = (
-        _grammar_classes(ast.expr) if expr_classes is None else expr_classes
+        grammar_expr_classes() if expr_classes is None else expr_classes
     )
     holes = []
     for cls in stmt_classes:
@@ -521,7 +511,7 @@ _HOLES = unaccounted_buckets()
 _GHOST = sorted(
     name
     for name in _NEVER_FALLS_THROUGH
-    if name not in {c.__name__ for c in _grammar_classes(ast.expr)}
+    if name not in {c.__name__ for c in grammar_expr_classes()}
 )
 _BAD = malformed_rows(LEDGER) + malformed_rows(FLAG_LEDGER)
 if _HOLES or _BAD or _GHOST:

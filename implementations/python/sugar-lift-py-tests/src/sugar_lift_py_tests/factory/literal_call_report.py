@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,7 +99,7 @@ def build_literal_call_report(
     contract_bindings: list | None = None,
 ) -> SourceReportBuild | None:
     del contract_bindings  # composition is by #euf# callsite name, not a binding/CID
-    tree = ast.parse(source, filename=filename)
+    root_frag = SourceFragment.from_source(source, filename)
     lines = source.splitlines(keepends=True)
     rel_file = memento_file or filename
     contracts: list[BodyUniverseDto] = []
@@ -109,16 +108,18 @@ def build_literal_call_report(
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
     local_functions = {
-        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        frag.function_name(): frag
+        for frag in root_frag.walk()
+        if frag.observed == "FunctionDef"
     }
     # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
     # is not local, so the dig cannot see its body. Resolve each imported callee to
     # its installed source FunctionDef so the SAME dig walks it like a local function.
     # Locals win on name collision; the assert-iteration below stays local-only.
-    dig_functions = {**_resolve_imported_callees(tree), **local_functions}
+    dig_functions = {**_resolve_imported_callees(root_frag), **local_functions}
     for fn in local_functions.values():
-        for stmt in fn.body:
-            if not isinstance(stmt, ast.Assert):
+        for stmt in fn.function_body():
+            if stmt.observed != "Assert":
                 continue
             lifted = _lift_assert(
                 stmt,
@@ -151,13 +152,13 @@ def build_literal_call_report(
 
 
 def _lift_assert(
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     *,
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    functions_by_name: dict[str, ast.FunctionDef],
+    functions_by_name: dict[str, SourceFragment],
 ) -> LiftResult | None:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -173,26 +174,27 @@ def _lift_assert(
 
     Either way the verifier's ambient-post specialization joins the post (local or
     imported) to the fact and z3 decides `and(universe, fact)`."""
-    comparison = stmt.test
-    if not isinstance(comparison, ast.Compare) or len(comparison.ops) != 1:
+    comparison = stmt.assert_test()
+    if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
         _panic_no_sugar(
             stmt, memento_file,
-            observed=f"assert-test:{type(comparison).__name__}",
+            observed=f"assert-test:{comparison.observed}",
             requested="EqualityAssertion",
             fix="lift this assertion shape (only `call(...) == literal` is covered)",
         )
-    if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
+    if comparison.compare_ops()[0] != "Eq" or len(comparison.compare_comparators()) != 1:
         _panic_no_sugar(
             stmt, memento_file,
-            observed=f"assert-compare-op:{type(comparison.ops[0]).__name__}",
+            observed=f"assert-compare-op:{comparison.compare_ops()[0]}",
             requested="EqualityAssertion",
             fix="lift non-`==` comparison assertions",
         )
-    callee_name = _callee_name(comparison.left)
+    comparison_left = comparison.compare_left()
+    callee_name = _callee_name(comparison_left)
     if callee_name is None:
         _panic_no_sugar(
-            comparison.left, memento_file,
-            observed=f"assert-eq-lhs:{type(comparison.left).__name__}",
+            comparison_left, memento_file,
+            observed=f"assert-eq-lhs:{comparison_left.observed}",
             requested="CallsiteEquality",
             fix="lift `<lhs> == literal` where the lhs is not a call",
         )
@@ -211,7 +213,7 @@ def _lift_assert(
     universe: LiftResult | None = None
     if callee_name in functions_by_name:
         universe = _dig_universe(
-            comparison.left,
+            comparison_left,
             functions_by_name=functions_by_name,
             filename=filename,
             memento_file=memento_file,
@@ -246,7 +248,7 @@ def _floor_to_term(value: Any) -> Term:
     )
 
 
-def _lift_literal_via_factory(node: ast.AST, filename: str) -> Term:
+def _lift_literal_via_factory(frag: SourceFragment, filename: str) -> Term:
     """Lift a literal operand of a callsite equality THROUGH THE FACTORY: the
     catalog's literal sugars (PrimitiveLiteral, ...) build and reduce it, and an
     unhandled shape panics via the catalog's own mouth. No special-casing per type."""
@@ -256,16 +258,16 @@ def _lift_literal_via_factory(node: ast.AST, filename: str) -> Term:
     from .build import default_catalog
 
     ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
-    body = ctx.build_body(node, _Role.TERM)
+    body = ctx.build_body(frag, _Role.TERM)
     return _floor_to_term(complete_value(body.reduce(ctx), owner="callsite literal"))
 
 
 def _lift_callsite_assertion(
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     *,
-    comparison: ast.Compare,
+    comparison: SourceFragment,
     callee_name: str,
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -279,19 +281,19 @@ def _lift_callsite_assertion(
     # The expected value composes through the factory's literal sugars (string,
     # int, ...). Anything the catalog can't build panics via its own mouth, which
     # names the next sugar -- no string-only special case here.
-    expected_term = _lift_literal_via_factory(comparison.comparators[0], filename)
+    expected_term = _lift_literal_via_factory(comparison.compare_comparators()[0], filename)
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
     # naming the next sugar, not a crash.
     arg_terms = []
-    for arg_node in comparison.left.args:
+    for arg_frag in comparison.compare_left().call_args():
         try:
-            arg_terms.append(_lift_literal_via_factory(arg_node, filename))
+            arg_terms.append(_lift_literal_via_factory(arg_frag, filename))
         except TypeError:
             _panic_no_sugar(
-                arg_node, memento_file,
-                observed=f"callsite-arg:{type(arg_node).__name__}-unliftable",
+                arg_frag, memento_file,
+                observed=f"callsite-arg:{arg_frag.observed}-unliftable",
                 requested="LiftableCallArg",
                 fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
             )
@@ -335,9 +337,9 @@ def _lift_callsite_assertion(
 
 
 def _dig_universe(
-    call_node: ast.Call,
+    call_frag: SourceFragment,
     *,
-    functions_by_name: dict[str, ast.FunctionDef],
+    functions_by_name: dict[str, SourceFragment],
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -353,17 +355,17 @@ def _dig_universe(
     factory_ctx = FactoryBuildContext(
         filename=filename,
         catalog=default_catalog(),
-        name_resolver=functions_by_name,
+        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
     )
     try:
         call_sugar = build_function_call_sugar(
-            SourceFragment.from_node(call_node, filename),
+            call_frag,
             factory_ctx,
         )
     except TypeError as exc:
         _panic_no_sugar(
-            call_node, memento_file,
-            observed=f"dig-body:{type(call_node).__name__}",
+            call_frag, memento_file,
+            observed=f"dig-body:{call_frag.observed}",
             requested="FunctionBodyConstraint",
             fix=f"lift this function body for the dig ({exc})",
         )
@@ -371,11 +373,11 @@ def _dig_universe(
     # IMPORT SUGAR: an imported callee's body belongs to its OWN module source, not
     # the file being lifted -- swap the provenance source so the dig's mementos
     # resolve against the right lines instead of indexing past the importer's file.
-    _imported_source = getattr(target_fn, "_sugar_source", None)
+    _imported_source = getattr(target_fn.node, "_sugar_source", None)
     if _imported_source is not None:
         source_lines = _imported_source.splitlines(keepends=True)
-        memento_file = getattr(target_fn, "_sugar_file", memento_file)
-    body_steps = call_sugar.factory_steps(target_fn)
+        memento_file = getattr(target_fn.node, "_sugar_file", memento_file)
+    body_steps = call_sugar.factory_steps(target_fn.node)
     body_formulas = call_sugar.constraint_formulas()
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
     body_step_formulas = call_sugar.constraint_formula_steps()
@@ -389,7 +391,7 @@ def _dig_universe(
     # It must be CLOSED after those substitutions or the verifier skips it as "open", so
     # drop free-var DEFINITIONS (`eq(alphabet, "..")` whose var is neither a formal nor
     # `out`); the str.eq-bv-blocks payload already carries the alphabet constant.
-    _universe_bound = {arg.arg for arg in target_fn.args.args} | {"out"}
+    _universe_bound = set(target_fn.function_params()) | {"out"}
     _universe_formulas = [
         f
         for f, fv in zip(body_formulas, body_formula_values)
@@ -400,7 +402,7 @@ def _dig_universe(
         if len(_universe_formulas) == 1
         else _formula_to_rpc(and_(_universe_formulas))
     )
-    function_contract_name = f"{Path(memento_file).stem}::{target_fn.name}::callable"
+    function_contract_name = f"{Path(memento_file).stem}::{target_fn.function_name()}::callable"
     function_memento = _function_source_memento(
         target_fn,
         memento_file,
@@ -410,7 +412,7 @@ def _dig_universe(
     )
     body_mementos = [
         _statement_source_memento(
-            step_stmt,
+            SourceFragment.from_node(step_stmt, memento_file),
             target_fn,
             memento_file,
             source_lines,
@@ -420,21 +422,22 @@ def _dig_universe(
         for _, _, step_stmt, _ in body_steps
     ]
     return_memento = body_mementos[-1]
-    return_stmt = body_steps[-1][2]
+    return_stmt_raw = body_steps[-1][2]
+    return_stmt_frag = SourceFragment.from_node(return_stmt_raw, memento_file)
     function_contract = BodyUniverseDto(
         name=function_contract_name,
         out_binding="out",
         post=function_post,
         source_warrants=[function_memento],
-        formals=[arg.arg for arg in target_fn.args.args],
+        formals=target_fn.function_params(),
         kind="function-contract",
         # Must equal the callsite ctor head the fact emits (`call:<callee>`), which the
         # verifier matches via `post.source_symbol == callsite.name`.
-        bridge_source_symbol=f"call:{target_fn.name}",
+        bridge_source_symbol=f"call:{target_fn.function_name()}",
     )
     audit = _source_audit(
         target_fn,
-        return_stmt,
+        return_stmt_frag,
         memento_file,
         function_contract_name,
         return_memento,
@@ -445,7 +448,7 @@ def _dig_universe(
         _walk_row(
             selected,
             ast_kind,
-            step_stmt,
+            SourceFragment.from_node(step_stmt, memento_file),
             filename,
             step_memento,
             output,
@@ -472,7 +475,7 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
     )
 
 
-def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
+def _panic_no_sugar(frag: SourceFragment, memento_file: str, *, observed: str, requested: str, fix: str):
     """The mouth. The lifter saw an assertion it could not lift and REFUSES to drop it
     silently -- it PANICS, naming the AST shape and the sugar that is missing. A silent
     `return None` here would be the cardinal crime (un-done work disguised as done), so
@@ -481,7 +484,7 @@ def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
     from .factory_gap import FactoryGap
     from .factory_gap_info import FactoryGapInfo
 
-    blame = f"{memento_file}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}"
+    blame = f"{memento_file}:{frag.line}:{frag.col}"
     info = FactoryGapInfo(
         owner="python.factory.literal-call",
         blame=blame,
@@ -503,7 +506,7 @@ def _panic_no_sugar(node, memento_file, *, observed, requested, fix):
     )
 
 
-def _import_bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+def _import_bindings(tree_frag: SourceFragment) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Scan a module's imports.
 
     Returns ``(aliases, from_imports)`` where ``aliases`` maps a bound name to its
@@ -512,18 +515,19 @@ def _import_bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str
     ("numpy", "rot90")}``)."""
     aliases: dict[str, str] = {}
     from_imports: dict[str, tuple[str, str]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                aliases[alias.asname or alias.name] = alias.name
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            for alias in node.names:
-                from_imports[alias.asname or alias.name] = (node.module, alias.name)
+    for frag in tree_frag.walk():
+        if frag.observed == "Import":
+            for name, asname in frag.import_names():
+                aliases[asname or name] = name
+        elif frag.observed == "ImportFrom" and frag.importfrom_module() and frag.importfrom_level() == 0:
+            module = frag.importfrom_module()
+            for name, asname in frag.importfrom_names():
+                from_imports[asname or name] = (module, name)
     return aliases, from_imports
 
 
-def _source_funcdef(module_name: str, attr: str) -> ast.FunctionDef | None:
-    """Resolve ``module_name.attr`` to its installed-source ``FunctionDef``.
+def _source_funcdef(module_name: str, attr: str) -> SourceFragment | None:
+    """Resolve ``module_name.attr`` to its installed-source FunctionDef SourceFragment.
 
     The callee must be importable in the lifter's environment and have readable
     Python source. Decorators are dropped (the dig walks the body, not the
@@ -547,38 +551,41 @@ def _source_funcdef(module_name: str, attr: str) -> ast.FunctionDef | None:
     except TypeError:
         sourcefile = f"<{module_name}>"
     try:
-        parsed = ast.parse(source)
+        parsed_frag = SourceFragment.from_source(source, sourcefile)
     except SyntaxError:
         return None
-    for node in parsed.body:
-        if isinstance(node, ast.FunctionDef) and node.name == attr:
-            node.decorator_list = []
+    for child in parsed_frag.walk():
+        if child.observed == "FunctionDef" and child.function_name() == attr:
+            child.node.decorator_list = []  # type: ignore[attr-defined]
             # Carry the callee's OWN source so the dig's provenance mementos resolve
             # against its module file, not the file that imported it.
-            node._sugar_source = source  # type: ignore[attr-defined]
-            node._sugar_file = sourcefile  # type: ignore[attr-defined]
-            return node
+            child.node._sugar_source = source  # type: ignore[attr-defined]
+            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
+            return child
     return None
 
 
-def _resolve_imported_callees(tree: ast.AST) -> dict[str, ast.FunctionDef]:
+def _resolve_imported_callees(tree_frag: SourceFragment) -> dict[str, SourceFragment]:
     """For every callsite referencing an imported callee (``np.rot90(...)`` or a
     ``from``-imported ``rot90(...)``), resolve its installed source to a
-    ``FunctionDef`` keyed by the callee name -- so the dig can walk it. The import
+    SourceFragment keyed by the callee name -- so the dig can walk it. The import
     is the bridge from "the source is on disk" to "the dig can reach it"."""
-    aliases, from_imports = _import_bindings(tree)
-    resolved: dict[str, ast.FunctionDef] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+    aliases, from_imports = _import_bindings(tree_frag)
+    resolved: dict[str, SourceFragment] = {}
+    for frag in tree_frag.walk():
+        if frag.observed != "Call":
             continue
-        func = node.func
         module_name: str | None = None
         attr: str | None = None
-        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-            module_name = aliases.get(func.value.id)
-            attr = func.attr
-        elif isinstance(func, ast.Name) and func.id in from_imports:
-            module_name, attr = from_imports[func.id]
+        if frag.call_is_method_call():
+            receiver = frag.call_receiver()
+            if receiver is not None and receiver.observed == "Name":
+                module_name = aliases.get(receiver.name_id())
+                attr = frag.call_func().attr_name()
+        else:
+            func_frag = frag.call_func()
+            if func_frag.observed == "Name" and func_frag.name_id() in from_imports:
+                module_name, attr = from_imports[func_frag.name_id()]
         if module_name is None or attr is None or attr in resolved:
             continue
         funcdef = _source_funcdef(module_name, attr)
@@ -587,15 +594,10 @@ def _resolve_imported_callees(tree: ast.AST) -> dict[str, ast.FunctionDef]:
     return resolved
 
 
-def _callee_name(node: ast.AST) -> str | None:
-    if not isinstance(node, ast.Call):
+def _callee_name(frag: SourceFragment) -> str | None:
+    if frag.observed != "Call":
         return None
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return None
+    return frag.call_target_name()
 
 
 def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
@@ -603,8 +605,8 @@ def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
 
 
 def _source_audit(
-    fn: ast.FunctionDef,
-    stmt: ast.stmt,
+    fn: SourceFragment,
+    stmt: SourceFragment,
     memento_file: str,
     contract_name: str,
     memento: SourceMementoDto,
@@ -625,13 +627,13 @@ def _source_audit(
         "role": role,
         "contract": contract_name,
         "file": memento_file,
-        "sourceFunctionName": fn.name,
+        "sourceFunctionName": fn.function_name(),
         "totals": totals,
         "loci": [
             {
                 "file": memento_file,
-                "line": getattr(stmt, "lineno"),
-                "col": getattr(stmt, "col_offset"),
+                "line": stmt.line,
+                "col": stmt.col,
                 "status": "warranted",
                 "ast_kind": ast_kind,
                 "role": role,
@@ -645,7 +647,7 @@ def _source_audit(
 def _walk_row(
     selected: str,
     ast_kind: str,
-    stmt: ast.stmt,
+    stmt: SourceFragment,
     filename: str,
     memento: SourceMementoDto,
     output: str,
@@ -655,7 +657,7 @@ def _walk_row(
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(
         file=filename,
-        line=getattr(stmt, "lineno"),
+        line=stmt.line,
         requested_role=requested_role,
         ast_kind=ast_kind,
         selected=selected,
@@ -666,10 +668,10 @@ def _walk_row(
         output=output,
         source_memento=memento,
         span=SourceSpanDto(
-            start_line=getattr(stmt, "lineno"),
-            start_col=getattr(stmt, "col_offset"),
-            end_line=getattr(stmt, "end_lineno") or getattr(stmt, "lineno"),
-            end_col=getattr(stmt, "end_col_offset") or 0,
+            start_line=stmt.line,
+            start_col=stmt.col,
+            end_line=stmt.end_line,
+            end_col=stmt.end_col,
         ),
         emitted_formula=emitted_formula,
     )

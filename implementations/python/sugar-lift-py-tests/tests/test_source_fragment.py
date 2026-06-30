@@ -280,3 +280,241 @@ def test_wrong_kind_raises_typeerror():
         assert False, "expected TypeError"
     except TypeError as e:
         assert "BinOp" in str(e)
+
+
+# ------------------------------------------------------------------
+# New accessors added in numpy-import-sugar sweep
+# ------------------------------------------------------------------
+
+def test_from_source_returns_module_fragment():
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    root = SourceFragment.from_source("x = 1\n", "t.py")
+    assert root.observed == "Module"
+
+
+def test_has_position_true():
+    site = _stmt("x = 1\n")
+    assert site.has_position() is True
+
+
+def test_has_position_false_on_module():
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    root = SourceFragment.from_source("x = 1\n", "t.py")
+    assert root.has_position() is False
+
+
+def test_end_line():
+    site = _stmt("x = 1\n")
+    assert site.end_line >= 1
+
+
+def test_end_col():
+    site = _stmt("x = 1\n")
+    assert isinstance(site.end_col, int)
+
+
+def test_source_text():
+    src = "x = 1\n"
+    site = _stmt(src)
+    text = site.source_text(src)
+    assert text is not None
+    assert "x" in text
+
+
+def test_walk_yields_descendants():
+    root = _module("x = a + b\n")
+    children = root.walk()
+    observed = {f.observed for f in children}
+    assert "BinOp" in observed
+    assert "Name" in observed
+
+
+def test_is_node_type_true():
+    site = _stmt("x = 1\n")
+    assert site.is_node_type(ast.Assign) is True
+
+
+def test_is_node_type_false():
+    site = _stmt("x = 1\n")
+    assert site.is_node_type(ast.Return) is False
+
+
+def test_is_node_type_multiple():
+    site = _stmt("x = 1\n")
+    assert site.is_node_type(ast.Return, ast.Assign) is True
+
+
+def test_assert_test():
+    site = _stmt("assert x == 1\n")
+    test = site.assert_test()
+    assert test.observed == "Compare"
+
+
+def test_expr_value():
+    site = _stmt("foo()\n")
+    val = site.expr_value()
+    assert val.observed == "Call"
+
+
+def test_unaryop_operand():
+    site = _expr("x = -a\n")
+    operand = site.unaryop_operand()
+    assert operand.name_id() == "a"
+
+
+def test_boolop_op_kind_and():
+    site = _expr("x = a and b\n")
+    assert site.boolop_op_kind() == "and"
+
+
+def test_boolop_op_kind_or():
+    site = _expr("x = a or b\n")
+    assert site.boolop_op_kind() == "or"
+
+
+def test_boolop_values():
+    site = _expr("x = a and b\n")
+    vals = site.boolop_values()
+    assert len(vals) == 2
+    assert vals[0].name_id() == "a"
+    assert vals[1].name_id() == "b"
+
+
+def test_attr_receiver():
+    site = _expr("x = obj.foo\n")
+    recv = site.attr_receiver()
+    assert recv.name_id() == "obj"
+
+
+def test_call_func_plain():
+    site = _expr("x = func(1)\n")
+    func = site.call_func()
+    assert func.name_id() == "func"
+
+
+def test_call_func_method():
+    site = _expr("x = obj.method(1)\n")
+    func = site.call_func()
+    assert func.observed == "Attribute"
+
+
+def test_call_keywords():
+    site = _expr("x = f(a=1, b=2)\n")
+    kws = site.call_keywords()
+    assert len(kws) == 2
+
+
+def test_keyword_arg_name():
+    site = _expr("x = f(key=42)\n")
+    kw = site.call_keywords()[0]
+    assert kw.keyword_arg_name() == "key"
+
+
+def test_keyword_value():
+    site = _expr("x = f(key=42)\n")
+    kw = site.call_keywords()[0]
+    assert kw.keyword_value().literal_value() == 42
+
+
+def test_annassign_target():
+    site = _stmt("x: int = 1\n")
+    assert site.annassign_target().name_id() == "x"
+
+
+def test_annassign_annotation():
+    site = _stmt("x: int = 1\n")
+    ann = site.annassign_annotation()
+    assert ann.name_id() == "int"
+
+
+def test_annassign_value_present():
+    site = _stmt("x: int = 5\n")
+    val = site.annassign_value()
+    assert val is not None
+    assert val.literal_value() == 5
+
+
+def test_annassign_value_absent():
+    site = _stmt("x: int\n")
+    assert site.annassign_value() is None
+
+
+def test_annassign_target_id():
+    site = _stmt("x: int = 1\n")
+    assert site.annassign_target_id() == "x"
+
+
+def test_import_names():
+    site = _stmt("import os\n")
+    names = site.import_names()
+    assert names == [("os", None)]
+
+
+def test_import_names_alias():
+    site = _stmt("import numpy as np\n")
+    names = site.import_names()
+    assert names == [("numpy", "np")]
+
+
+def test_importfrom_module():
+    site = _stmt("from os import path\n")
+    assert site.importfrom_module() == "os"
+
+
+def test_importfrom_level():
+    site = _stmt("from os import path\n")
+    assert site.importfrom_level() == 0
+
+
+def test_importfrom_names():
+    site = _stmt("from os import path, getcwd\n")
+    names = site.importfrom_names()
+    assert len(names) == 2
+    assert ("path", None) in names
+    assert ("getcwd", None) in names
+
+
+def test_function_decorators_empty():
+    fn = _module("def f():\n    pass\n").fragments()[0].statements()[0]
+    assert fn.function_decorators() == []
+
+
+def test_function_decorators_present():
+    fn = _module("@staticmethod\ndef f():\n    pass\n").fragments()[0].statements()[0]
+    decs = fn.function_decorators()
+    assert len(decs) == 1
+    assert decs[0].name_id() == "staticmethod"
+
+
+def test_aug_assign_op():
+    site = _stmt("x += 1\n")
+    assert site.aug_assign_op() == "Add"
+
+
+def test_aug_assign_target():
+    site = _stmt("x += 1\n")
+    assert site.aug_assign_target().name_id() == "x"
+
+
+def test_aug_assign_value():
+    site = _stmt("x += 1\n")
+    assert site.aug_assign_value().literal_value() == 1
+
+
+def test_raise_exc():
+    site = _stmt("raise ValueError\n")
+    exc = site.raise_exc()
+    assert exc is not None
+    assert exc.name_id() == "ValueError"
+
+
+def test_raise_exc_bare():
+    site = _stmt("raise\n")
+    assert site.raise_exc() is None
+
+
+def test_for_body():
+    site = _stmt("for x in items:\n    pass\n")
+    body = site.for_body()
+    assert len(body) == 1
+    assert body[0].observed == "Pass"

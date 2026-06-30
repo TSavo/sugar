@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-
 from sugar_lift_py_tests.claim import SugarRole
 
 from .source_fragment import SourceFragment
@@ -108,9 +106,10 @@ def build_function_call_sugar(site, ctx):
     if site.call_has_keywords() or site.call_arg_count() != 1:
         raise TypeError("FunctionCallSugar claim built a non-unary call")
     functions_by_name = ctx.name_resolver or {}
-    function = functions_by_name.get(target)
-    if function is None:
+    function_node = functions_by_name.get(target)
+    if function_node is None:
         raise TypeError("FunctionCallSugar claim built an unresolved function call")
+    function = SourceFragment.from_node(function_node, ctx.filename)
     argument = ctx.build_body(site.call_args()[0], SugarRole.TERM)
     body = _function_call_body(function, ctx)
     sugar = FunctionCallSugar.from_site(
@@ -123,35 +122,40 @@ def build_function_call_sugar(site, ctx):
     return sugar
 
 
-def _cf_operand(node):
+def _cf_operand(frag: SourceFragment):
     from sugar_lift_py_tests.ir import make_var, num, str_const
 
-    if isinstance(node, ast.Name):
-        return make_var(node.id)
-    if isinstance(node, ast.Constant) and not isinstance(node.value, bool):
-        if isinstance(node.value, int):
-            return num(node.value)
-        if isinstance(node.value, str):
-            return str_const(node.value)
-    raise TypeError(f"control-flow operand shape `{type(node).__name__}`")
+    if frag.observed == "Name":
+        return make_var(frag.name_id())
+    if frag.observed == "PrimitiveLiteral" and not isinstance(frag.literal_value(), bool):
+        val = frag.literal_value()
+        if isinstance(val, int):
+            return num(val)
+        if isinstance(val, str):
+            return str_const(val)
+    raise TypeError(f"control-flow operand shape `{frag.observed}`")
 
 
-def _cf_guard(test):
+def _cf_guard(frag: SourceFragment):
     from sugar_lift_py_tests.ir import eq, gt, lt, ne
 
-    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
-        left = _cf_operand(test.left)
-        right = _cf_operand(test.comparators[0])
-        op = test.ops[0]
-        if isinstance(op, ast.Eq):
+    if (
+        frag.observed == "Compare"
+        and len(frag.compare_ops()) == 1
+        and len(frag.compare_comparators()) == 1
+    ):
+        left = _cf_operand(frag.compare_left())
+        right = _cf_operand(frag.compare_comparators()[0])
+        op_name = frag.compare_ops()[0]
+        if op_name == "Eq":
             return eq(left, right)
-        if isinstance(op, ast.NotEq):
+        if op_name == "NotEq":
             return ne(left, right)
-        if isinstance(op, ast.Gt):
+        if op_name == "Gt":
             return gt(left, right)
-        if isinstance(op, ast.Lt):
+        if op_name == "Lt":
             return lt(left, right)
-    raise TypeError(f"control-flow guard shape `{type(test).__name__}`")
+    raise TypeError(f"control-flow guard shape `{frag.observed}`")
 
 
 def _lift_cf_return(node, build_ctx, reduce_ctx):
@@ -176,20 +180,20 @@ def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
     # `not cond` held, so it inherits that guard.
     fall_through = list(guards)
     for stmt in stmts:
-        if isinstance(stmt, ast.Return):
-            if stmt.value is None:
+        if stmt.observed == "Return":
+            if stmt.return_value() is None:
                 raise TypeError("control-flow: bare return")
-            term = _lift_cf_return(stmt.value, build_ctx, reduce_ctx)
+            term = _lift_cf_return(stmt.return_value(), build_ctx, reduce_ctx)
             paths.append((tuple(fall_through), term))
             return  # statements after a return are unreachable on this path
-        if isinstance(stmt, ast.If):
-            guard = _cf_guard(stmt.test)
+        if stmt.observed == "If":
+            guard = _cf_guard(stmt.if_test())
             _walk_control_flow(
-                stmt.body, tuple(fall_through) + (guard,), paths, build_ctx, reduce_ctx
+                stmt.if_body(), tuple(fall_through) + (guard,), paths, build_ctx, reduce_ctx
             )
-            if stmt.orelse:
+            if stmt.if_orelse():
                 _walk_control_flow(
-                    stmt.orelse,
+                    stmt.if_orelse(),
                     tuple(fall_through) + (not_(guard),),
                     paths,
                     build_ctx,
@@ -198,7 +202,7 @@ def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
                 return  # both branches handled; no fall-through past an if/else
             fall_through.append(not_(guard))
             continue
-        raise TypeError(f"control-flow statement `{type(stmt).__name__}`")
+        raise TypeError(f"control-flow statement `{stmt.observed}`")
 
 
 def build_control_flow_body_sugar(site, ctx):
@@ -209,17 +213,17 @@ def build_control_flow_body_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
     from sugar_lift_py_tests.temporal import TemporalContext
 
-    function = site.node
-    if not isinstance(function, ast.FunctionDef):
+    if site.observed != "FunctionDef":
         raise TypeError("ControlFlowBodySugar claim built a non-function")
-    if not function.args.args:
+    params = site.function_params()
+    if not params:
         raise TypeError("ControlFlowBodySugar requires at least one parameter")
     # Bind each param to a sort-NEUTRAL symbolic term -- the lift commits to no
     # sort. The return sugars compose operations over these vars; the SMT compiler
     # derives each var's canonical carrier from the operations it appears in.
     temporal = TemporalContext.empty()
-    for arg in function.args.args:
-        temporal = temporal.bind_value(arg.arg, SymbolicValue(make_var(arg.arg)))
+    for param_name in params:
+        temporal = temporal.bind_value(param_name, SymbolicValue(make_var(param_name)))
     reduce_ctx = replace(ctx, temporal=temporal)
     # Compose the body as a Block (which absorbs docstrings/comments as Support) and
     # read its return paths -- the same paths the ad-hoc walk produced, now obtained
@@ -229,7 +233,7 @@ def build_control_flow_body_sugar(site, ctx):
     from sugar_lift_py_tests.floor import EncodedStringValue, GuardedReturn, ReturnValue
     from sugar_lift_py_tests.outcome import complete_value
 
-    block = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT)
+    block = ctx.build_body(Block.of(site.node.body), SugarRole.STATEMENT)
     block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
     stmts = block_value.statements
     # The factory built one child per source statement as the Block composed; carry
@@ -247,7 +251,7 @@ def build_control_flow_body_sugar(site, ctx):
         from sugar_lift_py_tests.sugar.encoder_body_sugar import EncoderBodySugar
 
         return EncoderBodySugar(
-            parameter=function.args.args[0].arg,
+            parameter=params[0],
             encoded=stmts[0].value,
             statements=statements,
         )
@@ -264,24 +268,23 @@ def build_control_flow_body_sugar(site, ctx):
     if not paths:
         raise TypeError("ControlFlowBodySugar found no return paths")
     return ControlFlowBodySugar(
-        parameter=function.args.args[0].arg,
+        parameter=params[0],
         paths=tuple(paths),
-        formals=tuple(a.arg for a in function.args.args),
+        formals=tuple(params),
         statements=statements,
     )
 
 
-def _function_call_body(function: ast.FunctionDef, ctx):
-    if len(function.body) == 1:
-        body = function.body[0]
-        if isinstance(body, ast.Return) and body.value is not None:
-            return ctx.build_body(body.value, SugarRole.TERM)
+def _function_call_body(site: SourceFragment, ctx):
+    body_frags = site.function_body()
+    if len(body_frags) == 1:
+        body_frag = body_frags[0]
+        if body_frag.observed == "Return" and body_frag.return_value() is not None:
+            return ctx.build_body(body_frag.return_value(), SugarRole.TERM)
     # Every multi-statement body composes as one Block: control flow becomes guarded
     # implications, a string encoder becomes str.eq-bv-blocks, docstrings are absorbed.
     # One path -- GenericBodySugar's ad-hoc walk and the dispatch fork are gone.
-    return build_control_flow_body_sugar(
-        SourceFragment.from_node(function, ctx.filename), ctx
-    )
+    return build_control_flow_body_sugar(site, ctx)
 
 
 def build_list_sugar(site, ctx):
@@ -355,7 +358,7 @@ def build_if_sugar(site, ctx):
         if len(body_sites) > 1
         else None
     )
-    return IfSugar(test=_cf_guard(site.if_test().node), then=then_block, else_block=else_block)
+    return IfSugar(test=_cf_guard(site.if_test()), then=then_block, else_block=else_block)
 
 
 def build_block_sugar(site, ctx):

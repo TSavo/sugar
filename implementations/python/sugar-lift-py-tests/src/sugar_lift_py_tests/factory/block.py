@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
+from typing import Any, List
 
 
 @dataclass(frozen=True)
@@ -16,12 +16,12 @@ class Block:
     of an external loop faking it. It carries a position so it is a normal SourceFragment.
     """
 
-    body: tuple[ast.stmt, ...]
+    body: tuple
     lineno: int
     col_offset: int
 
     @classmethod
-    def of(cls, suite: list[ast.stmt]) -> "Block":
+    def of(cls, suite: List[Any]) -> "Block":
         first = suite[0]
         return cls(
             body=tuple(suite),
