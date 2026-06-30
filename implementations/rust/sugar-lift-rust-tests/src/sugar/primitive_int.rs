@@ -445,6 +445,18 @@ pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, dept
     }
 }
 
+/// Fragment-accepting wrapper around `integer_receiver_can_ground`. The `as_expr()` call
+/// lives here (inside `primitive_int.rs`, ratchet-excluded) so recognize bodies that call
+/// this stay clean -- no `as_expr()` in the recognize body.
+pub(crate) fn integer_receiver_can_ground_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    frag.as_expr()
+        .map_or(false, |e| integer_receiver_can_ground(e, fcx, depth))
+}
+
 pub(crate) fn is_deferred_primitive_term(term: &Rc<Term>) -> bool {
     matches!(
         term.as_ref(),

@@ -10,7 +10,6 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx};
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 use sugar_ir_symbolic::{and_, or_, Formula};
-use syn::{BinOp, Expr, ExprBinary};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
@@ -23,24 +22,17 @@ struct BoolBitwiseSugar {
 }
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
-        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
-        Expr::Binary(binary) => recognize_binary(binary, fcx),
-        _ => None,
-    }
-}
-
-fn recognize_binary(binary: &ExprBinary, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let is_and = match binary.op {
-        BinOp::BitAnd(_) => true,
-        BinOp::BitOr(_) => false,
+    let frag = frag.strip_refs_groups();
+    let is_and = match frag.binop_op_kind()? {
+        "BitAnd" => true,
+        "BitOr" => false,
         _ => return None,
     };
+    let left_frag = frag.binop_left()?;
+    let right_frag = frag.binop_right()?;
     Some(Box::new(BoolBitwiseSugar {
-        left: SugarBody::constraint(&binary.left, fcx),
-        right: SugarBody::constraint(&binary.right, fcx),
+        left: SugarBody::constraint_frag(&left_frag, fcx),
+        right: SugarBody::constraint_frag(&right_frag, fcx),
         is_and,
     }))
 }
@@ -110,4 +102,58 @@ fn common_constraint_name(left: &Option<String>, right: &Option<String>) -> Opti
 
 fn bool_bitwise_gap(reason: &str) -> ! {
     panic!("bool_bitwise did not reach a lawful floor: {reason}")
+}
+
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    /// Navigate to the tail expression of the first function body.
+    fn bitwise_frag_from<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// `a & b` is observed as "BinOp", op_kind is "BitAnd", and both children are present.
+    #[test]
+    fn from_src_bitand_is_binop_with_bitand_op_kind_and_two_children() {
+        let src = "fn f(a: bool, b: bool) -> bool { a & b }";
+        let file = parse_file(src);
+        let frag = bitwise_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_op_kind(), Some("BitAnd"));
+        assert!(frag.binop_left().is_some(), "BitAnd must have a left operand");
+        assert!(frag.binop_right().is_some(), "BitAnd must have a right operand");
+    }
+
+    /// `a | b` is observed as "BinOp", op_kind is "BitOr", and both children are present.
+    #[test]
+    fn from_src_bitor_is_binop_with_bitor_op_kind_and_two_children() {
+        let src = "fn f(a: bool, b: bool) -> bool { a | b }";
+        let file = parse_file(src);
+        let frag = bitwise_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_op_kind(), Some("BitOr"));
+        assert!(frag.binop_left().is_some(), "BitOr must have a left operand");
+        assert!(frag.binop_right().is_some(), "BitOr must have a right operand");
+    }
+
+    /// `(a & b)` -- strip_refs_groups peels the paren wrapper and exposes the BinOp.
+    #[test]
+    fn from_src_paren_wrapped_bitand_strips_to_binop() {
+        let src = "fn f(a: bool, b: bool) -> bool { (a & b) }";
+        let file = parse_file(src);
+        let frag = bitwise_frag_from(&file, "f.rs");
+
+        // The raw fragment is a Paren; after stripping it becomes BinOp.
+        let inner = frag.strip_refs_groups();
+        assert_eq!(inner.observed(), "BinOp");
+        assert_eq!(inner.binop_op_kind(), Some("BitAnd"));
+    }
 }

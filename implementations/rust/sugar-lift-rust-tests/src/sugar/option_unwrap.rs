@@ -14,35 +14,46 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
-use crate::{strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_unwrap", SugarRole::Term, recognize);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    let method = call.method.to_string();
+    let method = frag.call_method_key()?;
     if !matches!(method.as_str(), "unwrap" | "expect") {
         return None;
     }
-    if method == "unwrap" && !call.args.is_empty() {
+    let arg_count = frag.call_arg_count();
+    if method == "unwrap" && arg_count != 0 {
         return None;
     }
-    if method == "expect" && call.args.len() != 1 {
+    if method == "expect" && arg_count != 1 {
         return None;
     }
-    if !receiver_resolves_monadic_source(&call.receiver, fcx, 0) {
+    let receiver_frag = frag.call_receiver()?;
+    if !receiver_resolves_monadic_source_frag(&receiver_frag, fcx, 0) {
         return None;
     }
     Some(Box::new(OptionUnwrapSugar {
         method,
-        receiver: SugarBody::term(&call.receiver, fcx),
-        site_key: token_key(expr),
+        receiver: SugarBody::term_frag(&receiver_frag, fcx),
+        site_key: frag.token_str(),
     }))
+}
+
+/// Fragment-accepting wrapper for `receiver_resolves_monadic_source`.
+/// Keeps `as_expr()` out of the `recognize` body (ratchet-clean).
+fn receiver_resolves_monadic_source_frag(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
+    let Some(expr) = frag.as_expr() else {
+        return false;
+    };
+    receiver_resolves_monadic_source(expr, fcx, depth)
 }
 
 struct OptionUnwrapSugar {
@@ -231,5 +242,67 @@ pub(crate) fn is_known_monadic_source(expr: &Expr) -> bool {
         Expr::Paren(paren) => is_known_monadic_source(&paren.expr),
         Expr::Group(group) => is_known_monadic_source(&group.expr),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LiftOptions, TemporalPlan, TemporalScope};
+    use std::collections::BTreeMap;
+    use syn::Expr;
+
+    /// from_src: source -> SourceFragment -> call_method_key / call_arg_count /
+    /// call_receiver accessor gate -> recognize -> Sugar node returned.
+    /// No parse_quote! / StubTerm / run().
+    #[test]
+    fn from_src_option_unwrap_recognize() {
+        let expr: Expr = syn::parse_str("Some(42).unwrap()").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        // accessor gates -- these are what the migrated recognize reads
+        assert_eq!(frag.call_method_key().as_deref(), Some("unwrap"), "method key");
+        assert_eq!(frag.call_arg_count(), 0, "unwrap: 0 args");
+        assert!(frag.call_receiver().is_some(), "receiver present");
+
+        let scope = TemporalScope::new("option-unwrap-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        // grounded monadic source -> recognized
+        assert!(recognize(&frag, &fcx).is_some(), "Some(42).unwrap() recognized");
+
+        // unresolvable path receiver -> NOT recognized
+        let expr_no: Expr = syn::parse_str("runtime_value.unwrap()").expect("parse");
+        let frag_no = SourceFragment::expr(&expr_no, "<src>");
+        assert!(recognize(&frag_no, &fcx).is_none(), "runtime receiver not recognized");
+
+        // non-method-call -> NOT recognized
+        let expr_other: Expr = syn::parse_str("x + 1").expect("parse");
+        let frag_other = SourceFragment::expr(&expr_other, "<src>");
+        assert!(recognize(&frag_other, &fcx).is_none(), "binop not recognized");
+    }
+
+    #[test]
+    fn from_src_option_expect_recognize() {
+        let expr: Expr = syn::parse_str(r#"Some(42).expect("must be Some")"#).expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        assert_eq!(frag.call_method_key().as_deref(), Some("expect"), "method key");
+        assert_eq!(frag.call_arg_count(), 1, "expect: 1 arg");
+        assert!(frag.call_receiver().is_some(), "receiver present");
+
+        let scope = TemporalScope::new("option-unwrap-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        assert!(recognize(&frag, &fcx).is_some(), "Some(42).expect(..) recognized");
+
+        // wrong arg count for expect -> NOT recognized
+        let expr_bad: Expr = syn::parse_str("Some(42).expect()").expect("parse");
+        let frag_bad = SourceFragment::expr(&expr_bad, "<src>");
+        assert!(recognize(&frag_bad, &fcx).is_none(), "expect() with 0 args not recognized");
     }
 }

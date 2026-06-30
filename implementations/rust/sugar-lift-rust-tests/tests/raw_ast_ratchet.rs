@@ -56,7 +56,17 @@ use std::path::PathBuf;
 ///   call_method_key+call_arg_count+call_receiver), transparent_term.rs (transparent_inner
 ///   accessor, build_term_frag+build_composite_frag factory helpers), into.rs
 ///   (call_method_key+call_arg_count+call_receiver+token_str, ieee_float_frag): 93→89.
-const RAW_SYN_CEILING: usize = 89;
+/// bool_bitwise.rs migrated (strip_refs_groups+binop_op_kind+binop_left/right+constraint_frag): 89→88.
+/// option_unwrap.rs migrated (call_method_key+call_arg_count+call_receiver+term_frag+token_str,
+///   receiver_resolves_monadic_source_frag wrapper, no as_expr in recognize): 88→87.
+/// int_pow.rs migrated (strip_refs_groups+call_method_key+call_arg_count+call_receiver+
+///   call_args+term_frag, integer_receiver_can_ground_frag wrapper, no as_expr in recognize): 87→86.
+/// phase3-decode consolidation: int_sqrt.rs, option_predicate.rs, int_midpoint.rs,
+///   from_bool.rs, result_predicate.rs, reference_term.rs migrated (zero as_expr in
+///   recognize bodies, 3 discrimination tests each): 86→81. Note: option_unwrap.rs
+///   recognize body is clean but ratchet's 2000-char window bleeds into adjacent helper
+///   (receiver_resolves_monadic_source_frag) that contains as_expr -- counted as residual.
+const RAW_SYN_CEILING: usize = 81;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

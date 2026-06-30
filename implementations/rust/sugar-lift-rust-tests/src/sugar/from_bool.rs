@@ -9,33 +9,30 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
-use syn::{Expr, PathArguments, Type};
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
-    from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
+    from_impl_exists, ExactInt, IntKind, NumericFloor,
 };
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::ip_addr::{primitive_int_from_literal_ip, LiteralIp};
 use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
-use crate::{token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("from_bool", recognize);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 1 {
+    if frag.call_arg_count() != 1 {
         return None;
     }
-    let dst = primitive_int_from_kind(&call.func)?;
+    let func_frag = frag.call_func()?;
+    let dst = func_frag.path_primitive_int_from_kind()?;
+    let args = frag.call_args();
     Some(Box::new(FromPrimitiveSugar {
-        arg: SugarBody::term(&call.args[0], fcx),
+        arg: SugarBody::term_frag(&args[0], fcx),
         dst,
-        site: token_key(expr),
+        site: frag.token_str(),
     }))
 }
 
@@ -139,42 +136,85 @@ fn char_from_impl_exists(dst: IntKind) -> bool {
     !dst.signed && dst.bits >= 32
 }
 
-/// `<IntT>::from` (qself) or `IntT::from` (two-segment path) where `IntT` is a known
-/// primitive integer type. Anything else (a user type, a float, `char`, a longer
-/// path) is NOT a std primitive-integer `From` and is declined.
-fn primitive_int_from_kind(func: &Expr) -> Option<IntKind> {
-    let Expr::Path(path) = func else {
-        return None;
-    };
-    let Some(last) = path.path.segments.last() else {
-        return None;
-    };
-    if last.ident != "from" || !matches!(last.arguments, PathArguments::None) {
-        return None;
-    }
-    if let Some(qself) = &path.qself {
-        return primitive_int_type_kind(&qself.ty);
-    }
-    if path.path.segments.len() == 2
-        && matches!(path.path.segments[0].arguments, PathArguments::None)
-    {
-        primitive_int_kind(&path.path.segments[0].ident.to_string())
-    } else {
-        None
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
-fn primitive_int_type_kind(ty: &Type) -> Option<IntKind> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
+    fn from_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
     }
-    match path.path.segments.last() {
-        Some(seg) if matches!(seg.arguments, PathArguments::None) => {
-            primitive_int_kind(&seg.ident.to_string())
-        }
-        _ => None,
+
+    /// Positive: `u32::from(x)` observed as `"Call"`, arg count 1, `call_func()`
+    /// yields a `"Name"` fragment, `path_primitive_int_from_kind()` returns
+    /// `IntKind { name: "u32", signed: false, bits: 32 }`. No as_expr / Expr:: / raw
+    /// field access anywhere in this test.
+    #[test]
+    fn from_src_plain_path_observed_func_and_arg() {
+        let file = parse_file("fn f(x: u8) -> u32 { u32::from(x) }");
+        let frag = from_call_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Call");
+        assert_eq!(frag.call_arg_count(), 1);
+
+        let func_frag = frag.call_func().expect("func fragment present");
+        assert_eq!(func_frag.observed(), "Name");
+
+        let dst = func_frag
+            .path_primitive_int_from_kind()
+            .expect("u32::from is a primitive int from");
+        assert_eq!(dst.name, "u32");
+        assert!(!dst.signed);
+        assert_eq!(dst.bits, 32);
+
+        let args = frag.call_args();
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].observed(), "Name");
+    }
+
+    /// Discrimination: `<u64>::from(x)` (qualified-self form) decodes to
+    /// `IntKind { name: "u64", signed: false, bits: 64 }`. Proves
+    /// `path_primitive_int_from_kind` handles the qself path distinct from
+    /// the two-segment path.
+    #[test]
+    fn from_src_qself_form_decodes_to_u64_kind() {
+        let file = parse_file("fn f(x: u32) -> u64 { <u64>::from(x) }");
+        let frag = from_call_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Call");
+        assert_eq!(frag.call_arg_count(), 1);
+
+        let func_frag = frag.call_func().expect("func fragment present");
+        let dst = func_frag
+            .path_primitive_int_from_kind()
+            .expect("<u64>::from is a primitive int from");
+        assert_eq!(dst.name, "u64");
+        assert!(!dst.signed);
+        assert_eq!(dst.bits, 64);
+    }
+
+    /// Structural: a `BinOp` is not a `Call`; `call_func()` returns `None` and
+    /// `call_arg_count()` returns 0. The accessors are shape-specific and do not
+    /// bleed across kinds.
+    #[test]
+    fn structural_binop_returns_none_from_call_func() {
+        let file = parse_file("fn f(a: u32, b: u32) -> u32 { a + b }");
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().unwrap();
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        let binop_frag = &terms[0];
+
+        assert_eq!(binop_frag.observed(), "BinOp");
+        assert!(binop_frag.call_func().is_none());
+        assert_eq!(binop_frag.call_arg_count(), 0);
+        // path_primitive_int_from_kind on a non-path returns None
+        assert!(binop_frag.path_primitive_int_from_kind().is_none());
     }
 }
