@@ -25,7 +25,7 @@
   },
   "resolved_literal_body": {
     "panic": {
-      "fix": "lift this function body for the dig (FunctionCallSugar claim built a non-unary call)",
+      "fix": "lift this function body for the dig",
       "observed": "dig-body:Call"
     }
   },
