@@ -5362,6 +5362,35 @@ impl TemporalScope {
             None => Ok(name),
         }
     }
+
+    /// Temporal resolution for a pre-computed path name string (the `path_to_name`
+    /// output). Identical to `path_name` but skips the `path_to_name` step -- used
+    /// by `PathSugar::desugar` which stores the key at build time via
+    /// `SourceFragment::path_full_name` instead of holding a raw `ExprPath`.
+    pub(crate) fn path_name_str(&self, name: &str) -> Result<String, String> {
+        if !is_unqualified_local_name(name) {
+            return Ok(name.to_string());
+        }
+        if self.is_alias_deref_mutated(name) {
+            return Err(format!(
+                "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
+                 between borrow and read, so there is no single timeless value to read at the \
+                 assertion; refused"
+            ));
+        }
+        if !self.plan.versioned.contains(name) {
+            return Ok(name.to_string());
+        }
+        if self.ambiguous.contains(name) {
+            return Err(format!(
+                "ambiguous temporal identity for receiver `{name}`; skipped assertion"
+            ));
+        }
+        match self.versions.get(name).copied() {
+            Some(version) => Ok(format!("{name}@def{version}")),
+            None => Ok(name.to_string()),
+        }
+    }
 }
 
 fn group_assertions(
@@ -20232,7 +20261,7 @@ fn expr_head_key(expr: &Expr) -> String {
     }
 }
 
-fn path_to_name(path: &syn::Path) -> String {
+pub(crate) fn path_to_name(path: &syn::Path) -> String {
     path.segments
         .iter()
         .map(|segment| {

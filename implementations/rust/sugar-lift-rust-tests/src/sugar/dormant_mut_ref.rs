@@ -31,11 +31,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Path(path) = expr else {
-        return None;
-    };
-    let name = path.path.get_ident()?.to_string();
+    // `path_simple_ident` returns the bare ident for an `Expr::Path` with a single
+    // unqualified segment -- identical gate to the former `let Expr::Path(path) = expr;
+    // path.path.get_ident()?.to_string()` shim, with no raw-syn escape.
+    let name = frag.path_simple_ident()?;
     fcx.scope().dormant_mut_ref_term(&name).map(resolved_term)
 }
 

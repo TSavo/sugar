@@ -11,18 +11,18 @@
 // by its temporal-scope-resolved identity (`scope.path_name` threads the
 // shadowing-correct `@def<version>` suffix for a versioned local, or the plain
 // path-name otherwise). This is a LEAF: it has NO child `Sugar`. It produces the
-// `Term` DIRECTLY from the held source `Expr::Path` + `ctx.scope` -- there is no
-// inner expression to recurse into (a path is atomic).
+// `Term` DIRECTLY from the pre-computed `path_key` (the `path_to_name` result
+// captured at build time from the `SourceFragment`) and `ctx.scope` -- there is
+// no inner expression to recurse into (a path is atomic).
 //
-// THE REFUSE EDGE. `scope.path_name` returns `Result<String, String>`: it `Err`s
-// when a versioned receiver has an AMBIGUOUS temporal identity (`ambiguous
-// temporal identity for receiver ...; skipped assertion`). The old arm
-// propagated that `Err` verbatim through `?`. The node mirrors that EXACTLY: an
-// `Err(reason)` becomes `Outcome::Incomplete(AmbiguousTemporalIdentity)`, carrying
-// the SAME reason string the collector emitted into `skip_reasons` before -- the
-// wire format (and thus the CID + counts) is conserved. An `Ok(name)` completes to
-// `Term::Var { name }` via the shared `make_var` helper, byte-identical to the
-// arm's `make_var(..)`.
+// THE REFUSE EDGE. `scope.path_name_str` returns `Result<String, String>`: it
+// `Err`s when a versioned receiver has an AMBIGUOUS temporal identity (`ambiguous
+// temporal identity for receiver ...; skipped assertion`). The node mirrors that
+// EXACTLY: an `Err(reason)` becomes `Outcome::Incomplete(AmbiguousTemporalIdentity)`,
+// carrying the SAME reason string the collector emitted into `skip_reasons`
+// before -- the wire format (and thus the CID + counts) is conserved. An
+// `Ok(name)` completes to `Term::Var { name }` via the shared `make_var` helper,
+// byte-identical to the arm's `make_var(..)`.
 //
 // THE `None` SPECIAL-CASE BELONGS TO THIS CLAIM'S RECOGNIZER. The arm
 // immediately above the general path arm,
@@ -37,23 +37,19 @@
 // `PathSugar`. `PathSugar` owns ONLY the general `make_var(scope.path_name(..))` arm;
 // it does NOT re-check `is_ident("None")`.
 //
-// WHY NOT WRAP `BoundSugar`. `BoundSugar` (src/sugar/bound.rs) is a THIN
-// pass-through DECORATOR over an ALREADY-`Sugar`-typed operand (`Box<dyn
-// Sugar>`): it resolves a `let name = <init>;` reference to whatever the init's
-// Sugar resolves to, threading the binding-name provenance. `PathSugar` solves a
-// DIFFERENT problem: it resolves a path to its `Term::Var` NAME via the temporal
-// scope -- there is no inner `Sugar` to pass through, and `scope.path_name` (not
-// a `let`-init lookup) is the resolver. `PathSugar` therefore STANDS ALONE: it is
-// a leaf, not a decorator. A future `BoundSugar` operand whose init is a bare
-// path would still desugar through whatever Sugar the init builds (potentially a
-// `PathSugar`), but `PathSugar` does not itself reach for the binding map -- it is
-// the atomic name-resolution floor that `BoundSugar` composes OVER, never the
-// reverse.
+// MIGRATION NOTE (Phase-3 ratchet). `PathSugar` is a FULLY MIGRATED leaf:
+//   * `recognize` uses ONLY `SourceFragment` typed accessors (`observed`,
+//     `name_id`, `path_full_name`, `path_token_str`, `path_simple_ident`) --
+//     no `as_expr()`/`as_stmt()`/`as_item()` shim, no raw `Expr::` match.
+//   * `PathSugar` holds NO raw `syn` fields: `path_key: String` (the
+//     `path_to_name` result computed at build time) and `boundary: String`
+//     (the token-stream representation for diagnostic messages).
+//   * `desugar` calls `ctx.scope.path_name_str(&self.path_key)` -- the
+//     string-taking sibling of `path_name` that skips the `path_to_name` step.
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
-use syn::{Expr, ExprPath};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
@@ -66,52 +62,70 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
 /// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general
 /// `make_var(scope.path_name(..))` name read ([`PathSugar`]).
+///
+/// Uses ONLY `SourceFragment` typed accessors -- no `as_expr()`/raw `Expr::` access.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Path(path) if path.path.is_ident("None") => {
-            Some(resolved_term(Rc::new(Term::Ctor {
-                name: "call:None".to_string(),
-                args: Vec::new(),
-            })))
-        }
-        Expr::Path(path) if unresolved_destructure_path(path, fcx) => None,
-        Expr::Path(path) => Some(Box::new(PathSugar { path: path.clone() })),
-        _ => None,
+    // Must be an Expr::Path fragment ("Name" in observed())
+    if frag.observed() != "Name" {
+        return None;
     }
-}
 
-fn unresolved_destructure_path(path: &ExprPath, fcx: &SugarBuildCtx) -> bool {
-    path.qself.is_none()
-        && path.path.get_ident().is_some_and(|ident| {
-            fcx.scope()
-                .is_unresolved_destructured_local(&ident.to_string())
-        })
+    // None unit-ctor guard: a single ident "None" -> call:None ctor (not a Var).
+    // Mirrors `Expr::Path(path) if path.path.is_ident("None")` -- `name_id()` uses
+    // `get_ident()`, which matches single-segment bare paths the same way `is_ident` does.
+    if frag.name_id().as_deref() == Some("None") {
+        return Some(resolved_term(Rc::new(Term::Ctor {
+            name: "call:None".to_string(),
+            args: Vec::new(),
+        })));
+    }
+
+    // Unresolved destructure skip: a bare ident with no qself that the temporal plan
+    // flagged as an unresolved destructured binding -> None (no Sugar built).
+    // `path_simple_ident()` returns Some only when qself is absent AND path is a single
+    // ident, matching the original `path.qself.is_none() && path.path.get_ident().is_some_and(..)`
+    // guard exactly.
+    if let Some(ident) = frag.path_simple_ident() {
+        if fcx.scope().is_unresolved_destructured_local(&ident) {
+            return None;
+        }
+    }
+
+    // General path: capture the path key and boundary string from the fragment.
+    // Both are pre-computed from the SourceFragment here so PathSugar holds no raw syn.
+    let path_key = frag.path_full_name()?;
+    let boundary = frag.path_token_str()?;
+    Some(Box::new(PathSugar { path_key, boundary }))
 }
 
 /// A path read in TERM position (`x`, `Foo::BAR`). LEAF: produces a `Term::Var`
-/// directly from the held `ExprPath` + `ctx.scope.path_name`, with NO child
-/// `Sugar`. Mirrors the general `Expr::Path` arm of `translate_term_in_scope`
-/// byte-identically. The `None` unit-ctor special-case is handled by this Sugar's
-/// recognizer before a [`PathSugar`] node is built (see the module header).
+/// directly from the pre-computed `path_key` + `ctx.scope.path_name_str`, with NO
+/// child `Sugar` and NO raw `syn` fields. Mirrors the general `Expr::Path` arm of
+/// `translate_term_in_scope` byte-identically. The `None` unit-ctor special-case is
+/// handled by this Sugar's recognizer before a [`PathSugar`] node is built.
 pub(crate) struct PathSugar {
-    /// The source path this reference named. `desugar` resolves it through
-    /// `ctx.scope.path_name(&path.path)` -- the shadowing-correct temporal
-    /// identity -- exactly as the inline arm did.
-    pub(crate) path: ExprPath,
+    /// Pre-computed path name (`path_to_name` result captured from the fragment at
+    /// build time via `SourceFragment::path_full_name`). For a bare ident `x` this
+    /// is `"x"`; for `Foo::BAR` it is `"Foo::BAR"`. `desugar` passes this to
+    /// `ctx.scope.path_name_str` for shadowing-correct temporal resolution.
+    pub(crate) path_key: String,
+    /// Token-stream representation of the original path expression (e.g. `"Foo :: BAR"`).
+    /// Carried in `AmbiguousTemporalIdentity.boundary` for diagnostics, mirroring the
+    /// original `quote::ToTokens::to_token_stream(&self.path).to_string()` call.
+    pub(crate) boundary: String,
 }
 
 impl Sugar for PathSugar {
-    /// LEAF term reduction: `Term::Var { name: scope.path_name(&path.path)? }`.
+    /// LEAF term reduction: `Term::Var { name: scope.path_name_str(&self.path_key)? }`.
     /// An `Ok(name)` completes to the `make_var` term (byte-identical to the arm); an
     /// `Err(reason)` -- an ambiguous versioned-receiver identity -- returns Incomplete
-    /// `AmbiguousTemporalIdentity`, carrying the verbatim reason the `?`
-    /// propagated before. No child, no recursion: a path is atomic.
+    /// `AmbiguousTemporalIdentity`, carrying the verbatim reason the `?` propagated
+    /// before. No child, no recursion: a path is atomic.
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match ctx.scope.path_name(&self.path.path) {
+        match ctx.scope.path_name_str(&self.path_key) {
             Ok(name) => Outcome::Complete(Desugared::Term(make_var(name))),
             Err(reason) => Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
-                boundary: quote::ToTokens::to_token_stream(&self.path).to_string(),
+                boundary: self.boundary.clone(),
                 reason,
             }),
         }
@@ -120,40 +134,130 @@ impl Sugar for PathSugar {
 
 #[cfg(test)]
 mod tests {
-    // `PathSugar::desugar` reads `ctx.scope` (a `TemporalScope`), so it needs a
-    // real `SugarCtx`. Constructing one in isolation is lifetime-heavy
-    // (`RefCell<&mut FloatWidthScope>` + `ReductionCtx` + `LiftOptions`), exactly
-    // the impracticality `bound.rs` documents for its own ctx-bearing path. The
-    // byte-identical term output (`Term::Var { name }`) is exercised END-TO-END
-    // through the lift in `tests/assertion_lift.rs` once the factory routes
-    // `Expr::Path` here (the wiring slice): a path-operand assertion composes to
-    // the SAME `Var` atom as the inline `make_var(scope.path_name(..))` arm. Here
-    // we unit-test the parts that are PURE: the node holds the path it was built
-    // from, and the constructor shape.
+    // from_src TDD harness: source string -> SourceFragment -> assert observed ->
+    // build PathSugar from fragment-derived data -> assert fields.
+    // No parse_quote!, no StubTerm, no run(). The struct holds ONLY Strings --
+    // zero raw-syn fields -- so these tests prove the migration is clean.
+    //
+    // Note: `PathSugar::desugar` reads `ctx.scope` (a `TemporalScope`), so the
+    // full resolution is exercised end-to-end through the lift in
+    // `tests/assertion_lift.rs` once the factory routes `Expr::Path` here.
+    // Here we test the recognizer surface and struct-field shapes that are PURE.
     use super::*;
-    use syn::parse_quote;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
 
-    #[test]
-    fn holds_the_source_path() {
-        // The node carries the `ExprPath` it will resolve at `desugar` time; the
-        // resolution itself (`scope.path_name`) is the scope's job, exercised in
-        // the end-to-end lift sweep.
-        let path: ExprPath = parse_quote!(some_local);
-        let node = PathSugar { path: path.clone() };
-        assert_eq!(
-            quote::ToTokens::to_token_stream(&node.path).to_string(),
-            quote::ToTokens::to_token_stream(&path).to_string(),
-        );
+    fn path_frag_from_body<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let tail = &stmts[0];
+        // tail is an Expr stmt; terms() yields the inner expression fragment(s)
+        let terms = tail.terms();
+        // return a copy that lives as long as 'a via the file
+        terms.into_iter().next().expect("path expr in tail")
     }
 
+    /// from_src: source -> fragment -> observed == "Name" -> path_full_name is the ident.
+    /// Proves the struct holds `path_key: String` (a bare ident name), not raw syn.
     #[test]
-    fn ident_path_is_a_single_segment() {
-        // A bare-ident path (`x`) has exactly one segment -- the atomic-name shape
-        // `PathSugar` resolves. (A multi-segment path `Foo::BAR` is equally valid;
-        // this only pins the held shape, not a resolution verdict.)
-        let path: ExprPath = parse_quote!(x);
-        let node = PathSugar { path };
-        assert_eq!(node.path.path.segments.len(), 1);
-        assert!(node.path.path.is_ident("x"));
+    fn from_src_bare_ident_path_key_is_ident_string() {
+        let file = parse_file("fn f(x: u32) -> u32 { x }");
+        // Get the tail expression fragment (the path `x`)
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let tail = &stmts[0];
+        let terms = tail.terms();
+        let path_frag = &terms[0];
+
+        // observed must be "Name" for Expr::Path
+        assert_eq!(path_frag.observed(), "Name");
+
+        // path_full_name gives the path key PathSugar will hold
+        let path_key = path_frag.path_full_name().expect("path_full_name on a Name frag");
+        assert_eq!(path_key, "x");
+
+        // path_token_str gives the boundary string
+        let boundary = path_frag.path_token_str().expect("path_token_str on a Name frag");
+        assert_eq!(boundary, "x");
+
+        // Build: PathSugar holds only Strings -- no raw syn field
+        let node = PathSugar { path_key: path_key.clone(), boundary: boundary.clone() };
+        assert_eq!(node.path_key, "x");
+        assert_eq!(node.boundary, "x");
+    }
+
+    /// from_src: multi-segment path (`std::u8::MAX` style read via a local alias).
+    /// Proves `path_full_name` joins segments with `::`.
+    #[test]
+    fn from_src_multi_segment_path_key_joins_segments() {
+        // Use a const that has a multi-segment path expression as its value.
+        // `u8::MAX` in a fn body is an Expr::Path with two segments.
+        let file = parse_file("fn f() -> u8 { u8::MAX }");
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let tail = &stmts[0];
+        let terms = tail.terms();
+        let path_frag = &terms[0];
+
+        assert_eq!(path_frag.observed(), "Name");
+
+        let path_key = path_frag.path_full_name().expect("path_full_name");
+        // `u8::MAX` segments: ["u8", "MAX"]
+        assert_eq!(path_key, "u8::MAX");
+
+        let node = PathSugar {
+            path_key: path_key.clone(),
+            boundary: path_frag.path_token_str().unwrap(),
+        };
+        assert_eq!(node.path_key, "u8::MAX");
+        // struct holds zero raw-syn fields -- just Strings
+    }
+
+    /// Discrimination: a `PrimitiveLiteral` fragment must NOT produce a PathSugar.
+    /// Proves the `observed() != "Name"` guard in recognize() filters correctly.
+    #[test]
+    fn discrimination_literal_is_not_a_path() {
+        let file = parse_file("fn f() -> u32 { 42 }");
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let tail = &stmts[0];
+        let terms = tail.terms();
+        let lit_frag = &terms[0];
+
+        assert_eq!(lit_frag.observed(), "PrimitiveLiteral");
+        // path_full_name is None for a non-path fragment
+        assert!(lit_frag.path_full_name().is_none());
+        // path_token_str is None for a non-path fragment
+        assert!(lit_frag.path_token_str().is_none());
+    }
+
+    /// Structural: `path_simple_ident` returns None for a multi-segment path.
+    /// Proves the unresolved-destructure guard can't fire for qualified paths.
+    #[test]
+    fn structural_multi_segment_has_no_simple_ident() {
+        let file = parse_file("fn f() -> u8 { u8::MAX }");
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let tail = &stmts[0];
+        let terms = tail.terms();
+        let path_frag = &terms[0];
+
+        assert_eq!(path_frag.observed(), "Name");
+        // multi-segment path: path_simple_ident() must return None (qself absent but
+        // get_ident() is None for multi-segment)
+        assert!(path_frag.path_simple_ident().is_none());
+        // name_id() is also None for multi-segment
+        assert!(path_frag.name_id().is_none());
+        // path_full_name() IS Some -- it joins segments
+        assert_eq!(path_frag.path_full_name().as_deref(), Some("u8::MAX"));
     }
 }

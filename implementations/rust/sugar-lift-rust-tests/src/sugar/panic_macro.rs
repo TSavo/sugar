@@ -6,27 +6,22 @@
 // It diverges by unwinding or aborting at runtime, so the term position owns a typed
 // side-effect boundary instead of falling into the generic macro fallback.
 
-use syn::Expr;
-
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("panic_macro", &["macro_term"], recognize);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(expr_macro) = expr else {
-        return None;
-    };
-    let name = expr_macro.mac.path.segments.last()?.ident.to_string();
+    // `macro_name()` returns the last-segment ident without escaping to raw syn.
+    let name = frag.macro_name()?;
     if name != "panic" || fcx.scope().macro_registry().lookup(&name).is_some() {
         return None;
     }
     Some(Box::new(PanicMacroSugar {
-        boundary: token_key(expr),
+        boundary: frag.token_str(),
     }))
 }
 
