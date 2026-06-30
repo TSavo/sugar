@@ -10,6 +10,8 @@ use syn::{Expr, Item, Stmt};
 use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
+use crate::sugar::factory_gap_info::collect_gap;
+use crate::sugar::source_fragment::{FragNode, SourceFragment};
 use crate::sugar::{
     assign_sugar, block_sugar, if_sugar, return_sugar,
     addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
@@ -276,7 +278,11 @@ pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole)
     let seed = FactoryAuditSeed::expr(expr, role, selected, candidate_audits);
     let node = match selected_index {
         Some(index) => candidates.swap_remove(index).into_node(),
-        None => unsupported(seed.unresolved_reason()),
+        None => {
+            let frag = SourceFragment::expr(expr, "<factory>");
+            let gap  = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+        }
     };
     AccountedSugar::new(seed, node)
 }
@@ -305,7 +311,11 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
     let seed = FactoryAuditSeed::item(item, role, selected, candidate_audits);
     let node = match selected_index {
         Some(index) => candidates.swap_remove(index).into_node(),
-        None => unsupported(seed.unresolved_reason()),
+        None => {
+            let frag = SourceFragment::from_node(FragNode::Item(item), "<factory>");
+            let gap  = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+        }
     };
     AccountedSugar::new(seed, node)
 }
@@ -338,7 +348,11 @@ pub(crate) fn build_stmt_role(stmt: &Stmt, fcx: &SugarBuildCtx, role: SugarRole)
     let seed = FactoryAuditSeed::stmt(stmt, role, selected, candidate_audits);
     let node = match selected_index {
         Some(index) => candidates.swap_remove(index).into_node(),
-        None => unsupported(seed.unresolved_reason()),
+        None => {
+            let frag = SourceFragment::stmt(stmt, "<factory>");
+            let gap  = collect_gap(&frag, &format!("{role:?}"));
+            unsupported(format!("{}\n  gap: {}", seed.unresolved_reason(), gap.message()))
+        }
     };
     AccountedSugar::new(seed, node)
 }
