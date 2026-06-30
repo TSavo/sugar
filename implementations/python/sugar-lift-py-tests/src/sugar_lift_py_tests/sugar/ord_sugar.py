@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 @dataclass(frozen=True)
-class OrdByteSugar(Sugar, role=SugarRole.TERM):
+class OrdByteSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     """`ord(source[index])` as a TERM -- value's byte at a fixed position, a free bv32
     var the encoder universe (str.eq-bv-blocks) constrains to that byte.
 
