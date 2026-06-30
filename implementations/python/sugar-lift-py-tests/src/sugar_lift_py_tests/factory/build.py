@@ -209,49 +209,17 @@ def _raise_ambiguous_candidates(
     raise FactoryGap(info, audit_row)
 
 
-_DEFAULT_CATALOG_SUGARS = {
-    "CommentSugar",
-    "PrimitiveLiteralSugar",
-    "BitwiseOpSugar",
-    "ArrayLiteralSugar",
-    "BinOpSugar",
-    "NameSugar",
-    "StringSubscriptSugar",
-    "BlockSugar",
-    "ReturnSugar",
-    "AssignSugar",
-    "IfSugar",
-    "OrdByteSugar",
-    "AddSugar",
-    "BuilderCtorSugar",
-    "LambdaSugar",
-    "MapSugar",
-    "ToListSugar",
-}
-
-
 def default_catalog() -> SugarCatalog:
-    # Import each sugar module so its class self-registers into the registry via
-    # Sugar.__init_subclass__. The explicit whitelist keeps the catalog stable
-    # regardless of which other sugar modules tests may have imported (the global
-    # registry accumulates across imports; filtering prevents unintended conflicts).
-    from sugar_lift_py_tests.sugar import add_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import array_literal_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import assign_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import binop_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import bitwise_op_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import block_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import builder_ctor_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import comment_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import if_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import lambda_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import map_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import name_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import ord_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import primitive_literal_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import return_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import string_subscript_sugar  # noqa: F401
-    from sugar_lift_py_tests.sugar import to_list_sugar  # noqa: F401
+    # Import every sugar module so each class self-registers (via __init_subclass__),
+    # then the catalog is ALL of them -- no whitelist. When more than one sugar owns a
+    # fragment, the factory sorts the matching candidates by `comes_before` (declared on
+    # the sugar) and takes the winner; that precedence lives on the sugar, not here.
+    import importlib
+    import pkgutil
+
+    from sugar_lift_py_tests import sugar as _sugar_pkg
     from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 
-    return SugarCatalog([c for c in registered_claims() if c.name in _DEFAULT_CATALOG_SUGARS])
+    for _mod in pkgutil.iter_modules(_sugar_pkg.__path__):
+        importlib.import_module(f"sugar_lift_py_tests.sugar.{_mod.name}")
+    return SugarCatalog(registered_claims())

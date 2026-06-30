@@ -10,7 +10,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class ArrayLiteralSugar(Sugar, role=SugarRole.TERM):
+class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSugar",)):
+    # When both own a `[...]` fragment, ArrayLiteralSugar wins in any catalog that has
+    # both; a catalog with only ListLiteralSugar still selects it (no competitor).
     elements: tuple[SugarBody, ...]
 
     def __post_init__(self) -> None:
