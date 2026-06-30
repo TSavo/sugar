@@ -335,7 +335,7 @@ def _lift_callsite_assertion(
         source_warrants=[assertion_memento],
     )
     walk = _walk_row(
-        "FunctionCallSugar",
+        "CallSugar",
         "Call",
         stmt,
         filename,
