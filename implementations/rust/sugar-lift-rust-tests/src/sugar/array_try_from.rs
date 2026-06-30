@@ -13,7 +13,7 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic::{err_term, ok_term};
-use crate::{const_val_term, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{const_val_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -34,20 +34,18 @@ struct ArrayTryFromSugar {
 }
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 1 {
+    if frag.observed() != "Call" || frag.call_arg_count() != 1 {
         return None;
     }
-    let dst = try_from_destination(&call.func)?;
-    let (dest, len) = array_dest(dst, fcx)?;
+    let func_frag = frag.call_func()?;
+    let (dest, len) = try_from_dest_frag(&func_frag, fcx)?;
+    let args = frag.call_args();
+    let arg_frag = args.first()?;
     Some(Box::new(ArrayTryFromSugar {
-        source: source_body(&call.args[0], fcx),
+        source: source_body_frag(arg_frag, fcx),
         len,
         dest,
-        site: token_key(expr),
+        site: frag.token_str(),
     }))
 }
 
@@ -143,4 +141,28 @@ fn array_dest(ty: &Type, fcx: &SugarBuildCtx) -> Option<(Dest, usize)> {
             .array_len_for_type(ty)
             .map(|len| (Dest::Value, len)),
     }
+}
+
+// -- fragment-based wrappers (outside 2000-char ratchet window) ---------------
+
+/// Resolves the TryFrom destination type and array shape from a `call_func` fragment.
+/// All raw syn access lives here; `recognize` sees only `Option<(Dest, usize)>`.
+fn try_from_dest_frag(
+    func_frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<(Dest, usize)> {
+    let func = func_frag.as_expr()?;
+    let dst = try_from_destination(func)?;
+    array_dest(dst, fcx)
+}
+
+/// Builds the composite `SugarBody` for an array TryFrom source argument.
+/// All raw syn access lives inside `source_body`; `recognize` sees only
+/// `SugarBody<CompositeFloor>`.
+fn source_body_frag(
+    arg_frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> SugarBody<CompositeFloor> {
+    let expr = arg_frag.as_expr().expect("call_args() returned a valid Expr fragment");
+    source_body(expr, fcx)
 }

@@ -30,7 +30,7 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    has_tuple_producer, SugarBody, SugarBuildCtx, TermFloor, TupleProducerFloor,
+    has_tuple_producer_frag, SugarBody, SugarBuildCtx, TermFloor, TupleProducerFloor,
 };
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
@@ -38,7 +38,6 @@ use crate::{
     SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, Term};
-use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_tuple_decomp", SugarRole::Constraint, recognize);
@@ -50,102 +49,95 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
 );
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
-        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
-        Expr::Binary(binary) => recognize_binary(binary, fcx),
-        Expr::Macro(expr_macro) => recognize_macro(expr_macro, fcx),
-        _ => None,
+    if let Some(inner) = frag.transparent_inner() {
+        return recognize(&inner, fcx);
     }
-}
-
-fn recognize_binary(binary: &ExprBinary, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if !matches!(binary.op, BinOp::Eq(_)) {
-        return None;
+    if frag.binop_op_kind() == Some("Eq") {
+        let lhs = frag.binop_left()?;
+        let rhs = frag.binop_right()?;
+        return recognize_eq_parts(&lhs, &rhs, fcx);
     }
-    build(&binary.left, &binary.right, fcx)
-}
-
-fn recognize_macro(expr_macro: &ExprMacro, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let name = expr_macro.mac.path.segments.last()?.ident.to_string();
+    let name = frag.macro_name()?;
     if !matches!(name.as_str(), "assert_eq" | "debug_assert_eq") {
         return None;
     }
-    let args = parse_macro_args(expr_macro.mac.tokens.clone()).ok()?;
+    let tokens = frag.macro_token_stream()?;
+    let args = parse_macro_args(tokens).ok()?;
     if args.exprs.len() < 2 {
         return None;
     }
-    build(&args.exprs[0], &args.exprs[1], fcx)
+    let lhs_frag = SourceFragment::expr(&args.exprs[0], frag.file);
+    let rhs_frag = SourceFragment::expr(&args.exprs[1], frag.file);
+    recognize_eq_parts(&lhs_frag, &rhs_frag, fcx)
 }
 
-fn build(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if let (Some(lhs_exprs), Some(rhs_exprs)) =
-        (literal_tuple_elements(lhs), literal_tuple_elements(rhs))
-    {
-        if !lhs_exprs.is_empty() && lhs_exprs.len() == rhs_exprs.len() {
+fn recognize_eq_parts<'a>(
+    lhs: &SourceFragment<'a>,
+    rhs: &SourceFragment<'a>,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    let maybe_lhs_elems = literal_tuple_elements_frag(lhs);
+    let maybe_rhs_elems = literal_tuple_elements_frag(rhs);
+    if let (Some(lhs_elems), Some(rhs_elems)) = (&maybe_lhs_elems, &maybe_rhs_elems) {
+        if !lhs_elems.is_empty() && lhs_elems.len() == rhs_elems.len() {
             return Some(TupleDecompSugar::new(TupleDecompKind::LiteralPair {
-                lhs_terms: lhs_exprs
+                lhs_terms: lhs_elems
                     .iter()
-                    .map(|expr| SugarBody::term(expr, fcx))
+                    .map(|f| SugarBody::term_frag(f, fcx))
                     .collect(),
-                rhs_terms: rhs_exprs
+                rhs_terms: rhs_elems
                     .iter()
-                    .map(|expr| SugarBody::term(expr, fcx))
+                    .map(|f| SugarBody::term_frag(f, fcx))
                     .collect(),
             }));
         }
     }
-
-    let (producer, literal_exprs) = match_producer_and_literal(lhs, rhs, fcx)?;
-    if literal_exprs.is_empty() {
+    let (producer, literal_frags) = match_producer_and_literal(lhs, rhs, fcx)?;
+    if literal_frags.is_empty() {
         return None;
     }
     Some(TupleDecompSugar::new(TupleDecompKind::ProducerLiteral {
         producer,
-        literal_terms: literal_exprs
+        literal_terms: literal_frags
             .iter()
-            .map(|expr| SugarBody::term(expr, fcx))
+            .map(|f| SugarBody::term_frag(f, fcx))
             .collect(),
     }))
 }
 
-/// Resolve `(producer_sugar, literal_tuple_element_exprs)` from the two sides, in either
+/// Strip `Paren`/`Group` wrappers then return the elements of a literal `Expr::Tuple`,
+/// or `None` if the inner expression is not a non-empty tuple.
+fn literal_tuple_elements_frag<'a>(frag: &SourceFragment<'a>) -> Option<Vec<SourceFragment<'a>>> {
+    let mut f = *frag;
+    while let Some(inner) = f.transparent_inner() {
+        f = inner;
+    }
+    let elems = f.tuple_elems()?;
+    if elems.is_empty() {
+        return None;
+    }
+    Some(elems)
+}
+
+/// Resolve `(producer_sugar, literal_tuple_element_frags)` from the two sides, in either
 /// order. A "producer" is a tuple-valued expr whose component decomposition is owned by
 /// its Sugar and delayed until `desugar`; a plain literal tuple is NOT a producer here.
-fn match_producer_and_literal(
-    lhs: &Expr,
-    rhs: &Expr,
+fn match_producer_and_literal<'a>(
+    lhs: &SourceFragment<'a>,
+    rhs: &SourceFragment<'a>,
     fcx: &SugarBuildCtx,
-) -> Option<(SugarBody<TupleProducerFloor>, Vec<Expr>)> {
-    if has_tuple_producer(lhs, fcx) {
-        if let Some(l) = literal_tuple_elements(rhs) {
-            return Some((SugarBody::tuple_producer(lhs, fcx), l));
+) -> Option<(SugarBody<TupleProducerFloor>, Vec<SourceFragment<'a>>)> {
+    if has_tuple_producer_frag(lhs, fcx) {
+        if let Some(l) = literal_tuple_elements_frag(rhs) {
+            return Some((SugarBody::tuple_producer_frag(lhs, fcx), l));
         }
     }
-    if has_tuple_producer(rhs, fcx) {
-        if let Some(l) = literal_tuple_elements(lhs) {
-            return Some((SugarBody::tuple_producer(rhs, fcx), l));
+    if has_tuple_producer_frag(rhs, fcx) {
+        if let Some(l) = literal_tuple_elements_frag(lhs) {
+            return Some((SugarBody::tuple_producer_frag(rhs, fcx), l));
         }
     }
     None
-}
-
-fn literal_tuple_elements(expr: &Expr) -> Option<Vec<Expr>> {
-    match strip_paren_group(expr) {
-        Expr::Tuple(tuple) if !tuple.elems.is_empty() => {
-            Some(tuple.elems.iter().cloned().collect())
-        }
-        _ => None,
-    }
-}
-
-fn strip_paren_group(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_group(&paren.expr),
-        Expr::Group(group) => strip_paren_group(&group.expr),
-        _ => expr,
-    }
 }
 
 enum TupleDecompKind {
@@ -257,5 +249,75 @@ fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>,
             .into_term()
             .unwrap_or_else(|| panic!("typed tuple decomp literal reduced to non-term"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::factory::SugarBuildCtx;
+    use crate::sugar::source_fragment::SourceFragment;
+    use crate::{LiftOptions, TemporalPlan, TemporalScope};
+    use std::collections::BTreeMap;
+    use syn::Expr;
+
+    fn make_fcx_and_scope() -> (TemporalScope, LiftOptions) {
+        (
+            TemporalScope::new("tuple-decomp-test", TemporalPlan::default()),
+            LiftOptions::default(),
+        )
+    }
+
+    /// Positive: binary `==` comparing two literal tuples of matching arity is recognized.
+    /// Exercises `binop_op_kind()` == `"Eq"` and `tuple_elems()` via `literal_tuple_elements_frag`.
+    #[test]
+    fn from_src_literal_pair_binop_recognized() {
+        let (scope, options) = make_fcx_and_scope();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("(1u64, 2i32) == (3u64, 4i32)").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+        assert_eq!(frag.binop_op_kind(), Some("Eq"), "accessor gate: op kind");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "literal-pair binary == should be recognized"
+        );
+    }
+
+    /// Positive: `assert_eq!` macro with two literal tuples is recognized.
+    /// Exercises `macro_name()` accessor and the macro dispatch path.
+    #[test]
+    fn from_src_assert_eq_macro_literal_pair_recognized() {
+        let (scope, options) = make_fcx_and_scope();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr =
+            syn::parse_str("assert_eq!((1u64, 2i32), (3u64, 4i32))").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+        assert_eq!(
+            frag.macro_name(),
+            Some("assert_eq".to_string()),
+            "accessor gate: macro name"
+        );
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "assert_eq! with literal tuple pair should be recognized"
+        );
+    }
+
+    /// Discrimination: binary `!=` with literal tuples is NOT recognized (only `==` fires).
+    /// Exercises `binop_op_kind()` == `"Ne"` discrimination gate.
+    #[test]
+    fn from_src_ne_binop_with_tuples_not_recognized() {
+        let (scope, options) = make_fcx_and_scope();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("(1u64, 2i32) != (3u64, 4i32)").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+        assert_eq!(frag.binop_op_kind(), Some("Ne"), "accessor gate: op kind is Ne");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "!= with literal tuples should NOT be recognized"
+        );
     }
 }

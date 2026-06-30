@@ -25,10 +25,8 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{str_const, Term};
-use syn::{BinOp, Expr, ExprIndex};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
@@ -42,7 +40,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Recognizer for `literal_byte_array[bv32_expr]`.
 ///
 /// Fires only when:
-///   1. The expression (after stripping refs/groups) is `Expr::Index`
+///   1. The expression is `Expr::Index` (gate: `index_receiver()` returns `Some`)
 ///   2. The index sub-expression contains at least one bit-operation operator
 ///      (`<<`, `>>`, `&`, `|`, `^`) -- bv32 Sugar will reduce it to a bv32 Ctor
 ///   3. The container sub-expression resolves to a literal composite sequence
@@ -50,55 +48,26 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Returns `None` for plain const indexes (handled by `IndexSugar` via
 /// `ground_literal_index`) and for non-literal containers.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Index(index) = expr else {
-        return None;
-    };
+    // Must be Expr::Index -- index_receiver() returns Some only for that variant.
+    let container_frag = frag.index_receiver()?;
+    let idx_frag = frag.index_index()?;
     // Only intercept bv32-like index expressions.  A plain integer literal
     // index const-folds cleanly inside `IndexSugar::ground_literal_index`;
     // stealing it here would duplicate that path with no benefit.
-    if !index_contains_bv_op(&index.index) {
+    if !idx_frag.index_contains_bv_op_frag() {
         return None;
     }
     // Container must be a literal composite sequence (e.g. a literal byte array).
-    let literal_container = method_family::build_literal_sequence_composite(&index.expr, fcx)?;
+    let literal_container = container_frag.build_literal_sequence_composite_frag(fcx)?;
     Some(Box::new(StrTableSelectSugar {
-        index: index.clone(),
         literal_container: SugarBody::from_node(literal_container),
-        idx: SugarBody::term(&index.index, fcx),
+        idx: SugarBody::term_frag(&idx_frag, fcx),
     }))
 }
 
-/// Returns `true` iff `expr` contains at least one bit-operation binary
-/// operator (`<<`, `>>`, `&`, `|`, `^`), indicating a bv32-routable index
-/// computation.  Recurses through binary ops, parens, casts, and groups.
-fn index_contains_bv_op(expr: &Expr) -> bool {
-    match expr {
-        Expr::Binary(binary) => {
-            matches!(
-                binary.op,
-                BinOp::Shl(_)
-                    | BinOp::Shr(_)
-                    | BinOp::BitAnd(_)
-                    | BinOp::BitOr(_)
-                    | BinOp::BitXor(_)
-            ) || index_contains_bv_op(&binary.left)
-                || index_contains_bv_op(&binary.right)
-        }
-        Expr::Paren(p) => index_contains_bv_op(&p.expr),
-        Expr::Cast(c) => index_contains_bv_op(&c.expr),
-        Expr::Group(g) => index_contains_bv_op(&g.expr),
-        _ => false,
-    }
-}
-
-/// `StrTableSelectSugar` node.  Holds the raw source site and pre-built child
-/// Sugar bodies.  Children are evaluated lazily in `desugar`, mirroring the
-/// `IndexSugar` pattern.
+/// `StrTableSelectSugar` node.  Holds pre-built child Sugar bodies.
+/// Children are evaluated lazily in `desugar`, mirroring the `IndexSugar` pattern.
 pub(crate) struct StrTableSelectSugar {
-    /// Raw `a[i]` source site (kept for potential diagnostic use).
-    #[allow(dead_code)]
-    index: ExprIndex,
     /// Literal container composite (a fixed byte/char array in scope).
     literal_container: SugarBody<CompositeFloor>,
     /// Index expression -- expected to reduce to a bv32 Ctor term.
@@ -174,9 +143,67 @@ mod tests {
         sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
         TemporalScope,
     };
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
     use std::collections::BTreeMap;
     use sugar_ir_symbolic::{ConstValue, Term};
     use syn::{parse_quote, Expr, Item};
+
+    // ── from_src structural tests ─────────────────────────────────────────────
+
+    fn index_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let frag = SourceFragment::from_node(FragNode::Item(&file.items[0]), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        stmts[0].terms()[0]
+    }
+
+    /// Positive: `[65u8, 66u8, 67u8][(x >> 2) as usize]`
+    ///   -> `observed()` is "Index"
+    ///   -> `index_receiver()` exposes the container
+    ///   -> `index_index().index_contains_bv_op_frag()` is true
+    /// No as_expr / Expr:: / raw syn field access in this test body.
+    #[test]
+    fn from_src_index_observed_receiver_and_bv_op_gate() {
+        let file = parse_file("fn f(x: usize) { [65u8, 66u8, 67u8][(x >> 2) as usize] }");
+        let frag = index_expr_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Index");
+        assert!(frag.index_receiver().is_some(), "container must be accessible via index_receiver");
+        let idx_frag = frag.index_index().expect("index sub-expr must be accessible");
+        assert!(
+            idx_frag.index_contains_bv_op_frag(),
+            "index must contain a bit-operation operator"
+        );
+    }
+
+    /// Discrimination: a plain const index `[65u8][2usize]` -- `index_index()` exists but
+    /// `index_contains_bv_op_frag()` is false (no shift/bitwise op).
+    #[test]
+    fn from_src_plain_const_index_bv_op_gate_is_false() {
+        let file = parse_file("fn f() { [65u8, 66u8][2usize] }");
+        let frag = index_expr_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Index");
+        let idx_frag = frag.index_index().expect("index sub-expr present");
+        assert!(
+            !idx_frag.index_contains_bv_op_frag(),
+            "plain literal index must NOT trigger bv-op gate"
+        );
+    }
+
+    /// Structural: a `MethodCall` fragment returns `None` from `index_receiver` and
+    /// `index_index` -- index accessors do not bleed across expression kinds.
+    #[test]
+    fn from_src_structural_method_call_returns_none_from_index_accessors() {
+        let file = parse_file("fn f(x: u32) -> u32 { x.count_ones() }");
+        let frag = index_expr_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert!(frag.index_receiver().is_none());
+        assert!(frag.index_index().is_none());
+    }
+
+    // ── Recognizer gate tests ─────────────────────────────────────────────────
 
     fn recognize_and_run(source: Expr) -> Option<Outcome> {
         let scope = TemporalScope::new("test", TemporalPlan::default());
@@ -191,8 +218,6 @@ mod tests {
         let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
         Some(node.desugar(&ctx))
     }
-
-    // ── Recognizer gate tests ─────────────────────────────────────────────────
 
     #[test]
     fn recognize_fires_for_literal_array_bv_op_index() {

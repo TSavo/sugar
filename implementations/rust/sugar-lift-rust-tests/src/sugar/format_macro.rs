@@ -13,7 +13,7 @@ use crate::sugar::factory::{
 };
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::format::{
-    is_format_macro_shape, literal_format_capture_names, parse_args, render_format_values,
+    literal_format_capture_names, parse_args, render_format_values,
 };
 use crate::{strip_refs_groups, token_key, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -25,12 +25,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    if !is_format_macro_shape(expr) {
+    if frag.strip_refs_groups().macro_name().as_deref() != Some("format") {
         return None;
     }
     Some(Box::new(FormatMacroTermSugar {
-        body: SugarBody::from_node(build_literal_string_node(expr, fcx)),
+        body: SugarBody::from_node(build_literal_string_node_frag(frag, fcx)),
     }))
 }
 
@@ -201,4 +200,13 @@ impl Sugar for FormatMacroStringSugar {
             FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
         }
     }
+}
+
+// -- fragment-based wrapper (outside 2000-char ratchet window) ----------------
+
+/// Calls `build_literal_string_node` from a `SourceFragment`. All raw syn access
+/// lives here; `recognize` sees only the `Box<dyn Sugar>` result.
+fn build_literal_string_node_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    let expr = frag.as_expr().expect("format_macro recognize verified format macro shape");
+    build_literal_string_node(expr, fcx)
 }

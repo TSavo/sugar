@@ -7,15 +7,14 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{eq, num, str_const, ConstValue, Formula, Term};
-use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Outcome,
-    Sugar, SugarCtx, Warrant,
+    bool_const, callsite_assertion_name, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx,
+    Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -29,101 +28,67 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_or
 );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
-        return None;
-    };
-    if call.turbofish.is_some() || definitely_not_char_receiver(&call.receiver) {
+    let stripped = frag.strip_refs_groups();
+    // call_method_key() returns None for non-MethodCall.
+    let method_key = stripped.call_method_key()?;
+    if stripped.call_has_turbofish() {
         return None;
     }
-    let method = call.method.to_string();
-    let kind = match method.as_str() {
-        method if is_bool_method(method) && call.args.is_empty() => CharMethodKind::Bool {
-            method: method.to_string(),
+    let receiver_frag = stripped.call_receiver()?;
+    if receiver_frag.definitely_not_char_receiver() {
+        return None;
+    }
+    let arg_count = stripped.call_arg_count();
+    let args = stripped.call_args();
+
+    let kind = match method_key.as_str() {
+        m if is_bool_method(m) && arg_count == 0 => CharMethodKind::Bool {
+            method: m.to_string(),
         },
-        "to_ascii_uppercase" if call.args.is_empty() => CharMethodKind::AsciiUpper,
-        "to_ascii_lowercase" if call.args.is_empty() => CharMethodKind::AsciiLower,
-        "to_uppercase" if call.args.is_empty() => CharMethodKind::UnicodeUpper,
-        "to_lowercase" if call.args.is_empty() => CharMethodKind::UnicodeLower,
+        "to_ascii_uppercase" if arg_count == 0 => CharMethodKind::AsciiUpper,
+        "to_ascii_lowercase" if arg_count == 0 => CharMethodKind::AsciiLower,
+        "to_uppercase" if arg_count == 0 => CharMethodKind::UnicodeUpper,
+        "to_lowercase" if arg_count == 0 => CharMethodKind::UnicodeLower,
         "to_string"
-            if call.args.is_empty()
-                && char_to_string_receiver_resolves_literal(&call.receiver, fcx) =>
+            if arg_count == 0
+                && receiver_frag.char_to_string_receiver_resolves_literal(fcx) =>
         {
             CharMethodKind::ToString
         }
-        "len_utf8" if call.args.is_empty() => CharMethodKind::LenUtf8,
-        "to_digit" if call.args.len() == 1 => CharMethodKind::ToDigit {
-            radix: SugarBody::term(&call.args[0], fcx),
+        "len_utf8" if arg_count == 0 => CharMethodKind::LenUtf8,
+        "to_digit" if arg_count == 1 => CharMethodKind::ToDigit {
+            radix: SugarBody::term_frag(&args[0], fcx),
         },
         _ => return None,
     };
 
     Some(Box::new(CharMethodSugar {
-        receiver: SugarBody::term(&call.receiver, fcx),
+        receiver: SugarBody::term_frag(&receiver_frag, fcx),
         kind,
     }))
 }
 
 fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
-        return None;
-    };
-    if call.turbofish.is_some()
-        || !call.args.is_empty()
-        || definitely_not_char_receiver(&call.receiver)
-    {
+    let stripped = frag.strip_refs_groups();
+    let method_key = stripped.call_method_key()?;
+    if stripped.call_has_turbofish() {
         return None;
     }
-    let method = call.method.to_string();
-    if !is_bool_method(&method) {
+    if stripped.call_arg_count() != 0 {
+        return None;
+    }
+    let receiver_frag = stripped.call_receiver()?;
+    if receiver_frag.definitely_not_char_receiver() {
+        return None;
+    }
+    if !is_bool_method(&method_key) {
         return None;
     }
 
     Some(Box::new(CharBoolConstraintSugar {
-        method,
-        receiver: SugarBody::term(&call.receiver, fcx),
+        method: method_key,
+        receiver: SugarBody::term_frag(&receiver_frag, fcx),
     }))
-}
-
-fn definitely_not_char_receiver(expr: &Expr) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(_), ..
-        }) => false,
-        Expr::Lit(_) => true,
-        Expr::MethodCall(call) => definitely_not_char_receiver(&call.receiver),
-        _ => false,
-    }
-}
-
-fn char_to_string_receiver_resolves_literal(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(_), ..
-        }) => true,
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
-                return false;
-            };
-            if fcx.resolving_bound_path(&name) {
-                return false;
-            }
-            let Some(init) = fcx
-                .let_inits()
-                .get(&name)
-                .copied()
-                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
-            else {
-                return false;
-            };
-            let child_fcx = fcx.with_bound_path(&name);
-            char_to_string_receiver_resolves_literal(init, &child_fcx)
-        }
-        Expr::Paren(paren) => char_to_string_receiver_resolves_literal(&paren.expr, fcx),
-        Expr::Group(group) => char_to_string_receiver_resolves_literal(&group.expr, fcx),
-        _ => false,
-    }
 }
 
 fn is_bool_method(method: &str) -> bool {
@@ -317,4 +282,73 @@ fn require_radix(term: &Rc<Term>) -> u32 {
         .ok()
         .filter(|radix| (2..=36).contains(radix))
         .unwrap_or_else(|| panic!("to_digit radix is outside 2..=36; no char-method Effect exists"))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    fn method_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `'a'.to_uppercase()` -- observed "MethodCall", method key is
+    /// "to_uppercase", no turbofish, receiver is a Char literal (not
+    /// `definitely_not_char_receiver`). Struct holds `SugarBody<TermFloor>` +
+    /// `CharMethodKind` -- no raw syn fields.
+    #[test]
+    fn from_src_char_to_uppercase_method_key_no_turbofish_char_receiver() {
+        // The inner .to_uppercase() call is what the sugar recognizes.
+        // Peel the outer .collect::<String>() via call_receiver().
+        let file = parse_file("fn f() -> String { 'a'.to_uppercase().collect::<String>() }");
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        let outer = &stmts[0].terms()[0]; // collect::<String>()
+        assert_eq!(outer.observed(), "MethodCall");
+        let to_upper = outer.call_receiver().expect("collect has a receiver");
+        let stripped = to_upper.strip_refs_groups();
+        assert_eq!(stripped.observed(), "MethodCall");
+        assert_eq!(stripped.call_method_key().as_deref(), Some("to_uppercase"));
+        assert!(!stripped.call_has_turbofish());
+        assert_eq!(stripped.call_arg_count(), 0);
+        let recv = stripped.call_receiver().expect("to_uppercase has a receiver");
+        // Char literal -- NOT definitely_not_char_receiver
+        assert!(!recv.definitely_not_char_receiver());
+    }
+
+    /// Discrimination: an integer literal receiver is `definitely_not_char_receiver`.
+    /// Proves the guard correctly rejects non-char callers.
+    #[test]
+    fn discrimination_int_receiver_is_definitely_not_char() {
+        let file = parse_file("fn f() { let _ = 42u32.to_string(); }");
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().expect("fn has body");
+        let stmts = body.statements();
+        let val_frag = stmts[0].assign_value().expect("let has value");
+        let stripped = val_frag.strip_refs_groups();
+        assert_eq!(stripped.observed(), "MethodCall");
+        let recv = stripped.call_receiver().expect("method has receiver");
+        assert!(recv.strip_refs_groups().definitely_not_char_receiver());
+    }
+
+    /// Structural: a `BinOp` fragment returns `None` from `call_method_key()` and
+    /// `false` from `call_has_turbofish()`. Shape-specific accessors do not bleed
+    /// across node kinds.
+    #[test]
+    fn structural_binop_returns_none_from_call_method_accessors() {
+        let file = parse_file("fn f(a: u32, b: u32) -> u32 { a + b }");
+        let frag = method_call_frag(&file, "f.rs");
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.call_method_key(), None);
+        assert!(!frag.call_has_turbofish());
+        assert!(frag.call_receiver().is_none());
+    }
 }
