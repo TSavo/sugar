@@ -19,8 +19,8 @@
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
-use crate::Sugar;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::fallback_term("reference_term", recognize);
@@ -59,19 +59,31 @@ mod tests {
         // shared ref
         let shared: Expr = syn::parse_str("&x").expect("parse");
         let frag_shared = SourceFragment::expr(&shared, "<src>");
-        assert!(frag_shared.reference_inner().is_some(), "shared ref: inner is Some");
-        assert!(!frag_shared.reference_is_mutable(), "shared ref: not mutable");
+        assert!(
+            frag_shared.reference_inner().is_some(),
+            "shared ref: inner is Some"
+        );
+        assert!(
+            !frag_shared.reference_is_mutable(),
+            "shared ref: not mutable"
+        );
 
         // mutable ref
         let mutable: Expr = syn::parse_str("&mut y").expect("parse");
         let frag_mut = SourceFragment::expr(&mutable, "<src>");
-        assert!(frag_mut.reference_inner().is_some(), "mut ref: inner is Some");
+        assert!(
+            frag_mut.reference_inner().is_some(),
+            "mut ref: inner is Some"
+        );
         assert!(frag_mut.reference_is_mutable(), "mut ref: is mutable");
 
         // non-reference: accessor returns None / false
         let other: Expr = syn::parse_str("x + 1").expect("parse");
         let frag_other = SourceFragment::expr(&other, "<src>");
-        assert!(frag_other.reference_inner().is_none(), "non-ref: inner is None");
+        assert!(
+            frag_other.reference_inner().is_none(),
+            "non-ref: inner is None"
+        );
         assert!(!frag_other.reference_is_mutable(), "non-ref: not mutable");
     }
 
@@ -81,7 +93,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("reference_term recognizes");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("reference_term recognizes");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

@@ -191,7 +191,9 @@ impl MementoPool {
     /// accessor so callers write `pool.member_kind(cid)` instead of
     /// `sugar_proof_envelope::member_kind(pool.mementos.get(cid))`.
     pub fn member_kind(&self, cid: &str) -> Option<&str> {
-        self.mementos.get(cid).and_then(sugar_proof_envelope::member_kind)
+        self.mementos
+            .get(cid)
+            .and_then(sugar_proof_envelope::member_kind)
     }
 
     /// Return the JSON value of a kind-specific field from a stored member,
@@ -212,7 +214,9 @@ impl MementoPool {
     /// semantic slots (`pre`, `post`, `inv`) must resolve through the pool so
     /// the graph, not legacy inline fields, is the source of truth.
     pub fn resolve_contract_body(&self, envelope: &Json) -> Option<Json> {
-        let mut body = sugar_proof_envelope::member_body(envelope)?.as_object()?.clone();
+        let mut body = sugar_proof_envelope::member_body(envelope)?
+            .as_object()?
+            .clone();
         if let Some(body_cid) = contract_body_pointer(envelope) {
             for (slot, formula) in self.resolve_body_formula_slots(&body_cid)? {
                 body.insert(slot, formula);
@@ -252,8 +256,10 @@ impl MementoPool {
         // metadata; under v1.1 they live in evidence.body.
         for envelope in self.mementos.values() {
             if sugar_proof_envelope::member_kind(envelope) == Some("implication") {
-                let ant = sugar_proof_envelope::member_field(envelope, "antecedentHash").and_then(|v| v.as_str());
-                let con = sugar_proof_envelope::member_field(envelope, "consequentHash").and_then(|v| v.as_str());
+                let ant = sugar_proof_envelope::member_field(envelope, "antecedentHash")
+                    .and_then(|v| v.as_str());
+                let con = sugar_proof_envelope::member_field(envelope, "consequentHash")
+                    .and_then(|v| v.as_str());
                 if ant == Some(antecedent_cid) && con == Some(consequent_cid) {
                     return Some(envelope);
                 }
@@ -280,8 +286,10 @@ impl MementoPool {
         for envelope in self.mementos.values() {
             if sugar_proof_envelope::member_kind(envelope) == Some("implication") {
                 if let (Some(ant), Some(con)) = (
-                    sugar_proof_envelope::member_field(envelope, "antecedentHash").and_then(|v| v.as_str()),
-                    sugar_proof_envelope::member_field(envelope, "consequentHash").and_then(|v| v.as_str()),
+                    sugar_proof_envelope::member_field(envelope, "antecedentHash")
+                        .and_then(|v| v.as_str()),
+                    sugar_proof_envelope::member_field(envelope, "consequentHash")
+                        .and_then(|v| v.as_str()),
                 ) {
                     graph
                         .entry(ant.to_string())
@@ -367,7 +375,9 @@ impl MementoPool {
         // discharge via `verify_implication`/`can_implies`, which scan
         // implication mementos directly and don't need the consequent here.
         for field in &["postHash", "invHash"] {
-            if let Some(hash) = sugar_proof_envelope::member_field(&envelope, field).and_then(|v| v.as_str()) {
+            if let Some(hash) =
+                sugar_proof_envelope::member_field(&envelope, field).and_then(|v| v.as_str())
+            {
                 self.formula_to_memento
                     .insert(hash.to_string(), memento_cid.clone());
             }
@@ -1135,8 +1145,14 @@ mod tests {
             }
         });
 
-        assert_eq!(sugar_proof_envelope::member_kind(&memento), Some("source-memento"));
-        assert_eq!(sugar_proof_envelope::member_body(&memento), Some(&memento["body"]));
+        assert_eq!(
+            sugar_proof_envelope::member_kind(&memento),
+            Some("source-memento")
+        );
+        assert_eq!(
+            sugar_proof_envelope::member_body(&memento),
+            Some(&memento["body"])
+        );
         assert_eq!(
             sugar_proof_envelope::member_field(&memento, "contractName"),
             Some(&memento["header"]["contractName"])

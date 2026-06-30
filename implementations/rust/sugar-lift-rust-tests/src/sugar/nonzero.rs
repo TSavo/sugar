@@ -14,11 +14,11 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{ExactInt, NumericFloor};
 use crate::sugar::monadic::{none_term, some_term};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{
     MonadicFloorAccept, MonadicFloorVisitor, ScalarFloorAccept, ScalarFloorVisitor,
 };
 use crate::{str_const, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("nonzero_new", SugarRole::Term, recognize_new);

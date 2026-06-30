@@ -18,8 +18,8 @@ use syn::{Expr, ExprPath};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("range_bounds_contains", &["method"], recognize);
@@ -216,9 +216,6 @@ mod tests {
             "BinOp must have no call_target_name"
         );
         assert_eq!(frag.call_arg_count(), 0, "BinOp has no call args");
-        assert!(
-            frag.call_receiver().is_none(),
-            "BinOp has no call receiver"
-        );
+        assert!(frag.call_receiver().is_none(), "BinOp has no call receiver");
     }
 }

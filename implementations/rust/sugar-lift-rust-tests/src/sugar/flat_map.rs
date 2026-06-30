@@ -19,17 +19,20 @@ use std::collections::BTreeMap;
 use crate::sugar::factory::{build_composite, desugar_build_ctx};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval_flat_map_closure, substitute_expr, ConstVal, Desugared, DesugaredElem, Effect,
     FlatMapClosureEval, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 use syn::{Expr, Pat, Stmt};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("flat_map", recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;

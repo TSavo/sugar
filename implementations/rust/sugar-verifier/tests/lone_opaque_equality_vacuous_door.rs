@@ -31,8 +31,8 @@ use std::sync::Arc;
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody,
-    ContractMemento, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody, ContractMemento,
+    Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::{load_all_proofs::ProofBytes, ObligationVerdict, Runner, RunnerConfig};
 
@@ -100,10 +100,7 @@ fn raw_bridge_bytes(source_symbol: &str, target_cid: &str, signer_seed: Ed25519S
         ("targetContractCid", cv_str(target_cid)),
         ("targetLayer", cv_str("test-kit")),
     ]);
-    let evidence = cv_obj(vec![
-        ("kind", cv_str("bridge")),
-        ("body", body.clone()),
-    ]);
+    let evidence = cv_obj(vec![("kind", cv_str("bridge")), ("body", body.clone())]);
     let envelope_preimage = cv_obj(vec![
         ("kind", cv_str("bridge")),
         ("sourceSymbol", cv_str(source_symbol)),
@@ -117,10 +114,7 @@ fn raw_bridge_bytes(source_symbol: &str, target_cid: &str, signer_seed: Ed25519S
         ("declaredAt", cv_str("2026-06-28T00:00:00.000Z")),
         ("signature", cv_str(&signature)),
     ]);
-    let value = cv_obj(vec![
-        ("envelope", envelope),
-        ("evidence", evidence),
-    ]);
+    let value = cv_obj(vec![("envelope", envelope), ("evidence", evidence)]);
     encode_jcs(&value).into_bytes()
 }
 
@@ -238,14 +232,22 @@ fn run_with_bundle(literal: &str) -> Vec<(String, ObligationVerdict)> {
     if report.rows.is_empty() {
         // Surface load errors if any
         for err in &report.load_errors {
-            eprintln!("[lone_opaque diag] load_error: {} — {}", err.proof_path, err.reason);
+            eprintln!(
+                "[lone_opaque diag] load_error: {} — {}",
+                err.proof_path, err.reason
+            );
         }
     }
 
     report
         .rows
         .iter()
-        .map(|r| (r.callsite.bridge_ir_name.clone(), status_to_verdict(&r.status)))
+        .map(|r| {
+            (
+                r.callsite.bridge_ir_name.clone(),
+                status_to_verdict(&r.status),
+            )
+        })
         .collect()
 }
 

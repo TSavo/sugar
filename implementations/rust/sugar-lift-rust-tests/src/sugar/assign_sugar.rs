@@ -18,11 +18,10 @@ use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) static STMT_SUGAR: StmtSugarClaim =
-    StmtSugarClaim::statement("assign_sugar", recognize);
+pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("assign_sugar", recognize);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stmt = frag.as_stmt()?;
@@ -32,11 +31,17 @@ fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let init = local.init.as_ref()?;
     if init.diverge.is_some() {
         // `let x = expr else { ... }` (let-else) -> treat as Support.
-        return Some(Box::new(AssignSugar { name: None, raw_init: None }));
+        return Some(Box::new(AssignSugar {
+            name: None,
+            raw_init: None,
+        }));
     }
     let raw_init = *init.expr.clone();
     let name = simple_immutable_ident_name(&local.pat);
-    Some(Box::new(AssignSugar { name, raw_init: Some(raw_init) }))
+    Some(Box::new(AssignSugar {
+        name,
+        raw_init: Some(raw_init),
+    }))
 }
 
 /// Returns the ident name if the pattern is a simple immutable binding (`let name = ...`),

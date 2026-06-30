@@ -35,8 +35,8 @@ use syn::{Expr, GenericArgument, PathArguments, Type};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
 

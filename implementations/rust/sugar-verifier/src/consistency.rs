@@ -1685,8 +1685,8 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         if source_symbol.is_empty() {
             continue;
         }
-        let Some(target_cid) =
-            sugar_proof_envelope::member_field(bridge_env, "targetContractCid").and_then(|v| v.as_str())
+        let Some(target_cid) = sugar_proof_envelope::member_field(bridge_env, "targetContractCid")
+            .and_then(|v| v.as_str())
         else {
             continue;
         };
@@ -1787,12 +1787,13 @@ fn linked_ambient_post_instances_for_inv(
             continue;
         };
         for post in ambient.iter().filter(|post| {
-            let bare =
-                name.strip_prefix("call:").or_else(|| name.strip_prefix("method:")).unwrap_or(name);
+            let bare = name
+                .strip_prefix("call:")
+                .or_else(|| name.strip_prefix("method:"))
+                .unwrap_or(name);
             (post.source_symbol == name || post.source_symbol == bare)
                 && post.formals.len() == args.len()
-        })
-        {
+        }) {
             let mut instance = post.post.clone();
             for (formal, actual) in post.formals.iter().zip(args.iter()) {
                 instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
@@ -3507,7 +3508,9 @@ mod tests {
             results[0].reason
         );
         assert!(
-            results[0].reason.contains("single constraint has no sibling"),
+            results[0]
+                .reason
+                .contains("single constraint has no sibling"),
             "vacuous-refused reason must cite the single-constraint guard, got: {}",
             results[0].reason
         );

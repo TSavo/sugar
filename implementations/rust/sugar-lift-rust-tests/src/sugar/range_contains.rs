@@ -27,8 +27,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("range_contains", SugarRole::Term, recognize);
@@ -102,7 +102,10 @@ mod tests {
         // floor: bool_const(true) produces Term::Const { Bool(true) }
         let term = bool_const(sugar.value);
         match term.as_ref() {
-            Term::Const { value: ConstValue::Bool(b), .. } => {
+            Term::Const {
+                value: ConstValue::Bool(b),
+                ..
+            } => {
                 assert!(*b, "expected Bool(true)");
             }
             other => panic!("expected Bool const, got {other:?}"),

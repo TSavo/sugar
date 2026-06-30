@@ -14,9 +14,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("range_accessor", &["method"], recognize);
@@ -44,7 +44,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         EndpointKind::Start => receiver.range_start_frag(),
         EndpointKind::End => receiver.range_end_frag(),
     }?;
-    Some(RangeAccessorSugar::new(SugarBody::term_frag(&endpoint_frag, fcx)))
+    Some(RangeAccessorSugar::new(SugarBody::term_frag(
+        &endpoint_frag,
+        fcx,
+    )))
 }
 
 #[derive(Clone, Copy)]
@@ -109,9 +112,15 @@ mod tests {
         assert_eq!(frag.call_arg_count(), 0);
         // receiver after strip is a closed Range
         let receiver = frag.call_receiver().unwrap().strip_refs_groups();
-        assert!(receiver.range_is_closed(), "1_u8..=10_u8 must be a closed range");
+        assert!(
+            receiver.range_is_closed(),
+            "1_u8..=10_u8 must be a closed range"
+        );
         // start frag exists
-        assert!(receiver.range_start_frag().is_some(), "start endpoint must be present");
+        assert!(
+            receiver.range_start_frag().is_some(),
+            "start endpoint must be present"
+        );
     }
 
     /// Discrimination: `(1_u8..=10_u8).end()` — inclusive range, ".end" variant.

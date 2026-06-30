@@ -15,8 +15,8 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, IsqrtVisitor, NumericSqrt};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::primitive_int::deferred_primitive_method_term;
-use crate::{const_fold_int_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{const_fold_int_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("int_sqrt", SugarRole::Term, recognize);

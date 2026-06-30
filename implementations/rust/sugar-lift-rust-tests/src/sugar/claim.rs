@@ -300,10 +300,7 @@ impl StmtSugarClaim {
 
     /// A catch-all fallback claim. The factory selects this only when no
     /// non-fallback claim matched. Mirrors `ExprSugarClaim::fallback_term`.
-    pub(crate) const fn fallback_statement(
-        name: &'static str,
-        recognize: StmtRecognizer,
-    ) -> Self {
+    pub(crate) const fn fallback_statement(name: &'static str, recognize: StmtRecognizer) -> Self {
         Self {
             name,
             role: SugarRole::Statement,

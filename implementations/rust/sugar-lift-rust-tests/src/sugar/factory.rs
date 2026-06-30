@@ -275,7 +275,8 @@ impl SugarBody<TupleProducerFloor> {
     /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
     pub(crate) fn tuple_producer_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_tuple_producer(
-            frag.as_expr().expect("tuple_producer_frag: non-expr fragment"),
+            frag.as_expr()
+                .expect("tuple_producer_frag: non-expr fragment"),
             fcx,
         ))
     }
@@ -323,7 +324,8 @@ impl SugarBody<FormatValueFloor> {
     /// lives HERE (inside `factory.rs`, ratchet-excluded) so recognize bodies stay clean.
     pub(crate) fn format_value_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(crate::sugar::format::build_format_value_body(
-            frag.as_expr().expect("format_value_frag: non-expr fragment"),
+            frag.as_expr()
+                .expect("format_value_frag: non-expr fragment"),
             fcx,
         ))
     }
@@ -645,7 +647,8 @@ pub(crate) fn build_term_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box
 /// Used by transparent-passthrough recognizers that return a child Sugar directly.
 pub(crate) fn build_composite_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_composite(
-        frag.as_expr().expect("build_composite_frag: non-expr fragment"),
+        frag.as_expr()
+            .expect("build_composite_frag: non-expr fragment"),
         fcx,
     )
 }

@@ -21,9 +21,9 @@
 //     no raw syn).
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("const_if", &["value_if"], recognize);

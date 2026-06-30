@@ -97,7 +97,11 @@ fn every_consumer_uses_the_proof_graph_api() {
             if let Some(axis) = offending_axis(line) {
                 total += 1;
                 *per_axis.entry(axis).or_default() += 1;
-                *per_file.entry(rel.clone()).or_default().entry(axis).or_default() += 1;
+                *per_file
+                    .entry(rel.clone())
+                    .or_default()
+                    .entry(axis)
+                    .or_default() += 1;
                 first_hit
                     .entry(rel.clone())
                     .or_insert_with(|| (i + 1, line.trim().to_string()));

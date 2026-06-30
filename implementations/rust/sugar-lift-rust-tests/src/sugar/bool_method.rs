@@ -11,8 +11,8 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("bool_literal_method", &["method"], recognize);
@@ -141,7 +141,10 @@ mod from_src_tests {
         assert!(frag.call_is_method_call());
         assert_eq!(frag.call_target_name().as_deref(), Some("then_some"));
         assert_eq!(frag.call_arg_count(), 1);
-        assert!(frag.call_receiver().is_some(), "then_some must have a receiver");
+        assert!(
+            frag.call_receiver().is_some(),
+            "then_some must have a receiver"
+        );
     }
 
     /// Discrimination: `false.then_some(99)` has a PrimitiveLiteral receiver -- not "then".
@@ -151,11 +154,17 @@ mod from_src_tests {
         let file = parse_file(src);
         let frag = call_frag_from(&file, "f.rs");
 
-        assert_eq!(frag.call_target_name().as_deref(), Some("then_some"),
-            "method must be then_some not then");
+        assert_eq!(
+            frag.call_target_name().as_deref(),
+            Some("then_some"),
+            "method must be then_some not then"
+        );
         let recv = frag.call_receiver().expect("receiver must exist");
-        assert_eq!(recv.observed(), "PrimitiveLiteral",
-            "false receiver must be a PrimitiveLiteral");
+        assert_eq!(
+            recv.observed(),
+            "PrimitiveLiteral",
+            "false receiver must be a PrimitiveLiteral"
+        );
     }
 
     /// Structural: `true.then(|| 42)` arg is a zero-input closure whose body is accessible.

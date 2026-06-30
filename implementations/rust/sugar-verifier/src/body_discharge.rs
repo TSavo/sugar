@@ -99,11 +99,11 @@
 use serde_json::Value as Json;
 
 use libsugar::core::types::Term;
-use sugar_proof_envelope;
 use libsugar::wp::{
     self, value_expr_of_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
 };
 use sugar_ir_types::{IrFormula, IrTerm};
+use sugar_proof_envelope;
 
 use crate::types::{CallSite, MementoPool};
 
@@ -842,8 +842,8 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         };
         b
     };
-    let Some(target_cid) = sugar_proof_envelope::member_field(bridge, "targetContractCid")
-        .and_then(|v| v.as_str())
+    let Some(target_cid) =
+        sugar_proof_envelope::member_field(bridge, "targetContractCid").and_then(|v| v.as_str())
     else {
         gdbg!("REJECT cond2: bridge for {ctor_name} has no targetContractCid");
         return None;

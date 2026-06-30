@@ -44,9 +44,16 @@ mod tests {
         let expr: Expr = syn::parse_str("loop { break 42_i32; }").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
-        assert!(frag.observed().contains("Loop"), "observed={}", frag.observed());
+        assert!(
+            frag.observed().contains("Loop"),
+            "observed={}",
+            frag.observed()
+        );
         let payload = frag.loop_single_break_payload_frag();
-        assert!(payload.is_some(), "single break must have a payload fragment");
+        assert!(
+            payload.is_some(),
+            "single break must have a payload fragment"
+        );
         assert_eq!(payload.unwrap().observed(), "PrimitiveLiteral");
 
         let scope = TemporalScope::new("loop-break-test", TemporalPlan::default());
@@ -54,7 +61,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "loop{{break}} must be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "loop{{break}} must be recognized"
+        );
     }
 
     /// Discrimination: `loop { x += 1; }` has no break, returns None.
@@ -63,14 +73,20 @@ mod tests {
         let expr: Expr = syn::parse_str("loop { let x = 1; }").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
-        assert!(frag.loop_single_break_payload_frag().is_none(), "no break -> no payload");
+        assert!(
+            frag.loop_single_break_payload_frag().is_none(),
+            "no break -> no payload"
+        );
 
         let scope = TemporalScope::new("loop-break-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "loop without single break must not be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "loop without single break must not be recognized"
+        );
     }
 
     /// Structural: a BinOp is not a Loop.

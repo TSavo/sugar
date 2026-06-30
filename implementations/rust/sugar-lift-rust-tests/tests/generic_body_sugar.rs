@@ -37,8 +37,15 @@ fn encode_base64_lifts_to_str_eq_bv_blocks() {
     let Formula::Atomic { name, args } = &*inv else {
         panic!("expected Atomic formula, got {:?}", inv);
     };
-    assert_eq!(name, "str.eq-bv-blocks", "atom name must be str.eq-bv-blocks");
-    assert_eq!(args.len(), 3, "str.eq-bv-blocks must have 3 args: [out, param, payload]");
+    assert_eq!(
+        name, "str.eq-bv-blocks",
+        "atom name must be str.eq-bv-blocks"
+    );
+    assert_eq!(
+        args.len(),
+        3,
+        "str.eq-bv-blocks must have 3 args: [out, param, payload]"
+    );
     let payload_str = match &*args[2] {
         Term::Const {
             value: ConstValue::String(s),
@@ -48,7 +55,9 @@ fn encode_base64_lifts_to_str_eq_bv_blocks() {
     };
     let payload: serde_json::Value =
         serde_json::from_str(&payload_str).expect("payload must be valid JSON");
-    let per_char = payload["per_char"].as_array().expect("per_char must be array");
+    let per_char = payload["per_char"]
+        .as_array()
+        .expect("per_char must be array");
     let table = payload["table"].as_array().expect("table must be array");
     let vars = payload["vars"].as_array().expect("vars must be array");
 
@@ -56,9 +65,7 @@ fn encode_base64_lifts_to_str_eq_bv_blocks() {
     assert_eq!(per_char.len(), 4, "base64 produces 4 output chars");
     assert_eq!(table.len(), 64, "base64 alphabet has 64 entries");
     assert_eq!(
-        vars.iter()
-            .map(|v| v.as_str().unwrap())
-            .collect::<Vec<_>>(),
+        vars.iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>(),
         vec!["b0", "b1", "b2"],
         "vars must list byte names in order"
     );
@@ -107,7 +114,9 @@ fn encode_base20_lifts_to_str_eq_bv_blocks() {
     };
     let payload: serde_json::Value =
         serde_json::from_str(&payload_str).expect("payload must be valid JSON");
-    let per_char = payload["per_char"].as_array().expect("per_char must be array");
+    let per_char = payload["per_char"]
+        .as_array()
+        .expect("per_char must be array");
     let table = payload["table"].as_array().expect("table must be array");
     let vars = payload["vars"].as_array().expect("vars must be array");
 
@@ -115,9 +124,7 @@ fn encode_base20_lifts_to_str_eq_bv_blocks() {
     assert_eq!(per_char.len(), 2, "base20 produces 2 output chars");
     assert_eq!(table.len(), 20, "base20 alphabet has 20 entries");
     assert_eq!(
-        vars.iter()
-            .map(|v| v.as_str().unwrap())
-            .collect::<Vec<_>>(),
+        vars.iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>(),
         vec!["b0"],
         "single byte encoder has one var"
     );
@@ -162,14 +169,30 @@ fn encode_base64_str_param_lifts_to_str_eq_bv_blocks() {
     assert_eq!(name, "str.eq-bv-blocks");
     assert_eq!(args.len(), 3);
     let payload_str = match &*args[2] {
-        Term::Const { value: ConstValue::String(s), .. } => s.clone(),
+        Term::Const {
+            value: ConstValue::String(s),
+            ..
+        } => s.clone(),
         other => panic!("payload must be string const, got {:?}", other),
     };
     let payload: serde_json::Value = serde_json::from_str(&payload_str).unwrap();
-    assert_eq!(payload["per_char"].as_array().unwrap().len(), 4, "base64 produces 4 output chars");
-    assert_eq!(payload["table"].as_array().unwrap().len(), 64, "base64 alphabet has 64 entries");
     assert_eq!(
-        payload["vars"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>(),
+        payload["per_char"].as_array().unwrap().len(),
+        4,
+        "base64 produces 4 output chars"
+    );
+    assert_eq!(
+        payload["table"].as_array().unwrap().len(),
+        64,
+        "base64 alphabet has 64 entries"
+    );
+    assert_eq!(
+        payload["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>(),
         vec!["b0", "b1", "b2"],
     );
 }
@@ -192,18 +215,32 @@ fn encode_base20_str_param_lifts_to_str_eq_bv_blocks() {
     let decl = broad_functional_warrant("encode_base20", &item.sig, &item.block)
         .expect("str-param base20 encoder must emit a contract");
     let inv = decl.inv.unwrap();
-    let Formula::Atomic { name, args } = &*inv else { panic!() };
+    let Formula::Atomic { name, args } = &*inv else {
+        panic!()
+    };
     assert_eq!(name, "str.eq-bv-blocks");
     assert_eq!(args.len(), 3);
     let payload_str = match &*args[2] {
-        Term::Const { value: ConstValue::String(s), .. } => s.clone(),
+        Term::Const {
+            value: ConstValue::String(s),
+            ..
+        } => s.clone(),
         _ => panic!(),
     };
     let payload: serde_json::Value = serde_json::from_str(&payload_str).unwrap();
-    assert_eq!(payload["per_char"].as_array().unwrap().len(), 2, "base20 produces 2 output chars");
+    assert_eq!(
+        payload["per_char"].as_array().unwrap().len(),
+        2,
+        "base20 produces 2 output chars"
+    );
     assert_eq!(payload["table"].as_array().unwrap().len(), 20);
     assert_eq!(
-        payload["vars"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>(),
+        payload["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>(),
         vec!["b0"],
     );
 }
@@ -287,16 +324,26 @@ fn encoder_payload_keys_are_alphabetically_ordered_jcs() {
     let decl = broad_functional_warrant("encode_base20", &item.sig, &item.block)
         .expect("must emit contract");
     let inv = decl.inv.unwrap();
-    let Formula::Atomic { args, .. } = &*inv else { panic!() };
+    let Formula::Atomic { args, .. } = &*inv else {
+        panic!()
+    };
     let payload_str = match &*args[2] {
-        Term::Const { value: ConstValue::String(s), .. } => s.clone(),
+        Term::Const {
+            value: ConstValue::String(s),
+            ..
+        } => s.clone(),
         _ => panic!(),
     };
     // The raw JSON string must have keys in JCS order: per_char comes first.
-    let pc_pos = payload_str.find("\"per_char\"").expect("per_char key must exist");
+    let pc_pos = payload_str
+        .find("\"per_char\"")
+        .expect("per_char key must exist");
     let tbl_pos = payload_str.find("\"table\"").expect("table key must exist");
     let vars_pos = payload_str.find("\"vars\"").expect("vars key must exist");
-    assert!(pc_pos < tbl_pos, "per_char must precede table in JCS output");
+    assert!(
+        pc_pos < tbl_pos,
+        "per_char must precede table in JCS output"
+    );
     assert!(tbl_pos < vars_pos, "table must precede vars in JCS output");
 }
 
@@ -311,9 +358,14 @@ fn encoder_per_char_terms_reference_byte_vars_by_name() {
     };
     let decl = broad_functional_warrant("encode_base20", &item.sig, &item.block).unwrap();
     let inv = decl.inv.unwrap();
-    let Formula::Atomic { args, .. } = &*inv else { panic!() };
+    let Formula::Atomic { args, .. } = &*inv else {
+        panic!()
+    };
     let payload_str = match &*args[2] {
-        Term::Const { value: ConstValue::String(s), .. } => s.clone(),
+        Term::Const {
+            value: ConstValue::String(s),
+            ..
+        } => s.clone(),
         _ => panic!(),
     };
     // Both per_char terms must reference b0 by name (var node).

@@ -1550,7 +1550,10 @@ fn source_report_from_proof_pool(
         if pool.member_kind(cid) != Some("bridge") {
             continue;
         }
-        let source_symbol = match pool.member_field(cid, "sourceSymbol").and_then(|v| v.as_str()) {
+        let source_symbol = match pool
+            .member_field(cid, "sourceSymbol")
+            .and_then(|v| v.as_str())
+        {
             Some(s) if !s.is_empty() => s,
             _ => continue,
         };
@@ -1587,7 +1590,10 @@ fn source_report_from_proof_pool(
 
     let mut factory_walk = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(Member::from_value(envelope), Ok(Member::FactoryWalkMemento(_))) {
+        if !matches!(
+            Member::from_value(envelope),
+            Ok(Member::FactoryWalkMemento(_))
+        ) {
             continue;
         }
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1601,7 +1607,10 @@ fn source_report_from_proof_pool(
 
     let mut assertion_surface_audits = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(Member::from_value(envelope), Ok(Member::AssertionSurfaceMemento(_))) {
+        if !matches!(
+            Member::from_value(envelope),
+            Ok(Member::AssertionSurfaceMemento(_))
+        ) {
             continue;
         }
         let Some(body) = sugar_proof_envelope::member_body(envelope) else {
@@ -1729,10 +1738,12 @@ fn proof_implication_call_edge(
     cid: &str,
     contract_names_by_cid: &BTreeMap<String, String>,
 ) -> Option<Value> {
-    let antecedent_cid =
-        pool.member_field(cid, "antecedentCid").and_then(|v| v.as_str())?;
-    let consequent_cid =
-        pool.member_field(cid, "consequentCid").and_then(|v| v.as_str())?;
+    let antecedent_cid = pool
+        .member_field(cid, "antecedentCid")
+        .and_then(|v| v.as_str())?;
+    let consequent_cid = pool
+        .member_field(cid, "consequentCid")
+        .and_then(|v| v.as_str())?;
     let source = contract_names_by_cid
         .get(antecedent_cid)
         .cloned()
@@ -1944,9 +1955,7 @@ fn rebase_proof_source_file_paths(report: &mut LiftSourceReport) {
             .and_then(Value::as_array_mut)
         {
             for warrant in warrants.iter_mut() {
-                if let Some(prefix) =
-                    best_workspace_override_prefix_for_memento(warrant, &routes)
-                {
+                if let Some(prefix) = best_workspace_override_prefix_for_memento(warrant, &routes) {
                     rebase_proof_file_fields(warrant, &prefix);
                 }
             }
@@ -2110,7 +2119,8 @@ fn proof_contract_value(
     cid: &str,
     envelope: &Value,
 ) -> Value {
-    let name = pool.member_field(cid, "contractName")
+    let name = pool
+        .member_field(cid, "contractName")
         .or_else(|| pool.member_field(cid, "name"))
         .and_then(|v| v.as_str())
         .unwrap_or("<unknown contract>");
@@ -9788,10 +9798,8 @@ mod tests {
             "fn sample() { let x = 1 + 2; let y = runtime(); }\n",
         )
         .expect("write source");
-        let foo_source =
-            std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source");
-        let source: syn::File =
-            syn::parse_file(&foo_source).expect("parse source");
+        let foo_source = std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source");
+        let source: syn::File = syn::parse_file(&foo_source).expect("parse source");
         let syn::Item::Fn(item) = &source.items[0] else {
             panic!("expected function");
         };

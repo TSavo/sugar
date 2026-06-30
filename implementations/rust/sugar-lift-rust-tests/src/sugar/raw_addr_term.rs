@@ -28,7 +28,11 @@ pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim =
 /// TERM recognizer for `Expr::RawAddr`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let inner = frag.raw_addr_inner()?;
-    let ctor = if frag.raw_addr_is_const() { "raw_addr_const" } else { "raw_addr_mut" };
+    let ctor = if frag.raw_addr_is_const() {
+        "raw_addr_const"
+    } else {
+        "raw_addr_mut"
+    };
     Some(Box::new(CtorSugar::new(
         ctor,
         vec![SugarBody::term_frag(&inner, fcx)],
@@ -233,20 +237,38 @@ mod tests {
         // const raw addr
         let const_expr: Expr = syn::parse_str("&raw const x").expect("parse &raw const x");
         let frag_const = SourceFragment::expr(&const_expr, "<src>");
-        assert!(frag_const.raw_addr_inner().is_some(), "const raw: inner is Some");
-        assert!(frag_const.raw_addr_is_const(), "const raw: is_const returns true");
+        assert!(
+            frag_const.raw_addr_inner().is_some(),
+            "const raw: inner is Some"
+        );
+        assert!(
+            frag_const.raw_addr_is_const(),
+            "const raw: is_const returns true"
+        );
 
         // mut raw addr
         let mut_expr: Expr = syn::parse_str("&raw mut y").expect("parse &raw mut y");
         let frag_mut = SourceFragment::expr(&mut_expr, "<src>");
-        assert!(frag_mut.raw_addr_inner().is_some(), "mut raw: inner is Some");
-        assert!(!frag_mut.raw_addr_is_const(), "mut raw: is_const returns false");
+        assert!(
+            frag_mut.raw_addr_inner().is_some(),
+            "mut raw: inner is Some"
+        );
+        assert!(
+            !frag_mut.raw_addr_is_const(),
+            "mut raw: is_const returns false"
+        );
 
         // non-raw-addr: accessors return None / false
         let other: Expr = syn::parse_str("x + 1").expect("parse x + 1");
         let frag_other = SourceFragment::expr(&other, "<src>");
-        assert!(frag_other.raw_addr_inner().is_none(), "non-raw-addr: inner is None");
-        assert!(!frag_other.raw_addr_is_const(), "non-raw-addr: is_const returns false");
+        assert!(
+            frag_other.raw_addr_inner().is_none(),
+            "non-raw-addr: inner is None"
+        );
+        assert!(
+            !frag_other.raw_addr_is_const(),
+            "non-raw-addr: is_const returns false"
+        );
     }
 
     fn reduce(src: &str) -> Rc<Term> {
@@ -255,7 +277,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("raw_addr_term recognizes");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("raw_addr_term recognizes");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

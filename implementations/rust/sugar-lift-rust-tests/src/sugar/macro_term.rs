@@ -102,10 +102,7 @@ fn build_macro_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> MacroTer
             "macro `{name}` expansion depth exceeded; write more Sugar for this AST"
         ));
     }
-    if name == "file"
-        && tokens.is_empty()
-        && fcx.scope().macro_registry().lookup(&name).is_none()
-    {
+    if name == "file" && tokens.is_empty() && fcx.scope().macro_registry().lookup(&name).is_none() {
         return MacroTermBody::BuiltinFile;
     }
     let Some(rules) = fcx.scope().macro_registry().lookup(&name) else {
@@ -192,8 +189,7 @@ mod from_src_tests {
     /// no target facts are provided.
     #[test]
     fn from_src_cfg_macro_recognized_yields_configuration_incomplete() {
-        let expr: syn::Expr =
-            syn::parse_str("cfg!(target_os = \"linux\")").expect("parse");
+        let expr: syn::Expr = syn::parse_str("cfg!(target_os = \"linux\")").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert_eq!(frag.observed(), "Macro");
@@ -262,7 +258,11 @@ mod tests {
         let scope = TemporalScope::new(local_scope, TemporalPlan::default());
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(expr, "<src>"); recognize(&_frag, &fcx) }.expect("cfg! is owned by macro term sugar");
+        let node = {
+            let _frag = SourceFragment::expr(expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("cfg! is owned by macro term sugar");
         let items = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

@@ -19,8 +19,8 @@ use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{
     has_composite, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::insert::InsertSugar;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term,
     count_asserts_in_stmts, helper_param_names, macro_is_assertion_surface, path_to_variant_string,

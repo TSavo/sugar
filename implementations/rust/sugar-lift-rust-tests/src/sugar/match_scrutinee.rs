@@ -30,8 +30,8 @@
 use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{expr_is_runtime_call_result, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{expr_is_runtime_call_result, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("match_scrutinee_term", recognize_term);
@@ -64,7 +64,10 @@ fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn 
 
 /// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
 /// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`.
-pub(crate) fn recognize_verdict(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_verdict(
+    frag: &SourceFragment,
+    _fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     decompose_match_scrutinee(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
 }

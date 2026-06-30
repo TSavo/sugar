@@ -27,15 +27,11 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{str_const, Term};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before(
-        "str_table_select",
-        &["index"],
-        recognize,
-    );
+    crate::sugar::claim::ExprSugarClaim::term_before("str_table_select", &["index"], recognize);
 
 /// Recognizer for `literal_byte_array[bv32_expr]`.
 ///
@@ -139,11 +135,11 @@ fn table_select_gap(reason: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
     use crate::{
         sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
         TemporalScope,
     };
-    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
     use std::collections::BTreeMap;
     use sugar_ir_symbolic::{ConstValue, Term};
     use syn::{parse_quote, Expr, Item};
@@ -168,8 +164,13 @@ mod tests {
         let frag = index_expr_frag(&file, "f.rs");
 
         assert_eq!(frag.observed(), "Index");
-        assert!(frag.index_receiver().is_some(), "container must be accessible via index_receiver");
-        let idx_frag = frag.index_index().expect("index sub-expr must be accessible");
+        assert!(
+            frag.index_receiver().is_some(),
+            "container must be accessible via index_receiver"
+        );
+        let idx_frag = frag
+            .index_index()
+            .expect("index sub-expr must be accessible");
         assert!(
             idx_frag.index_contains_bv_op_frag(),
             "index must contain a bit-operation operator"
@@ -210,7 +211,10 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&source, "<src>"); recognize(&_frag, &fcx) }?;
+        let node = {
+            let _frag = SourceFragment::expr(&source, "<src>");
+            recognize(&_frag, &fcx)
+        }?;
 
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
@@ -237,7 +241,11 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         assert!(
-            { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.is_none(),
+            {
+                let _frag = SourceFragment::expr(&expr, "<src>");
+                recognize(&_frag, &fcx)
+            }
+            .is_none(),
             "must NOT recognize a plain const index -- leave that for IndexSugar"
         );
     }
@@ -251,7 +259,11 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         assert!(
-            { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.is_none(),
+            {
+                let _frag = SourceFragment::expr(&expr, "<src>");
+                recognize(&_frag, &fcx)
+            }
+            .is_none(),
             "must NOT recognize a non-literal container"
         );
     }
@@ -269,7 +281,10 @@ mod tests {
         };
         match &*term {
             Term::Ctor { name, args } => {
-                assert_eq!(name, "str.table-select", "ctor name must be str.table-select");
+                assert_eq!(
+                    name, "str.table-select",
+                    "ctor name must be str.table-select"
+                );
                 assert_eq!(args.len(), 2, "must have exactly 2 args: [alpha, idx]");
                 // First arg: the alpha string const
                 match &*args[0] {
@@ -302,7 +317,13 @@ mod tests {
             // The index arg (args[1]) should NOT be a plain Int const -- it must
             // be a Ctor (the bv32.lshr tree built by BvBinOpSugar) or a Var.
             assert!(
-                !matches!(&*args[1], Term::Const { value: sugar_ir_symbolic::ConstValue::Int(_), .. }),
+                !matches!(
+                    &*args[1],
+                    Term::Const {
+                        value: sugar_ir_symbolic::ConstValue::Int(_),
+                        ..
+                    }
+                ),
                 "index arg must be symbolic (Ctor/Var), not a folded Int const"
             );
         } else {

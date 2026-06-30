@@ -196,9 +196,7 @@ fn is_raw_recognizer(src: &str) -> bool {
         let signature = &window[..brace];
 
         // Old raw syn: parameter is still &Expr, &Stmt, or &Item
-        if signature.contains("&Expr")
-            || signature.contains("&Stmt")
-            || signature.contains("&Item")
+        if signature.contains("&Expr") || signature.contains("&Stmt") || signature.contains("&Item")
         {
             return true;
         }
@@ -228,8 +226,8 @@ fn raw_ast_recognizer_ratchet() {
     let mut unmigrated: Vec<String> = files
         .iter()
         .filter_map(|path| {
-            let src = fs::read_to_string(path)
-                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let src =
+                fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
             if is_raw_recognizer(&src) {
                 Some(path.file_name().unwrap().to_string_lossy().into_owned())
             } else {

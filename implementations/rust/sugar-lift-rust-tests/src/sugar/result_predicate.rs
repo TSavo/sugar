@@ -22,8 +22,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{
     bool_const, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Outcome,
     Sugar, SugarCtx,
@@ -334,7 +334,10 @@ mod tests {
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
     use crate::{LiftOptions, TemporalPlan, TemporalScope};
 
-    fn result_predicate_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+    fn result_predicate_expr_frag<'a>(
+        file: &'a syn::File,
+        file_str: &'a str,
+    ) -> SourceFragment<'a> {
         let item = &file.items[0];
         let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
         let body = frag.function_body().expect("fn has a body");

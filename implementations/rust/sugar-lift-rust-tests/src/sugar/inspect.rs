@@ -14,8 +14,8 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
-use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("inspect", recognize_composite);
@@ -23,7 +23,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("result_inspect", &["method"], recognize_term);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;

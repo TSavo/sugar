@@ -11,17 +11,20 @@ use tracing::debug;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval, parse_macro_args, primitive_int_kind, simple_path_name, strip_refs_groups,
     token_key, ConstVal, Desugared, DesugaredElem, Outcome, PrimitiveIntKind, Sugar, SugarCtx,
     SUGAR_SEQ_CAP,
 };
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite("vec_literal", recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let source = resolve_vec_literal_source(expr, fcx, 0)?;
     let seq = eval_vec_builder_source_static(&source)?;

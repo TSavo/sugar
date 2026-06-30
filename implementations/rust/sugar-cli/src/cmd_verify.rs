@@ -60,9 +60,9 @@ use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
 use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
-    classify, enumerate_callsites, instantiate, load_all_proofs,
-    resolve_target, run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool,
-    ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
+    classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
+    run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict, Runner,
+    RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
 };
 use tracing::{debug, info};
 

@@ -4,8 +4,8 @@
 
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
@@ -49,7 +49,10 @@ mod tests {
         // The match statement is `Stmt::Expr(Expr::Match(..), _)` -> observed "Expr".
         // terms() unwraps the Stmt wrapper and yields the inner Expr::Match fragment.
         let terms = stmts[0].terms();
-        terms.into_iter().next().expect("match expr in first statement")
+        terms
+            .into_iter()
+            .next()
+            .expect("match expr in first statement")
     }
 
     /// from_src: `match TypeId::of::<T>()` with an assertion in an arm -> boundary.
@@ -76,7 +79,9 @@ fn f() {
         assert!(!boundary.is_empty(), "boundary must be non-empty");
 
         // Build: StatementReflectionSugar holds only String, zero raw-syn fields
-        let sugar = StatementReflectionSugar { boundary: boundary.clone() };
+        let sugar = StatementReflectionSugar {
+            boundary: boundary.clone(),
+        };
         assert_eq!(sugar.boundary, boundary);
     }
 

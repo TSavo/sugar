@@ -347,7 +347,9 @@ fn mint_auto_writes_body_discharge_bridge() {
         )
     });
 
-    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) = sugar_proof_envelope::Member::from_value(bridge) else {
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) =
+        sugar_proof_envelope::Member::from_value(bridge)
+    else {
         panic!("bridge must parse as typed BridgeMember");
     };
     let target_cid = bridge_m.target_contract_cid.as_str().to_string();
@@ -361,10 +363,14 @@ fn mint_auto_writes_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) = sugar_proof_envelope::Member::from_value(target_env) else {
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) =
+        sugar_proof_envelope::Member::from_value(target_env)
+    else {
         panic!("bridge target must be a contract memento");
     };
-    let formals = target_contract.formals.as_ref()
+    let formals = target_contract
+        .formals
+        .as_ref()
         .expect("tool-written op-contract must carry formals (delta 2)");
     assert_eq!(
         formals.first().map(|s| s.as_str()),
@@ -395,7 +401,9 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         )
     });
 
-    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m2)) = sugar_proof_envelope::Member::from_value(bridge) else {
+    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m2)) =
+        sugar_proof_envelope::Member::from_value(bridge)
+    else {
         panic!("bridge must parse as typed BridgeMember");
     };
     let target_cid = bridge_m2.target_contract_cid.as_str().to_string();
@@ -405,10 +413,14 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let Ok(sugar_proof_envelope::Member::Contract(target_contract2)) = sugar_proof_envelope::Member::from_value(target_env2) else {
+    let Ok(sugar_proof_envelope::Member::Contract(target_contract2)) =
+        sugar_proof_envelope::Member::from_value(target_env2)
+    else {
         panic!("bridge target must be a contract memento");
     };
-    let formals = target_contract2.formals.as_ref()
+    let formals = target_contract2
+        .formals
+        .as_ref()
         .expect("zero-arg op-contract must carry an explicit formals array");
     assert!(
         formals.is_empty(),

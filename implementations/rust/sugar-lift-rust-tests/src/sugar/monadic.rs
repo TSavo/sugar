@@ -145,7 +145,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     }
 }
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
         // `for _ in None` / `None.into_iter()` is a finite empty sequence.

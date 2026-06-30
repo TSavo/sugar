@@ -39,11 +39,11 @@ use syn::{Expr, Item, Stmt};
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{
-    Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
-    sugar_ctx_with_factory_audits,
-};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{
+    sugar_ctx_with_factory_audits, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx,
+    Sugar, SugarCtx,
+};
 
 pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim =
     StmtSugarClaim::statement_before("block_sugar", &["stmt_support"], recognize_block);
@@ -127,7 +127,10 @@ impl Sugar for BlockSugar {
                     }
                     // Nested block/if: merge its guarded clauses (prefixed with pending),
                     // extend pending with any fall_through conditions.
-                    Desugared::StmtBlock { guarded, fall_through } => {
+                    Desugared::StmtBlock {
+                        guarded,
+                        fall_through,
+                    } => {
                         for (guards, term) in guarded {
                             let mut merged = pending.clone();
                             merged.extend(guards);
@@ -203,8 +206,7 @@ mod tests {
         let syn::Item::Fn(ref func) = file.items[0] else {
             panic!("expected fn");
         };
-        let contract = emit_value_contract("f", &func.block)
-            .expect("should produce a contract");
+        let contract = emit_value_contract("f", &func.block).expect("should produce a contract");
         // The formula must mention both arms of the guard.
         let inv_str = format!("{:?}", contract.inv);
         assert!(
@@ -226,8 +228,8 @@ mod tests {
         let syn::Item::Fn(ref func) = file.items[0] else {
             panic!("expected fn");
         };
-        let contract = emit_value_contract("f", &func.block)
-            .expect("should produce a contract for if/else");
+        let contract =
+            emit_value_contract("f", &func.block).expect("should produce a contract for if/else");
         let inv_str = format!("{:?}", contract.inv);
         assert!(
             inv_str.contains("implies") || inv_str.contains("value:if"),
@@ -252,8 +254,8 @@ mod tests {
         let syn::Item::Fn(ref func) = file.items[0] else {
             panic!("expected fn");
         };
-        let contract = emit_value_contract("f", &func.block)
-            .expect("should produce a contract for nested if");
+        let contract =
+            emit_value_contract("f", &func.block).expect("should produce a contract for nested if");
         let inv_str = format!("{:?}", contract.inv);
         // Three implies clauses expected.
         let count = inv_str.matches("implies").count();

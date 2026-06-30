@@ -14,12 +14,12 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, const_eval_unary_closure, const_fold_int_term, const_int, num,
     parse_macro_args, repeat_count_in_scope, strip_refs_groups, AssertionFactKind, ConstVal,
     Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("slice_search", &["method"], recognize_term);
@@ -79,7 +79,10 @@ pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Opti
     }))
 }
 
-fn recognize_assertion_surface(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assertion_surface(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match strip_refs_groups(expr) {
         Expr::Macro(expr_macro) => recognize_assert_eq_macro(expr_macro, fcx),

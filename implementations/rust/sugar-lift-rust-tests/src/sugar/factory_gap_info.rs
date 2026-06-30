@@ -24,31 +24,31 @@ use crate::sugar::source_fragment::SourceFragment;
 /// defaults to `"AST"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CoverageGapInfo {
-    pub(crate) owner:     String,
-    pub(crate) blame:     String,
-    pub(crate) observed:  String,
+    pub(crate) owner: String,
+    pub(crate) blame: String,
+    pub(crate) observed: String,
     pub(crate) requested: String,
-    pub(crate) fix:       String,
-    pub(crate) gap_kind:  String,
+    pub(crate) fix: String,
+    pub(crate) gap_kind: String,
     pub(crate) gap_locus: String,
 }
 
 impl CoverageGapInfo {
     /// Primary constructor. `gap_kind` = `"Sugar"`, `gap_locus` = `"AST"`.
     pub(crate) fn new(
-        owner:     impl Into<String>,
-        blame:     impl Into<String>,
-        observed:  impl Into<String>,
+        owner: impl Into<String>,
+        blame: impl Into<String>,
+        observed: impl Into<String>,
         requested: impl Into<String>,
-        fix:       impl Into<String>,
+        fix: impl Into<String>,
     ) -> Self {
         Self {
-            owner:     owner.into(),
-            blame:     blame.into(),
-            observed:  observed.into(),
+            owner: owner.into(),
+            blame: blame.into(),
+            observed: observed.into(),
             requested: requested.into(),
-            fix:       fix.into(),
-            gap_kind:  "Sugar".into(),
+            fix: fix.into(),
+            gap_kind: "Sugar".into(),
             gap_locus: "AST".into(),
         }
     }
@@ -72,11 +72,11 @@ impl CoverageGapInfo {
     /// JSON map of the five identity fields. Mirrors Python `to_json()`.
     pub(crate) fn to_json(&self) -> Map<String, Value> {
         let mut m = Map::new();
-        m.insert("owner".into(),     Value::String(self.owner.clone()));
-        m.insert("blame".into(),     Value::String(self.blame.clone()));
-        m.insert("observed".into(),  Value::String(self.observed.clone()));
+        m.insert("owner".into(), Value::String(self.owner.clone()));
+        m.insert("blame".into(), Value::String(self.blame.clone()));
+        m.insert("observed".into(), Value::String(self.observed.clone()));
         m.insert("requested".into(), Value::String(self.requested.clone()));
-        m.insert("fix".into(),       Value::String(self.fix.clone()));
+        m.insert("fix".into(), Value::String(self.fix.clone()));
         m
     }
 }
@@ -134,13 +134,13 @@ mod tests {
         // collect_gap NEVER panics -- it returns structured data.
         let gap = collect_gap(&frag, "Constraint");
 
-        assert_eq!(gap.owner,     "rust.factory",           "owner");
-        assert_eq!(gap.observed,  "PrimitiveLiteral",       "observed");
-        assert_eq!(gap.requested, "Constraint",             "requested");
-        assert_eq!(gap.gap_kind,  "Sugar",                  "gap_kind");
-        assert_eq!(gap.gap_locus, "AST",                    "gap_locus");
-        assert_eq!(gap.fix,       "sugar::primitive_literal","fix");
-        assert!(gap.blame.starts_with("gap_test.rs:"),      "blame={}", gap.blame);
+        assert_eq!(gap.owner, "rust.factory", "owner");
+        assert_eq!(gap.observed, "PrimitiveLiteral", "observed");
+        assert_eq!(gap.requested, "Constraint", "requested");
+        assert_eq!(gap.gap_kind, "Sugar", "gap_kind");
+        assert_eq!(gap.gap_locus, "AST", "gap_locus");
+        assert_eq!(gap.fix, "sugar::primitive_literal", "fix");
+        assert!(gap.blame.starts_with("gap_test.rs:"), "blame={}", gap.blame);
     }
 
     // -----------------------------------------------------------------------
@@ -152,14 +152,17 @@ mod tests {
         let src = "fn f() -> i32 { 42 }";
         let file = parse_file(src);
         let frag = tail_frag(&file, "msg_test.rs");
-        let gap  = collect_gap(&frag, "Term");
-        let msg  = gap.message();
+        let gap = collect_gap(&frag, "Term");
+        let msg = gap.message();
 
-        assert!(msg.starts_with("write more Sugar for this AST:"),  "msg={msg}");
-        assert!(msg.contains("owner=rust.factory"),                  "msg={msg}");
-        assert!(msg.contains("observed=PrimitiveLiteral"),           "msg={msg}");
-        assert!(msg.contains("requested=Term"),                      "msg={msg}");
-        assert!(msg.contains("fix=sugar::primitive_literal"),        "msg={msg}");
+        assert!(
+            msg.starts_with("write more Sugar for this AST:"),
+            "msg={msg}"
+        );
+        assert!(msg.contains("owner=rust.factory"), "msg={msg}");
+        assert!(msg.contains("observed=PrimitiveLiteral"), "msg={msg}");
+        assert!(msg.contains("requested=Term"), "msg={msg}");
+        assert!(msg.contains("fix=sugar::primitive_literal"), "msg={msg}");
     }
 
     // -----------------------------------------------------------------------
@@ -171,14 +174,18 @@ mod tests {
         let src = "fn f(a: i32, b: i32) -> i32 { a + b }";
         let file = parse_file(src);
         let frag = tail_frag(&file, "json_test.rs");
-        let gap  = collect_gap(&frag, "Composite");
+        let gap = collect_gap(&frag, "Composite");
         let json = gap.to_json();
 
-        assert_eq!(json["owner"].as_str().unwrap(),     "rust.factory", "owner");
-        assert_eq!(json["observed"].as_str().unwrap(),  "BinOp",        "observed");
-        assert_eq!(json["requested"].as_str().unwrap(), "Composite",    "requested");
-        assert_eq!(json["fix"].as_str().unwrap(),       "sugar::bin_op","fix");
-        assert!(json.contains_key("blame"),             "blame missing from json");
+        assert_eq!(json["owner"].as_str().unwrap(), "rust.factory", "owner");
+        assert_eq!(json["observed"].as_str().unwrap(), "BinOp", "observed");
+        assert_eq!(
+            json["requested"].as_str().unwrap(),
+            "Composite",
+            "requested"
+        );
+        assert_eq!(json["fix"].as_str().unwrap(), "sugar::bin_op", "fix");
+        assert!(json.contains_key("blame"), "blame missing from json");
     }
 
     // -----------------------------------------------------------------------
@@ -188,14 +195,20 @@ mod tests {
     #[test]
     fn gap_info_equality_is_structural() {
         let g1 = CoverageGapInfo::new(
-            "rust.factory", "f.rs:1:0", "BinOp", "Constraint", "sugar::bin_op",
+            "rust.factory",
+            "f.rs:1:0",
+            "BinOp",
+            "Constraint",
+            "sugar::bin_op",
         );
         let g2 = CoverageGapInfo::new(
-            "rust.factory", "f.rs:1:0", "BinOp", "Constraint", "sugar::bin_op",
+            "rust.factory",
+            "f.rs:1:0",
+            "BinOp",
+            "Constraint",
+            "sugar::bin_op",
         );
-        let g3 = CoverageGapInfo::new(
-            "rust.factory", "f.rs:1:0", "BinOp", "Term", "sugar::bin_op",
-        );
+        let g3 = CoverageGapInfo::new("rust.factory", "f.rs:1:0", "BinOp", "Term", "sugar::bin_op");
         assert_eq!(g1, g2, "identical fields should be equal");
         assert_ne!(g1, g3, "different requested role should differ");
     }
@@ -206,10 +219,8 @@ mod tests {
 
     #[test]
     fn gap_info_defaults_gap_kind_and_locus() {
-        let gap = CoverageGapInfo::new(
-            "rust.factory", "x.rs:1:0", "Name", "Term", "sugar::name",
-        );
-        assert_eq!(gap.gap_kind,  "Sugar");
+        let gap = CoverageGapInfo::new("rust.factory", "x.rs:1:0", "Name", "Term", "sugar::name");
+        assert_eq!(gap.gap_kind, "Sugar");
         assert_eq!(gap.gap_locus, "AST");
     }
 
@@ -222,9 +233,9 @@ mod tests {
         let src = "fn f(a: i32) -> i32 { a + 1 }";
         let file = parse_file(src);
         let frag = tail_frag(&file, "binop.rs");
-        let gap  = collect_gap(&frag, "Term");
+        let gap = collect_gap(&frag, "Term");
         assert_eq!(gap.observed, "BinOp");
-        assert_eq!(gap.fix,      "sugar::bin_op");
-        assert_eq!(gap.owner,    "rust.factory");
+        assert_eq!(gap.fix, "sugar::bin_op");
+        assert_eq!(gap.owner, "rust.factory");
     }
 }

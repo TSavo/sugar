@@ -35,9 +35,9 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{exact_int_value, primitive_int_kind, ExactInt, IntKind};
 use crate::sugar::monadic::{err_term, ok_term};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{num, Term};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("try_from", SugarRole::Term, recognize);
@@ -236,7 +236,10 @@ mod from_src_tests {
 
         assert_eq!(call_frag.observed(), "Call");
         assert_eq!(call_frag.call_arg_count(), 1, "exactly 1 arg");
-        assert!(call_frag.call_func().is_some(), "call_func is Some for Call");
+        assert!(
+            call_frag.call_func().is_some(),
+            "call_func is Some for Call"
+        );
         let head = call_frag.call_head_key().expect("head key");
         assert!(
             head.contains("try_from"),

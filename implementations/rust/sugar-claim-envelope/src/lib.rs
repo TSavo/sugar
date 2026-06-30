@@ -1996,7 +1996,10 @@ mod tests {
         assert_eq!(a.scope_kind, "contract");
         assert_eq!(a.scope, "checked_add_u8.postcondition");
         assert_eq!(
-            a.input_cids.as_ref().and_then(|v| v.first()).map(|c| c.as_str()),
+            a.input_cids
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|c| c.as_str()),
             Some("blake3-512:parent")
         );
         assert!(minted.cid.starts_with("blake3-512:"));

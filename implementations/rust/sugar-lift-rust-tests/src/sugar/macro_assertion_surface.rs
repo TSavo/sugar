@@ -257,7 +257,11 @@ macro_rules! wrap {
 "#,
             |fcx| {
                 assert!(
-                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_some(),
+                    {
+                        let _frag = SourceFragment::expr(&expr, "<src>");
+                        recognize(&_frag, fcx)
+                    }
+                    .is_some(),
                     "direct assertion expansion should be assertion-surface sugar"
                 );
             },
@@ -279,7 +283,11 @@ macro_rules! wrap {
 "#,
             |fcx| {
                 assert!(
-                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_none(),
+                    {
+                        let _frag = SourceFragment::expr(&expr, "<src>");
+                        recognize(&_frag, fcx)
+                    }
+                    .is_none(),
                     "guarded expansion needs statement-position collection to preserve the guard"
                 );
             },
@@ -304,7 +312,11 @@ macro_rules! suite {
 "#,
             |fcx| {
                 assert!(
-                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_none(),
+                    {
+                        let _frag = SourceFragment::expr(&expr, "<src>");
+                        recognize(&_frag, fcx)
+                    }
+                    .is_none(),
                     "item expansion needs the normal statement collector to walk item bodies"
                 );
             },

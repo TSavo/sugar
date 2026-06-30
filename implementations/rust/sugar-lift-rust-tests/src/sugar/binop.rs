@@ -24,12 +24,12 @@ use sugar_ir_symbolic::{ConstValue, Term};
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
 use crate::sugar::term_leaf::resolved_term;
-use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, const_fold_int_term, const_fold_u128_term, num,
-    u128_term, Desugared, Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, const_fold_u128_term, num, u128_term, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -421,7 +421,10 @@ mod from_src_tests {
         assert_eq!(frag.observed(), "BinOp");
         assert_eq!(frag.binop_term_name(), Some("+"), "Add must map to \"+\"");
         assert!(frag.binop_relation().is_none(), "a + b is not a comparison");
-        assert!(frag.binop_const_folded_term().is_none(), "a + b has variables; no fold");
+        assert!(
+            frag.binop_const_folded_term().is_none(),
+            "a + b has variables; no fold"
+        );
     }
 
     /// A comparison binop yields `binop_relation()` and no arithmetic term name.
@@ -432,8 +435,14 @@ mod from_src_tests {
         let frag = binop_frag_from(&file, "f.rs");
 
         assert_eq!(frag.observed(), "BinOp");
-        assert!(frag.binop_relation().is_some(), "a < b must have a RelationOp");
-        assert!(frag.binop_term_name().is_none(), "a < b is not an arithmetic binop");
+        assert!(
+            frag.binop_relation().is_some(),
+            "a < b must have a RelationOp"
+        );
+        assert!(
+            frag.binop_term_name().is_none(),
+            "a < b is not an arithmetic binop"
+        );
     }
 
     /// A ground integer addition const-folds to its sum.
@@ -448,7 +457,10 @@ mod from_src_tests {
             .binop_const_folded_term()
             .expect("2 + 3 must const-fold to 5");
         match &*term {
-            Term::Const { value: ConstValue::Int(v), .. } => {
+            Term::Const {
+                value: ConstValue::Int(v),
+                ..
+            } => {
                 assert_eq!(*v, 5, "2 + 3 must fold to 5");
             }
             other => panic!("expected Int const 5, got {other:?}"),
@@ -464,7 +476,10 @@ mod from_src_tests {
 
         assert_eq!(frag.observed(), "BinOp");
         assert_eq!(frag.binop_op_kind(), Some("And"));
-        assert!(frag.binop_term_name().is_none(), "&& is not an arithmetic binop");
+        assert!(
+            frag.binop_term_name().is_none(),
+            "&& is not an arithmetic binop"
+        );
         assert!(frag.binop_relation().is_none(), "&& is not a comparison");
     }
 }

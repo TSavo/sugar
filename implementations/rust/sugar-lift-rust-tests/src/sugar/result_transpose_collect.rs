@@ -18,8 +18,8 @@ use crate::sugar::collect::literal_vec_term;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
-use crate::sugar::unit_path::unit_path_literal_name;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     const_eval, primitive_int_term, resolve_value_call_inline, strip_refs_groups, u128_term,
     ConstVal, Desugared, Outcome, Sugar, SugarCtx,

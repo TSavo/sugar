@@ -8,8 +8,8 @@
 //   * `StatementControlFlowSugar` holds `boundary: String` -- zero raw-syn fields.
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::statement_effect("statement_control_flow", recognize);
@@ -55,7 +55,10 @@ mod tests {
         let stmts = body.statements();
         // Use terms() to unwrap the Stmt::Expr wrapper and yield the inner expression.
         let terms = stmts[0].terms();
-        terms.into_iter().next().expect("expression in first statement")
+        terms
+            .into_iter()
+            .next()
+            .expect("expression in first statement")
     }
 
     /// from_src: an `if` whose condition is `.await` and whose branch contains
@@ -87,7 +90,9 @@ mod tests {
             "boundary must contain the assert: {boundary}"
         );
         // Build: struct holds only a String (the migration invariant).
-        let sugar = StatementControlFlowSugar { boundary: boundary.clone() };
+        let sugar = StatementControlFlowSugar {
+            boundary: boundary.clone(),
+        };
         assert_eq!(sugar.boundary, boundary);
     }
 

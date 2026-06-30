@@ -17,8 +17,8 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::constraint::{
     relation_operand_capability_effect, relation_source_capability_effect,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
     repeat_count_in_scope, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,

@@ -228,7 +228,9 @@ fn collection_static_len_in_scope_frag(
 }
 
 fn sequence_body_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
-    let e = frag.as_expr().expect("sequence_body_frag: non-expr fragment");
+    let e = frag
+        .as_expr()
+        .expect("sequence_body_frag: non-expr fragment");
     sequence_body(e, fcx)
 }
 

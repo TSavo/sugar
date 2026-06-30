@@ -17,8 +17,8 @@ use crate::sugar::primitive_int::{
 };
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    const_fold_int_term, const_fold_u128_term, num, term_contains_curry_param,
-    Desugared, Outcome, Sugar, SugarCtx,
+    const_fold_int_term, const_fold_u128_term, num, term_contains_curry_param, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =

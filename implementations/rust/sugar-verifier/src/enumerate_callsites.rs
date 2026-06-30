@@ -806,7 +806,10 @@ fn bridge_formal_actuals_match_arg_terms(
     else {
         return false;
     };
-    let Some(formals) = pool.member_field(target_cid, "formals").and_then(|v| v.as_array()) else {
+    let Some(formals) = pool
+        .member_field(target_cid, "formals")
+        .and_then(|v| v.as_array())
+    else {
         return false;
     };
     if formals.len() != arg_terms.len() {

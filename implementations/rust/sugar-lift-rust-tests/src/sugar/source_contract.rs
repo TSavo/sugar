@@ -14,16 +14,16 @@ use sugar_ir_symbolic::{
 use syn::parse::ParseStream;
 use syn::{BinOp, Expr, ExprLit, Item, Lit, Pat, Stmt, Token, UnOp};
 
-use crate::{
-    bool_const, parse_int_lit, path_to_variant_string, source_assertion_entries_in_stmts,
-    subst_var_in_formula, subst_var_in_term, temporal_plan_for_stmts, translate_term_in_scope,
-    Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalScope,
-    sugar_ctx_with_factory_audits,
-};
 use crate::sugar::block_sugar::block_stmt_to_formula;
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::{
+    bool_const, parse_int_lit, path_to_variant_string, source_assertion_entries_in_stmts,
+    subst_var_in_formula, subst_var_in_term, sugar_ctx_with_factory_audits,
+    temporal_plan_for_stmts, translate_term_in_scope, Desugared, FloatWidthScope, LiftOptions,
+    Outcome, ReductionCtx, TemporalScope,
+};
 
 // ── Source-audit value-contract emission ────────────────────────────────────
 // A source warrant is REAL only if the kit EMITS the ProofIR contract for the
@@ -371,9 +371,7 @@ fn block_stmt_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formul
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut float_widths, 0, None);
     match block_node.reduce(&ctx) {
-        Outcome::Complete(Desugared::StmtBlock { guarded, .. }) => {
-            block_stmt_to_formula(guarded)
-        }
+        Outcome::Complete(Desugared::StmtBlock { guarded, .. }) => block_stmt_to_formula(guarded),
         _ => None,
     }
 }

@@ -291,8 +291,7 @@ mod tests {
         let (scope, options) = make_fcx_and_scope();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let expr: Expr =
-            syn::parse_str("assert_eq!((1u64, 2i32), (3u64, 4i32))").expect("parse");
+        let expr: Expr = syn::parse_str("assert_eq!((1u64, 2i32), (3u64, 4i32))").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
         assert_eq!(
             frag.macro_name(),
@@ -314,7 +313,11 @@ mod tests {
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         let expr: Expr = syn::parse_str("(1u64, 2i32) != (3u64, 4i32)").expect("parse");
         let frag = SourceFragment::expr(&expr, "<src>");
-        assert_eq!(frag.binop_op_kind(), Some("Ne"), "accessor gate: op kind is Ne");
+        assert_eq!(
+            frag.binop_op_kind(),
+            Some("Ne"),
+            "accessor gate: op kind is Ne"
+        );
         assert!(
             recognize(&frag, &fcx).is_none(),
             "!= with literal tuples should NOT be recognized"

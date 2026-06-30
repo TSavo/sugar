@@ -12,10 +12,10 @@ use crate::sugar::int_literal::{primitive_int_kind, typed_int_term, ExactInt, In
 
 use sugar_ir_symbolic::Term;
 
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{const_path_key, str_const, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("const", &["path"], recognize);

@@ -49,7 +49,11 @@ fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Optio
     recognize_role(frag, fcx, BoundPathRole::TupleProducer)
 }
 
-fn recognize_role(frag: &SourceFragment, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
+fn recognize_role(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    role: BoundPathRole,
+) -> Option<Box<dyn Sugar>> {
     let name = frag.path_simple_ident()?;
     if fcx.resolving_bound_path(&name) {
         return None;

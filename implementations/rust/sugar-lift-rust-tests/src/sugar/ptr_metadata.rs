@@ -19,8 +19,8 @@ use syn::{Expr, Lit};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::literal_slice;
-use crate::{num, Desugared, Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{num, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 // ---------------------------------------------------------------------------
 // Private raw-syn helpers -- defined BEFORE the recognize function so they
@@ -159,7 +159,9 @@ mod tests {
     use super::*;
     use crate::sugar::factory::SugarBuildCtx;
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
-    use crate::{sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan, TemporalScope};
+    use crate::{
+        sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan, TemporalScope,
+    };
     use std::collections::BTreeMap;
     use sugar_ir_symbolic::{ConstValue, Term};
 
@@ -190,8 +192,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &syn::Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let sugar = recognize(&frag, &fcx)
-            .expect("ptr::metadata(str literal) must be recognized");
+        let sugar = recognize(&frag, &fcx).expect("ptr::metadata(str literal) must be recognized");
 
         // floor: Complete(Term(num(11))) -- len of "hello world"
         let items: Vec<syn::Item> = Vec::new();
@@ -202,7 +203,10 @@ mod tests {
             Outcome::Complete(Desugared::Term(term)) => {
                 // num(11) = Term::Const { Int(11), Sort { "Int" } }
                 match term.as_ref() {
-                    Term::Const { value: ConstValue::Int(n), sort } => {
+                    Term::Const {
+                        value: ConstValue::Int(n),
+                        sort,
+                    } => {
                         assert_eq!(*n, 11, "DST len of 'hello world' is 11");
                         assert_eq!(sort.name, "Int");
                     }
@@ -242,7 +246,10 @@ mod tests {
                     reason.contains("runtime layout property"),
                     "layout boundary reason must mention runtime layout: {reason}"
                 );
-                assert!(reason.contains("v"), "boundary must include the argument token: {reason}");
+                assert!(
+                    reason.contains("v"),
+                    "boundary must include the argument token: {reason}"
+                );
             }
             Outcome::Complete(_) => panic!("expected Incomplete(TypeLayout), got Complete"),
         }

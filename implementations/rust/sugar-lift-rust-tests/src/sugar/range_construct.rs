@@ -14,9 +14,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, Term};
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("range_construct", recognize);

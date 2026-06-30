@@ -693,8 +693,16 @@ pub fn member_field<'a>(envelope: &'a Json, name: &str) -> Option<&'a Json> {
             .pointer("/header")
             .and_then(|h| h.get(name))
             .or_else(|| envelope.pointer("/metadata").and_then(|m| m.get(name)))
-            .or_else(|| envelope.pointer("/envelope/header").and_then(|h| h.get(name)))
-            .or_else(|| envelope.pointer("/envelope/metadata").and_then(|m| m.get(name)))
+            .or_else(|| {
+                envelope
+                    .pointer("/envelope/header")
+                    .and_then(|h| h.get(name))
+            })
+            .or_else(|| {
+                envelope
+                    .pointer("/envelope/metadata")
+                    .and_then(|m| m.get(name))
+            })
     } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
         envelope
             .pointer("/header")
@@ -906,9 +914,7 @@ impl ProofGraph {
     pub fn contract_body_of(&self, member: &MementoCid) -> Option<&ContractBody> {
         let record = self.members.get(member.as_str())?;
         let value: Json = serde_json::from_slice(&record.bytes).ok()?;
-        let body_cid = value
-            .pointer("/header/bodyCid")
-            .and_then(Json::as_str)?;
+        let body_cid = value.pointer("/header/bodyCid").and_then(Json::as_str)?;
         self.bodies.get(body_cid)
     }
 
@@ -1004,9 +1010,11 @@ impl ProofGraph {
     > + '_ {
         self.members.keys().map(move |cid_str| {
             let cid = MementoCid::new(cid_str.clone());
-            let result = self
-                .typed_member(&cid)
-                .unwrap_or_else(|| Err(crate::typed_member::MemberError::UnknownCid(cid_str.clone())));
+            let result = self.typed_member(&cid).unwrap_or_else(|| {
+                Err(crate::typed_member::MemberError::UnknownCid(
+                    cid_str.clone(),
+                ))
+            });
             (cid, result)
         })
     }
@@ -1385,8 +1393,10 @@ mod tests {
             body.cid().as_str(),
             "body CID round-trips"
         );
-        let body_atoms: Vec<String> =
-            read_body.atoms().map(|a| a.cid().as_str().to_string()).collect();
+        let body_atoms: Vec<String> = read_body
+            .atoms()
+            .map(|a| a.cid().as_str().to_string())
+            .collect();
         assert_eq!(
             body_atoms,
             vec![atom.cid().as_str().to_string()],

@@ -50,8 +50,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         "to_uppercase" if arg_count == 0 => CharMethodKind::UnicodeUpper,
         "to_lowercase" if arg_count == 0 => CharMethodKind::UnicodeLower,
         "to_string"
-            if arg_count == 0
-                && receiver_frag.char_to_string_receiver_resolves_literal(fcx) =>
+            if arg_count == 0 && receiver_frag.char_to_string_receiver_resolves_literal(fcx) =>
         {
             CharMethodKind::ToString
         }
@@ -318,7 +317,9 @@ mod tests {
         assert_eq!(stripped.call_method_key().as_deref(), Some("to_uppercase"));
         assert!(!stripped.call_has_turbofish());
         assert_eq!(stripped.call_arg_count(), 0);
-        let recv = stripped.call_receiver().expect("to_uppercase has a receiver");
+        let recv = stripped
+            .call_receiver()
+            .expect("to_uppercase has a receiver");
         // Char literal -- NOT definitely_not_char_receiver
         assert!(!recv.definitely_not_char_receiver());
     }

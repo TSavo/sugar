@@ -9,8 +9,8 @@
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite_before("for_loop_mutation", &["forall_loop"], recognize);

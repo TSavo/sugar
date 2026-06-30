@@ -21,13 +21,16 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::literal::LiteralSugar;
-use crate::{strip_refs_groups, Sugar};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{strip_refs_groups, Sugar};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("collection_literal", recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    _fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let array = collection_literal_array(expr)?;
     Some(Box::new(LiteralSugar { base: array }))

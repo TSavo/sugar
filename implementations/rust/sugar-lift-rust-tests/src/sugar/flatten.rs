@@ -13,14 +13,17 @@ use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuild
 use crate::sugar::flat_map::{FlatMapClosure, FlatMapSugar};
 use crate::sugar::method_family;
 use crate::sugar::sequence_floor::SequenceElementVisitor;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use syn::Expr;
-use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("flatten", recognize_composite);
 
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -28,7 +31,10 @@ pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) ->
     // The receiver must resolve to a finite literal sequence (whose ELEMENTS are
     // checked to be sub-sequences at desugar time, bailing if not).
     if call.method == "flatten" && call.args.is_empty() {
-        if let Some(sugar) = { let _frag = SourceFragment::expr(call.receiver.as_ref(), "<src>"); recognize_map_flatten(&_frag, fcx) } {
+        if let Some(sugar) = {
+            let _frag = SourceFragment::expr(call.receiver.as_ref(), "<src>");
+            recognize_map_flatten(&_frag, fcx)
+        } {
             return Some(sugar);
         }
         return Some(Box::new(FlattenSugar {

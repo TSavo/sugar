@@ -12,8 +12,8 @@ use syn::{Expr, ExprClosure};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::monadic;
-use crate::sugar::unit_path::unit_path_literal_name;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, const_eval, const_eval_option_closure, const_path_key, primitive_int_term,
     repeat_count_literal, resolve_value_call_inline, strip_refs_groups, u128_term, ConstVal,

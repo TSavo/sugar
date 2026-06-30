@@ -11,10 +11,8 @@ use syn::Expr;
 use crate::sugar::factory::{
     FloorRead, FormatTemplateFloor, FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
+use crate::sugar::format::{literal_format_capture_names, parse_args, render_format_values};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::format::{
-    literal_format_capture_names, parse_args, render_format_values,
-};
 use crate::{strip_refs_groups, token_key, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -207,6 +205,8 @@ impl Sugar for FormatMacroStringSugar {
 /// Calls `build_literal_string_node` from a `SourceFragment`. All raw syn access
 /// lives here; `recognize` sees only the `Box<dyn Sugar>` result.
 fn build_literal_string_node_frag(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
-    let expr = frag.as_expr().expect("format_macro recognize verified format macro shape");
+    let expr = frag
+        .as_expr()
+        .expect("format_macro recognize verified format macro shape");
     build_literal_string_node(expr, fcx)
 }

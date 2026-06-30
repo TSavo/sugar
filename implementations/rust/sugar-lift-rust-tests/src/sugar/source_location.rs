@@ -8,8 +8,8 @@
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("source_location", &["method"], recognize);
@@ -49,7 +49,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("recognized source-location method");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize(&_frag, &fcx)
+        }
+        .expect("recognized source-location method");
         let items = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();
@@ -79,7 +83,11 @@ mod tests {
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         assert!(
-            { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.is_none(),
+            {
+                let _frag = SourceFragment::expr(&expr, "<src>");
+                recognize(&_frag, &fcx)
+            }
+            .is_none(),
             "literal file! macro belongs to macro_term sugar, not source-location runtime sugar"
         );
     }

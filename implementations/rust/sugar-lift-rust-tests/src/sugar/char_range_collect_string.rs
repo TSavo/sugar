@@ -153,7 +153,10 @@ mod tests {
         assert!(collect_frag.call_is_method_call());
         assert_eq!(collect_frag.call_target_name().as_deref(), Some("collect"));
         assert_eq!(collect_frag.call_arg_count(), 0);
-        assert!(collect_frag.call_collects_string(), "must carry ::<String> turbofish");
+        assert!(
+            collect_frag.call_collects_string(),
+            "must carry ::<String> turbofish"
+        );
 
         // map receiver resolves to a literal sequence.
         let map_frag = collect_frag.call_receiver().unwrap().strip_refs_groups();
@@ -181,8 +184,7 @@ mod tests {
     /// closure_recognizes_char_cast gate rejects it. Verify recognize returns None.
     #[test]
     fn discrimination_wrong_cast_type_not_recognized() {
-        let src =
-            "fn f() -> String { (b'A'..=b'C').map(|b| b as u32).collect::<String>() }";
+        let src = "fn f() -> String { (b'A'..=b'C').map(|b| b as u32).collect::<String>() }";
         let file = parse_file(src);
         let frag = tail_term_frag(&file, "f.rs");
 
@@ -190,7 +192,12 @@ mod tests {
         // closure arg: cast to u32, not char.
         let collect_frag = frag.strip_refs_groups();
         let map_frag = collect_frag.call_receiver().unwrap().strip_refs_groups();
-        let closure_frag = map_frag.call_args().into_iter().next().unwrap().strip_refs_groups();
+        let closure_frag = map_frag
+            .call_args()
+            .into_iter()
+            .next()
+            .unwrap()
+            .strip_refs_groups();
         assert!(
             closure_frag.closure_recognizes_char_cast().is_none(),
             "cast to u32 must NOT pass closure_recognizes_char_cast"

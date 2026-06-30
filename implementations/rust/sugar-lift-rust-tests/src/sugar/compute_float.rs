@@ -13,20 +13,20 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::sugar::source_fragment::SourceFragment;
 use sugar_ir_symbolic::{make_var, num, Term};
 use syn::{
     Expr, ExprCall, ExprField, ExprPath, GenericArgument, ItemFn, Member, Pat, PathArguments, Stmt,
     Type,
 };
-use crate::sugar::source_fragment::SourceFragment;
 use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{
-    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups,
-    Desugared, Effect, Outcome, Sugar, SugarCtx,
+    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared,
+    Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -553,16 +553,16 @@ mod tests {
     /// No raw syn in the assertions -- all access is through fragment accessors.
     #[test]
     fn from_src_compute_float_f32_direct_call_observed_and_accessors() {
-        let file = parse_file(
-            "fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f32>(q, w) }",
-        );
+        let file = parse_file("fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f32>(q, w) }");
         let frag = compute_float_call_frag(&file, "f.rs");
 
         // observed: it is a function Call, not a MethodCall
         assert_eq!(frag.observed(), "Call");
 
         // call_func() returns Some for Call (this is the Call-type gate used in recognize)
-        let func_frag = frag.call_func().expect("compute_float::<f32>(q, w) is a Call");
+        let func_frag = frag
+            .call_func()
+            .expect("compute_float::<f32>(q, w) is a Call");
         assert_eq!(func_frag.observed(), "Name");
 
         // exactly 2 positional args: q and w
@@ -573,7 +573,10 @@ mod tests {
 
         // token_str contains the callee name
         let ts = frag.token_str();
-        assert!(ts.contains("compute_float"), "token_str should mention the callee: {ts}");
+        assert!(
+            ts.contains("compute_float"),
+            "token_str should mention the callee: {ts}"
+        );
 
         // width: f32 -- extracted via the frag wrapper (no raw syn in this test)
         let scope = TemporalScope::new("test", TemporalPlan::default());
@@ -588,9 +591,7 @@ mod tests {
     /// Proves `direct_compute_float_width_frag` distinguishes the two float widths.
     #[test]
     fn discrimination_compute_float_f64_decodes_to_f64_width() {
-        let file = parse_file(
-            "fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f64>(q, w) }",
-        );
+        let file = parse_file("fn f(q: i64, w: u64) -> (i32, u64) { compute_float::<f64>(q, w) }");
         let frag = compute_float_call_frag(&file, "f.rs");
 
         assert_eq!(frag.observed(), "Call");

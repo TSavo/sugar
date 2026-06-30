@@ -33,8 +33,8 @@ use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::term_leaf::resolved_term;
 use crate::{
     assoc_call_key, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term,
     expr_head_key, num, resolve_value_call_inline, type_id_of_call_term, u128_term, Desugared,
@@ -204,7 +204,9 @@ fn value_call_support_key(func: &Expr) -> Option<String> {
 /// body stays clean (ratchet-excluded per Phase-3 migration).
 fn frag_type_id_decision(frag: &SourceFragment) -> Option<Result<(), String>> {
     let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else { return None; };
+    let Expr::Call(call) = expr else {
+        return None;
+    };
     type_id_of_call_decision(&call.func, call.args.len())
 }
 
@@ -213,7 +215,9 @@ fn frag_type_id_decision(frag: &SourceFragment) -> Option<Result<(), String>> {
 /// body stays clean (ratchet-excluded per Phase-3 migration).
 /// Returns `Result<_, String>` matching `type_id_of_call_term`'s signature.
 fn frag_type_id_term(frag: &SourceFragment) -> Result<Option<Rc<Term>>, String> {
-    let expr = frag.as_expr().expect("frag_type_id_term: non-expr fragment");
+    let expr = frag
+        .as_expr()
+        .expect("frag_type_id_term: non-expr fragment");
     let Expr::Call(call) = expr else {
         panic!("frag_type_id_term: not a Call fragment")
     };
@@ -250,8 +254,14 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         });
     }
     Some(Box::new(CallSugar::Constructive {
-        head_key: frag.call_head_key().expect("recognize: Call fragment has no head key"),
-        args: frag.call_args().iter().map(|arg| SugarBody::term_frag(arg, fcx)).collect(),
+        head_key: frag
+            .call_head_key()
+            .expect("recognize: Call fragment has no head key"),
+        args: frag
+            .call_args()
+            .iter()
+            .map(|arg| SugarBody::term_frag(arg, fcx))
+            .collect(),
     }))
 }
 

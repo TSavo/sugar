@@ -9,14 +9,17 @@
 use syn::Expr;
 
 use crate::sugar::factory::{has_composite, CompositeFloor, FloorRead, SugarBody, SugarBuildCtx};
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("iterator", recognize_composite);
 
 /// COMPOSITE recognizer for identity-family iterator adaptors.
-pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;

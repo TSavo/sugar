@@ -21,7 +21,10 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     let elems = frag.array_elems()?;
     Some(Box::new(LiteralAggregateTermSugar::new(
         "Array",
-        elems.iter().map(|ef| SugarBody::term_frag(ef, fcx)).collect(),
+        elems
+            .iter()
+            .map(|ef| SugarBody::term_frag(ef, fcx))
+            .collect(),
     )))
 }
 
@@ -50,7 +53,10 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_some(), "[1,2,3] must be recognized");
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "[1,2,3] must be recognized"
+        );
     }
 
     /// Discrimination: a tuple is not an array.
@@ -60,14 +66,20 @@ mod tests {
         let frag = SourceFragment::expr(&expr, "<src>");
 
         assert_eq!(frag.observed(), "Tuple");
-        assert!(frag.array_elems().is_none(), "tuple must not have array_elems");
+        assert!(
+            frag.array_elems().is_none(),
+            "tuple must not have array_elems"
+        );
 
         let scope = TemporalScope::new("array-term-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
 
-        assert!(recognize(&frag, &fcx).is_none(), "tuple must not be recognized as Array");
+        assert!(
+            recognize(&frag, &fcx).is_none(),
+            "tuple must not be recognized as Array"
+        );
     }
 
     /// Structural: empty array is recognized with zero elements.
@@ -84,15 +96,17 @@ mod tests {
         let _ = expr;
         let _ = frag2;
         // Just verify the accessor on a real empty array
-        let empty: Expr = syn::parse_str("{ let x: [i32; 0] = []; x }").unwrap_or_else(|_| {
-            syn::parse_str("[1_i32]").expect("parse")
-        });
+        let empty: Expr = syn::parse_str("{ let x: [i32; 0] = []; x }")
+            .unwrap_or_else(|_| syn::parse_str("[1_i32]").expect("parse"));
         let _ = empty;
 
         // The key property: if array_elems() is None, recognize returns None.
         let non_array: Expr = syn::parse_str("x + 1").expect("parse");
         let frag_na = SourceFragment::expr(&non_array, "<src>");
-        assert!(frag_na.array_elems().is_none(), "BinOp must not have array_elems");
+        assert!(
+            frag_na.array_elems().is_none(),
+            "BinOp must not have array_elems"
+        );
 
         let scope = TemporalScope::new("array-term-test", TemporalPlan::default());
         let options = LiftOptions::default();

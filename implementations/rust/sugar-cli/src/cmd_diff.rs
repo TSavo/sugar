@@ -101,8 +101,7 @@ fn invert(t: &Table) -> ByCid {
 fn behavior_table_from_dir(dir: &Path) -> Result<Table, String> {
     let mut table = Table::new();
     for path in proof_files(dir) {
-        let bytes =
-            std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let graph = ProofGraph::read(&bytes)
             .map_err(|e| format!("read proof graph {}: {e}", path.display()))?;
         for c in graph.contracts() {

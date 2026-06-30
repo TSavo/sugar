@@ -139,8 +139,7 @@ mod tests {
     /// accessor door (no raw Expr:: in recognize; observed is "MethodCall").
     #[test]
     fn from_src_sorted_array_iter_folds_true() {
-        let expr: Expr = syn::parse_str("[1, 2, 2, 9].iter().is_sorted()")
-            .expect("parse expr");
+        let expr: Expr = syn::parse_str("[1, 2, 2, 9].iter().is_sorted()").expect("parse expr");
         let frag = SourceFragment::expr(&expr, "<src>");
 
         // observed: the outermost node is a method call
@@ -152,8 +151,8 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let sugar = recognize(&frag, &fcx)
-            .expect("recognize must succeed for sorted literal-array iter");
+        let sugar =
+            recognize(&frag, &fcx).expect("recognize must succeed for sorted literal-array iter");
 
         // floor: desugar must produce Bool(true)
         let items = Vec::new();

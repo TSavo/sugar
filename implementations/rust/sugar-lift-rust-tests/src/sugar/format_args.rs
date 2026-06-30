@@ -14,8 +14,8 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::format::{
     is_format_args_macro_shape, stable_let_bindings, try_estimate_format_args_capacity,
 };
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ESTIMATED_CAPACITY_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "format_args_estimated_capacity",
@@ -23,7 +23,10 @@ pub(crate) const ESTIMATED_CAPACITY_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim:
     recognize_estimated_capacity,
 );
 
-fn recognize_estimated_capacity(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_estimated_capacity(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -83,8 +86,11 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize_estimated_capacity(&_frag, &fcx) }
-            .expect("builtin format_args estimated_capacity should be owned");
+        let node = {
+            let _frag = SourceFragment::expr(&expr, "<src>");
+            recognize_estimated_capacity(&_frag, &fcx)
+        }
+        .expect("builtin format_args estimated_capacity should be owned");
         let items = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

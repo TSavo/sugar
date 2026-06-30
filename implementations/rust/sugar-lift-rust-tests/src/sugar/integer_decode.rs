@@ -14,8 +14,8 @@ use syn::Expr;
 
 use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::float_floor::{IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor};
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
