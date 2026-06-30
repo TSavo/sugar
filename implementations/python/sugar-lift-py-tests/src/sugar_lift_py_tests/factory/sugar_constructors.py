@@ -143,37 +143,10 @@ def build_control_flow_body_sugar(site, ctx):
     )
 
 
-def _function_call_body(site: SourceFragment, ctx):
+def build_bridge_body(site: SourceFragment, ctx):
     body_frags = site.function_body()
     if len(body_frags) == 1:
         body_frag = body_frags[0]
         if body_frag.observed == "Return" and body_frag.return_value() is not None:
             return ctx.build_body(body_frag.return_value(), SugarRole.TERM)
     return build_control_flow_body_sugar(site, ctx)
-
-
-def build_function_call_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
-
-    if site.observed != "Call":
-        raise TypeError("FunctionCallSugar claim built a non-call")
-    target = site.call_target_name()
-    if target is None:
-        raise TypeError("FunctionCallSugar claim built a non-name/attribute call")
-    if site.call_has_keywords() or site.call_arg_count() != 1:
-        raise TypeError("FunctionCallSugar claim built a non-unary call")
-    functions_by_name = ctx.name_resolver or {}
-    function_node = functions_by_name.get(target)
-    if function_node is None:
-        raise TypeError("FunctionCallSugar claim built an unresolved function call")
-    function = SourceFragment.from_node(function_node, ctx.filename)
-    argument = ctx.build_body(site.call_args()[0], SugarRole.TERM)
-    body = _function_call_body(function, ctx)
-    sugar = FunctionCallSugar.from_site(
-        site,
-        argument=argument,
-        body=body,
-    )
-    if sugar is None:
-        raise TypeError("FunctionCallSugar claim built a non-function call")
-    return sugar

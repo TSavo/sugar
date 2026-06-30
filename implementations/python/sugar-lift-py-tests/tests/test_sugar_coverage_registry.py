@@ -51,7 +51,6 @@ COVERAGE: dict[str, list[str]] = {
     "list_sugar": ["test_list_sugar.py"],
     # body / orchestration sugars -- pinned where they actually run
     "control_flow_body_sugar": ["test_control_flow_body.py"],
-    "function_call_sugar": ["test_literal_base64_showcase.py"],
     # builder / materialize path -- exercised by the fluent-builder tests
     "builder_ctor_sugar": [
         "test_factory_constructs_bodies.py",

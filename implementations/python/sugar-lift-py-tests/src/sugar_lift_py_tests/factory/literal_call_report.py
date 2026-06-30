@@ -12,7 +12,7 @@ from sugar_lift_py_tests.factory.array_map_report import (
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory.sugar_constructors import build_function_call_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import (
     Formula,
     Term,
@@ -377,17 +377,27 @@ def _dig_universe(
         catalog=default_catalog(),
         name_resolver={name: frag.node for name, frag in functions_by_name.items()},
     )
+    # Route through the CATALOG -- no side door. A resolved call builds a CallSugar whose
+    # strategy is a BridgeStrategy carrying the callee's universe (the body walked over its
+    # formals). The bridge IS the dig's source; never a side-door constructor.
+    from sugar_lift_py_tests.sugar.call_sugar import BridgeStrategy
+
     try:
-        call_sugar = build_function_call_sugar(
-            call_frag,
-            factory_ctx,
-        )
+        call_body = factory_ctx.build_body(call_frag, SugarRole.TERM)
     except TypeError as exc:
         _panic_no_sugar(
             call_frag, memento_file,
             observed=f"dig-body:{call_frag.observed}",
             requested="FunctionBodyConstraint",
             fix=f"lift this function body for the dig ({exc})",
+        )
+    call_sugar = getattr(call_body.sugar, "strategy", None)
+    if not isinstance(call_sugar, BridgeStrategy):
+        _panic_no_sugar(
+            call_frag, memento_file,
+            observed=f"dig-body:{call_frag.observed}",
+            requested="FunctionBodyConstraint",
+            fix="lift this function body for the dig",
         )
     target_fn = functions_by_name[call_sugar.target_name]
     # IMPORT SUGAR: an imported callee's body belongs to its OWN module source, not
