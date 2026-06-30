@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lib import lift_source
@@ -17,6 +18,7 @@ from sugar_lift_py_tests.lib import lift_source
 
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
+NO_SOURCE_SITES_MESSAGE = "factory source contained no source sites"
 LIFT_RPC_MODULE = "sugar_lift_py_tests.lift_rpc"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
@@ -353,13 +355,21 @@ def _handle_initialize(msg_id: Any) -> None:
     )
 
 
-def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
+def _handle_lift(msg_id: Any, params: Dict[str, Any], *, audit_only: bool = False) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     contract_bindings = params.get("contract_bindings") or []
     if not isinstance(contract_bindings, list):
         contract_bindings = []
     try:
+        if audit_only:
+            _handle_lift_audit_only(
+                msg_id,
+                workspace_root=workspace_root,
+                source_paths=source_paths,
+                contract_bindings=contract_bindings,
+            )
+            return
         payload = LiftReportPayloadDto(source_ledger={})
         root = Path(workspace_root).resolve()
         for path in _iter_python_files(workspace_root, source_paths):
@@ -414,6 +424,68 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
         )
 
 
+def _handle_lift_audit_only(
+    msg_id: Any,
+    *,
+    workspace_root: str,
+    source_paths: List[Any],
+    contract_bindings: list,
+) -> None:
+    root = Path(workspace_root).resolve()
+    walkers = []
+    for path in _iter_python_files(workspace_root, source_paths):
+        full_path = Path(path)
+        try:
+            rel_path = full_path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            rel_path = full_path.name
+        source = full_path.read_text(encoding="utf-8")
+
+        def walk(
+            *,
+            path: str = path,
+            source: str = source,
+            rel_path: str = rel_path,
+        ) -> object:
+            try:
+                return lift_source(
+                    path,
+                    source,
+                    memento_file=rel_path,
+                    contract_bindings=contract_bindings,
+                )
+            except ValueError as exc:
+                if str(exc) == NO_SOURCE_SITES_MESSAGE:
+                    return None
+                raise
+
+        walkers.append((path, walk))
+
+    gaps = collect_construction_gaps(walkers)
+    if gaps:
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32603,
+                    "message": "audit-only construction gaps",
+                    "data": {
+                        "auditOnlyGaps": [gap.to_json() for gap in gaps],
+                    },
+                },
+            }
+        )
+        return
+    _send(
+        {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": LiftReportPayloadDto(source_ledger={}).to_rpc(),
+        }
+    )
+
+
 def _merge_source_ledger(
     current: Dict[str, int],
     incoming: Dict[str, int] | None,
@@ -455,7 +527,8 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    del argv
+    argv = argv or []
+    audit_only = "--audit-only" in argv
     while True:
         msg = _recv()
         if msg is None:
@@ -487,9 +560,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                 }
             )
         elif method == "lift":
-            _handle_lift(msg_id, params if isinstance(params, dict) else {})
+            _handle_lift(
+                msg_id,
+                params if isinstance(params, dict) else {},
+                audit_only=audit_only,
+            )
         elif method == "sugar.plugin.lift_implications":
-            _handle_lift(msg_id, params if isinstance(params, dict) else {})
+            _handle_lift(
+                msg_id,
+                params if isinstance(params, dict) else {},
+                audit_only=audit_only,
+            )
         elif method == "sugar.plugin.resolve_dependency_proofs":
             _handle_resolve_dependency_proofs(
                 msg_id, params if isinstance(params, dict) else {}

@@ -211,6 +211,17 @@ def _lift_assert(
 
     Either way the verifier's ambient-post specialization joins the post (local or
     imported) to the fact and z3 decides `and(universe, fact)`."""
+    assertion_sugar = _lift_assertion_via_factory(
+        stmt,
+        fn=fn,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        functions_by_name=functions_by_name,
+    )
+    if assertion_sugar is not None:
+        return assertion_sugar
+
     comparison = stmt.assert_test()
     if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
         _panic_no_sugar(
@@ -271,8 +282,48 @@ def _lift_assert(
                 filename=filename,
                 memento_file=memento_file,
                 source_lines=source_lines,
-            )
+        )
     return _merge_lifts(universe, assertion)
+
+
+def _lift_assertion_via_factory(
+    stmt: SourceFragment,
+    *,
+    fn: SourceFragment,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    functions_by_name: dict[str, SourceFragment],
+) -> LiftResult | None:
+    from .build import build_node, default_catalog
+
+    catalog = default_catalog()
+    candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
+    if not candidates:
+        return None
+    ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=catalog,
+        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+    )
+    result = build_node(
+        stmt,
+        filename=filename,
+        role=SugarRole.ASSERTION,
+        catalog=catalog,
+        ctx=ctx,
+    )
+    formula = result.sugar.assertion_formula()
+    return _emit_assertion_surface_fact(
+        stmt,
+        fn,
+        formula,
+        selected=result.audit_row.selected or type(result.sugar).__name__,
+        role="python.isinstance-assertion-sugar",
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+    )
 
 
 def _floor_to_term(value: Any) -> Term:
@@ -417,6 +468,58 @@ def _emit_euf_fact(
         contract_name,
         memento,
         role="python.literal-call-sugar",
+        ast_kind="Assert",
+    )
+    return ([contract], [memento], [audit], [walk], [])
+
+
+def _emit_assertion_surface_fact(
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    formula: Formula,
+    *,
+    selected: str,
+    role: str,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+) -> LiftResult:
+    contract_name = (
+        f"{Path(memento_file).stem}::{fn.function_name()}::"
+        f"assert:{stmt.line}:{stmt.col}::assertion"
+    )
+    memento = _statement_source_memento(
+        stmt,
+        fn,
+        memento_file,
+        source_lines,
+        contract_name=contract_name,
+        role=role,
+    )
+    inv = _formula_to_rpc(formula)
+    contract = BodyUniverseDto(
+        name=contract_name,
+        out_binding="out",
+        inv=inv,
+        source_warrants=[memento],
+    )
+    walk = _walk_row(
+        selected,
+        "Assert",
+        stmt,
+        filename,
+        memento,
+        "predicate",
+        requested_role="AssertionSurface",
+        emitted_formula=inv,
+    )
+    audit = _source_audit(
+        fn,
+        stmt,
+        memento_file,
+        contract_name,
+        memento,
+        role=role,
         ast_kind="Assert",
     )
     return ([contract], [memento], [audit], [walk], [])

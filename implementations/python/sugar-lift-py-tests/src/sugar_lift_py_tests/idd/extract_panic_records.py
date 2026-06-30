@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Optional
 
@@ -13,6 +14,11 @@ _FIELD = re.compile(r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner
 def extract_panic_records(target: LiftTarget, stdout: str, stderr: str) -> list[PanicRecord]:
     records: list[PanicRecord] = []
     for line in (stdout + "\n" + stderr).splitlines():
+        rpc_records = _records_from_wrapped_rpc_error(target, line)
+        if rpc_records:
+            records.extend(rpc_records)
+            continue
+        line = _panic_segment(line)
         kind = _panic_kind(line)
         if kind is None:
             continue
@@ -30,6 +36,76 @@ def extract_panic_records(target: LiftTarget, stdout: str, stderr: str) -> list[
             )
         )
     return records
+
+
+def _records_from_wrapped_rpc_error(target: LiftTarget, line: str) -> list[PanicRecord]:
+    marker = "lift plugin returned error: "
+    if marker not in line:
+        return []
+    payload = line.split(marker, 1)[1].strip()
+    try:
+        error = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    data = error.get("data")
+    if not isinstance(data, dict):
+        return []
+    gaps = data.get("auditOnlyGaps")
+    if isinstance(gaps, list):
+        return [
+            _record_from_gap(target, gap)
+            for gap in gaps
+            if isinstance(gap, dict)
+        ]
+    info = data.get("info")
+    message = error.get("message")
+    if isinstance(info, dict) and isinstance(message, str):
+        kind = _panic_kind(message)
+        if kind is None:
+            return []
+        return [_record_from_fields(target, kind, info, message)]
+    return []
+
+
+def _record_from_gap(target: LiftTarget, gap: dict) -> PanicRecord:
+    message = str(gap.get("message", ""))
+    fields = gap.get("gap")
+    if not isinstance(fields, dict):
+        fields = {key: value.strip() for key, value in _FIELD.findall(message)}
+    return _record_from_fields(target, _panic_kind(message) or "unexpected", fields, message)
+
+
+def _record_from_fields(
+    target: LiftTarget,
+    kind: PanicKind,
+    fields: dict,
+    message: str,
+) -> PanicRecord:
+    return PanicRecord(
+        target=target.name,
+        kind=kind,
+        owner=str(fields.get("owner", "unknown")),
+        blame=str(fields.get("blame", "unknown")),
+        observed=str(fields.get("observed", "unknown")),
+        requested=str(fields.get("requested", "unknown")),
+        fix=str(fields.get("fix", "write the missing sugar or floor")),
+        message=message,
+    )
+
+
+def _panic_segment(line: str) -> str:
+    starts = [
+        idx
+        for prefix in (
+            "write more Sugar for this AST",
+            "write more Floor for this AST",
+            "write more Floor for this construction",
+        )
+        if (idx := line.find(prefix)) >= 0
+    ]
+    if not starts:
+        return line
+    return line[min(starts) :]
 
 
 def _panic_kind(line: str) -> Optional[PanicKind]:

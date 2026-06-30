@@ -82,6 +82,60 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     }
 
 
+def test_lift_rpc_audit_only_argv_collects_all_factory_gaps(tmp_path) -> None:
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
+    empty_package_marker = tmp_path / "empty" / "__init__.py"
+    first.write_text("def a():\n    return {}\n", encoding="utf-8")
+    second.write_text("def b():\n    return {}\n", encoding="utf-8")
+    empty_package_marker.parent.mkdir()
+    empty_package_marker.write_text("", encoding="utf-8")
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PY_TESTS / "src"),
+    }
+    request = "\n".join(
+        json.dumps(message)
+        for message in [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "lift",
+                "params": {"workspace_root": str(tmp_path), "source_paths": ["."]},
+            },
+            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
+        ]
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sugar_lift_py_tests.lift_rpc",
+            "--rpc",
+            "--audit-only",
+        ],
+        input=request + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    lift_response = next(response for response in responses if response.get("id") == 2)
+    error = lift_response["error"]
+    assert error["message"] == "audit-only construction gaps"
+    gaps = error["data"]["auditOnlyGaps"]
+    assert [gap["label"] for gap in gaps] == [str(first), str(second)]
+    assert [gap["gap"]["observed"] for gap in gaps] == ["Dict", "Dict"]
+    assert all(
+        gap["message"].startswith("write more Sugar for this AST") for gap in gaps
+    )
+
+
 def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
     source = "def encode_len(data):\n    return {}\n"
 
