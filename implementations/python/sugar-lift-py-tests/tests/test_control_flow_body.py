@@ -66,9 +66,10 @@ def test_param_passthrough_return_flows_through_symbolically():
     assert '{"kind": "var", "name": "s"}' in post
 
 
-def test_symbolic_operation_return_panics_clean_never_mislifts():
-    # `return n + 1` has no symbolic `+` sugar yet. The factory must surface a
-    # FactoryGap (the mouth), NOT silently emit a wrong term. This is the
-    # false-discharge floor: an unhandled shape is loud, never lifted.
-    with pytest.raises(FactoryGap):
-        build_literal_call_report(source=ARITHMETIC, filename="c.py", memento_file="c.py")
+def test_symbolic_operation_return_emits_the_op_into_the_universe():
+    # `return n + 1` is no longer a panic: the cf-walker EMITS the operation `+(n, 1)` into the
+    # universe post (sort-silent), so the body's source line is warranted. The SMT compiler
+    # derives n's carrier from the `+` it appears in. Emitting the operation IS the lift.
+    post = _universe_post(ARITHMETIC)
+    assert '"name": "+"' in post
+    assert '{"kind": "var", "name": "n"}' in post
