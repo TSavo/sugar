@@ -28,7 +28,7 @@ SOURCES = {
     "unresolved_int_arg_b": "def t():\n    assert make_value_xc(5) == 2\n",
     "unresolved_str_arg": 'def t():\n    assert parse_int("42") == 42\n',
     "resolved_literal_body": "def h():\n    return 42\ndef t():\n    assert h() == 42\n",
-    "two_calls_same_callee": "def t():\n    assert make_value_xc(5) == 1\n    assert make_value_xc(5) == 1\n",
+    "two_calls_same_callee": "def t():\n    assert make_value_xc(5) == 1\n    assert make_value_xc(5) == 1\n",    "resolved_dig_universe": "def f(x):\n    if x > 0:\n        return 1\n    return 0\ndef t():\n    assert f(5) == 1\n",
 }
 _FIELDS = ("name", "kind", "inv", "pre", "post", "formals", "out_binding", "bridge_source_symbol")
 
