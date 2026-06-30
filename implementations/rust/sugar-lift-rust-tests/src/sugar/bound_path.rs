@@ -12,7 +12,7 @@ use crate::sugar::factory::{
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
-use syn::{Expr, ExprPath};
+use syn::Expr;
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -50,8 +50,7 @@ fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Optio
 }
 
 fn recognize_role(frag: &SourceFragment, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let name = simple_local_path(expr)?;
+    let name = frag.path_simple_ident()?;
     if fcx.resolving_bound_path(&name) {
         return None;
     }
@@ -458,12 +457,79 @@ fn ambiguous_identity_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn
     })
 }
 
-fn simple_local_path(expr: &Expr) -> Option<String> {
-    let Expr::Path(ExprPath {
-        qself: None, path, ..
-    }) = expr
-    else {
-        return None;
-    };
-    path.get_ident().map(ToString::to_string)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LiftOptions, TemporalPlan, TemporalScope};
+    use std::collections::BTreeMap;
+    use syn::Expr;
+
+    /// from_src: source string -> SourceFragment -> path_simple_ident accessor gate.
+    /// Verifies the accessor used by the migrated recognize_role returns the right name.
+    /// No parse_quote! / StubTerm / run().
+    #[test]
+    fn from_src_simple_local_path_ident_observed() {
+        // simple bare ident: the only shape recognized as a bound-path
+        let expr: Expr = syn::parse_str("my_var").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        assert_eq!(
+            frag.path_simple_ident().as_deref(),
+            Some("my_var"),
+            "bare ident -> path_simple_ident returns name"
+        );
+
+        // binop: not a path -> None
+        let expr_bin: Expr = syn::parse_str("x + 1").expect("parse");
+        let frag_bin = SourceFragment::expr(&expr_bin, "<src>");
+        assert!(
+            frag_bin.path_simple_ident().is_none(),
+            "binop path_simple_ident is None"
+        );
+
+        // multi-segment path: no single ident -> None
+        let expr_seg: Expr = syn::parse_str("Foo::bar").expect("parse");
+        let frag_seg = SourceFragment::expr(&expr_seg, "<src>");
+        assert!(
+            frag_seg.path_simple_ident().is_none(),
+            "multi-segment path returns None"
+        );
+
+        // qualified path (<T as Trait>::Assoc): qself present -> None
+        let expr_qual: Expr = syn::parse_str("<u32 as Default>::default()").expect("parse");
+        let frag_qual = SourceFragment::expr(&expr_qual, "<src>");
+        assert!(
+            frag_qual.path_simple_ident().is_none(),
+            "call (not a bare path) returns None"
+        );
+    }
+
+    /// from_src: verify recognize rejects non-path expressions and accepts
+    /// a bare ident that is a tracked let-binding.
+    #[test]
+    fn from_src_bound_path_recognize_with_known_binding() {
+        let expr: Expr = syn::parse_str("some_val").expect("parse");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        let init_expr: Expr = syn::parse_str("42").expect("parse init");
+        let scope = TemporalScope::new("bound-path-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("some_val".to_string(), &init_expr);
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+
+        // ident with a known let-binding in scope -> recognized as bound path
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "bare ident with known binding recognized"
+        );
+
+        // binop not recognized
+        let expr_no: Expr = syn::parse_str("x + 1").expect("parse");
+        let frag_no = SourceFragment::expr(&expr_no, "<src>");
+        assert!(
+            recognize(&frag_no, &fcx).is_none(),
+            "binop not recognized as bound path"
+        );
+    }
 }

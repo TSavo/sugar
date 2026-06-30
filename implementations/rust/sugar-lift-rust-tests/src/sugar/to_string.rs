@@ -3,14 +3,12 @@
 // TERM recognizer for closed stdlib `<literal>.to_string()`. Unknown receivers
 // decline so generic MethodSugar can continue digging the method-call universe.
 
-use syn::Expr;
-
 use sugar_ir_symbolic::str_const;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::factory::{FormatValueFloor, SugarBody};
-use crate::sugar::format::{display_format_value_floor, is_to_string_shape};
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::format::display_format_value_floor;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -21,15 +19,16 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
-        return None;
-    };
-    if !is_to_string_shape(expr) {
+    let srg = frag.strip_refs_groups();
+    if srg.call_method_key()?.as_str() != "to_string" {
         return None;
     }
+    if srg.call_arg_count() != 0 {
+        return None;
+    }
+    let receiver = srg.call_receiver()?;
     Some(Box::new(ToStringTermSugar {
-        receiver: SugarBody::format_value(&call.receiver, fcx),
+        receiver: SugarBody::format_value_frag(&receiver, fcx),
     }))
 }
 
@@ -66,6 +65,27 @@ mod tests {
     use crate::{
         sugar_ctx, FloatWidthScope, LiftOptions, ReductionCtx, TemporalPlan, TemporalScope,
     };
+
+    #[test]
+    fn from_src_recognizes_to_string_method() {
+        let expr: Expr = syn::parse_str("x.to_string()").expect("parses");
+        let frag = SourceFragment::expr(&expr, "<test>");
+        assert_eq!(frag.observed(), "MethodCall");
+        let scope = TemporalScope::new("from-src-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        // positive: bare to_string() with no args must recognize
+        assert!(recognize(&frag, &fcx).is_some(), "to_string() with no args must recognize");
+        // negative: different method must not recognize
+        let clone_expr: Expr = syn::parse_str("x.clone()").expect("parses");
+        assert!(recognize(&SourceFragment::expr(&clone_expr, "<test>"), &fcx).is_none(),
+            "clone() must not recognize");
+        // negative: to_string with extra args must not recognize
+        let extra: Expr = syn::parse_str("x.to_string(extra)").expect("parses");
+        assert!(recognize(&SourceFragment::expr(&extra, "<test>"), &fcx).is_none(),
+            "to_string(arg) must not recognize");
+    }
 
     fn run(src: &str) -> Outcome {
         let expr: Expr = syn::parse_str(src).expect("expr parses");

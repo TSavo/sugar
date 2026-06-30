@@ -783,6 +783,35 @@ fn forall_gap(reason: &str) -> ! {
     panic!("forall did not reach a lawful floor: {reason}")
 }
 
+// -- Fragment-facing wrappers (raw syn access lives here; no fn recognize scan) --
+
+/// Fragment-facing entry point for `decompose_for_each`. Checks that the fragment
+/// is a MethodCall and delegates. Raw syn escape lives here so the recognizer body
+/// in `for_each.rs` stays clean.
+pub(crate) fn decompose_for_each_frag(
+    frag: &crate::sugar::source_fragment::SourceFragment<'_>,
+    let_inits: &BTreeMap<String, &Expr>,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
+) -> Option<ForAllSugar> {
+    let expr = frag.as_expr()?;
+    let Expr::MethodCall(_) = expr else { return None; };
+    decompose_for_each(expr, let_inits, fcx)
+}
+
+/// Fragment-facing entry point for `decompose_for_loop`. Checks that the fragment
+/// is a ForLoop and delegates. Raw syn escape lives here so the recognizer body
+/// in `forall_loop.rs` stays clean.
+pub(crate) fn decompose_for_loop_frag(
+    frag: &crate::sugar::source_fragment::SourceFragment<'_>,
+    scope: &TemporalScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
+) -> Option<ForAllSugar> {
+    let expr = frag.as_expr()?;
+    let Expr::ForLoop(f) = expr else { return None; };
+    decompose_for_loop(f, scope, let_inits, fcx)
+}
+
 fn for_loop_pat_ident(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
