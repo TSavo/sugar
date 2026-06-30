@@ -5,11 +5,9 @@
 // top-level point-wise assertion surface in this role. Enclosing block / closure
 // sugars only bubble this named effect.
 
-use syn::Expr;
-
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{macro_is_assertion_surface, token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -19,13 +17,9 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 );
 
 pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(expr_macro) = expr else {
-        return None;
-    };
-    macro_is_assertion_surface(&expr_macro.mac).then(|| {
+    frag.is_assertion_surface_macro().then(|| {
         Box::new(StatementNestedAssertionSugar {
-            boundary: token_key(expr),
+            boundary: frag.token_str(),
         }) as Box<dyn Sugar>
     })
 }
