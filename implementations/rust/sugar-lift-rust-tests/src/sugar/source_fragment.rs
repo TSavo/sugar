@@ -929,6 +929,52 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- Node-kind guard (non-shim; no raw syn returned) ----------------------
+
+    /// Returns `true` if this fragment wraps an expression node
+    /// (`FragNode::Expr`). Use as a gate in recognizer bodies instead of
+    /// `as_expr()?` when the body does not need the raw `&syn::Expr` (i.e.
+    /// all subsequent field access goes through typed accessors). All raw
+    /// syn is absent from the return type; the check is purely structural.
+    pub(crate) fn is_expr(&self) -> bool {
+        matches!(self.node, FragNode::Expr(_))
+    }
+
+    // -- Closure parameter and free-variable accessors -------------------------
+
+    /// For an `Expr::Closure` fragment, returns the set of parameter names
+    /// declared in the closure's input list. Strips `Pat::Type` wrappers to
+    /// expose the inner `Pat::Ident`. Multi-pattern / other non-ident patterns
+    /// are silently skipped (conservative: they cannot be free-var captures
+    /// since they bind by pattern). Returns an empty set for non-Closure
+    /// fragments and zero-parameter closures. All raw syn access lives HERE.
+    pub(crate) fn closure_param_names(&self) -> std::collections::BTreeSet<String> {
+        let FragNode::Expr(syn::Expr::Closure(c)) = &self.node else {
+            return std::collections::BTreeSet::new();
+        };
+        c.inputs
+            .iter()
+            .filter_map(|p| match p {
+                syn::Pat::Ident(id) => Some(id.ident.to_string()),
+                syn::Pat::Type(t) => match t.pat.as_ref() {
+                    syn::Pat::Ident(id) => Some(id.ident.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// For an `Expr::Closure` fragment, returns all names referenced in the
+    /// closure body via `crate::names_referenced_in_expr`. Returns an empty
+    /// `BTreeSet` for non-Closure fragments. All raw syn access lives HERE.
+    pub(crate) fn closure_referenced_names(&self) -> std::collections::BTreeSet<String> {
+        let FragNode::Expr(syn::Expr::Closure(c)) = &self.node else {
+            return std::collections::BTreeSet::new();
+        };
+        crate::names_referenced_in_expr(&c.body)
+    }
+
     // -- Token-stream string accessor -----------------------------------------
 
     /// Normalized token-stream string for this fragment (whitespace-collapsed).

@@ -503,8 +503,7 @@ mod tests {
     }
 
     fn recognize(frag: &SourceFragment, _: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-        let _ = frag.as_expr()?;
-        Some(Box::new(NoopSugar))
+        frag.is_expr().then_some(Box::new(NoopSugar) as Box<dyn Sugar>)
     }
 
     fn candidate_names(expr: &Expr) -> Vec<&'static str> {

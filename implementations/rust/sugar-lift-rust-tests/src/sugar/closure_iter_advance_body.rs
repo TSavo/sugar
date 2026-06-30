@@ -2,11 +2,9 @@
 //
 // Closure-adaptor captured-iterator advance sugar.
 
-use syn::Expr;
-
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -17,8 +15,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let site = closure_adaptor::decompose_closure_adaptor(expr, fcx.let_inits())?;
+    let site = closure_adaptor::decompose_closure_adaptor_frag(frag, fcx.let_inits(), fcx.scope())?;
     site.has_iter_advance_body()
         .then(|| Box::new(ClosureIterAdvanceBodySugar { site }) as Box<dyn Sugar>)
 }
@@ -30,7 +27,7 @@ struct ClosureIterAdvanceBodySugar {
 impl Sugar for ClosureIterAdvanceBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::IterAdvance {
-            boundary: token_key(self.site.expr()),
+            boundary: self.site.boundary().to_owned(),
         })
     }
 }
