@@ -17,16 +17,13 @@
 
 use std::rc::Rc;
 
-use syn::{BinOp, Expr};
-
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    const_eval, const_fold_u128_term, const_val_term, u128_term, Desugared, Outcome, Sugar,
+    const_fold_u128_term, u128_term, Desugared, Outcome, Sugar,
     SugarCtx,
 };
-use std::collections::BTreeMap;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("bv_binop", &["binop"], recognize);
@@ -36,36 +33,21 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Fires before `binop` for `Shl`/`Shr`/`BitAnd`/`BitOr`/`BitXor`. Returns `None`
 /// for all other operators so the factory falls through to the arithmetic `binop` sugar.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Binary(binary) = expr else {
-        return None;
-    };
-    let op_name = bv32_op_name(&binary.op)?;
+    // Gate: must be a BinOp fragment with a bv32 bit-operation operator.
+    let op_name = frag.binop_bv32_op_name()?;
     // Ground fast-path: if the whole expression const-evals to a scalar value, resolve
     // it immediately. This handles literals like `3u32 << 2` without building a bv32
     // Ctor at all.
-    if let Some(term) = const_eval(expr, &BTreeMap::new()).and_then(|v| const_val_term(&v)) {
+    if let Some(term) = frag.binop_const_folded_term() {
         return Some(resolved_term(term));
     }
+    let left_frag = frag.binop_left()?;
+    let right_frag = frag.binop_right()?;
     Some(Box::new(BvBinOpSugar {
-        left: SugarBody::term(&binary.left, fcx),
-        right: SugarBody::term(&binary.right, fcx),
+        left: SugarBody::term_frag(&left_frag, fcx),
+        right: SugarBody::term_frag(&right_frag, fcx),
         op_name,
     }))
-}
-
-/// Map a bit-operation `BinOp` to its canonical bv32 ctor name, or `None` for
-/// operators that are not bit ops.
-pub(crate) fn bv32_op_name(op: &BinOp) -> Option<&'static str> {
-    match op {
-        BinOp::Shl(_) => Some("bv32.shl"),
-        // Rust `>>` on unsigned integers is a logical right-shift.
-        BinOp::Shr(_) => Some("bv32.lshr"),
-        BinOp::BitAnd(_) => Some("bv32.and"),
-        BinOp::BitOr(_) => Some("bv32.or"),
-        BinOp::BitXor(_) => Some("bv32.xor"),
-        _ => None,
-    }
 }
 
 /// The constructive bv32 bit-operation node. `left`/`right` are the pre-built operand
@@ -112,6 +94,62 @@ impl Sugar for BvBinOpSugar {
 
 fn bv_binop_gap(reason: &str) -> ! {
     panic!("bv bit-op did not reach lawful child floors: {reason}; write more Sugar for this AST")
+}
+
+// ---------------------------------------------------------------------------
+// Phase-3 from_src tests: source -> SourceFragment -> observed -> accessor ->
+// assert shape. No parse_quote!, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    /// Navigate to the tail-expression fragment of the first function in a one-liner.
+    fn bv_binop_frag_from<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `x << k` gives `binop_bv32_op_name() == Some("bv32.shl")`.
+    #[test]
+    fn from_src_shl_gives_bv32_shl_op_name() {
+        let src = "fn f(x: u32, k: u32) -> u32 { x << k }";
+        let file = parse_file(src);
+        let frag = bv_binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_bv32_op_name(), Some("bv32.shl"));
+    }
+
+    /// Discrimination: arithmetic `+` gives `binop_bv32_op_name() == None`.
+    #[test]
+    fn from_src_arithmetic_binop_bv32_op_name_is_none() {
+        let src = "fn f(x: u32, y: u32) -> u32 { x + y }";
+        let file = parse_file(src);
+        let frag = bv_binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_bv32_op_name(), None, "arithmetic + is not a bv32 op");
+    }
+
+    /// Structural: `a << 2` — left/right children are accessible via frag accessors.
+    #[test]
+    fn from_src_shl_children_accessible_via_frag_accessors() {
+        let src = "fn f(a: u32) -> u32 { a << 2 }";
+        let file = parse_file(src);
+        let frag = bv_binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_bv32_op_name(), Some("bv32.shl"));
+        let left = frag.binop_left().expect("left child");
+        let right = frag.binop_right().expect("right child");
+        assert_eq!(left.observed(), "Name", "left `a` is a Name");
+        assert_eq!(right.observed(), "PrimitiveLiteral", "right `2` is a PrimitiveLiteral");
+    }
 }
 
 #[cfg(test)]

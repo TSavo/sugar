@@ -27,40 +27,42 @@ pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim =
 
 /// TERM recognizer for `Expr::RawAddr`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::RawAddr(raw) = expr else {
-        return None;
-    };
-    let ctor = match &raw.mutability {
-        syn::PointerMutability::Const(_) => "raw_addr_const",
-        syn::PointerMutability::Mut(_) => "raw_addr_mut",
-    };
+    let inner = frag.raw_addr_inner()?;
+    let ctor = if frag.raw_addr_is_const() { "raw_addr_const" } else { "raw_addr_mut" };
     Some(Box::new(CtorSugar::new(
         ctor,
-        vec![SugarBody::term(raw.expr.as_ref(), fcx)],
+        vec![SugarBody::term_frag(&inner, fcx)],
     )))
 }
 
 fn recognize_ptr_eq_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    let callee = pointer_eq_callee(&call.func)?;
-    if call.args.len() != 2 {
+    let callee = pointer_eq_callee_frag(frag.call_func()?)?;
+    if frag.call_arg_count() != 2 {
         panic!("ptr::eq expects two arguments; write more Sugar for this AST");
     }
     Some(Box::new(PointerEqTermSugar {
         callee,
-        args: call
-            .args
-            .iter()
+        args: frag
+            .call_args()
+            .into_iter()
             .map(|arg| PointerEqArg {
-                site: token_key(arg),
-                body: SugarBody::term(arg, fcx),
+                site: arg.token_str(),
+                body: SugarBody::term_frag(&arg, fcx),
             })
             .collect(),
     }))
+}
+
+/// Frag-based callee recognizer: peels Paren/Group wrappers via
+/// transparent_inner, then checks path_full_name against the three
+/// canonical ptr::eq spellings. Mirrors pointer_eq_callee (raw-syn
+/// path) without escaping to raw syn in the recognize body.
+fn pointer_eq_callee_frag(frag: SourceFragment<'_>) -> Option<String> {
+    if let Some(inner) = frag.transparent_inner() {
+        return pointer_eq_callee_frag(inner);
+    }
+    let name = frag.path_full_name()?;
+    matches!(name.as_str(), "core::ptr::eq" | "ptr::eq" | "std::ptr::eq").then_some(name)
 }
 
 struct PointerEqArg {
@@ -189,6 +191,8 @@ fn reduce_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, 
     }
 }
 
+// Raw-syn callee recognizer used by the assertion pathway (pointer_eq_assertion_entry).
+// The recognize body uses pointer_eq_callee_frag instead.
 fn pointer_eq_callee(expr: &Expr) -> Option<String> {
     let name = match expr {
         Expr::Path(path) if path.qself.is_none() => plain_path_name(&path.path)?,
@@ -219,7 +223,31 @@ mod tests {
         TemporalScope,
     };
     use sugar_ir_symbolic::Term;
-    use syn::Item;
+    use syn::{Expr, Item};
+
+    /// from_src: source -> SourceFragment -> accessor gate -> build -> floor.
+    /// Exercises raw_addr_inner / raw_addr_is_const directly; no
+    /// parse_quote! / StubTerm / run().
+    #[test]
+    fn from_src_raw_addr_accessors() {
+        // const raw addr
+        let const_expr: Expr = syn::parse_str("&raw const x").expect("parse &raw const x");
+        let frag_const = SourceFragment::expr(&const_expr, "<src>");
+        assert!(frag_const.raw_addr_inner().is_some(), "const raw: inner is Some");
+        assert!(frag_const.raw_addr_is_const(), "const raw: is_const returns true");
+
+        // mut raw addr
+        let mut_expr: Expr = syn::parse_str("&raw mut y").expect("parse &raw mut y");
+        let frag_mut = SourceFragment::expr(&mut_expr, "<src>");
+        assert!(frag_mut.raw_addr_inner().is_some(), "mut raw: inner is Some");
+        assert!(!frag_mut.raw_addr_is_const(), "mut raw: is_const returns false");
+
+        // non-raw-addr: accessors return None / false
+        let other: Expr = syn::parse_str("x + 1").expect("parse x + 1");
+        let frag_other = SourceFragment::expr(&other, "<src>");
+        assert!(frag_other.raw_addr_inner().is_none(), "non-raw-addr: inner is None");
+        assert!(!frag_other.raw_addr_is_const(), "non-raw-addr: is_const returns false");
+    }
 
     fn reduce(src: &str) -> Rc<Term> {
         let expr: Expr = syn::parse_str(src).expect("parse raw address expr");

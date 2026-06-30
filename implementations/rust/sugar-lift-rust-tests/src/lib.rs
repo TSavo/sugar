@@ -19738,7 +19738,7 @@ fn is_type_id_of_path(path: &syn::Path) -> bool {
     )
 }
 
-fn is_shared_dyn_any_type(ty: &syn::Type) -> bool {
+pub(crate) fn is_shared_dyn_any_type(ty: &syn::Type) -> bool {
     let syn::Type::Reference(reference) = ty else {
         return false;
     };
@@ -19767,7 +19767,7 @@ fn is_shared_dyn_any_type(ty: &syn::Type) -> bool {
 /// conversion's numeric semantics, only that it is a function of its input. char
 /// stays in the Int/opaque regime (a code point), so it composes alongside the
 /// integer casts. Floats are deliberately excluded (Real-sort interplay).
-fn scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
+pub(crate) fn scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
     if let Some(k) = integer_scalar_cast_type_key(ty) {
         return Some(k);
     }
@@ -20307,7 +20307,7 @@ fn generic_arg_key(arg: &syn::GenericArgument) -> String {
     }
 }
 
-fn type_key(ty: &syn::Type) -> String {
+pub(crate) fn type_key(ty: &syn::Type) -> String {
     match ty {
         syn::Type::Path(path) => path_to_name(&path.path),
         syn::Type::Reference(reference) => {

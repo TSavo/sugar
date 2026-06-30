@@ -258,6 +258,29 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// The tail expression of a `Stmt::Expr(e, None)` where `e` is NOT
+    /// `If`, `Block`, `Unsafe`, or `Return` -- the "simple tail value"
+    /// shapes that `ReturnSugar` claims at the statement role. Returns `None`
+    /// for explicit return stmts, semicolon-terminated stmts, if/block/unsafe
+    /// tail expressions, and all non-Stmt fragments. All raw syn field access
+    /// lives HERE; recognizer bodies see only `Option<SourceFragment>`.
+    pub(crate) fn stmt_tail_expr_noncf(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Stmt(syn::Stmt::Expr(e, None))
+                if !matches!(
+                    e,
+                    syn::Expr::If(_)
+                        | syn::Expr::Block(_)
+                        | syn::Expr::Unsafe(_)
+                        | syn::Expr::Return(_)
+                ) =>
+            {
+                Some(Self::expr(e, self.file))
+            }
+            _ => None,
+        }
+    }
+
     /// The base expression of an `Expr::Await` (`expr` in `expr.await`).
     /// Returns `None` for any non-`Await` fragment.
     pub(crate) fn await_base(&self) -> Option<SourceFragment<'a>> {
@@ -784,6 +807,29 @@ impl<'a> SourceFragment<'a> {
         match &self.node {
             FragNode::Expr(syn::Expr::Reference(r)) => Some(Self::expr(&r.expr, self.file)),
             _ => None,
+        }
+    }
+
+    // -- RawAddr accessors ---------------------------------------------------
+
+    /// The inner expression of an `Expr::RawAddr` fragment (`x` in
+    /// `&raw const x` or `&raw mut x`). Returns `None` for any non-`RawAddr`
+    /// fragment. All raw syn field access lives HERE.
+    pub(crate) fn raw_addr_inner(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::RawAddr(raw)) => Some(Self::expr(&raw.expr, self.file)),
+            _ => None,
+        }
+    }
+
+    /// Whether an `Expr::RawAddr` fragment is a const raw-address (`&raw const x`).
+    /// Returns `false` for `&raw mut x` and for any non-`RawAddr` fragment.
+    pub(crate) fn raw_addr_is_const(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::RawAddr(raw)) => {
+                matches!(raw.mutability, syn::PointerMutability::Const(_))
+            }
+            _ => false,
         }
     }
 
@@ -1415,7 +1461,65 @@ impl<'a> SourceFragment<'a> {
         r.end.as_deref().map(|e| Self::expr(e, self.file))
     }
 
-    // -- Loop accessors -------------------------------------------------------
+    /// Returns `true` if this fragment is an `Expr::Range` with `Closed` limits
+    /// (i.e. `a..=b`). Returns `false` for half-open ranges (`a..b`) and all
+    /// non-Range fragments. All raw syn access lives HERE.
+    pub(crate) fn range_is_closed(&self) -> bool {
+        let FragNode::Expr(syn::Expr::Range(r)) = &self.node else {
+            return false;
+        };
+        matches!(r.limits, syn::RangeLimits::Closed(_))
+    }
+
+    // -- BvBinOp accessor (bv_binop.rs) ---------------------------------------
+
+    /// For an `Expr::Binary` fragment whose operator is one of the five bv32
+    /// bit-operation operators (`<<`, `>>`, `&`, `|`, `^`), returns the
+    /// canonical bv32 ctor name. Returns `None` for non-Binary fragments or
+    /// arithmetic operators. All raw syn access lives HERE.
+    pub(crate) fn binop_bv32_op_name(&self) -> Option<&'static str> {
+        let FragNode::Expr(syn::Expr::Binary(b)) = &self.node else {
+            return None;
+        };
+        match b.op {
+            syn::BinOp::Shl(_) => Some("bv32.shl"),
+            // Rust `>>` on unsigned integers is a logical right-shift.
+            syn::BinOp::Shr(_) => Some("bv32.lshr"),
+            syn::BinOp::BitAnd(_) => Some("bv32.and"),
+            syn::BinOp::BitOr(_) => Some("bv32.or"),
+            syn::BinOp::BitXor(_) => Some("bv32.xor"),
+            _ => None,
+        }
+    }
+
+    // -- Repeat accessors -----------------------------------------------------
+
+    /// The element expression of an `Expr::Repeat` (`[elem; N]`) as a child
+    /// fragment. Returns `None` for any non-Repeat fragment.
+    /// All raw syn field access lives HERE; recognizers see only
+    /// `Option<SourceFragment>`.
+    pub(crate) fn repeat_elem_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::Repeat(r)) = &self.node else {
+            return None;
+        };
+        Some(Self::expr(&r.expr, self.file))
+    }
+
+    /// Resolve the repeat count (`N` in `[elem; N]`) through scope constants.
+    /// Returns `None` for any non-Repeat fragment OR if the length expression
+    /// does not reduce to a concrete `usize` via `repeat_count_in_scope`.
+    /// All raw syn field access lives HERE; recognizers see only `Option<usize>`.
+    pub(crate) fn repeat_len_in_scope(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> Option<usize> {
+        let FragNode::Expr(syn::Expr::Repeat(r)) = &self.node else {
+            return None;
+        };
+        crate::repeat_count_in_scope(&r.len, fcx.scope())
+    }
+
+        // -- Loop accessors -------------------------------------------------------
 
     /// For a `loop { break <expr>; }` fragment: returns the break-payload
     /// expression as a child fragment. Returns `None` if the fragment is not a
@@ -1510,6 +1614,130 @@ impl<'a> SourceFragment<'a> {
             return None;
         };
         Some(Self::expr(e, self.file))
+    }
+
+    // -- Cast accessors -------------------------------------------------------
+
+    /// The inner expression of an `Expr::Cast` (`x` in `x as T`).
+    /// Returns `None` for any non-Cast fragment.
+    /// All raw syn field access lives HERE.
+    pub(crate) fn cast_inner_frag(&self) -> Option<SourceFragment<'a>> {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return None;
+        };
+        Some(Self::expr(&cast.expr, self.file))
+    }
+
+    /// Returns `true` if this is a Cast whose target type is `_` (infer).
+    /// Transparent casts (`x as _`) delegate to the inner expression.
+    pub(crate) fn cast_is_infer(&self) -> bool {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return false;
+        };
+        matches!(cast.ty.as_ref(), syn::Type::Infer(_))
+    }
+
+    /// Returns `true` if this is a Cast to a slice reference (`&[T]` / `&[_]` /
+    /// `&mut [T]`). An unsizing coercion (`&[T; N] as &[T]`) is value-preserving
+    /// so `cast_term` treats it transparently.
+    pub(crate) fn cast_is_slice_ref(&self) -> bool {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return false;
+        };
+        matches!(
+            cast.ty.as_ref(),
+            syn::Type::Reference(r) if matches!(r.elem.as_ref(), syn::Type::Slice(_))
+        )
+    }
+
+    /// Returns `true` if this is a Cast to a raw pointer (`*const T` / `*mut T`).
+    pub(crate) fn cast_is_raw_ptr(&self) -> bool {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return false;
+        };
+        matches!(cast.ty.as_ref(), syn::Type::Ptr(_))
+    }
+
+    /// Returns `true` if this is a Cast to a shared `dyn Any` reference
+    /// (`&dyn Any` or `&dyn std::any::Any`). Delegates to `is_shared_dyn_any_type`.
+    pub(crate) fn cast_is_shared_dyn_any(&self) -> bool {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return false;
+        };
+        crate::is_shared_dyn_any_type(&cast.ty)
+    }
+
+    /// For a Cast to a primitive scalar target, returns the `cast:` ctor suffix
+    /// (e.g. `"u8"`, `"i32"`, `"char"`, `"f64"`). Returns `None` for non-Cast
+    /// fragments or non-scalar target types. Delegates to `scalar_cast_type_key`.
+    pub(crate) fn cast_scalar_type_key(&self) -> Option<&'static str> {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return None;
+        };
+        crate::scalar_cast_type_key(&cast.ty)
+    }
+
+    /// The canonical type-key string for the Cast target type (e.g. `"&dyn Any"`
+    /// for a shared-dyn-any cast). Used for `cast:<T>` ctor names.
+    /// Returns an empty string for non-Cast fragments.
+    /// Delegates to `type_key` in `lib.rs`. All raw syn access lives HERE.
+    pub(crate) fn cast_full_type_key_str(&self) -> String {
+        let FragNode::Expr(syn::Expr::Cast(cast)) = &self.node else {
+            return String::new();
+        };
+        crate::type_key(&cast.ty)
+    }
+
+    // -- int-literal fold accessor (transitional; raw syn lives HERE) ----------
+
+    /// Const-fold this fragment to an exact integer value through
+    /// `int_literal::exact_int_value`. Handles int/byte literals, negated
+    /// literals, and let-bound / const-path scalars when `fcx` is `Some`.
+    /// Returns `None` for non-literal, non-path, or runtime expressions.
+    /// All raw syn access lives HERE, not in the calling recognizer.
+    pub(crate) fn exact_int_value_frag(
+        &self,
+        fcx: Option<&crate::sugar::factory::SugarBuildCtx<'_, '_>>,
+    ) -> Option<crate::sugar::int_literal::ExactInt> {
+        let expr = self.as_expr()?;
+        crate::sugar::int_literal::exact_int_value(expr, fcx)
+    }
+
+    // -- macro token-stream accessor ------------------------------------------
+
+    /// Returns the raw `proc_macro2::TokenStream` of the macro body for an
+    /// `Expr::Macro` fragment. Returns `None` for non-Macro fragments.
+    /// All raw syn access lives HERE.
+    pub(crate) fn macro_token_stream(&self) -> Option<proc_macro2::TokenStream> {
+        let FragNode::Expr(syn::Expr::Macro(m)) = &self.node else {
+            return None;
+        };
+        Some(m.mac.tokens.clone())
+    }
+
+    // -- closure accessors ----------------------------------------------------
+
+    /// Returns `true` if this fragment is an `Expr::Closure` with zero input
+    /// parameters (no arguments). Returns `false` for all non-Closure
+    /// fragments and for closures that have one or more parameters.
+    /// All raw syn access lives HERE.
+    pub(crate) fn closure_is_zero_input(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Closure(c)) => c.inputs.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Returns the body expression of an `Expr::Closure` as a `SourceFragment`.
+    /// Returns `None` for non-Closure fragments.
+    /// All raw syn access lives HERE.
+    pub(crate) fn closure_body_frag(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Closure(c)) => {
+                Some(Self::expr(c.body.as_ref(), self.file))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -1644,6 +1872,7 @@ fn expr_kind(e: &syn::Expr) -> String {
         Range(_) => "Range".into(),
         Macro(_) => "Macro".into(),
         Assign(_) => "Assign".into(),
+        Struct(_) => "Struct".into(),
         // `#[non_exhaustive]`: every unhandled variant becomes a parametric bucket --
         // never a silent drop. This is the rust new-shape detector.
         other => format!("Other:Expr:{}", expr_discriminant(other)),

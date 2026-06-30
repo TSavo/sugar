@@ -130,20 +130,13 @@ fn parse_arm_predicate(input: ParseStream<'_>) -> syn::Result<Option<CfgPredicat
 }
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(ExprMacro { mac, .. }) = expr else {
-        return None;
-    };
-    if !mac
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "cfg_select")
-    {
+    // Gate: must be a macro named "cfg_select".
+    if frag.macro_name().as_deref() != Some("cfg_select") {
         return None;
     }
-    let site = token_key(expr);
-    let arms = match syn::parse2::<CfgSelectArms>(mac.tokens.clone()) {
+    let site = frag.token_str();
+    let tokens = frag.macro_token_stream()?;
+    let arms = match syn::parse2::<CfgSelectArms>(tokens) {
         Ok(arms) => arms,
         Err(error) => {
             return Some(Box::new(CfgSelectSugar {
@@ -351,4 +344,80 @@ fn macro_name_is_assertion_surface(mac: &syn::Macro) -> bool {
                     | "debug_assert_matches"
             )
         })
+}
+
+// ---------------------------------------------------------------------------
+// Phase-3 from_src tests: source -> SourceFragment -> accessor -> gate.
+// No parse_quote! in the test body, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    fn macro_frag_from<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        // Use a let binding so we can navigate via assign_value().
+        stmts[0].assign_value().expect("let init expr")
+    }
+
+    /// Positive: `cfg_select! { .. }` in let-init position has
+    /// observed="Macro" and macro_name()="cfg_select".
+    /// macro_token_stream() returns Some (the arm tokens).
+    #[test]
+    fn from_src_cfg_select_macro_name_and_token_stream() {
+        let src = r#"fn f() { let _ = cfg_select! { debug_assertions => { assert!(true); } _ => {} }; }"#;
+        let file = parse_file(src);
+        let frag = macro_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Macro");
+        assert_eq!(
+            frag.macro_name().as_deref(),
+            Some("cfg_select"),
+            "macro_name must be cfg_select"
+        );
+        assert!(
+            frag.macro_token_stream().is_some(),
+            "macro_token_stream must be Some for a Macro fragment"
+        );
+    }
+
+    /// Discrimination: `vec![1, 2]` is also a Macro but macro_name != "cfg_select".
+    #[test]
+    fn from_src_vec_macro_name_not_cfg_select() {
+        let src = "fn f() -> Vec<i32> { let _ = vec![1, 2]; 0i32 }";
+        let file = parse_file(src);
+        let mac_frag = macro_frag_from(&file, "f.rs");
+
+        assert_eq!(mac_frag.observed(), "Macro");
+        assert_ne!(
+            mac_frag.macro_name().as_deref(),
+            Some("cfg_select"),
+            "vec! macro_name must not be cfg_select"
+        );
+    }
+
+    /// Structural: a plain `Call` fragment has observed != "Macro", so
+    /// macro_name() and macro_token_stream() both return None.
+    #[test]
+    fn from_src_call_frag_has_no_macro_name() {
+        let src = "fn f(x: u8) -> u8 { let _ = u8::from(x); x }";
+        let file = parse_file(src);
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().expect("fn body");
+        let call_frag = body.statements()[0].assign_value().expect("call assign val");
+
+        assert_eq!(call_frag.observed(), "Call");
+        assert!(
+            call_frag.macro_name().is_none(),
+            "Call fragment has no macro_name"
+        );
+        assert!(
+            call_frag.macro_token_stream().is_none(),
+            "Call fragment has no macro_token_stream"
+        );
+    }
 }

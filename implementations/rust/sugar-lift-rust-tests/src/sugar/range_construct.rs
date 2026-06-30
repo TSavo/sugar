@@ -4,11 +4,14 @@
 // surfaces. The recognizer constructs each field's child body without reducing it;
 // desugar/reduce emits construction field facts or propagates the child's terminal
 // answer unchanged.
+//
+// MIGRATION STATUS (Phase-3 ratchet -- FULLY MIGRATED).
+// recognize body: zero as_expr/as_stmt/as_item, zero raw Expr::/Stmt::/Item::.
+// Struct fields: kind (enum, no raw syn), fields (Vec<(String, SugarBody)>, no raw syn).
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, Term};
-use syn::{Expr, Member};
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
@@ -19,49 +22,50 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("range_construct", recognize);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Struct(s) => {
-            if s.rest.is_some() {
+    match frag.observed().as_str() {
+        "Struct" => {
+            // Gate: no `..rest` spread.
+            if frag.struct_has_rest() {
                 return None;
             }
-            let kind = RangeConstructKind::from_struct_path(&s.path)?;
-            let mut raw_fields = Vec::new();
-            for field in &s.fields {
-                let name = match &field.member {
-                    Member::Named(id) => id.to_string(),
-                    Member::Unnamed(idx) => idx.index.to_string(),
-                };
-                if kind.accepts_field(&name) {
-                    raw_fields.push((name, &field.expr));
-                }
-            }
-            let field_names = raw_fields
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect::<Vec<_>>();
+            // Determine which range kind from the struct path's last segment.
+            let path_str = frag.struct_path_variant_string()?;
+            let last_seg = path_str.split("::").last()?;
+            let kind = RangeConstructKind::from_struct_name(last_seg)?;
+            // Collect accepted fields from the struct literal.
+            let all_fields = frag.struct_named_fields_frags();
+            let raw_fields: Vec<(String, SourceFragment<'_>)> = all_fields
+                .into_iter()
+                .filter(|(name, _)| kind.accepts_field(name))
+                .collect();
+            let field_names: Vec<String> = raw_fields.iter().map(|(n, _)| n.clone()).collect();
             if !kind.has_required_field_names(&field_names) {
                 return None;
             }
             let fields = raw_fields
                 .into_iter()
-                .map(|(name, expr)| (name, SugarBody::term(expr, fcx)))
+                .map(|(name, child_frag)| (name, SugarBody::term_frag(&child_frag, fcx)))
                 .collect();
             Some(RangeConstructSugar::new(kind, fields))
         }
-        Expr::Call(call) => {
-            let Expr::Path(path) = call.func.as_ref() else {
-                return None;
-            };
-            let kind = RangeConstructKind::from_call_path(&path.path)?;
-            if call.args.len() != 2 {
+        "Call" => {
+            // Gate: func path must end in `RangeInclusive::new`.
+            let func = frag.call_func()?;
+            if func.path_last_segment_ident().as_deref() != Some("new") {
                 return None;
             }
+            if func.path_penultimate_ident().as_deref() != Some("RangeInclusive") {
+                return None;
+            }
+            if frag.call_arg_count() != 2 {
+                return None;
+            }
+            let args = frag.call_args();
             Some(RangeConstructSugar::new(
-                kind,
+                RangeConstructKind::RangeInclusive,
                 vec![
-                    ("start".to_string(), SugarBody::term(&call.args[0], fcx)),
-                    ("end".to_string(), SugarBody::term(&call.args[1], fcx)),
+                    ("start".to_string(), SugarBody::term_frag(&args[0], fcx)),
+                    ("end".to_string(), SugarBody::term_frag(&args[1], fcx)),
                 ],
             ))
         }
@@ -79,21 +83,16 @@ enum RangeConstructKind {
 }
 
 impl RangeConstructKind {
-    fn from_struct_path(path: &syn::Path) -> Option<Self> {
-        match path.segments.last()?.ident.to_string().as_str() {
+    /// Construct from the last path-segment name of an `Expr::Struct`.
+    /// Replaces `from_struct_path` (which took a raw `&syn::Path`).
+    fn from_struct_name(name: &str) -> Option<Self> {
+        match name {
             "Range" => Some(Self::Range),
             "RangeFrom" => Some(Self::RangeFrom),
             "RangeTo" => Some(Self::RangeTo),
             "RangeToInclusive" => Some(Self::RangeToInclusive),
             _ => None,
         }
-    }
-
-    fn from_call_path(path: &syn::Path) -> Option<Self> {
-        let mut segments = path.segments.iter().map(|seg| seg.ident.to_string());
-        let penultimate = segments.next_back()?;
-        let ultimate = segments.next_back()?;
-        (penultimate == "new" && ultimate == "RangeInclusive").then_some(Self::RangeInclusive)
     }
 
     fn accepts_field(self, field: &str) -> bool {
@@ -228,5 +227,77 @@ impl RangeConstructSugar {
         fields: Vec<(String, SugarBody<TermFloor>)>,
     ) -> Box<dyn Sugar> {
         Box::new(Self { kind, fields })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase-3 from_src tests: source -> SourceFragment -> accessor -> recognize.
+// No parse_quote!, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    fn assign_val_frag<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        stmts[0].assign_value().expect("assign value")
+    }
+
+    /// Positive: `Range { start: 0, end: 10 }` struct literal is a Struct fragment
+    /// whose last path segment is "Range" and whose named fields are "start"/"end".
+    #[test]
+    fn from_src_range_struct_observed_and_fields() {
+        let src = "fn f() { let _ = std::ops::Range { start: 0, end: 10 }; }";
+        let file = parse_file(src);
+        let frag = assign_val_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Struct");
+        assert!(!frag.struct_has_rest(), "no rest");
+        let path_str = frag.struct_path_variant_string().expect("path_str");
+        let last = path_str.split("::").last().unwrap();
+        assert_eq!(last, "Range", "last segment must be Range");
+        let fields = frag.struct_named_fields_frags();
+        let names: Vec<_> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"start") && names.contains(&"end"));
+    }
+
+    /// Discrimination: a plain `Call` (not a RangeInclusive::new) path does not
+    /// match -- `path_penultimate_ident` != "RangeInclusive".
+    #[test]
+    fn from_src_non_range_call_penultimate_not_range_inclusive() {
+        let src = "fn f(x: u32) -> u32 { let _ = u32::from(x); }";
+        let file = parse_file(src);
+        let frag = assign_val_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "Call");
+        let func = frag.call_func().expect("call_func");
+        // last segment is "from", penultimate is "u32" -- neither matches RangeInclusive::new
+        assert_ne!(
+            func.path_last_segment_ident().as_deref(),
+            Some("new"),
+            "call_func last segment is 'from', not 'new'"
+        );
+    }
+
+    /// Structural: a `BinOp` fragment has observed != "Struct"/"Call"
+    /// and returns None from both branches.
+    #[test]
+    fn from_src_binop_not_recognized_by_range_construct() {
+        let src = "fn f(a: u32, b: u32) -> u32 { let _ = a + b; }";
+        let file = parse_file(src);
+        let frag = assign_val_frag(&file, "f.rs");
+
+        let obs = frag.observed();
+        assert!(
+            obs != "Struct" && obs != "Call",
+            "BinOp observed={obs:?} must not be Struct or Call"
+        );
+        // No struct_path_variant_string for a BinOp.
+        assert!(frag.struct_path_variant_string().is_none());
+        // No call_func for a BinOp.
+        assert!(frag.call_func().is_none());
     }
 }
