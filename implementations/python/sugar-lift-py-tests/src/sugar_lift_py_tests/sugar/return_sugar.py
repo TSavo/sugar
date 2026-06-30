@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -31,5 +31,9 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(value=ctx.build_body(value_site, SugarRole.TERM))
 
     def desugar(self, ctx) -> Outcome:
-        returned = complete_value(self.value.reduce(ctx), owner="return value")
-        return Complete(ReturnValue(returned))
+        # match the returned expression: an Incomplete (its evaluation raises) bubbles
+        # upward unchanged -- there is no value to return.
+        outcome = self.value.reduce(ctx)
+        if isinstance(outcome, Incomplete):
+            return outcome
+        return Complete(ReturnValue(complete_value(outcome, owner="return value")))

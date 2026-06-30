@@ -29,6 +29,7 @@ COVERAGE: dict[str, list[str]] = {
     "block_sugar": ["test_block_sugar.py"],
     "comment_sugar": ["test_comment_sugar.py"],
     "if_sugar": ["test_if_sugar.py"],
+    "raise_sugar": ["test_raise_sugar.py"],
     "return_sugar": ["test_return_sugar.py"],
     "primitive_literal_sugar": ["test_primitive_literal_sugar.py"],
     "string_literal_sugar": ["test_string_literal_sugar.py"],

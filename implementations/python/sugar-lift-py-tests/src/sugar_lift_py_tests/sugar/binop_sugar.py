@@ -4,20 +4,21 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import EncodedStringValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
-# The INTEGER-arithmetic operators BinOpSugar folds, AST-kind -> symbol -> fold (over
-# Int-sorted TermValue). Add also concatenates encoded strings (below). Div ('/') is
-# DELIBERATELY ABSENT: Python true-division yields a FLOAT (6/2 == 3.0), and floats are
-# residual -- not modeled, because `3.0 == 3` is Python-true so asserting `float != int`
-# would be a false distinctness (see literal_encoding.rs). So `/` is refused, not folded.
+# The arithmetic operators BinOpSugar folds over the collapsed Number (TermValue),
+# AST-kind -> symbol -> fold. Add also concatenates encoded strings (below). Div ('/') is
+# Python true-division (Real): 6/2 == 3.0, and the numeric type is collapsed so the result
+# is just a Number. Division by zero is NOT a value -- Python raises -- so it is a runtime
+# EFFECT: `Incomplete(DivByZeroEffect)`, the third leg of the Outcome algebra.
 _SYMBOL: dict[str, str] = {
     "Add": "+",
     "Sub": "-",
     "Mult": "*",
+    "Div": "/",
     "FloorDiv": "//",
     "Mod": "%",
     "Pow": "**",
@@ -26,10 +27,14 @@ _FOLD = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
     "*": lambda a, b: a * b,
+    "/": lambda a, b: a / b,
     "//": lambda a, b: a // b,
     "%": lambda a, b: a % b,
     "**": lambda a, b: a ** b,
 }
+
+# Operators whose divisor of 0 is a runtime effect (Python raises), not a value.
+_DIVIDES = {"/", "//", "%"}
 
 
 @dataclass(frozen=True)
@@ -68,8 +73,15 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx) -> Outcome:
-        left = complete_value(self.left.reduce(ctx), owner="BinOpSugar left")
-        right = complete_value(self.right.reduce(ctx), owner="BinOpSugar right")
+        # match each operand: an Incomplete (a runtime effect) bubbles upward unchanged.
+        left_outcome = self.left.reduce(ctx)
+        if isinstance(left_outcome, Incomplete):
+            return left_outcome
+        right_outcome = self.right.reduce(ctx)
+        if isinstance(right_outcome, Incomplete):
+            return right_outcome
+        left = complete_value(left_outcome, owner="BinOpSugar left")
+        right = complete_value(right_outcome, owner="BinOpSugar right")
         if isinstance(left, EncodedStringValue) and isinstance(right, EncodedStringValue):
             if self.operator != "+":
                 raise TypeError("BinOpSugar only concatenates encoded strings with +")
@@ -79,6 +91,14 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
                 EncodedStringValue(table=left.table, indices=left.indices + right.indices)
             )
         if isinstance(left, TermValue) and isinstance(right, TermValue):
+            if self.operator in _DIVIDES and right.value == 0:
+                # `a / 0` RAISES at runtime -- it warrants no value, and the line after it
+                # never executes, so this effect halts all downstream constraint
+                # propagation. It is Incomplete, not a value and not a refusal.
+                return Incomplete(
+                    f"division by zero (`{self.operator}` by 0): a runtime DivByZero "
+                    f"effect that raises and stops constraint propagation"
+                )
             return Complete(TermValue(_FOLD[self.operator](left.value, right.value)))
         raise TypeError(
             f"BinOpSugar {self.operator} requires TermValue or EncodedStringValue operands"

@@ -83,11 +83,12 @@ class SourceFragment:
     def observed(self) -> str:
         if isinstance(self.node, ast.Constant) and isinstance(
             self.node.value,
-            (int, str, bool, type(None)),
+            (int, float, str, bool, type(None)),
         ):
-            # NB: float is intentionally NOT here -- floats are RESIDUAL (unmodeled), so a
-            # float Constant stays observed as "Constant" and the factory refuses it. See
-            # literal_encoding.rs: asserting float != int is a false distinctness.
+            # float IS a primitive literal: the numeric type is COLLAPSED -- Int embeds in
+            # Real losslessly (3 and 3.0 are the same number), so 3.0 == 3 is reflexively
+            # true and there is no Int/Real split at the value level (the SMT sort is an
+            # emission-time inference: stay Int unless you meet a Real, then ride up).
             return "PrimitiveLiteral"
         return type(self.node).__name__
 
