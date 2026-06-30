@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import ast
 import functools
 import inspect
 import textwrap
@@ -45,6 +44,8 @@ from .ir import (
     not_,
     implies,
 )
+
+from .factory.source_fragment import SourceFragment
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +157,12 @@ def _parse_contract_expr(
 def _parse_expr_string(expr: str, available_names: List[str]) -> Formula:
     """Parse a string expression like ``x >= 0 && y != null``."""
     source = textwrap.dedent(expr).strip()
-    tree = ast.parse(source, mode="eval")
-    return _translate_expr(tree.body, available_names)
+    root = SourceFragment.from_source(source, "<contract>")
+    # Module body is wrapped in a Block; walk to find the first Expr statement.
+    for frag in root.walk():
+        if frag.observed == "Expr":
+            return _translate_expr(frag.expr_value(), available_names)
+    raise ValueError(f"empty contract expression: {expr!r}")
 
 
 def _parse_callable(fn: Callable[..., bool], available_names: List[str]) -> Formula:
@@ -168,91 +173,95 @@ def _parse_callable(fn: Callable[..., bool], available_names: List[str]) -> Form
         # Fallback: if source unavailable, treat as opaque.
         return atomic("py_predicate", [str_const(fn.__name__)])
     source = textwrap.dedent(source).strip()
-    tree = ast.parse(source)
+    root = SourceFragment.from_source(source, "<callable>")
     # Search for Lambda first (separate pass so we don't accidentally
     # match a nested FunctionDef from enclosing scope).
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Lambda):
-            return _translate_expr(node.body, available_names)
+    for frag in root.walk():
+        if frag.observed == "Lambda":
+            return _translate_expr(frag.lambda_body(), available_names)
     # Then search for FunctionDef.
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.body and isinstance(node.body[-1], ast.Return):
-                return _translate_expr(node.body[-1].value, available_names)
-            if len(node.body) == 1 and isinstance(node.body[0], ast.Expr):
-                return _translate_expr(node.body[0].value, available_names)
+    for frag in root.walk():
+        if frag.observed in ("FunctionDef", "AsyncFunctionDef"):
+            body = frag.function_body()
+            if body and body[-1].observed == "Return":
+                rv = body[-1].return_value()
+                if rv is not None:
+                    return _translate_expr(rv, available_names)
+            if len(body) == 1 and body[0].observed == "Expr":
+                return _translate_expr(body[0].expr_value(), available_names)
     # Fallback: opaque predicate
     return atomic("py_predicate", [str_const(fn.__name__)])
 
 
-_COMPARE_OPS = {
-    ast.Eq: "=",
-    ast.NotEq: "≠",
-    ast.Lt: "<",
-    ast.LtE: "≤",
-    ast.Gt: ">",
-    ast.GtE: "≥",
-    ast.Is: "=",
-    ast.IsNot: "≠",
-}
-
-_BOOL_OPS = {
-    ast.And: "and",
-    ast.Or: "or",
+_COMPARE_OPS_STR = {
+    "Eq": "=",
+    "NotEq": "≠",
+    "Lt": "<",
+    "LtE": "≤",
+    "Gt": ">",
+    "GtE": "≥",
+    "Is": "=",
+    "IsNot": "≠",
 }
 
 
-def _translate_expr(node: ast.expr, available_names: List[str]) -> Formula:
-    """Translate a Python AST expression node into an IR Formula."""
-    if isinstance(node, ast.BoolOp):
-        operands = [_translate_expr(v, available_names) for v in node.values]
-        kind = _BOOL_OPS.get(type(node.op))
+def _translate_expr(fragment: SourceFragment, available_names: List[str]) -> Formula:
+    """Translate a SourceFragment expression into an IR Formula."""
+    obs = fragment.observed
+
+    if obs == "BoolOp":
+        operands = [_translate_expr(v, available_names) for v in fragment.boolop_values()]
+        kind = fragment.boolop_op_kind()
         if kind == "and":
             return and_(operands)
         if kind == "or":
             return or_(operands)
-        raise ValueError(f"unsupported bool op: {type(node.op).__name__}")
+        raise ValueError(f"unsupported bool op: {obs}")
 
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        inner = _translate_expr(node.operand, available_names)
+    if obs == "UnaryOp" and fragment.operator_kind() == "Not":
+        inner = _translate_expr(fragment.unaryop_operand(), available_names)
         return not_(inner)
 
-    if isinstance(node, ast.Compare):
-        if len(node.ops) != 1 or len(node.comparators) != 1:
+    if obs == "Compare":
+        ops = fragment.compare_ops()
+        comparators = fragment.compare_comparators()
+        if len(ops) != 1 or len(comparators) != 1:
             raise ValueError("chained comparisons are not supported")
-        op = node.ops[0]
-        sym = _COMPARE_OPS.get(type(op))
+        sym = _COMPARE_OPS_STR.get(ops[0])
         if sym is None:
-            raise ValueError(f"unsupported comparison: {type(op).__name__}")
-        l = _translate_term(node.left, available_names)
-        r = _translate_term(node.comparators[0], available_names)
+            raise ValueError(f"unsupported comparison: {ops[0]}")
+        l = _translate_term(fragment.compare_left(), available_names)
+        r = _translate_term(comparators[0], available_names)
         return comparison_with_none_guard(sym, l, r)
 
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        l = _translate_term(node.left, available_names)
-        r = _translate_term(node.right, available_names)
+    if obs == "BinOp" and fragment.operator_kind() == "Add":
+        l = _translate_term(fragment.binop_left(), available_names)
+        r = _translate_term(fragment.binop_right(), available_names)
         return eq(ctor("+", [l, r]), ctor("+", [l, r]))  # placeholder
 
     # Single term treated as truthiness assertion.
-    t = _translate_term(node, available_names)
+    t = _translate_term(fragment, available_names)
     return eq(t, bool_const(True))
 
 
-def _translate_term(node: ast.expr, available_names: List[str]):
-    """Translate a Python AST expression node into an IR Term."""
+def _translate_term(fragment: SourceFragment, available_names: List[str]):
+    """Translate a SourceFragment expression into an IR Term."""
     from .ir import Term
 
-    if isinstance(node, ast.Name):
-        if node.id == "None":
-            return ctor("None", [])
-        if node.id == "True":
-            return bool_const(True)
-        if node.id == "False":
-            return bool_const(False)
-        return make_var(node.id)
+    obs = fragment.observed
 
-    if isinstance(node, ast.Constant):
-        v = node.value
+    if obs == "Name":
+        id_ = fragment.name_id()
+        if id_ == "None":
+            return ctor("None", [])
+        if id_ == "True":
+            return bool_const(True)
+        if id_ == "False":
+            return bool_const(False)
+        return make_var(id_)
+
+    if obs == "PrimitiveLiteral":
+        v = fragment.literal_value()
         if isinstance(v, bool):
             return bool_const(v)
         if isinstance(v, int):
@@ -263,55 +272,38 @@ def _translate_term(node: ast.expr, available_names: List[str]):
             return ctor("None", [])
         raise ValueError(f"unsupported constant: {type(v).__name__}")
 
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        if isinstance(node.operand, ast.Constant) and isinstance(
-            node.operand.value, int
-        ):
-            return num(-node.operand.value)
+    if obs == "UnaryOp" and fragment.operator_kind() == "USub":
+        operand = fragment.unaryop_operand()
+        if operand.observed == "PrimitiveLiteral":
+            v = operand.literal_value()
+            if isinstance(v, int):
+                return num(-v)
         raise ValueError("unary minus only supported on integer literals")
 
-    if isinstance(node, ast.Call):
-        if not isinstance(node.func, ast.Name):
+    if obs == "Call":
+        if fragment.call_is_method_call():
             raise ValueError("only simple-name calls are supported")
-        args = [_translate_term(a, available_names) for a in node.args]
-        return ctor(node.func.id, args)
+        name = fragment.call_target_name()
+        if name is None:
+            raise ValueError("only simple-name calls are supported")
+        args = [_translate_term(a, available_names) for a in fragment.call_args()]
+        return ctor(name, args)
 
-    if isinstance(node, ast.BinOp):
-        if isinstance(node.op, ast.Add):
-            return ctor(
-                "+",
-                [
-                    _translate_term(node.left, available_names),
-                    _translate_term(node.right, available_names),
-                ],
-            )
-        if isinstance(node.op, ast.Sub):
-            return ctor(
-                "-",
-                [
-                    _translate_term(node.left, available_names),
-                    _translate_term(node.right, available_names),
-                ],
-            )
-        if isinstance(node.op, ast.Mult):
-            return ctor(
-                "*",
-                [
-                    _translate_term(node.left, available_names),
-                    _translate_term(node.right, available_names),
-                ],
-            )
-        if isinstance(node.op, ast.Div):
-            return ctor(
-                "/",
-                [
-                    _translate_term(node.left, available_names),
-                    _translate_term(node.right, available_names),
-                ],
-            )
-        raise ValueError(f"unsupported binary op: {type(node.op).__name__}")
+    if obs == "BinOp":
+        op = fragment.operator_kind()
+        l = _translate_term(fragment.binop_left(), available_names)
+        r = _translate_term(fragment.binop_right(), available_names)
+        if op == "Add":
+            return ctor("+", [l, r])
+        if op == "Sub":
+            return ctor("-", [l, r])
+        if op == "Mult":
+            return ctor("*", [l, r])
+        if op == "Div":
+            return ctor("/", [l, r])
+        raise ValueError(f"unsupported binary op: {op}")
 
-    raise ValueError(f"unsupported expression: {type(node).__name__}")
+    raise ValueError(f"unsupported expression: {obs}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -13,9 +12,9 @@ class SourceFragmentStack:
 
     @classmethod
     def from_source(cls, source: str, filename: str) -> "SourceFragmentStack":
-        tree = ast.parse(source, filename=filename)
+        root = SourceFragment.from_source(source, filename)
         sites: List[SourceFragment] = []
-        cls._push(SourceFragment.from_node(tree, filename), sites)
+        cls._push(root, sites)
         return cls(sites)
 
     @classmethod
@@ -23,7 +22,7 @@ class SourceFragmentStack:
         # A site is pushed BEFORE the fragments it decomposes into, so it pops AFTER
         # them: the children build first (inside), then their parent composes them
         # (out). The fragment owns the decomposition -- the walk just recurses it.
-        if hasattr(site.node, "lineno") and hasattr(site.node, "col_offset"):
+        if site.has_position():
             sites.append(site)
         for fragment in site.fragments():
             cls._push(fragment, sites)

@@ -16,7 +16,10 @@ def _from_site_impl(site, functions_by_name):
     func_node = functions_by_name.get(func_name)
     if func_node is None:
         return None
-    func_site = SourceFragment.from_node(func_node, site.filename)
+    if isinstance(func_node, SourceFragment):
+        func_site = func_node
+    else:
+        func_site = SourceFragment.from_node(func_node, site.filename)
     params = func_site.function_params()
     if len(params) != 1:
         return None

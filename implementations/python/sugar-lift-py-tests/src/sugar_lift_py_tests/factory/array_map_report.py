@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import os
 import sys
@@ -40,7 +39,7 @@ def build_array_map_report(
     filename: str,
     memento_file: str | None = None,
 ) -> SourceReportBuild | None:
-    tree = ast.parse(source, filename=filename)
+    root = SourceFragment.from_source(source, filename)
     lines = source.splitlines(keepends=True)
     contracts: list[BodyUniverseDto] = []
     source_mementos: list[SourceMementoDto] = []
@@ -48,11 +47,13 @@ def build_array_map_report(
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
     functions_by_name = {
-        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        frag.function_name(): frag
+        for frag in root.walk()
+        if frag.observed == "FunctionDef"
     }
     for fn in functions_by_name.values():
-        for stmt in fn.body:
-            if not isinstance(stmt, ast.Assert):
+        for stmt in fn.function_body():
+            if stmt.observed != "Assert":
                 continue
             lifted = _lift_assert(
                 stmt,
@@ -85,13 +86,13 @@ def build_array_map_report(
 
 
 def _lift_assert(
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     *,
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    functions_by_name: dict[str, ast.FunctionDef],
+    functions_by_name: dict[str, SourceFragment],
 ) -> tuple[
     list[BodyUniverseDto],
     list[SourceMementoDto],
@@ -99,10 +100,10 @@ def _lift_assert(
     list[FactoryWalkRowDto],
     list[dict[str, Any]],
 ] | None:
-    comparison = stmt.test
-    if not isinstance(comparison, ast.Compare) or len(comparison.ops) != 1:
+    comparison = stmt.assert_test()
+    if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
         return None
-    if not isinstance(comparison.ops[0], ast.Eq) or len(comparison.comparators) != 1:
+    if comparison.compare_ops()[0] != "Eq" or len(comparison.compare_comparators()) != 1:
         return None
     lifted = _lift_fluent_array_map_assert(
         stmt,
@@ -126,10 +127,10 @@ def _lift_assert(
 
 
 def _lift_fluent_array_map_assert(
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     *,
-    comparison: ast.Compare,
-    fn: ast.FunctionDef,
+    comparison: SourceFragment,
+    fn: SourceFragment,
     filename: str,
     memento_file: str,
     source_lines: list[str],
@@ -140,23 +141,23 @@ def _lift_fluent_array_map_assert(
     list[FactoryWalkRowDto],
     list[dict[str, Any]],
 ] | None:
-    call = comparison.left
+    call = comparison.compare_left()
     if not (
-        isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr == "map"
-        and len(call.args) == 1
+        call.observed == "Call"
+        and call.call_is_method_call()
+        and call.call_target_name() == "map"
+        and call.call_arg_count() == 1
     ):
         return None
     factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
-    receiver = factory_ctx.build_body(call.func.value, SugarRole.TERM)
+    receiver = factory_ctx.build_body(call.call_receiver(), SugarRole.TERM)
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
     try:
-        map_sugar = build_map_sugar(SourceFragment.from_node(call, filename), factory_ctx)
+        map_sugar = build_map_sugar(call, factory_ctx)
     except TypeError:
         return None
-    expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
+    expected_sugar = _array_literal_sugar(comparison.compare_comparators()[0], factory_ctx)
     if expected_sugar is None:
         return None
     reduce_ctx = ReduceContext(temporal=factory_ctx.temporal)
@@ -171,7 +172,7 @@ def _lift_fluent_array_map_assert(
         fn,
         memento_file,
         source_lines,
-        contract_name=f"{Path(memento_file).stem}::{fn.name}::array-map-sugar",
+        contract_name=f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
     )
     formula = and_(
         [eq(num(len(actual.items)), num(len(expected.items)))]
@@ -182,7 +183,7 @@ def _lift_fluent_array_map_assert(
     )
     inv = json.loads(encode_jcs(formula_to_value(formula)))
     contract = BodyUniverseDto(
-        name=f"{Path(memento_file).stem}::{fn.name}::array-map-sugar",
+        name=f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
         out_binding="out",
         inv=inv,
         source_warrants=[statement_memento],
@@ -224,14 +225,14 @@ def _lift_fluent_array_map_assert(
 
 
 def _lift_native_list_map_assert(
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     *,
-    comparison: ast.Compare,
-    fn: ast.FunctionDef,
+    comparison: SourceFragment,
+    fn: SourceFragment,
     filename: str,
     memento_file: str,
     source_lines: list[str],
-    functions_by_name: dict[str, ast.FunctionDef],
+    functions_by_name: dict[str, SourceFragment],
 ) -> tuple[
     list[BodyUniverseDto],
     list[SourceMementoDto],
@@ -239,13 +240,13 @@ def _lift_native_list_map_assert(
     list[FactoryWalkRowDto],
     list[dict[str, Any]],
 ] | None:
-    blame = f"{filename}:{comparison.left.lineno}:{comparison.left.col_offset}"
-    left_site = SourceFragment.from_node(comparison.left, filename)
-    list_sugar_value = list_sugar(left_site, functions_by_name, blame=blame)
+    left_frag = comparison.compare_left()
+    blame = f"{filename}:{left_frag.line}:{left_frag.col}"
+    list_sugar_value = list_sugar(left_frag, functions_by_name, blame=blame)
     if list_sugar_value is None:
         return None
     factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
-    expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
+    expected_sugar = _array_literal_sugar(comparison.compare_comparators()[0], factory_ctx)
     if expected_sugar is None:
         return None
     actual = complete_value(list_sugar_value.desugar(), owner="native list-map actual")
@@ -257,7 +258,7 @@ def _lift_native_list_map_assert(
     callable_name = callable_sugar.name
     callable_fn = functions_by_name[callable_name]
     callable_contract_name = f"{Path(memento_file).stem}::{callable_name}::callable"
-    assertion_contract_name = f"{Path(memento_file).stem}::{fn.name}::array-map-sugar"
+    assertion_contract_name = f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar"
     callable_memento = _function_source_memento(
         callable_fn,
         memento_file,
@@ -378,8 +379,8 @@ def _lift_native_list_map_assert(
     )
 
 
-def _array_literal_sugar(node: ast.AST, ctx: FactoryBuildContext) -> ArrayLiteralSugar | None:
-    if not isinstance(node, ast.List):
+def _array_literal_sugar(node: SourceFragment, ctx: FactoryBuildContext) -> ArrayLiteralSugar | None:
+    if node.observed != "List":
         return None
     sugar = ctx.build_child(node, SugarRole.TERM).sugar
     if not isinstance(sugar, ArrayLiteralSugar):
@@ -407,11 +408,11 @@ def _array_map_catalog() -> SugarCatalog:
     )
 
 
-def _callsite_string(memento_file: str, node: ast.AST) -> str:
+def _callsite_string(memento_file: str, node: SourceFragment) -> str:
     return _source_locus_string(
         memento_file,
-        line=getattr(node, "lineno"),
-        col=getattr(node, "col_offset"),
+        line=node.line,
+        col=node.col,
     )
 
 
@@ -423,7 +424,7 @@ def _source_locus_string(memento_file: str, *, line: int, col: int) -> str:
 
 
 def _callable_source_audit(
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     memento_file: str,
     contract_name: str,
     memento: SourceMementoDto,
@@ -441,13 +442,13 @@ def _callable_source_audit(
         "role": "python.callable-sugar",
         "contract": contract_name,
         "file": memento_file,
-        "sourceFunctionName": fn.name,
+        "sourceFunctionName": fn.function_name(),
         "totals": totals,
         "loci": [
             {
                 "file": memento_file,
-                "line": fn.lineno,
-                "col": fn.col_offset,
+                "line": fn.line,
+                "col": fn.col,
                 "status": "warranted",
                 "ast_kind": "FunctionDef",
                 "role": "python.callable-sugar",
@@ -459,8 +460,8 @@ def _callable_source_audit(
 
 
 def _source_audit(
-    stmt: ast.Assert,
-    fn: ast.FunctionDef,
+    stmt: SourceFragment,
+    fn: SourceFragment,
     memento_file: str,
     contract_name: str,
     memento: SourceMementoDto,
@@ -478,13 +479,13 @@ def _source_audit(
         "role": "python.array-map-sugar",
         "contract": contract_name,
         "file": memento_file,
-        "sourceFunctionName": fn.name,
+        "sourceFunctionName": fn.function_name(),
         "totals": totals,
         "loci": [
             {
                 "file": memento_file,
-                "line": stmt.lineno,
-                "col": stmt.col_offset,
+                "line": stmt.line,
+                "col": stmt.col,
                 "status": "warranted",
                 "ast_kind": "Assert",
                 "role": "python.array-map-sugar",
@@ -498,7 +499,7 @@ def _source_audit(
 def _walk_row(
     selected: str,
     ast_kind: str,
-    stmt: ast.Assert,
+    stmt: SourceFragment,
     filename: str,
     memento: SourceMementoDto,
     output: str,
@@ -507,7 +508,7 @@ def _walk_row(
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(
         file=filename,
-        line=stmt.lineno,
+        line=stmt.line,
         requested_role="term",
         ast_kind=ast_kind,
         selected=selected,
@@ -515,10 +516,10 @@ def _walk_row(
         output=output,
         source_memento=memento,
         span=SourceSpanDto(
-            start_line=stmt.lineno,
-            start_col=stmt.col_offset,
-            end_line=stmt.end_lineno,
-            end_col=stmt.end_col_offset or 0,
+            start_line=stmt.line,
+            start_col=stmt.col,
+            end_line=stmt.end_line,
+            end_col=stmt.end_col,
         ),
         emitted_formula=emitted_formula,
         extra=extra or {},
@@ -526,7 +527,7 @@ def _walk_row(
 
 
 def _function_source_memento(
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     memento_file: str,
     source_lines: list[str],
     *,
@@ -545,16 +546,16 @@ def _function_source_memento(
         ),
         source_cid=body_source["source_cid"],
         template_cid=body_source["template_cid"],
-        source_function_name=fn.name,
+        source_function_name=fn.function_name(),
         role=role,
-        contract_name=contract_name or f"{Path(memento_file).stem}::{fn.name}::array-map-sugar",
+        contract_name=contract_name or f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
         param_names=body_source.get("param_names", []),
     )
 
 
 def _statement_source_memento(
-    stmt: ast.stmt,
-    fn: ast.FunctionDef,
+    stmt: SourceFragment,
+    fn: SourceFragment,
     memento_file: str,
     source_lines: list[str],
     *,
@@ -573,7 +574,7 @@ def _statement_source_memento(
         ),
         source_cid=statement_source["source_cid"],
         template_cid=statement_source["template_cid"],
-        source_function_name=fn.name,
+        source_function_name=fn.function_name(),
         role=role,
         contract_name=contract_name,
         param_names=statement_source.get("param_names", []),
@@ -582,7 +583,7 @@ def _statement_source_memento(
 
 
 def _body_source_locator(
-    fn: ast.FunctionDef,
+    fn: SourceFragment,
     memento_file: str,
     source_lines: list[str],
 ) -> dict[str, Any]:
@@ -595,34 +596,34 @@ def _body_source_locator(
         if str(sibling_src) not in sys.path:
             sys.path.insert(0, str(sibling_src))
         from sugar_lift_python_source.bind_lifter import _body_source_locator as locator
-    return locator(fn, memento_file.replace(os.sep, "/"), source_lines)
+    return locator(fn.node, memento_file.replace(os.sep, "/"), source_lines)
 
 
 def _statement_source_locator(
-    stmt: ast.stmt,
-    fn: ast.FunctionDef,
+    stmt: SourceFragment,
+    fn: SourceFragment,
     memento_file: str,
     source_lines: list[str],
 ) -> dict[str, Any]:
     source = "".join(source_lines)
-    source_text = ast.get_source_segment(source, stmt)
+    source_text = stmt.source_text(source)
     if source_text is None:
-        raise ValueError(f"could not extract source for statement at line {stmt.lineno}")
+        raise ValueError(f"could not extract source for statement at line {stmt.line}")
     function_param_names, stmt_to_template, blake3_512_of, template_cid_of_json = (
         _statement_source_api()
     )
-    ast_template = stmt_to_template(stmt, function_param_names(fn))
+    ast_template = stmt_to_template(stmt.node, function_param_names(fn.node))
     return {
         "file": memento_file.replace(os.sep, "/"),
         "source_cid": blake3_512_of(source_text.encode("utf-8")),
         "span": {
-            "start_line": stmt.lineno,
-            "start_col": stmt.col_offset,
-            "end_line": stmt.end_lineno or stmt.lineno,
-            "end_col": stmt.end_col_offset or 0,
+            "start_line": stmt.line,
+            "start_col": stmt.col,
+            "end_line": stmt.end_line,
+            "end_col": stmt.end_col,
         },
         "template_cid": template_cid_of_json(ast_template),
-        "param_names": function_param_names(fn),
+        "param_names": function_param_names(fn.node),
     }
 
 

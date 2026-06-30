@@ -17,29 +17,30 @@ boundary here re-buckets the census, so any edit must re-run the corpus.
 
 from __future__ import annotations
 
-import ast
 from typing import List, Tuple
 
+from .factory.source_fragment import SourceFragment
 
-def _strip_doc(body):
+
+def _strip_doc(body: List[SourceFragment]) -> List[SourceFragment]:
     return [
         s
         for s in body
         if not (
-            isinstance(s, ast.Expr)
-            and isinstance(s.value, ast.Constant)
-            and isinstance(s.value.value, str)
+            s.observed == "Expr"
+            and s.expr_value().observed == "PrimitiveLiteral"
+            and isinstance(s.expr_value().literal_value(), str)
         )
     ]
 
 
-def _is_literalish(node) -> bool:
-    return isinstance(node, ast.Constant)
+def _is_literalish(node: SourceFragment) -> bool:
+    return node.observed == "PrimitiveLiteral"
 
 
-def classify(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
+def classify(fn: SourceFragment) -> Tuple[str, List[str]]:
     """Primary bucket + orthogonal flags. TOTAL: always returns a bucket."""
-    body = _strip_doc(fn.body)
+    body = _strip_doc(fn.function_body())
     flags = []
     if not body:
         return "empty", flags
@@ -48,10 +49,10 @@ def classify(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
     guards = 0
     for s in body:
         if (
-            isinstance(s, ast.If)
-            and len(s.body) == 1
-            and isinstance(s.body[0], ast.Raise)
-            and not s.orelse
+            s.observed == "If"
+            and len(s.if_body()) == 1
+            and s.if_body()[0].observed == "Raise"
+            and not s.if_orelse()
         ):
             guards += 1
         else:
@@ -60,35 +61,35 @@ def classify(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
         flags.append("guard-then-raise-prefix")
 
     # table-loop: any for-loop whose body subscripts a Name and accumulates
-    for s in ast.walk(fn):
-        if isinstance(s, (ast.For, ast.AsyncFor)):
+    for s in fn.walk():
+        if s.observed in ("For", "AsyncFor"):
             has_sub = any(
-                isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
-                for n in ast.walk(s)
+                n.observed == "Subscript"
+                and n.subscript_receiver().observed == "Name"
+                for n in s.walk()
             )
             has_acc = any(
-                isinstance(n, (ast.AugAssign,))
+                n.observed == "AugAssign"
                 or (
-                    isinstance(n, ast.Call)
-                    and isinstance(n.func, ast.Attribute)
-                    and n.func.attr in ("append", "extend", "write", "add")
+                    n.observed == "Call"
+                    and n.call_is_method_call()
+                    and n.call_target_name() in ("append", "extend", "write", "add")
                 )
-                for n in ast.walk(s)
+                for n in s.walk()
             )
             if has_sub and has_acc:
                 flags.append("table-loop")
                 break
 
     last = body[-1]
-    if not isinstance(last, ast.Return) or last.value is None:
-        return f"non-return:{type(last).__name__}", flags
-    v = last.value
+    if last.observed != "Return" or last.return_value() is None:
+        return f"non-return:{last.observed}", flags
+    v = last.return_value()
 
-    if isinstance(v, ast.Call):
-        f = v.func
-        if isinstance(f, ast.Attribute):
-            a = f.attr
-            args = v.args
+    if v.observed == "Call":
+        if v.call_is_method_call():
+            a = v.call_target_name()
+            args = v.call_args()
             lit1 = len(args) == 1 and _is_literalish(args[0])
             if a == "translate":
                 return "return-translate", flags
@@ -105,29 +106,29 @@ def classify(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
             if a in ("upper", "lower", "casefold", "title"):
                 return "return-case-method", flags
             return "return-method-call", flags
-        if isinstance(f, ast.Name):
+        if v.call_func().observed == "Name":
             if len(body) == 1:
                 return "pure-delegation", flags
             return "return-fn-call", flags
         return "return-call-other", flags
-    if isinstance(v, ast.Subscript) and isinstance(v.value, ast.Name):
+    if v.observed == "Subscript" and v.subscript_receiver().observed == "Name":
         return "return-table-subscript", flags
-    if isinstance(v, ast.Constant):
+    if v.observed == "PrimitiveLiteral":
         return "return-constant", flags
-    if isinstance(v, ast.Name):
+    if v.observed == "Name":
         return "return-name", flags
-    if isinstance(v, ast.BinOp):
+    if v.observed == "BinOp":
         return "return-binop", flags
-    if isinstance(v, (ast.Compare, ast.BoolOp)) or (
-        isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.Not)
+    if v.observed in ("Compare", "BoolOp") or (
+        v.observed == "UnaryOp" and v.operator_kind() == "Not"
     ):
         return "return-predicate", flags
-    if isinstance(v, ast.IfExp):
+    if v.observed == "IfExp":
         return "return-ifexp", flags
-    if isinstance(v, ast.JoinedStr):
+    if v.observed == "JoinedStr":
         return "return-fstring", flags
-    if isinstance(v, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
+    if v.observed in ("Tuple", "List", "Dict", "Set"):
         return "return-collection", flags
-    if isinstance(v, ast.Attribute):
+    if v.observed == "Attribute":
         return "return-attribute", flags
-    return f"return-other:{type(v).__name__}", flags
+    return f"return-other:{v.observed}", flags

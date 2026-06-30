@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import ast
 from typing import Any
 
+from ..factory.source_fragment import SourceFragment
 from .constraint_dig_request import ConstraintDigRequest
 from .constraint_universe import ConstraintUniverse
 from .field_keyword_predicate import field_keyword_predicate
 
 
 def walk_constraint_universe(
-    tree: ast.Module,
+    tree: SourceFragment,
     dig: ConstraintDigRequest,
     *,
     source_memento: dict[str, Any],
@@ -20,13 +20,17 @@ def walk_constraint_universe(
     proofir: list[dict[str, Any]] = []
     sugar_chain: list[str] = []
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.AnnAssign):
+    for fragment in [tree, *tree.walk()]:
+        if fragment.observed != "AnnAssign":
             continue
-        if not isinstance(node.target, ast.Name) or node.target.id != field:
+        try:
+            target_id = fragment.annassign_target_id()
+        except TypeError:
+            continue
+        if target_id != field:
             continue
         predicate, child_chain = field_keyword_predicate(
-            node,
+            fragment,
             owner=owner,
             resolved_names=resolved_names,
         )

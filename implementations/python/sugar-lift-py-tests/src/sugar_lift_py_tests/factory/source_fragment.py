@@ -273,3 +273,248 @@ class SourceFragment:
         """Return the name string for a FunctionDef or AsyncFunctionDef node."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return self.node.name  # type: ignore[attr-defined]
+
+    # ------------------------------------------------------------------
+    # Additional accessors added in numpy-import-sugar sweep
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_source(cls, source: str, filename: str) -> "SourceFragment":
+        """Parse Python source and return the root Module SourceFragment.
+
+        Wraps ast.parse() internally; callers never need to import ast.
+        """
+        tree = ast.parse(source, filename=filename)
+        return cls.from_node(tree, filename)
+
+    def has_position(self) -> bool:
+        """Return True if this node has line and column position attributes."""
+        return hasattr(self.node, "lineno") and hasattr(self.node, "col_offset")
+
+    @property
+    def end_line(self) -> int:
+        """The end line number of this node, or lineno if end_lineno is absent."""
+        return getattr(self.node, "end_lineno", None) or getattr(self.node, "lineno", 0)
+
+    @property
+    def end_col(self) -> int:
+        """The end column offset of this node, or 0 if end_col_offset is absent."""
+        return getattr(self.node, "end_col_offset", None) or 0
+
+    def source_text(self, source: str) -> "str | None":
+        """Return the source substring for this node, or None if position is missing.
+
+        Wraps ast.get_source_segment() so callers never import ast.
+        """
+        return ast.get_source_segment(source, self.node)
+
+    def walk(self) -> "list[SourceFragment]":
+        """Return all descendant fragments in depth-first pre-order.
+
+        Replaces ast.walk() for callers that must not import ast.
+        """
+        result: list[SourceFragment] = []
+        for child in self.fragments():
+            result.append(child)
+            result.extend(child.walk())
+        return result
+
+    def is_node_type(self, *kinds) -> bool:
+        """Return True if this node is an instance of any of the given ast types.
+
+        Replaces isinstance(node, ast.X) checks in factory and report code.
+        Example: ``frag.is_node_type(ast.Lambda, ast.FunctionDef)``
+        """
+        return isinstance(self.node, kinds)
+
+    # --- assert / expr-statement ------------------------------------------
+
+    def assert_test(self) -> "SourceFragment":
+        """Return a SourceFragment for the test expression of an Assert node."""
+        self._require(ast.Assert)
+        return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
+
+    def expr_value(self) -> "SourceFragment":
+        """Return a SourceFragment for the expression inside an Expr statement node."""
+        self._require(ast.Expr)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    # --- unary / bool ops -------------------------------------------------
+
+    def unaryop_operand(self) -> "SourceFragment":
+        """Return a SourceFragment for the operand of a UnaryOp node."""
+        self._require(ast.UnaryOp)
+        return SourceFragment.from_node(self.node.operand, self.filename)  # type: ignore[attr-defined]
+
+    def boolop_op_kind(self) -> str:
+        """Return 'and' or 'or' for a BoolOp node."""
+        self._require(ast.BoolOp)
+        return "and" if isinstance(self.node.op, ast.And) else "or"  # type: ignore[attr-defined]
+
+    def boolop_values(self) -> "list[SourceFragment]":
+        """Return the operand SourceFragments for a BoolOp node (ast.BoolOp.values)."""
+        self._require(ast.BoolOp)
+        return [SourceFragment.from_node(v, self.filename) for v in self.node.values]  # type: ignore[attr-defined]
+
+    # --- attribute --------------------------------------------------------
+
+    def attr_receiver(self) -> "SourceFragment":
+        """Return a SourceFragment for the receiver of an Attribute node (Attribute.value)."""
+        self._require(ast.Attribute)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    # --- call / keyword ---------------------------------------------------
+
+    def call_func(self) -> "SourceFragment":
+        """Return a SourceFragment for the full func expression of a Call node.
+
+        Unlike call_receiver(), this always returns the func node regardless of
+        whether it is a Name or an Attribute.
+        """
+        self._require(ast.Call)
+        return SourceFragment.from_node(self.node.func, self.filename)  # type: ignore[attr-defined]
+
+    def call_keywords(self) -> "list[SourceFragment]":
+        """Return SourceFragments wrapping each ast.keyword of the Call."""
+        self._require(ast.Call)
+        return [SourceFragment.from_node(kw, self.filename) for kw in self.node.keywords]  # type: ignore[attr-defined]
+
+    def keyword_arg_name(self) -> "str | None":
+        """Return the keyword argument name string, or None for **kwargs expansion."""
+        self._require(ast.keyword)
+        return self.node.arg  # type: ignore[attr-defined]
+
+    def keyword_value(self) -> "SourceFragment":
+        """Return a SourceFragment for the value expression of a keyword argument."""
+        self._require(ast.keyword)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    # --- annotated assignment ----------------------------------------------
+
+    def annassign_target(self) -> "SourceFragment":
+        """Return a SourceFragment for the target of an AnnAssign node."""
+        self._require(ast.AnnAssign)
+        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+
+    def annassign_annotation(self) -> "SourceFragment":
+        """Return a SourceFragment for the annotation of an AnnAssign node."""
+        self._require(ast.AnnAssign)
+        return SourceFragment.from_node(self.node.annotation, self.filename)  # type: ignore[attr-defined]
+
+    def annassign_value(self) -> "SourceFragment | None":
+        """Return a SourceFragment for the optional value of an AnnAssign, or None."""
+        self._require(ast.AnnAssign)
+        if self.node.value is None:  # type: ignore[attr-defined]
+            return None
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    def annassign_target_id(self) -> str:
+        """Return the name string when an AnnAssign target is a simple Name node."""
+        self._require(ast.AnnAssign)
+        target = self.node.target  # type: ignore[attr-defined]
+        if not isinstance(target, ast.Name):
+            raise TypeError(
+                f"annassign_target_id requires a Name target, got {type(target).__name__}"
+                f" at {self.blame}"
+            )
+        return target.id
+
+    # --- imports ----------------------------------------------------------
+
+    def import_names(self) -> "list[tuple[str, str | None]]":
+        """Return (name, asname) pairs for an Import node."""
+        self._require(ast.Import)
+        return [(alias.name, alias.asname) for alias in self.node.names]  # type: ignore[attr-defined]
+
+    def importfrom_module(self) -> "str | None":
+        """Return the module string for an ImportFrom node (None for bare relative imports)."""
+        self._require(ast.ImportFrom)
+        return self.node.module  # type: ignore[attr-defined]
+
+    def importfrom_level(self) -> int:
+        """Return the relative-import level (0 = absolute) for an ImportFrom node."""
+        self._require(ast.ImportFrom)
+        return self.node.level or 0  # type: ignore[attr-defined]
+
+    def importfrom_names(self) -> "list[tuple[str, str | None]]":
+        """Return (name, asname) pairs for an ImportFrom node."""
+        self._require(ast.ImportFrom)
+        return [(alias.name, alias.asname) for alias in self.node.names]  # type: ignore[attr-defined]
+
+    # --- function decorators ----------------------------------------------
+
+    def function_decorators(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the decorators of a FunctionDef/AsyncFunctionDef."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return [
+            SourceFragment.from_node(d, self.filename)
+            for d in self.node.decorator_list  # type: ignore[attr-defined]
+        ]
+
+    # --- augmented assignment ----------------------------------------------
+
+    def aug_assign_target(self) -> "SourceFragment":
+        """Return a SourceFragment for the target of an AugAssign node."""
+        self._require(ast.AugAssign)
+        return SourceFragment.from_node(self.node.target, self.filename)  # type: ignore[attr-defined]
+
+    def aug_assign_value(self) -> "SourceFragment":
+        """Return a SourceFragment for the value expression of an AugAssign node."""
+        self._require(ast.AugAssign)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
+    def aug_assign_op(self) -> str:
+        """Return the operator class name for an AugAssign node (e.g. 'Add', 'Sub')."""
+        self._require(ast.AugAssign)
+        return type(self.node.op).__name__  # type: ignore[attr-defined]
+
+    # --- raise ------------------------------------------------------------
+
+    def raise_exc(self) -> "SourceFragment | None":
+        """Return a SourceFragment for the exception of a Raise node, or None."""
+        self._require(ast.Raise)
+        if self.node.exc is None:  # type: ignore[attr-defined]
+            return None
+        return SourceFragment.from_node(self.node.exc, self.filename)  # type: ignore[attr-defined]
+
+    # --- for loops --------------------------------------------------------
+
+    def for_body(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the body statements of a For or AsyncFor node."""
+        self._require(ast.For, ast.AsyncFor)
+        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+
+    def unparse(self) -> str:
+        """Return a canonical source-text representation of this node (via ast.unparse).
+
+        Replaces bare ast.unparse(node) calls so callers never import ast.
+        """
+        return ast.unparse(self.node)
+
+
+# ---------------------------------------------------------------------------
+# Module-level grammar introspection helpers.
+# These let callers enumerate ast grammar classes without importing ast.
+# ---------------------------------------------------------------------------
+
+
+def grammar_stmt_classes() -> frozenset:
+    """Return the frozenset of all concrete ast.stmt subclasses on this interpreter."""
+    return frozenset(
+        cls
+        for name in dir(ast)
+        if isinstance(cls := getattr(ast, name), type)
+        and issubclass(cls, ast.stmt)
+        and cls is not ast.stmt
+    )
+
+
+def grammar_expr_classes() -> frozenset:
+    """Return the frozenset of all concrete ast.expr subclasses on this interpreter."""
+    return frozenset(
+        cls
+        for name in dir(ast)
+        if isinstance(cls := getattr(ast, name), type)
+        and issubclass(cls, ast.expr)
+        and cls is not ast.expr
+    )

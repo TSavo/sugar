@@ -7,6 +7,7 @@ from sugar_lift_py_tests.constraint_flow import (
     recognize_callsite_fact,
     walk_constraint_universe,
 )
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
 def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
@@ -38,7 +39,9 @@ def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
     assert dig.target_symbol == "User"
     assert dig.reason == "vendor callsite fact warrants constraint-universe dig for User"
 
-    body_tree = ast.parse("class User:\n    age: int = Field(..., ge=18)\n")
+    body_tree = SourceFragment.from_node(
+        ast.parse("class User:\n    age: int = Field(..., ge=18)\n"), "model.py"
+    )
     universe = walk_constraint_universe(
         body_tree,
         dig,
@@ -66,7 +69,9 @@ def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
 
 
 def test_model_class_without_constraint_shape_emits_no_universe_predicates() -> None:
-    tree = ast.parse("class User(BaseModel):\n    age: int\n")
+    tree = SourceFragment.from_node(
+        ast.parse("class User(BaseModel):\n    age: int\n"), "model.py"
+    )
     dig = ConstraintDigRequest(
         fact_subject="User.age",
         target_symbol="User",
