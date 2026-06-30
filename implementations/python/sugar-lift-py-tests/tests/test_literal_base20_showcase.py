@@ -31,7 +31,7 @@ def test_base20_lifts_by_generic_composition_not_a_base64_sugar() -> None:
     # base64-specific. The table and the ord byte are support (inert lets), the return
     # warrants the str.eq-bv-blocks universe, the call warrants the assertion inv.
     selected = [row.selected for row in rep.payload.factory_walk]
-    assert selected == ["AssignSugar", "AssignSugar", "ReturnSugar", "FunctionCallSugar"]
+    assert selected == ["AssignSugar", "AssignSugar", "ReturnSugar", "CallSugar"]
     assert [row.status for row in rep.payload.factory_walk] == [
         "support",
         "support",

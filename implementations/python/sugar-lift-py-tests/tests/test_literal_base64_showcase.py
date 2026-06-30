@@ -167,7 +167,7 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         "AssignSugar",
         "AssignSugar",
         "ReturnSugar",
-        "FunctionCallSugar",
+        "CallSugar",
     ]
     assert [row["requested_role"] for row in walk] == [
         *["FunctionBodyConstraint"] * 5,
