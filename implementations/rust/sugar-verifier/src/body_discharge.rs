@@ -235,13 +235,49 @@ impl OpContractResolver for CatalogResolver<'_> {
         let slots: Vec<SlotInfo> = formals.iter().map(SlotInfo::value).collect();
 
         let mut info = OpContractInfo::new(slots);
+        // The post equates the function's RESULT var with the body value expression, and that
+        // var is the contract's OUT-BINDING -- the rust-kit emits "result", the python-kit
+        // emits "out" (carried through the mint from `outBinding`). Hardcoding "result" makes a
+        // perfectly good `out == +(x, 1)` universe look unreducible, so read the out-binding
+        // from the body, falling back to the post's own non-formal var side. wp then
+        // substitutes the call into the var the post actually equates.
+        if let Some(rv) = body
+            .get("outBinding")
+            .or_else(|| body.get("out_binding"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| post_result_var(&post, &formals))
+        {
+            info.result_var = rv;
+        }
         info.post = Some(post);
-        // Require a recognizable `result == <value_expr>` shape; otherwise
-        // wp has no value expression to inline and would error. Falling
-        // through is the honest posture for a non-body-derived contract.
+        // Require a recognizable `<result_var> == <value_expr>` shape; otherwise wp has no
+        // value expression to inline and would error. Falling through is the honest posture
+        // for a non-body-derived contract.
         info.value_expr()?;
         Some(info)
     }
+}
+
+/// Derive the result variable of a body-derived post `=( <result>, <value_expr> )`: the side
+/// of the equation that is a bare `Var` and is NOT one of the function's formals. Used when the
+/// contract body does not spell its out-binding, so wp still substitutes into the right var
+/// regardless of whether the kit named it "out" or "result".
+fn post_result_var(post: &IrFormula, formals: &[String]) -> Option<String> {
+    let IrFormula::Atomic { name, args } = post else {
+        return None;
+    };
+    if name != "=" || args.len() != 2 {
+        return None;
+    }
+    for arg in args {
+        if let IrTerm::Var { name } = arg {
+            if !formals.iter().any(|f| f == name) {
+                return Some(name.clone());
+            }
+        }
+    }
+    None
 }
 
 /// The body-discharge route that produced an obligation. This is separate from
