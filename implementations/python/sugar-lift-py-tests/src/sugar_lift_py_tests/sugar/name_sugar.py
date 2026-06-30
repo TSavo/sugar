@@ -38,9 +38,11 @@ class NameSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx) -> Outcome:
         value = ctx.temporal.value_for(self.identifier)
         if isinstance(value, BoundVar):
-            # the name aliases an expression -- recompose the source so the reference
-            # IS that expression (reached through the alias).
-            return value.source.reduce(ctx)
+            # The name aliases an expression -- recompose the source so the reference IS
+            # that expression. Recompose against the binding's DEFINITION scope (where
+            # the name still holds its old value), so `x = x + 1` reads the old x and
+            # terminates instead of recomposing against itself.
+            return value.source.reduce(value.scope if value.scope is not None else ctx)
         return Complete(value)
 
 

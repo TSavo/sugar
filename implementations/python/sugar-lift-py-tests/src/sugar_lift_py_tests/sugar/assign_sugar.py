@@ -35,5 +35,7 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx) -> Outcome:
-        del ctx  # the rhs is preserved as source, not reduced here
-        return Complete(BoundVar(self.name, self.value))
+        # Capture the DEFINITION scope: ctx here still holds the OLD binding for the
+        # name (the block threads the new one AFTER this), so a self-referential rebind
+        # reads the old value. The rhs stays as source -- not reduced here.
+        return Complete(BoundVar(self.name, self.value, scope=ctx))
