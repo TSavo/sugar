@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -21,9 +20,9 @@ class BinOpSugar:
     def from_site(
         cls, site, *, left: SugarBody, right: SugarBody
     ) -> "BinOpSugar | None":
-        if not isinstance(site.node, ast.BinOp):
+        if site.observed != "BinOp":
             return None
-        if not isinstance(site.node.op, ast.Add):
+        if site.operator_kind() != "Add":
             return None
         return cls(
             operator="+",
@@ -47,7 +46,7 @@ class BinOpSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.BinOp) and isinstance(site.node.op, ast.Add)
+    return site.observed == "BinOp" and site.operator_kind() == "Add"
 
 
 BINOP_CLAIM = SugarClaim(

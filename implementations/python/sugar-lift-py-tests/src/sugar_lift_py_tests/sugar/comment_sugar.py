@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -23,24 +22,28 @@ class CommentSugar:
         return Complete(SupportValue())
 
 
-def is_comment_node(node: ast.AST) -> bool:
+def _is_comment_site(site) -> bool:
     """A comment: a bare string-constant statement (a docstring is the canonical
     case)."""
-    return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-    )
+    if site.observed != "Expr":
+        return False
+    terms = site.terms()
+    if len(terms) != 1:
+        return False
+    val_site = terms[0]
+    if val_site.observed != "PrimitiveLiteral":
+        return False
+    return isinstance(val_site.literal_value(), str)
 
 
 def build_comment_sugar(site, ctx):
-    if not is_comment_node(site.node):
+    if not _is_comment_site(site):
         raise TypeError("CommentSugar claim built a non-comment statement")
     return CommentSugar()
 
 
 def _owns(site) -> bool:
-    return is_comment_node(site.node)
+    return _is_comment_site(site)
 
 
 # A comment is a STATEMENT (a member of a block); its OUTCOME is Support. The role

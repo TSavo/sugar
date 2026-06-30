@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -29,24 +28,30 @@ class OrdByteSugar:
 
 
 def _is_ord_byte(site) -> bool:
-    node = site.node
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+    if site.observed != "Call":
         return False
-    if node.func.id != "ord" or node.keywords or len(node.args) != 1:
+    if site.call_is_method_call():
         return False
-    sub = node.args[0]
-    return (
-        isinstance(sub, ast.Subscript)
-        and isinstance(sub.value, ast.Name)
-        and isinstance(sub.slice, ast.Constant)
-        and isinstance(sub.slice.value, int)
-    )
+    if site.call_target_name() != "ord":
+        return False
+    if site.call_has_keywords() or site.call_arg_count() != 1:
+        return False
+    sub = site.call_args()[0]
+    if sub.observed != "Subscript":
+        return False
+    if sub.subscript_receiver().observed != "Name":
+        return False
+    idx = sub.subscript_index()
+    return idx.observed == "PrimitiveLiteral" and isinstance(idx.literal_value(), int)
 
 
 def _build_ord_byte(site, ctx) -> OrdByteSugar:
     del ctx
-    sub = site.node.args[0]
-    return OrdByteSugar(source=sub.value.id, index=sub.slice.value)
+    sub = site.call_args()[0]
+    return OrdByteSugar(
+        source=sub.subscript_receiver().name_id(),
+        index=sub.subscript_index().literal_value(),
+    )
 
 
 ORD_BYTE_CLAIM = SugarClaim(

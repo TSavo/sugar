@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -33,7 +32,7 @@ class StringSubscriptSugar:
     def from_site(
         cls, site, *, receiver: SugarBody, index: SugarBody
     ) -> "StringSubscriptSugar | None":
-        if not isinstance(site.node, ast.Subscript):
+        if site.observed != "Subscript":
             return None
         return cls(receiver=receiver, index=index)
 
@@ -65,7 +64,7 @@ def _bv_term(value) -> Term:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.Subscript)
+    return site.observed == "Subscript"
 
 
 STRING_SUBSCRIPT_CLAIM = SugarClaim(

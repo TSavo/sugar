@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -21,7 +20,7 @@ class MapSugar:
     def from_site(
         cls, site, *, receiver: SugarBody, mapper: SugarBody
     ) -> "MapSugar | None":
-        if not _is_map_call(site.node):
+        if not _is_map_call(site):
             return None
         return cls(
             blame=site.blame,
@@ -45,17 +44,17 @@ class MapSugar:
         )
 
 
-def _is_map_call(node: ast.AST) -> bool:
+def _is_map_call(site) -> bool:
     return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "map"
-        and len(node.args) == 1
+        site.observed == "Call"
+        and site.call_is_method_call()
+        and site.call_target_name() == "map"
+        and site.call_arg_count() == 1
     )
 
 
 def _owns(site) -> bool:
-    return _is_map_call(site.node)
+    return _is_map_call(site)
 
 
 MAP_CLAIM = SugarClaim(

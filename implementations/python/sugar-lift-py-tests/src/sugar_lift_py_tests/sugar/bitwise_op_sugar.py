@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -9,6 +8,8 @@ from sugar_lift_py_tests.floor import Bv32Value, TermValue
 from sugar_lift_py_tests.ir import Term, bvand, bvlshr, bvor, bvshl, num
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
+
+_BITWISE_OPS = {"BitAnd": "&", "BitOr": "|", "LShift": "<<", "RShift": ">>"}
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,9 @@ class BitwiseOpSugar:
     def from_site(
         cls, site, *, left: SugarBody, right: SugarBody
     ) -> "BitwiseOpSugar | None":
-        if not isinstance(site.node, ast.BinOp):
+        if site.observed != "BinOp":
             return None
-        operator = _operator(site.node.op)
+        operator = _BITWISE_OPS.get(site.operator_kind())
         if operator is None:
             return None
         return cls(
@@ -42,18 +43,6 @@ class BitwiseOpSugar:
         left = _bv32_term(complete_value(self.left.reduce(ctx), owner="BitwiseOpSugar left"))
         right = _bv32_term(complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right"))
         return Complete(Bv32Value(_bv32_binary(self.operator, left, right)))
-
-
-def _operator(op: ast.operator) -> str | None:
-    if isinstance(op, ast.BitAnd):
-        return "&"
-    if isinstance(op, ast.BitOr):
-        return "|"
-    if isinstance(op, ast.LShift):
-        return "<<"
-    if isinstance(op, ast.RShift):
-        return ">>"
-    return None
 
 
 def _bv32_term(value) -> Term:
@@ -80,7 +69,7 @@ def _bv32_binary(operator: str, left: Term, right: Term) -> Term:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.BinOp) and _operator(site.node.op) is not None
+    return site.observed == "BinOp" and site.operator_kind() in _BITWISE_OPS
 
 
 BITWISE_OP_CLAIM = SugarClaim(

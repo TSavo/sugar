@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -18,13 +17,13 @@ class LambdaSugar:
 
     @classmethod
     def from_site(cls, site, *, body: SugarBody) -> "LambdaSugar | None":
-        if not isinstance(site.node, ast.Lambda):
+        if site.observed != "Lambda":
             return None
-        if len(site.node.args.args) != 1:
+        params = site.lambda_params()
+        if len(params) != 1:
             return None
-        parameter = site.node.args.args[0].arg
         return cls(
-            parameter=parameter,
+            parameter=params[0],
             body=body,
             blame=site.blame,
         )
@@ -34,7 +33,7 @@ class LambdaSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.Lambda) and len(site.node.args.args) == 1
+    return site.observed == "Lambda" and len(site.lambda_params()) == 1
 
 
 LAMBDA_CLAIM = SugarClaim(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -17,9 +16,9 @@ class BuilderCtorSugar:
 
     @classmethod
     def from_site(cls, site, *, items: SugarBody) -> "BuilderCtorSugar | None":
-        if not _is_builder_call(site.node):
+        if not _is_builder_call(site):
             return None
-        if len(site.node.args) != 1:
+        if site.call_arg_count() != 1:
             return None
         return cls(
             items=items,
@@ -33,16 +32,16 @@ class BuilderCtorSugar:
         return Complete(BuilderState(value))
 
 
-def _is_builder_call(node: ast.AST) -> bool:
+def _is_builder_call(site) -> bool:
     return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "Builder"
+        site.observed == "Call"
+        and not site.call_is_method_call()
+        and site.call_target_name() == "Builder"
     )
 
 
 def _owns(site) -> bool:
-    return _is_builder_call(site.node)
+    return _is_builder_call(site)
 
 
 BUILDER_CTOR_CLAIM = SugarClaim(
