@@ -17,11 +17,13 @@ use syn::{Expr, RangeLimits};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("range_accessor", &["method"], recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

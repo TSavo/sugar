@@ -14,11 +14,13 @@ use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBui
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::{simple_path_name, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("len", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

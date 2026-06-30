@@ -16,6 +16,7 @@ use crate::sugar::monadic;
 use crate::sugar::term_dispatch::{
     literal_array_term_from_terms, CurryOccurrence, CurryVisitor, TermFloorAccept,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     curry_param_name, curry_param_term, helper_param_names, parse_int_lit, strip_refs_groups,
     value_body_tail_substituted, Desugared, Outcome, Sugar, SugarCtx,
@@ -24,7 +25,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("try_from_fn", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };

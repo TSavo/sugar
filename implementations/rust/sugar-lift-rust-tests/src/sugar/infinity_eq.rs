@@ -13,6 +13,7 @@ use crate::sugar::float_floor::{
     stable_width_from_method_name, stable_width_from_path, stable_width_from_suffix,
     stable_width_from_type_key, IeeeFloatWidth, IeeeFloatWidthAccept, IeeeFloatWidthNameVisitor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, callsite_assertion_name, parse_macro_args, sugar_ctx_with_factory_audits,
     token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect,
@@ -39,10 +40,11 @@ struct InfinityEqSugar {
     debug_gated: bool,
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
-        Expr::Paren(paren) => recognize(&paren.expr, fcx),
-        Expr::Group(group) => recognize(&group.expr, fcx),
+        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
+        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
         Expr::Binary(binary) => recognize_binary(binary, fcx),
         Expr::Macro(expr_macro) => recognize_macro(expr_macro, fcx),
         _ => None,

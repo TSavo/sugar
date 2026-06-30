@@ -3,26 +3,33 @@
 //! Raw-AST recognizer ratchet (IDD Phase-3 migration tracker).
 //!
 //! Scans every `src/sugar/*.rs` file and counts files whose `recognize`
-//! function still takes a raw `&Expr`, `&Stmt`, or `&Item` parameter
-//! instead of `&SourceFragment`. The count is R(t) -- the migration state.
+//! function is NOT yet fully migrated. A recognizer counts as MIGRATED
+//! only when BOTH conditions hold:
+//!   (a) it takes `&SourceFragment` (not raw `&Expr`/`&Stmt`/`&Item`), AND
+//!   (b) its body contains NO `as_expr()`/`as_stmt()`/`as_item()` call and
+//!       no raw `Expr::`/`Stmt::`/`Item::` match arm access.
+//!
+//! A signature-flipped-but-shimmed recognizer (body calls `as_expr()` etc.)
+//! still counts toward R(t) -- as_expr*/raw-access = residual.
 //!
 //! `RAW_SYN_CEILING` pins today's measured value. The test fails RED if
-//! R(t) exceeds the ceiling -- a new raw recognizer was added or a migration
-//! was reverted. Tighten the ceiling IN THE SAME PR when a recognizer is
-//! migrated to `&SourceFragment`.
+//! R(t) exceeds the ceiling. Tighten the ceiling IN THE SAME PR when a
+//! recognizer is fully migrated (body logic rewritten to use SourceFragment
+//! typed accessors with no as_expr/as_stmt/as_item shim).
 //!
-//! Target: R(t) = 0 (all recognizers take `&SourceFragment`).
+//! Target: R(t) = 0 (all recognizers fully migrated, no shim residual).
 
 use std::fs;
 use std::path::PathBuf;
 
-/// Pinned ceiling. NEVER raise this value; only lower it as recognizers
-/// are migrated to `&SourceFragment`.
+/// Pinned ceiling. NEVER raise this value; only lower it as recognizers are
+/// fully migrated away from as_expr*/as_stmt*/as_item* shims.
 ///
-/// Measured on this branch: all 125 sugar files that define a `recognize`
-/// function still take raw `&Expr`, `&Stmt`, or `&Item`. This is the
-/// starting point of the migration ratchet.
-const RAW_SYN_CEILING: usize = 125;
+/// Post-shim baseline (Phase-3 linchpin): 124 files have `fn recognize`
+/// taking `&SourceFragment` but still shim via `as_expr()`/`as_stmt()`/
+/// `as_item()` in the body. factory.rs is excluded (doc comment only,
+/// no real function body).
+const RAW_SYN_CEILING: usize = 124;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -44,13 +51,16 @@ fn sugar_rs_files() -> Vec<PathBuf> {
     files
 }
 
-/// Returns `true` if `src` contains a `fn recognize(` whose parameter list
-/// mentions `&Expr`, `&Stmt`, or `&Item` (raw syn types not yet migrated to
-/// `&SourceFragment`).
+/// Returns `true` if `src` contains a `fn recognize(` that is NOT yet fully
+/// migrated. A recognizer is residual when:
+///   - its signature has `&Expr`, `&Stmt`, or `&Item` (old raw syn), OR
+///   - its signature has `&SourceFragment` AND its body calls
+///     `as_expr()`, `as_stmt()`, or `as_item()` (transitional shim).
 ///
 /// Handles both single-line and multi-line function signatures by scanning a
 /// 400-char window after each `fn recognize(` occurrence and stopping at the
-/// opening `{` of the function body.
+/// opening `{` of the function body. Then scans 2000 chars of body for shim
+/// indicators.
 fn is_raw_recognizer(src: &str) -> bool {
     let needle = "fn recognize(";
     let mut pos = 0_usize;
@@ -58,19 +68,37 @@ fn is_raw_recognizer(src: &str) -> bool {
         let Some(rel) = src[pos..].find(needle) else {
             break;
         };
-        // Window starts just after the opening `(`
         let sig_start = pos + rel + needle.len();
         let window_end = (sig_start + 400).min(src.len());
         let window = &src[sig_start..window_end];
-        // Signature ends at the first `{` (function body open brace)
-        let sig_end = window.find('{').unwrap_or(window.len());
-        let signature = &window[..sig_end];
+        let Some(brace) = window.find('{') else {
+            pos += rel + 1;
+            continue;
+        };
+        let signature = &window[..brace];
+
+        // Old raw syn: parameter is still &Expr, &Stmt, or &Item
         if signature.contains("&Expr")
             || signature.contains("&Stmt")
             || signature.contains("&Item")
         {
             return true;
         }
+
+        // Shim residual: signature uses &SourceFragment but body still escapes
+        // back to raw syn via as_expr()/as_stmt()/as_item() accessors.
+        if signature.contains("&SourceFragment") {
+            let body_start = sig_start + brace + 1;
+            let body_end = (body_start + 2000).min(src.len());
+            let body = &src[body_start..body_end];
+            if body.contains("as_expr()")
+                || body.contains("as_stmt()")
+                || body.contains("as_item()")
+            {
+                return true;
+            }
+        }
+
         pos += rel + 1;
     }
     false
@@ -97,20 +125,21 @@ fn raw_ast_recognizer_ratchet() {
     eprintln!("--- raw-AST recognizer ratchet ---");
     eprintln!("R(t) = {r_t}  (ceiling = {RAW_SYN_CEILING}, target = 0)");
     if !unmigrated.is_empty() {
-        eprintln!("Remaining files with raw-syn recognizers ({r_t}):");
+        eprintln!("Remaining files with shim residual ({r_t}):");
         for f in &unmigrated {
             eprintln!("  src/sugar/{f}");
         }
         eprintln!(
-            "Migrate each to `fn recognize(frag: &SourceFragment, ...) -> Option<Box<dyn Sugar>>`"
+            "Migrate each: rewrite body to use &SourceFragment typed accessors, \
+             remove as_expr()/as_stmt()/as_item() shim call."
         );
     }
 
     assert!(
         r_t <= RAW_SYN_CEILING,
-        "RATCHET REGRESSION: raw-syn recognizer count {r_t} exceeds ceiling \
-         {RAW_SYN_CEILING}. A recognizer was added or reverted to raw syn.\n\
-         Migrate to &SourceFragment and lower RAW_SYN_CEILING. Remaining ({r_t}):\n{}",
+        "RATCHET REGRESSION: residual recognizer count {r_t} exceeds ceiling \
+         {RAW_SYN_CEILING}. A recognizer was added or reverted to raw syn / shim.\n\
+         Migrate to &SourceFragment typed accessors and lower RAW_SYN_CEILING. Remaining ({r_t}):\n{}",
         unmigrated
             .iter()
             .map(|f| format!("  src/sugar/{f}"))

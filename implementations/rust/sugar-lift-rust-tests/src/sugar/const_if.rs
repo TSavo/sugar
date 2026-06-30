@@ -20,6 +20,7 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{const_eval, const_val_term, Sugar};
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before("const_if", &["value_if"], recognize);
@@ -27,7 +28,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for a const `Expr::If`. Folds the whole conditional to its taken
 /// branch's ground value via `const_eval`; declines (`None`) for any non-`If` expr or
 /// any `If` that is not a closed constant.
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if !matches!(expr, Expr::If(_)) {
         return None;
     }

@@ -12,11 +12,13 @@ use tracing::debug;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("intersperse_concat", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(concat_call) = strip_refs_groups(expr) else {
         return None;
     };

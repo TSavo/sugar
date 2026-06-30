@@ -8,6 +8,7 @@ use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
@@ -16,7 +17,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     statement_position::reflection_boundary(expr)
         .map(|boundary| Box::new(StatementReflectionSugar { boundary }) as Box<dyn Sugar>)
 }

@@ -13,12 +13,14 @@ use crate::sugar::array_repeat;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::{repeat_count_in_scope, Sugar};
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("repeat_term", recognize);
 
 /// TERM recognizer for `Expr::Repeat`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Repeat(repeat) = expr else {
         return None;
     };

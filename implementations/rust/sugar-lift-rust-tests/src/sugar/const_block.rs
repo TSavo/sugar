@@ -10,12 +10,14 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::unit_path::{unit_path_literal_name, unit_path_name};
 use crate::{make_var, scope_const_block_locals, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, Stmt};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("const_block", recognize);
 
 /// TERM recognizer for `Expr::Const`.
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Const(const_block) = expr else {
         return None;
     };

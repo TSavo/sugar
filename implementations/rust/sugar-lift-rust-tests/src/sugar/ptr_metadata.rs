@@ -11,14 +11,16 @@ use syn::{Expr, Lit};
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::literal_slice;
 use crate::{num, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("ptr_metadata", &["call"], recognize);
 
 pub(crate) fn recognize(
-    expr: &Expr,
+    frag: &SourceFragment,
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = peel_groups(expr) else {
         return None;
     };

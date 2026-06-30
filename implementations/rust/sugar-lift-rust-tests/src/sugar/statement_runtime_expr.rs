@@ -8,6 +8,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_runtime_expr",
@@ -19,9 +20,10 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::fallback_constraint("constraint_runtime_expr", recognize_constraint);
 
 pub(crate) fn recognize_statement_effect(
-    expr: &Expr,
+    frag: &SourceFragment,
     fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if fcx.scope().temporal_rewrite_can_apply(expr) {
         return None;
     }
@@ -32,7 +34,8 @@ pub(crate) fn recognize_statement_effect(
     })
 }
 
-pub(crate) fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if fcx.scope().temporal_rewrite_can_apply(expr) {
         return None;
     }

@@ -35,6 +35,7 @@ use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::constraint::assertion_entry_with_audits;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_dispatch::translate_term_in_scope;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
     sugar_ctx_with_factory_audits,
@@ -42,7 +43,8 @@ use crate::{
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("if_sugar", recognize);
 
-fn recognize(stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let stmt = frag.as_stmt()?;
     let Stmt::Expr(Expr::If(if_expr), _) = stmt else {
         return None;
     };

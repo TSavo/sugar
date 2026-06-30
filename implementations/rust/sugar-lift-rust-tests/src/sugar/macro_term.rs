@@ -14,6 +14,7 @@ use syn::Expr;
 
 use crate::sugar::configuration::{self, CfgDisposition};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, macro_literal_contains_mut_local, token_key, CfgPredicate, Desugared, Effect,
     Outcome, Sugar, SugarCtx, MAX_MACRO_EXPANSION_DEPTH,
@@ -23,7 +24,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("macro_term", recognize);
 
 /// TERM recognizer for `Expr::Macro`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(m) = expr else {
         return None;
     };
@@ -200,7 +202,7 @@ mod tests {
         let scope = TemporalScope::new(local_scope, TemporalPlan::default());
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, options, &let_inits);
-        let node = recognize(expr, &fcx).expect("cfg! is owned by macro term sugar");
+        let node = { let _frag = SourceFragment::expr(expr, "<src>"); recognize(&_frag, &fcx) }.expect("cfg! is owned by macro term sugar");
         let items = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

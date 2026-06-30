@@ -12,11 +12,13 @@ use syn::Expr;
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("addr_of_mut", &["macro_term"], recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(mac) = expr else {
         return None;
     };
@@ -73,7 +75,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = recognize(&expr, &fcx).expect("addr_of_mut sugar recognizes");
+        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("addr_of_mut sugar recognizes");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

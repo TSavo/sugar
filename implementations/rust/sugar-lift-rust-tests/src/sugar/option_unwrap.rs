@@ -15,11 +15,13 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_unwrap", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

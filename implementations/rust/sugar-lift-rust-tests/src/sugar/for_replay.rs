@@ -19,6 +19,7 @@ use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{
     has_composite, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::insert::InsertSugar;
 use crate::{
     bool_const, bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term,
@@ -37,7 +38,8 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     recognize,
 );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::ForLoop(for_loop) = expr else {
         return None;
     };

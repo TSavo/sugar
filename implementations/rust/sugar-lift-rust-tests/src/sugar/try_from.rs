@@ -37,11 +37,13 @@ use crate::sugar::int_literal::{exact_int_value, primitive_int_kind, ExactInt, I
 use crate::sugar::monadic::{err_term, ok_term};
 use crate::{expr_head_key, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{num, Term};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("try_from", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let _ = fcx;
     let Expr::Call(call) = expr else {
         return None;

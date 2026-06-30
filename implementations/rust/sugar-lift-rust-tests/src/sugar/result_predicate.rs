@@ -23,6 +23,7 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Outcome,
     Sugar, SugarCtx,
@@ -31,7 +32,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("result_predicate", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

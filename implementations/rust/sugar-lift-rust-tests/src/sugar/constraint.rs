@@ -27,6 +27,7 @@ use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, For
 use syn::parse::{Parse, ParseStream};
 use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Item, Lit, Token, Type, UnOp};
 use tracing::debug;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "constraint_relation_macro",
@@ -154,7 +155,8 @@ struct BoundedLiteralMacroSugar {
     sources: Vec<String>,
 }
 
-fn recognize_bounded_literal_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_bounded_literal_macro(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -233,7 +235,8 @@ fn bounded_literal_char_only_predicate(method: &str) -> bool {
     matches!(method, "is_alphabetic")
 }
 
-fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_relation_macro(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -337,7 +340,8 @@ struct AssertSugar {
     debug_gated: bool,
 }
 
-fn recognize_assert_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assert_macro(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -369,7 +373,8 @@ struct CfgMacroSugar {
     mac: syn::Macro,
 }
 
-fn recognize_cfg_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_cfg_macro(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -435,7 +440,8 @@ struct BoolExprSugar {
     kind: BoolExprKind,
 }
 
-fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_bool_expr(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Binary(binary) if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) => {
             Some(Box::new(BoolExprSugar {
@@ -782,7 +788,8 @@ struct IfPanicSugar {
     negate: bool,
 }
 
-fn recognize_if_panic(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_if_panic(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::If(if_expr) = expr else {
         return None;
     };
@@ -836,7 +843,8 @@ struct NoPanicCallSugar {
     ambient_effect: Option<Effect>,
 }
 
-fn recognize_no_panic_call(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_no_panic_call(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if !fcx.options().panic_freedom_enabled() {
         return None;
     }

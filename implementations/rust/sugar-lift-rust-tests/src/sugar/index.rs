@@ -48,6 +48,7 @@ use syn::{Expr, ExprIndex};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval, const_fold_int_term, const_index_term_in_scope, const_val_term, num,
     simple_path_name, token_key, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
@@ -58,7 +59,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Index`. Captures the raw source site; `IndexSugar::desugar`
 /// replays the source-of-truth arm order lazily.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Index(index) = expr else {
         return None;
     };

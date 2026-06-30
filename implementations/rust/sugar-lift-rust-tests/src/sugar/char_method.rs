@@ -12,6 +12,7 @@ use syn::{Expr, ExprLit, Lit};
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Outcome,
     Sugar, SugarCtx, Warrant,
@@ -27,7 +28,8 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_or
     recognize_constraint,
 );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
@@ -62,7 +64,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }))
 }
 
-fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

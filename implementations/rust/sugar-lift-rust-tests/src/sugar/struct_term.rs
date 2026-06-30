@@ -8,12 +8,14 @@ use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{path_to_variant_string, token_key, Outcome, Sugar, SugarCtx};
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("struct_term", recognize);
 
 /// TERM recognizer for `Expr::Struct`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Struct(s) = expr else {
         return None;
     };

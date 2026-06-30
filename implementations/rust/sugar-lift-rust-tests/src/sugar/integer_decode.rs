@@ -15,6 +15,7 @@ use syn::Expr;
 use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::float_floor::{IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
@@ -22,7 +23,8 @@ pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim 
         recognize_tuple_producer,
     );
 
-fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

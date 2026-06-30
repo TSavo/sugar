@@ -21,6 +21,7 @@ use syn::{BinOp, Expr};
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval, const_fold_u128_term, const_val_term, u128_term, Desugared, Outcome, Sugar,
     SugarCtx,
@@ -34,7 +35,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 ///
 /// Fires before `binop` for `Shl`/`Shr`/`BitAnd`/`BitOr`/`BitXor`. Returns `None`
 /// for all other operators so the factory falls through to the arithmetic `binop` sugar.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Binary(binary) = expr else {
         return None;
     };

@@ -13,11 +13,13 @@ use syn::{Expr, Stmt};
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{value_if_term, DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("value_if", recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::If(if_expr) = expr else {
         return None;
     };

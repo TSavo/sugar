@@ -7,6 +7,7 @@ use syn::Expr;
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 /// Mutating body is the conservative verdict owner: Mutation never understates
 /// a write effect that an accessor verdict would. This mirrors
@@ -25,7 +26,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let site = closure_adaptor::decompose_closure_adaptor(expr, fcx.let_inits())?;
     site.has_mutating_body()
         .then(|| Box::new(ClosureMutatingBodySugar { site }) as Box<dyn Sugar>)

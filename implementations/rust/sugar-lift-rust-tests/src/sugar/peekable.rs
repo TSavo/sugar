@@ -23,6 +23,7 @@ use crate::{
     AssertionFactKind, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
     Warrant,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "peekable_runtime_assertion_surface",
@@ -37,7 +38,8 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite("peekable", recognize_composite);
 
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -52,7 +54,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     None
 }
 
-fn recognize_assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assertion_surface(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };

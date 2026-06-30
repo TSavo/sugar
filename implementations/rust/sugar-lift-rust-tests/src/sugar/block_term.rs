@@ -8,6 +8,7 @@
 use std::rc::Rc;
 
 use crate::sugar::factory::{StatementEffectFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     substitute_expr, token_key, translate_term_in_scope_with_audits, Effect, ExprBindings,
     FactoryAuditLog, Outcome, Sugar, SugarCtx, TemporalScope,
@@ -19,7 +20,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("block_term", recognize);
 
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Unsafe(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),
         Expr::Block(block) => Some(BlockTermSugar::boxed(expr, block.block.stmts.clone(), fcx)),

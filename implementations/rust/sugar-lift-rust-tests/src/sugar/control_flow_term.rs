@@ -30,6 +30,7 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("control_flow_term", recognize_term);
@@ -40,7 +41,8 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
 /// `ControlFlowTermSugar` refuse-shape. TERM and COMPOSITE roles both carry the same typed node;
 /// the child effect's reason is rendered only when the caller consumes the `Outcome`.
-pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_term(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr),
         _ => None,
@@ -52,7 +54,8 @@ pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dy
 /// site reads its `Effect::ControlFlow` Incomplete). Byte-identical to the
 /// `Expr::TryBlock | Expr::Async | Expr::Try => decompose_control_flow_term(expr)`
 /// COMPOSITE arm of the old fat factory.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr),
         _ => None,

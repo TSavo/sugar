@@ -18,6 +18,7 @@ use crate::sugar::monadic::{
     err_term, is_grounded_literal_term, none_term, ok_term, some_term, OPT_NONE, OPT_SOME, RES_ERR,
     RES_OK,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::option_unwrap::receiver_resolves_monadic_source;
 use crate::{
     bool_const, const_eval, const_eval_unary_closure, const_fold_int_term, const_fold_u128_term,
@@ -28,7 +29,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::with_ordering("option_adaptor", SugarRole::Term, &["map_term"], recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

@@ -13,11 +13,13 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{count_asserts_in_stmts, token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::statement_effect("statement_async_future", recognize);
 
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Async(async_expr) = expr else {
         return None;
     };

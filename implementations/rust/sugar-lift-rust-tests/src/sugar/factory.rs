@@ -11,7 +11,7 @@
 //! ## The recognizer-fn pattern
 //!
 //! Every construct is a SELF-CONTAINED node living in its own `src/sugar/*.rs` module,
-//! owning BOTH a recognizer `fn recognize(expr: &Expr, fcx: &SugarBuildCtx) ->
+//! owning BOTH a recognizer `fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) ->
 //! Option<Box<dyn Sugar>>` (returns `Some(boxed self)` if this Sugar handles the site --
 //! building any children via `build_term`/`build_composite` -- else `None`) AND its
 //! `desugar`. The former free `decompose_*` functions are reused INSIDE these

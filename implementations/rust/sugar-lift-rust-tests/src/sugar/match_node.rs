@@ -27,6 +27,7 @@ use crate::{
     TemporalScope, Warrant,
 };
 use crate::{FactoryAuditLog, FloatWidthScope};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("match_node", recognize_composite);
@@ -48,7 +49,8 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
 /// via [`decompose_match`]). If the match cannot construct a lawful node, this
 /// recognizer declines and lets the factory's structural gap stay loud.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Match(m) => decompose_match(m, fcx.scope(), fcx.options())
             .map(|node| Box::new(node) as Box<dyn Sugar>),
@@ -59,7 +61,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 /// CONSTRAINT recognizer for a closed `match` whose scrutinee determines exactly one
 /// reachable arm from source literals/consts. The selected arm is delegated to the
 /// ordinary constraint floor after pattern bindings have been substituted.
-fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Match(m) = expr else {
         return None;
     };
@@ -99,7 +102,8 @@ pub(crate) fn desugar_statement_match(
 /// This is the value half of the same source shape `panic_locus_match_entry` uses for
 /// facts. The fact side says the surviving pattern held; the term side says the match
 /// expression evaluates to the surviving arm's value under that pattern binding.
-fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Match(m) = expr else {
         return None;
     };

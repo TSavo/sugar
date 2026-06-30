@@ -16,12 +16,14 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind, IntKind, MidpointVisitor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{canonical_term_sig, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("int_midpoint", &["call"], recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };

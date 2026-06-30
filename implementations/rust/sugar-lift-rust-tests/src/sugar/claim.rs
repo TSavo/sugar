@@ -6,6 +6,7 @@
 use syn::{Expr, Item, Stmt};
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 /// The source-position role a Sugar claim serves. Recognition itself lives in the
@@ -25,9 +26,9 @@ pub(crate) enum SugarRole {
     StatementItem,
 }
 
-type ExprRecognizer = fn(&Expr, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
-type ItemRecognizer = fn(&Item, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
-type StmtRecognizer = fn(&Stmt, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
+type ExprRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
+type ItemRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
+type StmtRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
@@ -234,7 +235,8 @@ impl ItemSugarClaim {
         item: &Item,
         fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
-        (self.recognize)(item, fcx).map(|node| SugarCandidate {
+        let frag = SourceFragment::item(item, "<src>");
+        (self.recognize)(&frag, fcx).map(|node| SugarCandidate {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,
@@ -320,7 +322,8 @@ impl StmtSugarClaim {
         stmt: &Stmt,
         fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
-        (self.recognize)(stmt, fcx).map(|node| SugarCandidate {
+        let frag = SourceFragment::stmt(stmt, "<src>");
+        (self.recognize)(&frag, fcx).map(|node| SugarCandidate {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,
@@ -368,7 +371,8 @@ impl ExprSugarClaim {
         expr: &Expr,
         fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
-        (self.recognize)(expr, fcx).map(|node| SugarCandidate {
+        let frag = SourceFragment::expr(expr, "<src>");
+        (self.recognize)(&frag, fcx).map(|node| SugarCandidate {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,

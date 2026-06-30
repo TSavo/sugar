@@ -16,6 +16,7 @@ use crate::sugar::float_floor::{
     runtime_float, stable_width_from_type_key, IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor,
     IeeeFloatWidth,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::int_literal::{
     from_impl_exists, primitive_int_kind, ExactInt, IntKind, NumericFloor,
 };
@@ -25,7 +26,8 @@ use crate::{token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("into", &["method"], recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

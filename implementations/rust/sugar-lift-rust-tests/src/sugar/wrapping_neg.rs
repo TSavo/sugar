@@ -15,11 +15,13 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{numeric_floor_from_term, WrappingNegVisitor};
 use crate::sugar::primitive_int::deferred_primitive_method_term;
 use crate::{strip_refs_groups, term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("wrapping_neg", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

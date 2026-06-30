@@ -15,6 +15,7 @@ use syn::{Expr, ExprCall};
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{IpAddrFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{ExactInt, IntKind};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, const_int, literal_string_value, num, strip_refs_groups, token_key,
     AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
@@ -64,7 +65,8 @@ struct IpAddrLiteralSugar {
     source: IpAddrSource,
 }
 
-fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match strip_refs_groups(expr) {
         Expr::Call(call) => recognize_ip_constructor_term(call, fcx, token_key(expr)),
         Expr::Path(path) => resolve_ip_const_path(&path.path).map(|ip| {
@@ -107,7 +109,8 @@ fn recognize_ip_constructor_term(
     }
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

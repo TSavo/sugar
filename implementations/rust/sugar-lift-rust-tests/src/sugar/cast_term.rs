@@ -11,6 +11,7 @@ use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     cast_const_fold_value, const_fold_int_term, is_shared_dyn_any_type, scalar_cast_type_key,
     str_const, token_key, type_key, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
@@ -21,7 +22,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("cast_term", recognize);
 
 /// TERM recognizer for `Expr::Cast`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Cast(cast) = expr else {
         return None;
     };

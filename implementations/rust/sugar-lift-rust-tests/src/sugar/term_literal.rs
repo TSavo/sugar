@@ -50,6 +50,7 @@ use sugar_ir_symbolic::{num, real_const, str_const, ConstValue, Term};
 use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, bytes_literal_term_from_bytes, canonical_float_literal, parse_int_lit,
     parse_u128_lit, token_key, u128_term, Desugared, Outcome, Sugar, SugarCtx,
@@ -60,7 +61,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Lit`: a scalar literal news a [`TermLiteralSugar`].
 /// Byte-identical to the `Expr::Lit(lit) => translate_lit(lit)` arm.
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Lit(lit) if !matches!(lit.lit, Lit::CStr(_)) => {
             Some(Box::new(TermLiteralSugar { lit: lit.clone() }))

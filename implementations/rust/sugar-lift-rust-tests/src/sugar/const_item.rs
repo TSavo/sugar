@@ -11,11 +11,13 @@ use tracing::debug;
 use crate::sugar::claim::ItemSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{count_asserts_in_expr, token_key, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim =
     ItemSugarClaim::statement_item("const_item", recognize);
 
-fn recognize(item: &Item, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let item = frag.as_item()?;
     let (kind, name, initializer) = const_static_parts(item)?;
     if count_asserts_in_expr(initializer) != 0 {
         return None;

@@ -17,11 +17,13 @@ use crate::sugar::int_literal::{numeric_floor_from_term, IsqrtVisitor, NumericSq
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::primitive_int::deferred_primitive_method_term;
 use crate::{const_fold_int_term, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("int_sqrt", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

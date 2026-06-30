@@ -36,13 +36,15 @@ use syn::{Expr, GenericArgument, PathArguments, Type};
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
 
 pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("maybe_uninit_zeroed", &["method"], recognize_assume_init);
 
-fn recognize_assume_init(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assume_init(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     // Outer must be `.assume_init()` with no extra arguments.
     let Expr::MethodCall(outer) = expr else {
         return None;
@@ -90,7 +92,8 @@ fn maybe_uninit_zeroed_type(expr: &Expr) -> Option<Type> {
 pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("mem_zeroed", &["call"], recognize_mem_zeroed);
 
-fn recognize_mem_zeroed(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_mem_zeroed(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };

@@ -34,6 +34,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, simple_path_name, strip_refs_groups, Desugared, DesugaredElem, Effect, Outcome,
     Sugar, SugarCtx,
@@ -42,7 +43,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("is_empty", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

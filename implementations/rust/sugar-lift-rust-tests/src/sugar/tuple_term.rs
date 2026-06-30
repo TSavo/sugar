@@ -9,6 +9,7 @@ use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("tuple_term", recognize);
@@ -20,7 +21,8 @@ pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim 
     );
 
 /// TERM recognizer for `Expr::Tuple`: the `literal_aggregate_term("Tuple", ..)` arm.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Tuple(tuple) = expr else {
         return None;
     };
@@ -34,7 +36,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     )))
 }
 
-fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Tuple(tuple) = expr else {
         return None;
     };

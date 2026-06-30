@@ -66,6 +66,7 @@ use crate::sugar::factory::{
     build_composite, desugar_build_ctx, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
     TermFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
@@ -174,7 +175,8 @@ impl Terminal {
 /// grounded value; a named `Incomplete` poisons the terminal and propagates; a structural bail
 /// stays structural. So the node can only ever ground-with-teeth, propagate a real boundary,
 /// or gap -- never reduce-to-maybe-wrong.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

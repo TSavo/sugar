@@ -16,6 +16,7 @@ use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::float_floor::{
     from_bits_width, reduce_bits, IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor, IeeeFloatWidth,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{token_key, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
@@ -24,7 +25,8 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     recognize,
 );
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::MethodCall(call) => recognize_method(call, fcx),
         Expr::Call(call) => recognize_call(call, fcx),

@@ -60,6 +60,10 @@ impl<'a> SourceFragment<'a> {
     pub(crate) fn stmt(s: &'a syn::Stmt, file: &'a str) -> Self {
         Self::from_node(FragNode::Stmt(s), file)
     }
+    pub(crate) fn item(i: &'a syn::Item, file: &'a str) -> Self {
+        Self::from_node(FragNode::Item(i), file)
+    }
+
     pub(crate) fn block(stmts: &'a [syn::Stmt], file: &'a str) -> Self {
         let (line, col) = stmts
             .first()
@@ -370,6 +374,29 @@ impl<'a> SourceFragment<'a> {
             FragNode::Stmt(syn::Stmt::Local(l)) => {
                 l.init.as_ref().map(|init| Self::expr(&init.expr, self.file))
             }
+            _ => None,
+        }
+    }
+
+    // -- Escape-hatch accessors (transitional shim) -------------------------
+
+    pub(crate) fn as_expr(&self) -> Option<&syn::Expr> {
+        match &self.node {
+            FragNode::Expr(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_stmt(&self) -> Option<&syn::Stmt> {
+        match &self.node {
+            FragNode::Stmt(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_item(&self) -> Option<&syn::Item> {
+        match &self.node {
+            FragNode::Item(i) => Some(i),
             _ => None,
         }
     }

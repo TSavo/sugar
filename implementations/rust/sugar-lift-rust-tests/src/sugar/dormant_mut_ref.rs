@@ -21,6 +21,7 @@ use syn::{BinOp, Expr, Pat, Stmt};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{parse_int_lit, simple_path_name, strip_refs_groups, Sugar};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -29,7 +30,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Path(path) = expr else {
         return None;
     };

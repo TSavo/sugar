@@ -57,6 +57,7 @@ use crate::{
 };
 use sugar_ir_symbolic::{atomic_, str_const, Formula, Term};
 
+use crate::sugar::source_fragment::SourceFragment;
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_regex_match",
     SugarRole::Constraint,
@@ -86,7 +87,8 @@ struct RegexMatchSugar {
     method: &'static str,
 }
 
-fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let stable = stable_let_bindings(fcx.scope());
     let matched = recognize_regex_match(expr, &stable, fcx)?;
     if !pattern_claims_literal_string_floor(&matched.pattern, &stable, fcx) {

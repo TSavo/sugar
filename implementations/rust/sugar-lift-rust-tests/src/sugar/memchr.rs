@@ -12,6 +12,7 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::sugar::monadic::{none_term, some_term};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval, const_fold_int_term, repeat_count_in_scope, token_key, ConstVal, Desugared, Effect,
     Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
@@ -21,9 +22,10 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("memchr", &["call"], recognize);
 
 pub(crate) fn recognize(
-    expr: &Expr,
+    frag: &SourceFragment,
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = peel_refs_groups(expr) else {
         return None;
     };

@@ -14,6 +14,7 @@ use syn::{Expr, GenericArgument, PathArguments, Type};
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, strip_refs_groups, token_key, type_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
@@ -24,7 +25,8 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     recognize,
 );
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let kind = DynAnyPredicateKind::from_expr(expr)?;
     Some(Box::new(DynAnyPredicateSugar {
         kind,

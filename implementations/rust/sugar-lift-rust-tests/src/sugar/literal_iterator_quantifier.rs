@@ -18,6 +18,7 @@ use crate::sugar::term_dispatch::{
     CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
     TermFloorAccept,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     const_fold_int_term, const_val_term, make_var, token_key, AssertionFactKind, Desugared,
@@ -47,7 +48,8 @@ struct QuantifierPredicate {
     body: SugarBody<TermFloor>,
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

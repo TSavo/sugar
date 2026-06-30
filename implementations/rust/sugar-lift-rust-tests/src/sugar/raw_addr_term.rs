@@ -10,6 +10,7 @@ use std::rc::Rc;
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     assertion_entry_from_eq, bool_const, sugar_ctx_with_factory_audits, token_key, AssertionEntry,
     Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
@@ -25,7 +26,8 @@ pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("ptr_eq_term", &["call"], recognize_ptr_eq_term);
 
 /// TERM recognizer for `Expr::RawAddr`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::RawAddr(raw) = expr else {
         return None;
     };
@@ -39,7 +41,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     )))
 }
 
-fn recognize_ptr_eq_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_ptr_eq_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -224,7 +227,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = std::collections::BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = recognize(&expr, &fcx).expect("raw_addr_term recognizes");
+        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("raw_addr_term recognizes");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

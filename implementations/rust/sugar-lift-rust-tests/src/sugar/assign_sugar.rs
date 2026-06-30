@@ -19,11 +19,13 @@ use syn::{Expr, Pat, Stmt};
 use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim =
     StmtSugarClaim::statement("assign_sugar", recognize);
 
-fn recognize(stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let stmt = frag.as_stmt()?;
     let Stmt::Local(local) = stmt else {
         return None;
     };

@@ -11,6 +11,7 @@ use sugar_ir_symbolic::{make_var, Term};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     is_unqualified_local_name, names_referenced_in_expr, token_key, Effect, Outcome, Sugar,
     SugarCtx,
@@ -34,7 +35,8 @@ impl Sugar for ClosureAmbiguousCaptureSugar {
 }
 
 /// TERM recognizer for `Expr::Closure`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Closure(closure) = expr else {
         return None;
     };

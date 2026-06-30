@@ -28,6 +28,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, scalar_literal_array_elems, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx,
 };
@@ -35,7 +36,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("is_sorted", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

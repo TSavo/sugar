@@ -15,6 +15,7 @@ use crate::{
     closure_body_is_side_effecting, closure_constructs_drop_side_effect_value, const_int,
     simple_path_name, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "runtime_iterator_source",
@@ -23,8 +24,9 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_orde
     recognize_composite,
 );
 
-fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if let Some(binding) = recognize_mutable_source_binding(expr, fcx) {
+fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
+    if let Some(binding) = recognize_mutable_source_binding(frag, fcx) {
         return Some(binding);
     }
     if collection_literal_array(expr).is_some() {
@@ -90,7 +92,8 @@ impl Sugar for RuntimeIteratorSourceSugar {
     }
 }
 
-fn recognize_mutable_source_binding(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_mutable_source_binding(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let name = simple_path_name(expr)?;
     if !fcx.scope().is_mut_local(&name) {
         return None;

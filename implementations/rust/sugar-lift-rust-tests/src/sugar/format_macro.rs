@@ -11,6 +11,7 @@ use syn::Expr;
 use crate::sugar::factory::{
     FloorRead, FormatTemplateFloor, FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::format::{
     is_format_macro_shape, literal_format_capture_names, parse_args, render_format_values,
 };
@@ -23,7 +24,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if !is_format_macro_shape(expr) {
         return None;
     }

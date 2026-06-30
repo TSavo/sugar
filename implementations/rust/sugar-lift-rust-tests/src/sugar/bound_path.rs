@@ -9,6 +9,7 @@ use crate::sugar::factory::{
     has_tuple_producer, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
     TupleProducerFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
@@ -32,23 +33,24 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composit
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::tuple_producer("bound_path_tuple_producer", recognize_tuple_producer);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_role(expr, fcx, BoundPathRole::Term)
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(frag, fcx, BoundPathRole::Term)
 }
 
-fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_role(expr, fcx, BoundPathRole::Constraint)
+fn recognize_constraint(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(frag, fcx, BoundPathRole::Constraint)
 }
 
-fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_role(expr, fcx, BoundPathRole::Composite)
+fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(frag, fcx, BoundPathRole::Composite)
 }
 
-fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_role(expr, fcx, BoundPathRole::TupleProducer)
+fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(frag, fcx, BoundPathRole::TupleProducer)
 }
 
-fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
+fn recognize_role(frag: &SourceFragment, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let name = simple_local_path(expr)?;
     if fcx.resolving_bound_path(&name) {
         return None;

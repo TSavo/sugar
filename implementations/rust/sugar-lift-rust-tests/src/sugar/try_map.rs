@@ -13,6 +13,7 @@ use syn::{Expr, ExprClosure};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     canonical_term_sig, const_eval, const_eval_option_closure, const_path_key, primitive_int_term,
     repeat_count_literal, resolve_value_call_inline, strip_refs_groups, u128_term, ConstVal,
@@ -22,7 +23,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("try_map", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

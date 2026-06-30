@@ -9,6 +9,7 @@ use std::rc::Rc;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{FloorRead, FormatValueFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::format::{FmtValue, IntKind};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, simple_path_name, strip_refs_groups, AssertionFactKind, Desugared,
     Effect, Outcome, Sugar, SugarCtx, Warrant,
@@ -238,10 +239,11 @@ impl LiteralVisitor for AlphabeticVisitor<'_> {
     }
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
-        Expr::Paren(paren) => recognize(&paren.expr, fcx),
-        Expr::Group(group) => recognize(&group.expr, fcx),
+        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
+        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
         Expr::MethodCall(call) => recognize_method(call, fcx),
         _ => None,
     }
