@@ -454,6 +454,94 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- partition_point fold accessor ----------------------------------------
+
+    /// For a `.partition_point(|param| pred)` method call whose receiver is a
+    /// literal scalar array, const-evaluates the predicate on each element in
+    /// the host, verifies that the results form a valid partition (all satisfying
+    /// elements precede all non-satisfying ones), and returns the count of leading
+    /// satisfying elements as an `i128` index. Returns `None` if the fragment is
+    /// not this shape, any element or closure body cannot be const-evaluated, or
+    /// the slice is not properly partitioned (which signals a contract misuse;
+    /// we decline rather than replicate the binary-search-defined value).
+    pub(crate) fn partition_point_literal_index(&self) -> Option<i128> {
+        let call = match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(m)) => m,
+            _ => return None,
+        };
+        if call.method != "partition_point" || call.args.len() != 1 {
+            return None;
+        }
+        let syn::Expr::Closure(closure) = crate::strip_refs_groups(&call.args[0]) else {
+            return None;
+        };
+        let elems =
+            crate::scalar_literal_array_elems(crate::strip_refs_groups(&call.receiver))?;
+        let empty: std::collections::BTreeMap<String, crate::ConstVal> =
+            std::collections::BTreeMap::new();
+        let mut preds = Vec::with_capacity(elems.len());
+        for e in &elems {
+            let value = crate::const_eval(e, &empty)?;
+            let pred = crate::const_eval_unary_closure(closure, &value)?.as_bool()?;
+            preds.push(pred);
+        }
+        // PARTITIONED check: no satisfying element after a non-satisfying one.
+        // Otherwise the result is binary-search-defined (contract misuse) and
+        // we decline rather than guess.
+        let mut seen_false = false;
+        for &p in &preds {
+            if p && seen_false {
+                return None;
+            }
+            seen_false |= !p;
+        }
+        Some(preds.iter().filter(|&&p| p).count() as i128)
+    }
+
+    // -- Const-fold If accessor -----------------------------------------------
+
+    /// Const-folds an `Expr::If` fragment to its resolved `Term` via the exact-
+    /// or-bail `const_eval` + `const_val_term` path. The condition is evaluated
+    /// with an empty environment (closed expression only); the taken branch's tail
+    /// value is folded to a `Term`. Returns `None` for any non-`If` fragment, for
+    /// an `if`-without-else, or for any `If` whose condition or taken branch
+    /// contains a non-const sub-expression. Callers see `Option<Rc<Term>>`; all
+    /// raw `syn` evaluator logic stays in lib.rs.
+    pub(crate) fn const_folded_if_term(
+        &self,
+    ) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
+        let e = match &self.node {
+            FragNode::Expr(e @ syn::Expr::If(_)) => e,
+            _ => return None,
+        };
+        use std::collections::BTreeMap;
+        crate::const_eval(e, &BTreeMap::new())
+            .and_then(|v| crate::const_val_term(&v))
+    }
+
+    // -- Reference/paren/group stripping -------------------------------------
+
+    /// Strip `Reference`, `Paren`, and `Group` wrappers from an expression
+    /// fragment, returning the innermost non-wrapper fragment. Non-`Expr`
+    /// fragments are returned unchanged (nothing to strip). Mirrors the
+    /// crate-level `strip_refs_groups` helper used in recognizer bodies
+    /// before this accessor was added, but operates entirely on fragments so
+    /// recognizers need not escape to raw syn.
+    pub(crate) fn strip_refs_groups(self) -> SourceFragment<'a> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Reference(r)) => {
+                Self::expr(&r.expr, self.file).strip_refs_groups()
+            }
+            FragNode::Expr(syn::Expr::Paren(p)) => {
+                Self::expr(&p.expr, self.file).strip_refs_groups()
+            }
+            FragNode::Expr(syn::Expr::Group(g)) => {
+                Self::expr(&g.expr, self.file).strip_refs_groups()
+            }
+            _ => self,
+        }
+    }
+
     // -- Escape-hatch accessors (transitional shim) -------------------------
 
     pub(crate) fn as_expr(&self) -> Option<&syn::Expr> {
@@ -647,6 +735,77 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- Const/Static item accessors (typed; no raw-syn in callers) -----------
+
+    /// For an `Item::Const` or `Item::Static` fragment, returns the item kind
+    /// (`"const"` or `"static"`) and the identifier name as a `String`.
+    /// Returns `None` for all other fragment kinds.
+    pub(crate) fn item_const_static_kind_and_name(&self) -> Option<(&'static str, String)> {
+        match &self.node {
+            FragNode::Item(syn::Item::Const(item)) => {
+                Some(("const", item.ident.to_string()))
+            }
+            FragNode::Item(syn::Item::Static(item)) => {
+                Some(("static", item.ident.to_string()))
+            }
+            _ => None,
+        }
+    }
+
+    /// For an `Item::Const` or `Item::Static` fragment, returns `true` when
+    /// the initializer expression contains at least one assertion-surface macro.
+    /// Returns `false` for all other fragment kinds or when the initializer is
+    /// assertion-free.
+    pub(crate) fn item_const_static_initializer_has_asserts(&self) -> bool {
+        match &self.node {
+            FragNode::Item(syn::Item::Const(item)) => {
+                crate::count_asserts_in_expr(&item.expr) != 0
+            }
+            FragNode::Item(syn::Item::Static(item)) => {
+                crate::count_asserts_in_expr(&item.expr) != 0
+            }
+            _ => false,
+        }
+    }
+
+    /// For an `Item::Const` or `Item::Static` fragment, returns the normalized
+    /// token-key string of the initializer expression (whitespace-collapsed via
+    /// `token_key`). Returns `None` for all other fragment kinds.
+    pub(crate) fn item_const_static_initializer_token_str(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Item(syn::Item::Const(item)) => {
+                Some(crate::token_key(&*item.expr))
+            }
+            FragNode::Item(syn::Item::Static(item)) => {
+                Some(crate::token_key(&*item.expr))
+            }
+            _ => None,
+        }
+    }
+
+    // -- Impl-item accessor ---------------------------------------------------
+
+    /// For an `Item::Impl` fragment, returns the name of the first impl method
+    /// whose body carries at least one assertion surface. Returns `None` for
+    /// non-impl-item fragments and for impl blocks with no asserting method
+    /// (pure / assert-free impls stay on the generic unclassified path).
+    /// All syn field access lives HERE -- recognizers see only the String.
+    pub(crate) fn impl_item_asserting_method_name(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Item(syn::Item::Impl(imp)) => {
+                imp.items.iter().find_map(|it| {
+                    if let syn::ImplItem::Fn(m) = it {
+                        if crate::count_asserts_in_stmts(&m.block.stmts) > 0 {
+                            return Some(m.sig.ident.to_string());
+                        }
+                    }
+                    None
+                })
+            }
+            _ => None,
+        }
+    }
+
     // -- Scalar literal accessor (typed; no raw-syn in callers) ---------------
 
     /// Decode the scalar literal held by an `Expr::Lit` fragment into a
@@ -680,6 +839,208 @@ impl<'a> SourceFragment<'a> {
             _ => None,
         }
     }
+
+    /// For an `Expr::Lit(Lit::Int)` fragment, parse the integer value as
+    /// `u128` using `syn::LitInt::base10_parse` (decimal digits only; hex,
+    /// binary, and octal literals return `None`). Does NOT strip
+    /// `Reference`/`Paren`/`Group` wrappers -- call `strip_refs_groups()`
+    /// first if the fragment may be wrapped. All syn field access lives HERE.
+    pub(crate) fn literal_int_u128(&self) -> Option<u128> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Lit(l)) => match &l.lit {
+                syn::Lit::Int(i) => i.base10_parse::<u128>().ok(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    // -- Range-contains const-fold accessor -----------------------------------
+
+    /// Const-fold a `(a..b).contains(&x)` / `(a..=b).contains(&x)` (and
+    /// open-ended variants) over an inline range literal with all-integer-scalar
+    /// endpoints and a single integer-scalar argument to the computed membership
+    /// `bool`. Returns `None` when:
+    ///   - the fragment is not a `.contains(single_arg)` method call,
+    ///   - the receiver (after stripping refs/groups/parens) is not an inline
+    ///     `Expr::Range` literal,
+    ///   - any present endpoint or the argument does not const-fold to an
+    ///     integer scalar (int/byte literal, possibly negated).
+    /// CHAR ranges return `None` (left to the char lane).
+    /// All raw syn field access lives HERE; callers see only `Option<bool>`.
+    pub(crate) fn range_literal_contains_int(&self) -> Option<bool> {
+        let FragNode::Expr(syn::Expr::MethodCall(call)) = &self.node else {
+            return None;
+        };
+        if call.method != "contains" || call.args.len() != 1 {
+            return None;
+        }
+        let syn::Expr::Range(range) = strip_refs_groups_expr(&call.receiver) else {
+            return None;
+        };
+        let x = int_scalar_expr(&call.args[0])?;
+        let start = match range.start.as_deref() {
+            None => None,
+            Some(e) => Some(int_scalar_expr(e)?),
+        };
+        let end = match range.end.as_deref() {
+            None => None,
+            Some(e) => Some(int_scalar_expr(e)?),
+        };
+        let lower_ok = start.map_or(true, |s| x >= s);
+        let upper_ok = match (end, &range.limits) {
+            (Some(e), syn::RangeLimits::HalfOpen(_)) => x < e,
+            (Some(e), syn::RangeLimits::Closed(_)) => x <= e,
+            (None, _) => true,
+        };
+        Some(lower_ok && upper_ok)
+    }
+
+    // -- Sorted-array const-fold accessors ------------------------------------
+
+    /// Const-fold a literal scalar array (after stripping refs/parens/groups)
+    /// to an ordered vector of i128 values, ready for consecutive-pair
+    /// sortedness comparison (`windows(2)`). Each element must be a closed
+    /// scalar: an int/byte literal, a `char` (codepoint), a `bool` (0/1), or a
+    /// negated int/byte -- through paren/group/ref wrappers.
+    ///
+    /// Also handles `Box::new([..])` as the same finite construction
+    /// (mirrors `scalar_literal_array_elems` in `lib.rs`).
+    ///
+    /// Returns `None` if the fragment is not a literal array, or if any element
+    /// fails to fold. All raw syn field access lives HERE; callers see only
+    /// `Option<Vec<i128>>`.
+    pub(crate) fn scalar_array_ordered_values(&self) -> Option<Vec<i128>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Array(arr)) => {
+                arr.elems.iter().map(scalar_ordered_value_expr).collect()
+            }
+            // Strip references / parens / groups transparently.
+            FragNode::Expr(syn::Expr::Reference(r)) => {
+                Self::expr(&r.expr, self.file).scalar_array_ordered_values()
+            }
+            FragNode::Expr(syn::Expr::Paren(p)) => {
+                Self::expr(&p.expr, self.file).scalar_array_ordered_values()
+            }
+            FragNode::Expr(syn::Expr::Group(g)) => {
+                Self::expr(&g.expr, self.file).scalar_array_ordered_values()
+            }
+            // `Box::new([..])` -- the boxed array is the same finite construction.
+            FragNode::Expr(syn::Expr::Call(c)) if c.args.len() == 1 => {
+                if let syn::Expr::Path(p) = c.func.as_ref() {
+                    let is_box_new = (p.path.segments.len() == 2
+                        && p.path.segments[0].ident == "Box"
+                        && p.path.segments[1].ident == "new")
+                        || (p.path.segments.last().is_some_and(|s| s.ident == "new")
+                            && p.path.segments.iter().any(|s| s.ident == "Box"));
+                    if is_box_new {
+                        return Self::expr(&c.args[0], self.file).scalar_array_ordered_values();
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if this fragment is a zero-argument `MethodCall` to one
+    /// of the order-PRESERVING iterator/view adaptor names: `iter`,
+    /// `into_iter`, `iter_mut`, `copied`, `cloned`, `as_slice`, `by_ref`.
+    ///
+    /// These can be peeled off the receiver of `.is_sorted()` while keeping
+    /// the sortedness of the underlying literal array intact.
+    /// Order-CHANGING adaptors (e.g. `.rev()`) are NOT listed here.
+    /// All raw syn field access lives HERE; callers see only `bool`.
+    pub(crate) fn is_order_preserving_view_adaptor(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(m)) => {
+                m.args.is_empty()
+                    && matches!(
+                        m.method.to_string().as_str(),
+                        "iter"
+                            | "into_iter"
+                            | "iter_mut"
+                            | "copied"
+                            | "cloned"
+                            | "as_slice"
+                            | "by_ref"
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    // -- Char-range filter-map equality site ---------------------------------
+
+    /// Returns the `token_key` boundary string if this fragment is an
+    /// `assert!(...)` macro call whose single argument is a char-range
+    /// `filter_map` equality expression of the form:
+    ///   `(from..=to).eq((from as u32..=to as u32).filter_map(char::from_u32))`
+    /// (optionally with `.rev()` on both sides). Returns `None` for any other
+    /// shape. All raw syn field access lives HERE; `char_range_filter_map::recognize`
+    /// sees only the derived site string.
+    pub(crate) fn char_range_filter_map_eq_site(&self) -> Option<String> {
+        let FragNode::Expr(syn::Expr::Macro(mac)) = &self.node else {
+            return None;
+        };
+        if mac.mac.path.segments.last()?.ident != "assert" {
+            return None;
+        }
+        let args = crate::parse_macro_args(mac.mac.tokens.clone()).ok()?;
+        let payload = args.exprs.first()?;
+        if !crate::sugar::char_range_filter_map::is_char_range_filter_map_eq(payload) {
+            return None;
+        }
+        Some(crate::token_key(payload))
+    }
+
+    // -- For-loop mutation boundary ------------------------------------------
+
+    /// Returns the `token_key` boundary string if this fragment is a `for` loop
+    /// that:
+    ///   (a) is NOT decomposable as a forall loop (i.e. `forall::decompose_for_loop`
+    ///       returns `None`), AND
+    ///   (b) carries a runtime mutation boundary in either the iterable expression
+    ///       or the loop body block (checked via `statement_position::has_runtime_boundary`).
+    /// Returns `None` for any non-`ForLoop` fragment, for a loop that IS a forall,
+    /// or for a for loop that has no mutation boundary. All raw syn field access
+    /// lives HERE; `for_loop_mutation::recognize` sees only the derived boundary string.
+    pub(crate) fn for_loop_mutation_boundary(
+        &self,
+        fcx: &crate::sugar::factory::SugarBuildCtx<'_, '_>,
+    ) -> Option<String> {
+        let FragNode::Expr(syn::Expr::ForLoop(for_loop)) = &self.node else {
+            return None;
+        };
+        // If this for loop IS a forall, decline -- forall_loop owns it.
+        if crate::sugar::forall::decompose_for_loop(
+            for_loop,
+            fcx.scope(),
+            fcx.let_inits(),
+            fcx,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        // Check for runtime mutation boundary in the iterable expr or the body block.
+        let body_block_as_expr = syn::Expr::Block(syn::ExprBlock {
+            attrs: Vec::new(),
+            label: None,
+            block: for_loop.body.clone(),
+        });
+        let has_mutation =
+            crate::sugar::statement_position::has_runtime_boundary(&for_loop.expr)
+                || crate::sugar::statement_position::has_runtime_boundary(&body_block_as_expr);
+        if has_mutation {
+            let FragNode::Expr(e) = &self.node else {
+                unreachable!()
+            };
+            Some(crate::token_key(e))
+        } else {
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +1051,59 @@ impl<'a> SourceFragment<'a> {
 /// returned fragment borrows from `parsed`, so callers hold the `syn::File` alive.
 pub(crate) fn parse_file(source: &str) -> syn::File {
     syn::parse_file(source).expect("source_fragment: parse_file failed")
+}
+
+// ---------------------------------------------------------------------------
+// Range-contains helpers (used by `range_literal_contains_int`)
+// ---------------------------------------------------------------------------
+
+/// Strip `Reference` / `Paren` / `Group` wrappers recursively to expose the inner
+/// expression. Mirrors `strip_refs_groups` in `lib.rs` but scoped here so that
+/// `range_literal_contains_int` does not escape to raw syn in recognizer bodies.
+fn strip_refs_groups_expr(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Reference(r) => strip_refs_groups_expr(&r.expr),
+        syn::Expr::Paren(p) => strip_refs_groups_expr(&p.expr),
+        syn::Expr::Group(g) => strip_refs_groups_expr(&g.expr),
+        _ => expr,
+    }
+}
+
+/// Const-fold an expression to an integer scalar through ref/paren/group wrappers.
+/// Recognises int literals, byte literals (`b'x'`), and negated variants. CHAR is
+/// intentionally excluded (char ranges are handled by the char-range lane).
+fn int_scalar_expr(expr: &syn::Expr) -> Option<i128> {
+    match strip_refs_groups_expr(expr) {
+        syn::Expr::Lit(l) => match &l.lit {
+            syn::Lit::Int(i) => i.base10_parse::<i128>().ok(),
+            syn::Lit::Byte(b) => Some(i128::from(b.value())),
+            _ => None,
+        },
+        syn::Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            int_scalar_expr(&u.expr).and_then(i128::checked_neg)
+        }
+        _ => None,
+    }
+}
+
+/// Const-fold a closed scalar expression to an ordering i128 value for
+/// sortedness comparison. Extends `int_scalar_expr` to cover `char` (codepoint)
+/// and `bool` (0/1), through ref/paren/group wrappers. Used by
+/// `scalar_array_ordered_values`.
+fn scalar_ordered_value_expr(expr: &syn::Expr) -> Option<i128> {
+    match strip_refs_groups_expr(expr) {
+        syn::Expr::Lit(l) => match &l.lit {
+            syn::Lit::Int(i)  => i.base10_parse::<i128>().ok(),
+            syn::Lit::Byte(b) => Some(i128::from(b.value())),
+            syn::Lit::Char(c) => Some(i128::from(u32::from(c.value()))),
+            syn::Lit::Bool(b) => Some(i128::from(b.value)),
+            _ => None,
+        },
+        syn::Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            scalar_ordered_value_expr(&u.expr).and_then(i128::checked_neg)
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -782,6 +1196,7 @@ fn item_kind(i: &syn::Item) -> &'static str {
     match i {
         syn::Item::Fn(_) => "FunctionDef",
         syn::Item::Const(_) => "Const",
+        syn::Item::Static(_) => "Static",
         syn::Item::Impl(_) => "Impl",
         syn::Item::Struct(_) => "Struct",
         syn::Item::Enum(_) => "Enum",

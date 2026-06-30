@@ -1,32 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Side-effecting `for` statement sugar.
-
-use syn::{Expr, ExprForLoop};
+//
+// MIGRATION STATUS (Phase-3 ratchet -- FULLY MIGRATED).
+//   * `recognize` uses ONLY `SourceFragment::for_loop_mutation_boundary(fcx)` --
+//     no `as_expr()` shim, no raw `Expr::` match, no raw syn imports.
+//   * The Sugar struct holds only `String` (no raw syn).
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::{forall, statement_position};
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite_before("for_loop_mutation", &["forall_loop"], recognize);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::ForLoop(for_loop) = expr else {
-        return None;
-    };
-
-    if forall::decompose_for_loop(for_loop, fcx.scope(), fcx.let_inits(), fcx).is_some() {
-        return None;
-    }
-    loop_has_mutation_boundary(for_loop).then(|| {
-        Box::new(ForLoopMutationSugar {
-            boundary: token_key(expr),
-        }) as Box<dyn Sugar>
-    })
+    let boundary = frag.for_loop_mutation_boundary(fcx)?;
+    Some(Box::new(ForLoopMutationSugar { boundary }))
 }
 
 struct ForLoopMutationSugar {
@@ -39,13 +30,4 @@ impl Sugar for ForLoopMutationSugar {
             boundary: self.boundary.clone(),
         })
     }
-}
-
-fn loop_has_mutation_boundary(for_loop: &ExprForLoop) -> bool {
-    statement_position::has_runtime_boundary(&for_loop.expr)
-        || statement_position::has_runtime_boundary(&Expr::Block(syn::ExprBlock {
-            attrs: Vec::new(),
-            label: None,
-            block: for_loop.body.clone(),
-        }))
 }

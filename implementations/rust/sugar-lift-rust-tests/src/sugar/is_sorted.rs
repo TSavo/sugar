@@ -22,84 +22,52 @@
 // TEETH. `[1,3,2].iter().is_sorted()` folds to `Bool(false)` -> asserting it is
 // z3-UNSAT (REFUTED); `[1,2,2,9].iter().is_sorted()` -> `Bool(true)` ->
 // discharged.
+//
+// DEEP MIGRATION (Phase-3 ratchet -- FULLY MIGRATED).
+//   * `recognize` uses ONLY typed `SourceFragment` accessors:
+//     `call_is_method_call`, `call_target_name`, `call_arg_count`,
+//     `call_receiver`, `scalar_array_ordered_values`,
+//     `is_order_preserving_view_adaptor`. No `as_expr()`, no raw `Expr::` match.
+//   * `IsSortedSugar` holds `value: bool` only -- no raw syn field.
 
-use syn::{Expr, ExprLit, Lit, UnOp};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    bool_const, scalar_literal_array_elems, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx,
-};
+use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("is_sorted", SugarRole::Term, recognize);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    // Bare `is_sorted` only: `is_sorted_by`/`is_sorted_by_key` carry a closure
-    // (args), which we do not evaluate here.
-    if call.method != "is_sorted" || !call.args.is_empty() {
+    // Must be a MethodCall named `is_sorted` with no args.
+    // `is_sorted_by`/`is_sorted_by_key` carry a closure argument; decline those.
+    if !frag.call_is_method_call() {
         return None;
     }
-    let elems = literal_array_under_view(&call.receiver)?;
-    let mut vals = Vec::with_capacity(elems.len());
-    for e in &elems {
-        vals.push(scalar_lit_value(&e)?);
+    if frag.call_target_name().as_deref() != Some("is_sorted") {
+        return None;
     }
-    // std `is_sorted`: non-strict consecutive pairs. Empty/single -> true.
-    let sorted = vals.windows(2).all(|w| w[0] <= w[1]);
-    Some(Box::new(IsSortedSugar { value: sorted }))
-}
-
-/// Peel order-preserving view/iter adaptors off the receiver down to a literal
-/// array of closed scalar elements. `None` for a runtime receiver, a non-array,
-/// or an order-changing adaptor (only the listed no-arg, order-preserving views
-/// are peeled).
-fn literal_array_under_view(expr: &Expr) -> Option<Vec<Expr>> {
-    let stripped = strip_refs_groups(expr);
-    if let Some(elems) = scalar_literal_array_elems(stripped) {
-        return Some(elems);
+    if frag.call_arg_count() != 0 {
+        return None;
     }
-    if let Expr::MethodCall(call) = stripped {
-        if call.args.is_empty()
-            && matches!(
-                call.method.to_string().as_str(),
-                "iter" | "into_iter" | "iter_mut" | "copied" | "cloned" | "as_slice" | "by_ref"
-            )
-        {
-            return literal_array_under_view(&call.receiver);
+    // Walk the receiver, peeling order-PRESERVING view/iter adaptors, until we
+    // reach a literal scalar array whose elements we can fold to i128.
+    let mut recv = frag.call_receiver()?;
+    loop {
+        if let Some(vals) = recv.scalar_array_ordered_values() {
+            // std `is_sorted`: non-strict consecutive pairs. Empty/single -> true.
+            let sorted = vals.windows(2).all(|w| w[0] <= w[1]);
+            return Some(Box::new(IsSortedSugar { value: sorted }));
         }
-    }
-    None
-}
-
-/// The exact ordering value of a closed scalar literal element: the integer
-/// value, the byte, the `char` codepoint, or `0`/`1` for a bool; through a unary
-/// `-` and paren/group/ref wrappers. `scalar_literal_array_elems` already vetted
-/// the shape, so this folds; `None` is the defensive bail (never a guess).
-fn scalar_lit_value(expr: &Expr) -> Option<i128> {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Int(i), ..
-        }) => i.base10_parse::<i128>().ok(),
-        Expr::Lit(ExprLit {
-            lit: Lit::Byte(b), ..
-        }) => Some(i128::from(b.value())),
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(i128::from(u32::from(c.value()))),
-        Expr::Lit(ExprLit {
-            lit: Lit::Bool(b), ..
-        }) => Some(i128::from(b.value)),
-        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
-            scalar_lit_value(&u.expr).and_then(i128::checked_neg)
+        // Peel one order-PRESERVING adaptor (iter/into_iter/copied/etc.) and retry.
+        // An order-CHANGING adaptor (rev) or a runtime receiver -> decline.
+        if recv.is_order_preserving_view_adaptor() {
+            recv = recv.call_receiver()?;
+        } else {
+            return None;
         }
-        _ => None,
     }
 }
 
@@ -115,5 +83,140 @@ impl Sugar for IsSortedSugar {
             "resolved literal-array is_sorted stdlib axiom to a ground bool"
         );
         Outcome::Complete(Desugared::Term(bool_const(self.value)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// from_src tests: source string -> SourceFragment -> observed -> build -> floor
+// No parse_quote!, no StubTerm, no run(). Typed-accessor door only.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::factory::SugarBuildCtx;
+    use crate::sugar::source_fragment::SourceFragment;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+    use std::collections::BTreeMap;
+    use sugar_ir_symbolic::{ConstValue, Term};
+    use syn::Expr;
+
+    /// Parse an expression string, wrap in a SourceFragment, call `recognize`,
+    /// then `desugar`, and extract the ground `bool` from the resulting
+    /// `Outcome::Complete(Desugared::Term(Bool(..)))`. Returns `None` when
+    /// `recognize` declines (correct for all "must not fold" cases).
+    fn desugar_bool(src: &str) -> Option<bool> {
+        let expr: Expr = syn::parse_str(src).expect("parse expr");
+        let scope = TemporalScope::new("is-sorted-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let frag = SourceFragment::expr(&expr, "<src>");
+        let sugar = recognize(&frag, &fcx)?;
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        match sugar.desugar(&ctx) {
+            Outcome::Complete(Desugared::Term(term)) => match term.as_ref() {
+                Term::Const {
+                    value: ConstValue::Bool(b),
+                    ..
+                } => Some(*b),
+                _ => panic!("expected Bool const from is_sorted desugar"),
+            },
+            Outcome::Incomplete(_) => panic!("expected Outcome::Complete from is_sorted desugar"),
+            _ => panic!("expected Outcome::Complete(Desugared::Term) from is_sorted desugar"),
+        }
+    }
+
+    // --- failing from_src test (written first, before recognize was rewritten) ---
+
+    /// `[1, 2, 2, 9].iter().is_sorted()` must fold to `true` via the typed
+    /// accessor door (no raw Expr:: in recognize; observed is "MethodCall").
+    #[test]
+    fn from_src_sorted_array_iter_folds_true() {
+        let expr: Expr = syn::parse_str("[1, 2, 2, 9].iter().is_sorted()")
+            .expect("parse expr");
+        let frag = SourceFragment::expr(&expr, "<src>");
+
+        // observed: the outermost node is a method call
+        assert_eq!(frag.observed(), "MethodCall");
+
+        // build: recognize must return Some (was failing before migration
+        //        because as_expr() shim was the only path in)
+        let scope = TemporalScope::new("is-sorted-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize(&frag, &fcx)
+            .expect("recognize must succeed for sorted literal-array iter");
+
+        // floor: desugar must produce Bool(true)
+        let items = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        match sugar.desugar(&ctx) {
+            Outcome::Complete(Desugared::Term(term)) => match term.as_ref() {
+                Term::Const {
+                    value: ConstValue::Bool(true),
+                    ..
+                } => {}
+                _ => panic!("[1,2,2,9].iter().is_sorted() must fold to Bool(true)"),
+            },
+            Outcome::Incomplete(_) => panic!("must Complete, got Incomplete"),
+            _ => panic!("must Outcome::Complete(Desugared::Term)"),
+        }
+    }
+
+    // --- additional coverage ---
+
+    #[test]
+    fn from_src_unsorted_array_iter_folds_false() {
+        // [1, 3, 2].iter().is_sorted() -> Bool(false)
+        assert_eq!(desugar_bool("[1, 3, 2].iter().is_sorted()"), Some(false));
+    }
+
+    #[test]
+    fn from_src_direct_array_no_adaptor_descending_false() {
+        // [3, 2, 1].is_sorted() -> Bool(false)  (no .iter() needed)
+        assert_eq!(desugar_bool("[3, 2, 1].is_sorted()"), Some(false));
+    }
+
+    #[test]
+    fn from_src_order_changing_adaptor_declines() {
+        // .rev() is order-CHANGING -> recognize returns None
+        assert!(
+            desugar_bool("[1, 2, 3].iter().rev().is_sorted()").is_none(),
+            ".rev() is order-changing; is_sorted must decline"
+        );
+    }
+
+    #[test]
+    fn from_src_is_sorted_by_with_closure_declines() {
+        // is_sorted_by carries an arg -> decline
+        assert!(
+            desugar_bool("[1, 2, 3].iter().is_sorted_by(|a, b| a.partial_cmp(b))").is_none(),
+            "is_sorted_by has an argument; must decline"
+        );
+    }
+
+    #[test]
+    fn from_src_single_element_is_trivially_sorted() {
+        // [42].is_sorted() -> Bool(true)
+        assert_eq!(desugar_bool("[42].is_sorted()"), Some(true));
+    }
+
+    #[test]
+    fn from_src_multiple_preserving_adaptors_peel_correctly() {
+        // [1, 2, 3].iter().copied().is_sorted() -> Bool(true)
+        assert_eq!(
+            desugar_bool("[1, 2, 3].iter().copied().is_sorted()"),
+            Some(true)
+        );
     }
 }

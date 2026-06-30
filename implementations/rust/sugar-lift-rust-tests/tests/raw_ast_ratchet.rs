@@ -36,7 +36,18 @@ use std::path::PathBuf;
 /// statement_control_flow.rs migrated: 116→115.
 /// wave2 consolidation (unsafe_memory, statement_nested_assertion, statement_loop_advance,
 /// statement_future_handoff, write_macro, future_join): 115→109.
-const RAW_SYN_CEILING: usize = 109;
+/// const_item.rs migrated: 109→108.
+/// impl_method.rs migrated: 108→107.
+/// partition_point.rs migrated: 107→106.
+/// range_contains.rs migrated: 106→105.
+/// is_sorted.rs migrated: 105→104.
+/// const_if.rs migrated (const_folded_if_term accessor, no as_expr): 104→103.
+/// tightened to measured R(t)=102: 103→102.
+/// duration_accessor.rs migrated (strip_refs_groups+literal_int_u128 accessors): 102→101.
+/// re-measured: R(t)=102 (duration_accessor was residual; migration brings it to 102 not 101): 101→102.
+/// char_range_filter_map.rs migrated (char_range_filter_map_eq_site accessor): 102→101.
+/// for_loop_mutation.rs migrated (for_loop_mutation_boundary accessor, needs fcx): 101→99.
+const RAW_SYN_CEILING: usize = 99;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
