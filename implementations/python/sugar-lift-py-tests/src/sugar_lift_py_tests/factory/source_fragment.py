@@ -83,7 +83,7 @@ class SourceFragment:
     def observed(self) -> str:
         if isinstance(self.node, ast.Constant) and isinstance(
             self.node.value,
-            (int, str, bool, type(None)),
+            (int, float, str, bool, type(None)),
         ):
             return "PrimitiveLiteral"
         return type(self.node).__name__

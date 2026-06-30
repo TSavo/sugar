@@ -49,7 +49,19 @@ def test_aug_mult_assign_equals_the_product():
 
 
 def test_aug_div_assign_equals_the_quotient():
-    assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3\n")
+    # true division yields a float: 6 / 2 == 3.0, not 3.
+    assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3.0\n")
+
+
+# --- the next red bait: float is folded into a bare TermValue, so the Real refinement is
+# --- missing -- 3.0 and 3 wrongly compare equal. RED until a typed float/Real lands.
+
+def test_float_is_a_real_distinct_from_the_int(  # noqa: D103
+):
+    # 3.0 is a Real; 3 is an Int. They must NOT be the same Floor value. Today both fold
+    # to TermValue and 3.0 == 3 in Python, so this is RED -- naming the next atom: a typed
+    # float (the Real refinement of the numeric sort hierarchy), not a bare TermValue.
+    assert _block("    return 3.0\n") != _block("    return 3\n")
 
 
 def test_aug_floordiv_assign_equals_the_floor_quotient():
