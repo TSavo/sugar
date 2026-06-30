@@ -56,6 +56,29 @@ fn encode20(value: &str) -> String {
     .collect()
 }
 
+/// Simple if/else selector -- symbolic if/else discharge proof.
+/// Body has exactly two arms: `if b { 1 } else { 2 }`.
+/// `emit_if_value` lifts this as:
+///   and([implies(eq(b,true), eq(out,1)), implies(not(eq(b,true)), eq(out,2))])
+/// The consistency pass substitutes the vendor-pinned argument and the solver
+/// finds SAT -> DISCHARGED.
+fn pick(b: bool) -> u32 {
+    if b { 1 } else { 2 }
+}
+
+/// Guard-clause classifier -- symbolic nested-if discharge proof.
+/// Body uses the three-arm guard-clause shape (two `if return` guards + tail 0).
+/// `block_stmt_inv` via BlockSugar composes three guarded clauses:
+///   and([implies(n>10, out==100),
+///        implies(!n>10 /\ n>5, out==50),
+///        implies(!n>10 /\ !n>5, out==0)])
+/// At n=7 (vendor row) only the middle arm fires: out==50 SAT -> DISCHARGED.
+fn classify(n: u32) -> u32 {
+    if n > 10 { return 100; }
+    if n > 5 { return 50; }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +165,24 @@ mod tests {
         // Vendor source: base64 0.22.1 src/decode.rs::decoded_len_est.
         // Exact row: decoded_len_estimate(4) == 3.
         assert_eq!(3, decoded_len_estimate(4));
+    }
+
+    // ── if/else + nested-if symbolic discharge (factory BlockSugar) ───────────
+
+    #[test]
+    fn pick_if_else_discharged() {
+        // pick(true) == 1.
+        // Body: `if b { 1 } else { 2 }` -- single-tail if/else.
+        // emit_if_value -> and([implies(eq(b,true),out==1), implies(!eq(b,true),out==2)]).
+        // At b=true: only the first arm fires -> eq(out,1) SAT with vendor row 1 -> DISCHARGED.
+        assert_eq!(1, pick(true));
+    }
+
+    #[test]
+    fn classify_nested_if_discharged() {
+        // classify(7) == 50.
+        // Body: guard-clause shape; block_stmt_inv via BlockSugar.
+        // At n=7: n>10 is false, n>5 is true -> middle arm: eq(out,50) SAT -> DISCHARGED.
+        assert_eq!(50, classify(7));
     }
 }

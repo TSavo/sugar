@@ -137,15 +137,27 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
 
   # STRICT ENCODER GATE: the encode64 consistency row is str.eq-bv-blocks-teethed
   # and must DISCHARGE (good) or be UNSATISFIED (bad).  This is the marquee claim.
-  local encoder64_status encoder20_status
+  local encoder64_status encoder20_status pick_status classify_status
   encoder64_status="$(pyget "$prove_json" "
 next((r.get('status') for r in d.get('rows', []) if 'encode64#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
 ")"
   encoder20_status="$(pyget "$prove_json" "
 next((r.get('status') for r in d.get('rows', []) if 'encode20#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
 ")"
+  # STRICT IF/ELSE + NESTED-IF GATE: pick (if/else) and classify (nested-if
+  # guard-clause) rows prove that BlockSugar discharges symbolically (good)
+  # and refutes subtle wrong values (bad) via QF_BV.  Filter on #euf# to skip
+  # the #panic_callsite#euf# rows (those are always refused, expected).
+  pick_status="$(pyget "$prove_json" "
+next((r.get('status') for r in d.get('rows', []) if 'pick#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
+")"
+  classify_status="$(pyget "$prove_json" "
+next((r.get('status') for r in d.get('rows', []) if 'classify#euf#' in (r.get('property', '') or '') and 'consistency:' in (r.get('property', '') or '')), 'MISSING')
+")"
   echo "   encode64 consistency row: $encoder64_status"
   echo "   encode20 consistency row: $encoder20_status"
+  echo "   pick    consistency row: $pick_status"
+  echo "   classify consistency row: $classify_status"
 
   if [ "$expect_consistency" = "DISCHARGE" ]; then
     # Good suite: encoder row must be discharged (body + assertion are SAT).
@@ -155,6 +167,13 @@ next((r.get('status') for r in d.get('rows', []) if 'encode20#euf#' in (r.get('p
     [ "$encoder20_status" = "discharged" ] || {
       echo "FAIL[$suite]: encode20 consistency row must be discharged, got $encoder20_status"; exit 1
     }
+    # pick/classify: BlockSugar if/else + nested-if must discharge symbolically.
+    [ "$pick_status" = "discharged" ] || {
+      echo "FAIL[$suite]: pick consistency row must be discharged, got $pick_status"; exit 1
+    }
+    [ "$classify_status" = "discharged" ] || {
+      echo "FAIL[$suite]: classify consistency row must be discharged, got $classify_status"; exit 1
+    }
     # No other consistency row should be unsatisfied (no false refutations).
     if echo "$consistency_status" | grep -q 'unsatisfied'; then
       echo "FAIL[$suite]: a true assertion was refuted (unsatisfied): $consistency_status"; exit 1
@@ -163,6 +182,13 @@ next((r.get('status') for r in d.get('rows', []) if 'encode20#euf#' in (r.get('p
     # Bad suite: encode64 row must be UNSATISFIED (body contradicts wrong assertion).
     [ "$encoder64_status" = "unsatisfied" ] || {
       echo "FAIL[$suite]: encode64 consistency row must be unsatisfied (refuted), got $encoder64_status"; exit 1
+    }
+    # pick/classify wrong-value twins must also be UNSATISFIED (BlockSugar teeth).
+    [ "$pick_status" = "unsatisfied" ] || {
+      echo "FAIL[$suite]: pick consistency row must be unsatisfied (refuted), got $pick_status"; exit 1
+    }
+    [ "$classify_status" = "unsatisfied" ] || {
+      echo "FAIL[$suite]: classify consistency row must be unsatisfied (refuted), got $classify_status"; exit 1
     }
   fi
 
@@ -222,22 +248,44 @@ encoder20_rows = [
     if "encode20#euf#" in (r.get("property") or "")
     and "consistency:" in (r.get("property") or "")
 ]
+pick_rows = [
+    r.get("status")
+    for r in rows
+    if "pick#euf#" in (r.get("property") or "")
+    and "consistency:" in (r.get("property") or "")
+]
+classify_rows = [
+    r.get("status")
+    for r in rows
+    if "classify#euf#" in (r.get("property") or "")
+    and "consistency:" in (r.get("property") or "")
+]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
 
-# STRICT ENCODER GATE (marquee claim).
+# STRICT ENCODER + IF/ELSE + NESTED-IF GATE (marquee claim and BlockSugar teeth).
 if expect_consistency == "DISCHARGE":
     # Good: encoder rows must be discharged, no other unsatisfied.
     if encoder64_rows != ["discharged"]:
         raise SystemExit(f"FAIL[{suite}]: encode64 durable consistency must be ['discharged'], got {encoder64_rows}")
     if encoder20_rows != ["discharged"]:
         raise SystemExit(f"FAIL[{suite}]: encode20 durable consistency must be ['discharged'], got {encoder20_rows}")
+    # pick (if/else) and classify (nested-if guard-clause) must discharge.
+    if not pick_rows or any(s != "discharged" for s in pick_rows):
+        raise SystemExit(f"FAIL[{suite}]: pick durable consistency must all be 'discharged', got {pick_rows}")
+    if not classify_rows or any(s != "discharged" for s in classify_rows):
+        raise SystemExit(f"FAIL[{suite}]: classify durable consistency must all be 'discharged', got {classify_rows}")
     if "unsatisfied" in consistency:
         raise SystemExit(f"FAIL[{suite}]: a true assertion was refuted (unsatisfied): {consistency}")
 else:
     # Bad: encode64 row must be unsatisfied (refuted by body post).
     if encoder64_rows != ["unsatisfied"]:
         raise SystemExit(f"FAIL[{suite}]: encode64 durable consistency must be ['unsatisfied'], got {encoder64_rows}")
+    # pick/classify wrong-value twins must all be unsatisfied (BlockSugar refutes).
+    if not pick_rows or any(s != "unsatisfied" for s in pick_rows):
+        raise SystemExit(f"FAIL[{suite}]: pick durable consistency must all be 'unsatisfied', got {pick_rows}")
+    if not classify_rows or any(s != "unsatisfied" for s in classify_rows):
+        raise SystemExit(f"FAIL[{suite}]: classify durable consistency must all be 'unsatisfied', got {classify_rows}")
 
 if expect_witness == "DISCHARGE":
     if witness != ["discharged"]:
@@ -254,6 +302,8 @@ if not verified:
 print(f"   durable consistency statuses: {','.join(consistency)}")
 print(f"   encode64 consistency: {','.join(encoder64_rows)}")
 print(f"   encode20 consistency: {','.join(encoder20_rows)}")
+print(f"   pick    consistency: {','.join(pick_rows)}")
+print(f"   classify consistency: {','.join(classify_rows)}")
 print(f"   durable witness statuses: {','.join(witness)}")
 print("   durable witness dimension: verified")
 PY

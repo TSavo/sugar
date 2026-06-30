@@ -34,6 +34,18 @@ fn encode64(value: &str) -> String {
     .collect()
 }
 
+/// Correct pick body -- same as good suite.  Wrong assertions below.
+fn pick(b: bool) -> u32 {
+    if b { 1 } else { 2 }
+}
+
+/// Correct classify body -- same as good suite.  Wrong assertions below.
+fn classify(n: u32) -> u32 {
+    if n > 10 { return 100; }
+    if n > 5 { return 50; }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,5 +70,42 @@ mod tests {
         // base64's length values are not FOL-computable so consistency refuses
         // (vacuity guard); the TEETH live in the witness dimension (runtime panic).
         assert_eq!(3, encoded_len(3, false).unwrap());
+    }
+
+    // ── if/else + nested-if WRONG twins -- must be UNSATISFIED ───────────────
+    //
+    // All four bodies are CORRECT (same as good suite).  The assertions are
+    // subtly wrong; the body post forces a contradictory value -> UNSAT in QF_BV.
+
+    #[test]
+    fn pick_if_else_wrong_a() {
+        // WRONG: pick(true) is 1, not 2.
+        // Body: implies(eq(b,true), eq(out,1)) at b=true forces out==1.
+        // Assertion claims out==2 -> UNSAT -> UNSATISFIED.
+        assert_eq!(2, pick(true));
+    }
+
+    #[test]
+    fn classify_nested_if_wrong_a() {
+        // WRONG: classify(7) is 50, not 51.
+        // Body: at n=7 the middle arm fires -> out==50.
+        // Assertion claims out==51 -> UNSAT -> UNSATISFIED.
+        assert_eq!(51, classify(7));
+    }
+
+    #[test]
+    fn pick_if_else_wrong_b() {
+        // WRONG: pick(false) is 2, not 1.
+        // Body: implies(!eq(b,true), eq(out,2)) at b=false forces out==2.
+        // Assertion claims out==1 -> UNSAT -> UNSATISFIED.
+        assert_eq!(1, pick(false));
+    }
+
+    #[test]
+    fn classify_nested_if_wrong_b() {
+        // WRONG: classify(11) is 100, not 50.
+        // Body: at n=11 the first arm fires (11>10) -> out==100.
+        // Assertion claims out==50 -> UNSAT -> UNSATISFIED.
+        assert_eq!(50, classify(11));
     }
 }

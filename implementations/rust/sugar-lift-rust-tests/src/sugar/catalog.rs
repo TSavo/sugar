@@ -5,12 +5,13 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use syn::{Expr, Item};
+use syn::{Expr, Item, Stmt};
 
 use crate::sugar::backstop::unsupported;
-use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
+    assign_sugar, block_sugar, if_sugar, return_sugar,
     addr_of_mut, aggregate_decomp, array_chunks, array_repeat, array_term, array_try_from,
     assign_op, atomic_load, await_term, binop, block_term, bool_bitwise, bool_method, bound_path,
     bv_binop, call, cast_term, cell_refcell, cfg_select, chain, char_method, char_range_collect_string,
@@ -251,6 +252,20 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
 
 const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&const_item::ITEM_SUGAR, &impl_method::ITEM_SUGAR];
 
+/// Statement-position Sugar claims (`return`, `let`, `if`, block).
+/// Dispatched via `build_stmt_role`; NO caller may iterate block.stmts by hand.
+/// Order: non-fallback claims come before the SupportSugar fallback automatically
+/// via the `fallback_well` ordering mechanism. `block_sugar` uses `statement_before`
+/// to ensure it precedes `stmt_support` even when both would match the same stmt.
+#[allow(dead_code)]
+const STMT_CLAIMS: &[&StmtSugarClaim] = &[
+    &return_sugar::STMT_SUGAR,
+    &assign_sugar::STMT_SUGAR,
+    &if_sugar::STMT_SUGAR,
+    &block_sugar::BLOCK_STMT_SUGAR,
+    &block_sugar::SUPPORT_STMT_SUGAR,
+];
+
 pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     let mut candidates = matching_expr_claims_for_role(expr, fcx, role);
     let selected_index = candidates
@@ -304,6 +319,40 @@ pub(crate) fn matching_item_claims_for_role(
         .iter()
         .filter(|claim| claim.role() == role)
         .filter_map(|claim| (*claim).candidate(item, fcx))
+        .collect();
+    order_candidates_or_panic(&mut candidates);
+    candidates
+}
+
+/// Dispatch a single STATEMENT through the factory by role -- the Stmt analogue of
+/// `build_expr_role`/`build_item_role`. The body->post composition uses THIS; there is
+/// no other sanctioned way to lift a statement.
+#[allow(dead_code)]
+pub(crate) fn build_stmt_role(stmt: &Stmt, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
+    let mut candidates = matching_stmt_claims_for_role(stmt, fcx, role);
+    let selected_index = candidates
+        .iter()
+        .position(|candidate| candidate.role() == role);
+    let candidate_audits = candidate_audits(&candidates, selected_index);
+    let selected = selected_index.map(|index| candidates[index].name());
+    let seed = FactoryAuditSeed::stmt(stmt, role, selected, candidate_audits);
+    let node = match selected_index {
+        Some(index) => candidates.swap_remove(index).into_node(),
+        None => unsupported(seed.unresolved_reason()),
+    };
+    AccountedSugar::new(seed, node)
+}
+
+#[allow(dead_code)]
+pub(crate) fn matching_stmt_claims_for_role(
+    stmt: &Stmt,
+    fcx: &SugarBuildCtx,
+    role: SugarRole,
+) -> Vec<SugarCandidate> {
+    let mut candidates: Vec<_> = STMT_CLAIMS
+        .iter()
+        .filter(|claim| claim.role() == role)
+        .filter_map(|claim| (*claim).candidate(stmt, fcx))
         .collect();
     order_candidates_or_panic(&mut candidates);
     candidates
