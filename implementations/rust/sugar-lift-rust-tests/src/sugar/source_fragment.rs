@@ -258,10 +258,108 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// The base expression of an `Expr::Await` (`expr` in `expr.await`).
+    /// Returns `None` for any non-`Await` fragment.
+    pub(crate) fn await_base(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Await(a)) => Some(Self::expr(&a.base, self.file)),
+            _ => None,
+        }
+    }
+
+    /// The inner expression of a `Paren` (`(expr)`) or `Group` node.
+    /// Returns `None` for any other fragment kind.
+    pub(crate) fn transparent_inner(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Paren(p)) => Some(Self::expr(&p.expr, self.file)),
+            FragNode::Expr(syn::Expr::Group(g)) => Some(Self::expr(&g.expr, self.file)),
+            _ => None,
+        }
+    }
+
     /// The identifier string for a `Path` (Name) node.
     pub(crate) fn name_id(&self) -> Option<String> {
         match &self.node {
             FragNode::Expr(syn::Expr::Path(p)) => p.path.get_ident().map(|i| i.to_string()),
+            _ => None,
+        }
+    }
+
+    // -- UnaryOp accessors -------------------------------------------------
+
+    /// The operand of a `UnaryOp` expression (`x` in `-x`, `!x`, `*x`).
+    pub(crate) fn unary_operand(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Unary(u)) => Some(Self::expr(&u.expr, self.file)),
+            _ => None,
+        }
+    }
+
+    /// The operator kind for a `UnaryOp` expression: `"Neg"` for `-`, `"Not"` for
+    /// `!`, `"Deref"` for `*`. Returns `None` for non-unary fragments. Unknown
+    /// future operators (non-exhaustive `syn::UnOp`) return `Some("Other")`.
+    pub(crate) fn unary_op_kind(&self) -> Option<&'static str> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Unary(u)) => Some(match u.op {
+                syn::UnOp::Neg(_) => "Neg",
+                syn::UnOp::Not(_) => "Not",
+                syn::UnOp::Deref(_) => "Deref",
+                _ => "Other",
+            }),
+            _ => None,
+        }
+    }
+
+    // -- Index accessors ---------------------------------------------------
+
+    /// The container (receiver) of an `Index` expression (`a` in `a[i]`).
+    pub(crate) fn index_receiver(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Index(i)) => Some(Self::expr(&i.expr, self.file)),
+            _ => None,
+        }
+    }
+
+    /// The index expression of an `Index` expression (`i` in `a[i]`).
+    pub(crate) fn index_index(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Index(i)) => Some(Self::expr(&i.index, self.file)),
+            _ => None,
+        }
+    }
+
+    // -- Field accessor ----------------------------------------------------
+
+    /// The base/receiver of a `Field` expression (`base` in `base.member`).
+    pub(crate) fn field_receiver(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Field(f)) => Some(Self::expr(&f.base, self.file)),
+            _ => None,
+        }
+    }
+
+    /// Whether the member of a `Field` expression is unnamed (tuple-style, e.g. `.0`).
+    /// Returns `false` for named fields and for non-`Field` nodes.
+    pub(crate) fn field_is_unnamed(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Field(f)) => {
+                matches!(f.member, syn::Member::Unnamed(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// The tuple index of an unnamed `Field` member (e.g. `1` for `.1`).
+    /// Returns `None` for named fields or non-`Field` nodes.
+    pub(crate) fn field_tuple_index(&self) -> Option<usize> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Field(f)) => {
+                if let syn::Member::Unnamed(idx) = &f.member {
+                    Some(idx.index as usize)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -288,6 +386,42 @@ impl<'a> SourceFragment<'a> {
     pub(crate) fn binop_op_kind(&self) -> Option<&'static str> {
         match &self.node {
             FragNode::Expr(syn::Expr::Binary(b)) => Some(binop_kind(&b.op)),
+            _ => None,
+        }
+    }
+
+    /// Const-folds a `BinOp` (`Expr::Binary`) expression to a `Term` via the
+    /// exact-or-bail `const_eval` + `const_val_term` path. Returns `None` for
+    /// non-Binary fragments or expressions that contain non-const sub-expressions.
+    /// Mirrors `const_folded_if_term` but for `Expr::Binary`.
+    pub(crate) fn binop_const_folded_term(
+        &self,
+    ) -> Option<std::rc::Rc<sugar_ir_symbolic::Term>> {
+        let e = match &self.node {
+            FragNode::Expr(e @ syn::Expr::Binary(_)) => e,
+            _ => return None,
+        };
+        crate::const_eval(e, &std::collections::BTreeMap::new())
+            .and_then(|v| crate::const_val_term(&v))
+    }
+
+    /// The `RelationOp` for a `BinOp` comparison expression
+    /// (`==`, `!=`, `<`, `<=`, `>`, `>=`). Returns `None` for non-Binary
+    /// fragments or operators that are not comparisons.
+    pub(crate) fn binop_relation(&self) -> Option<crate::RelationOp> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Binary(b)) => crate::relation_from_binop(&b.op),
+            _ => None,
+        }
+    }
+
+    /// The arithmetic term-binop name for a `BinOp` expression
+    /// (e.g. `"+"` for `Add`, `"int-div"` for `Div`, `"*"` for `Mul`).
+    /// Returns `None` for non-Binary fragments, comparison operators,
+    /// logical-and/or, or any operator not in the arithmetic table.
+    pub(crate) fn binop_term_name(&self) -> Option<&'static str> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Binary(b)) => crate::term_binop_name(&b.op),
             _ => None,
         }
     }
@@ -330,6 +464,20 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// The full method key for a `MethodCall` fragment: bare method name, with the
+    /// turbofish angle-args key appended when present (e.g. `"parse::<i32>"` for
+    /// `recv.parse::<i32>()`). Returns `None` for any non-`MethodCall` fragment.
+    /// Produces byte-identical output to `crate::sugar::method::method_key`.
+    pub(crate) fn call_method_key(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::MethodCall(m)) => Some(match &m.turbofish {
+                Some(args) => format!("{}{}", m.method, crate::angle_args_key(args)),
+                None => m.method.to_string(),
+            }),
+            _ => None,
+        }
+    }
+
     /// Whether the call is a method call (`receiver.method(args)`).
     pub(crate) fn call_is_method_call(&self) -> bool {
         matches!(&self.node, FragNode::Expr(syn::Expr::MethodCall(_)))
@@ -359,6 +507,16 @@ impl<'a> SourceFragment<'a> {
     /// Number of positional arguments.
     pub(crate) fn call_arg_count(&self) -> usize {
         self.call_args().len()
+    }
+
+    /// The "head key" of a `Call` expression -- the canonical callee name used in
+    /// `call:<head>` ctor names. Delegates to `crate::expr_head_key` on the internal
+    /// func expression. Returns `None` for non-`Call` fragments.
+    pub(crate) fn call_head_key(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Call(c)) => Some(crate::expr_head_key(&c.func)),
+            _ => None,
+        }
     }
 
     // -- Literal accessor -------------------------------------------------

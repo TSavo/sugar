@@ -47,7 +47,16 @@ use std::path::PathBuf;
 /// re-measured: R(t)=102 (duration_accessor was residual; migration brings it to 102 not 101): 101→102.
 /// char_range_filter_map.rs migrated (char_range_filter_map_eq_site accessor): 102→101.
 /// for_loop_mutation.rs migrated (for_loop_mutation_boundary accessor, needs fcx): 101→99.
-const RAW_SYN_CEILING: usize = 99;
+/// unary.rs migrated (UnaryOpKind enum, unary_op_kind+unary_operand accessors, ieee_float_frag): 99→98.
+/// method.rs migrated (call_method_key+call_receiver+call_args+term_frag, no as_expr in recognize): 98→97.
+/// field_term.rs migrated (field_receiver+field_is_unnamed+field_tuple_index+attr_name accessors,
+///   tuple_producer_frag+has_tuple_producer_frag factory helpers, clean recognize body): 97→94.
+/// binop.rs migrated (binop_const_folded_term+binop_relation+binop_term_name accessors): 94→93.
+/// composite wave: await_term.rs (await_base accessor), wrapping_neg.rs (strip_refs_groups+
+///   call_method_key+call_arg_count+call_receiver), transparent_term.rs (transparent_inner
+///   accessor, build_term_frag+build_composite_frag factory helpers), into.rs
+///   (call_method_key+call_arg_count+call_receiver+token_str, ieee_float_frag): 93→89.
+const RAW_SYN_CEILING: usize = 89;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

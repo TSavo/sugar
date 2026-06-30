@@ -54,41 +54,64 @@
 // mod declaration).
 //
 // RECOGNIZER PREAMBLE. `recognize` for `Expr::Unary` builds the operand child and
-// news a `UnarySugar` carrying { the op `unary.op`, the source key, the child }.
+// news a `UnarySugar` carrying { the op `UnaryOpKind`, the source key, the child }.
 // `UnarySugar` makes no recognition decision of its own; it composes and reduces after
 // the Sugar claim accepts the source shape.
+//
+// MIGRATION STATUS (Phase-3 ratchet -- FULLY MIGRATED).
+//   * `recognize` uses ONLY `SourceFragment::unary_op_kind()` and
+//     `SourceFragment::unary_operand()` -- no `as_expr()` shim, no raw `Expr::`
+//     match, no raw `syn::UnOp` access.
+//   * `UnarySugar` holds `op: UnaryOpKind` (a crate-local enum; no raw syn)
+//     and `site: String`. No raw syn fields.
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{ConstValue, Term};
-use syn::{Expr, UnOp};
 
 use crate::sugar::factory::{IeeeFloatFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::float_floor::{IeeeFloatAccept, IeeeFloatValue, IeeeFloatVisitor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, num, real_const, real_literal_is_zero, token_key, Desugared, Effect, Outcome,
-    Sugar, SugarCtx,
+    bool_const, num, real_const, real_literal_is_zero, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("unary", recognize);
 
+/// Operator kind for a `UnaryOp` expression -- replaces raw `syn::UnOp` in the struct.
+/// `syn::UnOp` is `#[non_exhaustive]`; an unknown future operator routes to `None`
+/// from `recognize` (no node is constructed) rather than being stored here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnaryOpKind {
+    /// `-x`
+    Neg,
+    /// `!x`
+    Not,
+    /// `*p`
+    Deref,
+}
+
 /// TERM recognizer for `Expr::Unary`: news a [`UnarySugar`] over the operand child.
-/// Byte-identical to the `Expr::Unary` arm — `UnarySugar` owns the per-`UnOp` arm
-/// selection + the Neg literal fast-paths.
+/// Byte-identical to the `Expr::Unary` arm -- `UnarySugar` owns the per-`UnaryOpKind`
+/// arm selection + the Neg literal fast-paths.
+///
+/// FULLY MIGRATED: no `as_expr()`, no raw `Expr::` or `UnOp::` access in this body.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    match expr {
-        Expr::Unary(unary) => Some(Box::new(UnarySugar {
-            op: unary.op,
-            site: token_key(expr),
-            inner: SugarBody::term(&unary.expr, fcx),
-            float_inner: matches!(unary.op, UnOp::Neg(_))
-                .then(|| SugarBody::ieee_float(&unary.expr, fcx, None, "unary_neg")),
-        })),
-        _ => None,
-    }
+    let op = match frag.unary_op_kind()? {
+        "Neg" => UnaryOpKind::Neg,
+        "Not" => UnaryOpKind::Not,
+        "Deref" => UnaryOpKind::Deref,
+        _ => return None, // unknown future syn::UnOp -- construction gap
+    };
+    let operand_frag = frag.unary_operand()?;
+    Some(Box::new(UnarySugar {
+        op,
+        site: frag.token_str(),
+        inner: SugarBody::term_frag(&operand_frag, fcx),
+        float_inner: (op == UnaryOpKind::Neg)
+            .then(|| SugarBody::ieee_float_frag(&operand_frag, fcx, None, "unary_neg")),
+    }))
 }
 
 /// A unary operator in TERM position (`-x` / `!x` / `*p`). Composes ONE child
@@ -98,7 +121,7 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
 pub(crate) struct UnarySugar {
     /// The unary operator -- selects the arm (`Neg` -> fold-or-`0 - x`; `Not` ->
     /// `bit-not`; `Deref` -> `deref`).
-    pub(crate) op: UnOp,
+    pub(crate) op: UnaryOpKind,
     /// The whole `-x` / `!x` / `*p` source key for named effects.
     pub(crate) site: String,
     /// The child `Sugar` built from the operand. Its `desugar(ctx).into_term()`
@@ -175,7 +198,7 @@ impl IeeeFloatVisitor for UnaryNegFloatVisitor<'_> {
 impl Sugar for UnarySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.op {
-            UnOp::Neg(_) => {
+            UnaryOpKind::Neg => {
                 let child = match reduce_child_term(&self.inner, ctx) {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
@@ -207,7 +230,7 @@ impl Sugar for UnarySugar {
                     args: vec![num(0), child],
                 })))
             }
-            UnOp::Not(_) => {
+            UnaryOpKind::Not => {
                 let child = match reduce_child_term(&self.inner, ctx) {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
@@ -224,7 +247,7 @@ impl Sugar for UnarySugar {
                     args: vec![child],
                 })))
             }
-            UnOp::Deref(_) => match reduce_child_term(&self.inner, ctx) {
+            UnaryOpKind::Deref => match reduce_child_term(&self.inner, ctx) {
                 // `*&e == e`: dereferencing a SHARED borrow yields its pointee. A shared
                 // borrow freezes its pointee for the borrow's lifetime (the borrow
                 // checker forbids mutating the pointee while a `&` is live, and a shared
@@ -252,10 +275,6 @@ impl Sugar for UnarySugar {
                 }
                 Err(outcome) => outcome,
             },
-            // `syn::UnOp` is `#[non_exhaustive]`; an unknown future operator has no
-            // construction-from-literals meaning here. Unreachable for today's
-            // `{ Deref, Not, Neg }`.
-            _ => unary_gap("unknown unary operator shape; write more Sugar for this AST"),
         }
     }
 }
@@ -272,7 +291,82 @@ mod tests {
     // through `tests/assertion_lift.rs` once the factory routes `Expr::Unary` here
     // (the wiring slice). Here we pin the two pure halves the node is built from.
     use super::*;
-    use crate::make_var;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+    use crate::{make_var, Effect};
+
+    // -- from_src tests: source -> fragment -> observed -> accessors -> floor --
+
+    fn unary_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = frag.function_body().expect("fn has a body");
+        let stmts = body.statements();
+        // The tail expression statement (`-x`, `!x`, `*p`) is the only statement;
+        // `terms()` on the Expr stmt yields the single unary expr child.
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `-x` is classified as `"UnaryOp"`, `unary_op_kind()` returns `"Neg"`,
+    /// and `unary_operand()` yields a `"Name"` fragment for `x`. Struct holds
+    /// `UnaryOpKind::Neg` -- no raw syn.
+    #[test]
+    fn from_src_neg_observed_op_kind_and_operand() {
+        let file = parse_file("fn f(x: i64) -> i64 { -x }");
+        let frag = unary_expr_frag(&file, "f.rs");
+
+        // observed
+        assert_eq!(frag.observed(), "UnaryOp");
+
+        // op kind via typed accessor (no as_expr / Expr:: access here)
+        assert_eq!(frag.unary_op_kind(), Some("Neg"));
+
+        // operand: `x` is a Name
+        let operand = frag.unary_operand().expect("operand present");
+        assert_eq!(operand.observed(), "Name");
+
+        // floor: decode to UnaryOpKind::Neg -- the struct holds this, not syn::UnOp
+        let op_str = frag.unary_op_kind().unwrap();
+        let op = match op_str {
+            "Neg" => UnaryOpKind::Neg,
+            "Not" => UnaryOpKind::Not,
+            "Deref" => UnaryOpKind::Deref,
+            _ => panic!("unexpected op kind: {op_str}"),
+        };
+        assert_eq!(op, UnaryOpKind::Neg);
+    }
+
+    /// Discrimination: `!flag` has op kind `"Not"` and operand `"Name"`.
+    /// Proves `unary_op_kind()` distinguishes Not from Neg.
+    #[test]
+    fn discrimination_not_op_kind_is_not() {
+        let file = parse_file("fn f(flag: bool) -> bool { !flag }");
+        let frag = unary_expr_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "UnaryOp");
+        assert_eq!(frag.unary_op_kind(), Some("Not"));
+        let operand = frag.unary_operand().expect("operand present");
+        assert_eq!(operand.observed(), "Name");
+    }
+
+    /// Structural: a `BinOp` fragment returns `None` from both `unary_op_kind()`
+    /// and `unary_operand()` -- the accessors are shape-specific.
+    #[test]
+    fn structural_binop_returns_none_from_unary_accessors() {
+        let file = parse_file("fn f(a: i64, b: i64) -> i64 { a + b }");
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().unwrap();
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        let binop_frag = &terms[0];
+
+        assert_eq!(binop_frag.observed(), "BinOp");
+        assert_eq!(binop_frag.unary_op_kind(), None);
+        assert!(binop_frag.unary_operand().is_none());
+    }
+
+    // -- pure unit tests (unchanged from pre-migration) -----------------------
 
     #[test]
     fn child_hit_propagates_verbatim() {

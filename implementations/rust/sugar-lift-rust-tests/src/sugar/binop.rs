@@ -18,11 +18,9 @@
 // factory gap stays loud. This node composes its two pre-built children and emits the
 // arithmetic ctor over their terms, propagating a child `Incomplete` verbatim.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{ConstValue, Term};
-use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
@@ -30,8 +28,8 @@ use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
 use crate::sugar::term_leaf::resolved_term;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    bool_const, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
-    relation_from_binop, term_binop_name, u128_term, Desugared, Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, const_fold_u128_term, num,
+    u128_term, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -42,32 +40,43 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// the arithmetic-op [`BinOpSugar`]. If no arithmetic op exists after the bool/compare
 /// branches, this sugar does not own the expression and the factory gap path remains loud.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Binary(binary) = expr else {
+    // Gate: must be a BinOp (Expr::Binary) fragment.
+    if frag.observed() != "BinOp" {
         return None;
-    };
-    if let Some(term) = const_eval(expr, &BTreeMap::new()).and_then(|value| const_val_term(&value))
-    {
+    }
+    // Const-fold the whole expression first: `1 + 2` -> `num(3)`, `1 < 2` -> `bool_const(true)`.
+    if let Some(term) = frag.binop_const_folded_term() {
         return Some(resolved_term(term));
     }
-    if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) {
+    // Boolean logic operators (&&, ||): both operands are BoolFloor.
+    let op_kind = frag.binop_op_kind()?;
+    if op_kind == "And" || op_kind == "Or" {
+        let left_frag = frag.binop_left()?;
+        let right_frag = frag.binop_right()?;
         return Some(Box::new(BoolLogicSugar {
-            left: SugarBody::<BoolFloor>::bool_expr(&binary.left, fcx),
-            right: SugarBody::<BoolFloor>::bool_expr(&binary.right, fcx),
-            is_and: matches!(binary.op, BinOp::And(_)),
+            left: SugarBody::<BoolFloor>::bool_expr_frag(&left_frag, fcx),
+            right: SugarBody::<BoolFloor>::bool_expr_frag(&right_frag, fcx),
+            is_and: op_kind == "And",
         }));
     }
-    if let Some(rel) = relation_from_binop(&binary.op) {
+    // Comparison operators (==, !=, <, <=, >, >=): emit a `cmp:*` ctor via CompareSugar.
+    if let Some(rel) = frag.binop_relation() {
+        let left_frag = frag.binop_left()?;
+        let right_frag = frag.binop_right()?;
         return Some(Box::new(CompareSugar {
-            left: SugarBody::term(&binary.left, fcx),
-            right: SugarBody::term(&binary.right, fcx),
+            left: SugarBody::term_frag(&left_frag, fcx),
+            right: SugarBody::term_frag(&right_frag, fcx),
             rel,
         }));
     }
-    let op = term_binop_name(&binary.op)?;
+    // Arithmetic operators (+, -, *, /, %): emit arithmetic ctor; declines for bit-ops
+    // and any operator without an arithmetic term name (factory gap stays loud).
+    let op = frag.binop_term_name()?;
+    let left_frag = frag.binop_left()?;
+    let right_frag = frag.binop_right()?;
     Some(Box::new(BinOpSugar {
-        left: SugarBody::term(&binary.left, fcx),
-        right: SugarBody::term(&binary.right, fcx),
+        left: SugarBody::term_frag(&left_frag, fcx),
+        right: SugarBody::term_frag(&right_frag, fcx),
         op_name: op,
     }))
 }
@@ -380,5 +389,82 @@ mod tests {
             }
             Outcome::Complete(_) => panic!("expected the right child's Incomplete, got Complete"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase-3 from_src tests: source -> SourceFragment -> observed -> accessor ->
+// assert shape. No parse_quote!, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+    use sugar_ir_symbolic::{ConstValue, Term};
+
+    /// Navigate to the tail expression of the first function in a one-liner source.
+    fn binop_frag_from<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// An arithmetic binop yields `binop_term_name()` and has no relation or const fold.
+    #[test]
+    fn from_src_arithmetic_binop_term_name_maps_to_canonical_op() {
+        let src = "fn f(a: i32, b: i32) -> i32 { a + b }";
+        let file = parse_file(src);
+        let frag = binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_term_name(), Some("+"), "Add must map to \"+\"");
+        assert!(frag.binop_relation().is_none(), "a + b is not a comparison");
+        assert!(frag.binop_const_folded_term().is_none(), "a + b has variables; no fold");
+    }
+
+    /// A comparison binop yields `binop_relation()` and no arithmetic term name.
+    #[test]
+    fn from_src_comparison_binop_relation_is_some_term_name_is_none() {
+        let src = "fn f(a: i32, b: i32) -> bool { a < b }";
+        let file = parse_file(src);
+        let frag = binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert!(frag.binop_relation().is_some(), "a < b must have a RelationOp");
+        assert!(frag.binop_term_name().is_none(), "a < b is not an arithmetic binop");
+    }
+
+    /// A ground integer addition const-folds to its sum.
+    #[test]
+    fn from_src_const_fold_ground_addition_folds_to_int_term() {
+        let src = "fn f() -> i32 { 2 + 3 }";
+        let file = parse_file(src);
+        let frag = binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        let term = frag
+            .binop_const_folded_term()
+            .expect("2 + 3 must const-fold to 5");
+        match &*term {
+            Term::Const { value: ConstValue::Int(v), .. } => {
+                assert_eq!(*v, 5, "2 + 3 must fold to 5");
+            }
+            other => panic!("expected Int const 5, got {other:?}"),
+        }
+    }
+
+    /// A boolean-logic binop (&&) has `op_kind == "And"` and neither term-name nor relation.
+    #[test]
+    fn from_src_bool_logic_and_has_op_kind_but_no_term_name_or_relation() {
+        let src = "fn f(a: bool, b: bool) -> bool { a && b }";
+        let file = parse_file(src);
+        let frag = binop_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "BinOp");
+        assert_eq!(frag.binop_op_kind(), Some("And"));
+        assert!(frag.binop_term_name().is_none(), "&& is not an arithmetic binop");
+        assert!(frag.binop_relation().is_none(), "&& is not a comparison");
     }
 }
