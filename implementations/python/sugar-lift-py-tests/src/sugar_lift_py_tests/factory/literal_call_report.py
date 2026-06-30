@@ -171,6 +171,23 @@ def build_literal_call_report(
     )
 
 
+def _resolve_bound_lhs(lhs, fn):
+    """LHS-as-term, syntactically: a Name bound to a CALL recomposes to that call, so
+    ``x = y(5); assert x == 9`` lifts IDENTICALLY to ``assert y(5) == 9`` -- the binding is
+    transparent and the bridge falls out wherever the call appears (the same dance, the
+    binding just different clothes). Only a call RHS substitutes; a non-call binding leaves
+    the Name as-is (which panics as before -- only ``call(...) == literal`` is covered)."""
+    if lhs.observed != "Name":
+        return lhs
+    name = lhs.name_id()
+    for stmt in fn.function_body():
+        if stmt.observed == "Assign" and stmt.assign_target_name() == name:
+            rhs = stmt.assign_value()
+            if rhs.observed == "Call":
+                return rhs
+    return lhs
+
+
 def _lift_assert(
     stmt: SourceFragment,
     *,
@@ -209,7 +226,7 @@ def _lift_assert(
             requested="EqualityAssertion",
             fix="lift non-`==` comparison assertions",
         )
-    comparison_left = comparison.compare_left()
+    comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
     callee_name = _callee_name(comparison_left)
     if callee_name is None:
         _panic_no_sugar(
@@ -224,6 +241,7 @@ def _lift_assert(
         stmt,
         comparison=comparison,
         callee_name=callee_name,
+        callsite=comparison_left,
         fn=fn,
         filename=filename,
         memento_file=memento_file,
@@ -287,6 +305,7 @@ def _lift_callsite_assertion(
     *,
     comparison: SourceFragment,
     callee_name: str,
+    callsite: SourceFragment,
     fn: SourceFragment,
     filename: str,
     memento_file: str,
@@ -307,7 +326,7 @@ def _lift_callsite_assertion(
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
     # naming the next sugar, not a crash.
     arg_terms = []
-    for arg_frag in comparison.compare_left().call_args():
+    for arg_frag in callsite.call_args():
         try:
             arg_terms.append(_lift_literal_via_factory(arg_frag, filename))
         except TypeError:
