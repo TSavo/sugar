@@ -219,21 +219,26 @@ def default_catalog() -> SugarCatalog:
     )
     from sugar_lift_py_tests.sugar.assign_sugar import ASSIGN_CLAIM
     from sugar_lift_py_tests.sugar.block_sugar import BLOCK_CLAIM
-    from sugar_lift_py_tests.sugar.comment_sugar import COMMENT_CLAIM
     from sugar_lift_py_tests.sugar.if_sugar import IF_CLAIM
     from sugar_lift_py_tests.sugar.ord_sugar import ORD_BYTE_CLAIM
     from sugar_lift_py_tests.sugar.return_sugar import RETURN_CLAIM
     from sugar_lift_py_tests.sugar.string_subscript_sugar import STRING_SUBSCRIPT_CLAIM
 
+    # Self-registering Sugar subclasses (migrated to the base class) contribute their
+    # claims by import side effect; the legacy CLAIM constants below are the not-yet-
+    # migrated sugars and are folded in until they move onto the base too.
+    from sugar_lift_py_tests.sugar import comment_sugar  # noqa: F401  registers CommentSugar
+    from sugar_lift_py_tests.sugar.sugar_base import registered_claims
+
     return SugarCatalog(
         [
+            *registered_claims(),
             PRIMITIVE_LITERAL_CLAIM,
             BITWISE_OP_CLAIM,
             ARRAY_LITERAL_CLAIM,
             BINOP_CLAIM,
             NAME_CLAIM,
             STRING_SUBSCRIPT_CLAIM,
-            COMMENT_CLAIM,
             BLOCK_CLAIM,
             RETURN_CLAIM,
             ASSIGN_CLAIM,
