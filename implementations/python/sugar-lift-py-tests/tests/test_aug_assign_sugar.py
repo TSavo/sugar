@@ -49,18 +49,18 @@ def test_aug_mult_assign_equals_the_product():
 
 
 def test_aug_div_assign_equals_the_quotient():
-    # true division yields a float: 6 / 2 == 3.0, not 3.
+    # RED: true division is REAL, not Int -- 6/2 == 3.0. A real result is a canonical-
+    # decimal RealValue with possibly non-terminating division (1/3); that is the Real-
+    # arithmetic / tolerance rung (mirror the decimal-tolerance lift), not a float fold.
     assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3.0\n")
 
 
-# --- the next red bait: float is folded into a bare TermValue, so the Real refinement is
-# --- missing -- 3.0 and 3 wrongly compare equal. RED until a typed float/Real lands.
+# --- GREEN now: the typed Real landed. float lifts to a RealValue (canonical decimal),
+# --- distinct from the Int-sorted TermValue, so 3.0 and 3 are no longer conflated.
 
-def test_float_is_a_real_distinct_from_the_int(  # noqa: D103
-):
-    # 3.0 is a Real; 3 is an Int. They must NOT be the same Floor value. Today both fold
-    # to TermValue and 3.0 == 3 in Python, so this is RED -- naming the next atom: a typed
-    # float (the Real refinement of the numeric sort hierarchy), not a bare TermValue.
+def test_float_is_a_real_distinct_from_the_int():
+    # 3.0 is Real-sorted (RealValue), 3 is Int-sorted (TermValue) -- distinct Floor
+    # values, never conflated. This is the sort discipline the z3 compiler enforces.
     assert _block("    return 3.0\n") != _block("    return 3\n")
 
 
