@@ -7,8 +7,8 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 
 def _from_site_impl(site, functions_by_name):
-    """Core recognition logic operating entirely through SourceSite accessors."""
-    from sugar_lift_py_tests.factory.source_site import SourceSite
+    """Core recognition logic operating entirely through SourceFragment accessors."""
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     if site.observed != "Name":
         return None
@@ -16,7 +16,7 @@ def _from_site_impl(site, functions_by_name):
     func_node = functions_by_name.get(func_name)
     if func_node is None:
         return None
-    func_site = SourceSite.from_node(func_node, site.filename)
+    func_site = SourceFragment.from_node(func_node, site.filename)
     params = func_site.function_params()
     if len(params) != 1:
         return None
@@ -62,10 +62,10 @@ def function_ref_sugar_from_site(site, functions_by_name):
 
 
 def function_ref_sugar(node, functions_by_name):
-    """Legacy entry-point accepting a raw AST node -- wraps it in a SourceSite."""
-    from sugar_lift_py_tests.factory.source_site import SourceSite
+    """Legacy entry-point accepting a raw AST node -- wraps it in a SourceFragment."""
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-    site = SourceSite.from_node(node, "")
+    site = SourceFragment.from_node(node, "")
     return _from_site_impl(site, functions_by_name)
 
 

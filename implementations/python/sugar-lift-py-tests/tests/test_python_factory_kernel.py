@@ -103,7 +103,7 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     }
 
 
-def test_factory_without_sugar_panics_on_last_popped_source_site() -> None:
+def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
     source = "def encode_len(data):\n    return {}\n"
 
     with pytest.raises(FactoryGap) as raised:
@@ -130,7 +130,7 @@ def test_factory_without_sugar_panics_on_last_popped_source_site() -> None:
     }
 
 
-def test_factory_matches_registered_sugar_for_last_popped_source_site() -> None:
+def test_factory_matches_registered_sugar_for_last_popped_source_fragment() -> None:
     source = "def encode_len(data):\n    return len(data)\n"
 
     @dataclass(frozen=True)

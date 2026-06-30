@@ -8,7 +8,7 @@ import ast
 
 from factory_reduce import array_map_build
 
-from sugar_lift_py_tests.factory import SourceSite
+from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.floor import LambdaCallable
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
@@ -17,7 +17,7 @@ from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 def _lambda(src: str):
     node = ast.parse(src, mode="eval").body
     body = array_map_build(ast.unparse(node.body))
-    return LambdaSugar.from_site(SourceSite.from_node(node, "l.py"), body=body), body
+    return LambdaSugar.from_site(SourceFragment.from_node(node, "l.py"), body=body), body
 
 
 def test_lambda_holds_whatever_body_verbatim_and_wraps_it():

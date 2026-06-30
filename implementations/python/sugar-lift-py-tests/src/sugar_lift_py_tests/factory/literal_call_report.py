@@ -35,7 +35,7 @@ from sugar_lift_py_tests.layer2 import _canonical_term_sig
 from sugar_lift_py_tests.outcome import complete_value
 
 from .factory_build_context import FactoryBuildContext
-from .source_site import SourceSite
+from .source_fragment import SourceFragment
 
 # One lift, returned as five parallel lists: (contracts, source_mementos,
 # source_audits, factory_walk_rows, call_edges).
@@ -331,7 +331,7 @@ def _dig_universe(
     )
     try:
         call_sugar = build_function_call_sugar(
-            SourceSite.from_node(call_node, filename),
+            SourceFragment.from_node(call_node, filename),
             factory_ctx,
         )
     except TypeError as exc:

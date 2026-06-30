@@ -9,8 +9,8 @@ from .factory_build_context import FactoryBuildContext
 from .factory_build_result import FactoryBuildResult
 from .factory_gap import FactoryGap
 from .factory_gap_info import FactoryGapInfo
-from .source_site import SourceSite
-from .source_site_stack import SourceSiteStack
+from .source_fragment import SourceFragment
+from .source_fragment_stack import SourceFragmentStack
 
 
 def build_node(
@@ -22,7 +22,7 @@ def build_node(
     ctx: Optional[FactoryBuildContext] = None,
 ) -> FactoryBuildResult:
     catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
-    site = node if isinstance(node, SourceSite) else SourceSite.from_node(node, filename)
+    site = node if isinstance(node, SourceFragment) else SourceFragment.from_node(node, filename)
     return _build_site(
         site,
         role=role,
@@ -53,7 +53,7 @@ def build_next(
     if report is not None:
         return report
 
-    site = SourceSiteStack.from_source(source, filename).pop()
+    site = SourceFragmentStack.from_source(source, filename).pop()
     if site is None:
         raise ValueError("factory source contained no source sites")
 
@@ -96,7 +96,7 @@ def _build_source_report(
 
 
 def _build_site(
-    site: SourceSite,
+    site: SourceFragment,
     *,
     role: SugarRole,
     catalog: SugarCatalog,
@@ -185,7 +185,7 @@ def _dominates(
 
 
 def _raise_ambiguous_candidates(
-    site: SourceSite, role: SugarRole, candidates: list[SugarCandidate]
+    site: SourceFragment, role: SugarRole, candidates: list[SugarCandidate]
 ) -> None:
     names = [candidate.name for candidate in candidates]
     info = FactoryGapInfo(

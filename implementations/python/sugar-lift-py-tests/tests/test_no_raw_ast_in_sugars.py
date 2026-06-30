@@ -1,10 +1,10 @@
 """
-CI guard: sugar recognizers/builders must talk only to the SourceSite
+CI guard: sugar recognizers/builders must talk only to the SourceFragment
 fragment, never the raw ast module.
 
 Forbidden patterns:
   - `import ast`
-  - `site.node`           (raw node access bypassing SourceSite API)
+  - `site.node`           (raw node access bypassing SourceFragment API)
   - `isinstance(<x>, ast.<Y>)`
 
 If any sugar/*.py file contains one of these patterns, this test FAILS with
@@ -40,6 +40,6 @@ def test_no_raw_ast_in_sugars():
                     )
 
     assert not violations, (
-        "Raw-ast usage found in sugar/ files (must use SourceSite API only):\n"
+        "Raw-ast usage found in sugar/ files (must use SourceFragment API only):\n"
         + "\n".join(violations)
     )

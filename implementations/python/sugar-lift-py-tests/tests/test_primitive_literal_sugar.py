@@ -4,7 +4,7 @@ import ast
 
 from factory_reduce import fol, reduce_term
 
-from sugar_lift_py_tests.factory import SourceSite
+from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.ir import num, str_const
 from sugar_lift_py_tests.outcome import complete_value
@@ -21,9 +21,9 @@ def test_primitive_literal_sugar_is_value_born_from_site() -> None:
     int_node = ast.parse("42", mode="eval").body
     string_node = ast.parse('"abc"', mode="eval").body
 
-    int_sugar = PrimitiveLiteralSugar.from_site(SourceSite.from_node(int_node, "literals.py"))
+    int_sugar = PrimitiveLiteralSugar.from_site(SourceFragment.from_node(int_node, "literals.py"))
     string_sugar = PrimitiveLiteralSugar.from_site(
-        SourceSite.from_node(string_node, "literals.py")
+        SourceFragment.from_node(string_node, "literals.py")
     )
 
     assert int_sugar == PrimitiveLiteralSugar(value=42)

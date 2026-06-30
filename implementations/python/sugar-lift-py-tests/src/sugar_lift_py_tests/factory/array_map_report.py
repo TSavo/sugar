@@ -25,7 +25,7 @@ from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar.list_sugar import list_sugar
 
 from .factory_build_context import FactoryBuildContext
-from .source_site import SourceSite
+from .source_fragment import SourceFragment
 from .sugar_constructors import build_map_sugar
 
 
@@ -153,7 +153,7 @@ def _lift_fluent_array_map_assert(
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
     try:
-        map_sugar = build_map_sugar(SourceSite.from_node(call, filename), factory_ctx)
+        map_sugar = build_map_sugar(SourceFragment.from_node(call, filename), factory_ctx)
     except TypeError:
         return None
     expected_sugar = _array_literal_sugar(comparison.comparators[0], factory_ctx)
@@ -240,7 +240,7 @@ def _lift_native_list_map_assert(
     list[dict[str, Any]],
 ] | None:
     blame = f"{filename}:{comparison.left.lineno}:{comparison.left.col_offset}"
-    left_site = SourceSite.from_node(comparison.left, filename)
+    left_site = SourceFragment.from_node(comparison.left, filename)
     list_sugar_value = list_sugar(left_site, functions_by_name, blame=blame)
     if list_sugar_value is None:
         return None

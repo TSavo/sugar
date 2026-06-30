@@ -6,7 +6,7 @@ from __future__ import annotations
 import ast
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import SourceSite
+from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import SupportValue
 from sugar_lift_py_tests.outcome import complete_value
@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar.comment_sugar import CommentSugar
 
 def _support_candidates(stmt_src: str) -> list[str]:
     node = ast.parse(stmt_src).body[0]
-    site = SourceSite.from_node(node, "c.py")
+    site = SourceFragment.from_node(node, "c.py")
     return [c.name for c in default_catalog().candidates_for(SugarRole.STATEMENT, site)]
 
 
