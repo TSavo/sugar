@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -21,11 +20,9 @@ class AddSugar:
     def from_site(
         cls, site, *, receiver: SugarBody, operand: SugarBody
     ) -> "AddSugar | None":
-        if not _is_add_call(site.node):
+        if not _is_add_call(site):
             return None
-        assert isinstance(site.node, ast.Call)
-        assert isinstance(site.node.func, ast.Attribute)
-        if len(site.node.args) != 1:
+        if site.call_arg_count() != 1:
             return None
         return cls(
             receiver=receiver,
@@ -48,16 +45,16 @@ class AddSugar:
         )
 
 
-def _is_add_call(node: ast.AST) -> bool:
+def _is_add_call(site) -> bool:
     return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "add"
+        site.observed == "Call"
+        and site.call_is_method_call()
+        and site.call_target_name() == "add"
     )
 
 
 def _owns(site) -> bool:
-    return _is_add_call(site.node)
+    return _is_add_call(site)
 
 
 ADD_CLAIM = SugarClaim(

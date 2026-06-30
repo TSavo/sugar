@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -24,7 +23,7 @@ class ReturnSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.Return)
+    return site.observed == "Return"
 
 
 RETURN_CLAIM = SugarClaim(

@@ -29,7 +29,20 @@ class FactoryBuildContext:
         )
 
     def build_body(self, node, role: SugarRole):
+        from sugar_lift_py_tests.factory.build import build_node
+        from sugar_lift_py_tests.factory.source_site import SourceSite
         from sugar_lift_py_tests.sugar_body import SugarBody
 
-        result = self.build_child(node, role)
+        # Accept a SourceSite directly (idempotent) or an ast node.
+        if isinstance(node, SourceSite):
+            site = node
+            result = build_node(
+                site,
+                filename=self.filename,
+                role=role,
+                catalog=self.catalog,
+                ctx=self,
+            )
+        else:
+            result = self.build_child(node, role)
         return SugarBody(sugar=result.sugar, role=role, audit_row=result.audit_row)

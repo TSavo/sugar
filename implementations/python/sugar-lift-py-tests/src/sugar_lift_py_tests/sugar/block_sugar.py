@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.sugar_constructors import build_block_sugar
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -64,7 +63,7 @@ class BlockSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, Block)
+    return site.observed == "Block"
 
 
 BLOCK_CLAIM = SugarClaim(

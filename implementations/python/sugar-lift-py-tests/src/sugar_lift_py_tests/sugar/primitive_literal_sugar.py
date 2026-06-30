@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -16,11 +15,12 @@ class PrimitiveLiteralSugar:
 
     @classmethod
     def from_site(cls, site) -> "PrimitiveLiteralSugar | None":
-        if not isinstance(site.node, ast.Constant):
+        if site.observed != "PrimitiveLiteral":
             return None
-        if not isinstance(site.node.value, (int, str)):
+        value = site.literal_value()
+        if not isinstance(value, (int, str)):
             return None
-        return cls(site.node.value)
+        return cls(value)
 
     def desugar(self) -> Outcome:
         if isinstance(self.value, int):

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -15,9 +14,9 @@ class NameSugar:
 
     @classmethod
     def from_site(cls, site, _ctx) -> "NameSugar | None":
-        if not isinstance(site.node, ast.Name):
+        if site.observed != "Name":
             return None
-        return cls(identifier=site.node.id, blame=site.blame)
+        return cls(identifier=site.name_id(), blame=site.blame)
 
     def desugar(self, ctx) -> Outcome:
         value = ctx.temporal.value_for(self.identifier)
@@ -29,7 +28,7 @@ class NameSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.Name)
+    return site.observed == "Name"
 
 
 def _build(site, ctx) -> NameSugar:

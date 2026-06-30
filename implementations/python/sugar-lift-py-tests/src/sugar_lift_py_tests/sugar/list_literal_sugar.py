@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -18,7 +17,7 @@ class ListLiteralSugar:
     def from_site(
         cls, site, *, elements: tuple[SugarBody, ...]
     ) -> "ListLiteralSugar | None":
-        if not isinstance(site.node, ast.List):
+        if site.observed != "List":
             return None
         return cls(elements=elements)
 
@@ -33,7 +32,7 @@ class ListLiteralSugar:
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.List)
+    return site.observed == "List"
 
 
 LIST_LITERAL_CLAIM = SugarClaim(

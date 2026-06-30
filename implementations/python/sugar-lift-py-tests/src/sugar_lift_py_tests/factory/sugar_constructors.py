@@ -12,8 +12,8 @@ def build_add_sugar(site, ctx):
 
     sugar = AddSugar.from_site(
         site,
-        receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
-        operand=ctx.build_body(site.node.args[0], SugarRole.TERM),
+        receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
+        operand=ctx.build_body(site.call_args()[0], SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("AddSugar claim built a non-add call")
@@ -26,7 +26,7 @@ def build_array_literal_sugar(site, ctx):
     sugar = ArrayLiteralSugar.from_site(
         site,
         elements=tuple(
-            ctx.build_body(element, SugarRole.TERM) for element in site.node.elts
+            ctx.build_body(element, SugarRole.TERM) for element in site.terms()
         ),
     )
     if sugar is None:
@@ -39,8 +39,8 @@ def build_binop_sugar(site, ctx):
 
     sugar = BinOpSugar.from_site(
         site,
-        left=ctx.build_body(site.node.left, SugarRole.TERM),
-        right=ctx.build_body(site.node.right, SugarRole.TERM),
+        left=ctx.build_body(site.binop_left(), SugarRole.TERM),
+        right=ctx.build_body(site.binop_right(), SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("BinOpSugar claim built a non-addition")
@@ -52,8 +52,8 @@ def build_bitwise_op_sugar(site, ctx):
 
     sugar = BitwiseOpSugar.from_site(
         site,
-        left=ctx.build_body(site.node.left, SugarRole.TERM),
-        right=ctx.build_body(site.node.right, SugarRole.TERM),
+        left=ctx.build_body(site.binop_left(), SugarRole.TERM),
+        right=ctx.build_body(site.binop_right(), SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("BitwiseOpSugar claim built a non-bitwise op")
@@ -63,13 +63,10 @@ def build_bitwise_op_sugar(site, ctx):
 def build_string_subscript_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.string_subscript_sugar import StringSubscriptSugar
 
-    index_node = site.node.slice
-    if isinstance(index_node, ast.Index):  # py<3.9 compatibility
-        index_node = index_node.value
     sugar = StringSubscriptSugar.from_site(
         site,
-        receiver=ctx.build_body(site.node.value, SugarRole.TERM),
-        index=ctx.build_body(index_node, SugarRole.TERM),
+        receiver=ctx.build_body(site.subscript_receiver(), SugarRole.TERM),
+        index=ctx.build_body(site.subscript_index(), SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("StringSubscriptSugar claim built a non-subscript")
@@ -81,7 +78,7 @@ def build_builder_ctor_sugar(site, ctx):
 
     sugar = BuilderCtorSugar.from_site(
         site,
-        items=ctx.build_body(site.node.args[0], SugarRole.TERM),
+        items=ctx.build_body(site.call_args()[0], SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("BuilderCtorSugar claim built a non-builder call")
@@ -93,7 +90,7 @@ def build_lambda_sugar(site, ctx):
 
     sugar = LambdaSugar.from_site(
         site,
-        body=ctx.build_body(site.node.body, SugarRole.TERM),
+        body=ctx.build_body(site.lambda_body(), SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("LambdaSugar claim built a non-lambda")
@@ -297,7 +294,7 @@ def build_list_literal_sugar(site, ctx):
     sugar = ListLiteralSugar.from_site(
         site,
         elements=tuple(
-            ctx.build_body(element, SugarRole.TERM) for element in site.node.elts
+            ctx.build_body(element, SugarRole.TERM) for element in site.terms()
         ),
     )
     if sugar is None:
@@ -308,80 +305,69 @@ def build_list_literal_sugar(site, ctx):
 def build_return_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 
-    node = site.node
-    if not isinstance(node, ast.Return):
+    if site.observed != "Return":
         raise TypeError("ReturnSugar claim built a non-return")
-    if node.value is None:
+    value_site = site.return_value()
+    if value_site is None:
         raise TypeError("ReturnSugar requires a return value")
     # The factory builds the value expression (TERM) and hands it in.
-    return ReturnSugar(value=ctx.build_body(node.value, SugarRole.TERM))
+    return ReturnSugar(value=ctx.build_body(value_site, SugarRole.TERM))
 
 
 def build_assign_sugar(site, ctx):
     from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
-    node = site.node
-    if not (
-        isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-    ):
+    name = site.assign_target_name()
+    if name is None:
         raise TypeError("AssignSugar claim built a non-single-name assignment")
     # The factory builds the RHS (TERM) and hands it in.
     return AssignSugar(
-        name=node.targets[0].id,
-        value=ctx.build_body(node.value, SugarRole.TERM),
+        name=name,
+        value=ctx.build_body(site.assign_value(), SugarRole.TERM),
     )
 
 
 def build_if_sugar(site, ctx):
-    from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
-    node = site.node
-    if not isinstance(node, ast.If):
+    if site.observed != "If":
         raise TypeError("IfSugar claim built a non-if")
     # The test lifts to a guard Formula; the then/orelse suites are child Blocks the
-    # factory builds and hands in.
-    then_block = ctx.build_body(Block.of(node.body), SugarRole.STATEMENT)
+    # factory builds and hands in. site.statements() yields the Block-wrapped body and
+    # (if non-empty) orelse, each as a SourceSite; build_body accepts SourceSite directly.
+    body_sites = site.statements()
+    then_block = ctx.build_body(body_sites[0], SugarRole.STATEMENT)
     else_block = (
-        ctx.build_body(Block.of(node.orelse), SugarRole.STATEMENT)
-        if node.orelse
+        ctx.build_body(body_sites[1], SugarRole.STATEMENT)
+        if len(body_sites) > 1
         else None
     )
-    return IfSugar(test=_cf_guard(node.test), then=then_block, else_block=else_block)
+    return IfSugar(test=_cf_guard(site.if_test().node), then=then_block, else_block=else_block)
 
 
 def build_block_sugar(site, ctx):
-    from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
 
-    block = site.node
-    if not isinstance(block, Block):
+    if site.observed != "Block":
         raise TypeError("BlockSugar claim built a non-block")
     # The factory builds each statement child (by `owns` at the STATEMENT role) and
     # hands the sub-bodies to BlockSugar -- composition, not a walk.
     return BlockSugar(
         statements=tuple(
-            ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in block.body
+            ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in site.statements()
         )
     )
 
 
 def build_map_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.map_sugar import MapSugar
+    from sugar_lift_py_tests.sugar.map_sugar import MapSugar, _is_map_call
 
-    if not (
-        isinstance(site.node, ast.Call)
-        and isinstance(site.node.func, ast.Attribute)
-        and site.node.func.attr == "map"
-        and len(site.node.args) == 1
-    ):
+    if not _is_map_call(site):
         raise TypeError("MapSugar claim built a non-map call")
     sugar = MapSugar.from_site(
         site,
-        receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
-        mapper=ctx.build_body(site.node.args[0], SugarRole.TERM),
+        receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
+        mapper=ctx.build_body(site.call_args()[0], SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("MapSugar claim built a non-map call")
@@ -393,7 +379,7 @@ def build_to_list_sugar(site, ctx):
 
     sugar = ToListSugar.from_site(
         site,
-        receiver=ctx.build_body(site.node.func.value, SugarRole.TERM),
+        receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
     )
     if sugar is None:
         raise TypeError("ToListSugar claim built a non-to-list call")

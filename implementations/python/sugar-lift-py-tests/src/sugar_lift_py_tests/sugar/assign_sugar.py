@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -27,11 +26,9 @@ class AssignSugar:
 
 
 def _owns(site) -> bool:
-    node = site.node
     return (
-        isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
+        site.observed == "Assign"
+        and site.assign_target_name() is not None
     )
 
 

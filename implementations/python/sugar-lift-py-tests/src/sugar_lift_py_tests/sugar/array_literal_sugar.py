@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
@@ -22,7 +21,7 @@ class ArrayLiteralSugar:
     def from_site(
         cls, site, *, elements: tuple[SugarBody, ...]
     ) -> "ArrayLiteralSugar | None":
-        if not isinstance(site.node, ast.List):
+        if site.observed != "List":
             return None
         return cls(elements=elements)
 
@@ -51,7 +50,7 @@ def _array_element(value):
 
 
 def _owns(site) -> bool:
-    return isinstance(site.node, ast.List)
+    return site.observed == "List"
 
 
 ARRAY_LITERAL_CLAIM = SugarClaim(

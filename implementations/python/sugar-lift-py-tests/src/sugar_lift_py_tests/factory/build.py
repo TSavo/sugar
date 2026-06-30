@@ -22,8 +22,9 @@ def build_node(
     ctx: Optional[FactoryBuildContext] = None,
 ) -> FactoryBuildResult:
     catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
+    site = node if isinstance(node, SourceSite) else SourceSite.from_node(node, filename)
     return _build_site(
-        SourceSite.from_node(node, filename),
+        site,
         role=role,
         catalog=catalog,
         ctx=ctx
