@@ -75,7 +75,18 @@ def crimes_in(path: Path, root: Path) -> list[str]:
     crimes: list[str] = []
     local_sugar = _local_sugar_class(path)
 
+        # Track the enclosing function name so Crime D can distinguish build() from desugar().
+    _enclosing_fn: list[str] = []
+
     class Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            _enclosing_fn.append(node.name)
+            visit_node(node)
+            self.generic_visit(node)
+            _enclosing_fn.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
         def generic_visit(self, node: ast.AST) -> None:
             visit_node(node)
             super().generic_visit(node)
@@ -111,16 +122,17 @@ def crimes_in(path: Path, root: Path) -> list[str]:
                 f"`{ast.unparse(node)}` -- the kit must LOWER bitwise ops to bitvector FOL "
                 "for the solver, never compute them in Python."
             )
-        # CRIME D: a sugar reaches into the factory to assemble its own body.
-        # The factory builds the children bottom-up and HANDS the finished
-        # SugarBody to the sugar at construction. A sugar that calls build_body is
-        # pulling its body instead of receiving it -- the inversion.
+        # CRIME D: a sugar pulls its own body from the factory inside desugar().
+        # build() classmethods ARE allowed to call ctx.build_body -- that is exactly
+        # how the factory hands composed children to the sugar at construction.
+        # desugar() must NEVER call build_body; it receives pre-built children from
+        # __init__ and lowers them to FOL.
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "build_body":
+            if node.func.attr == "build_body" and _enclosing_fn and _enclosing_fn[-1] == "desugar":
                 crimes.append(
-                    f"{rel}:{node.lineno}: CRIME D (sugar pulls its own body from the factory) "
-                    f"`{ast.unparse(node.func)}(...)` -- the factory builds the children and "
-                    "hands the SugarBody to the sugar at __init__; a sugar never calls build_body."
+                    f"{rel}:{node.lineno}: CRIME D (sugar pulls its own body inside desugar) "
+                    f"`{ast.unparse(node.func)}(...)` -- desugar() receives pre-built SugarBody "
+                    "children from __init__; only build() may call build_body to compose them."
                 )
         # CRIME G: a sugar reaches sideways to construct another sugar as its
         # child. The factory constructor layer owns that assembly.

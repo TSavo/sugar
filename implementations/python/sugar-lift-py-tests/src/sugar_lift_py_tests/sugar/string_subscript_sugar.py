@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_string_subscript_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import Bv32Value, EncodedStringValue, StringValue, TermValue
 from sugar_lift_py_tests.ir import Term, num
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class StringSubscriptSugar:
+class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
     """`table[index]` -- index a string-valued receiver by a BV term.
 
     The receiver reduces to the constant table; the index reduces to a BV term.
@@ -27,6 +27,21 @@ class StringSubscriptSugar:
             raise TypeError("StringSubscriptSugar receiver must be factory-built")
         if not isinstance(self.index, SugarBody):
             raise TypeError("StringSubscriptSugar index must be factory-built")
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "Subscript"
+
+    @classmethod
+    def build(cls, site, ctx) -> "StringSubscriptSugar":
+        sugar = cls.from_site(
+            site,
+            receiver=ctx.build_body(site.subscript_receiver(), SugarRole.TERM),
+            index=ctx.build_body(site.subscript_index(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("StringSubscriptSugar claim built a non-subscript")
+        return sugar
 
     @classmethod
     def from_site(
@@ -61,15 +76,3 @@ def _bv_term(value) -> Term:
         f"write more Floor for StringSubscriptSugar index `{type(value).__name__}`: "
         "expected TermValue or Bv32Value"
     )
-
-
-def _owns(site) -> bool:
-    return site.observed == "Subscript"
-
-
-STRING_SUBSCRIPT_CLAIM = SugarClaim(
-    name="StringSubscriptSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_string_subscript_sugar,
-)

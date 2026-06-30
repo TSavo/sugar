@@ -25,7 +25,7 @@ from sugar_lift_py_tests.sugar.list_sugar import list_sugar
 
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
-from .sugar_constructors import build_map_sugar
+from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 
 
 @dataclass(frozen=True)
@@ -154,7 +154,7 @@ def _lift_fluent_array_map_assert(
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
     try:
-        map_sugar = build_map_sugar(call, factory_ctx)
+        map_sugar = MapSugar.build(call, factory_ctx)
     except TypeError:
         return None
     expected_sugar = _array_literal_sugar(comparison.compare_comparators()[0], factory_ctx)
@@ -389,23 +389,15 @@ def _array_literal_sugar(node: SourceFragment, ctx: FactoryBuildContext) -> Arra
 
 
 def _array_map_catalog() -> SugarCatalog:
-    from sugar_lift_py_tests.sugar.array_literal_sugar import ARRAY_LITERAL_CLAIM
-    from sugar_lift_py_tests.sugar.binop_sugar import BINOP_CLAIM
-    from sugar_lift_py_tests.sugar.lambda_sugar import LAMBDA_CLAIM
-    from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM
-    from sugar_lift_py_tests.sugar.primitive_literal_sugar import (
-        PRIMITIVE_LITERAL_CLAIM,
-    )
+    from sugar_lift_py_tests.sugar import array_literal_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import binop_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import lambda_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import name_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import primitive_literal_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 
-    return SugarCatalog(
-        [
-            PRIMITIVE_LITERAL_CLAIM,
-            NAME_CLAIM,
-            BINOP_CLAIM,
-            LAMBDA_CLAIM,
-            ARRAY_LITERAL_CLAIM,
-        ]
-    )
+    names = {"PrimitiveLiteralSugar", "NameSugar", "BinOpSugar", "LambdaSugar", "ArrayLiteralSugar"}
+    return SugarCatalog([c for c in registered_claims() if c.name in names])
 
 
 def _callsite_string(memento_file: str, node: SourceFragment) -> str:

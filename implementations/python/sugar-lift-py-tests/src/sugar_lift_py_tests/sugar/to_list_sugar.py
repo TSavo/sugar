@@ -2,17 +2,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_to_list_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import MaterializeOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class ToListSugar:
+class ToListSugar(Sugar, role=SugarRole.TERM):
     receiver: SugarBody
     blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return _is_to_list_call(site)
+
+    @classmethod
+    def build(cls, site, ctx) -> "ToListSugar":
+        sugar = cls.from_site(
+            site,
+            receiver=ctx.build_body(site.call_receiver(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("ToListSugar claim built a non-to-list call")
+        return sugar
 
     @classmethod
     def from_site(cls, site, *, receiver: SugarBody) -> "ToListSugar | None":
@@ -45,13 +59,5 @@ def _is_to_list_call(site) -> bool:
     )
 
 
-def _owns(site) -> bool:
-    return _is_to_list_call(site)
-
-
-TO_LIST_CLAIM = SugarClaim(
-    name="ToListSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_to_list_sugar,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+TO_LIST_CLAIM = next(c for c in _rc() if c.name == "ToListSugar")

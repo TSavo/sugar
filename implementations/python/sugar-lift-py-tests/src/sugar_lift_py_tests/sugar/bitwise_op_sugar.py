@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_bitwise_op_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import Bv32Value, TermValue
 from sugar_lift_py_tests.ir import Term, bvand, bvlshr, bvor, bvshl, num
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _BITWISE_OPS = {"BitAnd": "&", "BitOr": "|", "LShift": "<<", "RShift": ">>"}
 
 
 @dataclass(frozen=True)
-class BitwiseOpSugar:
+class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
     operator: str
     left: SugarBody
     right: SugarBody
@@ -23,6 +23,21 @@ class BitwiseOpSugar:
             raise TypeError("BitwiseOpSugar operands must be factory-built bodies")
         if not isinstance(self.right, SugarBody):
             raise TypeError("BitwiseOpSugar operands must be factory-built bodies")
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "BinOp" and site.operator_kind() in _BITWISE_OPS
+
+    @classmethod
+    def build(cls, site, ctx) -> "BitwiseOpSugar":
+        sugar = cls.from_site(
+            site,
+            left=ctx.build_body(site.binop_left(), SugarRole.TERM),
+            right=ctx.build_body(site.binop_right(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("BitwiseOpSugar claim built a non-bitwise op")
+        return sugar
 
     @classmethod
     def from_site(
@@ -68,13 +83,5 @@ def _bv32_binary(operator: str, left: Term, right: Term) -> Term:
     raise TypeError(f"write more Sugar for BitwiseOpSugar operator `{operator}`")
 
 
-def _owns(site) -> bool:
-    return site.observed == "BinOp" and site.operator_kind() in _BITWISE_OPS
-
-
-BITWISE_OP_CLAIM = SugarClaim(
-    name="BitwiseOpSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_bitwise_op_sugar,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+BITWISE_OP_CLAIM = next(c for c in _rc() if c.name == "BitwiseOpSugar")

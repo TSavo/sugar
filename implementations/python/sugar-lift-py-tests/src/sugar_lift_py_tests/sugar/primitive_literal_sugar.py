@@ -2,16 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 PrimitiveValue = int | str
 
 
 @dataclass(frozen=True)
-class PrimitiveLiteralSugar:
+class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
     value: PrimitiveValue
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return cls.from_site(site) is not None
+
+    @classmethod
+    def build(cls, site, ctx) -> "PrimitiveLiteralSugar":
+        sugar = cls.from_site(site)
+        if sugar is None:
+            raise TypeError("PrimitiveLiteralSugar claim built a non-primitive literal")
+        return sugar
 
     @classmethod
     def from_site(cls, site) -> "PrimitiveLiteralSugar | None":
@@ -32,20 +44,5 @@ class PrimitiveLiteralSugar:
         )
 
 
-def _owns(site) -> bool:
-    return PrimitiveLiteralSugar.from_site(site) is not None
-
-
-def _build(site, _ctx) -> PrimitiveLiteralSugar:
-    sugar = PrimitiveLiteralSugar.from_site(site)
-    if sugar is None:
-        raise TypeError("PrimitiveLiteralSugar claim built a non-primitive literal")
-    return sugar
-
-
-PRIMITIVE_LITERAL_CLAIM = SugarClaim(
-    name="PrimitiveLiteralSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=_build,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+PRIMITIVE_LITERAL_CLAIM = next(c for c in _rc() if c.name == "PrimitiveLiteralSugar")

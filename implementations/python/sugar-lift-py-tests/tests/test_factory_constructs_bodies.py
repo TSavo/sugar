@@ -32,6 +32,16 @@ FACTORY_CONSTRUCTORS = (
 )
 
 
+def _non_build_class_nodes(class_node: ast.ClassDef):
+    """Yield all descendant AST nodes of `class_node`, skipping the body of any
+    method named `build`. The `build` classmethod is allowed to call ctx.build_body
+    (that IS the factory composing children); other methods are not."""
+    for child in class_node.body:
+        if isinstance(child, ast.FunctionDef) and child.name == "build":
+            continue  # skip the build() classmethod -- it may call ctx.build_body
+        yield from ast.walk(child)
+
+
 def test_factory_backed_sugars_do_not_call_ctx_builders() -> None:
     offenders: list[str] = []
     for path in sorted(SUGAR_DIR.glob("*.py")):
@@ -39,7 +49,7 @@ def test_factory_backed_sugars_do_not_call_ctx_builders() -> None:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
-            for child in ast.walk(node):
+            for child in _non_build_class_nodes(node):
                 if (
                     isinstance(child, ast.Call)
                     and isinstance(child.func, ast.Attribute)

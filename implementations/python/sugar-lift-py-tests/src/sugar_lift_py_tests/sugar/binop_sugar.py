@@ -2,19 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
-from sugar_lift_py_tests.factory.sugar_constructors import build_binop_sugar
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import EncodedStringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class BinOpSugar:
+class BinOpSugar(Sugar, role=SugarRole.TERM):
     operator: str
     left: SugarBody
     right: SugarBody
     blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "BinOp" and site.operator_kind() == "Add"
+
+    @classmethod
+    def build(cls, site, ctx) -> "BinOpSugar":
+        sugar = cls.from_site(
+            site,
+            left=ctx.build_body(site.binop_left(), SugarRole.TERM),
+            right=ctx.build_body(site.binop_right(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("BinOpSugar claim built a non-addition")
+        return sugar
 
     @classmethod
     def from_site(
@@ -45,13 +60,5 @@ class BinOpSugar:
         raise TypeError("BinOpSugar + requires TermValue or EncodedStringValue operands")
 
 
-def _owns(site) -> bool:
-    return site.observed == "BinOp" and site.operator_kind() == "Add"
-
-
-BINOP_CLAIM = SugarClaim(
-    name="BinOpSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=build_binop_sugar,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+BINOP_CLAIM = next(c for c in _rc() if c.name == "BinOpSugar")

@@ -2,21 +2,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 @dataclass(frozen=True)
-class NameSugar:
+class NameSugar(Sugar, role=SugarRole.TERM):
     identifier: str
     blame: str
 
     @classmethod
-    def from_site(cls, site, _ctx) -> "NameSugar | None":
+    def owns(cls, site) -> bool:
+        return site.observed == "Name"
+
+    @classmethod
+    def build(cls, site, ctx) -> "NameSugar":
+        sugar = cls._from_site(site, ctx)
+        if sugar is None:
+            raise TypeError("NameSugar claim built a non-name")
+        return sugar
+
+    @classmethod
+    def _from_site(cls, site, ctx) -> "NameSugar | None":
         if site.observed != "Name":
             return None
         return cls(identifier=site.name_id(), blame=site.blame)
+
+    # Keep the old from_site signature for any callers that pass ctx.
+    @classmethod
+    def from_site(cls, site, _ctx) -> "NameSugar | None":
+        return cls._from_site(site, _ctx)
 
     def desugar(self, ctx) -> Outcome:
         value = ctx.temporal.value_for(self.identifier)
@@ -27,20 +44,5 @@ class NameSugar:
         return Complete(value)
 
 
-def _owns(site) -> bool:
-    return site.observed == "Name"
-
-
-def _build(site, ctx) -> NameSugar:
-    sugar = NameSugar.from_site(site, ctx)
-    if sugar is None:
-        raise TypeError("NameSugar claim built a non-name")
-    return sugar
-
-
-NAME_CLAIM = SugarClaim(
-    name="NameSugar",
-    role=SugarRole.TERM,
-    owns=_owns,
-    build=_build,
-)
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+NAME_CLAIM = next(c for c in _rc() if c.name == "NameSugar")
