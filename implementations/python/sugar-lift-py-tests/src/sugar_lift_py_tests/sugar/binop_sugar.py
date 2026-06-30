@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import EncodedStringValue, TermValue
+from sugar_lift_py_tests.floor import EncodedStringValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -35,6 +35,21 @@ _FOLD = {
 
 # Operators whose divisor of 0 is a runtime effect (Python raises), not a value.
 _DIVIDES = {"/", "//", "%"}
+
+
+def _operand_term(value):
+    """The ProofIR term for a BinOp operand when the op is emitted (not folded): a symbolic
+    value's own term, or an integer literal as a numeric const. Floats wait on the Real
+    refinement; any other concrete shape is out of scope and refuses loudly here."""
+    from sugar_lift_py_tests.ir import num
+
+    if isinstance(value, SymbolicValue):
+        return value.term
+    if isinstance(value, TermValue) and isinstance(value.value, int) and not isinstance(
+        value.value, bool
+    ):
+        return num(value.value)
+    raise TypeError(f"BinOpSugar cannot lift operand `{type(value).__name__}` to a term")
 
 
 @dataclass(frozen=True)
@@ -100,6 +115,19 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
                     f"effect that raises and stops constraint propagation"
                 )
             return Complete(TermValue(_FOLD[self.operator](left.value, right.value)))
+        # A symbolic operand (a free var, or a term over one) -> EMIT the operation as a
+        # sort-silent structural term `<op>(left, right)`. We do NOT interpret it -- that is the
+        # construction's job, via Python -- we emit the SHAPE so the universe walk warrants the
+        # body's source line, and the SMT compiler derives each variable's carrier from the
+        # operations the term appears in (`+ - *` are its builtin term operators).
+        if isinstance(left, (TermValue, SymbolicValue)) and isinstance(
+            right, (TermValue, SymbolicValue)
+        ):
+            from sugar_lift_py_tests.ir import ctor
+
+            return Complete(
+                SymbolicValue(ctor(self.operator, [_operand_term(left), _operand_term(right)]))
+            )
         raise TypeError(
             f"BinOpSugar {self.operator} requires TermValue or EncodedStringValue operands"
         )
