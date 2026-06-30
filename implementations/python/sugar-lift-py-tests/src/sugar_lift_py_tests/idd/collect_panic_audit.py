@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -40,7 +43,7 @@ def collect_panic_audit(root: Path, run_command: Optional[RunCommand] = None) ->
                 )
             )
             continue
-        command = ["sugar", "lift", "--report", "--visual", "--audit-only", str(target.path)]
+        command = ["sugar", "lift", "--report", "--visual", str(target.path)]
         result = runner(command, root)
         target_records = extract_panic_records(target, result.stdout, result.stderr)
         records.extend(target_records)
@@ -66,8 +69,79 @@ def collect_panic_audit(root: Path, run_command: Optional[RunCommand] = None) ->
 
 
 def _run_command(command: List[str], cwd: Path) -> CommandResult:
+    if command[:4] == ["sugar", "lift", "--report", "--visual"] and command:
+        target = Path(command[-1])
+        with tempfile.TemporaryDirectory(prefix="sugar-python-audit-") as tmp:
+            audit_workspace = Path(tmp) / target.name
+            _prepare_audit_workspace(target, cwd, audit_workspace)
+            return _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
+    return _run_subprocess(command, cwd)
+
+
+def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
     try:
         completed = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
     except FileNotFoundError as exc:
         return CommandResult(127, "", f"unable to execute {command[0]}: {exc}")
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) -> None:
+    target = target.resolve()
+    root = root.resolve()
+    audit_workspace.mkdir(parents=True, exist_ok=True)
+    for source in sorted(target.rglob("*.py")):
+        if "__pycache__" in source.parts:
+            continue
+        relative = source.relative_to(target)
+        destination = audit_workspace / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    sugar_dir = audit_workspace / ".sugar"
+    manifest_dir = sugar_dir / "lift/python"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (sugar_dir / "config.toml").write_text(
+        "\n".join(
+            [
+                '[[plugins]]',
+                'name = "python-audit-lift"',
+                'kind = "lift"',
+                'surface = "python"',
+                'emit = "ir-document"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    lift_rpc = root / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
+    command = [
+        sys.executable,
+        str(lift_rpc),
+        "--rpc",
+        "--audit-only",
+    ]
+    command_items = ", ".join(_toml_string(item) for item in command)
+    (manifest_dir / "manifest.toml").write_text(
+        "\n".join(
+            [
+                'name = "python-audit-lift"',
+                'version = "0.1.0"',
+                'protocol_version = "pep/1.7.0"',
+                'kind = "lift"',
+                f"command = [{command_items}]",
+                f"working_dir = {_toml_string(str(root))}",
+                "",
+                "[capabilities]",
+                'authoring_surfaces = ["python"]',
+                'ir_version = "v1.1.0"',
+                'emits_signed_mementos = false',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'

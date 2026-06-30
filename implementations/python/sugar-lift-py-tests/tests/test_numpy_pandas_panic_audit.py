@@ -11,6 +11,7 @@ from sugar_lift_py_tests.idd import (
     main,
     render_text,
 )
+from sugar_lift_py_tests.idd.collect_panic_audit import _prepare_audit_workspace
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -54,8 +55,8 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
         "unexpected_panics": 0,
     }
     assert len(report.records) == 3
-    assert all("--audit-only" in command for command in calls)
-    assert all(command[:2] == ["sugar", "lift"] for command in calls)
+    assert all("--audit-only" not in command for command in calls)
+    assert all(command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls)
 
     text = render_text(report)
     assert "python numpy/pandas lift panic audit" in text
@@ -63,6 +64,31 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
     assert "write more Sugar for this AST" in text
     assert "write more Floor for this AST" in text
     assert "fix=create sugar_lift_py_tests.sugar.call.call_sugar" in text
+
+
+def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -> None:
+    target = tmp_path / "target"
+    stale_manifest = target / ".sugar/lift/python/manifest.toml"
+    stale_manifest.parent.mkdir(parents=True)
+    stale_manifest.write_text(
+        'command = ["python3", "-m", "sugar_lift_py_tests.lsp"]\n',
+        encoding="utf-8",
+    )
+    (target / "pkg").mkdir()
+    (target / "pkg/sample.py").write_text("def f():\n    return {}\n", encoding="utf-8")
+    audit_workspace = tmp_path / "audit"
+
+    _prepare_audit_workspace(target, ROOT, audit_workspace)
+
+    config = (audit_workspace / ".sugar/config.toml").read_text(encoding="utf-8")
+    manifest = (audit_workspace / ".sugar/lift/python/manifest.toml").read_text(
+        encoding="utf-8"
+    )
+    assert (audit_workspace / "pkg/sample.py").is_file()
+    assert "emit = \"ir-document\"" in config
+    assert "sugar_lift_py_tests/lift_rpc.py" in manifest
+    assert "\"--rpc\", \"--audit-only\"" in manifest
+    assert "sugar_lift_py_tests.lsp" not in manifest
 
 
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:
@@ -92,13 +118,51 @@ def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) 
 
 def test_failed_lift_without_gap_records_counts_as_unexpected() -> None:
     def failing_runner(command: list[str], cwd: Path) -> CommandResult:
-        return CommandResult(returncode=2, stdout="", stderr="error: unknown option --audit-only\n")
+        return CommandResult(returncode=1, stdout="", stderr="error: no construction gaps\n")
 
     report = collect_panic_audit(ROOT, run_command=failing_runner)
 
     assert report.r.values["unexpected_panics"] == 2
     assert not report.is_zero
     assert all(record.kind == "unexpected" for record in report.records)
+
+
+def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
+    def failing_runner(command: list[str], cwd: Path) -> CommandResult:
+        return CommandResult(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "\x1b[1m\x1b[31merror\x1b[39m\x1b[0m: kit transform failed: "
+                "lift plugin transport: lift plugin returned error: "
+                '{"code":-32603,"message":"audit-only construction gaps",'
+                '"data":{"auditOnlyGaps":[{"kind":"audit-only-construction-gap",'
+                '"label":"a.py","message":"write more Sugar for this AST: '
+                'owner=python.factory blame=a.py:1:0 observed=Dict requested=term '
+                'fix=create sugar_lift_py_tests.sugar.dict.dict_sugar",'
+                '"gap":{"owner":"python.factory","blame":"a.py:1:0",'
+                '"observed":"Dict","requested":"term",'
+                '"fix":"create sugar_lift_py_tests.sugar.dict.dict_sugar"},'
+                '"auditRow":{}},{"kind":"audit-only-construction-gap",'
+                '"label":"b.py","message":"write more Floor for this construction: '
+                'owner=python-test blame=b.py:2:4 observed=TermValue requested=map_with '
+                'fix=add map_with to TermValue or emit a real effect",'
+                '"gap":{"owner":"python-test","blame":"b.py:2:4",'
+                '"observed":"TermValue","requested":"map_with",'
+                '"fix":"add map_with to TermValue or emit a real effect"},'
+                '"auditRow":{}}]}}\n'
+            ),
+        )
+
+    report = collect_panic_audit(ROOT, run_command=failing_runner)
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 1,
+        "numpy_floor_panics": 1,
+        "pandas_sugar_panics": 1,
+        "pandas_floor_panics": 1,
+        "unexpected_panics": 0,
+    }
 
 
 def test_missing_sugar_binary_counts_as_unexpected(tmp_path, monkeypatch) -> None:
