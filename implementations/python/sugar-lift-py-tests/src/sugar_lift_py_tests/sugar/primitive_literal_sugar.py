@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import RealValue, StringValue, TermValue
+from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
-PrimitiveValue = int | float | str
+PrimitiveValue = int | str
 
 
 @dataclass(frozen=True)
@@ -30,16 +30,14 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
         if site.observed != "PrimitiveLiteral":
             return None
         value = site.literal_value()
-        if not isinstance(value, (int, float, str)):
+        # float is NOT here: floats are residual (unmodeled). bool is int (True == 1).
+        if not isinstance(value, (int, str)):
             return None
         return cls(value)
 
     def desugar(self) -> Outcome:
-        # float is Real-sorted (canonical decimal), int is Int-sorted -- never conflate.
-        if isinstance(self.value, bool) or isinstance(self.value, int):
+        if isinstance(self.value, int):
             return Complete(TermValue(self.value))
-        if isinstance(self.value, float):
-            return Complete(RealValue.from_python(self.value))
         if isinstance(self.value, str):
             return Complete(StringValue(self.value))
         raise TypeError(

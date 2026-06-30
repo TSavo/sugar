@@ -83,8 +83,11 @@ class SourceFragment:
     def observed(self) -> str:
         if isinstance(self.node, ast.Constant) and isinstance(
             self.node.value,
-            (int, float, str, bool, type(None)),
+            (int, str, bool, type(None)),
         ):
+            # NB: float is intentionally NOT here -- floats are RESIDUAL (unmodeled), so a
+            # float Constant stays observed as "Constant" and the factory refuses it. See
+            # literal_encoding.rs: asserting float != int is a false distinctness.
             return "PrimitiveLiteral"
         return type(self.node).__name__
 
