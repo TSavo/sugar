@@ -6,14 +6,12 @@
 // values filtered out. The `.rev()` twin is the same axiom in reverse traversal.
 
 use sugar_ir_symbolic::{atomic_, str_const};
-use syn::{Expr, ExprMacro, RangeLimits, Type};
+use syn::{Expr, RangeLimits, Type};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    parse_macro_args, token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
-};
+use crate::{token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "char_range_filter_map_eq",
@@ -33,21 +31,8 @@ struct CharRangeFilterMapSugar {
 }
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Macro(ExprMacro { mac, .. }) = expr else {
-        return None;
-    };
-    if mac.path.segments.last()?.ident != "assert" {
-        return None;
-    }
-    let args = parse_macro_args(mac.tokens.clone()).ok()?;
-    let payload = args.exprs.first()?;
-    if !is_char_range_filter_map_eq(payload) {
-        return None;
-    }
-    Some(Box::new(CharRangeFilterMapSugar {
-        site: token_key(payload),
-    }))
+    let site = frag.char_range_filter_map_eq_site()?;
+    Some(Box::new(CharRangeFilterMapSugar { site }))
 }
 
 impl Sugar for CharRangeFilterMapSugar {
@@ -70,7 +55,7 @@ impl Sugar for CharRangeFilterMapSugar {
     }
 }
 
-fn is_char_range_filter_map_eq(expr: &Expr) -> bool {
+pub(crate) fn is_char_range_filter_map_eq(expr: &Expr) -> bool {
     let Expr::MethodCall(eq_call) = strip_expr(expr) else {
         return false;
     };

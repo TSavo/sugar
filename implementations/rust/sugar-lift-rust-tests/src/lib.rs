@@ -20353,7 +20353,7 @@ fn type_key(ty: &syn::Type) -> String {
     }
 }
 
-fn token_key<T: ToTokens>(node: T) -> String {
+pub(crate) fn token_key<T: ToTokens>(node: T) -> String {
     node.to_token_stream()
         .to_string()
         .split_whitespace()

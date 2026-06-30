@@ -23,74 +23,27 @@
 // lands), a CHAR range (left to the char lane), or a non-literal argument returns `None`,
 // so the generic method machinery keeps its opaque handling (no regression, never a guess).
 
-use syn::{Expr, ExprLit, ExprRange, Lit, RangeLimits, UnOp};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("range_contains", SugarRole::Term, recognize);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    if call.method != "contains" || call.args.len() != 1 {
-        return None;
-    }
-    let Expr::Range(range) = strip_refs_groups(&call.receiver) else {
-        return None;
-    };
-    let x = int_scalar(&call.args[0])?;
-    let value = range_contains(range, x)?;
+    // `range_literal_contains_int()` handles all raw syn internally:
+    // checks MethodCall shape, receiver is an inline Range, all endpoints/arg
+    // const-fold to i128 scalars, computes the bool. No as_expr/raw syn here.
+    let value = frag.range_literal_contains_int()?;
     Some(Box::new(RangeContainsSugar { value }))
 }
 
-/// Membership of `x` in a range literal whose present endpoints const-fold to integer
-/// scalars. `None` if an endpoint is present but not const-foldable -- left for the generic
-/// machinery (never a guess).
-fn range_contains(range: &ExprRange, x: i128) -> Option<bool> {
-    let start = match range.start.as_deref() {
-        None => None,
-        Some(e) => Some(int_scalar(e)?),
-    };
-    let end = match range.end.as_deref() {
-        None => None,
-        Some(e) => Some(int_scalar(e)?),
-    };
-    let lower_ok = start.map_or(true, |s| x >= s);
-    let upper_ok = match (end, range.limits) {
-        (Some(e), RangeLimits::HalfOpen(_)) => x < e,
-        (Some(e), RangeLimits::Closed(_)) => x <= e,
-        // open upper bound (`a..` / `..`): no upper constraint.
-        (None, _) => true,
-    };
-    Some(lower_ok && upper_ok)
-}
-
-/// Const-fold a range endpoint / argument to its exact INTEGER scalar: an int/byte literal,
-/// optionally negated, through paren/group/ref wrappers. CHAR is intentionally EXCLUDED
-/// (char ranges are the char lane's). Anything else is `None` -> the caller declines.
-fn int_scalar(expr: &Expr) -> Option<i128> {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Int(i), ..
-        }) => i.base10_parse::<i128>().ok(),
-        Expr::Lit(ExprLit {
-            lit: Lit::Byte(b), ..
-        }) => Some(i128::from(b.value())),
-        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
-            int_scalar(&u.expr).and_then(i128::checked_neg)
-        }
-        _ => None,
-    }
-}
-
 struct RangeContainsSugar {
+    /// The compile-time-computed membership result. Holds only a `bool` --
+    /// zero raw-syn fields. Desugar lowers this to a ground `Bool` const.
     value: bool,
 }
 
@@ -102,5 +55,88 @@ impl Sugar for RangeContainsSugar {
             "resolved range contains stdlib axiom to a ground bool"
         );
         Outcome::Complete(Desugared::Term(bool_const(self.value)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // from_src TDD harness: source string → SourceFragment → assert observed →
+    // range_literal_contains_int() → assert value → build struct → assert floor.
+    // No parse_quote!, no StubTerm, no run(). The struct holds ONLY `bool` --
+    // zero raw-syn fields -- so these tests prove the migration is clean.
+    use super::*;
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+    use sugar_ir_symbolic::{ConstValue, Term};
+
+    /// Navigate to the single tail-expression term in a one-line fn body.
+    fn tail_term_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let fn_frag = SourceFragment::from_node(FragNode::Item(item), file_str);
+        let body = fn_frag.function_body().unwrap();
+        let stmts = body.statements();
+        let terms = stmts[0].terms();
+        terms[0]
+    }
+
+    /// Positive: `(1..5).contains(&3)` — 3 is in [1,5), folds to `true`.
+    /// Proves the accessor computes correctly and the struct holds only `bool`.
+    #[test]
+    fn from_src_half_open_range_in_bounds_folds_to_true() {
+        let src = "fn f() -> bool { (1..5).contains(&3) }";
+        let file = parse_file(src);
+        let frag = tail_term_frag(&file, "f.rs");
+
+        // observed: a method call
+        assert_eq!(frag.observed(), "MethodCall");
+
+        // build: accessor const-folds without any as_expr / raw Expr:: access
+        let value = frag
+            .range_literal_contains_int()
+            .expect("(1..5).contains(&3) must fold");
+        assert!(value, "(1..5).contains(&3) is true");
+
+        // struct holds only `bool` -- no raw-syn field
+        let sugar = RangeContainsSugar { value };
+        assert!(sugar.value);
+
+        // floor: bool_const(true) produces Term::Const { Bool(true) }
+        let term = bool_const(sugar.value);
+        match term.as_ref() {
+            Term::Const { value: ConstValue::Bool(b), .. } => {
+                assert!(*b, "expected Bool(true)");
+            }
+            other => panic!("expected Bool const, got {other:?}"),
+        }
+    }
+
+    /// Discrimination: `(1..5).contains(&5)` — 5 is NOT in [1,5) (exclusive upper),
+    /// folds to `false`. Proves upper-bound exclusion is preserved post-migration.
+    #[test]
+    fn from_src_half_open_range_at_exclusive_upper_folds_to_false() {
+        let src = "fn f() -> bool { (1..5).contains(&5) }";
+        let file = parse_file(src);
+        let frag = tail_term_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+
+        let value = frag
+            .range_literal_contains_int()
+            .expect("(1..5).contains(&5) must fold");
+        assert!(!value, "(1..5).contains(&5) is false -- 5 not in [1,5)");
+    }
+
+    /// Structural: a `.len()` call has no range receiver — must return `None`.
+    /// Proves the guard does not over-claim on unrelated method calls.
+    #[test]
+    fn discrimination_non_range_method_call_returns_none() {
+        let src = "fn f(v: &[i32]) -> usize { v.len() }";
+        let file = parse_file(src);
+        let frag = tail_term_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert!(
+            frag.range_literal_contains_int().is_none(),
+            "v.len() must NOT be recognized as range_contains"
+        );
     }
 }
