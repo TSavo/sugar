@@ -69,8 +69,8 @@ def test_block_sugar_absorbs_comments_into_an_empty_block():
 
 
 def test_block_sugar_panics_on_a_statement_with_no_sugar_yet():
-    # an augmented assignment has no statement sugar yet -> the block's composition
-    # asks the catalog, finds nothing, and the factory panics (names the next sugar).
-    # Never an ad-hoc raise, never a silent skip.
+    # a delete statement has no statement sugar yet -> the block's composition asks the
+    # catalog, finds nothing, and the factory panics (names the next sugar). Never an
+    # ad-hoc raise, never a silent skip. (`x += 1` used to live here, until AugAssign.)
     with pytest.raises(FactoryGap):
-        _compose_block('    "doc"\n    x += 1\n')
+        _compose_block('    "doc"\n    del x\n')

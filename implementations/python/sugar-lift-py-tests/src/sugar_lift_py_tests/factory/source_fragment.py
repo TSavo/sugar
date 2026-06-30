@@ -468,6 +468,24 @@ class SourceFragment:
         self._require(ast.AugAssign)
         return type(self.node.op).__name__  # type: ignore[attr-defined]
 
+    def aug_assign_binop(self) -> "SourceFragment":
+        """Synthesize the BinOp `target <op> value` that `target <op>= value` unrolls to.
+
+        This is the temporal rewrite that lets AugAssign become a plain assign: the
+        operator then dispatches to its OWN binop sugar downstream (Add -> BinOpSugar),
+        or the factory panics naming the missing one (Sub/Mult, until those exist). The
+        gateway is the only place ast may be constructed.
+        """
+        self._require(ast.AugAssign)
+        binop = ast.BinOp(
+            left=self.node.target,  # type: ignore[attr-defined]
+            op=self.node.op,  # type: ignore[attr-defined]
+            right=self.node.value,  # type: ignore[attr-defined]
+        )
+        ast.copy_location(binop, self.node)
+        ast.fix_missing_locations(binop)
+        return SourceFragment.from_node(binop, self.filename)
+
     # --- raise ------------------------------------------------------------
 
     def raise_exc(self) -> "SourceFragment | None":

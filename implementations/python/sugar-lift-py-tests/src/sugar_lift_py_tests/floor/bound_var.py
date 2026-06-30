@@ -22,3 +22,8 @@ class BoundVar(FloorValue):
 
     name: str
     source: object  # the rhs's composed body (a SugarBody): recoverable + recomposable
+    # The DEFINITION scope -- the ctx as it stood when this binding was made, where the
+    # name still holds its OLD value. A reference recomposes `source` against THIS, not
+    # the current scope, so a self-referential rebind (`x = x + 1`) reads the old x and
+    # terminates instead of recomposing against itself forever.
+    scope: object = None
