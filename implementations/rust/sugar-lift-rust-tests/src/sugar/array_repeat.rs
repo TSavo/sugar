@@ -64,9 +64,9 @@ pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) ->
     decompose_array_repeat(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
 }
 
-pub(crate) fn refusal_node(expr: &Expr) -> Box<dyn Sugar> {
+pub(crate) fn refusal_node(site: &str) -> Box<dyn Sugar> {
     Box::new(ArrayRepeatSugar {
-        boundary: token_key(expr),
+        boundary: site.to_string(),
     })
 }
 

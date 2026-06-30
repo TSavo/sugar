@@ -35,7 +35,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{exact_int_value, primitive_int_kind, ExactInt, IntKind};
 use crate::sugar::monadic::{err_term, ok_term};
-use crate::{expr_head_key, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{num, Term};
 use crate::sugar::source_fragment::SourceFragment;
 
@@ -43,21 +43,59 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("try_from", SugarRole::Term, recognize);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let _ = fcx;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 1 {
+    // Gate: must be a plain Call (not MethodCall) with exactly 1 argument.
+    // call_func() returns None for MethodCall and all non-Call shapes;
+    // call_arg_count() returns 0 for non-Call shapes.
+    if frag.call_func().is_none() || frag.call_arg_count() != 1 {
         return None;
     }
-    let dst = try_from_destination(&call.func)?;
+    // Must resolve to a primitive-integer try_from destination.
+    let dst = try_from_destination_frag(frag)?;
     primitive_int_kind(&dst)?;
+    let func_key = frag.call_head_key()?;
+    let args = frag.call_args();
     Some(Box::new(TryFromSugar {
-        func_key: expr_head_key(&call.func),
-        arg: SugarBody::term(&call.args[0], fcx),
-        folded: try_from_fold_inputs(call, Some(fcx)),
+        func_key,
+        arg: SugarBody::term_frag(&args[0], fcx),
+        folded: try_from_fold_inputs_frag(frag, Some(fcx)),
     }))
+}
+
+/// Extract the try_from destination string from a Call fragment using
+/// SourceFragment path accessors (no as_expr). Mirrors `try_from_destination`
+/// logic via `path_last_segment_ident`, `path_has_qself`,
+/// `path_qself_simple_type_name`, and `path_penultimate_ident`.
+fn try_from_destination_frag(frag: &SourceFragment) -> Option<String> {
+    let func_frag = frag.call_func()?.strip_refs_groups();
+    // Last path segment must be "try_from".
+    if func_frag.path_last_segment_ident().as_deref() != Some("try_from") {
+        return None;
+    }
+    // Qself form: `<DST as TryFrom<SRC>>::try_from` or `<DST>::try_from`.
+    if func_frag.path_has_qself() {
+        return func_frag.path_qself_simple_type_name();
+    }
+    // Module-path form: `DST::try_from`.  Penultimate segment is the destination.
+    let dst = func_frag.path_penultimate_ident()?;
+    // `TryFrom::try_from(..)` leaves the destination inferred -- not foldable.
+    (dst != "TryFrom").then_some(dst)
+}
+
+/// Compute fold inputs from a Call fragment using SourceFragment accessors.
+/// Uses `call_arg_count`, `try_from_destination_frag`, `call_args`, and the
+/// `exact_int_value_frag` accessor (raw syn confined inside source_fragment.rs).
+fn try_from_fold_inputs_frag(
+    frag: &SourceFragment,
+    fcx: Option<&SugarBuildCtx>,
+) -> Option<(IntKind, ExactInt)> {
+    if frag.call_arg_count() != 1 {
+        return None;
+    }
+    let dst = try_from_destination_frag(frag)?;
+    let kind = primitive_int_kind(&dst)?;
+    let args = frag.call_args();
+    let value = args[0].exact_int_value_frag(fcx)?;
+    Some((kind, value))
 }
 
 /// Does this call fold to a `Result` (an integer-destination `try_from` over a
@@ -162,4 +200,80 @@ impl TryFromSugar {
 
 fn try_from_gap(reason: &str) -> ! {
     panic!("try_from did not reach a lawful floor: {reason}")
+}
+
+// ---------------------------------------------------------------------------
+// Phase-3 from_src tests: source -> SourceFragment -> observed -> accessor.
+// No parse_quote!, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod from_src_tests {
+    use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
+
+    /// Navigate to the tail expression of the first statement in the first function.
+    fn expr_frag_from<'a>(file: &'a syn::File, src_name: &'a str) -> SourceFragment<'a> {
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), src_name);
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        stmts[0].terms()[0]
+    }
+
+    /// Positive: `u8::try_from(255u16)` is a Call with 1 arg whose callee
+    /// produces a head key containing "try_from". Verifies the three accessor
+    /// values that drive the recognize gate.
+    #[test]
+    fn from_src_try_from_call_is_observed_call_with_one_arg_and_try_from_key() {
+        let src = "fn f(x: u16) { let _ = u8::try_from(255u16); }";
+        let file = parse_file(src);
+        // Navigate to the initializer of the let binding.
+        let item = &file.items[0];
+        let frag = SourceFragment::from_node(FragNode::Item(item), "f.rs");
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        // The let init is an Assign stmt; its value is the Call.
+        let call_frag = stmts[0].assign_value().expect("let init");
+
+        assert_eq!(call_frag.observed(), "Call");
+        assert_eq!(call_frag.call_arg_count(), 1, "exactly 1 arg");
+        assert!(call_frag.call_func().is_some(), "call_func is Some for Call");
+        let head = call_frag.call_head_key().expect("head key");
+        assert!(
+            head.contains("try_from"),
+            "head key must mention try_from, got {head:?}"
+        );
+    }
+
+    /// Discrimination: a method call (`.len()`) has observed="MethodCall" and
+    /// call_func() returns None, so the recognize gate rejects it.
+    #[test]
+    fn from_src_method_call_has_no_call_func_and_is_rejected_by_gate() {
+        let src = "fn f(x: &[u8]) -> usize { x.len() }";
+        let file = parse_file(src);
+        let frag = expr_frag_from(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert!(
+            frag.call_func().is_none(),
+            "MethodCall has no call_func: recognize gate rejects it"
+        );
+    }
+
+    /// Structural: a Call with 2 args has call_arg_count() != 1 and is rejected.
+    #[test]
+    fn from_src_call_with_two_args_is_rejected_by_arg_count_gate() {
+        let src = "fn f(a: u8, b: u8) -> u8 { a.clamp(0u8, b) }";
+        let file = parse_file(src);
+        // clamp is a MethodCall; use a plain call shape with 2 args instead.
+        let src2 = "fn f(a: u32, b: u32) -> u32 { u32::min(a, b) }";
+        let file2 = parse_file(src2);
+        let frag = expr_frag_from(&file2, "f.rs");
+
+        assert_eq!(frag.observed(), "Call");
+        assert_eq!(frag.call_arg_count(), 2, "2 args triggers the gate");
+        assert!(
+            frag.call_func().is_some(),
+            "call_func is Some (it is a Call), but the arg-count gate fires first"
+        );
+    }
 }

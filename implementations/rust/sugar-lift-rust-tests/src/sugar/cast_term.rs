@@ -10,25 +10,25 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{build_term_frag, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    cast_const_fold_value, const_fold_int_term, is_shared_dyn_any_type, scalar_cast_type_key,
-    str_const, token_key, type_key, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    cast_const_fold_value, const_fold_int_term,
+    str_const, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
-use syn::{Expr, Type};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("cast_term", recognize);
 
 /// TERM recognizer for `Expr::Cast`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Cast(cast) = expr else {
+    if frag.observed() != "Cast" {
         return None;
-    };
-    if matches!(cast.ty.as_ref(), Type::Infer(_)) {
-        return Some(build_term(&cast.expr, fcx));
+    }
+    // `as _`: inferred target is transparent -- delegate to inner expression.
+    if frag.cast_is_infer() {
+        let inner = frag.cast_inner_frag()?;
+        return Some(build_term_frag(&inner, fcx));
     }
     // `&array as &[_]` / `&vec as &[T]`: an UNSIZING coercion to a slice reference is
     // VALUE-PRESERVING -- the slice views the SAME elements as its source, so the cast
@@ -38,39 +38,34 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
     // cast transparent, both EUF call-arguments coalesce instead of backstopping. The
     // inner reference's own soundness still applies (a `&mut <place>` source propagates
     // its refusal); this arm only strips the unsizing coercion.
-    if is_slice_reference_cast(cast.ty.as_ref()) {
-        return Some(build_term(&cast.expr, fcx));
+    if frag.cast_is_slice_ref() {
+        let inner = frag.cast_inner_frag()?;
+        return Some(build_term_frag(&inner, fcx));
     }
-    if matches!(cast.ty.as_ref(), Type::Ptr(_)) {
+    if frag.cast_is_raw_ptr() {
         return Some(Box::new(RepresentationCastSugar {
-            boundary: token_key(expr),
+            boundary: frag.token_str(),
             kind: "a raw pointer cast".to_string(),
         }));
     }
-    if is_shared_dyn_any_type(&cast.ty) {
+    if frag.cast_is_shared_dyn_any() {
+        let inner = frag.cast_inner_frag()?;
         return Some(Box::new(CtorSugar::new(
-            format!("cast:{}", type_key(&cast.ty)),
-            vec![SugarBody::term(&cast.expr, fcx)],
+            format!("cast:{}", frag.cast_full_type_key_str()),
+            vec![SugarBody::term_frag(&inner, fcx)],
         )));
     }
-    if let Some(cast_type) = scalar_cast_type_key(&cast.ty) {
+    if let Some(cast_type) = frag.cast_scalar_type_key() {
+        let inner = frag.cast_inner_frag()?;
         return Some(Box::new(CastSugar {
             cast_type: cast_type.to_string(),
-            inner: SugarBody::term(&cast.expr, fcx),
+            inner: SugarBody::term_frag(&inner, fcx),
         }));
     }
     Some(Box::new(RepresentationCastSugar {
-        boundary: token_key(expr),
+        boundary: frag.token_str(),
         kind: "a non-scalar representation cast".to_string(),
     }))
-}
-
-/// `&[_]` / `&[T]` / `&mut [_]`: a reference to a SLICE. A cast to such a type is an
-/// unsizing coercion (`&[T; N] as &[T]`, `&Vec<T> as &[T]`) that preserves the elements,
-/// so `cast_term` treats it transparently. (The element type is irrelevant -- the value
-/// is the source's elements either way.)
-fn is_slice_reference_cast(ty: &Type) -> bool {
-    matches!(ty, Type::Reference(reference) if matches!(reference.elem.as_ref(), Type::Slice(_)))
 }
 
 struct CastSugar {
@@ -156,4 +151,76 @@ fn scalar_cast_const_term(value: i128, cast_type: &str) -> Rc<Term> {
             name: cast_type.to_string(),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sugar::source_fragment::{FragNode, SourceFragment};
+    use syn::Expr;
+
+    fn e(src: &str) -> Expr {
+        syn::parse_str(src).expect("parse expr")
+    }
+
+    // --- positive: cast to scalar type ---------------------------------------
+
+    #[test]
+    fn from_src_scalar_cast_observed_and_inner_frag() {
+        // positive: `x as u32` -> observed "Cast", cast_scalar_type_key "u32",
+        // cast_inner_frag observed "Name"
+        let expr = e("x as u32");
+        let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
+        assert_eq!(frag.observed(), "Cast");
+        assert!(
+            frag.cast_is_infer() == false,
+            "u32 cast must not be infer"
+        );
+        assert!(
+            frag.cast_is_slice_ref() == false,
+            "u32 cast is not a slice ref"
+        );
+        assert!(
+            frag.cast_is_raw_ptr() == false,
+            "u32 cast is not a raw ptr"
+        );
+        assert!(
+            frag.cast_is_shared_dyn_any() == false,
+            "u32 cast is not dyn Any"
+        );
+        assert_eq!(
+            frag.cast_scalar_type_key(),
+            Some("u32"),
+            "scalar_type_key must be u32"
+        );
+        let inner = frag.cast_inner_frag().expect("inner must be Some for Cast");
+        assert_eq!(inner.observed(), "Name", "inner of `x as u32` is a path (Name)");
+    }
+
+    // --- discrimination: non-Cast returns None from cast_inner_frag ----------
+
+    #[test]
+    fn from_src_non_cast_cast_inner_frag_returns_none() {
+        // discrimination: a BinOp fragment must return None from cast_inner_frag
+        let expr = e("1 + 2");
+        let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
+        assert!(frag.cast_inner_frag().is_none(), "BinOp must not have cast_inner_frag");
+        assert!(
+            frag.cast_scalar_type_key().is_none(),
+            "BinOp must not have a scalar cast key"
+        );
+    }
+
+    // --- structural: infer cast, slice-ref cast, raw-ptr cast flags ----------
+
+    #[test]
+    fn from_src_infer_cast_is_infer_true() {
+        // structural: `x as _` -> cast_is_infer() == true, cast_is_slice_ref() == false
+        let expr = e("x as _");
+        let frag = SourceFragment::from_node(FragNode::Expr(&expr), "<test>");
+        assert_eq!(frag.observed(), "Cast");
+        assert!(frag.cast_is_infer(), "x as _ must be cast_is_infer");
+        assert!(!frag.cast_is_slice_ref(), "x as _ must not be cast_is_slice_ref");
+        assert!(!frag.cast_is_raw_ptr(), "x as _ must not be cast_is_raw_ptr");
+        assert!(frag.cast_inner_frag().is_some(), "inner must be present");
+    }
 }

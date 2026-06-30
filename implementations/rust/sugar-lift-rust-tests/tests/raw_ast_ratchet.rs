@@ -80,7 +80,22 @@ use std::path::PathBuf;
 /// array_term.rs, tuple_term.rs, for_each.rs, forall_loop.rs, range_term.rs migrated: 72→67.
 /// loop_break_term.rs, struct_term.rs, value_if.rs migrated (new accessors in source_fragment.rs,
 ///   forall.rs wrappers): 67→64.
-const RAW_SYN_CEILING: usize = 64;
+/// range_accessor.rs migrated (range_is_closed accessor, call_target_name+call_arg_count+
+///   call_receiver+strip_refs_groups+range_start_frag+range_end_frag, term_frag, 3 tests): 64→63.
+/// wave-6 consolidation (bv_binop.rs, try_from.rs, repeat_term.rs + others already in tree): 63→58.
+/// cast_term.rs migrated (cast_inner_frag+cast_is_infer+cast_is_slice_ref+cast_is_raw_ptr+
+///   cast_is_shared_dyn_any+cast_scalar_type_key+cast_full_type_key_str, build_term_frag,
+///   3 from_src tests, zero as_expr in recognize body): 58→57.
+/// phase3-decode consolidation: try_from.rs helpers rewritten (try_from_destination_frag via
+///   path_last_segment_ident+path_has_qself+path_qself_simple_type_name+path_penultimate_ident;
+///   try_from_fold_inputs_frag via call_arg_count+call_args+exact_int_value_frag accessor);
+///   range_construct.rs migrated (observed=="Struct"/"Call", struct_has_rest+
+///   struct_path_variant_string+struct_named_fields_frags+call_func+path_last_segment_ident+
+///   path_penultimate_ident, from_struct_name helper, Struct added to expr_kind);
+///   cfg_select.rs migrated (macro_name()+macro_token_stream()+token_str(), 3 from_src tests
+///   each, exact_int_value_frag+macro_token_stream+closure accessors added to source_fragment.rs):
+///   57→53.
+const RAW_SYN_CEILING: usize = 53;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
