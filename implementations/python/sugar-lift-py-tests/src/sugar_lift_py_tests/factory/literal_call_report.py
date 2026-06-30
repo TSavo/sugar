@@ -314,12 +314,17 @@ def _lift_assertion_via_factory(
         ctx=ctx,
     )
     formula = result.sugar.assertion_formula()
+    source_role = getattr(
+        result.sugar,
+        "source_role",
+        f"python.{type(result.sugar).__name__}",
+    )
     return _emit_assertion_surface_fact(
         stmt,
         fn,
         formula,
         selected=result.audit_row.selected or type(result.sugar).__name__,
-        role="python.isinstance-assertion-sugar",
+        role=source_role,
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
