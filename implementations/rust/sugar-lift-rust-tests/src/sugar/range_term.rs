@@ -14,12 +14,14 @@ use crate::sugar::int_literal::{numeric_floor_from_term, ExactInt, NumericFloor}
 use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("range_term", recognize);
 
 /// TERM recognizer for `Expr::Range`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Range(range) = expr else {
         return None;
     };

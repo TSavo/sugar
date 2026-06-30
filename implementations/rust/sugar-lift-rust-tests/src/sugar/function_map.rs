@@ -20,13 +20,15 @@ use crate::{
     resolve_value_call_inline, strip_refs_groups, value_body_tail_substituted, ConstVal, Desugared,
     DesugaredElem, Outcome, Sugar, SugarCtx,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("function_map", recognize_composite);
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("function_map_term", recognize_term);
 
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     recognize_function_map(expr, fcx, SequenceKind::Any).map(|(receiver, func)| {
         let body = build_function_map_body_or_gap(func, fcx);
         Box::new(FunctionMapCallSugar {
@@ -36,7 +38,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     })
 }
 
-pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).map(|(receiver, func)| {
         let body = build_function_map_body_or_gap(func, fcx);
         Box::new(FunctionMapTermSugar {

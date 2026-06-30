@@ -30,6 +30,7 @@ use crate::{
     const_eval, repeat_count_in_scope, repeat_count_literal, token_key, Desugared, DesugaredElem,
     Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("array_repeat", recognize_composite);
@@ -38,7 +39,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// [`decompose_array_repeat`]). DISTINCT from the TERM-position `Expr::Repeat` (which
 /// expands a literal-count aggregate); the two roles genuinely differ. A repeat that
 /// cannot construct this node declines instead of manufacturing a backstop sugar.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Repeat(repeat) = expr else {
         return None;
     };

@@ -32,6 +32,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
     has_tuple_producer, SugarBody, SugarBuildCtx, TermFloor, TupleProducerFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Outcome, Sugar,
     SugarCtx, Warrant,
@@ -48,10 +49,11 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
     recognize,
 );
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
-        Expr::Paren(paren) => recognize(&paren.expr, fcx),
-        Expr::Group(group) => recognize(&group.expr, fcx),
+        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
+        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
         Expr::Binary(binary) => recognize_binary(binary, fcx),
         Expr::Macro(expr_macro) => recognize_macro(expr_macro, fcx),
         _ => None,

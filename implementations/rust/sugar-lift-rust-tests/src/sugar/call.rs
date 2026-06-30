@@ -34,6 +34,7 @@ use syn::Expr;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     assoc_call_key, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term,
     expr_head_key, num, resolve_value_call_inline, type_id_of_call_term, u128_term, Desugared,
@@ -202,7 +203,8 @@ fn value_call_support_key(func: &Expr) -> Option<String> {
 /// `TypeId::of` const-fold preamble FIRST (a resolved term, or a construction gap on
 /// malformed syntax), then the constructive `call:<head>` ctor over the arg children
 /// ([`CallSugar`]).
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };

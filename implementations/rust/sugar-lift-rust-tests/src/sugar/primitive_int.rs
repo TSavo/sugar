@@ -16,6 +16,7 @@ use crate::sugar::int_literal::{
     numeric_floor_from_term, primitive_int_kind as int_literal_kind, typed_int_term, ExactInt,
     IntKind, IsqrtVisitor, NumericFloor, NumericSqrt, PowVisitor, WrappingNegVisitor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
@@ -213,7 +214,8 @@ pub(crate) fn try_eval_deferred_primitive_method(
     }
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -316,7 +318,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }))
 }
 
-fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_tuple_producer(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

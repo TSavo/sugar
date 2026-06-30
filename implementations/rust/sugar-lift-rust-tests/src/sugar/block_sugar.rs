@@ -43,6 +43,7 @@ use crate::{
     Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
     sugar_ctx_with_factory_audits,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim =
     StmtSugarClaim::statement_before("block_sugar", &["stmt_support"], recognize_block);
@@ -50,7 +51,8 @@ pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim =
 pub(crate) static SUPPORT_STMT_SUGAR: StmtSugarClaim =
     StmtSugarClaim::fallback_statement("stmt_support", recognize_support);
 
-fn recognize_block(stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_block(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let stmt = frag.as_stmt()?;
     let Stmt::Expr(Expr::Block(b), _) = stmt else {
         return None;
     };
@@ -59,7 +61,8 @@ fn recognize_block(stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> 
     }))
 }
 
-fn recognize_support(_stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_support(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let _stmt = frag.as_stmt()?;
     Some(Box::new(SupportSugar))
 }
 
@@ -184,6 +187,7 @@ pub(crate) fn block_stmt_to_formula(
 #[cfg(test)]
 mod tests {
     use crate::sugar::source_contract::emit_value_contract;
+    use crate::sugar::source_fragment::SourceFragment;
 
     /// Guard-clause shape: `if cond { return v1; } v2`
     /// Must produce the SAME two-arm guarded formula as the old emit_guard_return_value.

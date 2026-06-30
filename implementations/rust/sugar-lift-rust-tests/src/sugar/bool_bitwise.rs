@@ -11,6 +11,7 @@ use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx};
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 use sugar_ir_symbolic::{and_, or_, Formula};
 use syn::{BinOp, Expr, ExprBinary};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_bool_bitwise", SugarRole::Constraint, recognize);
@@ -21,10 +22,11 @@ struct BoolBitwiseSugar {
     is_and: bool,
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
-        Expr::Paren(paren) => recognize(&paren.expr, fcx),
-        Expr::Group(group) => recognize(&group.expr, fcx),
+        Expr::Paren(paren) => { let _frag = SourceFragment::expr(paren.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
+        Expr::Group(group) => { let _frag = SourceFragment::expr(group.expr.as_ref(), "<src>"); recognize(&_frag, fcx) },
         Expr::Binary(binary) => recognize_binary(binary, fcx),
         _ => None,
     }

@@ -21,6 +21,7 @@ use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
 use crate::sugar::factory::{FloorRead, LiteralStringFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, const_fold_int_term, simple_path_name, strip_refs_groups, Desugared, Effect,
     Outcome, Sugar, SugarCtx,
@@ -37,7 +38,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

@@ -11,12 +11,14 @@ use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::Sugar;
 use syn::Expr;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("array_term", recognize);
 
 /// TERM recognizer for `Expr::Array`: the `literal_aggregate_term("Array", ..)` arm.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Array(array) = expr else {
         return None;
     };

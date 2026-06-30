@@ -11,6 +11,7 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::factory::{FormatValueFloor, SugarBody};
 use crate::sugar::format::{display_format_value_floor, is_to_string_shape};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -19,7 +20,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
@@ -71,7 +73,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = recognize(&expr, &fcx).expect("to_string sugar should recognize");
+        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("to_string sugar should recognize");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();
@@ -86,7 +88,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = recognize(&expr, &fcx).expect("to_string sugar should recognize");
+        let node = { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.expect("to_string sugar should recognize");
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
         let mut float_widths = FloatWidthScope::new();

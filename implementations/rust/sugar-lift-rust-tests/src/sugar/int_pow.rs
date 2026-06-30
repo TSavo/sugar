@@ -16,6 +16,7 @@ use crate::sugar::int_literal::{numeric_floor_from_term, PowVisitor};
 use crate::sugar::primitive_int::{
     deferred_primitive_method_term, integer_receiver_can_ground, is_deferred_primitive_term,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_fold_int_term, const_fold_u128_term, num, strip_refs_groups, term_contains_curry_param,
     Desugared, Outcome, Sugar, SugarCtx,
@@ -24,7 +25,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("int_pow", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

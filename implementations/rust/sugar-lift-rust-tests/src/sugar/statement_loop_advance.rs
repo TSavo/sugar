@@ -7,6 +7,7 @@ use syn::Expr;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::statement_effect_before(
@@ -15,7 +16,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize,
     );
 
-pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     statement_position::has_loop_advance(expr).then(|| {
         Box::new(StatementLoopAdvanceSugar {
             boundary: token_key(expr),

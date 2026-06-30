@@ -20,6 +20,7 @@ use crate::{
     token_key, AssertionFactKind, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions,
     Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("conditional", recognize_composite);
@@ -27,7 +28,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// COMPOSITE recognizer for `Expr::If`: the implication composite ([`ConditionalSugar`]
 /// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => decompose_if(i)`
 /// arm of the old fat `build_composite`, with gaps now loud.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::If(i) => decompose_if(i, fcx).map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,

@@ -23,11 +23,13 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{strip_refs_groups, Outcome, Sugar, SugarCtx};
 use syn::{Expr, UnOp};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("maybe_uninit_new", &["method"], recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     // Outer must be `.assume_init()` with no extra arguments.
     let Expr::MethodCall(outer) = expr else {
         return None;

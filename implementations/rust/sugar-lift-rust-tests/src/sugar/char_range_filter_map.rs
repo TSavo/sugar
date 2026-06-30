@@ -10,6 +10,7 @@ use syn::{Expr, ExprMacro, RangeLimits, Type};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     parse_macro_args, token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
@@ -31,7 +32,8 @@ struct CharRangeFilterMapSugar {
     site: String,
 }
 
-fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };

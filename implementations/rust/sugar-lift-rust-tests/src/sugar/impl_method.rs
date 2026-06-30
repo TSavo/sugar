@@ -28,6 +28,7 @@ use syn::{Item, ItemImpl};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{impl_block_method_name, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const ITEM_SUGAR: crate::sugar::claim::ItemSugarClaim =
     crate::sugar::claim::ItemSugarClaim::statement_item("impl_method", recognize);
@@ -38,7 +39,8 @@ pub(crate) const ITEM_SUGAR: crate::sugar::claim::ItemSugarClaim =
 /// An `impl` operates on a `syn::Item`/`ItemImpl`, not an `Expr`, so this is the item-source
 /// analogue of the expression `recognize` shape. Ctx-independent (the verdict is purely
 /// structural).
-pub(crate) fn recognize(item: &Item, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let item = frag.as_item()?;
     let Item::Impl(imp) = item else {
         return None;
     };

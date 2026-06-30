@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{FloorRead, LiteralCStrFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bytes_literal_term_from_bytes, bytes_to_hex, num, Desugared, Outcome, Sugar, SugarCtx,
 };
@@ -21,7 +22,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("cstr", &["bound_path"], recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if has_literal_cstr_floor(expr, fcx) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::cstr",

@@ -11,6 +11,7 @@ use sugar_ir_symbolic::Term;
 use crate::sugar::factory::{
     has_tuple_producer, SugarBody, SugarBuildCtx, TermFloor, TupleProducerFloor,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{DesugaredFloorAccept, DesugaredFloorVisitor};
 use crate::{token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::Expr;
@@ -19,7 +20,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("field_term", recognize);
 
 /// TERM recognizer for `Expr::Field`.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Field(field)
             if matches!(field.member, syn::Member::Unnamed(_))

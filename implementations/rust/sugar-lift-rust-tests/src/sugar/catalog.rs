@@ -488,6 +488,7 @@ mod tests {
 
     use crate::sugar::claim::{ExprSugarClaim, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
+    use crate::sugar::source_fragment::SourceFragment;
     use crate::{
         record_simple_value_binding, FactoryAuditLog, FactoryDisposition, LiftOptions,
         MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalPlan, TemporalScope,
@@ -501,7 +502,8 @@ mod tests {
         }
     }
 
-    fn recognize(_: &Expr, _: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fn recognize(frag: &SourceFragment, _: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+        let _ = frag.as_expr()?;
         Some(Box::new(NoopSugar))
     }
 

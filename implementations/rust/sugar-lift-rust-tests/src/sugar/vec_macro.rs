@@ -10,11 +10,13 @@ use tracing::debug;
 use crate::sugar::aggregate_term::LiteralAggregateTermSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::{parse_macro_args, Sugar};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("vec_macro", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(expr_macro) = expr else {
         return None;
     };

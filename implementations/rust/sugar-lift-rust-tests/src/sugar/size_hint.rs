@@ -16,6 +16,7 @@ use tracing::debug;
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::monadic;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_int, is_closed_scalar_literal, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx,
 };
@@ -23,7 +24,8 @@ use crate::{
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer("size_hint_tuple_producer", recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

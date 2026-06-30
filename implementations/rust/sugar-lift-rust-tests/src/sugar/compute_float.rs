@@ -18,6 +18,7 @@ use syn::{
     Expr, ExprCall, ExprField, ExprPath, GenericArgument, ItemFn, Member, Pat, PathArguments, Stmt,
     Type,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
@@ -31,7 +32,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("compute_float", SugarRole::Term, recognize);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };

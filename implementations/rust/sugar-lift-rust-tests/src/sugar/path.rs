@@ -58,6 +58,7 @@ use syn::{Expr, ExprPath};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("path", recognize);
@@ -65,7 +66,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
 /// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general
 /// `make_var(scope.path_name(..))` name read ([`PathSugar`]).
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::Path(path) if path.path.is_ident("None") => {
             Some(resolved_term(Rc::new(Term::Ctor {

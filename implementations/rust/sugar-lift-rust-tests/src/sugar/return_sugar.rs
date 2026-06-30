@@ -20,10 +20,12 @@ use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_dispatch::translate_term_in_scope;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("return_sugar", recognize);
 
-fn recognize(stmt: &Stmt, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let stmt = frag.as_stmt()?;
     match stmt {
         // Explicit `return <expr>;` or `return <expr>` (with or without semicolon).
         Stmt::Expr(Expr::Return(ret), _) => {

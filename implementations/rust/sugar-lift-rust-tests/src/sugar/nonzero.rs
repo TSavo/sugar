@@ -18,6 +18,7 @@ use crate::sugar::term_dispatch::{
     MonadicFloorAccept, MonadicFloorVisitor, ScalarFloorAccept, ScalarFloorVisitor,
 };
 use crate::{str_const, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("nonzero_new", SugarRole::Term, recognize_new);
@@ -31,7 +32,8 @@ pub(crate) const ASSOC_CONST_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("nonzero_get", SugarRole::Term, recognize_get);
 
-fn recognize_assoc_const(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assoc_const(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Path(path) = expr else {
         return None;
     };
@@ -39,7 +41,8 @@ fn recognize_assoc_const(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Su
     Some(Box::new(NonZeroAssocConstSugar { kind, konst }))
 }
 
-fn recognize_new(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_new(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -52,7 +55,8 @@ fn recognize_new(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }))
 }
 
-fn recognize_get(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_get(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

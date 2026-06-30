@@ -17,6 +17,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration::{resolve_predicate as cfg_resolve_predicate, CfgDisposition};
 use crate::sugar::factory::{AssertionSurfaceFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::macro_assertion_surface::collect_assertion_surfaces_from_stmts;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, token_key, AssertionFactKind, CfgPredicate, Desugared, Effect, Outcome, Sugar,
     SugarCtx, Warrant,
@@ -128,7 +129,8 @@ fn parse_arm_predicate(input: ParseStream<'_>) -> syn::Result<Option<CfgPredicat
     syn::parse2::<CfgPredicate>(tokens).map(Some)
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };

@@ -50,6 +50,7 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     const_eval, const_fold_int_term, const_fold_u128_term, strip_refs_groups, ConstVal, Desugared,
     DesugaredElem, Outcome, Sugar, SugarCtx,
@@ -111,7 +112,8 @@ enum CompositeKind {
 /// (for `Some`/`Ok`/`Err`), so a recognized monadic constructor grounds to its
 /// ADT-backed constructed value instead of the generic `call:` / `call:None`
 /// ctor.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         // Nullary `None` -- a path whose final segment is `None` (`None`,
         // `None::<isize>` with a turbofish, `Option::None`). `is_ident` is too
@@ -143,7 +145,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
 }
 
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         // `for _ in None` / `None.into_iter()` is a finite empty sequence.
         Expr::Path(path) if path_ends_with(path, "None") => Some(Box::new(MonadicCompositeSugar {

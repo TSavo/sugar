@@ -11,6 +11,7 @@ use sugar_ir_symbolic::{and_, Formula};
 use syn::{Expr, Stmt};
 
 use crate::sugar::factory::{AssertionSurfaceFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     let_simple_value_binding, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
     MAX_MACRO_EXPANSION_DEPTH,
@@ -24,7 +25,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// Assertion-surface recognizer for a held source macro whose expansion contains
 /// assertion-surface syntax.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(mac) = expr else {
         return None;
     };
@@ -256,7 +258,7 @@ macro_rules! wrap {
 "#,
             |fcx| {
                 assert!(
-                    recognize(&expr, fcx).is_some(),
+                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_some(),
                     "direct assertion expansion should be assertion-surface sugar"
                 );
             },
@@ -278,7 +280,7 @@ macro_rules! wrap {
 "#,
             |fcx| {
                 assert!(
-                    recognize(&expr, fcx).is_none(),
+                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_none(),
                     "guarded expansion needs statement-position collection to preserve the guard"
                 );
             },
@@ -303,7 +305,7 @@ macro_rules! suite {
 "#,
             |fcx| {
                 assert!(
-                    recognize(&expr, fcx).is_none(),
+                    { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, fcx) }.is_none(),
                     "item expansion needs the normal statement collector to walk item bodies"
                 );
             },

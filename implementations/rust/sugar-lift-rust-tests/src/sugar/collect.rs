@@ -18,6 +18,7 @@ use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     canonical_term_sig, closure_single_param_ident, const_eval, primitive_int_term,
     strip_refs_groups, u128_term, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar,
@@ -27,7 +28,8 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("collect", recognize);
 
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

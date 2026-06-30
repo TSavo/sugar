@@ -19,6 +19,7 @@ use syn::{Expr, Lit, RangeLimits};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::monadic;
 use crate::sugar::sequence_floor::{SequenceSelection, SequenceSelectionVisitor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     parse_int_lit, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
@@ -94,9 +95,10 @@ impl Sugar for SliceIndexSugar {
 }
 
 pub(crate) fn recognize(
-    expr: &Expr,
+    frag: &SourceFragment,
     fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

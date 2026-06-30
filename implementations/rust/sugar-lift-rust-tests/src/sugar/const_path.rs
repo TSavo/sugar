@@ -15,6 +15,7 @@ use sugar_ir_symbolic::Term;
 use crate::{const_path_key, str_const, token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("const", &["path"], recognize);
@@ -22,7 +23,8 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
 pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::composite("const_composite", recognize_composite);
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     if let Some(term) = primitive_assoc_const_term(expr) {
         return Some(ConstSugar::new_primitive(token_key(expr), term));
     }
@@ -36,7 +38,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     Some(ConstSugar::new_path(name, body))
 }
 
-fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let (name, path) = simple_const_path(expr)?;
     if fcx.resolving_const_path(&name) {
         return None;

@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     callsite_assertion_name, lit_membership_term, strict_variant_path, token_key, wrapped_variant,
     AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
@@ -26,7 +27,8 @@ struct MatchesMacroSugar {
     site: String,
 }
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };

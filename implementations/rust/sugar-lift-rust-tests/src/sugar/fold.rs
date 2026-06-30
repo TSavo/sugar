@@ -26,6 +26,7 @@ use crate::{
     DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("fold", recognize_composite);
@@ -34,7 +35,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the
 /// walk falls through to the next method-call recognizer). Mirrors the FIRST arm of the
 /// old `build_method_call_composite` chain — BEFORE `for_each`.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     match expr {
         Expr::MethodCall(call) => {
             let method = call.method.to_string();

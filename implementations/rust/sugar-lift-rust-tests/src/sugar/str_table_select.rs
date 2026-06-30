@@ -30,6 +30,7 @@ use syn::{BinOp, Expr, ExprIndex};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -48,7 +49,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 ///
 /// Returns `None` for plain const indexes (handled by `IndexSugar` via
 /// `ground_literal_index`) and for non-literal containers.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Index(index) = expr else {
         return None;
     };
@@ -181,7 +183,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let node = recognize(&source, &fcx)?;
+        let node = { let _frag = SourceFragment::expr(&source, "<src>"); recognize(&_frag, &fcx) }?;
 
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
@@ -210,7 +212,7 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         assert!(
-            recognize(&expr, &fcx).is_none(),
+            { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.is_none(),
             "must NOT recognize a plain const index -- leave that for IndexSugar"
         );
     }
@@ -224,7 +226,7 @@ mod tests {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         assert!(
-            recognize(&expr, &fcx).is_none(),
+            { let _frag = SourceFragment::expr(&expr, "<src>"); recognize(&_frag, &fcx) }.is_none(),
             "must NOT recognize a non-literal container"
         );
     }

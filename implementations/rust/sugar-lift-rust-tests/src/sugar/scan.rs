@@ -33,11 +33,13 @@ use crate::{
     closure_single_param_ident, const_fold_acc_update, const_int_acc_init, simple_path_name,
     strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("scan", recognize_composite);
 
-fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     try_build_scan_inner(expr, fcx)
 }
 

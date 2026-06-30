@@ -17,6 +17,7 @@ use crate::{
     strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope,
     SUGAR_SEQ_CAP,
 };
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite_before(
@@ -25,7 +26,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize_composite,
     );
 
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Index(index) = strip_refs_groups(expr) else {
         return None;
     };

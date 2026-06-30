@@ -11,6 +11,7 @@ use syn::Expr;
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("slice_chunk_window", recognize_composite);
@@ -24,7 +25,8 @@ pub(crate) enum SliceChunkWindowKind {
     Windows,
 }
 
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };

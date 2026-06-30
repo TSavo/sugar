@@ -17,6 +17,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::constraint::{
     relation_operand_capability_effect, relation_source_capability_effect,
 };
+use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
@@ -35,7 +36,8 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim =
         recognize,
     );
 
-fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Macro(expr_macro) = expr else {
         return None;
     };

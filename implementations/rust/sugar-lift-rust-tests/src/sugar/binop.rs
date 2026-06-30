@@ -28,6 +28,7 @@ use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
 use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
     relation_from_binop, term_binop_name, u128_term, Desugared, Outcome, Sugar, SugarCtx,
@@ -40,7 +41,8 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// comparison branch (const-fold to a Bool, else the `cmp:*` [`CompareSugar`]), then
 /// the arithmetic-op [`BinOpSugar`]. If no arithmetic op exists after the bool/compare
 /// branches, this sugar does not own the expression and the factory gap path remains loud.
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let expr = frag.as_expr()?;
     let Expr::Binary(binary) = expr else {
         return None;
     };
