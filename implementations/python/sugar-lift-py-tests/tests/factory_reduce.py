@@ -14,7 +14,7 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
 from sugar_lift_py_tests.ir import term_to_value
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
@@ -35,7 +35,10 @@ def compose_block(body_src: str, binds: dict | None = None):
             temporal = temporal.bind_value(name, value)
         ctx = replace(ctx, temporal=temporal)
     result = build_node(block, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
-    return complete_value(result.sugar.desugar(ctx), owner="block")
+    outcome = result.sugar.desugar(ctx)
+    if isinstance(outcome, Incomplete):
+        return outcome  # the body raised (an effect) -- surface it, do not force-read
+    return complete_value(outcome, owner="block")
 
 
 def reduce_value(expr: str, binds: dict | None = None):

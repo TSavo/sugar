@@ -3,18 +3,17 @@ no operator knowledge: it rewrites to a plain assign over the synthesized `x <op
 binop and hands it downstream, so each operator dispatches to its OWN binop sugar -- or
 the factory panics naming the gap.
 
-So the spec writes itself, one row per Python augmented operator. The INTEGER ops (`+=`,
-`-=`, `*=`, `//=`, `%=`, `**=`) compose over Int-sorted TermValue. True division (`/=`)
-and any float literal are RESIDUAL -- floats are not modeled (see literal_encoding.rs:
-`3.0 == 3` is Python-true, so asserting `float != int` is a false distinctness that would
-manufacture a false refusal), so they are refused loudly, which is correct, not a rung.
+Every augmented operator composes over the COLLAPSED Number (one value type: Int embeds
+in Real losslessly, so 3 and 3.0 are the same number and 3.0 == 3 is reflexively true).
+True division `/=` lifts too. And `x /= 0` is not a value -- it raises -- so it is an
+`Incomplete(DivByZero)` EFFECT: the line after it is unreachable, the account cannot be
+completed, and every sugar bubbles that Incomplete upward unchanged, doing no work past
+it (the Outcome short-circuit).
 """
 from __future__ import annotations
 
-import pytest
-
 from factory_reduce import compose_block
-from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _block(src: str):
@@ -40,8 +39,6 @@ def test_aug_assign_carries_the_old_value_not_just_the_rhs():
     )
 
 
-# --- RED: the binop atom is unwritten, so the row names what to write next ---------------
-
 def test_aug_sub_assign_equals_the_difference():
     assert _block("    x = 5\n    x -= 2\n    return x\n") == _block("    return 3\n")
 
@@ -50,22 +47,28 @@ def test_aug_mult_assign_equals_the_product():
     assert _block("    x = 5\n    x *= 2\n    return x\n") == _block("    return 10\n")
 
 
-def test_aug_div_assign_equals_the_quotient():
-    # true division yields a float (6/2 == 3.0), and floats are RESIDUAL -- so it is
-    # correctly REFUSED, not modeled. The factory panics; that is the right behavior, not
-    # a worklist rung. (Modeling it would risk the false distinctness below.)
-    with pytest.raises(FactoryGap):
-        _block("    x = 6\n    x /= 2\n    return x\n")
+def test_aug_div_assign_lifts_via_the_collapsed_number():
+    # `/` is true division (6/2 == 3.0). The numeric type is COLLAPSED -- Int embeds in
+    # Real losslessly -- so 3.0 == 3 and this lifts. No residual, no false distinctness.
+    assert _block("    x = 6\n    x /= 2\n    return x\n") == _block("    return 3\n")
 
 
-# --- floats are RESIDUAL, by the soundness principle in literal_encoding.rs: `3.0 == 3`
-# --- is Python-TRUE, so asserting `float != int` is a FALSE distinctness that would
-# --- manufacture a false refusal. So we do NOT model floats -- a float literal is refused
-# --- loudly, never folded into Int (which would lie) nor split off as Real (also a lie).
+# --- the collapsed Number: float and int are one value (Int embeds in Real losslessly),
+# --- so 3.0 == 3 is REFLEXIVELY true -- nothing to assert, nothing to refuse.
 
-def test_float_literal_is_residual_and_is_refused_loudly():
-    with pytest.raises(FactoryGap):
-        _block("    return 3.0\n")
+def test_float_literal_collapses_three_point_zero_equals_three():
+    assert _block("    return 3.0\n") == _block("    return 3\n")
+
+
+# --- divide-by-zero is an EFFECT (Incomplete), not a value: the line after it never runs,
+# --- so the account cannot be completed and the unreachable work is never done.
+
+def test_divide_by_zero_is_an_incomplete_effect_that_halts_propagation():
+    # `x = 1 // 0` binds lazily; the effect surfaces when x is USED -- the reference
+    # reduces the source to Incomplete, which bubbles through return and halts the block.
+    halted = _block("    x = 1 // 0\n    return x\n")
+    assert isinstance(halted, Incomplete)
+    assert "zero" in halted.reason
 
 
 def test_aug_floordiv_assign_equals_the_floor_quotient():

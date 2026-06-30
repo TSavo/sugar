@@ -10,7 +10,12 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     SupportValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.outcome import (
+    Complete,
+    Incomplete,
+    Outcome,
+    complete_value,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -46,7 +51,13 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         outcomes: list[object] = []
         pending: tuple = ()  # guards accumulated from prior fall-through ifs
         for child in self.statements:
-            value = complete_value(child.reduce(ctx), owner="block statement")
+            outcome = child.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                # A statement raised (an effect). Execution halts: every statement after
+                # it is unreachable, so we do NO further work -- no outcomes, no pending
+                # guards -- and bubble the Incomplete upward unchanged.
+                return outcome
+            value = complete_value(outcome, owner="block statement")
             if isinstance(value, SupportValue):
                 continue  # Support (a comment) is inert -- absorbed
             if isinstance(value, BoundVar):
