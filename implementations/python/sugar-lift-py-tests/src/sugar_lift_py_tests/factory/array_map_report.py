@@ -240,11 +240,8 @@ def _lift_native_list_map_assert(
     list[dict[str, Any]],
 ] | None:
     blame = f"{filename}:{comparison.left.lineno}:{comparison.left.col_offset}"
-    list_sugar_value = list_sugar(
-        comparison.left,
-        functions_by_name,
-        blame=blame,
-    )
+    left_site = SourceSite.from_node(comparison.left, filename)
+    list_sugar_value = list_sugar(left_site, functions_by_name, blame=blame)
     if list_sugar_value is None:
         return None
     factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())

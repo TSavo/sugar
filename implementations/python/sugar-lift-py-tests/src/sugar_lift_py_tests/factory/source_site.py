@@ -239,6 +239,11 @@ class SourceSite:
         self._require(ast.If)
         return [SourceSite.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
 
+    def function_name(self) -> str:
+        """Return the name string for a FunctionDef or AsyncFunctionDef."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return self.node.name  # type: ignore[attr-defined]
+
     def function_params(self) -> "list[str]":
         """Return the argument names for a FunctionDef or AsyncFunctionDef."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
@@ -263,3 +268,8 @@ class SourceSite:
         """Return SourceSites for each comparator on the right side of a Compare."""
         self._require(ast.Compare)
         return [SourceSite.from_node(c, self.filename) for c in self.node.comparators]  # type: ignore[attr-defined]
+
+    def function_name(self) -> str:
+        """Return the name string for a FunctionDef or AsyncFunctionDef node."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return self.node.name  # type: ignore[attr-defined]

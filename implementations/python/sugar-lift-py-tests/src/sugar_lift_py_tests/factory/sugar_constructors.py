@@ -98,24 +98,20 @@ def build_lambda_sugar(site, ctx):
 
 
 def build_function_call_sugar(site, ctx):
-    from sugar_lift_py_tests.sugar.function_call_sugar import (
-        FunctionCallSugar,
-        callee_target,
-    )
+    from sugar_lift_py_tests.sugar.function_call_sugar import FunctionCallSugar
 
-    node = site.node
-    if not isinstance(node, ast.Call):
+    if site.observed != "Call":
         raise TypeError("FunctionCallSugar claim built a non-call")
-    target = callee_target(node)
+    target = site.call_target_name()
     if target is None:
         raise TypeError("FunctionCallSugar claim built a non-name/attribute call")
-    if node.keywords or len(node.args) != 1:
+    if site.call_has_keywords() or site.call_arg_count() != 1:
         raise TypeError("FunctionCallSugar claim built a non-unary call")
     functions_by_name = ctx.name_resolver or {}
     function = functions_by_name.get(target)
     if function is None:
         raise TypeError("FunctionCallSugar claim built an unresolved function call")
-    argument = ctx.build_body(node.args[0], SugarRole.TERM)
+    argument = ctx.build_body(site.call_args()[0], SugarRole.TERM)
     body = _function_call_body(function, ctx)
     sugar = FunctionCallSugar.from_site(
         site,
@@ -286,6 +282,23 @@ def _function_call_body(function: ast.FunctionDef, ctx):
     return build_control_flow_body_sugar(
         SourceSite.from_node(function, ctx.filename), ctx
     )
+
+
+def build_list_sugar(site, ctx):
+    from sugar_lift_py_tests.sugar.list_sugar import ListSugar
+    from sugar_lift_py_tests.sugar.map_builtin_sugar import map_builtin_sugar
+
+    functions_by_name = ctx.name_resolver or {}
+    # Build the inner MapBuiltinSugar from the factory (passing the raw inner node
+    # directly -- map_builtin_sugar is the recognised low-level recogniser for it).
+    inner_site = site.call_args()[0]
+    body = map_builtin_sugar(inner_site.node, functions_by_name, blame=site.blame)
+    if body is None:
+        raise TypeError("ListSugar claim: inner argument is not a map(...) call")
+    sugar = ListSugar.from_site(site, body=body)
+    if sugar is None:
+        raise TypeError("ListSugar claim built a non-list(map(...)) call")
+    return sugar
 
 
 def build_list_literal_sugar(site, ctx):

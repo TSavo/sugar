@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor import StringValue
@@ -14,18 +13,6 @@ from .function_body_universe import FunctionBodyUniverse
 # or a multi-statement universe (FunctionBodyUniverse -- control flow / encoder).
 FunctionCallBody = SugarBody | FunctionBodyUniverse
 _BODY_TYPES = (SugarBody, FunctionBodyUniverse)
-
-
-def callee_target(node: ast.Call) -> str | None:
-    """The callee name of a call, whether bare (`f(...)`) or attribute
-    (`np.rot90(...)`). The dig keys on this name and looks it up in the resolved
-    function map -- so an imported `np.rot90` digs just like a local `f`."""
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return None
 
 
 @dataclass(frozen=True)
@@ -48,13 +35,12 @@ class FunctionCallSugar:
         argument: SugarBody,
         body: FunctionCallBody,
     ) -> "FunctionCallSugar | None":
-        node = site.node
-        if not isinstance(node, ast.Call):
+        if site.observed != "Call":
             return None
-        target = callee_target(node)
+        target = site.call_target_name()
         if target is None:
             return None
-        if node.keywords or len(node.args) != 1:
+        if site.call_has_keywords() or site.call_arg_count() != 1:
             return None
         return cls(
             target_name=target,
