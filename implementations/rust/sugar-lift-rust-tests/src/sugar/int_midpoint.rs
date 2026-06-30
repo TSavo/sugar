@@ -8,7 +8,6 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
-use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::ExprSugarClaim;
@@ -22,36 +21,38 @@ use crate::{canonical_term_sig, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("int_midpoint", &["call"], recognize);
 
+// FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / Call field
+// access. Uses call_func(), call_arg_count(), call_args(), SugarBody::term_frag(),
+// and SourceFragment path accessors exclusively.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 2 {
+    let func_frag = frag.call_func()?; // ensures this is an Expr::Call
+    if frag.call_arg_count() != 2 {
         return None;
     }
-    let kind = midpoint_kind(&call.func)?;
+    let kind = midpoint_kind_frag(&func_frag)?;
+    let args = frag.call_args();
     Some(Box::new(IntMidpointSugar {
-        lhs: SugarBody::term(&call.args[0], fcx),
-        rhs: SugarBody::term(&call.args[1], fcx),
+        lhs: SugarBody::term_frag(&args[0], fcx),
+        rhs: SugarBody::term_frag(&args[1], fcx),
         kind,
     }))
 }
 
-fn midpoint_kind(func: &Expr) -> Option<IntKind> {
-    let Expr::Path(path) = crate::strip_refs_groups(func) else {
-        return None;
-    };
-    if path.path.segments.last()?.ident != "midpoint" {
+/// Determine the `IntKind` for a `T::midpoint` or `<T>::midpoint` func fragment.
+/// Strips refs/groups, requires last path segment == "midpoint", then resolves
+/// the type name from qself (`<u32>::midpoint`) or the penultimate segment
+/// (`u32::midpoint`). All raw syn access lives in the SourceFragment accessors.
+fn midpoint_kind_frag(func: &SourceFragment) -> Option<IntKind> {
+    let stripped = func.strip_refs_groups();
+    if stripped.path_last_segment_ident()?.as_str() != "midpoint" {
         return None;
     }
-    if let Some(qself) = &path.qself {
-        let syn::Type::Path(ty) = qself.ty.as_ref() else {
-            return None;
-        };
-        return primitive_int_kind(&ty.path.segments.last()?.ident.to_string());
+    // <T>::midpoint form: qself carries the type
+    if let Some(ty_name) = stripped.path_qself_simple_type_name() {
+        return primitive_int_kind(&ty_name);
     }
-    let ty = path.path.segments.iter().rev().nth(1)?.ident.to_string();
+    // T::midpoint form: penultimate segment is the type
+    let ty = stripped.path_penultimate_ident()?;
     primitive_int_kind(&ty)
 }
 
@@ -116,5 +117,116 @@ fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Ou
             .into_term()
             .unwrap_or_else(|| panic!("term body completed as non-term before int midpoint"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests -- from_src harness: source -> SourceFragment -> accessor asserts.
+// No parse_quote!, no StubTerm, no run().
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sugar::source_fragment::{parse_file, SourceFragment};
+
+    /// Navigate to the tail expression of the first fn in a source snippet.
+    fn tail_expr_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
+        let syn::Item::Fn(f) = &file.items[0] else {
+            panic!("expected fn item");
+        };
+        let tail = f.block.stmts.last().expect("fn has stmts");
+        let syn::Stmt::Expr(e, _) = tail else {
+            panic!("expected expr tail stmt");
+        };
+        SourceFragment::expr(e, file_str)
+    }
+
+    #[test]
+    fn path_penultimate_and_last_segment_for_plain_path() {
+        let src = "fn f() -> u32 { u32::midpoint(1u32, 3u32) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+
+        assert_eq!(call.observed(), "Call");
+        assert_eq!(call.call_arg_count(), 2);
+
+        let func_frag = call.call_func().expect("call has func");
+        assert_eq!(func_frag.path_last_segment_ident().as_deref(), Some("midpoint"));
+        assert_eq!(func_frag.path_penultimate_ident().as_deref(), Some("u32"));
+        assert!(func_frag.path_qself_simple_type_name().is_none());
+    }
+
+    #[test]
+    fn path_qself_type_name_for_angle_bracket_form() {
+        let src = "fn f() -> i32 { <i32>::midpoint(1i32, 3i32) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+
+        let func_frag = call.call_func().expect("call has func");
+        assert_eq!(func_frag.path_last_segment_ident().as_deref(), Some("midpoint"));
+        assert_eq!(func_frag.path_qself_simple_type_name().as_deref(), Some("i32"));
+        // qself path has no penultimate because the path only has "midpoint"
+        assert!(func_frag.path_penultimate_ident().is_none());
+    }
+
+    #[test]
+    fn midpoint_kind_frag_u32_plain_path() {
+        let src = "fn f() -> u32 { u32::midpoint(1u32, 3u32) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+        let func = call.call_func().unwrap();
+        let kind = midpoint_kind_frag(&func).expect("u32::midpoint -> IntKind");
+        assert_eq!(kind.name, "u32");
+        assert!(!kind.signed);
+        assert_eq!(kind.bits, 32);
+    }
+
+    #[test]
+    fn midpoint_kind_frag_i64_qself() {
+        let src = "fn f() -> i64 { <i64>::midpoint(1i64, 3i64) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+        let func = call.call_func().unwrap();
+        let kind = midpoint_kind_frag(&func).expect("<i64>::midpoint -> IntKind");
+        assert_eq!(kind.name, "i64");
+        assert!(kind.signed);
+        assert_eq!(kind.bits, 64);
+    }
+
+    #[test]
+    fn midpoint_kind_frag_wrong_method_returns_none() {
+        // "from" is not "midpoint" -- should be rejected
+        let src = "fn f() -> u32 { u32::from(1u8) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+        let func = call.call_func().unwrap();
+        assert!(midpoint_kind_frag(&func).is_none(), "u32::from must not match midpoint");
+    }
+
+    #[test]
+    fn midpoint_kind_frag_unknown_type_returns_none() {
+        // "MyType::midpoint" -- not a primitive int type
+        let src = "fn f() { MyType::midpoint(a, b) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+        let func = call.call_func().unwrap();
+        assert!(midpoint_kind_frag(&func).is_none(), "unknown type must not match");
+    }
+
+    #[test]
+    fn call_args_are_accessible_as_fragments() {
+        let src = "fn f() -> u32 { u32::midpoint(2u32, 8u32) }";
+        let file = parse_file(src);
+        let call = tail_expr_frag(&file, "f.rs");
+
+        assert_eq!(call.call_arg_count(), 2);
+        let args = call.call_args();
+        assert_eq!(args[0].observed(), "PrimitiveLiteral");
+        assert_eq!(args[1].observed(), "PrimitiveLiteral");
+        // Confirm the full pipeline: kind is resolved, args are fragments
+        let func = call.call_func().unwrap();
+        let kind = midpoint_kind_frag(&func).unwrap();
+        assert_eq!(kind.name, "u32");
     }
 }

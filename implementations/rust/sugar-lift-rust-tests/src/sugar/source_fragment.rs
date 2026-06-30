@@ -612,6 +612,48 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    /// The last path-segment ident for an `Expr::Path` node.
+    /// E.g., for `u32::midpoint`, returns `Some("midpoint")`.
+    /// Returns `None` for non-path nodes or empty paths.
+    pub(crate) fn path_last_segment_ident(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => {
+                p.path.segments.last().map(|s| s.ident.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// For an `Expr::Path` with a `qself` (`<T>::method`), returns the simple
+    /// type name from the qself `Type::Path` last segment.
+    /// E.g., for `<u32>::midpoint`, returns `Some("u32")`.
+    /// Returns `None` for paths without qself, non-`Type::Path` qself types,
+    /// or non-path nodes.
+    pub(crate) fn path_qself_simple_type_name(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => {
+                let qself = p.qself.as_ref()?;
+                let syn::Type::Path(ty) = qself.ty.as_ref() else {
+                    return None;
+                };
+                ty.path.segments.last().map(|s| s.ident.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// The second-to-last path-segment ident for an `Expr::Path` node.
+    /// E.g., for `u32::midpoint` (two segments), returns `Some("u32")`.
+    /// Returns `None` for single-segment paths or non-path nodes.
+    pub(crate) fn path_penultimate_ident(&self) -> Option<String> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Path(p)) => {
+                p.path.segments.iter().rev().nth(1).map(|s| s.ident.to_string())
+            }
+            _ => None,
+        }
+    }
+
     // -- partition_point fold accessor ----------------------------------------
 
     /// For a `.partition_point(|param| pred)` method call whose receiver is a
@@ -700,10 +742,37 @@ impl<'a> SourceFragment<'a> {
         }
     }
 
+    // -- Reference accessors -------------------------------------------------
+
+    /// Whether an `Expr::Reference` fragment is a mutable borrow (`&mut expr`).
+    /// Returns `false` for any non-`Reference` fragment or a shared reference.
+    pub(crate) fn reference_is_mutable(&self) -> bool {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Reference(r)) => r.mutability.is_some(),
+            _ => false,
+        }
+    }
+
+    /// The inner expression of an `Expr::Reference` fragment.
+    /// Returns `None` for any non-`Reference` fragment.
+    pub(crate) fn reference_inner(&self) -> Option<SourceFragment<'a>> {
+        match &self.node {
+            FragNode::Expr(syn::Expr::Reference(r)) => Some(Self::expr(&r.expr, self.file)),
+            _ => None,
+        }
+    }
+
     // -- Escape-hatch accessors (transitional shim) -------------------------
 
-    pub(crate) fn as_expr(&self) -> Option<&syn::Expr> {
-        match &self.node {
+    /// Returns the inner `&'a syn::Expr` with the fragment's own lifetime `'a`, not
+    /// shortened to the borrow of `self`. This matters when callers take `self` by
+    /// value (e.g. helper fns that return `SourceFragment<'a>` built from the fields
+    /// of the same fragment): matching on `self.node` (Copy) gives `e: &'a syn::Expr`
+    /// directly so the caller can use `self.file` in the same scope without a
+    /// borrow-checker conflict. Without the explicit `'a`, Rust would tie the returned
+    /// `&syn::Expr` to the lifetime of `&self`, blocking subsequent use of `self`.
+    pub(crate) fn as_expr(&self) -> Option<&'a syn::Expr> {
+        match self.node {
             FragNode::Expr(e) => Some(e),
             _ => None,
         }
@@ -1152,6 +1221,45 @@ impl<'a> SourceFragment<'a> {
         Some(crate::token_key(payload))
     }
 
+    // -- Primitive-integer From callee accessor --------------------------------
+
+    /// For an `Expr::Path` fragment that is the callee of a primitive-integer
+    /// `from` call -- `<IntT>::from` (qualified self) or `IntT::from` (two-segment
+    /// path) -- return the `IntKind` of the destination integer type. Returns `None`
+    /// for any path that is not this shape, including non-integer types, floats,
+    /// `char`, longer paths, or paths with generic arguments.
+    ///
+    /// Mirrors `primitive_int_from_kind` + `primitive_int_type_kind` from
+    /// `from_bool.rs`; all raw syn field access lives HERE so recognizer bodies
+    /// see only `Option<IntKind>`.
+    pub(crate) fn path_primitive_int_from_kind(
+        &self,
+    ) -> Option<crate::sugar::int_literal::IntKind> {
+        use syn::PathArguments;
+        let syn::Expr::Path(path) = (match &self.node {
+            FragNode::Expr(e) => e,
+            _ => return None,
+        }) else {
+            return None;
+        };
+        let last = path.path.segments.last()?;
+        if last.ident != "from" || !matches!(last.arguments, PathArguments::None) {
+            return None;
+        }
+        if let Some(qself) = &path.qself {
+            return primitive_int_type_kind_from_syn(&qself.ty);
+        }
+        if path.path.segments.len() == 2
+            && matches!(path.path.segments[0].arguments, PathArguments::None)
+        {
+            crate::sugar::int_literal::primitive_int_kind(
+                &path.path.segments[0].ident.to_string(),
+            )
+        } else {
+            None
+        }
+    }
+
     // -- For-loop mutation boundary ------------------------------------------
 
     /// Returns the `token_key` boundary string if this fragment is a `for` loop
@@ -1198,6 +1306,31 @@ impl<'a> SourceFragment<'a> {
         } else {
             None
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Primitive-integer type kind helper (used by path_primitive_int_from_kind)
+// ---------------------------------------------------------------------------
+
+/// Decode a `&syn::Type` to an `IntKind` for the qualified-self form
+/// `<IntT>::from`: the type must be a simple path (no qself, no args) whose
+/// last segment is a known primitive integer type name.
+fn primitive_int_type_kind_from_syn(
+    ty: &syn::Type,
+) -> Option<crate::sugar::int_literal::IntKind> {
+    use syn::PathArguments;
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    match path.path.segments.last() {
+        Some(seg) if matches!(seg.arguments, PathArguments::None) => {
+            crate::sugar::int_literal::primitive_int_kind(&seg.ident.to_string())
+        }
+        _ => None,
     }
 }
 

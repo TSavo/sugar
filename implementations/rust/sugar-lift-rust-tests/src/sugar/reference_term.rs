@@ -20,7 +20,6 @@ use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::Sugar;
-use syn::Expr;
 use crate::sugar::source_fragment::SourceFragment;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -28,18 +27,15 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let expr = frag.as_expr()?;
-    let Expr::Reference(reference) = expr else {
-        return None;
-    };
-    let ctor = if reference.mutability.is_some() {
+    let inner = frag.reference_inner()?;
+    let ctor = if frag.reference_is_mutable() {
         "ref_mut"
     } else {
         "ref"
     };
     Some(Box::new(CtorSugar::new(
         ctor,
-        vec![SugarBody::term(reference.expr.as_ref(), fcx)],
+        vec![SugarBody::term_frag(&inner, fcx)],
     )))
 }
 
@@ -53,7 +49,31 @@ mod tests {
         TemporalScope,
     };
     use sugar_ir_symbolic::Term;
-    use syn::Item;
+    use syn::{Expr, Item};
+
+    /// from_src: source -> SourceFragment -> accessor gate -> build -> floor.
+    /// Exercises `reference_inner` / `reference_is_mutable` directly; no
+    /// parse_quote! / StubTerm / run().
+    #[test]
+    fn from_src_reference_accessors() {
+        // shared ref
+        let shared: Expr = syn::parse_str("&x").expect("parse");
+        let frag_shared = SourceFragment::expr(&shared, "<src>");
+        assert!(frag_shared.reference_inner().is_some(), "shared ref: inner is Some");
+        assert!(!frag_shared.reference_is_mutable(), "shared ref: not mutable");
+
+        // mutable ref
+        let mutable: Expr = syn::parse_str("&mut y").expect("parse");
+        let frag_mut = SourceFragment::expr(&mutable, "<src>");
+        assert!(frag_mut.reference_inner().is_some(), "mut ref: inner is Some");
+        assert!(frag_mut.reference_is_mutable(), "mut ref: is mutable");
+
+        // non-reference: accessor returns None / false
+        let other: Expr = syn::parse_str("x + 1").expect("parse");
+        let frag_other = SourceFragment::expr(&other, "<src>");
+        assert!(frag_other.reference_inner().is_none(), "non-ref: inner is None");
+        assert!(!frag_other.reference_is_mutable(), "non-ref: not mutable");
+    }
 
     fn reduce(src: &str) -> Rc<Term> {
         let expr: Expr = syn::parse_str(src).expect("parse reference expr");
