@@ -11,9 +11,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 # The INTEGER-arithmetic operators BinOpSugar folds, AST-kind -> symbol -> fold (over
 # Int-sorted TermValue). Add also concatenates encoded strings (below). Div ('/') is
-# DELIBERATELY ABSENT: Python true-division is Real, not Int (6/2 == 3.0), and a real
-# result is a canonical-decimal RealValue with division that can be non-terminating
-# (1/3) -- that is the Real-arithmetic / tolerance rung, still red, not a float fold.
+# DELIBERATELY ABSENT: Python true-division yields a FLOAT (6/2 == 3.0), and floats are
+# residual -- not modeled, because `3.0 == 3` is Python-true so asserting `float != int`
+# would be a false distinctness (see literal_encoding.rs). So `/` is refused, not folded.
 _SYMBOL: dict[str, str] = {
     "Add": "+",
     "Sub": "-",
