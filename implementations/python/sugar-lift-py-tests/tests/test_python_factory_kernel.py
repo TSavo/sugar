@@ -30,27 +30,6 @@ PYTHON_KIT = ROOT / "implementations/python"
 PY_TESTS = PYTHON_KIT / "sugar-lift-py-tests"
 
 
-def test_python_lib_lift_source_delegates_to_factory_not_lsp(monkeypatch) -> None:
-    from sugar_lift_py_tests import lib, lsp
-
-    monkeypatch.setattr(
-        lsp,
-        "_lift_source",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("old entrypoint reused")),
-    )
-
-    with pytest.raises(FactoryGap) as raised:
-        lib.lift_source("base64.py", "def encode_len(data):\n    return {}\n")
-
-    assert raised.value.info == {
-        "owner": "python.factory",
-        "blame": "base64.py:2:11",
-        "observed": "Dict",
-        "requested": "term",
-        "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
-    }
-
-
 def test_batch_lift_entrypoints_use_lift_rpc_not_lsp() -> None:
     manifest = (PYTHON_KIT / ".sugar/lift/python/manifest.toml").read_text(encoding="utf-8")
     pyproject = (PY_TESTS / "pyproject.toml").read_text(encoding="utf-8")

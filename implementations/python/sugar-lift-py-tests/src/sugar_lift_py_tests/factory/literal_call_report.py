@@ -31,11 +31,37 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.layer2 import _canonical_term_sig
 from sugar_lift_py_tests.outcome import complete_value
 
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
+
+
+def _canonical_term_sig(term) -> str:
+    """Deterministic canonical signature for a Term, argument-keying the callsite
+    contract base so mint coalesces cross-location assertions about the SAME
+    (callee, args) into one ``::assertion`` inv. Structural, hash-stable: same
+    structure -> same string -> same base -> mint conjoins -> contradiction fires."""
+    from sugar_lift_py_tests.ir import (
+        _ConstBool,
+        _ConstInt,
+        _ConstStr,
+        _Ctor,
+        _Var,
+    )
+
+    if isinstance(term, _Var):
+        return f"v:{term.name}"
+    if isinstance(term, _ConstInt):
+        return f"i:{term.value}"
+    if isinstance(term, _ConstStr):
+        return f"s:{term.value!r}"
+    if isinstance(term, _ConstBool):
+        return f"b:{term.value}"
+    if isinstance(term, _Ctor):
+        inner = ",".join(_canonical_term_sig(a) for a in term.args)
+        return f"c:{term.name}({inner})"
+    return f"?:{term!r}"
 
 # One lift, returned as five parallel lists: (contracts, source_mementos,
 # source_audits, factory_walk_rows, call_edges).

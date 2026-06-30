@@ -590,7 +590,7 @@ def _body_source_locator(
         from sugar_lift_python_source.bind_lifter import _body_source_locator as locator
     except ModuleNotFoundError:
         sibling_src = (
-            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+            Path(__file__).resolve().parents[4] / "sugar-lift-python-source" / "src"
         )
         if str(sibling_src) not in sys.path:
             sys.path.insert(0, str(sibling_src))
@@ -638,7 +638,7 @@ def _statement_source_api():
         )
     except ModuleNotFoundError:
         sibling_src = (
-            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
+            Path(__file__).resolve().parents[4] / "sugar-lift-python-source" / "src"
         )
         if str(sibling_src) not in sys.path:
             sys.path.insert(0, str(sibling_src))
