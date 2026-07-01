@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -97,13 +94,23 @@ def test_identity_assertion_lifts_call_to_call_fact() -> None:
     }
 
 
-def test_identity_assertion_leaves_unsupported_rhs_to_factory_gap() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=("def test_label(x, label):\n" "    assert x is f'{label}'\n"),
-            filename="test_label.py",
-            memento_file="test_label.py",
-        )
+def test_identity_assertion_lifts_fstring_identity_fact() -> None:
+    report = build_literal_call_report(
+        source=("def test_label(x, label):\n" "    assert x is f'{label}'\n"),
+        filename="test_label.py",
+        memento_file="test_label.py",
+    )
 
-    assert exc.value.info["observed"] == "assert-compare-op:Is"
-    assert exc.value.info["requested"] == "EqualityAssertion"
+    assert report is not None
+    assert report.payload.ir[0].inv == {
+        "kind": "atomic",
+        "name": "identity",
+        "args": [
+            {"kind": "var", "name": "x"},
+            {
+                "kind": "ctor",
+                "name": "py.fstring",
+                "args": [{"kind": "var", "name": "label"}],
+            },
+        ],
+    }

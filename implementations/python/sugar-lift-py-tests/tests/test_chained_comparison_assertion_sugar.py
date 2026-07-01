@@ -135,7 +135,11 @@ def test_chained_assertion_keeps_call_and_attribute_terms_symbolic() -> None:
                 "kind": "atomic",
                 "name": "=",
                 "args": [
-                    {"kind": "ctor", "name": "call:default_device", "args": []},
+                    {
+                        "kind": "ctor",
+                        "name": "call:default_device",
+                        "args": [{"kind": "var", "name": "info"}],
+                    },
                     {
                         "kind": "const",
                         "sort": {"kind": "primitive", "name": "String"},

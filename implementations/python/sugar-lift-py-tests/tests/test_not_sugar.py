@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryGap, build_node
+from sugar_lift_py_tests.factory import build_node
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.sugar.call_truth_assertion_sugar import CallTruthAssertionSugar
@@ -90,11 +88,12 @@ def test_unary_not_lifts_as_not_wrapped_child_fact() -> None:
                         "kind": "ctor",
                         "name": "call:is_td64",
                         "args": [
+                            {"kind": "var", "name": "checks"},
                             {
                                 "kind": "const",
                                 "sort": {"kind": "primitive", "name": "Int"},
                                 "value": 1,
-                            }
+                            },
                         ],
                     }
                 ],
@@ -104,13 +103,28 @@ def test_unary_not_lifts_as_not_wrapped_child_fact() -> None:
     assert [row.selected for row in report.payload.factory_walk] == ["NotSugar"]
 
 
-def test_is_not_leaves_unsupported_rhs_to_factory_gap() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=("def test_label(x, label):\n" "    assert x is not f'{label}'\n"),
-            filename="test_label.py",
-            memento_file="test_label.py",
-        )
+def test_is_not_lifts_fstring_identity_fact() -> None:
+    report = build_literal_call_report(
+        source=("def test_label(x, label):\n" "    assert x is not f'{label}'\n"),
+        filename="test_label.py",
+        memento_file="test_label.py",
+    )
 
-    assert exc.value.info["observed"] == "assert-compare-op:IsNot"
-    assert exc.value.info["requested"] == "EqualityAssertion"
+    assert report is not None
+    assert report.payload.ir[0].inv == {
+        "kind": "not",
+        "operands": [
+            {
+                "kind": "atomic",
+                "name": "identity",
+                "args": [
+                    {"kind": "var", "name": "x"},
+                    {
+                        "kind": "ctor",
+                        "name": "py.fstring",
+                        "args": [{"kind": "var", "name": "label"}],
+                    },
+                ],
+            }
+        ],
+    }

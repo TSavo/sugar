@@ -18,7 +18,7 @@ def test_call_result_attribute_reduces_to_py_attr_ctor() -> None:
         ctor(
             "py.attr",
             [
-                ctor("call:any", [make_var("arr")]),
+                ctor("call:any", [make_var("np"), make_var("arr")]),
                 str_const("dtype"),
             ],
         )
