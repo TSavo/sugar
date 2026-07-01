@@ -103,6 +103,58 @@ def test_projected_equality_lifts_attribute_to_attribute_fact() -> None:
     ]
 
 
+def test_projected_equality_lifts_attribute_to_tuple_fact() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_shape(arr):\n"
+            "    assert arr.shape == (1, 1)\n"
+        ),
+        filename="test_shape.py",
+        memento_file="test_shape.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.projected-equality-assertion-sugar"
+    assert contract.inv == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.attr",
+                "args": [
+                    {"kind": "var", "name": "arr"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "shape",
+                    },
+                ],
+            },
+            {
+                "kind": "ctor",
+                "name": "tuple",
+                "args": [
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": 1,
+                    },
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": 1,
+                    },
+                ],
+            },
+        ],
+    }
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ProjectedEqualityAssertionSugar"
+    ]
+
+
 def test_projected_equality_leaves_unsupported_rhs_to_factory_gap() -> None:
     with pytest.raises(FactoryGap) as exc:
         build_literal_call_report(
@@ -114,5 +166,5 @@ def test_projected_equality_leaves_unsupported_rhs_to_factory_gap() -> None:
             memento_file="test_dtype.py",
         )
 
-    assert exc.value.info["observed"] == "assert-eq-lhs:Attribute"
-    assert exc.value.info["requested"] == "CallsiteEquality"
+    assert exc.value.info["observed"] == "Attribute"
+    assert exc.value.info["requested"] == "term"

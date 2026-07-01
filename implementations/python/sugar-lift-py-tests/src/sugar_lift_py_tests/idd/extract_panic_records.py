@@ -100,6 +100,8 @@ def _panic_segment(line: str) -> str:
             "write more Sugar for this AST",
             "write more Floor for this AST",
             "write more Floor for this construction",
+            "write more Sugar for ",
+            "write more Floor for ",
         )
         if (idx := line.find(prefix)) >= 0
     ]
@@ -109,9 +111,9 @@ def _panic_segment(line: str) -> str:
 
 
 def _panic_kind(line: str) -> Optional[PanicKind]:
-    if line.startswith("write more Sugar for this AST"):
+    if line.startswith("write more Sugar for "):
         return "sugar"
-    if line.startswith("write more Floor for this AST") or line.startswith("write more Floor for this construction"):
+    if line.startswith("write more Floor for "):
         return "floor"
     if "panicked" in line and "write more " not in line:
         return "unexpected"
