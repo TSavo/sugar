@@ -316,6 +316,17 @@ def _lift_assert(
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
+        ctx=_assertion_factory_ctx(
+            stmt=stmt,
+            fn=fn,
+            filename=filename,
+            functions_by_name=functions_by_name,
+            classes_by_name=classes_by_name,
+            import_aliases=import_aliases,
+            from_imports=from_imports,
+            contract_bindings=contract_bindings,
+            module_statements=module_statements,
+        ),
     )
 
     universe: LiftResult | None = None
@@ -363,20 +374,18 @@ def _lift_assertion_via_factory(
 
     catalog = default_catalog()
     external_bridge_sink: list[dict[str, Any]] = []
-    ctx = FactoryBuildContext(
+    ctx = _assertion_factory_ctx(
+        stmt=stmt,
+        fn=fn,
         filename=filename,
-        catalog=catalog,
-        name_resolver={
-            **{name: frag.node for name, frag in functions_by_name.items()},
-            **{name: frag.node for name, frag in classes_by_name.items()},
-        },
+        functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
         import_aliases=import_aliases,
         from_imports=from_imports,
         contract_bindings=contract_bindings,
+        module_statements=module_statements,
         external_bridge_sink=external_bridge_sink,
     )
-    ctx = _ctx_with_function_params(fn, ctx)
-    ctx = _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
     if _is_simple_bound_name_equality(
         stmt, _prior_assignment_names(module_statements, fn, stmt)
     ):
@@ -437,6 +446,37 @@ def _lift_assertion_via_factory(
     return lifted
 
 
+def _assertion_factory_ctx(
+    *,
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    filename: str,
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    contract_bindings: list,
+    module_statements: list[SourceFragment],
+    external_bridge_sink: list[dict[str, Any]] | None = None,
+) -> FactoryBuildContext:
+    from .build import default_catalog
+
+    ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=default_catalog(),
+        name_resolver={
+            **{name: frag.node for name, frag in functions_by_name.items()},
+            **{name: frag.node for name, frag in classes_by_name.items()},
+        },
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
+        external_bridge_sink=external_bridge_sink,
+    )
+    ctx = _ctx_with_function_params(fn, ctx)
+    return _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
+
+
 def _ctx_with_function_params(
     fn: SourceFragment, ctx: FactoryBuildContext
 ) -> FactoryBuildContext:
@@ -459,11 +499,7 @@ def _ctx_with_prior_assignments(
     from sugar_lift_py_tests.outcome import Complete
 
     temporal = ctx.temporal
-    needed_names = set(_names_including_self(stmt))
-    for prior in _prior_assignment_sites(module_statements, fn, stmt):
-        names = _assignment_target_names(prior)
-        if not names or needed_names.isdisjoint(names):
-            continue
+    for prior in _needed_prior_assignment_sites(module_statements, fn, stmt):
         scoped = replace(ctx, temporal=temporal)
         outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
         if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
@@ -473,6 +509,28 @@ def _ctx_with_prior_assignments(
                 if isinstance(statement, BoundVar):
                     temporal = temporal.bind_value(statement.name, statement)
     return replace(ctx, temporal=temporal)
+
+
+def _needed_prior_assignment_sites(
+    module_statements: list[SourceFragment],
+    fn: SourceFragment,
+    stmt: SourceFragment,
+) -> list[SourceFragment]:
+    needed_names = set(_names_including_self(stmt))
+    selected: list[SourceFragment] = []
+    for prior in reversed(_prior_assignment_sites(module_statements, fn, stmt)):
+        names = _assignment_target_names(prior)
+        if not names or needed_names.isdisjoint(names):
+            continue
+        selected.append(prior)
+        needed_names.update(_assignment_value_names(prior))
+    return list(reversed(selected))
+
+
+def _assignment_value_names(site: SourceFragment) -> set[str]:
+    if site.observed != "Assign":
+        return set()
+    return set(_names_including_self(site.assign_value()))
 
 
 def _assignment_target_names(site: SourceFragment) -> set[str]:
@@ -626,7 +684,9 @@ def _floor_to_term(value: Any) -> Term:
     )
 
 
-def _lift_literal_via_factory(frag: SourceFragment, filename: str) -> Term:
+def _lift_literal_via_factory(
+    frag: SourceFragment, filename: str, *, ctx: FactoryBuildContext | None = None
+) -> Term:
     """Lift a literal operand of a callsite equality THROUGH THE FACTORY: the
     catalog's literal sugars (PrimitiveLiteral, ...) build and reduce it, and an
     unhandled shape panics via the catalog's own mouth. No special-casing per type."""
@@ -635,7 +695,7 @@ def _lift_literal_via_factory(frag: SourceFragment, filename: str) -> Term:
 
     from .build import default_catalog
 
-    ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
+    ctx = ctx or FactoryBuildContext(filename=filename, catalog=default_catalog())
     body = ctx.build_body(frag, _Role.TERM)
     return _floor_to_term(complete_value(body.reduce(ctx), owner="callsite literal"))
 
@@ -650,6 +710,7 @@ def _lift_callsite_assertion(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    ctx: FactoryBuildContext | None = None,
 ) -> LiftResult | None:
     """The fact. `callee(args) == expected` lifts to the euf callsite obligation
     `eq(call:callee(args), expected)`, contract-named `callee#euf#<arg_sig>::assertion`.
@@ -661,7 +722,7 @@ def _lift_callsite_assertion(
     # int, ...). Anything the catalog can't build panics via its own mouth, which
     # names the next sugar -- no string-only special case here.
     expected_term = _lift_literal_via_factory(
-        comparison.compare_comparators()[0], filename
+        comparison.compare_comparators()[0], filename, ctx=ctx
     )
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
@@ -670,7 +731,7 @@ def _lift_callsite_assertion(
     arg_terms = []
     for arg_frag in callsite.call_args():
         try:
-            arg_terms.append(_lift_literal_via_factory(arg_frag, filename))
+            arg_terms.append(_lift_literal_via_factory(arg_frag, filename, ctx=ctx))
         except TypeError:
             _panic_no_sugar(
                 arg_frag,

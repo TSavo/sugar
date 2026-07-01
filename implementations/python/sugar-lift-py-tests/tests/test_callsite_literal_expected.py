@@ -43,6 +43,33 @@ def test_flat_list_arg_composes_through_the_factory():
     assert euf == ["aggregate#euf#c:call:aggregate(c:array(i:1,i:2,i:3))::assertion"]
 
 
+def test_bound_literal_arg_replays_prior_assignment_before_callsite_fact():
+    rep = build_literal_call_report(
+        source="def t():\n    value = 1\n    assert f(value) == 2\n",
+        filename="t.py",
+        memento_file="t.py",
+    )
+
+    euf = [c.name for c in rep.payload.ir if "euf" in c.name]
+    assert euf == ["f#euf#c:call:f(i:1)::assertion"]
+
+
+def test_bound_arg_replays_transitive_prior_assignment_dependencies():
+    rep = build_literal_call_report(
+        source=(
+            "def t():\n"
+            "    base = 1\n"
+            "    value = base\n"
+            "    assert f(value) == 2\n"
+        ),
+        filename="t.py",
+        memento_file="t.py",
+    )
+
+    euf = [c.name for c in rep.payload.ir if "euf" in c.name]
+    assert euf == ["f#euf#c:call:f(i:1)::assertion"]
+
+
 def test_numeric_expected_and_nested_array_arg_are_handled_panic_is_downstream():
     # For `np.rot90([[1,2],[3,4]]) == 5` the numeric expected AND the nested-array
     # arg both compose through the factory now. Any remaining panic is DOWNSTREAM

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -58,8 +59,26 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
 
 def _array_element(value):
     if not isinstance(value, (TermValue, ArrayLiteral)):
-        raise TypeError(
-            "ArrayLiteralSugar elements must desugar to a scalar or a nested array"
+        info = FactoryGapInfo(
+            owner="ArrayLiteralSugar",
+            blame="<array element>",
+            observed=type(value).__name__,
+            requested="array element floor",
+            fix=f"add ArrayLiteral element floor for {type(value).__name__}",
+            gap_kind="Floor",
+            gap_locus="construction",
+        )
+        raise FactoryGap(
+            info,
+            FactoryAuditRow(
+                role="array element floor",
+                status="floor-gap",
+                observed=info.observed,
+                blame=info.blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
         )
     return value
 

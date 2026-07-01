@@ -7,8 +7,16 @@ import pytest
 from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.factory import FactoryGap, build_node
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.operations import perform_operation
+from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+
+class _ObjectValueSugar:
+    def desugar(self):
+        return Complete(ObjectValue(class_name="object", fields=()))
 
 
 def test_audit_only_collects_multiple_construction_gaps() -> None:
@@ -91,6 +99,31 @@ def test_audit_only_collects_loud_floor_type_errors() -> None:
         "observed": "SymbolicValue",
         "requested": "StringValue",
         "fix": "write the missing floor",
+    }
+    assert gaps[0].audit_row.to_json()["status"] == "floor-gap"
+
+
+def test_audit_only_collects_array_literal_element_floor_gaps() -> None:
+    def unsupported_array_element():
+        ArrayLiteralSugar(
+            elements=(
+                SugarBody(
+                    _ObjectValueSugar(),
+                    role=SugarRole.TERM,
+                ),
+            )
+        ).desugar()
+
+    gaps = collect_construction_gaps([("fixture.py", unsupported_array_element)])
+
+    assert len(gaps) == 1
+    assert gaps[0].message.startswith("write more Floor for this construction")
+    assert gaps[0].info == {
+        "owner": "ArrayLiteralSugar",
+        "blame": "<array element>",
+        "observed": "ObjectValue",
+        "requested": "array element floor",
+        "fix": "add ArrayLiteral element floor for ObjectValue",
     }
     assert gaps[0].audit_row.to_json()["status"] == "floor-gap"
 
