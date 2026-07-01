@@ -375,8 +375,11 @@ def _lift_assertion_via_factory(
         contract_bindings=contract_bindings,
         external_bridge_sink=external_bridge_sink,
     )
+    ctx = _ctx_with_function_params(fn, ctx)
     ctx = _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
-    if _is_simple_bound_name_equality(stmt, ctx):
+    if _is_simple_bound_name_equality(
+        stmt, _prior_assignment_names(module_statements, fn, stmt)
+    ):
         return None
     if _comparison_assertion_uses_nonfree_name(
         stmt,
@@ -434,6 +437,18 @@ def _lift_assertion_via_factory(
     return lifted
 
 
+def _ctx_with_function_params(
+    fn: SourceFragment, ctx: FactoryBuildContext
+) -> FactoryBuildContext:
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+
+    temporal = ctx.temporal
+    for param_name in fn.function_params():
+        temporal = temporal.bind_value(param_name, SymbolicValue(make_var(param_name)))
+    return replace(ctx, temporal=temporal)
+
+
 def _ctx_with_prior_assignments(
     module_statements: list[SourceFragment],
     fn: SourceFragment,
@@ -474,6 +489,17 @@ def _assignment_target_names(site: SourceFragment) -> set[str]:
     return set()
 
 
+def _prior_assignment_names(
+    module_statements: list[SourceFragment],
+    fn: SourceFragment,
+    stmt: SourceFragment,
+) -> set[str]:
+    names: set[str] = set()
+    for prior in _prior_assignment_sites(module_statements, fn, stmt):
+        names.update(_assignment_target_names(prior))
+    return names
+
+
 def _prior_assignment_sites(
     module_statements: list[SourceFragment],
     fn: SourceFragment,
@@ -495,9 +521,7 @@ def _temporal_binding_names(ctx: FactoryBuildContext) -> set[str]:
     return {binding.name for binding in ctx.temporal.bindings}
 
 
-def _is_simple_bound_name_equality(
-    stmt: SourceFragment, ctx: FactoryBuildContext
-) -> bool:
+def _is_simple_bound_name_equality(stmt: SourceFragment, bound_names: set[str]) -> bool:
     if stmt.observed != "Assert":
         return False
     test = stmt.assert_test()
@@ -506,7 +530,7 @@ def _is_simple_bound_name_equality(
     if test.compare_ops() != ["Eq"] or len(test.compare_comparators()) != 1:
         return False
     left = test.compare_left()
-    return left.observed == "Name" and left.name_id() in _temporal_binding_names(ctx)
+    return left.observed == "Name" and left.name_id() in bound_names
 
 
 def _comparison_assertion_uses_nonfree_name(
