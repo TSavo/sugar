@@ -13,12 +13,21 @@ from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.list_literal_sugar import LIST_LITERAL_CLAIM
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
+from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.sugar.tuple_literal_sugar import (
+    TupleLiteralSugar,
+)  # noqa: F401
 from sugar_lift_py_tests.temporal import TemporalContext
+
+
+def _claim(name: str):
+    return next(claim for claim in registered_claims() if claim.name == name)
 
 
 def _reduce_with_log(expr: str):
@@ -69,6 +78,29 @@ def test_list_literal_constructs_through_floor_operation_when_selected() -> None
     assert value == ArrayLiteral((TermValue(1), TermValue(2)))
     assert operation_log == [
         ("ListLiteralSugar", "construct_sequence_with", "SequenceConstructionOperation")
+    ]
+
+
+def test_list_literal_accepts_tuple_elements_through_floor_operation() -> None:
+    value, operation_log = _reduce_with_catalog_and_log(
+        "[(1, 2)]",
+        SugarCatalog(
+            [LIST_LITERAL_CLAIM, _claim("TupleLiteralSugar"), PRIMITIVE_LITERAL_CLAIM]
+        ),
+    )
+
+    assert value == ArrayLiteral((TupleLiteralValue((TermValue(1), TermValue(2))),))
+    assert operation_log == [
+        (
+            "TupleLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
+        (
+            "ListLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
     ]
 
 

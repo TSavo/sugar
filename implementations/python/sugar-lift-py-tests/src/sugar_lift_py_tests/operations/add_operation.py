@@ -24,7 +24,7 @@ class AddOperation:
         return Complete(
             ArrayLiteral(
                 tuple(
-                    TermValue(item.value + self.operand.value)
+                    TermValue(self._array_term(item).value + self.operand.value)
                     for item in receiver.items
                 )
             )
@@ -35,6 +35,11 @@ class AddOperation:
         if not isinstance(current, ArrayLiteral):
             raise TypeError("AddOperation over BuilderState must produce ArrayLiteral")
         return Complete(BuilderState(current))
+
+    def _array_term(self, item) -> TermValue:
+        if isinstance(item, TermValue):
+            return item
+        self._floor_gap(receiver=f"ArrayLiteral[{type(item).__name__}]")
 
     def _floor_gap(self, *, receiver: str) -> None:
         info = FactoryGapInfo(

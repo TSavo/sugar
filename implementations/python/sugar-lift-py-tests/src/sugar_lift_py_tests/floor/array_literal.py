@@ -5,12 +5,13 @@ from typing import Any
 
 from .floor_value import FloorValue
 from .term_value import TermValue
+from .tuple_literal_value import TupleLiteralValue
 
 
 @dataclass(frozen=True)
 class ArrayLiteral(FloorValue):
-    # Each item is a scalar (TermValue) or a nested array (ArrayLiteral).
-    items: tuple["TermValue | ArrayLiteral", ...]
+    # Each item is a scalar, a nested array, or a tuple literal.
+    items: tuple["TermValue | ArrayLiteral | TupleLiteralValue", ...]
 
     def map_with(self, operation: Any, ctx: Any) -> Any:
         return operation.map_array(self, ctx)
