@@ -6,6 +6,8 @@ from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
     Bv32Value,
+    CallSiteValue,
+    ObjectValue,
     SliceValue,
     StringValue,
     SymbolicValue,
@@ -22,8 +24,13 @@ def floor_to_term(value: Any, *, owner: str) -> Term:
         return bool_const(value.value)
     if isinstance(value, StringValue):
         return str_const(value.value)
-    if isinstance(value, (SymbolicValue, Bv32Value)):
+    if isinstance(value, (SymbolicValue, Bv32Value, CallSiteValue)):
         return value.term
+    if isinstance(value, ObjectValue):
+        return ctor(
+            "py.object.identity",
+            [str_const(value.class_name), str_const(value.identity)],
+        )
     if isinstance(value, ArrayLiteral):
         return ctor("array", [floor_to_term(item, owner=owner) for item in value.items])
     if isinstance(value, TupleLiteralValue):

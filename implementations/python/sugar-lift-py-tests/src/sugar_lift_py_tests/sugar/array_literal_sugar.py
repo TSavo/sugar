@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
-from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
+from sugar_lift_py_tests.floor import ArrayLiteral, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -60,7 +60,7 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
 
 
 def _array_element(value, *, element: SugarBody):
-    if not isinstance(value, (TermValue, ArrayLiteral, TupleLiteralValue)):
+    if not isinstance(value, (TermValue, ObjectValue, ArrayLiteral, TupleLiteralValue)):
         blame = _element_blame(element)
         info = FactoryGapInfo(
             owner="ArrayLiteralSugar",

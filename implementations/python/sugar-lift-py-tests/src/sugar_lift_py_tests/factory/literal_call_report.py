@@ -659,6 +659,8 @@ def _floor_to_term(value: Any) -> Term:
         ArrayLiteral,
         BoolValue,
         Bv32Value,
+        CallSiteValue,
+        ObjectValue,
         StringValue,
         SymbolicValue,
         TermValue,
@@ -673,8 +675,13 @@ def _floor_to_term(value: Any) -> Term:
         return str_const(value.value)
     # A symbolic term (a bound variable or a composed operation over one) already
     # IS its ProofIR term -- carry it through; the compiler sorts it.
-    if isinstance(value, (SymbolicValue, Bv32Value)):
+    if isinstance(value, (SymbolicValue, Bv32Value, CallSiteValue)):
         return value.term
+    if isinstance(value, ObjectValue):
+        return ctor(
+            "py.object.identity",
+            [str_const(value.class_name), str_const(value.identity)],
+        )
     if isinstance(value, ArrayLiteral):
         return ctor("array", [_floor_to_term(item) for item in value.items])
     if isinstance(value, TupleLiteralValue):
@@ -891,7 +898,12 @@ def _construct_callsite(
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.factory.factory_gap import FactoryGap
-    from sugar_lift_py_tests.floor import ReturnValue, SymbolicValue, TermValue
+    from sugar_lift_py_tests.floor import (
+        CallSiteValue,
+        ReturnValue,
+        SymbolicValue,
+        TermValue,
+    )
     from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -970,7 +982,7 @@ def _construct_callsite(
             continue
         if isinstance(result, TermValue):
             value_term = _floor_to_term(result)  # reached a literal floor
-        elif isinstance(result, SymbolicValue):
+        elif isinstance(result, (SymbolicValue, CallSiteValue)):
             value_term = (
                 result.term
             )  # topped out at a bridge `call:h(arg2)` -- the pointer

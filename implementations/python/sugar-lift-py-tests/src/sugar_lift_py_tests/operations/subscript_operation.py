@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     Bv32Value,
     EncodedStringValue,
     FloorValue,
@@ -12,6 +13,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -24,16 +26,44 @@ class SubscriptOperation:
     blame: str = "<unknown>"
 
     def subscript_string(self, receiver: StringValue, ctx: object) -> Outcome:
-        del ctx
-        if isinstance(self.index, SliceValue):
-            return _subscript_string_slice(receiver, self.index, self.blame)
-        if isinstance(self.index, TermValue) and type(self.index.value) is int:
-            return Complete(StringValue(receiver.value[self.index.value]))
+        index = force_floor(
+            self.index,
+            ctx,
+            owner=f"{self.owner} index",
+        )
+        if isinstance(index, SliceValue):
+            return _subscript_string_slice(receiver, index, self.blame)
+        if isinstance(index, TermValue) and type(index.value) is int:
+            return Complete(StringValue(receiver.value[index.value]))
         return Complete(
             EncodedStringValue(
                 table=tuple(ord(ch) for ch in receiver.value),
-                indices=(_string_index_term(self.index),),
+                indices=(_string_index_term(index),),
             )
+        )
+
+    def subscript_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
+        index = force_floor(
+            self.index,
+            ctx,
+            owner=f"{self.owner} array index",
+        )
+        if isinstance(index, TermValue) and type(index.value) is int:
+            if 0 <= index.value < len(receiver.items):
+                return Complete(receiver.items[index.value])
+            _raise_subscript_gap(
+                owner=self.owner,
+                blame=self.blame,
+                observed=f"ArrayLiteral[{index.value}]",
+                requested="bounds-safe array subscript",
+                fix="add bounds-safe projection support for ArrayLiteral",
+            )
+        _raise_subscript_gap(
+            owner=self.owner,
+            blame=self.blame,
+            observed=type(index).__name__,
+            requested="concrete array index",
+            fix=f"add array index floor for {type(index).__name__}",
         )
 
     def subscript_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
@@ -104,6 +134,37 @@ def _raise_string_slice_gap(
         info,
         FactoryAuditRow(
             role="string_slice",
+            status="floor-gap",
+            observed=observed,
+            blame=blame,
+            selected=None,
+            candidates=[],
+            message=info.message,
+        ),
+    )
+
+
+def _raise_subscript_gap(
+    *,
+    owner: str,
+    blame: str,
+    observed: str,
+    requested: str,
+    fix: str,
+) -> None:
+    info = FactoryGapInfo(
+        owner=owner,
+        blame=blame,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+        gap_kind="Floor",
+        gap_locus="construction",
+    )
+    raise FactoryGap(
+        info,
+        FactoryAuditRow(
+            role=requested,
             status="floor-gap",
             observed=observed,
             blame=blame,

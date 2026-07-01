@@ -103,8 +103,8 @@ def test_audit_only_collects_loud_floor_type_errors() -> None:
     assert gaps[0].audit_row.to_json()["status"] == "floor-gap"
 
 
-def test_audit_only_collects_array_literal_element_floor_gaps() -> None:
-    def unsupported_array_element():
+def test_audit_only_accepts_object_values_in_array_literals() -> None:
+    def object_array_element():
         ArrayLiteralSugar(
             elements=(
                 SugarBody(
@@ -114,18 +114,9 @@ def test_audit_only_collects_array_literal_element_floor_gaps() -> None:
             )
         ).desugar()
 
-    gaps = collect_construction_gaps([("fixture.py", unsupported_array_element)])
+    gaps = collect_construction_gaps([("fixture.py", object_array_element)])
 
-    assert len(gaps) == 1
-    assert gaps[0].message.startswith("write more Floor for this construction")
-    assert gaps[0].info == {
-        "owner": "ArrayLiteralSugar",
-        "blame": "<array element>",
-        "observed": "ObjectValue",
-        "requested": "array element floor",
-        "fix": "add ArrayLiteral element floor for ObjectValue",
-    }
-    assert gaps[0].audit_row.to_json()["status"] == "floor-gap"
+    assert gaps == []
 
 
 def test_audit_only_does_not_swallow_unmarked_type_errors() -> None:

@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import ast
+
+from factory_reduce import fol
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.factory.block import Block
+from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.floor import ArrayLiteral, ObjectValue, ReturnValue, TermValue
+from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+
+def _ctx_for_module(source: str) -> FactoryBuildContext:
+    module = ast.parse(source)
+    resolver = {
+        stmt.name: stmt
+        for stmt in module.body
+        if isinstance(stmt, (ast.FunctionDef, ast.ClassDef))
+    }
+    return FactoryBuildContext(
+        filename="t.py",
+        catalog=default_catalog(),
+        name_resolver=resolver,
+    )
+
+
+def _reduce_expr(source: str, expr: str):
+    ctx = _ctx_for_module(source)
+    node = ast.parse(expr, mode="eval").body
+    return complete_value(
+        ctx.build_body(node, SugarRole.TERM).reduce(ctx),
+        owner="callsite value demand",
+    )
+
+
+def _reduce_function_return(source: str, name: str):
+    module = ast.parse(source)
+    ctx = _ctx_for_module(source)
+    function = next(
+        stmt
+        for stmt in module.body
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == name
+    )
+    block = ctx.build_body(Block.of(function.body), SugarRole.STATEMENT)
+    value = complete_value(block.reduce(ctx), owner="function return demand")
+    assert len(value.statements) == 1
+    returned = value.statements[0]
+    assert isinstance(returned, ReturnValue)
+    return returned.value
+
+
+def test_callsite_projects_to_bridge_but_floors_only_when_value_is_demanded() -> None:
+    source = """\
+def h():
+    return 1
+
+def g():
+    return h()
+
+def f():
+    return g()
+"""
+
+    call_value = _reduce_expr(source, "f()")
+    assert fol(floor_to_term(call_value, owner="callsite projection")) == fol(
+        ctor("call:f", [])
+    )
+
+    indexed = _reduce_expr(source, "[10, 20, 30][f()]")
+    assert indexed == TermValue(20)
+
+
+def test_object_constructor_can_stand_inside_array_literal_as_identity_floor() -> None:
+    source = """\
+class Mult:
+    pass
+"""
+
+    value = _reduce_expr(source, "[Mult()]")
+
+    assert isinstance(value, ArrayLiteral)
+    assert isinstance(value.items[0], ObjectValue)
+    assert fol(floor_to_term(value, owner="object array")) == fol(
+        ctor(
+            "array",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Mult"), str_const("t.py:1:1")],
+                )
+            ],
+        )
+    )
+
+
+def test_constructor_bound_field_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+def t():
+    x = X(1)
+    return [10, 20, 30][x.x]
+"""
+
+    assert _reduce_function_return(source, "t") == TermValue(20)
+
+
+def test_constructor_method_return_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def getX(self):
+        return self.x
+
+def t():
+    x = X(1)
+    return [10, 20, 30][x.getX()]
+"""
+
+    assert _reduce_function_return(source, "t") == TermValue(20)
