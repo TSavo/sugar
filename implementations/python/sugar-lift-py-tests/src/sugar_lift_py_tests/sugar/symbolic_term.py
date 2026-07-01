@@ -20,6 +20,7 @@ _BINOP_SYMBOL: dict[str, str] = {
     "FloorDiv": "//",
     "Mod": "%",
     "Pow": "**",
+    "BitXor": "^",
 }
 _COMPARE_TERMS = {
     "Eq",
