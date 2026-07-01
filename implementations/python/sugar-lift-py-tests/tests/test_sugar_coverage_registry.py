@@ -46,6 +46,7 @@ COVERAGE: dict[str, list[str]] = {
     "string_subscript_sugar": ["test_string_subscript_sugar.py"],
     "ord_sugar": ["test_ord_sugar.py"],
     "isinstance_assertion_sugar": ["test_isinstance_assertion_sugar.py"],
+    "boolop_assertion_sugar": ["test_boolop_assertion_sugar.py"],
     "call_truth_assertion_sugar": ["test_call_truth_assertion_sugar.py"],
     "comparison_assertion_sugar": ["test_comparison_assertion_sugar.py"],
     "chained_comparison_assertion_sugar": [
@@ -57,6 +58,7 @@ COVERAGE: dict[str, list[str]] = {
     "projected_equality_assertion_sugar": [
         "test_projected_equality_assertion_sugar.py"
     ],
+    "truthy_assertion_sugar": ["test_truthy_assertion_sugar.py"],
     "encoder_body_sugar": ["test_encoder_body_sugar.py"],
     # array-map path -- leaves + the composer
     "add_sugar": ["test_add_sugar.py"],
