@@ -47,7 +47,9 @@ def _run_lift_rpc(project: Path) -> dict:
     return response["result"]
 
 
-def _write_project(project: Path, *, body: str, expected: int) -> None:
+def _write_project(
+    project: Path, *, body: str, expected: int, argument: int = 5
+) -> None:
     project.mkdir()
     (project / "test_try_wrapped.py").write_text(
         (
@@ -55,7 +57,7 @@ def _write_project(project: Path, *, body: str, expected: int) -> None:
             f"{body}\n"
             "\n"
             "def test_wrapped():\n"
-            f"    assert wrapped(5) == {expected}\n"
+            f"    assert wrapped({argument}) == {expected}\n"
         ),
         encoding="utf-8",
     )
@@ -66,7 +68,7 @@ def _callsite_status(doc: dict) -> str:
     return "sat" if len(set(values)) == 1 else "unsat"
 
 
-def _callsite_values(doc: dict) -> list[int]:
+def _callsite_values(doc: dict, *, argument: int = 5) -> list[int]:
     values: list[int] = []
     for contract in doc["ir"]:
         if not contract["name"].endswith("::assertion"):
@@ -75,13 +77,13 @@ def _callsite_values(doc: dict) -> list[int]:
         assert inv["kind"] == "atomic"
         assert inv["name"] == "="
         left, right = inv["args"]
-        if left == _wrapped_call_term():
+        if left == _wrapped_call_term(argument):
             values.append(right["value"])
     assert values
     return values
 
 
-def _wrapped_call_term() -> dict:
+def _wrapped_call_term(argument: int = 5) -> dict:
     return {
         "kind": "ctor",
         "name": "call:wrapped",
@@ -89,7 +91,7 @@ def _wrapped_call_term() -> dict:
             {
                 "kind": "const",
                 "sort": {"kind": "primitive", "name": "Int"},
-                "value": 5,
+                "value": argument,
             }
         ],
     }
@@ -106,6 +108,12 @@ def _post_rhs(doc: dict) -> dict:
     return right
 
 
+def _post(doc: dict) -> dict:
+    post_contracts = [contract for contract in doc["ir"] if contract.get("post")]
+    assert len(post_contracts) == 1
+    return post_contracts[0]["post"]
+
+
 def _add_rhs(addend: int) -> dict:
     return {
         "kind": "ctor",
@@ -116,6 +124,116 @@ def _add_rhs(addend: int) -> dict:
                 "kind": "const",
                 "sort": {"kind": "primitive", "name": "Int"},
                 "value": addend,
+            },
+        ],
+    }
+
+
+def _nested_add_rhs(first: int, second: int) -> dict:
+    return {
+        "kind": "ctor",
+        "name": "+",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "+",
+                "args": [
+                    {"kind": "var", "name": "x"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": first,
+                    },
+                ],
+            },
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": second,
+            },
+        ],
+    }
+
+
+def _var_x() -> dict:
+    return {"kind": "var", "name": "x"}
+
+
+def _gt_zero_guard() -> dict:
+    return {
+        "kind": "atomic",
+        "name": ">",
+        "args": [
+            {"kind": "var", "name": "x"},
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": 0,
+            },
+        ],
+    }
+
+
+def _guarded_add_post(*, true_addend: int, false_addend: int) -> dict:
+    guard = _gt_zero_guard()
+    return {
+        "kind": "and",
+        "operands": [
+            {
+                "kind": "implies",
+                "operands": [
+                    guard,
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [{"kind": "var", "name": "out"}, _add_rhs(true_addend)],
+                    },
+                ],
+            },
+            {
+                "kind": "implies",
+                "operands": [
+                    {"kind": "not", "operands": [guard]},
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "out"},
+                            _add_rhs(false_addend),
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def _guarded_post(*, true_rhs: dict, false_rhs: dict) -> dict:
+    guard = _gt_zero_guard()
+    return {
+        "kind": "and",
+        "operands": [
+            {
+                "kind": "implies",
+                "operands": [
+                    guard,
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [{"kind": "var", "name": "out"}, true_rhs],
+                    },
+                ],
+            },
+            {
+                "kind": "implies",
+                "operands": [
+                    {"kind": "not", "operands": [guard]},
+                    {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [{"kind": "var", "name": "out"}, false_rhs],
+                    },
+                ],
             },
         ],
     }
@@ -192,4 +310,83 @@ def test_try_finally_override_sat_and_unsat_twins_go_through_lift_rpc(
     assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [7, 6]
     assert _callsite_status(bad_doc) == "unsat"
+    assert "TrySugar" in _selected_sugars(good_doc)
+
+
+def test_try_finally_inert_body_preserves_complete_universe_through_lift_rpc(
+    tmp_path: Path,
+) -> None:
+    body = "    try:\n" "        return x + 1\n" "    finally:\n" "        'cleanup'\n"
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=6)
+    _write_project(bad, body=body, expected=7)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post_rhs(good_doc) == _add_rhs(1)
+    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_status(good_doc) == "sat"
+    assert _callsite_values(bad_doc) == [6, 7]
+    assert _callsite_status(bad_doc) == "unsat"
+    assert "TrySugar" in _selected_sugars(good_doc)
+
+
+def test_try_conditional_raise_except_curries_guarded_universe_through_lift_rpc(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "    try:\n"
+        "        if x > 0:\n"
+        "            raise ValueError('boom')\n"
+        "        return x + 1\n"
+        "    except ValueError:\n"
+        "        return x + 2\n"
+    )
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=7)
+    _write_project(bad, body=body, expected=6)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post(good_doc) == _guarded_add_post(true_addend=2, false_addend=1)
+    assert _post(bad_doc) == _guarded_add_post(true_addend=2, false_addend=1)
+    assert _callsite_values(good_doc) == [7]
+    assert _callsite_values(bad_doc) == [6]
+    assert "TrySugar" in _selected_sugars(good_doc)
+
+
+def test_try_conditional_raise_except_uses_raise_scope_in_lift_rpc(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "    try:\n"
+        "        y = x + 1\n"
+        "        if x > 0:\n"
+        "            raise ValueError('boom')\n"
+        "        return x\n"
+        "    except ValueError:\n"
+        "        return y + 2\n"
+    )
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=8)
+    _write_project(bad, body=body, expected=5)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post(good_doc) == _guarded_post(
+        true_rhs=_nested_add_rhs(1, 2),
+        false_rhs=_var_x(),
+    )
+    assert _post(bad_doc) == _guarded_post(
+        true_rhs=_nested_add_rhs(1, 2),
+        false_rhs=_var_x(),
+    )
+    assert _callsite_values(good_doc) == [8]
+    assert _callsite_values(bad_doc) == [5]
     assert "TrySugar" in _selected_sugars(good_doc)

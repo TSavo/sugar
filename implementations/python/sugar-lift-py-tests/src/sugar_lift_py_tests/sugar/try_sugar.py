@@ -4,7 +4,13 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
-from sugar_lift_py_tests.floor import BlockValue, GuardedReturn, ReturnValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    GuardedRaise,
+    GuardedReturn,
+    RaiseValue,
+    ReturnValue,
+)
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.try_handler import TryHandler
@@ -66,6 +72,10 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         if isinstance(outcome, Incomplete):
             return self._route_incomplete(outcome, ctx)
         block = complete_value(outcome, owner="try body")
+        routed = self._route_block_raises(block, ctx)
+        if isinstance(routed, Incomplete):
+            return routed
+        block = complete_value(routed, owner="try routed body")
         if self.else_body is not None and _runs_else(block):
             return self.else_body.reduce(ctx)
         return Complete(block)
@@ -78,6 +88,38 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             if handler.matches(effect):
                 return handler.reduce(ctx, effect)
         return outcome
+
+    def _route_block_raises(self, block: BlockValue, ctx) -> Outcome:
+        statements: list[object] = []
+        fall_through = list(block.fall_through)
+        for statement in block.statements:
+            routed = self._route_raise_statement(statement, ctx)
+            if routed is None:
+                statements.append(statement)
+                continue
+            if isinstance(routed, Incomplete):
+                return routed
+            handled_block = complete_value(routed, owner="try handler")
+            guards = _raise_guards(statement)
+            statements.extend(
+                _with_guards(handled_statement, guards)
+                for handled_statement in handled_block.statements
+            )
+            if handled_block.fall_through:
+                fall_through.append(
+                    _guard_conjunction(guards + handled_block.fall_through)
+                )
+        return Complete(BlockValue(tuple(statements), tuple(fall_through)))
+
+    def _route_raise_statement(self, statement: object, ctx) -> Outcome | None:
+        effect = _raise_effect(statement)
+        if effect is None:
+            return None
+        handler_ctx = _raise_scope(statement) or ctx
+        for handler in self.handlers:
+            if handler.matches(effect):
+                return handler.reduce(handler_ctx, effect)
+        return None
 
 
 def _build_optional(site, ctx) -> SugarBody | None:
@@ -123,9 +165,49 @@ def _merge_finally_fallthrough(
 
 def _with_guards(statement, guards: tuple):
     if isinstance(statement, ReturnValue):
-        return GuardedReturn(guards, statement.value)
+        return GuardedReturn(guards, statement.value) if guards else statement
     if isinstance(statement, GuardedReturn):
         return GuardedReturn(guards + statement.guards, statement.value)
+    if isinstance(statement, RaiseValue):
+        return (
+            GuardedRaise(guards, statement.effect, statement.scope)
+            if guards
+            else statement
+        )
+    if isinstance(statement, GuardedRaise):
+        return GuardedRaise(
+            guards + statement.guards,
+            statement.effect,
+            statement.scope,
+        )
     raise TypeError(
         f"write more TrySugar finally fallthrough for `{type(statement).__name__}`"
     )
+
+
+def _raise_effect(statement: object) -> RaiseEffect | None:
+    if isinstance(statement, RaiseValue):
+        return statement.effect
+    if isinstance(statement, GuardedRaise):
+        return statement.effect
+    return None
+
+
+def _raise_guards(statement: object) -> tuple:
+    if isinstance(statement, GuardedRaise):
+        return statement.guards
+    return ()
+
+
+def _raise_scope(statement: object):
+    if isinstance(statement, (RaiseValue, GuardedRaise)):
+        return statement.scope
+    return None
+
+
+def _guard_conjunction(guards: tuple):
+    if len(guards) == 1:
+        return guards[0]
+    from sugar_lift_py_tests.ir import and_
+
+    return and_(list(guards))

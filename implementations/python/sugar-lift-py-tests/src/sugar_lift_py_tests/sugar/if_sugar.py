@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import BlockValue, GuardedReturn, ReturnValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    GuardedRaise,
+    GuardedReturn,
+    RaiseValue,
+    ReturnValue,
+)
 from sugar_lift_py_tests.ir import (
     ctor,
     eq,
@@ -30,6 +36,10 @@ def _guard(stmt, extra: tuple):
         return GuardedReturn(extra, stmt.value)
     if isinstance(stmt, GuardedReturn):
         return GuardedReturn(extra + stmt.guards, stmt.value)
+    if isinstance(stmt, RaiseValue):
+        return GuardedRaise(extra, stmt.effect, stmt.scope)
+    if isinstance(stmt, GuardedRaise):
+        return GuardedRaise(extra + stmt.guards, stmt.effect, stmt.scope)
     raise TypeError(f"if branch yielded a non-return outcome `{type(stmt).__name__}`")
 
 

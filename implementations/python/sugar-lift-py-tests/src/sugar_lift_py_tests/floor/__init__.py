@@ -9,11 +9,13 @@ from .bv32_value import Bv32Value
 from .encoded_string_value import EncodedStringValue
 from .floor_value import FloorValue
 from .function_callable import FunctionCallable
+from .guarded_raise import GuardedRaise
 from .guarded_return import GuardedReturn
 from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .object_field import ObjectField
 from .object_value import ObjectValue
+from .raise_value import RaiseValue
 from .return_value import ReturnValue
 from .slice_value import SliceValue
 from .string_value import StringValue
@@ -31,11 +33,13 @@ __all__ = [
     "EncodedStringValue",
     "FloorValue",
     "FunctionCallable",
+    "GuardedRaise",
     "GuardedReturn",
     "ImportAliasValue",
     "LambdaCallable",
     "ObjectField",
     "ObjectValue",
+    "RaiseValue",
     "ReturnValue",
     "SliceValue",
     "StringValue",
