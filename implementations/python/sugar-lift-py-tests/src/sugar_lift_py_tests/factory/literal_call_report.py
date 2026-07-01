@@ -334,7 +334,11 @@ def _lift_assertion_via_factory(
             [
                 claim
                 for claim in catalog.claims
-                if claim.name != "ComparisonAssertionSugar"
+                if claim.name
+                not in {
+                    "ChainedComparisonAssertionSugar",
+                    "ComparisonAssertionSugar",
+                }
             ]
         )
         candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
@@ -440,13 +444,17 @@ def _comparison_assertion_uses_nonfree_name(
     test = stmt.assert_test()
     if test.observed != "Compare":
         return False
-    if len(test.compare_ops()) != 1 or len(test.compare_comparators()) != 1:
+    operators = test.compare_ops()
+    comparators = test.compare_comparators()
+    if not operators or len(operators) != len(comparators):
         return False
-    operator = test.compare_ops()[0]
-    if operator not in {"Eq", "NotEq", "Lt", "LtE", "Gt", "GtE"}:
+    if any(
+        operator not in {"Eq", "NotEq", "Lt", "LtE", "Gt", "GtE"}
+        for operator in operators
+    ):
         return False
     safe_names = set(fn.function_params()) | set(import_aliases) | set(from_imports)
-    for operand in (test.compare_left(), test.compare_comparators()[0]):
+    for operand in (test.compare_left(), *comparators):
         for name in _names_including_self(operand):
             if name not in safe_names:
                 return True
