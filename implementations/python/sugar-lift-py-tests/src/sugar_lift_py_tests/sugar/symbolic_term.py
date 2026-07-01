@@ -7,7 +7,10 @@ def can_symbolic_term(site) -> bool:
     if site.observed == "Name":
         return True
     if site.observed == "PrimitiveLiteral":
-        return isinstance(site.literal_value(), (bool, int, str))
+        return site.literal_value() is None or isinstance(
+            site.literal_value(),
+            (bool, int, str),
+        )
     if site.observed == "List":
         return all(can_symbolic_term(item) for item in site.terms())
     if site.observed == "Attribute":
@@ -40,6 +43,8 @@ def symbolic_term(site, *, owner: str) -> Term:
             return num(value)
         if isinstance(value, str):
             return str_const(value)
+        if value is None:
+            return ctor("None", [])
     if site.observed == "List":
         return ctor("array", [symbolic_term(item, owner=owner) for item in site.terms()])
     if site.observed == "Attribute":

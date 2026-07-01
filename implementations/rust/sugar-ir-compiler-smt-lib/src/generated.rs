@@ -327,6 +327,13 @@ fn collect_opaque_quantifier_sorts_formula(formula: &Formula, out: &mut BTreeMap
 pub fn emit_formula(formula: &Formula) -> String {
     match formula {
         Formula::Atomic { name, args } => {
+            if name == "identity" && args.len() == 2 {
+                return format!(
+                    "(= {} {})",
+                    emit_identity_term(&args[0]),
+                    emit_identity_term(&args[1])
+                );
+            }
             if let Some(rendered) = emit_string_theory_atomic(name, args) {
                 return rendered;
             }
@@ -1373,6 +1380,8 @@ use crate::literal_encoding::{emit_const_value as encode_const, LiteralConstants
 // cannot silently revert the soundness-critical type-disjointness encoding.
 use crate::isinstance_encoding::IsinstanceClauses;
 
+const IDENTITY_SORT: &str = "SugarIdentity";
+
 fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
     // A `Real`-sorted const is a real literal carried as a CANONICAL DECIMAL
     // STRING (e.g. "0.00000015") so its CID is deterministic. Emit it verbatim as
@@ -1410,6 +1419,159 @@ fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
     // string/None -> hash-named uninterpreted Int const). Unchanged, so every
     // pre-existing (Real-free) formula is byte-for-byte identical.
     encode_const(value)
+}
+
+fn identity_const_name(value: &serde_json::Value, sort_name: &str) -> String {
+    smt_quote(&format!(
+        "identity:const:{}",
+        identity_const_name_suffix(value, sort_name)
+    ))
+}
+
+fn identity_const_name_suffix(value: &serde_json::Value, sort_name: &str) -> String {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(sort_name.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(
+        serde_json::to_string(value)
+            .unwrap_or_else(|_| "null".to_string())
+            .as_bytes(),
+    );
+    let full = blake3_512_of(&bytes);
+    let hex_part = full.strip_prefix("blake3-512:").unwrap_or(&full);
+    let short: String = hex_part
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(24)
+        .collect();
+    short
+}
+
+fn identity_var_name(name: &str) -> String {
+    smt_quote(&format!("identity:var:{name}"))
+}
+
+fn identity_ctor_head(name: &str, arity: usize) -> String {
+    smt_quote(&format!("identity:ctor:{name}#arity{arity}"))
+}
+
+fn emit_identity_term(term: &Term) -> String {
+    match term {
+        Term::Var { name, .. } => identity_var_name(name),
+        Term::Const { value, sort, .. } => {
+            let sort_name = match sort {
+                Sort::Primitive { name } => name.as_str(),
+                Sort::Function { .. } => "Function",
+                Sort::Dependent { .. } => "Dependent",
+                Sort::Region { .. } => "Region",
+            };
+            identity_const_name(value, sort_name)
+        }
+        Term::Ctor { name, args, .. } => {
+            let rendered_args: Vec<String> = args.iter().map(emit_identity_term).collect();
+            if rendered_args.is_empty() {
+                identity_ctor_head(name, 0)
+            } else {
+                format!(
+                    "({} {})",
+                    identity_ctor_head(name, rendered_args.len()),
+                    rendered_args.join(" ")
+                )
+            }
+        }
+        Term::Lambda { body, .. } => emit_identity_term(body),
+        Term::Let { bindings, body, .. } => {
+            let mut rendered = emit_identity_term(body);
+            for binding in bindings.iter().rev() {
+                rendered = format!(
+                    "(let (({} {})) {})",
+                    identity_var_name(&binding.name),
+                    emit_identity_term(&binding.bound_term),
+                    rendered
+                );
+            }
+            rendered
+        }
+    }
+}
+
+fn collect_identity_literals_formula(formula: &Formula, out: &mut BTreeSet<String>) {
+    match formula {
+        Formula::Atomic { name, args } if name == "identity" && args.len() == 2 => {
+            for arg in args {
+                collect_identity_literals_term(arg, out);
+            }
+        }
+        Formula::Atomic { .. } => {}
+        Formula::And { operands } | Formula::Or { operands } | Formula::Implies { operands } => {
+            for operand in operands {
+                collect_identity_literals_formula(operand, out);
+            }
+        }
+        Formula::Not { operands } => {
+            for operand in operands {
+                collect_identity_literals_formula(operand, out);
+            }
+        }
+        Formula::Forall { body, .. }
+        | Formula::Exists { body, .. }
+        | Formula::Choice { body, .. } => {
+            collect_identity_literals_formula(body, out);
+        }
+        Formula::Substitute { target, .. } => collect_identity_literals_formula(target, out),
+        Formula::Apply { args, .. } => {
+            for arg in args {
+                collect_identity_literals_formula(arg, out);
+            }
+        }
+        Formula::DivergenceBetween { source, target } => {
+            collect_identity_literals_formula(source, out);
+            collect_identity_literals_formula(target, out);
+        }
+    }
+}
+
+fn collect_identity_literals_term(term: &Term, out: &mut BTreeSet<String>) {
+    match term {
+        Term::Const { value, sort, .. } => {
+            let sort_name = match sort {
+                Sort::Primitive { name } => name.as_str(),
+                Sort::Function { .. } => "Function",
+                Sort::Dependent { .. } => "Dependent",
+                Sort::Region { .. } => "Region",
+            };
+            out.insert(identity_const_name(value, sort_name));
+        }
+        Term::Ctor { name, args, .. } => {
+            if args.is_empty() {
+                out.insert(identity_ctor_head(name, 0));
+            }
+            for arg in args {
+                collect_identity_literals_term(arg, out);
+            }
+        }
+        Term::Lambda { body, .. } => collect_identity_literals_term(body, out),
+        Term::Let { bindings, body, .. } => {
+            for binding in bindings {
+                collect_identity_literals_term(&binding.bound_term, out);
+            }
+            collect_identity_literals_term(body, out);
+        }
+        Term::Var { .. } => {}
+    }
+}
+
+fn identity_distinctness_preamble(formula: &Formula) -> String {
+    let mut literals = BTreeSet::new();
+    collect_identity_literals_formula(formula, &mut literals);
+    if literals.len() < 2 {
+        String::new()
+    } else {
+        format!(
+            "(assert (distinct {}))\n",
+            literals.into_iter().collect::<Vec<_>>().join(" ")
+        )
+    }
 }
 
 // smt_quote renders a name as an SMT-LIB symbol, quoting with |...| when it is
@@ -1706,6 +1868,12 @@ pub fn collect_free_vars_formula(
 ) {
     match formula {
         Formula::Atomic { name, args } => {
+            if name == "identity" && args.len() == 2 {
+                for a in args {
+                    collect_free_vars_identity_term(a, out, bound);
+                }
+                return;
+            }
             if crate::literal_encoding::routes_to_string_theory(name, args) {
                 for a in args {
                     collect_free_vars_string_term(a, out, bound);
@@ -1914,6 +2082,42 @@ fn collect_free_vars_term_ctx_adt(
     }
 }
 
+fn collect_free_vars_identity_term(
+    term: &Term,
+    out: &mut BTreeMap<String, String>,
+    bound: &BTreeSet<String>,
+) {
+    match term {
+        Term::Var { name, .. } => {
+            if !bound.contains(name) {
+                out.entry(format!("identity:var:{name}"))
+                    .or_insert_with(|| IDENTITY_SORT.to_string());
+            }
+        }
+        Term::Const { .. } => {}
+        Term::Ctor { args, .. } => {
+            for a in args {
+                collect_free_vars_identity_term(a, out, bound);
+            }
+        }
+        Term::Lambda {
+            param_name, body, ..
+        } => {
+            let mut nb = bound.clone();
+            nb.insert(param_name.clone());
+            collect_free_vars_identity_term(body, out, &nb);
+        }
+        Term::Let { bindings, body, .. } => {
+            let mut current_bound = bound.clone();
+            for b in bindings {
+                collect_free_vars_identity_term(&b.bound_term, out, &current_bound);
+                current_bound.insert(b.name.clone());
+            }
+            collect_free_vars_identity_term(body, out, &current_bound);
+        }
+    }
+}
+
 fn collect_free_vars_string_term(
     term: &Term,
     out: &mut BTreeMap<String, String>,
@@ -2096,6 +2300,12 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
 fn collect_ctor_decls_formula(formula: &Formula, out: &mut BTreeMap<String, CtorSignature>) {
     match formula {
         Formula::Atomic { name, args } => {
+            if name == "identity" && args.len() == 2 {
+                for arg in args {
+                    collect_identity_decls_term(arg, out);
+                }
+                return;
+            }
             // G2: BV32 atoms — declare the subject ctor (args[0]) with ALL sorts
             // as `(_ BitVec 32)`: the arg sorts AND the return sort. Skip args[1]
             // (the BV expression tree) entirely: its operator ctors (bv32.ite,
@@ -2410,6 +2620,46 @@ fn collect_ctor_decls_term(
     }
 }
 
+fn collect_identity_decls_term(term: &Term, out: &mut BTreeMap<String, CtorSignature>) {
+    match term {
+        Term::Const { value, sort, .. } => {
+            let sort_name = match sort {
+                Sort::Primitive { name } => name.as_str(),
+                Sort::Function { .. } => "Function",
+                Sort::Dependent { .. } => "Dependent",
+                Sort::Region { .. } => "Region",
+            };
+            out.entry(format!(
+                "identity:const:{}",
+                identity_const_name_suffix(value, sort_name)
+            ))
+            .or_insert_with(|| CtorSignature {
+                args: Vec::new(),
+                ret: IDENTITY_SORT.to_string(),
+            });
+        }
+        Term::Ctor { name, args, .. } => {
+            for a in args {
+                collect_identity_decls_term(a, out);
+            }
+            let arg_sorts: Vec<String> = args.iter().map(|_| IDENTITY_SORT.to_string()).collect();
+            out.entry(format!("identity:ctor:{name}#arity{}", args.len()))
+                .or_insert_with(|| CtorSignature {
+                    args: arg_sorts,
+                    ret: IDENTITY_SORT.to_string(),
+                });
+        }
+        Term::Lambda { body, .. } => collect_identity_decls_term(body, out),
+        Term::Let { bindings, body, .. } => {
+            for binding in bindings {
+                collect_identity_decls_term(&binding.bound_term, out);
+            }
+            collect_identity_decls_term(body, out);
+        }
+        Term::Var { .. } => {}
+    }
+}
+
 /// True iff `name` (after `smt_atomic_name` normalization) is an SMT-LIB
 /// builtin/theory predicate that needs no declaration. Everything else is a
 /// user-defined (uninterpreted) predicate symbol -- `is_some`, `is_ok`,
@@ -2467,6 +2717,9 @@ fn is_float_refinement_atomic_predicate(name: &str) -> bool {
 fn collect_predicate_decls_formula(formula: &Formula, out: &mut BTreeMap<String, CtorSignature>) {
     match formula {
         Formula::Atomic { name, args } => {
+            if name == "identity" && args.len() == 2 {
+                return;
+            }
             // G2: BV32 atoms are emitted as theory expressions — do not declare
             // them as uninterpreted predicates.
             if crate::literal_encoding::routes_to_bv32_theory(name) {
@@ -2759,6 +3012,7 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     // Check whether the formula references Outlives. If so, inject the
     // kernel axioms (per protocol/specs/2026-05-05-outlives-kernel-axioms.md §2).
     let has_outlives = has_outlives_predicate(formula);
+    let has_identity = has_identity_predicate(formula);
     let mut preamble = String::new();
     preamble.push_str("(set-logic ALL)\n");
     // Declare the monadic Option/Result ADTs (if used) BEFORE any constant /
@@ -2791,6 +3045,9 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
         // 'static outlives every region per spec §2.3 (corrected in commit 655ab84).
         preamble.push_str("(declare-fun static_region () Region)\n");
         preamble.push_str("(assert (forall ((r Region)) (Outlives static_region r)))\n");
+    }
+    if has_identity {
+        preamble.push_str(&format!("(declare-sort {IDENTITY_SORT} 0)\n"));
     }
     // Declare every opaque-sorted quantifier sort as an uninterpreted sort.
     // These are sorts the SMT-LIB backend cannot encode natively (non-builtin
@@ -2850,6 +3107,7 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
             signature.ret
         ));
     }
+    preamble.push_str(&identity_distinctness_preamble(formula));
     // Declare string-literal constants and emit the cross-type distinctness
     // axiom (str/None distinct from each other and from concrete int/bool
     // values; bool encoded as int; floats residual). See `literal_encoding`.
@@ -2908,6 +3166,7 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
     collect_predicate_decls_formula(formula, &mut predicate_decls);
 
     let has_outlives = has_outlives_predicate(formula);
+    let has_identity = has_identity_predicate(formula);
     let mut preamble = String::new();
     preamble.push_str("(set-logic ALL)\n");
     // Declare the monadic Option/Result ADTs (if used) BEFORE any constant /
@@ -2933,6 +3192,9 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
         preamble.push_str("(assert (forall ((r1 Region) (r2 Region) (r3 Region)) (=> (and (Outlives r1 r2) (Outlives r2 r3)) (Outlives r1 r3))))\n");
         preamble.push_str("(declare-fun static_region () Region)\n");
         preamble.push_str("(assert (forall ((r Region)) (Outlives static_region r)))\n");
+    }
+    if has_identity {
+        preamble.push_str(&format!("(declare-sort {IDENTITY_SORT} 0)\n"));
     }
     // Declare opaque-sorted quantifier sorts as uninterpreted sorts (see the
     // matching block in `compile_formula` for full rationale).
@@ -2965,6 +3227,7 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
             signature.ret
         ));
     }
+    preamble.push_str(&identity_distinctness_preamble(formula));
     // Declare string-literal constants and emit the cross-type distinctness
     // axiom (str/None distinct from each other and from concrete int/bool
     // values; bool encoded as int; floats residual). See `literal_encoding`.
@@ -3004,6 +3267,25 @@ fn has_outlives_predicate(formula: &Formula) -> bool {
         Formula::Apply { args, .. } => args.iter().any(has_outlives_predicate),
         Formula::DivergenceBetween { source, target } => {
             has_outlives_predicate(source) || has_outlives_predicate(target)
+        }
+    }
+}
+
+/// Recursively check whether a formula tree references the language-neutral
+/// Sugar identity predicate.
+fn has_identity_predicate(formula: &Formula) -> bool {
+    match formula {
+        Formula::Atomic { name, args } => name == "identity" && args.len() == 2,
+        Formula::And { operands } | Formula::Or { operands } | Formula::Implies { operands } => {
+            operands.iter().any(has_identity_predicate)
+        }
+        Formula::Not { operands } => operands.iter().any(has_identity_predicate),
+        Formula::Forall { body, .. } | Formula::Exists { body, .. } => has_identity_predicate(body),
+        Formula::Choice { body, .. } => has_identity_predicate(body),
+        Formula::Substitute { target, .. } => has_identity_predicate(target),
+        Formula::Apply { args, .. } => args.iter().any(has_identity_predicate),
+        Formula::DivergenceBetween { source, target } => {
+            has_identity_predicate(source) || has_identity_predicate(target)
         }
     }
 }

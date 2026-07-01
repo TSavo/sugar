@@ -42,6 +42,7 @@ COVERAGE: dict[str, list[str]] = {
     "ord_sugar": ["test_ord_sugar.py"],
     "isinstance_assertion_sugar": ["test_isinstance_assertion_sugar.py"],
     "call_truth_assertion_sugar": ["test_call_truth_assertion_sugar.py"],
+    "identity_assertion_sugar": ["test_identity_assertion_sugar.py"],
     "projected_equality_assertion_sugar": [
         "test_projected_equality_assertion_sugar.py"
     ],

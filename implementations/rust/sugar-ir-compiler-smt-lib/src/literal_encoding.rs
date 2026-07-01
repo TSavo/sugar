@@ -150,6 +150,9 @@ impl LiteralConstants {
     fn collect_formula_for_legacy_literals(&mut self, formula: &Formula) {
         match formula {
             Formula::Atomic { name, args } => {
+                if name == "identity" {
+                    return;
+                }
                 if routes_to_string_theory(name, args) {
                     // The atom's TOP-LEVEL string consts render as real SMT
                     // String literals (no `strlit_*` declaration needed). But a
