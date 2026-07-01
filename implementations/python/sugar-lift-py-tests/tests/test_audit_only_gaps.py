@@ -71,6 +71,38 @@ def test_audit_only_does_not_swallow_unexpected_exceptions() -> None:
         collect_construction_gaps([("broken", broken_walker)])
 
 
+def test_audit_only_collects_loud_floor_type_errors() -> None:
+    def missing_floor_projection():
+        raise TypeError(
+            "write more Floor for StringSubscriptSugar receiver: "
+            "expected StringValue got SymbolicValue"
+        )
+
+    gaps = collect_construction_gaps([("fixture.py", missing_floor_projection)])
+
+    assert len(gaps) == 1
+    assert gaps[0].message == (
+        "write more Floor for StringSubscriptSugar receiver: "
+        "expected StringValue got SymbolicValue"
+    )
+    assert gaps[0].info == {
+        "owner": "StringSubscriptSugar receiver",
+        "blame": "fixture.py",
+        "observed": "SymbolicValue",
+        "requested": "StringValue",
+        "fix": "write the missing floor",
+    }
+    assert gaps[0].audit_row.to_json()["status"] == "floor-gap"
+
+
+def test_audit_only_does_not_swallow_unmarked_type_errors() -> None:
+    def broken_walker():
+        raise TypeError("plain type error")
+
+    with pytest.raises(TypeError, match="plain type error"):
+        collect_construction_gaps([("broken", broken_walker)])
+
+
 def test_normal_mode_still_panics_immediately() -> None:
     with pytest.raises(FactoryGap):
         build_node(

@@ -207,6 +207,36 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
     }
 
 
+def test_extracts_audit_only_loud_floor_type_error() -> None:
+    def failing_runner(command: list[str], cwd: Path) -> CommandResult:
+        return CommandResult(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "error: kit transform failed: lift plugin transport: "
+                "lift plugin returned error: "
+                '{"code":-32603,"message":"audit-only construction gaps",'
+                '"data":{"auditOnlyGaps":[{"kind":"audit-only-construction-gap",'
+                '"label":"numpy/core.py","message":"write more Floor for '
+                'StringSubscriptSugar receiver: expected StringValue got SymbolicValue",'
+                '"gap":{"owner":"StringSubscriptSugar receiver",'
+                '"blame":"numpy/core.py","observed":"SymbolicValue",'
+                '"requested":"StringValue","fix":"write the missing floor"},'
+                '"auditRow":{}}]}}\n'
+            ),
+        )
+
+    report = collect_panic_audit(ROOT, run_command=failing_runner)
+
+    assert report.r.values == {
+        "numpy_sugar_panics": 0,
+        "numpy_floor_panics": 1,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 1,
+        "unexpected_panics": 0,
+    }
+
+
 def test_missing_sugar_binary_counts_as_unexpected(tmp_path, monkeypatch) -> None:
     (tmp_path / "examples/numpy-showcase").mkdir(parents=True)
     (tmp_path / "examples/pandas-showcase").mkdir(parents=True)
