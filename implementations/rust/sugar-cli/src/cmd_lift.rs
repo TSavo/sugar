@@ -3230,16 +3230,21 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
     out.push_str("factory visual:\n");
     if rows.is_empty() {
         out.push_str("  <no factory walk emitted>\n");
-        return out;
-    }
-
-    let mut current_context = String::new();
-    for row in rows {
-        if row.context != current_context {
-            current_context = row.context.clone();
-            out.push_str(&format!("  contract {current_context}\n"));
+    } else {
+        let mut current_context = String::new();
+        for row in rows {
+            if row.context != current_context {
+                current_context = row.context.clone();
+                out.push_str(&format!("  contract {current_context}\n"));
+            }
+            render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
         }
-        render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
+    }
+    if !report.call_edges.is_empty() {
+        out.push_str("call edges observed:\n");
+        for edge in &report.call_edges {
+            out.push_str(&format!("  - {}\n", format_call_edge(edge)));
+        }
     }
     out
 }
@@ -10328,6 +10333,34 @@ fn sample() {
         );
         assert!(
             !visual.contains("    let a = 10;\u{1b}[0m  RED HERE"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_lists_observed_call_edges() {
+        let mut report = minimal_source_report();
+        report.call_edges = vec![serde_json::json!({
+            "kind": "call-edge",
+            "schemaVersion": "1",
+            "sourceContract": "test_external::test_sqrt::assert:5:4::assertion",
+            "targetSymbol": "call:math.sqrt",
+            "targetContract": null,
+            "targetContractCid": null,
+            "callSiteLocus": {
+                "file": "test_external.py",
+                "line": 5,
+                "column": 27
+            }
+        })];
+
+        let visual = render_visual_source_report(&report);
+
+        assert!(visual.contains("call edges observed:"), "{visual}");
+        assert!(
+            visual.contains(
+                "test_external::test_sqrt::assert:5:4::assertion -> call:math.sqrt -> null cid=null @ test_external.py:5 ?"
+            ),
             "{visual}"
         );
     }
