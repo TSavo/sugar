@@ -8,6 +8,7 @@ from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     EncodedStringValue,
     FloorValue,
+    ObjectValue,
     SymbolicValue,
     TermValue,
 )
@@ -37,7 +38,6 @@ class BinaryOperatorOperation:
     blame: str = "<unknown>"
 
     def binary_term(self, receiver: TermValue, ctx: object) -> Outcome:
-        del ctx
         if self.operator == "*" and isinstance(self.right, ArrayLiteral):
             return self._repeat_array(self.right, receiver)
         if self.operator == "*" and isinstance(self.right, TupleLiteralValue):
@@ -55,6 +55,8 @@ class BinaryOperatorOperation:
             )
         if isinstance(self.right, SymbolicValue):
             return self._emit_symbolic(receiver, self.right)
+        if isinstance(self.right, ObjectValue):
+            return self._reflect_binary(receiver, self.right, ctx)
         self._floor_gap(receiver="TermValue")
 
     def binary_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
@@ -98,6 +100,28 @@ class BinaryOperatorOperation:
             SymbolicValue(
                 ctor(self.operator, [_operand_term(left), _operand_term(right)])
             )
+        )
+
+    def _reflect_binary(
+        self, left: FloorValue, right: FloorValue, ctx: object
+    ) -> Outcome:
+        from sugar_lift_py_tests.operations.perform_operation import perform_operation
+        from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
+            ReflectedBinaryOperatorOperation,
+        )
+
+        return perform_operation(
+            owner=self.owner,
+            blame=self.blame,
+            receiver=right,
+            method_name="reflected_binary_operator_with",
+            operation=ReflectedBinaryOperatorOperation(
+                operator=self.operator,
+                left=left,
+                owner=self.owner,
+                blame=self.blame,
+            ),
+            ctx=ctx,
         )
 
     def _repeat_array(self, value: ArrayLiteral, count: TermValue) -> Outcome:

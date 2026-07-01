@@ -47,6 +47,27 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def reflected_binary_operator_with(self, operation, ctx):
+        del ctx
+        method_name = _REFLECTED_BINARY_DUNDER_METHODS.get(operation.operator)
+        if method_name is None:
+            return self._floor_gap(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"{type(operation.left).__name__}{operation.operator}{self.class_name}",
+                requested="object reflected binary data-model method",
+                fix=(
+                    f"add ObjectValue reflected data-model dispatch for "
+                    f"operator `{operation.operator}`"
+                ),
+            )
+        return self.call_method_value(
+            method_name,
+            (operation.left,),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
     def call_method_value(
         self,
         name: str,
@@ -148,5 +169,13 @@ class ObjectValue(FloorValue):
 
 
 _BINARY_DUNDER_METHODS = {
+    "+": "__add__",
+    "-": "__sub__",
     "*": "__mul__",
+}
+
+_REFLECTED_BINARY_DUNDER_METHODS = {
+    "+": "__radd__",
+    "-": "__rsub__",
+    "*": "__rmul__",
 }
