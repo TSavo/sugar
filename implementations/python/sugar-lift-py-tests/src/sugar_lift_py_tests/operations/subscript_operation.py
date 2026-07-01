@@ -66,6 +66,15 @@ class SubscriptOperation:
             fix=f"add array index floor for {type(index).__name__}",
         )
 
+    def subscript_object(self, receiver, ctx: object) -> Outcome:
+        del ctx
+        return receiver.call_method_value(
+            "__getitem__",
+            (self.index,),
+            owner=self.owner,
+            blame=self.blame,
+        )
+
     def subscript_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
         del ctx
         return Complete(

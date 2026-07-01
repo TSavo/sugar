@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.ir import Formula, Term, atomic
+from sugar_lift_py_tests.floor import BoolValue, ObjectValue
+from sugar_lift_py_tests.floor.call_site_value import force_floor
+from sugar_lift_py_tests.ir import Formula, Term, atomic, bool_const, eq
+from sugar_lift_py_tests.operations import MethodCallOperation, perform_operation
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
@@ -13,6 +18,8 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     source_role = "python.call-truth-assertion-sugar"
 
     call: Term
+    call_body: SugarBody | None
+    blame: str
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -27,20 +34,73 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "CallTruthAssertionSugar":
+        test = site.assert_test()
         return cls(
             call=symbolic_term(
-                site.assert_test(),
+                test,
                 owner="call truth assertion",
                 import_aliases=getattr(ctx, "import_aliases", {}) or {},
                 from_imports=getattr(ctx, "from_imports", {}) or {},
                 name_resolver=getattr(ctx, "name_resolver", {}) or {},
                 external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
-            )
+            ),
+            call_body=_local_constructor_body(test, ctx),
+            blame=site.blame,
         )
 
     def assertion_formula(self) -> Formula:
         return atomic("py.truthy", [self.call])
 
     def desugar(self, ctx):
-        del ctx
-        return self.assertion_formula()
+        if self.call_body is None:
+            return self.assertion_formula()
+        call_outcome = self.call_body.reduce(ctx)
+        if isinstance(call_outcome, Incomplete):
+            return call_outcome
+        value = complete_value(call_outcome, owner="CallTruthAssertionSugar call")
+        if not isinstance(value, ObjectValue):
+            return self.assertion_formula()
+        bool_outcome = perform_operation(
+            owner="CallTruthAssertionSugar",
+            blame=self.blame,
+            receiver=value,
+            method_name="call_method_with",
+            operation=MethodCallOperation(
+                name="__bool__",
+                arguments=(),
+                owner="CallTruthAssertionSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
+        )
+        bool_value = force_floor(
+            complete_value(bool_outcome, owner="CallTruthAssertionSugar __bool__"),
+            ctx,
+            owner="CallTruthAssertionSugar __bool__",
+        )
+        if not isinstance(bool_value, BoolValue):
+            raise TypeError(
+                "CallTruthAssertionSugar __bool__ must reduce to BoolValue"
+            )
+        return eq(bool_const(bool_value.value), bool_const(True))
+
+
+def _local_constructor_body(test, ctx) -> SugarBody | None:
+    target = test.call_target_name()
+    if target is None:
+        return None
+    import_target = test.call_import_target_name(
+        getattr(ctx, "import_aliases", {}) or {},
+        getattr(ctx, "from_imports", {}) or {},
+    )
+    if import_target is not None:
+        return None
+    function_node = (getattr(ctx, "name_resolver", None) or {}).get(target)
+    if function_node is None:
+        return None
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    if SourceFragment.from_node(function_node, ctx.filename).observed != "ClassDef":
+        return None
+    return ctx.build_body(test, SugarRole.TERM)

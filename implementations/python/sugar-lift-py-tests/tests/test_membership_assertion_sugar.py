@@ -10,7 +10,13 @@ from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    ObjectMethodValue,
+    ObjectValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import (
     atomic,
     bool_const,
@@ -18,8 +24,12 @@ from sugar_lift_py_tests.ir import (
     eq,
     make_var,
     not_,
+    num,
     str_const,
 )
+from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext
 
 TRUE_CONST = {
@@ -72,6 +82,53 @@ def test_membership_assertion_uses_shared_operation_dispatch_path() -> None:
     assert operation_log == [
         ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
     ]
+
+
+def test_membership_contains_operation_dispatches_object_contains_method() -> None:
+    method_body = SugarBody(sugar=object(), role=SugarRole.TERM)
+    item = TermValue(42)
+    bag = ObjectValue(
+        class_name="Bag",
+        fields=(),
+        methods=(
+            ObjectMethodValue(
+                name="__contains__",
+                parameters=("self", "item"),
+                body=method_body,
+            ),
+        ),
+        identity="test_contains.py:1:0",
+    )
+
+    outcome = perform_operation(
+        owner="MembershipAssertionSugar",
+        blame="test_contains.py:7:4",
+        receiver=bag,
+        method_name="contains_with",
+        operation=ContainsOperation(
+            item=item,
+            owner="MembershipAssertionSugar",
+            blame="test_contains.py:7:4",
+        ),
+        ctx=ReduceContext(temporal=TemporalContext.empty()),
+    )
+    callsite = complete_value(outcome, owner="object contains dispatch")
+
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "Bag.__contains__"
+    assert callsite.arg_values == (bag, item)
+    assert callsite.parameters == ("self", "item")
+    assert callsite.term == ctor(
+        "call:Bag.__contains__",
+        [
+            ctor(
+                "py.object.identity",
+                [str_const("Bag"), str_const("test_contains.py:1:0")],
+            ),
+            num(42),
+        ],
+    )
+    assert callsite.body is method_body
 
 
 def test_membership_assertion_emits_symbolic_contains_predicate() -> None:

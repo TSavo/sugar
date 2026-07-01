@@ -114,3 +114,30 @@ def test_identity_assertion_lifts_fstring_identity_fact() -> None:
             },
         ],
     }
+
+
+def test_identity_assertion_does_not_route_object_identity_through_eq() -> None:
+    report = build_literal_call_report(
+        source=(
+            "class Eq:\n"
+            "    def __eq__(self, other):\n"
+            "        return True\n"
+            "\n"
+            "def test_object_identity():\n"
+            "    assert Eq() is Eq()\n"
+            "    assert Eq() is not Eq()\n"
+        ),
+        filename="test_eq_identity.py",
+        memento_file="test_eq_identity.py",
+    )
+
+    assert report is not None
+    assert [contract.source_warrants[0].role for contract in report.payload.ir] == [
+        "python.identity-assertion-sugar",
+        "python.identity-assertion-sugar",
+    ]
+    first, second = [contract.inv for contract in report.payload.ir]
+    assert first["name"] == "identity"
+    assert second["kind"] == "not"
+    assert second["operands"][0]["name"] == "identity"
+    assert "Eq.__eq__" not in repr(report.payload.ir)

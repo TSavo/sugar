@@ -61,6 +61,7 @@ COVERAGE: dict[str, list[str]] = {
     "membership_assertion_sugar": ["test_membership_assertion_sugar.py"],
     "identity_assertion_sugar": ["test_identity_assertion_sugar.py"],
     "not_sugar": ["test_not_sugar.py"],
+    "object_equality_term_sugar": ["test_callsite_value_demand.py"],
     "projected_equality_assertion_sugar": [
         "test_projected_equality_assertion_sugar.py"
     ],
