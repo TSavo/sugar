@@ -12,6 +12,7 @@ from .inplace_binary_operator_operation import InplaceBinaryOperatorOperation
 from .map_operation import MapOperation
 from .materialize_operation import MaterializeOperation
 from .method_call_operation import MethodCallOperation
+from .next_operation import NextOperation
 from .perform_operation import perform_operation
 from .route_raises_operation import RouteRaisesOperation
 from .reflected_binary_operator_operation import ReflectedBinaryOperatorOperation
@@ -32,6 +33,7 @@ __all__ = [
     "MapOperation",
     "MaterializeOperation",
     "MethodCallOperation",
+    "NextOperation",
     "perform_operation",
     "ReflectedBinaryOperatorOperation",
     "RouteRaisesOperation",

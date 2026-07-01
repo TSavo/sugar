@@ -35,6 +35,15 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def next_with(self, operation, ctx):
+        del ctx
+        return self.call_method_value(
+            "__next__",
+            (),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
     def subscript_with(self, operation, ctx):
         return operation.subscript_object(self, ctx)
 
