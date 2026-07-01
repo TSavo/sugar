@@ -11,3 +11,6 @@ class StringValue(FloorValue):
 
     def contains_with(self, operation, ctx):
         return operation.contains_string(self, ctx)
+
+    def subscript_with(self, operation, ctx):
+        return operation.subscript_string(self, ctx)

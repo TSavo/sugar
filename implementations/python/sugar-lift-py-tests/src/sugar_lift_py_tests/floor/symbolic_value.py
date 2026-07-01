@@ -21,3 +21,6 @@ class SymbolicValue(FloorValue):
     """
 
     term: Term
+
+    def subscript_with(self, operation, ctx):
+        return operation.subscript_symbolic(self, ctx)

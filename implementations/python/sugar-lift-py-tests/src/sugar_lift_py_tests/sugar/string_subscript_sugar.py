@@ -3,14 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import (
-    Bv32Value,
-    EncodedStringValue,
-    StringValue,
-    TermValue,
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
 )
-from sugar_lift_py_tests.ir import Term, num
-from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
+from sugar_lift_py_tests.operations import SubscriptOperation
+from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -26,6 +25,7 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
 
     receiver: SugarBody
     index: SugarBody
+    blame: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.receiver, SugarBody):
@@ -43,6 +43,7 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
             site,
             receiver=ctx.build_body(site.subscript_receiver(), SugarRole.TERM),
             index=ctx.build_body(site.subscript_index(), SugarRole.TERM),
+            blame=site.blame,
         )
         if sugar is None:
             raise TypeError("StringSubscriptSugar claim built a non-subscript")
@@ -50,38 +51,54 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def from_site(
-        cls, site, *, receiver: SugarBody, index: SugarBody
+        cls, site, *, receiver: SugarBody, index: SugarBody, blame: str
     ) -> "StringSubscriptSugar | None":
         if site.observed != "Subscript":
             return None
-        return cls(receiver=receiver, index=index)
+        return cls(receiver=receiver, index=index, blame=blame)
 
     def desugar(self, ctx=None) -> Outcome:
         receiver = complete_value(
             self.receiver.reduce(ctx), owner="StringSubscriptSugar receiver"
         )
-        if not isinstance(receiver, StringValue):
-            raise TypeError(
-                "write more Floor for StringSubscriptSugar receiver: expected StringValue "
-                f"got {type(receiver).__name__}"
-            )
         index = complete_value(
             self.index.reduce(ctx), owner="StringSubscriptSugar index"
         )
-        return Complete(
-            EncodedStringValue(
-                table=tuple(ord(ch) for ch in receiver.value),
-                indices=(_bv_term(index),),
-            )
+        operation = SubscriptOperation(
+            index=index,
+            owner="StringSubscriptSugar",
+            blame=self.blame,
+        )
+        return _perform_subscript(
+            receiver=receiver,
+            operation=operation,
+            blame=self.blame,
+            ctx=ctx,
         )
 
 
-def _bv_term(value) -> Term:
-    if isinstance(value, Bv32Value):
-        return value.term
-    if isinstance(value, TermValue):
-        return num(value.value)
-    raise TypeError(
-        f"write more Floor for StringSubscriptSugar index `{type(value).__name__}`: "
-        "expected TermValue or Bv32Value"
-    )
+def _perform_subscript(*, receiver, operation: SubscriptOperation, blame: str, ctx):
+    method = getattr(receiver, "subscript_with", None)
+    if method is None:
+        info = FactoryGapInfo(
+            owner="StringSubscriptSugar",
+            blame=blame,
+            observed=type(receiver).__name__,
+            requested="subscript_with",
+            fix=f"add subscript_with to {type(receiver).__name__}",
+            gap_kind="Floor",
+            gap_locus="construction",
+        )
+        raise FactoryGap(
+            info,
+            FactoryAuditRow(
+                role="subscript_with",
+                status="floor-gap",
+                observed=type(receiver).__name__,
+                blame=blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+    return method(operation, ctx)

@@ -7,6 +7,7 @@ from .contains_operation import ContainsOperation
 from .map_operation import MapOperation
 from .materialize_operation import MaterializeOperation
 from .perform_operation import perform_operation
+from .subscript_operation import SubscriptOperation
 
 __all__ = [
     "AddOperation",
@@ -16,4 +17,5 @@ __all__ = [
     "MapOperation",
     "MaterializeOperation",
     "perform_operation",
+    "SubscriptOperation",
 ]
