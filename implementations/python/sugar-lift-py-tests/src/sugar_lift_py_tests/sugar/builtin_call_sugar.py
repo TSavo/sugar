@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import (
     BinaryOperatorOperation,
     MethodCallOperation,
+    NextOperation,
     StrCoercionOperation,
     perform_operation,
 )
@@ -59,6 +60,18 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 receiver=argument,
                 method_name="str_with",
                 operation=StrCoercionOperation(
+                    owner="BuiltinCallSugar",
+                    blame=self.blame,
+                ),
+                ctx=ctx,
+            )
+        if self.name == "next":
+            return perform_operation(
+                owner="BuiltinCallSugar",
+                blame=self.blame,
+                receiver=argument,
+                method_name="next_with",
+                operation=NextOperation(
                     owner="BuiltinCallSugar",
                     blame=self.blame,
                 ),
@@ -153,6 +166,7 @@ _BUILTIN_DUNDER_METHODS = {
 _OPERATOR_INDEX_CALL = "operator.index"
 _OWNED_BUILTIN_CALLS = frozenset(
     {
+        "next",
         "str",
         *_BUILTIN_DUNDER_METHODS,
     }

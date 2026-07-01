@@ -149,6 +149,7 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__getitem__": "SubscriptOperation",
         "__contains__": "ObjectValue.contains_with",
         "__iter__": "SequenceProjectionOperation",
+        "__next__": "NextOperation",
         "__bool__": "object_truthiness",
     }
     for name in object_value._BINARY_DUNDER_METHODS.values():

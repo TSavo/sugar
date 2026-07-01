@@ -13,7 +13,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
 
     assert report.r.values == {
         "attribute_descriptor_slots": 9,
-        "call_container_slots": 1,
+        "call_container_slots": 0,
         "comparison_slots": 0,
         "inplace_binary_slots": 0,
         "lifecycle_slots": 0,
@@ -26,7 +26,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "display_conversion_slots": 4,
         "context_async_slots": 7,
     }
-    assert report.r.total == 25
+    assert report.r.total == 24
     assert not report.is_zero
 
 
@@ -39,6 +39,7 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__getitem__",
         "__contains__",
         "__iter__",
+        "__next__",
         "__bool__",
         "__len__",
         "__hash__",
@@ -65,7 +66,6 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         assert by_name[name].owner
 
     for name in (
-        "__next__",
         "__setitem__",
         "__str__",
         "__getattr__",
@@ -85,9 +85,11 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
     assert "  inplace_binary_slots: 0" in stdout
-    assert "  total: 25" in stdout
+    assert "  total: 24" in stdout
     assert "missing dunder slots:" in stdout
     missing, owned = stdout.split("owned dunder slots:", 1)
+    assert "  - call_container __next__" not in missing
+    assert "  - call_container __next__: NextOperation" in owned
     assert "  - inplace_binary __iadd__" not in missing
     assert (
         "  - inplace_binary __iadd__: ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
