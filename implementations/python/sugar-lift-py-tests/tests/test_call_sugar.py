@@ -92,5 +92,44 @@ def test_refuse_strategy_raises_a_named_factory_gap_on_reduce():
     body, ctx = _build("np.divide(6, 2)")
     with pytest.raises(FactoryGap) as raised:
         body.reduce(ctx)
-    assert raised.value.info["observed"] == "Call"
+    assert raised.value.info["observed"] == "call-method:divide"
     assert "divide" in raised.value.info["fix"]
+
+
+def test_refuse_strategy_classifies_builtin_call_frontier():
+    body, ctx = _build("hash(value)")
+
+    with pytest.raises(FactoryGap) as raised:
+        body.reduce(ctx)
+
+    assert raised.value.info["observed"] == "call-builtin:hash"
+    assert raised.value.info["fix"] == (
+        "add builtin call sugar for `hash`, resolve a local body, "
+        "link an imported .proof, or emit a real effect"
+    )
+
+
+def test_refuse_strategy_classifies_method_call_frontier():
+    body, ctx = _build("buffer.decode()")
+
+    with pytest.raises(FactoryGap) as raised:
+        body.reduce(ctx)
+
+    assert raised.value.info["observed"] == "call-method:decode"
+    assert raised.value.info["fix"] == (
+        "add receiver-dispatched method sugar for `decode`, resolve a local body, "
+        "link an imported .proof, or emit a real effect"
+    )
+
+
+def test_refuse_strategy_classifies_unresolved_local_call_frontier():
+    body, ctx = _build("my_int16(3)")
+
+    with pytest.raises(FactoryGap) as raised:
+        body.reduce(ctx)
+
+    assert raised.value.info["observed"] == "call-local:my_int16"
+    assert raised.value.info["fix"] == (
+        "resolve local call `my_int16` to a body, link an imported .proof, "
+        "add sugar, or emit a real effect"
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -253,7 +254,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     info = FactoryGapInfo(
                         owner="python.factory",
                         blame=fragment.blame,
-                        observed="Call",
+                        observed=_call_frontier_observed(
+                            fragment, import_target=import_target, target=target
+                        ),
                         requested="term",
                         fix=(
                             f"resolve call to '{target}' with explicit keyword names; "
@@ -275,12 +278,17 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             )
         # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
         # never a silent lift, never a hang.
+        observed = _call_frontier_observed(
+            fragment, import_target=import_target, target=target
+        )
         info = FactoryGapInfo(
             owner="python.factory",
             blame=fragment.blame,
-            observed="Call",
+            observed=observed,
             requested="term",
-            fix=f"resolve call to '{target}' (local body, imported .proof, or a sugar)",
+            fix=_call_frontier_fix(
+                fragment, import_target=import_target, target=target
+            ),
         )
         return cls(strategy=RefuseStrategy(info))
 
@@ -360,6 +368,49 @@ def _is_inert_constructor_statement(stmt) -> bool:
         and stmt.expr_value().observed == "PrimitiveLiteral"
         and isinstance(stmt.expr_value().literal_value(), str)
     )
+
+
+def _call_frontier_observed(fragment, *, import_target: str | None, target: str | None):
+    label = (
+        import_target or fragment.call_qualified_target_name() or target or "unknown"
+    )
+    if import_target is not None:
+        return f"call-external:{label}"
+    if target in _BUILTIN_CALLS:
+        return f"call-builtin:{target}"
+    if fragment.call_is_method_call():
+        return f"call-method:{target or label}"
+    return f"call-local:{target or label}"
+
+
+def _call_frontier_fix(
+    fragment, *, import_target: str | None, target: str | None
+) -> str:
+    label = (
+        import_target or fragment.call_qualified_target_name() or target or "unknown"
+    )
+    if import_target is not None:
+        return (
+            f"link external call `{label}` to an imported .proof, add sugar, "
+            "or emit a real effect"
+        )
+    if target in _BUILTIN_CALLS:
+        return (
+            f"add builtin call sugar for `{target}`, resolve a local body, "
+            "link an imported .proof, or emit a real effect"
+        )
+    if fragment.call_is_method_call():
+        return (
+            f"add receiver-dispatched method sugar for `{target or label}`, "
+            "resolve a local body, link an imported .proof, or emit a real effect"
+        )
+    return (
+        f"resolve local call `{target or label}` to a body, link an imported .proof, "
+        "add sugar, or emit a real effect"
+    )
+
+
+_BUILTIN_CALLS = frozenset(dir(builtins))
 
 
 @dataclass(frozen=True)
