@@ -12,18 +12,21 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
     report = collect_dunder_frontier(ROOT)
 
     assert report.r.values == {
-        "call_container_slots": 1,
-        "mutation_container_slots": 4,
-        "numeric_binary_slots": 1,
-        "reflected_binary_slots": 1,
-        "inplace_binary_slots": 13,
-        "unary_numeric_slots": 5,
-        "numeric_conversion_slots": 4,
-        "display_conversion_slots": 4,
         "attribute_descriptor_slots": 9,
+        "call_container_slots": 1,
+        "comparison_slots": 0,
+        "inplace_binary_slots": 0,
+        "lifecycle_slots": 0,
+        "mutation_container_slots": 4,
+        "numeric_binary_slots": 0,
+        "numeric_conversion_slots": 0,
+        "reflected_binary_slots": 0,
+        "truth_hash_slots": 0,
+        "unary_numeric_slots": 0,
+        "display_conversion_slots": 4,
         "context_async_slots": 7,
     }
-    assert report.r.total == 49
+    assert report.r.total == 25
     assert not report.is_zero
 
 
@@ -42,8 +45,21 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__eq__",
         "__ge__",
         "__truediv__",
+        "__divmod__",
+        "__rdivmod__",
         "__rxor__",
+        "__iadd__",
+        "__ior__",
         "__invert__",
+        "__abs__",
+        "__round__",
+        "__floor__",
+        "__ceil__",
+        "__trunc__",
+        "__int__",
+        "__float__",
+        "__complex__",
+        "__index__",
     ):
         assert by_name[name].status == "owned", name
         assert by_name[name].owner
@@ -51,9 +67,6 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
     for name in (
         "__next__",
         "__setitem__",
-        "__iadd__",
-        "__abs__",
-        "__index__",
         "__str__",
         "__getattr__",
         "__enter__",
@@ -71,8 +84,13 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     stdout = capsys.readouterr().out
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
-    assert "  inplace_binary_slots: 13" in stdout
-    assert "  total: 49" in stdout
+    assert "  inplace_binary_slots: 0" in stdout
+    assert "  total: 25" in stdout
     assert "missing dunder slots:" in stdout
-    assert "  - inplace_binary __iadd__" in stdout
+    missing, owned = stdout.split("owned dunder slots:", 1)
+    assert "  - inplace_binary __iadd__" not in missing
+    assert (
+        "  - inplace_binary __iadd__: ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
+        in owned
+    )
     assert "  - display_conversion __str__" in stdout

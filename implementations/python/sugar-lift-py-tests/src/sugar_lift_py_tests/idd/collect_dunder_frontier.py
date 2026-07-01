@@ -7,8 +7,14 @@ from .dunder_slot import DunderSlot
 
 _TRACKED_SLOTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lifecycle", ("__init__",)),
-    ("call_container", ("__call__", "__getitem__", "__contains__", "__iter__", "__next__")),
-    ("mutation_container", ("__setitem__", "__delitem__", "__reversed__", "__missing__")),
+    (
+        "call_container",
+        ("__call__", "__getitem__", "__contains__", "__iter__", "__next__"),
+    ),
+    (
+        "mutation_container",
+        ("__setitem__", "__delitem__", "__reversed__", "__missing__"),
+    ),
     ("truth_hash", ("__bool__", "__len__", "__hash__")),
     ("comparison", ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__")),
     (
@@ -151,6 +157,8 @@ def _owned_dunder_slots() -> dict[str, str]:
         owners[name] = "ObjectValue._BITWISE_DUNDER_METHODS"
     for name in object_value._REFLECTED_BINARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._REFLECTED_BINARY_DUNDER_METHODS"
+    for name in object_value._INPLACE_BINARY_DUNDER_METHODS.values():
+        owners[name] = "ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
     for name in object_value._UNARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._UNARY_DUNDER_METHODS"
     for name in builtin_call_sugar._BUILTIN_DUNDER_METHODS.values():
