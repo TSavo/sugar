@@ -7,7 +7,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue
+from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
@@ -56,12 +56,14 @@ class BridgeStrategy:
     """
 
     target_name: str
-    argument: SugarBody
+    parameters: tuple[str, ...]
+    arguments: tuple[SugarBody, ...]
     body: FunctionCallBody
 
     def __post_init__(self) -> None:
-        if not isinstance(self.argument, SugarBody):
-            raise TypeError("BridgeStrategy argument must be factory-built")
+        for argument in self.arguments:
+            if not isinstance(argument, SugarBody):
+                raise TypeError("BridgeStrategy arguments must be factory-built")
         if not isinstance(self.body, _BODY_TYPES):
             raise TypeError("BridgeStrategy body must be factory-built")
 
@@ -76,15 +78,29 @@ class BridgeStrategy:
             euf_call_term,
         )
 
-        arg = complete_value(self.argument.reduce(ctx), owner="BridgeStrategy argument")
+        arg_values = tuple(
+            complete_value(argument.reduce(ctx), owner="BridgeStrategy argument")
+            for argument in self.arguments
+        )
         # Only a CONCRETE arg can be dug (curried over a value); a symbolic formal -- the
         # universe build -- leaves the bridge symbolic and enqueues nothing.
-        if not isinstance(arg, SymbolicValue):
+        if len(arg_values) == 1 and not isinstance(
+            arg_values[0], (SymbolicValue, CallSiteValue)
+        ):
             sink = getattr(ctx, "dig_sink", None)
             if sink is not None:
-                sink.append((self.target_name, arg))
+                sink.append((self.target_name, arg_values[0]))
+        term = euf_call_term(
+            self.target_name, [_floor_to_term(arg) for arg in arg_values]
+        )
         return Complete(
-            SymbolicValue(euf_call_term(self.target_name, [_floor_to_term(arg)]))
+            CallSiteValue(
+                target_name=self.target_name,
+                arg_values=arg_values,
+                parameters=self.parameters,
+                term=term,
+                body=self.body if isinstance(self.body, SugarBody) else None,
+            )
         )
 
     # --- the UNIVERSE (used by the dig in _dig_universe, via the catalog) -------------------
@@ -109,8 +125,10 @@ class BridgeStrategy:
     def callsite_fact_formulas(self, expected: StringValue) -> list[Formula]:
         if isinstance(self.body, SugarBody):
             return [eq(make_var("out"), str_const(expected.value))]
+        if len(self.arguments) != 1:
+            raise ValueError("BridgeStrategy callsite facts require one argument")
         argument = complete_value(
-            self.argument.reduce(None), owner="BridgeStrategy argument"
+            self.arguments[0].reduce(None), owner="BridgeStrategy argument"
         )
         if not isinstance(argument, StringValue):
             raise ValueError("write more Floor for BridgeStrategy argument")
@@ -185,6 +203,50 @@ class ExternalBridgeStrategy:
 
 
 @dataclass(frozen=True)
+class MethodCallStrategy:
+    method_name: str
+    receiver: SugarBody
+    arguments: tuple[SugarBody, ...]
+    blame: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receiver, SugarBody):
+            raise TypeError("MethodCallStrategy receiver must be factory-built")
+        for argument in self.arguments:
+            if not isinstance(argument, SugarBody):
+                raise TypeError("MethodCallStrategy arguments must be factory-built")
+
+    def emit(self, sugar: "CallSugar", ctx) -> Outcome:
+        del sugar
+        from sugar_lift_py_tests.operations import (
+            MethodCallOperation,
+            perform_operation,
+        )
+
+        receiver = complete_value(
+            self.receiver.reduce(ctx), owner="MethodCallStrategy receiver"
+        )
+        arguments = tuple(
+            complete_value(argument.reduce(ctx), owner="MethodCallStrategy argument")
+            for argument in self.arguments
+        )
+        operation = MethodCallOperation(
+            name=self.method_name,
+            arguments=arguments,
+            owner="CallSugar",
+            blame=self.blame,
+        )
+        return perform_operation(
+            owner="CallSugar",
+            blame=self.blame,
+            receiver=receiver,
+            method_name="call_method_with",
+            operation=operation,
+            ctx=ctx,
+        )
+
+
+@dataclass(frozen=True)
 class CallSugar(Sugar, role=SugarRole.TERM):
     """A call -- DUMB. `owns` is shape only; `build` is the ONLY place context decides (it
     picks the strategy by resolution); `desugar` is one line, delegating. Every Call-owning
@@ -231,16 +293,50 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             and target is not None
             and target not in building
             and not fragment.call_has_keywords()
-            and fragment.call_arg_count() == 1
+            and fragment.call_arg_count() in {0, 1}
         ):
-            argument = ctx.build_body(fragment.call_args()[0], SugarRole.TERM)
             function = SourceFragment.from_node(function_node, ctx.filename)
-            body = build_bridge_body(
-                function, replace(ctx, building=building | {target})
+            parameters = tuple(function.function_params())
+            if len(parameters) != fragment.call_arg_count():
+                return cls(
+                    strategy=RefuseStrategy(
+                        FactoryGapInfo(
+                            owner="python.factory",
+                            blame=fragment.blame,
+                            observed=f"{target}(...)",
+                            requested=f"{len(parameters)} call arguments",
+                            fix=f"add argument binding sugar for `{target}`",
+                        )
+                    )
+                )
+            arguments = tuple(
+                ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
             )
+            try:
+                body = build_bridge_body(
+                    function, replace(ctx, building=building | {target})
+                )
+            except TypeError as exc:
+                return cls(
+                    strategy=RefuseStrategy(
+                        FactoryGapInfo(
+                            owner="python.factory",
+                            blame=function.blame,
+                            observed=f"call-local:{target}",
+                            requested="FunctionBodyConstraint",
+                            fix=(
+                                f"lift this function body for `{target}` "
+                                f"or emit a real effect: {exc}"
+                            ),
+                        )
+                    )
+                )
             return cls(
                 strategy=BridgeStrategy(
-                    target_name=target, argument=argument, body=body
+                    target_name=target,
+                    parameters=parameters,
+                    arguments=arguments,
+                    body=body,
                 )
             )
         if import_target is not None and function_node is None:
@@ -276,6 +372,24 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     column=fragment.col,
                 )
             )
+        if (
+            fragment.call_is_method_call()
+            and target is not None
+            and _resolver_has_method(ctx, target)
+        ):
+            receiver = fragment.call_receiver()
+            if receiver is not None:
+                return cls(
+                    strategy=MethodCallStrategy(
+                        method_name=target,
+                        receiver=ctx.build_body(receiver, SugarRole.TERM),
+                        arguments=tuple(
+                            ctx.build_body(arg, SugarRole.TERM)
+                            for arg in fragment.call_args()
+                        ),
+                        blame=fragment.blame,
+                    )
+                )
         # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
         # never a silent lift, never a hang.
         observed = _call_frontier_observed(
@@ -299,28 +413,55 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 def _build_constructor_strategy(fragment, ctx, target: str, class_site):
     from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
 
-    if fragment.call_has_keywords() or fragment.call_arg_count() != 0:
+    if fragment.call_has_keywords():
         return RefuseStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=fragment.blame,
                 observed=f"{target}(...)",
-                requested="zero-arg constructor",
-                fix=f"add constructor argument binding sugar for `{target}`",
+                requested="positional constructor arguments",
+                fix=f"add keyword constructor argument binding sugar for `{target}`",
             )
         )
+    methods = _build_object_methods(class_site, ctx)
     init = _find_init(class_site)
     if init is None:
-        return ConstructorStrategy(class_name=target, fields=())
+        if fragment.call_arg_count() != 0:
+            return RefuseStrategy(
+                FactoryGapInfo(
+                    owner="python.factory",
+                    blame=fragment.blame,
+                    observed=f"{target}(...)",
+                    requested="zero-arg constructor",
+                    fix=f"add constructor argument binding sugar for `{target}`",
+                )
+            )
+        return ConstructorStrategy(
+            class_name=target,
+            fields=(),
+            methods=methods,
+            identity=fragment.blame,
+        )
     params = init.function_params()
-    if len(params) != 1:
+    if len(params) < 1:
         return RefuseStrategy(
             FactoryGapInfo(
                 owner="python.factory",
                 blame=init.blame,
                 observed=f"{target}.__init__({', '.join(params)})",
-                requested="zero-arg constructor",
+                requested="constructor self parameter",
                 fix=f"add constructor argument binding sugar for `{target}.__init__`",
+            )
+        )
+    constructor_params = tuple(params[1:])
+    if len(constructor_params) != fragment.call_arg_count():
+        return RefuseStrategy(
+            FactoryGapInfo(
+                owner="python.factory",
+                blame=fragment.blame,
+                observed=f"{target}(...)",
+                requested=f"{len(constructor_params)} constructor arguments",
+                fix=f"add constructor argument binding sugar for `{target}`",
             )
         )
     self_name = params[0]
@@ -352,7 +493,53 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 ),
             )
         )
-    return ConstructorStrategy(class_name=target, fields=tuple(fields))
+    return ConstructorStrategy(
+        class_name=target,
+        fields=tuple(fields),
+        parameters=constructor_params,
+        arguments=tuple(
+            ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
+        ),
+        methods=methods,
+        identity=fragment.blame,
+    )
+
+
+def _build_object_methods(class_site, ctx):
+    from sugar_lift_py_tests.floor import ObjectMethodValue
+
+    methods = []
+    for stmt in class_site.class_body():
+        if stmt.observed != "FunctionDef" or stmt.function_name() == "__init__":
+            continue
+        body = stmt.function_body()
+        if (
+            len(body) == 1
+            and body[0].observed == "Return"
+            and body[0].return_value() is not None
+        ):
+            methods.append(
+                ObjectMethodValue(
+                    name=stmt.function_name(),
+                    parameters=tuple(stmt.function_params()),
+                    body=ctx.build_body(body[0].return_value(), SugarRole.TERM),
+                )
+            )
+    return tuple(methods)
+
+
+def _resolver_has_method(ctx, method_name: str) -> bool:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    resolver = getattr(ctx, "name_resolver", None) or {}
+    for node in resolver.values():
+        site = SourceFragment.from_node(node, ctx.filename)
+        if site.observed != "ClassDef":
+            continue
+        for stmt in site.class_body():
+            if stmt.observed == "FunctionDef" and stmt.function_name() == method_name:
+                return True
+    return False
 
 
 def _find_init(class_site):

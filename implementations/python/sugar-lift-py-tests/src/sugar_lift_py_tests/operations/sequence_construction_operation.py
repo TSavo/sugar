@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
-from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, TermValue
+from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.sequence_constructor import SequenceConstructor
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -31,8 +31,8 @@ class SequenceConstructionOperation:
 
     def _list_element(
         self, item: FloorValue
-    ) -> TermValue | ArrayLiteral | TupleLiteralValue:
-        if isinstance(item, (TermValue, ArrayLiteral, TupleLiteralValue)):
+    ) -> TermValue | ObjectValue | ArrayLiteral | TupleLiteralValue:
+        if isinstance(item, (TermValue, ObjectValue, ArrayLiteral, TupleLiteralValue)):
             return item
         self._floor_gap(
             observed=f"ListLiteralSugar element {type(item).__name__}",

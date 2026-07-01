@@ -25,8 +25,8 @@
   },
   "resolved_literal_body": {
     "panic": {
-      "fix": "lift this function body for the dig",
-      "observed": "dig-body:Call"
+      "fix": "add the numeric simple-body dig (out == <return expr over the formal>): BridgeStrategy simple body requires an output value",
+      "observed": "dig-body:simple-h"
     }
   },
   "two_calls_same_callee": {

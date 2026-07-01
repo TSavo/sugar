@@ -133,3 +133,24 @@ def test_refuse_strategy_classifies_unresolved_local_call_frontier():
         "resolve local call `my_int16` to a body, link an imported .proof, "
         "add sugar, or emit a real effect"
     )
+
+
+def test_zero_arg_local_call_with_unlifted_body_refuses_named_not_raw_typeerror():
+    module = ast.parse("def f():\n    if True:\n        return 1\nf()")
+    function = module.body[0]
+    call = module.body[1].value
+    ctx = FactoryBuildContext(
+        filename="t.py",
+        catalog=default_catalog(),
+        name_resolver={"f": function},
+    )
+
+    body = ctx.build_body(call, SugarRole.TERM)
+    assert isinstance(body.sugar, CallSugar)
+    assert isinstance(body.sugar.strategy, RefuseStrategy)
+
+    with pytest.raises(FactoryGap) as raised:
+        body.reduce(ctx)
+
+    assert raised.value.info["observed"] == "call-local:f"
+    assert raised.value.info["requested"] == "FunctionBodyConstraint"

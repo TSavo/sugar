@@ -10,6 +10,7 @@ from .control_flow_guard_operation import ControlFlowGuardOperation
 from .finally_fallthrough_operation import FinallyFallthroughOperation
 from .map_operation import MapOperation
 from .materialize_operation import MaterializeOperation
+from .method_call_operation import MethodCallOperation
 from .perform_operation import perform_operation
 from .route_raises_operation import RouteRaisesOperation
 from .str_coercion_operation import StrCoercionOperation
@@ -27,6 +28,7 @@ __all__ = [
     "FinallyFallthroughOperation",
     "MapOperation",
     "MaterializeOperation",
+    "MethodCallOperation",
     "perform_operation",
     "RouteRaisesOperation",
     "StrCoercionOperation",
