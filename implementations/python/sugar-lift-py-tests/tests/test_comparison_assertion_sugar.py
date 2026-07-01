@@ -267,3 +267,25 @@ def test_comparison_assertion_does_not_treat_bound_local_as_vendor_fact() -> Non
         contract.source_warrants[0].role != "python.comparison-assertion-sugar"
         for contract in report.payload.ir
     )
+
+
+def test_bound_name_equality_gap_names_bound_name_frontier() -> None:
+    import pytest
+
+    from sugar_lift_py_tests.factory import FactoryGap
+
+    with pytest.raises(FactoryGap) as raised:
+        build_literal_call_report(
+            source=(
+                "def test_counter():\n" "    count = 0\n" "    assert count == 0\n"
+            ),
+            filename="test_counter.py",
+            memento_file="test_counter.py",
+        )
+
+    assert raised.value.info["observed"] == "assert-eq-lhs:bound-name:count"
+    assert raised.value.info["requested"] == "BoundNameEquality"
+    assert raised.value.info["fix"] == (
+        "lift bound-name equality for `count`: reduce a proven-pure binding, "
+        "dig its assignment/mutation history, or emit a stateful effect"
+    )
