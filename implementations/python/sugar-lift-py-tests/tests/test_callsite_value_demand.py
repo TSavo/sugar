@@ -6,6 +6,7 @@ from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.factory import SourceFragment
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
@@ -18,6 +19,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.sugar.object_equality_term_sugar import ObjectEqualityTermSugar
 
 
 def _ctx_for_module(source: str) -> FactoryBuildContext:
@@ -182,6 +184,9 @@ class Eq:
     def __eq__(self, other):
         return 1
 """
+
+    fragment = SourceFragment.from_node(ast.parse("Eq() == Eq()", mode="eval").body, "t.py")
+    assert ObjectEqualityTermSugar.owns(fragment)
 
     value = _reduce_expr(source, "Eq() == Eq()")
 

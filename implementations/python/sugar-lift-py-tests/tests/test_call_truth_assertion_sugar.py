@@ -70,6 +70,44 @@ def test_call_truth_assertion_lifts_attribute_call_fact() -> None:
     }
 
 
+def test_call_truth_assertion_dispatches_local_object_bool_dunder() -> None:
+    report = build_literal_call_report(
+        source=(
+            "class Truthy:\n"
+            "    def __bool__(self):\n"
+            "        return True\n"
+            "\n"
+            "def test_truthy_object():\n"
+            "    assert Truthy()\n"
+        ),
+        filename="test_truthy_object.py",
+        memento_file="test_truthy_object.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.call-truth-assertion-sugar"
+    assert contract.inv == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            },
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Bool"},
+                "value": True,
+            },
+        ],
+    }
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "CallTruthAssertionSugar"
+    ]
+
+
 def test_call_truth_assertion_emits_external_bridge_edge_for_import_without_source() -> (
     None
 ):

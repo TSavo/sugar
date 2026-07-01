@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import BoolValue, StringValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
-PrimitiveValue = int | float | str | None
+PrimitiveValue = bool | int | float | str | None
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,8 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
     def desugar(self) -> Outcome:
         # Collapsed numeric type: int AND float are the same Number value (Int embeds in
         # Real losslessly), so 3 and 3.0 share one TermValue and 3.0 == 3 is reflexive.
+        if isinstance(self.value, bool):
+            return Complete(BoolValue(self.value))
         if isinstance(self.value, (int, float)):
             return Complete(TermValue(self.value))
         if isinstance(self.value, str):

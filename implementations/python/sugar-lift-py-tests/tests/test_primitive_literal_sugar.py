@@ -5,8 +5,8 @@ import ast
 from factory_reduce import fol, reduce_term
 
 from sugar_lift_py_tests.factory import SourceFragment
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, num, str_const
+from sugar_lift_py_tests.floor import BoolValue, StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import bool_const, ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PrimitiveLiteralSugar
 
@@ -50,3 +50,17 @@ def test_none_primitive_literal_sugar_reduces_to_none_ctor() -> None:
     assert complete_value(none_sugar.desugar(), owner="none literal") == SymbolicValue(
         ctor("None", [])
     )
+
+
+def test_bool_primitive_literal_sugar_reduces_to_bool_floor() -> None:
+    bool_node = ast.parse("True", mode="eval").body
+
+    bool_sugar = PrimitiveLiteralSugar.from_site(
+        SourceFragment.from_node(bool_node, "literals.py")
+    )
+
+    assert bool_sugar == PrimitiveLiteralSugar(value=True)
+    assert complete_value(bool_sugar.desugar(), owner="bool literal") == BoolValue(
+        True
+    )
+    assert fol(reduce_term("True")) == fol(bool_const(True))
