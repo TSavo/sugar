@@ -25,12 +25,19 @@ class PanicVector:
             if record.kind == "unexpected":
                 values["unexpected_panics"] += 1
                 continue
-            if record.target not in {"numpy", "pandas"}:
+            target = _axis_target(record.target)
+            if target not in {"numpy", "pandas"}:
                 values["unexpected_panics"] += 1
                 continue
-            values[f"{record.target}_{record.kind}_panics"] += 1
+            values[f"{target}_{record.kind}_panics"] += 1
         return cls(values)
 
     @property
     def is_zero(self) -> bool:
         return all(value == 0 for value in self.values.values())
+
+
+def _axis_target(target: str) -> str:
+    if target.endswith("-all"):
+        return target[: -len("-all")]
+    return target

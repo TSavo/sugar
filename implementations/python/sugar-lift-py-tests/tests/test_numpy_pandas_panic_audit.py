@@ -66,6 +66,48 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
     assert "fix=create sugar_lift_py_tests.sugar.call.call_sugar" in text
 
 
+def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -> None:
+    (tmp_path / "examples/numpy-showcase").mkdir(parents=True)
+    (tmp_path / "examples/pandas-showcase").mkdir(parents=True)
+    package = tmp_path / "site-packages/numpy"
+    package.mkdir(parents=True)
+    (package / "sample.py").write_text("def f():\n    assert not g()\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path) -> CommandResult:
+        calls.append(command)
+        target = command[-1]
+        if target.endswith("numpy-showcase") or target.endswith("pandas-showcase"):
+            return CommandResult(returncode=0, stdout="", stderr="")
+        assert target.endswith("numpy")
+        return CommandResult(
+            returncode=1,
+            stdout=(
+                "write more Sugar for this AST: owner=python.factory.literal-call "
+                "blame=sample.py:2:4 observed=assert-test:UnaryOp "
+                "requested=EqualityAssertion fix=lift this assertion shape\n"
+            ),
+            stderr="",
+        )
+
+    report = collect_panic_audit(
+        tmp_path,
+        run_command=fake_runner,
+        installed_packages=("numpy",),
+        package_path_resolver=lambda package_name: package,
+    )
+
+    assert [target.name for target in report.targets] == ["numpy", "pandas", "numpy-all"]
+    assert report.r.values == {
+        "numpy_sugar_panics": 1,
+        "numpy_floor_panics": 0,
+        "pandas_sugar_panics": 0,
+        "pandas_floor_panics": 0,
+        "unexpected_panics": 0,
+    }
+    assert all(command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls)
+
+
 def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -> None:
     target = tmp_path / "target"
     stale_manifest = target / ".sugar/lift/python/manifest.toml"
@@ -94,7 +136,7 @@ def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:
     from sugar_lift_py_tests.idd import cli
 
-    def fake_collect(root: Path):
+    def fake_collect(root: Path, **_kwargs):
         return collect_panic_audit(
             root,
             run_command=lambda command, cwd: CommandResult(

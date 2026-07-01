@@ -313,7 +313,7 @@ def _lift_assertion_via_factory(
         catalog=catalog,
         ctx=ctx,
     )
-    formula = result.sugar.assertion_formula()
+    formula = result.sugar.desugar(ctx)
     source_role = getattr(
         result.sugar,
         "source_role",

@@ -13,9 +13,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--installed-package",
+        action="append",
+        default=[],
+        help="also audit an installed Python package by import name, e.g. numpy",
+    )
+    parser.add_argument(
+        "--no-showcases",
+        action="store_true",
+        help="only run explicitly requested audit targets",
+    )
     args = parser.parse_args(argv)
 
-    report = collect_panic_audit(Path(args.root))
+    report = collect_panic_audit(
+        Path(args.root),
+        installed_packages=tuple(args.installed_package),
+        include_showcases=not args.no_showcases,
+    )
     if args.json:
         print(json.dumps(report.to_json(), sort_keys=True, indent=2))
     else:
