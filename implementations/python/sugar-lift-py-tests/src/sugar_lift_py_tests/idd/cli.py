@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
+from .collect_dunder_frontier import collect_dunder_frontier
 from .collect_panic_audit import collect_panic_audit
+from .render_dunder_frontier import render_text as render_dunder_text
 from .render_panic_audit import render_text
 
 
@@ -24,7 +26,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="only run explicitly requested audit targets",
     )
+    parser.add_argument(
+        "--dunder-frontier",
+        action="store_true",
+        help="audit tracked Python data-model dunder slots instead of panic targets",
+    )
     args = parser.parse_args(argv)
+
+    if args.dunder_frontier:
+        report = collect_dunder_frontier(Path(args.root))
+        if args.json:
+            print(json.dumps(report.to_json(), sort_keys=True, indent=2))
+        else:
+            print(render_dunder_text(report), end="")
+        return 0 if report.is_zero else 1
 
     report = collect_panic_audit(
         Path(args.root),
