@@ -1505,6 +1505,9 @@ mod tests {
     fn and2(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {
         serde_json::json!({"kind":"and","operands":[a,b]})
     }
+    fn not_formula(a: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"kind":"not","operands":[a]})
+    }
 
     #[test]
     fn identity_relation_has_sat_unsat_teeth_under_z3() {
@@ -1566,6 +1569,32 @@ mod tests {
             out.trim(),
             "unsat",
             "identity(r,True) ∧ identity(r,1) must be UNSAT even though True == 1 is SAT; got: {out}\nscript:\n{script}"
+        );
+
+        let negated_good = and2(
+            atomic("identity", vec![var("r"), bool_const(true)]),
+            not_formula(atomic("identity", vec![var("r"), none_ctor()])),
+        );
+        let parts = compile_asserted_to_parts(&negated_good).expect("compile negated identity");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "sat",
+            "identity(r,True) ∧ not(identity(r,None)) must be SAT, got: {out}\nscript:\n{script}"
+        );
+
+        let negated_bad = and2(
+            atomic("identity", vec![var("r"), none_ctor()]),
+            not_formula(atomic("identity", vec![var("r"), none_ctor()])),
+        );
+        let parts = compile_asserted_to_parts(&negated_bad).expect("compile negated contradiction");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "unsat",
+            "identity(r,None) ∧ not(identity(r,None)) must be UNSAT, got: {out}\nscript:\n{script}"
         );
     }
 

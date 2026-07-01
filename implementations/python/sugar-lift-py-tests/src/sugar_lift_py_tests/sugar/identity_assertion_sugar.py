@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula, Term, identity
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.not_sugar import NotSugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
 
 
@@ -14,6 +15,7 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     left: Term
     right: Term
+    polarity: NotSugar | None = None
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -22,7 +24,7 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         test = site.assert_test()
         if test.observed != "Compare":
             return False
-        if test.compare_ops() != ["Is"]:
+        if test.compare_ops() not in (["Is"], ["IsNot"]):
             return False
         if len(test.compare_comparators()) != 1:
             return False
@@ -40,10 +42,14 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 test.compare_comparators()[0],
                 owner="identity assertion right",
             ),
+            polarity=NotSugar() if test.compare_ops() == ["IsNot"] else None,
         )
 
     def assertion_formula(self) -> Formula:
-        return identity(self.left, self.right)
+        formula = identity(self.left, self.right)
+        if self.polarity is None:
+            return formula
+        return self.polarity.apply(formula)
 
     def desugar(self, ctx):
         del ctx
