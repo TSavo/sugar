@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.floor import FloorValue
 
 from .temporal_binding import TemporalBinding
-from .temporal_rewrite_step import TemporalRewriteStep
 
 
 @dataclass(frozen=True)
@@ -34,42 +33,22 @@ class TemporalContext:
     def bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":
+        return self._bind_value(name, value, blame=blame)
+
+    def _bind_value(
+        self, name: str, value: FloorValue, *, blame: str | None = None
+    ) -> "TemporalContext":
         remaining = tuple(binding for binding in self.bindings if binding.name != name)
         return TemporalContext(remaining + (TemporalBinding(name, value, blame),))
 
-    def apply_step(self, step: TemporalRewriteStep, *, ctx=None) -> "TemporalContext":
-        if step.kind == "add_assign":
-            from sugar_lift_py_tests.operations import AddOperation, perform_operation
-            from sugar_lift_py_tests.outcome import complete_value
+    def bind_with(self, operation, ctx):
+        return operation.bind_context(self, ctx)
 
-            current = self.value_for(step.name)
-            rewritten = complete_value(
-                perform_operation(
-                    owner="TemporalContext",
-                    blame=step.blame,
-                    receiver=current,
-                    method_name="add_with",
-                    operation=AddOperation(
-                        operand=step.value,
-                        owner="TemporalContext",
-                        blame=step.blame,
-                    ),
-                    ctx=ctx,
-                ),
-                owner="TemporalContext add_assign",
-            )
-            return self.bind_value(
-                step.name,
-                rewritten,
-                blame=step.blame,
-            )
-        self._gap(
-            owner="TemporalContext",
-            blame=step.blame,
-            observed=step.kind,
-            requested="temporal rewrite",
-            fix="add a TemporalRewriteStep handler for this mutation",
-        )
+    def curry_with(self, operation, ctx):
+        return operation.curry_context(self, ctx)
+
+    def rewrite_with(self, operation, ctx):
+        return operation.rewrite_context(self, ctx)
 
     def _gap(
         self,
