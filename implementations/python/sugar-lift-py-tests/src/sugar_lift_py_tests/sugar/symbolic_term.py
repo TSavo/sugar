@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from sugar_lift_py_tests.ir import Term, bool_const, ctor, make_var, num, str_const
+from decimal import Decimal
+
+from sugar_lift_py_tests.ir import (
+    Term,
+    bool_const,
+    ctor,
+    make_var,
+    num,
+    real_lit,
+    str_const,
+)
 
 
 def can_symbolic_term(site) -> bool:
@@ -9,7 +19,7 @@ def can_symbolic_term(site) -> bool:
     if site.observed == "PrimitiveLiteral":
         return site.literal_value() is None or isinstance(
             site.literal_value(),
-            (bool, int, str),
+            (bool, int, float, str),
         )
     if site.observed == "List":
         return all(can_symbolic_term(item) for item in site.terms())
@@ -52,6 +62,8 @@ def symbolic_term(
             return bool_const(value)
         if isinstance(value, int):
             return num(value)
+        if isinstance(value, float):
+            return real_lit(format(Decimal(str(value)), "f"))
         if isinstance(value, str):
             return str_const(value)
         if value is None:

@@ -23,6 +23,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.tuple_assign_sugar import TupleAssignSugar
 
 
 def _desugar_assign(src: str):
@@ -52,6 +53,21 @@ def test_assign_binds_a_name_resolved_by_a_later_return():
     assert compose_block("    y = 5\n    return y\n") == BlockValue(
         (ReturnValue(TermValue(5)),)
     )
+
+
+def test_tuple_assign_binds_each_name_resolved_by_later_return():
+    assert compose_block("    x, y = 1, 2\n    return y\n") == BlockValue(
+        (ReturnValue(TermValue(2)),)
+    )
+
+
+def test_tuple_assign_selects_tuple_assign_sugar():
+    result = build_node(
+        ast.parse("x, y = 1, 2").body[0],
+        filename="f.py",
+        role=SugarRole.STATEMENT,
+    )
+    assert isinstance(result.sugar, TupleAssignSugar)
 
 
 def test_comment_then_assign_then_return():

@@ -139,6 +139,7 @@ def build_literal_call_report(
         if frag.observed == "ClassDef"
     }
     import_aliases, from_imports = _import_bindings(root_frag)
+    module_statements = _module_statements(root_frag)
     # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
     # is not local, so the dig cannot see its body. Resolve each imported callee to
     # its installed source FunctionDef so the SAME dig walks it like a local function.
@@ -162,6 +163,7 @@ def build_literal_call_report(
                 import_aliases=import_aliases,
                 from_imports=from_imports,
                 contract_bindings=contract_bindings or [],
+                module_statements=module_statements,
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -215,6 +217,7 @@ def _lift_assert(
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
+    module_statements: list[SourceFragment],
 ) -> LiftResult | None:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -241,6 +244,7 @@ def _lift_assert(
         import_aliases=import_aliases,
         from_imports=from_imports,
         contract_bindings=contract_bindings,
+        module_statements=module_statements,
     )
     if assertion_sugar is not None:
         return assertion_sugar
@@ -327,31 +331,11 @@ def _lift_assertion_via_factory(
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
+    module_statements: list[SourceFragment],
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
 
     catalog = default_catalog()
-    candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
-    if _comparison_assertion_uses_nonfree_name(
-        stmt,
-        fn,
-        import_aliases=import_aliases,
-        from_imports=from_imports,
-    ):
-        catalog = SugarCatalog(
-            [
-                claim
-                for claim in catalog.claims
-                if claim.name
-                not in {
-                    "ChainedComparisonAssertionSugar",
-                    "ComparisonAssertionSugar",
-                }
-            ]
-        )
-        candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
-    if not candidates:
-        return None
     external_bridge_sink: list[dict[str, Any]] = []
     ctx = FactoryBuildContext(
         filename=filename,
@@ -365,7 +349,31 @@ def _lift_assertion_via_factory(
         contract_bindings=contract_bindings,
         external_bridge_sink=external_bridge_sink,
     )
-    ctx = _ctx_with_prior_assignments(fn, stmt, ctx)
+    ctx = _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
+    if _is_simple_bound_name_equality(stmt, ctx):
+        return None
+    if _comparison_assertion_uses_nonfree_name(
+        stmt,
+        fn,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        extra_safe_names=_temporal_binding_names(ctx),
+    ):
+        catalog = SugarCatalog(
+            [
+                claim
+                for claim in catalog.claims
+                if claim.name
+                not in {
+                    "ChainedComparisonAssertionSugar",
+                    "ComparisonAssertionSugar",
+                }
+            ]
+        )
+        ctx = replace(ctx, catalog=catalog)
+    candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
+    if not candidates:
+        return None
     result = build_node(
         stmt,
         filename=filename,
@@ -401,46 +409,78 @@ def _lift_assertion_via_factory(
 
 
 def _ctx_with_prior_assignments(
+    module_statements: list[SourceFragment],
     fn: SourceFragment,
     stmt: SourceFragment,
     ctx: FactoryBuildContext,
 ) -> FactoryBuildContext:
-    from sugar_lift_py_tests.floor import BoundVar
+    from sugar_lift_py_tests.floor import BlockValue, BoundVar
     from sugar_lift_py_tests.outcome import Complete
 
     temporal = ctx.temporal
     needed_names = set(_names_including_self(stmt))
-    for prior in fn.function_body():
-        if prior.line == stmt.line and prior.col == stmt.col:
-            break
-        name = prior.assign_target_name() if prior.observed == "Assign" else None
-        if name is None or name not in needed_names:
-            continue
-        if not _is_constructor_assignment(prior, ctx):
+    for prior in _prior_assignment_sites(module_statements, fn, stmt):
+        names = _assignment_target_names(prior)
+        if not names or needed_names.isdisjoint(names):
             continue
         scoped = replace(ctx, temporal=temporal)
         outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
         if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
             temporal = temporal.bind_value(outcome.value.name, outcome.value)
+        elif isinstance(outcome, Complete) and isinstance(outcome.value, BlockValue):
+            for statement in outcome.value.statements:
+                if isinstance(statement, BoundVar):
+                    temporal = temporal.bind_value(statement.name, statement)
     return replace(ctx, temporal=temporal)
 
 
-def _is_constructor_assignment(prior: SourceFragment, ctx: FactoryBuildContext) -> bool:
-    value = prior.assign_value()
-    if value.observed != "Call":
+def _assignment_target_names(site: SourceFragment) -> set[str]:
+    if site.observed != "Assign":
+        return set()
+    name = site.assign_target_name()
+    if name is not None:
+        return {name}
+    targets = site.assign_targets()
+    if len(targets) == 1 and targets[0].observed == "Tuple":
+        return {
+            item.name_id() for item in targets[0].terms() if item.observed == "Name"
+        }
+    return set()
+
+
+def _prior_assignment_sites(
+    module_statements: list[SourceFragment],
+    fn: SourceFragment,
+    stmt: SourceFragment,
+) -> list[SourceFragment]:
+    priors: list[SourceFragment] = []
+    for prior in module_statements:
+        if prior.line == fn.line and prior.col == fn.col:
+            break
+        priors.append(prior)
+    for prior in fn.function_body():
+        if prior.line == stmt.line and prior.col == stmt.col:
+            break
+        priors.append(prior)
+    return priors
+
+
+def _temporal_binding_names(ctx: FactoryBuildContext) -> set[str]:
+    return {binding.name for binding in ctx.temporal.bindings}
+
+
+def _is_simple_bound_name_equality(
+    stmt: SourceFragment, ctx: FactoryBuildContext
+) -> bool:
+    if stmt.observed != "Assert":
         return False
-    target = (
-        value.call_import_target_name(
-            getattr(ctx, "import_aliases", {}) or {},
-            getattr(ctx, "from_imports", {}) or {},
-        )
-        or value.call_target_name()
-    )
-    resolver = getattr(ctx, "name_resolver", None) or {}
-    resolved = resolver.get(target)
-    if resolved is None:
+    test = stmt.assert_test()
+    if test.observed != "Compare":
         return False
-    return SourceFragment.from_node(resolved, ctx.filename).observed == "ClassDef"
+    if test.compare_ops() != ["Eq"] or len(test.compare_comparators()) != 1:
+        return False
+    left = test.compare_left()
+    return left.observed == "Name" and left.name_id() in _temporal_binding_names(ctx)
 
 
 def _comparison_assertion_uses_nonfree_name(
@@ -449,6 +489,7 @@ def _comparison_assertion_uses_nonfree_name(
     *,
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
+    extra_safe_names: set[str] | None = None,
 ) -> bool:
     if stmt.observed != "Assert":
         return False
@@ -464,7 +505,12 @@ def _comparison_assertion_uses_nonfree_name(
         for operator in operators
     ):
         return False
-    safe_names = set(fn.function_params()) | set(import_aliases) | set(from_imports)
+    safe_names = (
+        set(fn.function_params())
+        | set(import_aliases)
+        | set(from_imports)
+        | set(extra_safe_names or set())
+    )
     for operand in (test.compare_left(), *comparators):
         for name in _names_including_self(operand):
             if name not in safe_names:
@@ -473,10 +519,26 @@ def _comparison_assertion_uses_nonfree_name(
 
 
 def _names_including_self(site: SourceFragment) -> list[str]:
+    if site.observed == "Name":
+        return [site.name_id()]
+    if site.observed == "Call":
+        names: list[str] = []
+        receiver = site.call_receiver()
+        if receiver is not None:
+            names.extend(_names_including_self(receiver))
+        for arg in site.call_args():
+            names.extend(_names_including_self(arg))
+        for keyword in site.call_keywords():
+            names.extend(_names_including_self(keyword.keyword_value()))
+        return names
+    if site.observed == "Attribute":
+        return _names_including_self(site.attr_receiver())
+    if site.observed == "keyword":
+        return _names_including_self(site.keyword_value())
+
     names: list[str] = []
-    for fragment in [site, *site.walk()]:
-        if fragment.observed == "Name":
-            names.append(fragment.name_id())
+    for child in site.fragments():
+        names.extend(_names_including_self(child))
     return names
 
 
@@ -1190,6 +1252,13 @@ def _external_bridge_edges(
             edge["targetProofCid"] = proof_cid
         edges.append(edge)
     return edges
+
+
+def _module_statements(root_frag: SourceFragment) -> list[SourceFragment]:
+    statements: list[SourceFragment] = []
+    for fragment in root_frag.fragments():
+        statements.extend(fragment.statements())
+    return statements
 
 
 def _binding_for_bridge_symbol(
