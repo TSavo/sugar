@@ -93,3 +93,16 @@ def test_add_on_symbolic_operand_emits_the_operation_sort_silent():
     # BinOpSugar emits the operation `+(x, 1)` (the structural term the universe walk warrants).
     result = reduce_term("x + 1", {"x": SymbolicValue(make_var("x"))})
     assert fol(result) == fol(ctor("+", [make_var("x"), num(1)]))
+
+
+def test_tuple_multiplication_repeats_literal_tuple():
+    assert fol(reduce_term("(1,) * 3")) == fol(ctor("tuple", [num(1), num(1), num(1)]))
+
+
+def test_list_multiplication_repeats_literal_array():
+    assert fol(reduce_term("[1] * 3")) == fol(ctor("array", [num(1), num(1), num(1)]))
+
+
+def test_reversed_sequence_multiplication_repeats_literal_sequence():
+    assert fol(reduce_term("3 * (1,)")) == fol(ctor("tuple", [num(1), num(1), num(1)]))
+    assert fol(reduce_term("3 * [1]")) == fol(ctor("array", [num(1), num(1), num(1)]))

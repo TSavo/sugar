@@ -14,5 +14,8 @@ class TupleLiteralValue(FloorValue):
         if not all(isinstance(item, FloorValue) for item in self.items):
             raise TypeError("TupleLiteralValue items must be floor values")
 
+    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.binary_tuple(self, ctx)
+
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_tuple(self, ctx)

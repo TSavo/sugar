@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     EncodedStringValue,
     FloorValue,
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
@@ -36,6 +38,10 @@ class BinaryOperatorOperation:
 
     def binary_term(self, receiver: TermValue, ctx: object) -> Outcome:
         del ctx
+        if self.operator == "*" and isinstance(self.right, ArrayLiteral):
+            return self._repeat_array(self.right, receiver)
+        if self.operator == "*" and isinstance(self.right, TupleLiteralValue):
+            return self._repeat_tuple(self.right, receiver)
         if isinstance(self.right, TermValue):
             if self.operator in _DIVIDES and self.right.value == 0:
                 return Incomplete(
@@ -56,6 +62,18 @@ class BinaryOperatorOperation:
         if isinstance(self.right, (TermValue, SymbolicValue)):
             return self._emit_symbolic(receiver, self.right)
         self._floor_gap(receiver="SymbolicValue")
+
+    def binary_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
+        del ctx
+        if self.operator == "*" and isinstance(self.right, TermValue):
+            return self._repeat_array(receiver, self.right)
+        self._floor_gap(receiver="ArrayLiteral")
+
+    def binary_tuple(self, receiver: TupleLiteralValue, ctx: object) -> Outcome:
+        del ctx
+        if self.operator == "*" and isinstance(self.right, TermValue):
+            return self._repeat_tuple(receiver, self.right)
+        self._floor_gap(receiver="TupleLiteralValue")
 
     def binary_encoded_string(
         self, receiver: EncodedStringValue, ctx: object
@@ -79,6 +97,31 @@ class BinaryOperatorOperation:
         return Complete(
             SymbolicValue(
                 ctor(self.operator, [_operand_term(left), _operand_term(right)])
+            )
+        )
+
+    def _repeat_array(self, value: ArrayLiteral, count: TermValue) -> Outcome:
+        repeat = self._repeat_count(count)
+        if repeat is None:
+            return self._repeat_count_effect(count)
+        return Complete(ArrayLiteral(value.items * repeat))
+
+    def _repeat_tuple(self, value: TupleLiteralValue, count: TermValue) -> Outcome:
+        repeat = self._repeat_count(count)
+        if repeat is None:
+            return self._repeat_count_effect(count)
+        return Complete(TupleLiteralValue(value.items * repeat))
+
+    def _repeat_count(self, count: TermValue) -> int | None:
+        if isinstance(count.value, int):
+            return count.value
+        return None
+
+    def _repeat_count_effect(self, count: TermValue) -> Outcome:
+        return Incomplete(
+            RuntimeEffect(
+                "sequence repetition by non-int "
+                f"({type(count.value).__name__}): a runtime TypeError effect"
             )
         )
 
