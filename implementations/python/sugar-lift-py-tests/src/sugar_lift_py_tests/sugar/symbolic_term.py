@@ -48,6 +48,8 @@ def can_symbolic_term(site) -> bool:
         return isinstance(site.literal_value(), complex)
     if site.observed == "List":
         return all(can_symbolic_term(item) for item in site.terms())
+    if site.observed == "Tuple":
+        return all(can_symbolic_term(item) for item in site.terms())
     if site.observed == "Attribute":
         return can_symbolic_term(site.attr_receiver())
     if site.observed == "Subscript":
@@ -59,6 +61,10 @@ def can_symbolic_term(site) -> bool:
             site.operator_kind() in _BINOP_SYMBOL
             and can_symbolic_term(site.binop_left())
             and can_symbolic_term(site.binop_right())
+        )
+    if site.observed == "UnaryOp":
+        return site.operator_kind() in {"UAdd", "USub"} and can_symbolic_term(
+            site.unaryop_operand()
         )
     if site.observed == "Compare":
         comparators = site.compare_comparators()
@@ -145,6 +151,21 @@ def symbolic_term(
                 for item in site.terms()
             ],
         )
+    if site.observed == "Tuple":
+        return ctor(
+            "tuple",
+            [
+                symbolic_term(
+                    item,
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                )
+                for item in site.terms()
+            ],
+        )
     if site.observed == "Attribute":
         return ctor(
             "py.attr",
@@ -204,6 +225,35 @@ def symbolic_term(
                         name_resolver=name_resolver,
                         external_bridge_sink=external_bridge_sink,
                     ),
+                ],
+            )
+    if site.observed == "UnaryOp":
+        operator = site.operator_kind()
+        operand_site = site.unaryop_operand()
+        if operator == "UAdd":
+            return symbolic_term(
+                operand_site,
+                owner=owner,
+                import_aliases=import_aliases,
+                from_imports=from_imports,
+                name_resolver=name_resolver,
+                external_bridge_sink=external_bridge_sink,
+            )
+        if operator == "USub":
+            literal = _negated_numeric_literal(operand_site)
+            if literal is not None:
+                return literal
+            return ctor(
+                "py.neg",
+                [
+                    symbolic_term(
+                        operand_site,
+                        owner=owner,
+                        import_aliases=import_aliases,
+                        from_imports=from_imports,
+                        name_resolver=name_resolver,
+                        external_bridge_sink=external_bridge_sink,
+                    )
                 ],
             )
     if site.observed == "Compare":
@@ -352,3 +402,16 @@ def symbolic_term(
 
 def _real_part_term(value: float) -> Term:
     return real_lit(format(Decimal(str(value)), "f"))
+
+
+def _negated_numeric_literal(site) -> Term | None:
+    if site.observed != "PrimitiveLiteral":
+        return None
+    value = site.literal_value()
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return num(-value)
+    if isinstance(value, float):
+        return _real_part_term(-value)
+    return None

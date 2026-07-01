@@ -77,6 +77,147 @@ def test_comparison_assertion_lifts_order_relation_fact() -> None:
     }
 
 
+def test_comparison_assertion_lifts_order_relation_with_call_term() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_return_real(t, err):\n" "    assert abs(t(234) - 234.0) <= err\n"
+        ),
+        filename="test_return_real.py",
+        memento_file="test_return_real.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.comparison-assertion-sugar"
+    assert contract.inv == {
+        "kind": "atomic",
+        "name": "≤",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "call:abs",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "-",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "call:t",
+                                "args": [
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 234,
+                                    }
+                                ],
+                            },
+                            {
+                                "kind": "const",
+                                "sort": {
+                                    "kind": "primitive",
+                                    "name": "Real",
+                                },
+                                "value": "234.0",
+                            },
+                        ],
+                    }
+                ],
+            },
+            {"kind": "var", "name": "err"},
+        ],
+    }
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ComparisonAssertionSugar"
+    ]
+
+
+def test_comparison_assertion_lifts_order_relation_with_branch_bound_limit() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_return_real(t, tname):\n"
+            "    if tname == 't0':\n"
+            "        err = 1e-5\n"
+            "    else:\n"
+            "        err = 0.0\n"
+            "    assert abs(t(234) - 234.0) <= err\n"
+        ),
+        filename="test_return_real.py",
+        memento_file="test_return_real.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.comparison-assertion-sugar"
+    assert contract.inv["name"] == "≤"
+    assert contract.inv["args"][1] == {"kind": "var", "name": "err"}
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ComparisonAssertionSugar"
+    ]
+
+
+def test_comparison_assertion_lifts_order_relation_with_negative_call_argument() -> (
+    None
+):
+    report = build_literal_call_report(
+        source=(
+            "def test_return_real(t, err):\n" "    assert abs(t(-234) + 234) <= err\n"
+        ),
+        filename="test_return_real.py",
+        memento_file="test_return_real.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.comparison-assertion-sugar"
+    assert contract.inv["name"] == "≤"
+    assert contract.inv["args"][0]["args"][0]["args"][0]["args"] == [
+        {
+            "kind": "const",
+            "sort": {"kind": "primitive", "name": "Int"},
+            "value": -234,
+        }
+    ]
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ComparisonAssertionSugar"
+    ]
+
+
+def test_comparison_assertion_lifts_order_relation_with_tuple_call_argument() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_return_real(t, err):\n"
+            "    assert abs(t((234,)) - 234.0) <= err\n"
+        ),
+        filename="test_return_real.py",
+        memento_file="test_return_real.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.comparison-assertion-sugar"
+    assert contract.inv["name"] == "≤"
+    assert contract.inv["args"][0]["args"][0]["args"][0]["args"] == [
+        {
+            "kind": "ctor",
+            "name": "tuple",
+            "args": [
+                {
+                    "kind": "const",
+                    "sort": {"kind": "primitive", "name": "Int"},
+                    "value": 234,
+                }
+            ],
+        }
+    ]
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ComparisonAssertionSugar"
+    ]
+
+
 def test_comparison_assertion_does_not_steal_callsite_equality_dig() -> None:
     report = build_literal_call_report(
         source=(

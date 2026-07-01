@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+_SYMBOL = {
+    "UAdd": "py.pos",
+    "USub": "py.neg",
+}
+
+
+@dataclass(frozen=True)
+class UnaryOpSugar(Sugar, role=SugarRole.TERM):
+    operator: str
+    operand: SugarBody
+    blame: str
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "UnaryOp" and site.operator_kind() in _SYMBOL
+
+    @classmethod
+    def build(cls, site, ctx) -> "UnaryOpSugar":
+        sugar = cls.from_site(
+            site,
+            operand=ctx.build_body(site.unaryop_operand(), SugarRole.TERM),
+        )
+        if sugar is None:
+            raise TypeError("UnaryOpSugar claim built an unsupported unary op")
+        return sugar
+
+    @classmethod
+    def from_site(cls, site, *, operand: SugarBody) -> "UnaryOpSugar | None":
+        if site.observed != "UnaryOp" or site.operator_kind() not in _SYMBOL:
+            return None
+        return cls(
+            operator=_SYMBOL[site.operator_kind()],
+            operand=operand,
+            blame=site.blame,
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        operand_outcome = self.operand.reduce(ctx)
+        if isinstance(operand_outcome, Incomplete):
+            return operand_outcome
+        operand = complete_value(operand_outcome, owner="UnaryOpSugar operand")
+        if isinstance(operand, TermValue):
+            if self.operator == "py.pos":
+                return Complete(TermValue(+operand.value))
+            if self.operator == "py.neg":
+                return Complete(TermValue(-operand.value))
+        if isinstance(operand, SymbolicValue):
+            if self.operator == "py.pos":
+                return Complete(operand)
+            if self.operator == "py.neg":
+                return Complete(
+                    SymbolicValue(
+                        ctor(
+                            self.operator,
+                            [floor_to_term(operand, owner="UnaryOpSugar operand")],
+                        )
+                    )
+                )
+        raise TypeError(
+            f"UnaryOpSugar {self.operator} requires TermValue or SymbolicValue operand"
+        )
