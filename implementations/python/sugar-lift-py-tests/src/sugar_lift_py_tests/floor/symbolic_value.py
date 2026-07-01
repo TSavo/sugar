@@ -22,5 +22,20 @@ class SymbolicValue(FloorValue):
 
     term: Term
 
+    def binary_operator_with(self, operation, ctx):
+        return operation.binary_symbolic(self, ctx)
+
+    def unary_operator_with(self, operation, ctx):
+        return operation.unary_symbolic(self, ctx)
+
     def subscript_with(self, operation, ctx):
         return operation.subscript_symbolic(self, ctx)
+
+    def project_sequence_with(self, operation, ctx):
+        return operation.project_symbolic(self, ctx)
+
+    def str_with(self, operation, ctx):
+        return operation.str_symbolic(self, ctx)
+
+    def bitwise_with(self, operation, ctx):
+        return operation.bitwise_symbolic(self, ctx)

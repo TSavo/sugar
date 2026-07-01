@@ -20,3 +20,6 @@ class EncodedStringValue(FloorValue):
 
     table: tuple[int, ...]
     indices: tuple[Term, ...]
+
+    def binary_operator_with(self, operation, ctx):
+        return operation.binary_encoded_string(self, ctx)

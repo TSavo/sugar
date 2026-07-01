@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import BoolValue
 from sugar_lift_py_tests.ir import Formula, bool_const, eq
-from sugar_lift_py_tests.operations import ContainsOperation
+from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -63,10 +62,12 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             owner="MembershipAssertionSugar",
             blame=self.blame,
         )
-        contains_outcome = _perform_contains(
-            receiver=container,
-            operation=operation,
+        contains_outcome = perform_operation(
+            owner="MembershipAssertionSugar",
             blame=self.blame,
+            receiver=container,
+            method_name="contains_with",
+            operation=operation,
             ctx=ctx,
         )
         contains = complete_value(
@@ -82,30 +83,3 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
 def _assert_true(value: bool) -> Formula:
     return eq(bool_const(value), bool_const(True))
-
-
-def _perform_contains(*, receiver, operation: ContainsOperation, blame: str, ctx):
-    method = getattr(receiver, "contains_with", None)
-    if method is None:
-        info = FactoryGapInfo(
-            owner="MembershipAssertionSugar",
-            blame=blame,
-            observed=type(receiver).__name__,
-            requested="contains_with",
-            fix=f"add contains_with to {type(receiver).__name__}",
-            gap_kind="Floor",
-            gap_locus="construction",
-        )
-        raise FactoryGap(
-            info,
-            FactoryAuditRow(
-                role="contains_with",
-                status="floor-gap",
-                observed=type(receiver).__name__,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
-    return method(operation, ctx)

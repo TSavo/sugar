@@ -605,6 +605,7 @@ def _floor_to_term(value: Any) -> Term:
         SymbolicValue,
         TermValue,
     )
+    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 
     if isinstance(value, TermValue):
         return num(value.value)
@@ -618,6 +619,8 @@ def _floor_to_term(value: Any) -> Term:
         return value.term
     if isinstance(value, ArrayLiteral):
         return ctor("array", [_floor_to_term(item) for item in value.items])
+    if isinstance(value, TupleLiteralValue):
+        return ctor("tuple", [_floor_to_term(item) for item in value.items])
     raise TypeError(
         f"write more Floor->Term for `{type(value).__name__}` in the callsite literal"
     )

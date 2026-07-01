@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import ctor, num
-from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
-from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.operations.perform_operation import perform_operation
+from sugar_lift_py_tests.operations.sequence_projection_operation import (
+    SequenceProjectionOperation,
+)
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -13,6 +14,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class TupleUnpackProjection:
     receiver: SugarBody
     index: int
+    blame: str = "<unknown>"
 
     def __post_init__(self) -> None:
         if not isinstance(self.receiver, SugarBody):
@@ -25,14 +27,15 @@ class TupleUnpackProjection:
         receiver = complete_value(
             receiver_outcome, owner="TupleUnpackProjection receiver"
         )
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "py.unpack",
-                    [
-                        floor_to_term(receiver, owner="TupleUnpackProjection receiver"),
-                        num(self.index),
-                    ],
-                )
-            )
+        return perform_operation(
+            owner="TupleUnpackProjection",
+            blame=self.blame,
+            receiver=receiver,
+            method_name="project_sequence_with",
+            operation=SequenceProjectionOperation(
+                index=self.index,
+                owner="TupleUnpackProjection",
+                blame=self.blame,
+            ),
+            ctx=ctx,
         )

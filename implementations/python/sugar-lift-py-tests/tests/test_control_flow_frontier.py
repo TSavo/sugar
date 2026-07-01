@@ -147,10 +147,12 @@ def test_try_sugar_routes_raise_frontiers_by_floor_dispatch() -> None:
     )
 
     assert isinstance(value, BlockValue)
-    assert operation_log[:4] == [
+    assert operation_log == [
         ("IfSugar", "guard_with", "ControlFlowGuardOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("BlockSugar", "guard_with", "ControlFlowGuardOperation"),
         ("TrySugar", "route_raises_with", "RouteRaisesOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("TrySugar", "guard_with", "ControlFlowGuardOperation"),
     ]
 
@@ -163,7 +165,9 @@ def test_block_sugar_guards_fallthrough_exits_by_floor_dispatch() -> None:
 
     assert isinstance(value, BlockValue)
     assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("IfSugar", "guard_with", "ControlFlowGuardOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("BlockSugar", "guard_with", "ControlFlowGuardOperation"),
     ]
 
