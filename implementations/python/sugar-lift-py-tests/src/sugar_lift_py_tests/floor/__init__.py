@@ -15,6 +15,7 @@ from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .object_field import ObjectField
 from .object_value import ObjectValue
+from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .return_value import ReturnValue
 from .sequence_constructor import SequenceConstructor
@@ -41,6 +42,7 @@ __all__ = [
     "LambdaCallable",
     "ObjectField",
     "ObjectValue",
+    "PredicateValue",
     "RaiseValue",
     "ReturnValue",
     "SequenceConstructor",

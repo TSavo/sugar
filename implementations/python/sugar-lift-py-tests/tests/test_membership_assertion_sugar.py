@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 
 import pytest
 
@@ -9,7 +10,16 @@ from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
-from sugar_lift_py_tests.ir import bool_const, eq
+from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.ir import (
+    atomic,
+    bool_const,
+    ctor,
+    eq,
+    make_var,
+    not_,
+    str_const,
+)
 from sugar_lift_py_tests.temporal import TemporalContext
 
 TRUE_CONST = {
@@ -19,13 +29,17 @@ TRUE_CONST = {
 }
 
 
-def _reduce_assertion_with_operation_log(source: str):
+def _reduce_assertion_with_operation_log(source: str, binds: dict | None = None):
+    temporal = TemporalContext.empty()
+    for name, value in (binds or {}).items():
+        temporal = temporal.bind_value(name, value)
     build_ctx = FactoryBuildContext(
         filename="test_contains.py", catalog=default_catalog()
     )
+    build_ctx = replace(build_ctx, temporal=temporal)
     statement = ast.parse(source).body[0]
     body = build_ctx.build_body(statement, SugarRole.ASSERTION)
-    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
+    reduce_ctx = ReduceContext(temporal=temporal)
     return body.reduce(reduce_ctx), reduce_ctx.operation_log
 
 
@@ -55,6 +69,52 @@ def test_membership_assertion_uses_shared_operation_dispatch_path() -> None:
     )
 
     assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_emits_symbolic_contains_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 'needle' in haystack",
+        {"haystack": SymbolicValue(make_var("haystack"))},
+    )
+
+    assert formula == atomic("contains", [make_var("haystack"), str_const("needle")])
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_negates_symbolic_not_in_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 'needle' not in haystack",
+        {"haystack": SymbolicValue(make_var("haystack"))},
+    )
+
+    assert formula == not_(
+        atomic("contains", [make_var("haystack"), str_const("needle")])
+    )
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
+    ]
+
+
+def test_membership_assertion_emits_symbolic_bytes_contains_predicate() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert b'_multiarray_umath' not in payload",
+        {"payload": SymbolicValue(make_var("payload"))},
+    )
+
+    assert formula == not_(
+        atomic(
+            "contains",
+            [
+                make_var("payload"),
+                ctor("py.bytes", [str_const("5f6d756c746961727261795f756d617468")]),
+            ],
+        )
+    )
     assert operation_log == [
         ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
     ]
