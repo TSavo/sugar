@@ -26,6 +26,15 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def contains_with(self, operation, ctx):
+        del ctx
+        return self.call_method_value(
+            "__contains__",
+            (operation.item,),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
     def binary_operator_with(self, operation, ctx):
         del ctx
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
