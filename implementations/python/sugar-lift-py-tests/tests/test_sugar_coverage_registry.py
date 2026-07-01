@@ -28,6 +28,7 @@ COVERAGE: dict[str, list[str]] = {
     "call_sugar": ["test_call_sugar.py"],
     "aug_assign_sugar": ["test_aug_assign_sugar.py"],
     "block_sugar": ["test_block_sugar.py"],
+    "alias_sugar": ["test_alias_sugar.py"],
     "comment_sugar": ["test_comment_sugar.py"],
     "if_sugar": ["test_if_sugar.py"],
     "raise_sugar": ["test_raise_sugar.py"],

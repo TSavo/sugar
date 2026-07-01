@@ -501,6 +501,16 @@ class SourceFragment:
         self._require(ast.ImportFrom)
         return [(alias.name, alias.asname) for alias in self.node.names]  # type: ignore[attr-defined]
 
+    def alias_name(self) -> str:
+        """Return the imported name for an alias node."""
+        self._require(ast.alias)
+        return self.node.name  # type: ignore[attr-defined]
+
+    def alias_bound_name(self) -> str:
+        """Return the local binding name for an alias node."""
+        self._require(ast.alias)
+        return self.node.asname or self.node.name  # type: ignore[attr-defined]
+
     # --- function decorators ----------------------------------------------
 
     def function_decorators(self) -> "list[SourceFragment]":
