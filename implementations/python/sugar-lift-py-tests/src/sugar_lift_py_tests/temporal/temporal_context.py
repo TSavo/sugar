@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.floor import FloorValue, TermValue
+from sugar_lift_py_tests.floor import FloorValue
 
 from .temporal_binding import TemporalBinding
 from .temporal_rewrite_step import TemporalRewriteStep
@@ -37,22 +37,30 @@ class TemporalContext:
         remaining = tuple(binding for binding in self.bindings if binding.name != name)
         return TemporalContext(remaining + (TemporalBinding(name, value, blame),))
 
-    def apply_step(self, step: TemporalRewriteStep) -> "TemporalContext":
+    def apply_step(self, step: TemporalRewriteStep, *, ctx=None) -> "TemporalContext":
         if step.kind == "add_assign":
+            from sugar_lift_py_tests.operations import AddOperation, perform_operation
+            from sugar_lift_py_tests.outcome import complete_value
+
             current = self.value_for(step.name)
-            if not isinstance(current, TermValue) or not isinstance(
-                step.value, TermValue
-            ):
-                self._gap(
+            rewritten = complete_value(
+                perform_operation(
                     owner="TemporalContext",
                     blame=step.blame,
-                    observed=f"{type(current).__name__}+={type(step.value).__name__}",
-                    requested="TermValue add_assign",
-                    fix="add temporal rewrite support for this assignment shape",
-                )
+                    receiver=current,
+                    method_name="add_with",
+                    operation=AddOperation(
+                        operand=step.value,
+                        owner="TemporalContext",
+                        blame=step.blame,
+                    ),
+                    ctx=ctx,
+                ),
+                owner="TemporalContext add_assign",
+            )
             return self.bind_value(
                 step.name,
-                TermValue(current.value + step.value.value),
+                rewritten,
                 blame=step.blame,
             )
         self._gap(

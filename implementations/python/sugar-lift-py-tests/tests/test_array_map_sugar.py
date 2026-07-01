@@ -197,7 +197,7 @@ def test_map_operation_missing_floor_names_floor_gap() -> None:
             blame="x.py:1:0",
             receiver=TermValue(1),
             method_name="map_with",
-            operation=MapOperation(parameter="x", addend=1),
+            operation=MapOperation(mapper=object()),
             ctx=None,
         )
 
