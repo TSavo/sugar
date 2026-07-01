@@ -196,6 +196,22 @@ def test_subscript_index():
     assert site.subscript_index().literal_value() == 2
 
 
+def test_slice_bounds():
+    site = _expr("x = arr[-2:10:2]\n").subscript_index()
+    assert site.observed == "Slice"
+    assert site.slice_lower().observed == "UnaryOp"
+    assert site.slice_upper().literal_value() == 10
+    assert site.slice_step().literal_value() == 2
+
+
+def test_slice_missing_bounds():
+    site = _expr("x = arr[:]\n").subscript_index()
+    assert site.observed == "Slice"
+    assert site.slice_lower() is None
+    assert site.slice_upper() is None
+    assert site.slice_step() is None
+
+
 def test_lambda_body():
     site = _expr("x = lambda a: a + 1\n")
     body = site.lambda_body()

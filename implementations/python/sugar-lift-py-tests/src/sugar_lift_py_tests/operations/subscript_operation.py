@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
     Bv32Value,
     EncodedStringValue,
     FloorValue,
+    SliceValue,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -23,6 +25,8 @@ class SubscriptOperation:
 
     def subscript_string(self, receiver: StringValue, ctx: object) -> Outcome:
         del ctx
+        if isinstance(self.index, SliceValue):
+            _raise_string_slice_gap(self.blame)
         return Complete(
             EncodedStringValue(
                 table=tuple(ord(ch) for ch in receiver.value),
@@ -53,4 +57,28 @@ def _string_index_term(value: FloorValue):
     raise TypeError(
         f"write more Floor for StringSubscriptSugar index `{type(value).__name__}`: "
         "expected TermValue or Bv32Value"
+    )
+
+
+def _raise_string_slice_gap(blame: str) -> None:
+    info = FactoryGapInfo(
+        owner="StringSubscriptSugar.string_slice",
+        blame=blame,
+        observed="SliceValue",
+        requested="StringValue slice lowering",
+        fix="add concrete StringValue slice lowering",
+        gap_kind="Floor",
+        gap_locus="construction",
+    )
+    raise FactoryGap(
+        info,
+        FactoryAuditRow(
+            role="string_slice",
+            status="floor-gap",
+            observed="SliceValue",
+            blame=blame,
+            selected=None,
+            candidates=[],
+            message=info.message,
+        ),
     )

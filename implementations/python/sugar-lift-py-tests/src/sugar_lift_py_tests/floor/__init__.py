@@ -15,6 +15,7 @@ from .lambda_callable import LambdaCallable
 from .object_field import ObjectField
 from .object_value import ObjectValue
 from .return_value import ReturnValue
+from .slice_value import SliceValue
 from .string_value import StringValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
@@ -36,6 +37,7 @@ __all__ = [
     "ObjectField",
     "ObjectValue",
     "ReturnValue",
+    "SliceValue",
     "StringValue",
     "SupportValue",
     "SymbolicValue",

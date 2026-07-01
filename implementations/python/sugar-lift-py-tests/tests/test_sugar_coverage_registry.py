@@ -46,6 +46,7 @@ COVERAGE: dict[str, list[str]] = {
     "tuple_literal_sugar": ["test_tuple_literal_sugar.py"],
     "tuple_assign_sugar": ["test_assign_sugar.py"],
     "tuple_unpack_assign_sugar": ["test_tuple_unpack_assign_sugar.py"],
+    "slice_sugar": ["test_slice_sugar.py"],
     "string_subscript_sugar": ["test_string_subscript_sugar.py"],
     "ord_sugar": ["test_ord_sugar.py"],
     "isinstance_assertion_sugar": ["test_isinstance_assertion_sugar.py"],
