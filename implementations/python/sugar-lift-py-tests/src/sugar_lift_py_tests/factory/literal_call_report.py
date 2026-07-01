@@ -205,6 +205,29 @@ def _resolve_bound_lhs(lhs, fn):
     return lhs
 
 
+def _non_call_equality_lhs_gap(
+    lhs: SourceFragment, *, fn: SourceFragment, stmt: SourceFragment
+) -> tuple[str, str, str]:
+    if lhs.observed == "Name":
+        name = lhs.name_id()
+        for prior in _prior_assignment_sites([], fn, stmt):
+            if name in _assignment_target_names(prior):
+                return (
+                    f"assert-eq-lhs:bound-name:{name}",
+                    "BoundNameEquality",
+                    (
+                        f"lift bound-name equality for `{name}`: reduce a proven-pure "
+                        "binding, dig its assignment/mutation history, or emit a "
+                        "stateful effect"
+                    ),
+                )
+    return (
+        f"assert-eq-lhs:{lhs.observed}",
+        "CallsiteEquality",
+        "lift `<lhs> == literal` where the lhs is not a call",
+    )
+
+
 def _lift_assert(
     stmt: SourceFragment,
     *,
@@ -272,12 +295,15 @@ def _lift_assert(
     comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
     callee_name = _callee_name(comparison_left, import_aliases, from_imports)
     if callee_name is None:
+        observed, requested, fix = _non_call_equality_lhs_gap(
+            comparison_left, fn=fn, stmt=stmt
+        )
         _panic_no_sugar(
             comparison_left,
             memento_file,
-            observed=f"assert-eq-lhs:{comparison_left.observed}",
-            requested="CallsiteEquality",
-            fix="lift `<lhs> == literal` where the lhs is not a call",
+            observed=observed,
+            requested=requested,
+            fix=fix,
         )
 
     # _lift_callsite_assertion lifts or PANICS; it never returns None.
