@@ -247,6 +247,49 @@ class MethodCallStrategy:
 
 
 @dataclass(frozen=True)
+class ObjectCallStrategy:
+    callee: SugarBody
+    arguments: tuple[SugarBody, ...]
+    blame: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.callee, SugarBody):
+            raise TypeError("ObjectCallStrategy callee must be factory-built")
+        for argument in self.arguments:
+            if not isinstance(argument, SugarBody):
+                raise TypeError("ObjectCallStrategy arguments must be factory-built")
+
+    def emit(self, sugar: "CallSugar", ctx) -> Outcome:
+        del sugar
+        from sugar_lift_py_tests.operations import (
+            MethodCallOperation,
+            perform_operation,
+        )
+
+        callee = complete_value(
+            self.callee.reduce(ctx), owner="ObjectCallStrategy callee"
+        )
+        arguments = tuple(
+            complete_value(argument.reduce(ctx), owner="ObjectCallStrategy argument")
+            for argument in self.arguments
+        )
+        operation = MethodCallOperation(
+            name="__call__",
+            arguments=arguments,
+            owner="CallSugar",
+            blame=self.blame,
+        )
+        return perform_operation(
+            owner="CallSugar",
+            blame=self.blame,
+            receiver=callee,
+            method_name="call_method_with",
+            operation=operation,
+            ctx=ctx,
+        )
+
+
+@dataclass(frozen=True)
 class CallSugar(Sugar, role=SugarRole.TERM):
     """A call -- DUMB. `owns` is shape only; `build` is the ONLY place context decides (it
     picks the strategy by resolution); `desugar` is one line, delegating. Every Call-owning
@@ -388,8 +431,19 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             for arg in fragment.call_args()
                         ),
                         blame=fragment.blame,
-                    )
                 )
+            )
+        if target is None and not fragment.call_has_keywords():
+            return cls(
+                strategy=ObjectCallStrategy(
+                    callee=ctx.build_body(fragment.call_func(), SugarRole.TERM),
+                    arguments=tuple(
+                        ctx.build_body(arg, SugarRole.TERM)
+                        for arg in fragment.call_args()
+                    ),
+                    blame=fragment.blame,
+                )
+            )
         # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
         # never a silent lift, never a hang.
         observed = _call_frontier_observed(
