@@ -22,24 +22,27 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "Call"
-            and not site.call_is_method_call()
-            and not site.call_has_keywords()
-            and site.call_target_name() in _OWNED_BUILTIN_CALLS
-            and site.call_arg_count() == 1
-        )
+        if (
+            site.observed != "Call"
+            or site.call_has_keywords()
+            or site.call_arg_count() != 1
+        ):
+            return False
+        if site.call_is_method_call():
+            return site.call_qualified_target_name() == _OPERATOR_INDEX_CALL
+        return site.call_target_name() in _OWNED_BUILTIN_CALLS
 
     @classmethod
     def build(cls, site, ctx) -> Sugar:
         if not cls.owns(site):
             raise TypeError("BuiltinCallSugar claim built an unsupported builtin call")
-        if _call_is_context_bound(site, ctx):
+        name = _owned_builtin_name(site, ctx)
+        if name is None:
             from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 
             return CallSugar.build(site, ctx)
         return cls(
-            name=site.call_target_name(),
+            name=name,
             argument=ctx.build_body(site.call_args()[0], SugarRole.TERM),
             blame=site.blame,
         )
@@ -142,18 +145,46 @@ _BUILTIN_DUNDER_METHODS = {
     "trunc": "__trunc__",
     "len": "__len__",
     "hash": "__hash__",
+    "int": "__int__",
+    "float": "__float__",
+    "complex": "__complex__",
+    "operator.index": "__index__",
 }
-_OWNED_BUILTIN_CALLS = frozenset({"str", *_BUILTIN_DUNDER_METHODS})
+_OPERATOR_INDEX_CALL = "operator.index"
+_OWNED_BUILTIN_CALLS = frozenset(
+    {
+        "str",
+        *_BUILTIN_DUNDER_METHODS,
+    }
+) - {_OPERATOR_INDEX_CALL}
+
+
+def _owned_builtin_name(site, ctx) -> str | None:
+    target = site.call_target_name()
+    if not site.call_is_method_call() and target in _OWNED_BUILTIN_CALLS:
+        if _call_is_context_bound(site, ctx):
+            return None
+        return target
+    if (
+        site.call_qualified_target_name() == _OPERATOR_INDEX_CALL
+        and _canonical_import_target(site, ctx) == _OPERATOR_INDEX_CALL
+    ):
+        return _OPERATOR_INDEX_CALL
+    return None
+
+
+def _canonical_import_target(site, ctx) -> str | None:
+    return site.call_import_target_name(
+        getattr(ctx, "import_aliases", {}) or {},
+        getattr(ctx, "from_imports", {}) or {},
+    )
 
 
 def _call_is_context_bound(site, ctx) -> bool:
     target = site.call_target_name()
     if target is None:
         return False
-    import_target = site.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
-    )
+    import_target = _canonical_import_target(site, ctx)
     if import_target is not None:
         return True
     resolver = getattr(ctx, "name_resolver", None) or {}

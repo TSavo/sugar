@@ -26,6 +26,7 @@ PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
 def _ctx_for_module(
     source: str,
     *,
+    import_aliases: dict[str, str] | None = None,
     from_imports: dict[str, tuple[str, str]] | None = None,
 ) -> FactoryBuildContext:
     module = ast.parse(source)
@@ -38,6 +39,7 @@ def _ctx_for_module(
         filename="t.py",
         catalog=default_catalog(),
         name_resolver=resolver,
+        import_aliases=import_aliases or {},
         from_imports=from_imports or {},
     )
 
@@ -46,9 +48,14 @@ def _reduce_expr(
     source: str,
     expr: str,
     *,
+    import_aliases: dict[str, str] | None = None,
     from_imports: dict[str, tuple[str, str]] | None = None,
 ):
-    ctx = _ctx_for_module(source, from_imports=from_imports)
+    ctx = _ctx_for_module(
+        source,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+    )
     node = ast.parse(expr, mode="eval").body
     return complete_value(
         ctx.build_body(node, SugarRole.TERM).reduce(ctx),
@@ -246,28 +253,6 @@ class Box:
     )
 
 
-def test_abs_builtin_projects_to_dunder_method_bridge() -> None:
-    source = """\
-class Box:
-    def __abs__(self):
-        return 1
-"""
-
-    try:
-        value = _reduce_expr(source, "abs(Box())")
-    except FactoryGap as exc:
-        pytest.fail(
-            "expected abs(Box()) to dispatch to Box.__abs__, "
-            f"got {exc.info['observed']}: {exc.info['fix']}"
-        )
-
-    assert isinstance(value, CallSiteValue)
-    assert value.target_name == "Box.__abs__"
-    assert fol(floor_to_term(value, owner="abs dunder bridge")) == fol(
-        ctor("call:Box.__abs__", [_object_identity("Box", "t.py:1:4")])
-    )
-
-
 @pytest.mark.parametrize(
     ("builtin_name", "method_name"),
     [
@@ -335,6 +320,67 @@ class Box:
     assert fol(value.term) == fol(
         ctor("call:math.floor", [_object_identity("Box", "t.py:1:6")])
     )
+
+
+@pytest.mark.parametrize(
+    ("call_expr", "method_name", "object_blame", "import_aliases"),
+    [
+        ("int(Box())", "__int__", "t.py:1:4", None),
+        ("float(Box())", "__float__", "t.py:1:6", None),
+        ("complex(Box())", "__complex__", "t.py:1:8", None),
+        ("operator.index(Box())", "__index__", "t.py:1:15", {"operator": "operator"}),
+    ],
+)
+def test_numeric_conversion_builtin_projects_to_dunder_method_bridge(
+    call_expr: str,
+    method_name: str,
+    object_blame: str,
+    import_aliases: dict[str, str] | None,
+) -> None:
+    import_prefix = "import operator\n\n" if import_aliases else ""
+    source = f"""\
+{import_prefix}\
+class Box:
+    def {method_name}(self):
+        return 1
+"""
+
+    value = _reduce_expr(source, call_expr, import_aliases=import_aliases)
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Box.{method_name}"
+    assert fol(
+        floor_to_term(value, owner=f"{method_name} numeric conversion bridge")
+    ) == fol(ctor(f"call:Box.{method_name}", [_object_identity("Box", object_blame)]))
+
+
+@pytest.mark.parametrize(
+    ("call_expr", "method_name", "import_aliases"),
+    [
+        ("int(Box())", "__int__", None),
+        ("operator.index(Box())", "__index__", {"operator": "operator"}),
+    ],
+)
+def test_numeric_conversion_dunder_can_drive_array_index_value_demand(
+    call_expr: str,
+    method_name: str,
+    import_aliases: dict[str, str] | None,
+) -> None:
+    import_prefix = "import operator\n\n" if import_aliases else ""
+    source = f"""\
+{import_prefix}\
+class Box:
+    def {method_name}(self):
+        return 1
+"""
+
+    value = _reduce_expr(
+        source,
+        f"[10, 20, 30][{call_expr}]",
+        import_aliases=import_aliases,
+    )
+
+    assert value == TermValue(20)
 
 
 def test_imported_builtin_like_call_stays_external_bridge() -> None:
