@@ -482,11 +482,17 @@ def _ctx_with_function_params(
 ) -> FactoryBuildContext:
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.temporal import bind_temporal
 
-    temporal = ctx.temporal
     for param_name in fn.function_params():
-        temporal = temporal.bind_value(param_name, SymbolicValue(make_var(param_name)))
-    return replace(ctx, temporal=temporal)
+        ctx = bind_temporal(
+            ctx,
+            param_name,
+            SymbolicValue(make_var(param_name)),
+            owner="literal_call_report.function_params",
+            blame=fn.blame,
+        )
+    return ctx
 
 
 def _ctx_with_prior_assignments(
@@ -497,18 +503,30 @@ def _ctx_with_prior_assignments(
 ) -> FactoryBuildContext:
     from sugar_lift_py_tests.floor import BlockValue, BoundVar
     from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.temporal import bind_temporal
 
-    temporal = ctx.temporal
     for prior in _needed_prior_assignment_sites(module_statements, fn, stmt):
-        scoped = replace(ctx, temporal=temporal)
+        scoped = ctx
         outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
         if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
-            temporal = temporal.bind_value(outcome.value.name, outcome.value)
+            ctx = bind_temporal(
+                ctx,
+                outcome.value.name,
+                outcome.value,
+                owner="literal_call_report.prior_assignments",
+                blame=prior.blame,
+            )
         elif isinstance(outcome, Complete) and isinstance(outcome.value, BlockValue):
             for statement in outcome.value.statements:
                 if isinstance(statement, BoundVar):
-                    temporal = temporal.bind_value(statement.name, statement)
-    return replace(ctx, temporal=temporal)
+                    ctx = bind_temporal(
+                        ctx,
+                        statement.name,
+                        statement,
+                        owner="literal_call_report.prior_assignments",
+                        blame=prior.blame,
+                    )
+    return ctx
 
 
 def _needed_prior_assignment_sites(
@@ -959,11 +977,15 @@ def _construct_callsite(
             if uni is not None:
                 facts.append(uni)
         sink: list[tuple[str, object]] = []
-        reduce_ctx = ReduceContext(
-            temporal=TemporalContext.empty().bind_value(
-                callee.function_params()[0], arg_value
-            ),
-            dig_sink=sink,
+        reduce_ctx = ReduceContext(temporal=TemporalContext.empty(), dig_sink=sink)
+        from sugar_lift_py_tests.temporal import bind_temporal
+
+        reduce_ctx = bind_temporal(
+            reduce_ctx,
+            callee.function_params()[0],
+            arg_value,
+            owner="literal_call_report.construct_callsite",
+            blame=callee.blame,
         )
         try:
             outcome = build_ctx.build_body(

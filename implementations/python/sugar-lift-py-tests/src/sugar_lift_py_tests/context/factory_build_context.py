@@ -55,3 +55,19 @@ class FactoryBuildContext:
         else:
             result = self.build_child(node, role)
         return SugarBody(sugar=result.sugar, role=role, audit_row=result.audit_row)
+
+    def with_temporal(self, temporal: TemporalContext) -> "FactoryBuildContext":
+        return FactoryBuildContext(
+            filename=self.filename,
+            catalog=self.catalog,
+            temporal=temporal,
+            source_oracle=self.source_oracle,
+            expected_role=self.expected_role,
+            name_resolver=self.name_resolver,
+            import_aliases=self.import_aliases,
+            from_imports=self.from_imports,
+            contract_bindings=self.contract_bindings,
+            external_bridge_sink=self.external_bridge_sink,
+            audit_sink=self.audit_sink,
+            building=self.building,
+        )

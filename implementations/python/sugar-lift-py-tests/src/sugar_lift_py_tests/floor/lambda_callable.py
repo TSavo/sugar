@@ -14,8 +14,15 @@ class LambdaCallable(FloorValue):
 
     def apply(self, value: TermValue, ctx) -> TermValue:
         from sugar_lift_py_tests.outcome import complete_value
+        from sugar_lift_py_tests.temporal import bind_temporal
 
-        next_ctx = ctx.with_temporal(ctx.temporal.bind_value(self.parameter, value))
+        next_ctx = bind_temporal(
+            ctx,
+            self.parameter,
+            value,
+            owner="LambdaCallable",
+            blame="<lambda>",
+        )
         result = complete_value(self.body.reduce(next_ctx), owner="LambdaCallable")
         if not isinstance(result, TermValue):
             raise TypeError("LambdaCallable body must reduce to TermValue")

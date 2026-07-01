@@ -31,7 +31,12 @@ from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM, NameSugar
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
 from sugar_lift_py_tests.sugar.to_list_sugar import TO_LIST_CLAIM, ToListSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
-from sugar_lift_py_tests.temporal import TemporalContext, TemporalRewriteStep
+from sugar_lift_py_tests.temporal import (
+    AddAssignRewriteOperation,
+    TemporalContext,
+    bind_temporal,
+    rewrite_temporal,
+)
 
 SOURCE = """
 n = 10
@@ -65,10 +70,26 @@ def _out_rhs() -> ast.AST:
 
 
 def test_fluent_builder_constructs_bodies_then_rewrites_forward():
-    temporal = TemporalContext.empty().bind_value("n", TermValue(10))
-    temporal = temporal.apply_step(
-        TemporalRewriteStep.add_assign("n", TermValue(1), blame="builder.py:3:0")
+    setup_ctx = ReduceContext(temporal=TemporalContext.empty())
+    setup_ctx = bind_temporal(
+        setup_ctx,
+        "n",
+        TermValue(10),
+        owner="temporal builder setup",
+        blame="builder.py:2:0",
     )
+    setup_ctx = rewrite_temporal(
+        setup_ctx,
+        AddAssignRewriteOperation(
+            name="n",
+            value=TermValue(1),
+            owner="temporal builder setup",
+            blame="builder.py:3:0",
+        ),
+        owner="temporal builder setup",
+        blame="builder.py:3:0",
+    )
+    temporal = setup_ctx.temporal
     build_ctx = FactoryBuildContext(
         filename="builder.py",
         catalog=_temporal_catalog(),
@@ -121,8 +142,11 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
             "SequenceConstructionOperation",
         ),
         ("MapSugar", "map_with", "MapOperation"),
+        ("LambdaCallable", "bind_with", "BindValueOperation"),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+        ("LambdaCallable", "bind_with", "BindValueOperation"),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+        ("LambdaCallable", "bind_with", "BindValueOperation"),
         ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("AddSugar", "add_with", "AddOperation"),
         ("ToListSugar", "materialize_with", "MaterializeOperation"),
@@ -130,28 +154,56 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
 
 
 def test_temporal_add_assign_rewrite_dispatches_through_the_bound_floor():
-    temporal = TemporalContext.empty().bind_value("n", TermValue(10))
-    reduce_ctx = ReduceContext(temporal=temporal)
-
-    rewritten = temporal.apply_step(
-        TemporalRewriteStep.add_assign("n", TermValue(1), blame="builder.py:3:0"),
-        ctx=reduce_ctx,
+    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
+    reduce_ctx = bind_temporal(
+        reduce_ctx,
+        "n",
+        TermValue(10),
+        owner="TemporalContext",
+        blame="builder.py:2:0",
     )
 
-    assert rewritten.value_for("n") == TermValue(11)
-    assert reduce_ctx.operation_log == [("TemporalContext", "add_with", "AddOperation")]
+    rewritten = rewrite_temporal(
+        reduce_ctx,
+        AddAssignRewriteOperation(
+            name="n",
+            value=TermValue(1),
+            owner="TemporalContext",
+            blame="builder.py:3:0",
+        ),
+        owner="TemporalContext",
+        blame="builder.py:3:0",
+    )
+
+    assert rewritten.temporal.value_for("n") == TermValue(11)
+    assert reduce_ctx.operation_log == [
+        ("TemporalContext", "bind_with", "BindValueOperation"),
+        ("TemporalContext", "rewrite_with", "AddAssignRewriteOperation"),
+        ("TemporalContext", "add_with", "AddOperation"),
+    ]
 
 
 def test_temporal_add_assign_bad_operand_names_the_floor_gap():
-    temporal = TemporalContext.empty().bind_value("n", TermValue(10))
+    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
+    reduce_ctx = bind_temporal(
+        reduce_ctx,
+        "n",
+        TermValue(10),
+        owner="TemporalContext",
+        blame="builder.py:2:0",
+    )
 
     with pytest.raises(FactoryGap) as gap:
-        temporal.apply_step(
-            TemporalRewriteStep.add_assign(
-                "n",
-                ArrayLiteral((TermValue(1),)),
+        rewrite_temporal(
+            reduce_ctx,
+            AddAssignRewriteOperation(
+                name="n",
+                value=ArrayLiteral((TermValue(1),)),
+                owner="TemporalContext",
                 blame="builder.py:3:0",
-            )
+            ),
+            owner="TemporalContext",
+            blame="builder.py:3:0",
         )
 
     assert gap.value.info == {

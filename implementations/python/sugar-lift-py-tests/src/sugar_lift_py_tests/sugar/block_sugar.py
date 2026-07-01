@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import (
@@ -19,6 +19,7 @@ from sugar_lift_py_tests.outcome import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.temporal import bind_temporal
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,13 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
             if isinstance(value, SupportValue):
                 continue  # Support (a comment) is inert -- absorbed
             if isinstance(value, BoundVar):
-                ctx = replace(ctx, temporal=ctx.temporal.bind_value(value.name, value))
+                ctx = bind_temporal(
+                    ctx,
+                    value.name,
+                    value,
+                    owner="BlockSugar",
+                    blame=self.blame,
+                )
                 continue
             if isinstance(value, ReturnValue):
                 outcomes.append(_guard_exit(value, pending, ctx, self.blame))
@@ -76,9 +83,12 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 exit_emitted = False
                 for statement in value.statements:
                     if isinstance(statement, BoundVar):
-                        ctx = replace(
+                        ctx = bind_temporal(
                             ctx,
-                            temporal=ctx.temporal.bind_value(statement.name, statement),
+                            statement.name,
+                            statement,
+                            owner="BlockSugar",
+                            blame=self.blame,
                         )
                         continue
                     exit_emitted = True
