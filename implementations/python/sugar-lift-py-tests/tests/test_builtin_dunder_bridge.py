@@ -13,7 +13,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -112,6 +112,30 @@ def _write_builtin_dunder_assertion(
     )
 
 
+def _write_divmod_dunder_assertion(
+    project: Path,
+    *,
+    method_name: str,
+    expression: str,
+    expected: int,
+) -> None:
+    project.mkdir()
+    (project / "test_divmod_dunder.py").write_text(
+        (
+            "class Box:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n"
+            "\n"
+            f"    def {method_name}(self, other):\n"
+            "        return self.x\n"
+            "\n"
+            "def test_divmod_dunder():\n"
+            f"    assert [10, 20, 30][{expression}] == {expected}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 def _first_inv(doc: dict) -> dict:
     return doc["ir"][0]["inv"]
 
@@ -176,6 +200,50 @@ class Box:
     )
 
 
+def test_divmod_builtin_projects_left_object_to_dunder_method_bridge() -> None:
+    source = """\
+class Box:
+    def __divmod__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "divmod(Box(), 2)")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "Box.__divmod__"
+    assert fol(floor_to_term(value, owner="divmod dunder bridge")) == fol(
+        ctor(
+            "call:Box.__divmod__",
+            [
+                _object_identity("Box", "t.py:1:7"),
+                num(2),
+            ],
+        )
+    )
+
+
+def test_divmod_builtin_projects_right_object_to_reflected_dunder_method_bridge() -> None:
+    source = """\
+class Box:
+    def __rdivmod__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "divmod(2, Box())")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "Box.__rdivmod__"
+    assert fol(floor_to_term(value, owner="reflected divmod dunder bridge")) == fol(
+        ctor(
+            "call:Box.__rdivmod__",
+            [
+                _object_identity("Box", "t.py:1:10"),
+                num(2),
+            ],
+        )
+    )
+
+
 def test_imported_builtin_like_call_stays_external_bridge() -> None:
     source = """\
 class Box:
@@ -233,6 +301,37 @@ def test_len_and_hash_builtin_lift_rpc_emit_sat_and_unsat_twins(
             bad,
             builtin_name=builtin_name,
             method_name=method_name,
+            expected=10,
+        )
+
+        good_inv = _first_inv(_run_lift_rpc(good))
+        bad_inv = _first_inv(_run_lift_rpc(bad))
+
+        assert _formula_status(good_inv) == "sat"
+        assert _formula_values(good_inv) == (20, 20)
+        assert _formula_status(bad_inv) == "unsat"
+        assert _formula_values(bad_inv) == (20, 10)
+
+
+def test_divmod_builtin_dunder_lift_rpc_emits_sat_and_unsat_twins(
+    tmp_path: Path,
+) -> None:
+    for method_name, expression in (
+        ("__divmod__", "divmod(Box(1), 2)"),
+        ("__rdivmod__", "divmod(2, Box(1))"),
+    ):
+        good = tmp_path / f"{method_name}_good"
+        bad = tmp_path / f"{method_name}_bad"
+        _write_divmod_dunder_assertion(
+            good,
+            method_name=method_name,
+            expression=expression,
+            expected=20,
+        )
+        _write_divmod_dunder_assertion(
+            bad,
+            method_name=method_name,
+            expression=expression,
             expected=10,
         )
 

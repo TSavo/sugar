@@ -233,6 +233,7 @@ _BINARY_DUNDER_METHODS = {
     "/": "__truediv__",
     "//": "__floordiv__",
     "%": "__mod__",
+    "divmod": "__divmod__",
     "**": "__pow__",
     "@": "__matmul__",
 }
@@ -252,6 +253,7 @@ _REFLECTED_BINARY_DUNDER_METHODS = {
     "/": "__rtruediv__",
     "//": "__rfloordiv__",
     "%": "__rmod__",
+    "divmod": "__rdivmod__",
     "**": "__rpow__",
     "@": "__rmatmul__",
     "&": "__rand__",

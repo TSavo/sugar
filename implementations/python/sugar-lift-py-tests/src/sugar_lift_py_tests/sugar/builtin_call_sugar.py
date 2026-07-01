@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import (
+    BinaryOperatorOperation,
     MethodCallOperation,
     StrCoercionOperation,
     perform_operation,
@@ -76,6 +77,61 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 ctx=ctx,
             )
         raise TypeError(f"write more Sugar for builtin call `{self.name}`")
+
+
+@dataclass(frozen=True)
+class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
+    left: SugarBody
+    right: SugarBody
+    blame: str = "<unknown>"
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return (
+            site.observed == "Call"
+            and not site.call_is_method_call()
+            and not site.call_has_keywords()
+            and site.call_target_name() == "divmod"
+            and site.call_arg_count() == 2
+        )
+
+    @classmethod
+    def build(cls, site, ctx) -> Sugar:
+        if not cls.owns(site):
+            raise TypeError("DivmodBuiltinSugar claim built an unsupported builtin call")
+        if _call_is_context_bound(site, ctx):
+            from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+
+            return CallSugar.build(site, ctx)
+        left, right = site.call_args()
+        return cls(
+            left=ctx.build_body(left, SugarRole.TERM),
+            right=ctx.build_body(right, SugarRole.TERM),
+            blame=site.blame,
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        left_outcome = self.left.reduce(ctx)
+        if isinstance(left_outcome, Incomplete):
+            return left_outcome
+        right_outcome = self.right.reduce(ctx)
+        if isinstance(right_outcome, Incomplete):
+            return right_outcome
+        left = complete_value(left_outcome, owner="DivmodBuiltinSugar left")
+        right = complete_value(right_outcome, owner="DivmodBuiltinSugar right")
+        return perform_operation(
+            owner="DivmodBuiltinSugar",
+            blame=self.blame,
+            receiver=left,
+            method_name="binary_operator_with",
+            operation=BinaryOperatorOperation(
+                operator="divmod",
+                right=right,
+                owner="DivmodBuiltinSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
+        )
 
 
 _BUILTIN_DUNDER_METHODS = {

@@ -14,8 +14,6 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
     assert report.r.values == {
         "call_container_slots": 1,
         "mutation_container_slots": 4,
-        "numeric_binary_slots": 1,
-        "reflected_binary_slots": 1,
         "inplace_binary_slots": 13,
         "unary_numeric_slots": 5,
         "numeric_conversion_slots": 4,
@@ -23,7 +21,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "attribute_descriptor_slots": 9,
         "context_async_slots": 7,
     }
-    assert report.r.total == 49
+    assert report.r.total == 47
     assert not report.is_zero
 
 
@@ -42,6 +40,8 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__eq__",
         "__ge__",
         "__truediv__",
+        "__divmod__",
+        "__rdivmod__",
         "__rxor__",
         "__invert__",
     ):
@@ -72,7 +72,7 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
     assert "  inplace_binary_slots: 13" in stdout
-    assert "  total: 49" in stdout
+    assert "  total: 47" in stdout
     assert "missing dunder slots:" in stdout
     assert "  - inplace_binary __iadd__" in stdout
     assert "  - display_conversion __str__" in stdout
