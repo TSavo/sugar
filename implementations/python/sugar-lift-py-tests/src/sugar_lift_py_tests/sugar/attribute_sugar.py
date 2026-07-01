@@ -49,6 +49,8 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             if _is_constructor_gap(gap):
                 raise
             return Complete(SymbolicValue(self.term))
+        except TypeError:
+            return Complete(SymbolicValue(self.term))
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
         receiver = getattr(receiver_outcome, "value", None)
