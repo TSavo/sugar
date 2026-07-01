@@ -6,8 +6,13 @@ from __future__ import annotations
 
 from factory_reduce import reduce_value
 
-from sugar_lift_py_tests.floor import Bv32Value, EncodedStringValue, StringValue
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.floor import (
+    Bv32Value,
+    EncodedStringValue,
+    StringValue,
+    SymbolicValue,
+)
+from sugar_lift_py_tests.ir import ctor, make_var, num
 
 
 def test_subscript_reduces_to_encoded_string_table_and_index():
@@ -15,3 +20,23 @@ def test_subscript_reduces_to_encoded_string_table_and_index():
         "tbl[i]", {"tbl": StringValue("ABCD"), "i": Bv32Value(make_var("i"))}
     )
     assert value == EncodedStringValue(table=(65, 66, 67, 68), indices=(make_var("i"),))
+
+
+def test_subscript_dispatches_symbolic_receiver_to_symbolic_floor_term():
+    value = reduce_value("values[0]", {"values": SymbolicValue(make_var("values"))})
+
+    assert value == SymbolicValue(ctor("py.subscript", [make_var("values"), num(0)]))
+
+
+def test_subscript_dispatches_symbolic_receiver_and_index_to_symbolic_floor_term():
+    value = reduce_value(
+        "values[i]",
+        {
+            "values": SymbolicValue(make_var("values")),
+            "i": SymbolicValue(make_var("i")),
+        },
+    )
+
+    assert value == SymbolicValue(
+        ctor("py.subscript", [make_var("values"), make_var("i")])
+    )
