@@ -121,3 +121,20 @@ def test_if_guard_membership_gap_is_structured():
         "blame=f.py:2:7 observed=Compare:NotIn requested=control-flow guard "
         "fix=add IfSugar lowering for Compare:NotIn"
     )
+
+
+def test_if_guard_call_gap_names_control_flow_call_frontier():
+    with pytest.raises(TypeError) as exc:
+        compose_block(
+            '    if pytest.importorskip("numpy"):\n'
+            '        return "a"\n'
+            "    else:\n"
+            '        return "b"\n'
+        )
+
+    assert str(exc.value) == (
+        "write more Sugar for control-flow guard: owner=IfSugar "
+        "blame=f.py:2:7 observed=call-control-flow-guard:pytest.importorskip "
+        "requested=control-flow guard fix=add IfSugar lowering for guard call "
+        "`pytest.importorskip` or emit a real effect"
+    )

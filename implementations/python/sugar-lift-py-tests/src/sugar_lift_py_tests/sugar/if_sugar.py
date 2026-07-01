@@ -122,12 +122,21 @@ def _cf_guard(frag):
     observed = frag.observed
     if frag.observed == "Compare":
         observed = f"Compare:{','.join(frag.compare_ops()) or 'unknown'}"
+    if frag.observed == "Call":
+        target = (
+            frag.call_qualified_target_name() or frag.call_target_name() or "unknown"
+        )
+        observed = f"call-control-flow-guard:{target}"
     raise TypeError(_cf_gap_message("guard", frag, observed=observed))
 
 
 def _cf_gap_message(kind: str, frag, *, observed: str) -> str:
+    fix = f"add IfSugar lowering for {observed}"
+    if kind == "guard" and observed.startswith("call-control-flow-guard:"):
+        target = observed.split(":", 1)[1]
+        fix = f"add IfSugar lowering for guard call `{target}` or emit a real effect"
     return (
         f"write more Sugar for control-flow {kind}: owner=IfSugar "
         f"blame={frag.blame} observed={observed} requested=control-flow {kind} "
-        f"fix=add IfSugar lowering for {observed}"
+        f"fix={fix}"
     )
