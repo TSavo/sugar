@@ -12,6 +12,8 @@ from .function_callable import FunctionCallable
 from .guarded_return import GuardedReturn
 from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
+from .object_field import ObjectField
+from .object_value import ObjectValue
 from .return_value import ReturnValue
 from .string_value import StringValue
 from .support_value import SupportValue
@@ -31,6 +33,8 @@ __all__ = [
     "GuardedReturn",
     "ImportAliasValue",
     "LambdaCallable",
+    "ObjectField",
+    "ObjectValue",
     "ReturnValue",
     "StringValue",
     "SupportValue",
