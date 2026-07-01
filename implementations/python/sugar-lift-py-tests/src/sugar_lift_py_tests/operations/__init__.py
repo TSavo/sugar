@@ -8,6 +8,7 @@ from .callable_map_operation import CallableMapOperation
 from .contains_operation import ContainsOperation
 from .control_flow_guard_operation import ControlFlowGuardOperation
 from .finally_fallthrough_operation import FinallyFallthroughOperation
+from .inplace_binary_operator_operation import InplaceBinaryOperatorOperation
 from .map_operation import MapOperation
 from .materialize_operation import MaterializeOperation
 from .method_call_operation import MethodCallOperation
@@ -27,6 +28,7 @@ __all__ = [
     "ContainsOperation",
     "ControlFlowGuardOperation",
     "FinallyFallthroughOperation",
+    "InplaceBinaryOperatorOperation",
     "MapOperation",
     "MaterializeOperation",
     "MethodCallOperation",

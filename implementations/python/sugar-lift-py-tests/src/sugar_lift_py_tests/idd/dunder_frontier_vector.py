@@ -13,7 +13,7 @@ class DunderFrontierVector:
 
     @classmethod
     def from_slots(cls, slots: list[DunderSlot]) -> "DunderFrontierVector":
-        values: dict[str, int] = {}
+        values: dict[str, int] = {f"{slot.axis}_slots": 0 for slot in slots}
         for slot in slots:
             if slot.status != "missing":
                 continue

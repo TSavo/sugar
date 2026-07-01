@@ -1,7 +1,8 @@
-"""`x <op>= v` is sugar for `x = x <op> v`. AugAssignSugar is a pure recognizer that owns
-no operator knowledge: it rewrites to a plain assign over the synthesized `x <op> v`
-binop and hands it downstream, so each operator dispatches to its OWN binop sugar -- or
-the factory panics naming the gap.
+"""`x <op>= v` binds `x` to a lazy operation over the old `x` and the rhs.
+
+Non-object values preserve the old binary/bitwise floor behavior. Object values dispatch
+through their in-place data-model slot (`__iadd__`, `__isub__`, ...), so the object bridge
+is not accidentally rewritten through the plain binary dunder.
 
 Every augmented operator composes over the COLLAPSED Number (one value type: Int embeds
 in Real losslessly, so 3 and 3.0 are the same number and 3.0 == 3 is reflexively true).

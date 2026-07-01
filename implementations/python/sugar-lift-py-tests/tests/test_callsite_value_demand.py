@@ -8,7 +8,7 @@ from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.factory import SourceFragment
+from sugar_lift_py_tests.factory import FactoryGap, SourceFragment
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
@@ -187,7 +187,9 @@ class Eq:
         return 1
 """
 
-    fragment = SourceFragment.from_node(ast.parse("Eq() == Eq()", mode="eval").body, "t.py")
+    fragment = SourceFragment.from_node(
+        ast.parse("Eq() == Eq()", mode="eval").body, "t.py"
+    )
     assert ObjectEqualityTermSugar.owns(fragment)
 
     value = _reduce_expr(source, "Eq() == Eq()")
@@ -289,6 +291,88 @@ class X:
     value = _reduce_expr(source, "[10, 20, 30][2 + X(1)]")
 
     assert value == TermValue(20)
+
+
+def test_object_inplace_add_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __iadd__(self, other):
+        return other.x
+
+def t():
+    x = X(0)
+    x += X(1)
+    return [10, 20, 30][x]
+"""
+
+    try:
+        value = _reduce_function_return(source, "t")
+    except FactoryGap as exc:
+        pytest.fail(f"object inplace add should dispatch to __iadd__: {exc}")
+
+    assert value == TermValue(20)
+
+
+def test_object_inplace_add_value_demand_distinguishes_self_from_rhs() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __iadd__(self, other):
+        return self.x
+
+def t():
+    x = X(0)
+    x += X(1)
+    return [10, 20, 30][x]
+"""
+
+    value = _reduce_function_return(source, "t")
+
+    assert value == TermValue(10)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "statement"),
+    [
+        ("__iadd__", "x += Op()"),
+        ("__isub__", "x -= Op()"),
+        ("__imul__", "x *= Op()"),
+        ("__imatmul__", "x @= Op()"),
+        ("__itruediv__", "x /= Op()"),
+        ("__ifloordiv__", "x //= Op()"),
+        ("__imod__", "x %= Op()"),
+        ("__ipow__", "x **= Op()"),
+        ("__ilshift__", "x <<= Op()"),
+        ("__irshift__", "x >>= Op()"),
+        ("__iand__", "x &= Op()"),
+        ("__ixor__", "x ^= Op()"),
+        ("__ior__", "x |= Op()"),
+    ],
+)
+def test_expanded_object_inplace_binary_projects_to_dunder_method_bridge(
+    method_name: str, statement: str
+) -> None:
+    source = f"""\
+class Op:
+    def {method_name}(self, other):
+        return 1
+
+def t():
+    x = Op()
+    {statement}
+    return x
+"""
+
+    value = _reduce_function_return(source, "t")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Op.{method_name}"
+    assert len(value.arg_values) == 2
 
 
 def test_object_subtract_projects_to_dunder_method_bridge() -> None:

@@ -104,6 +104,27 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def inplace_binary_operator_with(self, operation, ctx):
+        del ctx
+        method_name = _INPLACE_BINARY_DUNDER_METHODS.get(operation.operator)
+        if method_name is None:
+            return self._floor_gap(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"{self.class_name}{operation.operator}={type(operation.right).__name__}",
+                requested="object in-place binary data-model method",
+                fix=(
+                    f"add ObjectValue in-place data-model dispatch for "
+                    f"operator `{operation.operator}`"
+                ),
+            )
+        return self.call_method_value(
+            method_name,
+            (operation.right,),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
     def unary_operator_with(self, operation, ctx):
         del ctx
         method_name = _UNARY_DUNDER_METHODS.get(operation.operator)
@@ -261,6 +282,22 @@ _REFLECTED_BINARY_DUNDER_METHODS = {
     "^": "__rxor__",
     "<<": "__rlshift__",
     ">>": "__rrshift__",
+}
+
+_INPLACE_BINARY_DUNDER_METHODS = {
+    "+": "__iadd__",
+    "-": "__isub__",
+    "*": "__imul__",
+    "/": "__itruediv__",
+    "//": "__ifloordiv__",
+    "%": "__imod__",
+    "**": "__ipow__",
+    "@": "__imatmul__",
+    "&": "__iand__",
+    "|": "__ior__",
+    "^": "__ixor__",
+    "<<": "__ilshift__",
+    ">>": "__irshift__",
 }
 
 _UNARY_DUNDER_METHODS = {

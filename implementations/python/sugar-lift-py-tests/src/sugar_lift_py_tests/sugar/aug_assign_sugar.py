@@ -1,39 +1,98 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor import BoundVar
+from sugar_lift_py_tests.operations import (
+    InplaceBinaryOperatorOperation,
+    perform_operation,
+)
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar_body import SugarBody
+
+_INPLACE_SYMBOL: dict[str, str] = {
+    "Add": "+",
+    "Sub": "-",
+    "Mult": "*",
+    "Div": "/",
+    "FloorDiv": "//",
+    "Mod": "%",
+    "Pow": "**",
+    "MatMult": "@",
+    "BitAnd": "&",
+    "BitOr": "|",
+    "BitXor": "^",
+    "LShift": "<<",
+    "RShift": ">>",
+}
 
 
+@dataclass(frozen=True)
 class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
-    """`x += v` is sugar for `x = x + v`.
+    """`x <op>= v` binds x to a lazy in-place binary operation over the old x."""
 
-    A pure recognizer that owns NO operator knowledge. It rewrites to an AssignSugar over
-    the synthesized `x <op> v` binop (`aug_assign_binop` on the gateway) and hands that
-    downstream through the factory. So the operator dispatches to its own binop sugar
-    (Add -> BinOpSugar) -- or, when that binop does not exist yet (Sub, Mult, ...), the
-    factory panics naming the gap. That panic is the CORRECT behavior: `-=` is not
-    silently wrong, it is loudly unwritten.
-
-    It reuses AssignSugar's bind (which closes over its definition scope, so the rebind
-    reads the old x) and the binop's add. It re-implements neither, which is exactly why
-    it stays three lines: `+=`, and every other augmented op, for free once its binop
-    lands.
-    """
+    name: str
+    value: SugarBody
 
     @classmethod
     def owns(cls, fragment) -> bool:
         return (
             fragment.observed == "AugAssign"
             and fragment.aug_assign_target().observed == "Name"
+            and fragment.aug_assign_op() in _INPLACE_SYMBOL
         )
 
     @classmethod
     def build(cls, fragment, ctx):
-        # Rewrite to a plain assign of the synthesized binop -- never instantiated as an
-        # AugAssignSugar; the downstream AssignSugar + binop sugar do all the work.
-        from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
-
-        return AssignSugar(
+        value = _AugAssignValue(
+            operator=_INPLACE_SYMBOL[fragment.aug_assign_op()],
+            left=ctx.build_body(fragment.aug_assign_target(), SugarRole.TERM),
+            right=ctx.build_body(fragment.aug_assign_value(), SugarRole.TERM),
+            blame=fragment.blame,
+        )
+        return cls(
             name=fragment.aug_assign_target().name_id(),
-            value=ctx.build_body(fragment.aug_assign_binop(), SugarRole.TERM),
+            value=SugarBody(value, SugarRole.TERM),
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        return Complete(BoundVar(self.name, self.value, scope=ctx))
+
+
+@dataclass(frozen=True)
+class _AugAssignValue:
+    operator: str
+    left: SugarBody
+    right: SugarBody
+    blame: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.left, SugarBody):
+            raise TypeError("AugAssignSugar left must be a factory-built body")
+        if not isinstance(self.right, SugarBody):
+            raise TypeError("AugAssignSugar right must be a factory-built body")
+
+    def desugar(self, ctx) -> Outcome:
+        left_outcome = self.left.reduce(ctx)
+        if isinstance(left_outcome, Incomplete):
+            return left_outcome
+        right_outcome = self.right.reduce(ctx)
+        if isinstance(right_outcome, Incomplete):
+            return right_outcome
+        left = complete_value(left_outcome, owner="AugAssignSugar left")
+        right = complete_value(right_outcome, owner="AugAssignSugar right")
+        return perform_operation(
+            owner="AugAssignSugar",
+            blame=self.blame,
+            receiver=left,
+            method_name="inplace_binary_operator_with",
+            operation=InplaceBinaryOperatorOperation(
+                operator=self.operator,
+                right=right,
+                owner="AugAssignSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
         )
