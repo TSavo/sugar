@@ -4,12 +4,11 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
-from sugar_lift_py_tests.floor import (
-    BlockValue,
-    GuardedRaise,
-    GuardedReturn,
-    RaiseValue,
-    ReturnValue,
+from sugar_lift_py_tests.floor import BlockValue
+from sugar_lift_py_tests.operations import (
+    FinallyFallthroughOperation,
+    RouteRaisesOperation,
+    perform_operation,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -65,14 +64,25 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         exit_outcome = self._try_exit(ctx)
         if self.finally_body is None:
             return exit_outcome
-        return _apply_finally(exit_outcome, self.finally_body, ctx)
+        return _apply_finally(exit_outcome, self.finally_body, ctx, self.blame)
 
     def _try_exit(self, ctx) -> Outcome:
         outcome = self.body.reduce(ctx)
         if isinstance(outcome, Incomplete):
             return self._route_incomplete(outcome, ctx)
         block = complete_value(outcome, owner="try body")
-        routed = self._route_block_raises(block, ctx)
+        routed = perform_operation(
+            owner="TrySugar",
+            blame=self.blame,
+            receiver=block,
+            method_name="route_raises_with",
+            operation=RouteRaisesOperation(
+                self.handlers,
+                owner="TrySugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
+        )
         if isinstance(routed, Incomplete):
             return routed
         block = complete_value(routed, owner="try routed body")
@@ -89,38 +99,6 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                 return handler.reduce(ctx, effect)
         return outcome
 
-    def _route_block_raises(self, block: BlockValue, ctx) -> Outcome:
-        statements: list[object] = []
-        fall_through = list(block.fall_through)
-        for statement in block.statements:
-            routed = self._route_raise_statement(statement, ctx)
-            if routed is None:
-                statements.append(statement)
-                continue
-            if isinstance(routed, Incomplete):
-                return routed
-            handled_block = complete_value(routed, owner="try handler")
-            guards = _raise_guards(statement)
-            statements.extend(
-                _with_guards(handled_statement, guards)
-                for handled_statement in handled_block.statements
-            )
-            if handled_block.fall_through:
-                fall_through.append(
-                    _guard_conjunction(guards + handled_block.fall_through)
-                )
-        return Complete(BlockValue(tuple(statements), tuple(fall_through)))
-
-    def _route_raise_statement(self, statement: object, ctx) -> Outcome | None:
-        effect = _raise_effect(statement)
-        if effect is None:
-            return None
-        handler_ctx = _raise_scope(statement) or ctx
-        for handler in self.handlers:
-            if handler.matches(effect):
-                return handler.reduce(handler_ctx, effect)
-        return None
-
 
 def _build_optional(site, ctx) -> SugarBody | None:
     if site is None:
@@ -132,7 +110,9 @@ def _runs_else(block: BlockValue) -> bool:
     return not block.statements
 
 
-def _apply_finally(incoming: Outcome, finally_body: SugarBody, ctx) -> Outcome:
+def _apply_finally(
+    incoming: Outcome, finally_body: SugarBody, ctx, blame: str
+) -> Outcome:
     outcome = finally_body.reduce(ctx)
     if isinstance(outcome, Incomplete):
         return outcome
@@ -149,65 +129,15 @@ def _apply_finally(incoming: Outcome, finally_body: SugarBody, ctx) -> Outcome:
             )
         )
     incoming_block = complete_value(incoming, owner="try incoming exit")
-    return Complete(_merge_finally_fallthrough(final_block, incoming_block))
-
-
-def _merge_finally_fallthrough(
-    final_block: BlockValue, incoming_block: BlockValue
-) -> BlockValue:
-    guarded = list(final_block.statements)
-    guarded.extend(
-        _with_guards(statement, final_block.fall_through)
-        for statement in incoming_block.statements
+    return perform_operation(
+        owner="TrySugar.finally",
+        blame=blame,
+        receiver=final_block,
+        method_name="merge_finally_with",
+        operation=FinallyFallthroughOperation(
+            incoming_block=incoming_block,
+            owner="TrySugar.finally",
+            blame=blame,
+        ),
+        ctx=ctx,
     )
-    return BlockValue(tuple(guarded))
-
-
-def _with_guards(statement, guards: tuple):
-    if isinstance(statement, ReturnValue):
-        return GuardedReturn(guards, statement.value) if guards else statement
-    if isinstance(statement, GuardedReturn):
-        return GuardedReturn(guards + statement.guards, statement.value)
-    if isinstance(statement, RaiseValue):
-        return (
-            GuardedRaise(guards, statement.effect, statement.scope)
-            if guards
-            else statement
-        )
-    if isinstance(statement, GuardedRaise):
-        return GuardedRaise(
-            guards + statement.guards,
-            statement.effect,
-            statement.scope,
-        )
-    raise TypeError(
-        f"write more TrySugar finally fallthrough for `{type(statement).__name__}`"
-    )
-
-
-def _raise_effect(statement: object) -> RaiseEffect | None:
-    if isinstance(statement, RaiseValue):
-        return statement.effect
-    if isinstance(statement, GuardedRaise):
-        return statement.effect
-    return None
-
-
-def _raise_guards(statement: object) -> tuple:
-    if isinstance(statement, GuardedRaise):
-        return statement.guards
-    return ()
-
-
-def _raise_scope(statement: object):
-    if isinstance(statement, (RaiseValue, GuardedRaise)):
-        return statement.scope
-    return None
-
-
-def _guard_conjunction(guards: tuple):
-    if len(guards) == 1:
-        return guards[0]
-    from sugar_lift_py_tests.ir import and_
-
-    return and_(list(guards))

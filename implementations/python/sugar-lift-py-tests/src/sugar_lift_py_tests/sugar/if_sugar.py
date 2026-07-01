@@ -6,10 +6,6 @@ from decimal import Decimal
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import (
     BlockValue,
-    GuardedRaise,
-    GuardedReturn,
-    RaiseValue,
-    ReturnValue,
 )
 from sugar_lift_py_tests.ir import (
     ctor,
@@ -26,21 +22,10 @@ from sugar_lift_py_tests.ir import (
     real_lit,
     str_const,
 )
+from sugar_lift_py_tests.operations import ControlFlowGuardOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
-
-
-def _guard(stmt, extra: tuple):
-    if isinstance(stmt, ReturnValue):
-        return GuardedReturn(extra, stmt.value)
-    if isinstance(stmt, GuardedReturn):
-        return GuardedReturn(extra + stmt.guards, stmt.value)
-    if isinstance(stmt, RaiseValue):
-        return GuardedRaise(extra, stmt.effect, stmt.scope)
-    if isinstance(stmt, GuardedRaise):
-        return GuardedRaise(extra + stmt.guards, stmt.effect, stmt.scope)
-    raise TypeError(f"if branch yielded a non-return outcome `{type(stmt).__name__}`")
 
 
 @dataclass(frozen=True)
@@ -53,6 +38,7 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
     test: object  # a guard Formula lifted from the `if` test
     then: SugarBody
     else_block: object  # SugarBody | None
+    blame: str
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -70,18 +56,40 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             else None
         )
         return cls(
-            test=_cf_guard(site.if_test()), then=then_block, else_block=else_block
+            test=_cf_guard(site.if_test()),
+            then=then_block,
+            else_block=else_block,
+            blame=site.blame,
         )
 
     def desugar(self, ctx) -> Outcome:
         then_bv = complete_value(self.then.reduce(ctx), owner="if then-block")
-        guarded = [_guard(stmt, (self.test,)) for stmt in then_bv.statements]
+        then_guarded = self._guard_block(then_bv, (self.test,), ctx)
+        guarded = list(then_guarded.statements)
         if self.else_block is not None:
             else_bv = complete_value(self.else_block.reduce(ctx), owner="if else-block")
             negated = (not_(self.test),)
-            guarded.extend(_guard(stmt, negated) for stmt in else_bv.statements)
+            else_guarded = self._guard_block(else_bv, negated, ctx)
+            guarded.extend(else_guarded.statements)
             return Complete(BlockValue(tuple(guarded)))
         return Complete(BlockValue(tuple(guarded), (not_(self.test),)))
+
+    def _guard_block(self, block: BlockValue, guards: tuple, ctx) -> BlockValue:
+        return complete_value(
+            perform_operation(
+                owner="IfSugar",
+                blame=self.blame,
+                receiver=block,
+                method_name="guard_with",
+                operation=ControlFlowGuardOperation(
+                    guards,
+                    owner="IfSugar",
+                    blame=self.blame,
+                ),
+                ctx=ctx,
+            ),
+            owner="if guarded block",
+        )
 
 
 def _cf_operand(frag):

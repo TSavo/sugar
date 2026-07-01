@@ -6,12 +6,11 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import (
     BlockValue,
     BoundVar,
-    GuardedRaise,
-    GuardedReturn,
     RaiseValue,
     ReturnValue,
     SupportValue,
 )
+from sugar_lift_py_tests.operations import ControlFlowGuardOperation, perform_operation
 from sugar_lift_py_tests.outcome import (
     Complete,
     Incomplete,
@@ -34,6 +33,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
     """
 
     statements: tuple[SugarBody, ...]
+    blame: str
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -46,7 +46,8 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             statements=tuple(
                 ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in site.statements()
-            )
+            ),
+            blame=site.blame,
         )
 
     def desugar(self, ctx) -> Outcome:
@@ -66,16 +67,10 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 ctx = replace(ctx, temporal=ctx.temporal.bind_value(value.name, value))
                 continue
             if isinstance(value, ReturnValue):
-                outcomes.append(
-                    GuardedReturn(pending, value.value) if pending else value
-                )
+                outcomes.append(_guard_exit(value, pending, ctx, self.blame))
                 return Complete(BlockValue(tuple(outcomes)))
             if isinstance(value, RaiseValue):
-                outcomes.append(
-                    GuardedRaise(pending, value.effect, value.scope)
-                    if pending
-                    else value
-                )
+                outcomes.append(_guard_exit(value, pending, ctx, self.blame))
                 return Complete(BlockValue(tuple(outcomes)))
             if isinstance(value, BlockValue):
                 exit_emitted = False
@@ -86,39 +81,34 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                             temporal=ctx.temporal.bind_value(statement.name, statement),
                         )
                         continue
-                    if isinstance(statement, RaiseValue):
-                        exit_emitted = True
-                        outcomes.append(
-                            GuardedRaise(pending, statement.effect, statement.scope)
-                            if pending
-                            else statement
-                        )
-                        continue
-                    if isinstance(statement, ReturnValue):
-                        exit_emitted = True
-                        outcomes.append(
-                            GuardedReturn(pending, statement.value)
-                            if pending
-                            else statement
-                        )
-                        continue
-                    if isinstance(statement, GuardedRaise):
-                        exit_emitted = True
-                        outcomes.append(
-                            GuardedRaise(
-                                pending + statement.guards,
-                                statement.effect,
-                                statement.scope,
-                            )
-                        )
-                        continue
                     exit_emitted = True
-                    outcomes.append(
-                        GuardedReturn(pending + statement.guards, statement.value)
-                    )
+                    outcomes.append(_guard_exit(statement, pending, ctx, self.blame))
                 if exit_emitted and not value.fall_through:
                     return Complete(BlockValue(tuple(outcomes)))
                 pending = pending + value.fall_through
                 continue
             outcomes.append(value)
         return Complete(BlockValue(tuple(outcomes), pending))
+
+
+def _guard_exit(statement: object, guards: tuple, ctx, blame: str):
+    if not guards:
+        return statement
+    guarded = complete_value(
+        perform_operation(
+            owner="BlockSugar",
+            blame=blame,
+            receiver=BlockValue((statement,)),
+            method_name="guard_with",
+            operation=ControlFlowGuardOperation(
+                guards,
+                owner="BlockSugar",
+                blame=blame,
+            ),
+            ctx=ctx,
+        ),
+        owner="block guarded exit",
+    )
+    if len(guarded.statements) != 1:
+        raise TypeError("BlockSugar guard dispatch must preserve one exit")
+    return guarded.statements[0]
