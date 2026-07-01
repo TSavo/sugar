@@ -135,6 +135,11 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
 
 
 _BUILTIN_DUNDER_METHODS = {
+    "abs": "__abs__",
+    "round": "__round__",
+    "floor": "__floor__",
+    "ceil": "__ceil__",
+    "trunc": "__trunc__",
     "len": "__len__",
     "hash": "__hash__",
 }

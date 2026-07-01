@@ -7,10 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, num, str_const
@@ -241,6 +243,97 @@ class Box:
                 num(2),
             ],
         )
+    )
+
+
+def test_abs_builtin_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Box:
+    def __abs__(self):
+        return 1
+"""
+
+    try:
+        value = _reduce_expr(source, "abs(Box())")
+    except FactoryGap as exc:
+        pytest.fail(
+            "expected abs(Box()) to dispatch to Box.__abs__, "
+            f"got {exc.info['observed']}: {exc.info['fix']}"
+        )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "Box.__abs__"
+    assert fol(floor_to_term(value, owner="abs dunder bridge")) == fol(
+        ctor("call:Box.__abs__", [_object_identity("Box", "t.py:1:4")])
+    )
+
+
+@pytest.mark.parametrize(
+    ("builtin_name", "method_name"),
+    [
+        ("abs", "__abs__"),
+        ("round", "__round__"),
+        ("floor", "__floor__"),
+        ("ceil", "__ceil__"),
+        ("trunc", "__trunc__"),
+    ],
+)
+def test_unary_numeric_builtin_projects_to_dunder_method_bridge(
+    builtin_name: str, method_name: str
+) -> None:
+    source = f"""\
+class Box:
+    def {method_name}(self):
+        return 1
+"""
+
+    value = _reduce_expr(source, f"{builtin_name}(Box())")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Box.{method_name}"
+    assert len(value.arg_values) == 1
+
+
+@pytest.mark.parametrize(
+    ("builtin_name", "method_name"),
+    [
+        ("abs", "__abs__"),
+        ("round", "__round__"),
+        ("floor", "__floor__"),
+        ("ceil", "__ceil__"),
+        ("trunc", "__trunc__"),
+    ],
+)
+def test_unary_numeric_builtin_dunder_can_drive_array_index_value_demand(
+    builtin_name: str, method_name: str
+) -> None:
+    source = f"""\
+class Box:
+    def {method_name}(self):
+        return 1
+"""
+
+    value = _reduce_expr(source, f"[10, 20, 30][{builtin_name}(Box())]")
+
+    assert value == TermValue(20)
+
+
+def test_imported_math_floor_stays_external_bridge() -> None:
+    source = """\
+class Box:
+    def __floor__(self):
+        return 1
+"""
+
+    value = _reduce_expr(
+        source,
+        "floor(Box())",
+        from_imports={"floor": ("math", "floor")},
+    )
+
+    assert isinstance(value, SymbolicValue)
+    assert fol(value.term) == fol(
+        ctor("call:math.floor", [_object_identity("Box", "t.py:1:6")])
     )
 
 
