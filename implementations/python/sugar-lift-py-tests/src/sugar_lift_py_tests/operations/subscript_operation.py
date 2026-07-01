@@ -26,7 +26,9 @@ class SubscriptOperation:
     def subscript_string(self, receiver: StringValue, ctx: object) -> Outcome:
         del ctx
         if isinstance(self.index, SliceValue):
-            _raise_string_slice_gap(self.blame)
+            return _subscript_string_slice(receiver, self.index, self.blame)
+        if isinstance(self.index, TermValue) and type(self.index.value) is int:
+            return Complete(StringValue(receiver.value[self.index.value]))
         return Complete(
             EncodedStringValue(
                 table=tuple(ord(ch) for ch in receiver.value),
@@ -60,13 +62,41 @@ def _string_index_term(value: FloorValue):
     )
 
 
-def _raise_string_slice_gap(blame: str) -> None:
+def _subscript_string_slice(
+    receiver: StringValue, index: SliceValue, blame: str
+) -> Outcome:
+    lower = _concrete_slice_bound(index.lower, blame)
+    upper = _concrete_slice_bound(index.upper, blame)
+    step = _concrete_slice_bound(index.step, blame)
+    return Complete(StringValue(receiver.value[slice(lower, upper, step)]))
+
+
+def _concrete_slice_bound(value: FloorValue | None, blame: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, TermValue) and type(value.value) is int:
+        return value.value
+    _raise_string_slice_gap(
+        blame=blame,
+        observed=type(value).__name__,
+        requested="concrete slice bounds",
+        fix="add symbolic StringValue slice lowering",
+    )
+
+
+def _raise_string_slice_gap(
+    *,
+    blame: str,
+    observed: str,
+    requested: str,
+    fix: str,
+) -> None:
     info = FactoryGapInfo(
         owner="StringSubscriptSugar.string_slice",
         blame=blame,
-        observed="SliceValue",
-        requested="StringValue slice lowering",
-        fix="add concrete StringValue slice lowering",
+        observed=observed,
+        requested=requested,
+        fix=fix,
         gap_kind="Floor",
         gap_locus="construction",
     )
@@ -75,7 +105,7 @@ def _raise_string_slice_gap(blame: str) -> None:
         FactoryAuditRow(
             role="string_slice",
             status="floor-gap",
-            observed="SliceValue",
+            observed=observed,
             blame=blame,
             selected=None,
             candidates=[],

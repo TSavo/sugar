@@ -84,11 +84,26 @@ def test_subscript_dispatches_symbolic_receiver_with_tuple_slice_index():
     )
 
 
-def test_string_slice_reaches_named_floor_gap():
+def test_string_scalar_index_uses_python_string_value():
+    value = reduce_value("'abcde'[-1]")
+
+    assert value == StringValue("e")
+
+
+def test_string_slice_uses_python_string_value():
+    assert reduce_value("'abcdef'[1:3]") == StringValue("bc")
+    assert reduce_value("'abcdef'[::2]") == StringValue("ace")
+    assert reduce_value("'abcdef'[-2:]") == StringValue("ef")
+
+
+def test_symbolic_string_slice_bound_reaches_named_floor_gap():
     with pytest.raises(FactoryGap) as raised:
-        reduce_value("'abcdef'[1:3]")
+        reduce_value(
+            "s[i:3]",
+            {"s": StringValue("abcdef"), "i": SymbolicValue(make_var("i"))},
+        )
 
     assert raised.value.info["owner"] == "StringSubscriptSugar.string_slice"
-    assert raised.value.info["observed"] == "SliceValue"
-    assert raised.value.info["requested"] == "StringValue slice lowering"
-    assert raised.value.info["fix"] == "add concrete StringValue slice lowering"
+    assert raised.value.info["observed"] == "SymbolicValue"
+    assert raised.value.info["requested"] == "concrete slice bounds"
+    assert raised.value.info["fix"] == "add symbolic StringValue slice lowering"
