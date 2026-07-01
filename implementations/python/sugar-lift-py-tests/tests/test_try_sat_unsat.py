@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[4]
+PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
+
+
+def _run_lift_rpc(project: Path) -> dict:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(PY_TESTS / "src"),
+    }
+    request = "\n".join(
+        json.dumps(message)
+        for message in [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "lift",
+                "params": {"workspace_root": str(project), "source_paths": ["."]},
+            },
+            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
+        ]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
+        input=request + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
+    response = next(item for item in responses if item.get("id") == 2)
+    assert "error" not in response, response
+    return response["result"]
+
+
+def _write_project(project: Path, *, body: str, expected: int) -> None:
+    project.mkdir()
+    (project / "test_try_wrapped.py").write_text(
+        (
+            "def wrapped(x):\n"
+            f"{body}\n"
+            "\n"
+            "def test_wrapped():\n"
+            f"    assert wrapped(5) == {expected}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
+def _callsite_status(doc: dict) -> str:
+    values = _callsite_values(doc)
+    return "sat" if len(set(values)) == 1 else "unsat"
+
+
+def _callsite_values(doc: dict) -> list[int]:
+    values: list[int] = []
+    for contract in doc["ir"]:
+        if not contract["name"].endswith("::assertion"):
+            continue
+        inv = contract["inv"]
+        assert inv["kind"] == "atomic"
+        assert inv["name"] == "="
+        left, right = inv["args"]
+        if left == _wrapped_call_term():
+            values.append(right["value"])
+    assert values
+    return values
+
+
+def _wrapped_call_term() -> dict:
+    return {
+        "kind": "ctor",
+        "name": "call:wrapped",
+        "args": [
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": 5,
+            }
+        ],
+    }
+
+
+def _post_rhs(doc: dict) -> dict:
+    post_contracts = [contract for contract in doc["ir"] if contract.get("post")]
+    assert len(post_contracts) == 1
+    post = post_contracts[0]["post"]
+    assert post["kind"] == "atomic"
+    assert post["name"] == "="
+    left, right = post["args"]
+    assert left == {"kind": "var", "name": "out"}
+    return right
+
+
+def _add_rhs(addend: int) -> dict:
+    return {
+        "kind": "ctor",
+        "name": "+",
+        "args": [
+            {"kind": "var", "name": "x"},
+            {
+                "kind": "const",
+                "sort": {"kind": "primitive", "name": "Int"},
+                "value": addend,
+            },
+        ],
+    }
+
+
+def _selected_sugars(doc: dict) -> list[str]:
+    return [row["selected"] for row in doc["factoryAuditSummary"]["factoryWalk"]]
+
+
+def test_try_body_sat_and_unsat_twins_go_through_lift_rpc(tmp_path: Path) -> None:
+    body = (
+        "    try:\n"
+        "        return x + 1\n"
+        "    except Exception:\n"
+        "        return 99\n"
+    )
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=6)
+    _write_project(bad, body=body, expected=7)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post_rhs(good_doc) == _add_rhs(1)
+    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_status(good_doc) == "sat"
+    assert _callsite_values(bad_doc) == [6, 7]
+    assert _callsite_status(bad_doc) == "unsat"
+    assert "TrySugar" in _selected_sugars(good_doc)
+
+
+def test_try_except_raise_sat_and_unsat_twins_go_through_lift_rpc(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "    try:\n"
+        "        raise ValueError('boom')\n"
+        "    except ValueError:\n"
+        "        return x + 1\n"
+    )
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=6)
+    _write_project(bad, body=body, expected=7)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post_rhs(good_doc) == _add_rhs(1)
+    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_status(good_doc) == "sat"
+    assert _callsite_values(bad_doc) == [6, 7]
+    assert _callsite_status(bad_doc) == "unsat"
+    assert "TrySugar" in _selected_sugars(good_doc)
+
+
+def test_try_finally_override_sat_and_unsat_twins_go_through_lift_rpc(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "    try:\n" "        return x + 1\n" "    finally:\n" "        return x + 2\n"
+    )
+    good = tmp_path / "good"
+    bad = tmp_path / "bad"
+    _write_project(good, body=body, expected=7)
+    _write_project(bad, body=body, expected=6)
+
+    good_doc = _run_lift_rpc(good)
+    bad_doc = _run_lift_rpc(bad)
+
+    assert _post_rhs(good_doc) == _add_rhs(2)
+    assert _callsite_values(good_doc) == [7, 7]
+    assert _callsite_status(good_doc) == "sat"
+    assert _callsite_values(bad_doc) == [7, 6]
+    assert _callsite_status(bad_doc) == "unsat"
+    assert "TrySugar" in _selected_sugars(good_doc)
