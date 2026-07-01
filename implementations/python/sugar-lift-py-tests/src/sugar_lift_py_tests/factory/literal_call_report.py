@@ -404,11 +404,28 @@ def _ctx_with_prior_assignments(
         name = prior.assign_target_name() if prior.observed == "Assign" else None
         if name is None or name not in needed_names:
             continue
+        if not _is_constructor_assignment(prior, ctx):
+            continue
         scoped = replace(ctx, temporal=temporal)
         outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
         if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
             temporal = temporal.bind_value(outcome.value.name, outcome.value)
     return replace(ctx, temporal=temporal)
+
+
+def _is_constructor_assignment(prior: SourceFragment, ctx: FactoryBuildContext) -> bool:
+    value = prior.assign_value()
+    if value.observed != "Call":
+        return False
+    target = value.call_import_target_name(
+        getattr(ctx, "import_aliases", {}) or {},
+        getattr(ctx, "from_imports", {}) or {},
+    ) or value.call_target_name()
+    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolved = resolver.get(target)
+    if resolved is None:
+        return False
+    return SourceFragment.from_node(resolved, ctx.filename).observed == "ClassDef"
 
 
 def _comparison_assertion_uses_nonfree_name(

@@ -155,6 +155,27 @@ def test_projected_equality_lifts_attribute_to_tuple_fact() -> None:
     ]
 
 
+def test_projected_equality_keeps_non_constructor_bound_attribute_symbolic() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_dtype():\n"
+            "    arr = np.array(['a'])\n"
+            "    assert arr.dtype == np.str_\n"
+        ),
+        filename="test_dtype.py",
+        memento_file="test_dtype.py",
+    )
+
+    assert report is not None
+    left = report.payload.ir[0].inv["args"][0]
+    assert left["kind"] == "ctor"
+    assert left["name"] == "py.attr"
+    assert left["args"][0]["kind"] == "var"
+    assert left["args"][0]["name"] == "arr"
+    assert left["args"][1]["value"] == "dtype"
+
+
 def test_projected_equality_emits_external_bridge_edge_for_import_without_source() -> None:
     report = build_literal_call_report(
         source=(
