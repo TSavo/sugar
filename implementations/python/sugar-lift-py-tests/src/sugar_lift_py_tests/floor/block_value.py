@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .floor_value import FloorValue
 
@@ -16,3 +17,12 @@ class BlockValue(FloorValue):
 
     statements: tuple[object, ...]
     fall_through: tuple = ()
+
+    def guard_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.guard_block(self, ctx)
+
+    def route_raises_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.route_block_raises(self, ctx)
+
+    def merge_finally_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.merge_finally_block(self, ctx)
