@@ -44,6 +44,7 @@ def test_import_sugar_digs_imported_callee_into_its_module_source(tmp_path, monk
     # source: the universe contract is keyed to that module, not the consumer file.
     assert names == [
         "b64importmod::encodeBase64::callable",
-        "encodeBase64#euf#c:call:encodeBase64(s:'xyz')::assertion",
+        "b64importmod.encodeBase64#euf#c:call:b64importmod.encodeBase64(s:'xyz')::assertion",
     ]
+    assert rep.payload.ir[0].bridge_source_symbol == "call:b64importmod.encodeBase64"
     assert "str.eq-bv-blocks" in json.dumps(rep.payload.ir[0].post)

@@ -12,6 +12,16 @@ def _is_suite(value) -> bool:
     )
 
 
+def _dotted_expr_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        receiver = _dotted_expr_name(node.value)
+        if receiver is not None:
+            return f"{receiver}.{node.attr}"
+    return None
+
+
 @dataclass(frozen=True)
 class SourceFragment:
     """A fragment of source -- the one object the factory uses to talk to the AST.
@@ -152,6 +162,39 @@ class SourceFragment:
             return func.id
         if isinstance(func, ast.Attribute):
             return func.attr
+        return None
+
+    def call_qualified_target_name(self) -> "str | None":
+        """Return the dotted call target as written, e.g. ``np.testing.equal``.
+
+        This is syntax, not import resolution: aliases are intentionally not expanded here.
+        """
+        self._require(ast.Call)
+        return _dotted_expr_name(self.node.func)  # type: ignore[attr-defined]
+
+    def call_import_target_name(
+        self,
+        import_aliases: "dict[str, str]",
+        from_imports: "dict[str, tuple[str, str]]",
+    ) -> "str | None":
+        """Return the canonical imported target, if this call is import-bound.
+
+        ``import numpy as np; np.dtype(...)`` becomes ``numpy.dtype`` and
+        ``from math import sqrt; sqrt(...)`` becomes ``math.sqrt``. Local calls
+        with no import binding return None.
+        """
+        target = self.call_qualified_target_name()
+        if target is None:
+            return None
+        if "." in target:
+            head, rest = target.split(".", 1)
+            module = import_aliases.get(head)
+            if module is not None:
+                return f"{module}.{rest}"
+        imported = from_imports.get(target)
+        if imported is not None:
+            module, attr = imported
+            return f"{module}.{attr}"
         return None
 
     def call_args(self) -> "list[SourceFragment]":

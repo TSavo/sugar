@@ -15,6 +15,10 @@ class FactoryBuildContext:
     source_oracle: Any = None
     expected_role: SugarRole | None = None
     name_resolver: Any = None
+    import_aliases: dict[str, str] = field(default_factory=dict)
+    from_imports: dict[str, tuple[str, str]] = field(default_factory=dict)
+    contract_bindings: list[Any] = field(default_factory=list)
+    external_bridge_sink: Any = None
     audit_sink: Any = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
     # CallSugar.build refuses a callee already in this set: eagerly building a recursive

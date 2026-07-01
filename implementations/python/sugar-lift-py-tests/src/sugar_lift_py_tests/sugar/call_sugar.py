@@ -108,6 +108,68 @@ class BridgeStrategy:
 
 
 @dataclass(frozen=True)
+class ExternalBridgeStrategy:
+    """An imported call whose Python body is absent.
+
+    This is not a proof and not a local universe. It emits the same EUF call term the
+    verifier/linker know how to compose later, and records a report edge saying which
+    external source symbol must be supplied by another proof bundle.
+    """
+
+    target_name: str
+    arguments: tuple[SugarBody, ...]
+    keywords: tuple[tuple[str, SugarBody], ...]
+    line: int
+    column: int
+
+    def __post_init__(self) -> None:
+        for argument in self.arguments:
+            if not isinstance(argument, SugarBody):
+                raise TypeError("ExternalBridgeStrategy argument must be factory-built")
+        for _name, value in self.keywords:
+            if not isinstance(value, SugarBody):
+                raise TypeError("ExternalBridgeStrategy keyword value must be factory-built")
+
+    @property
+    def target_symbol(self) -> str:
+        return f"call:{self.target_name}"
+
+    def emit(self, sugar: "CallSugar", ctx) -> Outcome:
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        from sugar_lift_py_tests.factory.literal_call_report import euf_call_term
+
+        terms = []
+        for argument in self.arguments:
+            value = complete_value(
+                argument.reduce(ctx), owner="ExternalBridgeStrategy argument"
+            )
+            terms.append(floor_to_term(value, owner="external bridge argument"))
+        for name, keyword in self.keywords:
+            value = complete_value(
+                keyword.reduce(ctx), owner=f"ExternalBridgeStrategy keyword {name}"
+            )
+            terms.append(
+                ctor(
+                    f"kw:{name}",
+                    [floor_to_term(value, owner=f"external bridge keyword {name}")],
+                )
+            )
+        sink = getattr(ctx, "external_bridge_sink", None)
+        if sink is not None:
+            sink.append(
+                {
+                    "targetSymbol": self.target_symbol,
+                    "targetName": self.target_name,
+                    "line": self.line,
+                    "column": self.column,
+                }
+            )
+        return Complete(SymbolicValue(euf_call_term(self.target_name, terms)))
+
+
+@dataclass(frozen=True)
 class CallSugar(Sugar, role=SugarRole.TERM):
     """A call -- DUMB. `owns` is shape only; `build` is the ONLY place context decides (it
     picks the strategy by resolution); `desugar` is one line, delegating. Every Call-owning
@@ -127,7 +189,12 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.factory.sugar_constructors import build_bridge_body
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-        target = fragment.call_target_name()
+        import_target = fragment.call_import_target_name(
+            getattr(ctx, "import_aliases", {}) or {},
+            getattr(ctx, "from_imports", {}) or {},
+        )
+        bare_target = fragment.call_target_name()
+        target = import_target or bare_target
         resolver = getattr(ctx, "name_resolver", None) or {}
         function_node = resolver.get(target)
         building = getattr(ctx, "building", frozenset())
@@ -146,6 +213,35 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             function = SourceFragment.from_node(function_node, ctx.filename)
             body = build_bridge_body(function, replace(ctx, building=building | {target}))
             return cls(strategy=BridgeStrategy(target_name=target, argument=argument, body=body))
+        if import_target is not None and function_node is None:
+            arguments = tuple(
+                ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
+            )
+            keywords = []
+            for keyword in fragment.call_keywords():
+                name = keyword.keyword_arg_name()
+                if name is None:
+                    info = FactoryGapInfo(
+                        owner="python.factory",
+                        blame=fragment.blame,
+                        observed="Call",
+                        requested="term",
+                        fix=(
+                            f"resolve call to '{target}' with explicit keyword names; "
+                            "add **kwargs bridge sugar"
+                        ),
+                    )
+                    return cls(strategy=RefuseStrategy(info))
+                keywords.append((name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM)))
+            return cls(
+                strategy=ExternalBridgeStrategy(
+                    target_name=import_target,
+                    arguments=arguments,
+                    keywords=tuple(keywords),
+                    line=fragment.line,
+                    column=fragment.col,
+                )
+            )
         # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
         # never a silent lift, never a hang.
         info = FactoryGapInfo(
