@@ -159,6 +159,10 @@ def bvor(left: Term, right: Term) -> Term:
     return ctor("bv32.or", [left, right])
 
 
+def bvxor(left: Term, right: Term) -> Term:
+    return ctor("bv32.xor", [left, right])
+
+
 def bvshl(left: Term, right: Term) -> Term:
     return ctor("bv32.shl", [left, right])
 

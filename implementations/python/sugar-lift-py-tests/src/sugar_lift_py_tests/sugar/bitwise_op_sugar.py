@@ -8,7 +8,13 @@ from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-_BITWISE_OPS = {"BitAnd": "&", "BitOr": "|", "LShift": "<<", "RShift": ">>"}
+_BITWISE_OPS = {
+    "BitAnd": "&",
+    "BitOr": "|",
+    "BitXor": "^",
+    "LShift": "<<",
+    "RShift": ">>",
+}
 
 
 @dataclass(frozen=True)

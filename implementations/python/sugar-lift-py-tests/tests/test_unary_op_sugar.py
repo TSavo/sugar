@@ -38,6 +38,15 @@ def test_unary_op_dispatches_through_floor_operation_log() -> None:
     ]
 
 
+def test_numeric_unary_plus_stays_on_unary_operator_floor() -> None:
+    value, operation_log = _reduce_with_log("+3")
+
+    assert value.value == 3
+    assert operation_log == [
+        ("UnaryOpSugar", "unary_operator_with", "UnaryOperatorOperation")
+    ]
+
+
 def test_unary_minus_symbolic_operand_emits_structural_term() -> None:
     result = reduce_term("-x", {"x": SymbolicValue(make_var("x"))})
 

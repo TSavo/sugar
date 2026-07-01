@@ -50,9 +50,10 @@ class BinaryOperatorOperation:
                         "DivByZero effect that raises and stops constraint propagation"
                     )
                 )
-            return Complete(
-                TermValue(_FOLD[self.operator](receiver.value, self.right.value))
-            )
+            folder = _FOLD.get(self.operator)
+            if folder is None:
+                self._floor_gap(receiver="TermValue")
+            return Complete(TermValue(folder(receiver.value, self.right.value)))
         if isinstance(self.right, SymbolicValue):
             return self._emit_symbolic(receiver, self.right)
         if isinstance(self.right, ObjectValue):

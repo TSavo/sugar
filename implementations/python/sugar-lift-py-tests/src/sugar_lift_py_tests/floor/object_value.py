@@ -38,6 +38,27 @@ class ObjectValue(FloorValue):
     def subscript_with(self, operation, ctx):
         return operation.subscript_object(self, ctx)
 
+    def bitwise_with(self, operation, ctx):
+        del ctx
+        method_name = _BITWISE_DUNDER_METHODS.get(operation.operator)
+        if method_name is None:
+            return self._floor_gap(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"{self.class_name}{operation.operator}{type(operation.operand).__name__}",
+                requested="object bitwise data-model method",
+                fix=(
+                    f"add ObjectValue data-model dispatch for bitwise "
+                    f"operator `{operation.operator}`"
+                ),
+            )
+        return self.call_method_value(
+            method_name,
+            (operation.operand,),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
     def binary_operator_with(self, operation, ctx):
         del ctx
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
@@ -76,6 +97,27 @@ class ObjectValue(FloorValue):
         return self.call_method_value(
             method_name,
             (operation.left,),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
+
+    def unary_operator_with(self, operation, ctx):
+        del ctx
+        method_name = _UNARY_DUNDER_METHODS.get(operation.operator)
+        if method_name is None:
+            return self._floor_gap(
+                owner=operation.owner,
+                blame=operation.blame,
+                observed=f"{operation.operator}({self.class_name})",
+                requested="object unary data-model method",
+                fix=(
+                    f"add ObjectValue unary data-model dispatch for "
+                    f"operator `{operation.operator}`"
+                ),
+            )
+        return self.call_method_value(
+            method_name,
+            (),
             owner=operation.owner,
             blame=operation.blame,
         )
@@ -185,10 +227,39 @@ _BINARY_DUNDER_METHODS = {
     "+": "__add__",
     "-": "__sub__",
     "*": "__mul__",
+    "/": "__truediv__",
+    "//": "__floordiv__",
+    "%": "__mod__",
+    "**": "__pow__",
+    "@": "__matmul__",
+}
+
+_BITWISE_DUNDER_METHODS = {
+    "&": "__and__",
+    "|": "__or__",
+    "^": "__xor__",
+    "<<": "__lshift__",
+    ">>": "__rshift__",
 }
 
 _REFLECTED_BINARY_DUNDER_METHODS = {
     "+": "__radd__",
     "-": "__rsub__",
     "*": "__rmul__",
+    "/": "__rtruediv__",
+    "//": "__rfloordiv__",
+    "%": "__rmod__",
+    "**": "__rpow__",
+    "@": "__rmatmul__",
+    "&": "__rand__",
+    "|": "__ror__",
+    "^": "__rxor__",
+    "<<": "__rlshift__",
+    ">>": "__rrshift__",
+}
+
+_UNARY_DUNDER_METHODS = {
+    "py.pos": "__pos__",
+    "py.neg": "__neg__",
+    "py.invert": "__invert__",
 }
