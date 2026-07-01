@@ -26,6 +26,9 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def subscript_with(self, operation, ctx):
+        return operation.subscript_object(self, ctx)
+
     def binary_operator_with(self, operation, ctx):
         del ctx
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
