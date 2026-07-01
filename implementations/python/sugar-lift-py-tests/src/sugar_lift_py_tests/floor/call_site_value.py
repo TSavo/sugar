@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from sugar_lift_py_tests.ir import Term
@@ -71,16 +71,12 @@ def _ctx_with_curried_args(
     parameters: tuple[str, ...],
     arg_values: tuple[FloorValue, ...],
 ):
-    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_lift_py_tests.temporal import curry_temporal
 
-    temporal = getattr(ctx, "temporal", TemporalContext.empty())
-    for name, value in zip(parameters, arg_values, strict=True):
-        temporal = temporal.bind_value(name, value)
-
-    if hasattr(ctx, "with_temporal"):
-        return ctx.with_temporal(temporal)
-    if ctx is None:
-        from sugar_lift_py_tests.context.reduce_context import ReduceContext
-
-        return ReduceContext(temporal=temporal)
-    return replace(ctx, temporal=temporal)
+    return curry_temporal(
+        ctx,
+        parameters,
+        arg_values,
+        owner="CallSiteValue.force_floor",
+        blame="<callsite>",
+    )

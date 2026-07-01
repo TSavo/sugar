@@ -78,6 +78,8 @@ def test_tuple_assign_projects_literal_tuple_through_floor_operation_log() -> No
 
     assert value == BlockValue((ReturnValue(TermValue(2)),))
     assert operation_log == [
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("BlockSugar", "bind_with", "BindValueOperation"),
         (
             "TupleLiteralSugar",
             "construct_sequence_with",
@@ -99,6 +101,8 @@ def test_list_unpack_projects_array_floor_through_floor_operation_log() -> None:
 
     assert value == BlockValue((ReturnValue(TermValue(1)),))
     assert operation_log == [
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("BlockSugar", "bind_with", "BindValueOperation"),
         (
             "TupleUnpackProjection",
             "project_sequence_with",

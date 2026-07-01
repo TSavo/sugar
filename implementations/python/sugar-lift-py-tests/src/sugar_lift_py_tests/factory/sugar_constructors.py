@@ -92,22 +92,25 @@ def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
 
 
 def build_control_flow_body_sugar(site, ctx):
-    from dataclasses import replace
-
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
-    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
 
     if site.observed != "FunctionDef":
         raise TypeError("ControlFlowBodySugar claim built a non-function")
     params = site.function_params()
     if not params:
         raise TypeError("ControlFlowBodySugar requires at least one parameter")
-    temporal = TemporalContext.empty()
+    reduce_ctx = ctx.with_temporal(TemporalContext.empty())
     for param_name in params:
-        temporal = temporal.bind_value(param_name, SymbolicValue(make_var(param_name)))
-    reduce_ctx = replace(ctx, temporal=temporal)
+        reduce_ctx = bind_temporal(
+            reduce_ctx,
+            param_name,
+            SymbolicValue(make_var(param_name)),
+            owner="sugar_constructors.control_flow_body",
+            blame=site.blame,
+        )
     from sugar_lift_py_tests.factory.block import Block
     from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
     from sugar_lift_py_tests.floor import EncodedStringValue, GuardedReturn, ReturnValue

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.temporal import bind_temporal
 
 
 @dataclass(frozen=True)
@@ -34,10 +35,11 @@ class TryHandler:
             "py.exception",
             [str_const(effect.exception_name or "unknown")],
         )
-        handler_ctx = replace(
+        handler_ctx = bind_temporal(
             ctx,
-            temporal=ctx.temporal.bind_value(
-                self.bound_name, SymbolicValue(exception_term)
-            ),
+            self.bound_name,
+            SymbolicValue(exception_term),
+            owner="TryHandler",
+            blame=self.blame,
         )
         return self.body.reduce(handler_ctx)

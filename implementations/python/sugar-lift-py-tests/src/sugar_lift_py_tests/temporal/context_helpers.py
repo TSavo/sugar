@@ -80,4 +80,8 @@ def rewrite_temporal(ctx: Any, operation: object, *, owner: str, blame: str) -> 
 def _ctx_with_temporal(ctx: Any, temporal: TemporalContext) -> Any:
     if hasattr(ctx, "with_temporal"):
         return ctx.with_temporal(temporal)
+    if ctx is None:
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+
+        return ReduceContext(temporal=temporal)
     return replace(ctx, temporal=temporal)

@@ -65,10 +65,22 @@ def t():
 
     assert value == TermValue(2)
     assert operation_log == [
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        ("BlockSugar", "bind_with", "BindValueOperation"),
+        (
+            "CallSiteValue.force_floor",
+            "curry_with",
+            "CurryArgumentsOperation",
+        ),
         (
             "TupleUnpackProjection",
             "project_sequence_with",
             "SequenceProjectionOperation",
+        ),
+        (
+            "CallSiteValue.force_floor",
+            "curry_with",
+            "CurryArgumentsOperation",
         ),
         (
             "TupleUnpackProjection.__iter__",
