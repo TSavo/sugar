@@ -17,6 +17,7 @@ from sugar_lift_py_tests.ir import (
     Formula,
     Term,
     and_,
+    bool_const,
     ctor,
     eq,
     formula_to_value,
@@ -412,6 +413,7 @@ def _floor_to_term(value: Any) -> Term:
     not care WHICH sugar produced the value, only its Floor type."""
     from sugar_lift_py_tests.floor import (
         ArrayLiteral,
+        BoolValue,
         Bv32Value,
         StringValue,
         SymbolicValue,
@@ -420,6 +422,8 @@ def _floor_to_term(value: Any) -> Term:
 
     if isinstance(value, TermValue):
         return num(value.value)
+    if isinstance(value, BoolValue):
+        return bool_const(value.value)
     if isinstance(value, StringValue):
         return str_const(value.value)
     # A symbolic term (a bound variable or a composed operation over one) already
