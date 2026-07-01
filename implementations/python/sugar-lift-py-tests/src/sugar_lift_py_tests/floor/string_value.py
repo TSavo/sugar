@@ -8,3 +8,6 @@ from .floor_value import FloorValue
 @dataclass(frozen=True)
 class StringValue(FloorValue):
     value: str
+
+    def contains_with(self, operation, ctx):
+        return operation.contains_string(self, ctx)

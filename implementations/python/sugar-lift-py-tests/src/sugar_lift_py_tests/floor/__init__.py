@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .array_literal import ArrayLiteral
 from .block_value import BlockValue
+from .bool_value import BoolValue
 from .bound_var import BoundVar
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
@@ -20,6 +21,7 @@ from .term_value import TermValue
 __all__ = [
     "ArrayLiteral",
     "BlockValue",
+    "BoolValue",
     "BoundVar",
     "BuilderState",
     "Bv32Value",

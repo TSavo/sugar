@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
+    BoolValue,
+    FloorValue,
+    StringValue,
+    TermValue,
+)
+from sugar_lift_py_tests.outcome import Complete, Outcome
+
+
+@dataclass(frozen=True)
+class ContainsOperation:
+    item: FloorValue
+    owner: str = "MembershipAssertionSugar"
+    blame: str = "<unknown>"
+
+    def contains_string(self, receiver: StringValue, ctx: object) -> Outcome:
+        del ctx
+        if not isinstance(self.item, StringValue):
+            self._floor_gap(receiver="StringValue")
+        return Complete(BoolValue(self.item.value in receiver.value))
+
+    def contains_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
+        del ctx
+        if not isinstance(self.item, TermValue):
+            self._floor_gap(receiver="ArrayLiteral")
+        return Complete(BoolValue(any(item == self.item for item in receiver.items)))
+
+    def _floor_gap(self, *, receiver: str) -> None:
+        info = FactoryGapInfo(
+            owner=self.owner,
+            blame=self.blame,
+            observed=f"{receiver}.contains({type(self.item).__name__})",
+            requested="contains item floor",
+            fix=f"add contains support for {receiver} with {type(self.item).__name__}",
+            gap_kind="Floor",
+            gap_locus="construction",
+        )
+        raise FactoryGap(
+            info,
+            FactoryAuditRow(
+                role="contains item floor",
+                status="floor-gap",
+                observed=info.observed,
+                blame=self.blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )

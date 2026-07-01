@@ -17,3 +17,6 @@ class ArrayLiteral(FloorValue):
 
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_array(self, ctx)
+
+    def contains_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.contains_array(self, ctx)
