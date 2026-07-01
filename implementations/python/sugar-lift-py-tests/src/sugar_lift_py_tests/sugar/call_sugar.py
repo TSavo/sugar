@@ -198,6 +198,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         resolver = getattr(ctx, "name_resolver", None) or {}
         function_node = resolver.get(target)
         building = getattr(ctx, "building", frozenset())
+        if function_node is not None and target is not None:
+            resolved = SourceFragment.from_node(function_node, ctx.filename)
+            if resolved.observed == "ClassDef":
+                return cls(strategy=_build_constructor_strategy(fragment, ctx, target, resolved))
         # RESOLVED + unary + NOT already on the build stack -> the bridge carries its universe.
         # The build-stack check is the recursion guard: eagerly building a callee already being
         # built loops forever, and an infinite recursion is not finitely constructible. So a
@@ -252,6 +256,80 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx) -> Outcome:
         return self.strategy.emit(self, ctx)
+
+
+def _build_constructor_strategy(fragment, ctx, target: str, class_site):
+    from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
+
+    if fragment.call_has_keywords() or fragment.call_arg_count() != 0:
+        return RefuseStrategy(
+            FactoryGapInfo(
+                owner="python.factory",
+                blame=fragment.blame,
+                observed=f"{target}(...)",
+                requested="zero-arg constructor",
+                fix=f"add constructor argument binding sugar for `{target}`",
+            )
+        )
+    init = _find_init(class_site)
+    if init is None:
+        return ConstructorStrategy(class_name=target, fields=())
+    params = init.function_params()
+    if len(params) != 1:
+        return RefuseStrategy(
+            FactoryGapInfo(
+                owner="python.factory",
+                blame=init.blame,
+                observed=f"{target}.__init__({', '.join(params)})",
+                requested="zero-arg constructor",
+                fix=f"add constructor argument binding sugar for `{target}.__init__`",
+            )
+        )
+    self_name = params[0]
+    fields: list[tuple[str, SugarBody]] = []
+    for stmt in init.function_body():
+        if _is_inert_constructor_statement(stmt):
+            continue
+        if (
+            stmt.observed == "Assign"
+            and stmt.assign_target_attribute_receiver_name() == self_name
+            and stmt.assign_target_attribute_name() is not None
+        ):
+            fields.append(
+                (
+                    stmt.assign_target_attribute_name(),
+                    ctx.build_body(stmt.assign_value(), SugarRole.TERM),
+                )
+            )
+            continue
+        return RefuseStrategy(
+            FactoryGapInfo(
+                owner="python.factory",
+                blame=stmt.blame,
+                observed=f"{target}.__init__:{stmt.observed}",
+                requested="constructor field assignment",
+                fix=(
+                    f"write more constructor sugar for `{target}.__init__`: "
+                    "support this statement shape or emit an effect"
+                ),
+            )
+        )
+    return ConstructorStrategy(class_name=target, fields=tuple(fields))
+
+
+def _find_init(class_site):
+    for stmt in class_site.class_body():
+        if stmt.observed == "FunctionDef" and stmt.function_name() == "__init__":
+            return stmt
+    return None
+
+
+def _is_inert_constructor_statement(stmt) -> bool:
+    return (
+        stmt.observed == "Expr"
+        and stmt.expr_value().observed == "PrimitiveLiteral"
+        and isinstance(stmt.expr_value().literal_value(), str)
+    )
 
 
 @dataclass(frozen=True)

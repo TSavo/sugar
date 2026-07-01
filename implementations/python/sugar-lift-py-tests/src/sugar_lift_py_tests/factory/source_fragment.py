@@ -266,6 +266,26 @@ class SourceFragment:
             return targets[0].id
         return None
 
+    def assign_target_attribute_receiver_name(self) -> "str | None":
+        """Return the receiver name for ``receiver.field = value``, else None."""
+        self._require(ast.Assign)
+        targets = self.node.targets  # type: ignore[attr-defined]
+        if (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Attribute)
+            and isinstance(targets[0].value, ast.Name)
+        ):
+            return targets[0].value.id
+        return None
+
+    def assign_target_attribute_name(self) -> "str | None":
+        """Return the field name for ``receiver.field = value``, else None."""
+        self._require(ast.Assign)
+        targets = self.node.targets  # type: ignore[attr-defined]
+        if len(targets) == 1 and isinstance(targets[0], ast.Attribute):
+            return targets[0].attr
+        return None
+
     def assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for Assign.value."""
         self._require(ast.Assign)
@@ -320,6 +340,16 @@ class SourceFragment:
         """Return the name string for a FunctionDef or AsyncFunctionDef node."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return self.node.name  # type: ignore[attr-defined]
+
+    def class_name(self) -> str:
+        """Return the name string for a ClassDef node."""
+        self._require(ast.ClassDef)
+        return self.node.name  # type: ignore[attr-defined]
+
+    def class_body(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the statements in a ClassDef body."""
+        self._require(ast.ClassDef)
+        return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Additional accessors added in numpy-import-sugar sweep

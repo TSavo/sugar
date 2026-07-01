@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +132,11 @@ def build_literal_call_report(
         for frag in root_frag.walk()
         if frag.observed == "FunctionDef"
     }
+    local_classes = {
+        frag.class_name(): frag
+        for frag in root_frag.walk()
+        if frag.observed == "ClassDef"
+    }
     import_aliases, from_imports = _import_bindings(root_frag)
     # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
     # is not local, so the dig cannot see its body. Resolve each imported callee to
@@ -152,6 +157,7 @@ def build_literal_call_report(
                 memento_file=rel_file,
                 source_lines=lines,
                 functions_by_name=dig_functions,
+                classes_by_name=local_classes,
                 import_aliases=import_aliases,
                 from_imports=from_imports,
                 contract_bindings=contract_bindings or [],
@@ -203,6 +209,7 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
@@ -228,6 +235,7 @@ def _lift_assert(
         memento_file=memento_file,
         source_lines=source_lines,
         functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
         import_aliases=import_aliases,
         from_imports=from_imports,
         contract_bindings=contract_bindings,
@@ -307,6 +315,7 @@ def _lift_assertion_via_factory(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
     import_aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
@@ -335,12 +344,16 @@ def _lift_assertion_via_factory(
     ctx = FactoryBuildContext(
         filename=filename,
         catalog=catalog,
-        name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+        name_resolver={
+            **{name: frag.node for name, frag in functions_by_name.items()},
+            **{name: frag.node for name, frag in classes_by_name.items()},
+        },
         import_aliases=import_aliases,
         from_imports=from_imports,
         contract_bindings=contract_bindings,
         external_bridge_sink=external_bridge_sink,
     )
+    ctx = _ctx_with_prior_assignments(fn, stmt, ctx)
     result = build_node(
         stmt,
         filename=filename,
@@ -373,6 +386,29 @@ def _lift_assertion_via_factory(
         )
         lifted = (lifted[0], lifted[1], lifted[2], lifted[3], [*lifted[4], *edges])
     return lifted
+
+
+def _ctx_with_prior_assignments(
+    fn: SourceFragment,
+    stmt: SourceFragment,
+    ctx: FactoryBuildContext,
+) -> FactoryBuildContext:
+    from sugar_lift_py_tests.floor import BoundVar
+    from sugar_lift_py_tests.outcome import Complete
+
+    temporal = ctx.temporal
+    needed_names = set(_names_including_self(stmt))
+    for prior in fn.function_body():
+        if prior.line == stmt.line and prior.col == stmt.col:
+            break
+        name = prior.assign_target_name() if prior.observed == "Assign" else None
+        if name is None or name not in needed_names:
+            continue
+        scoped = replace(ctx, temporal=temporal)
+        outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
+        if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
+            temporal = temporal.bind_value(outcome.value.name, outcome.value)
+    return replace(ctx, temporal=temporal)
 
 
 def _comparison_assertion_uses_nonfree_name(
