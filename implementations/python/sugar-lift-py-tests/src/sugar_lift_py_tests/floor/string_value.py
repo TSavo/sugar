@@ -14,3 +14,6 @@ class StringValue(FloorValue):
 
     def subscript_with(self, operation, ctx):
         return operation.subscript_string(self, ctx)
+
+    def str_with(self, operation, ctx):
+        return operation.str_string(self, ctx)

@@ -14,6 +14,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     names: tuple[str, ...]
     receiver: SugarBody
+    blame: str
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -39,6 +40,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             names=tuple(item.name_id() for item in target_items),
             receiver=ctx.build_body(site.assign_value(), SugarRole.TERM),
+            blame=site.blame,
         )
 
     def desugar(self, ctx) -> Outcome:
@@ -48,7 +50,11 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                     BoundVar(
                         name,
                         SugarBody(
-                            TupleUnpackProjection(self.receiver, index),
+                            TupleUnpackProjection(
+                                self.receiver,
+                                index,
+                                blame=self.blame,
+                            ),
                             SugarRole.TERM,
                         ),
                         scope=ctx,

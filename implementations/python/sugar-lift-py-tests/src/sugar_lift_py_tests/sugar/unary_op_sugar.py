@@ -3,10 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
-from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.operations import UnaryOperatorOperation, perform_operation
+from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -51,23 +49,15 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
         if isinstance(operand_outcome, Incomplete):
             return operand_outcome
         operand = complete_value(operand_outcome, owner="UnaryOpSugar operand")
-        if isinstance(operand, TermValue):
-            if self.operator == "py.pos":
-                return Complete(TermValue(+operand.value))
-            if self.operator == "py.neg":
-                return Complete(TermValue(-operand.value))
-        if isinstance(operand, SymbolicValue):
-            if self.operator == "py.pos":
-                return Complete(operand)
-            if self.operator == "py.neg":
-                return Complete(
-                    SymbolicValue(
-                        ctor(
-                            self.operator,
-                            [floor_to_term(operand, owner="UnaryOpSugar operand")],
-                        )
-                    )
-                )
-        raise TypeError(
-            f"UnaryOpSugar {self.operator} requires TermValue or SymbolicValue operand"
+        return perform_operation(
+            owner="UnaryOpSugar",
+            blame=self.blame,
+            receiver=operand,
+            method_name="unary_operator_with",
+            operation=UnaryOperatorOperation(
+                operator=self.operator,
+                owner="UnaryOpSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
         )

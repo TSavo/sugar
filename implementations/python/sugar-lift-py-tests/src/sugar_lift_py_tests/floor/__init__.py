@@ -17,11 +17,13 @@ from .object_field import ObjectField
 from .object_value import ObjectValue
 from .raise_value import RaiseValue
 from .return_value import ReturnValue
+from .sequence_constructor import SequenceConstructor
 from .slice_value import SliceValue
 from .string_value import StringValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
 from .term_value import TermValue
+from .tuple_literal_value import TupleLiteralValue
 
 __all__ = [
     "ArrayLiteral",
@@ -41,9 +43,11 @@ __all__ = [
     "ObjectValue",
     "RaiseValue",
     "ReturnValue",
+    "SequenceConstructor",
     "SliceValue",
     "StringValue",
     "SupportValue",
     "SymbolicValue",
     "TermValue",
+    "TupleLiteralValue",
 ]

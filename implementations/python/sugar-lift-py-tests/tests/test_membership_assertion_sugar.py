@@ -1,15 +1,32 @@
 from __future__ import annotations
 
+import ast
+
 import pytest
 
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+from sugar_lift_py_tests.ir import bool_const, eq
+from sugar_lift_py_tests.temporal import TemporalContext
 
 TRUE_CONST = {
     "kind": "const",
     "sort": {"kind": "primitive", "name": "Bool"},
     "value": True,
 }
+
+
+def _reduce_assertion_with_operation_log(source: str):
+    build_ctx = FactoryBuildContext(
+        filename="test_contains.py", catalog=default_catalog()
+    )
+    statement = ast.parse(source).body[0]
+    body = build_ctx.build_body(statement, SugarRole.ASSERTION)
+    reduce_ctx = ReduceContext(temporal=TemporalContext.empty())
+    return body.reduce(reduce_ctx), reduce_ctx.operation_log
 
 
 def test_membership_assertion_uses_string_floor_contains() -> None:
@@ -29,6 +46,17 @@ def test_membership_assertion_uses_string_floor_contains() -> None:
     }
     assert [row.selected for row in report.payload.factory_walk] == [
         "MembershipAssertionSugar"
+    ]
+
+
+def test_membership_assertion_uses_shared_operation_dispatch_path() -> None:
+    formula, operation_log = _reduce_assertion_with_operation_log(
+        "assert 'mp' in 'numpy'"
+    )
+
+    assert formula == eq(bool_const(True), bool_const(True))
+    assert operation_log == [
+        ("MembershipAssertionSugar", "contains_with", "ContainsOperation")
     ]
 
 

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import ast
+
 from factory_reduce import fol, reduce_term
 
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
+from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.floor import Bv32Value, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.temporal import TemporalContext
 
 
 def test_str_builtin_folds_concrete_number() -> None:
@@ -14,3 +21,30 @@ def test_str_builtin_symbolic_argument_emits_structural_term() -> None:
     result = reduce_term("str(x)", {"x": SymbolicValue(make_var("x"))})
 
     assert fol(result) == fol(ctor("py.str", [make_var("x")]))
+
+
+def test_str_builtin_dispatches_bv32_argument_to_floor_operation() -> None:
+    result, operation_log = _reduce_value_with_log(
+        "str(x)", {"x": Bv32Value(make_var("x"))}
+    )
+
+    assert result == SymbolicValue(ctor("py.str", [make_var("x")]))
+    assert operation_log == [("BuiltinCallSugar", "str_with", "StrCoercionOperation")]
+
+
+def _reduce_value_with_log(expr: str, binds: dict | None = None):
+    temporal = TemporalContext.empty()
+    for name, value in (binds or {}).items():
+        temporal = temporal.bind_value(name, value)
+    build_ctx = FactoryBuildContext(
+        filename="t.py",
+        catalog=default_catalog(),
+        temporal=temporal,
+    )
+    node = ast.parse(expr, mode="eval").body
+    body = build_ctx.build_body(node, SugarRole.TERM)
+    reduce_ctx = ReduceContext(temporal=temporal)
+    return (
+        complete_value(body.reduce(reduce_ctx), owner="builtin call test"),
+        reduce_ctx.operation_log,
+    )

@@ -15,3 +15,15 @@ class TermValue(FloorValue):
 
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
+
+    def str_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.str_term(self, ctx)
+
+    def bitwise_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.bitwise_term(self, ctx)
+
+    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.binary_term(self, ctx)
+
+    def unary_operator_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.unary_term(self, ctx)

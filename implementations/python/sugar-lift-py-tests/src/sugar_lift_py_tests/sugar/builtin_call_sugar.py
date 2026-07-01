@@ -3,10 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
-from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.operations import StrCoercionOperation, perform_operation
+from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -15,6 +13,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     name: str
     argument: SugarBody
+    blame: str = "<unknown>"
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -33,6 +32,7 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         return cls(
             name=site.call_target_name(),
             argument=ctx.build_body(site.call_args()[0], SugarRole.TERM),
+            blame=site.blame,
         )
 
     def desugar(self, ctx) -> Outcome:
@@ -41,20 +41,15 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             return argument_outcome
         argument = complete_value(argument_outcome, owner="BuiltinCallSugar argument")
         if self.name == "str":
-            if isinstance(argument, StringValue):
-                return Complete(argument)
-            if isinstance(argument, TermValue):
-                return Complete(StringValue(str(argument.value)))
-            return Complete(
-                SymbolicValue(
-                    ctor(
-                        "py.str",
-                        [
-                            floor_to_term(
-                                argument, owner="BuiltinCallSugar str argument"
-                            )
-                        ],
-                    )
-                )
+            return perform_operation(
+                owner="BuiltinCallSugar",
+                blame=self.blame,
+                receiver=argument,
+                method_name="str_with",
+                operation=StrCoercionOperation(
+                    owner="BuiltinCallSugar",
+                    blame=self.blame,
+                ),
+                ctx=ctx,
             )
         raise TypeError(f"write more Sugar for builtin call `{self.name}`")

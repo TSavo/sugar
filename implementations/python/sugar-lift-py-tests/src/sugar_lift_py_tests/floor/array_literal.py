@@ -20,3 +20,6 @@ class ArrayLiteral(FloorValue):
 
     def contains_with(self, operation: Any, ctx: Any) -> Any:
         return operation.contains_array(self, ctx)
+
+    def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.project_array(self, ctx)

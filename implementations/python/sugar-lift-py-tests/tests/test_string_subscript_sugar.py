@@ -4,11 +4,17 @@ pair (table, index) IS the per-character constraint the encoder universe carries
 
 from __future__ import annotations
 
+import ast
+from dataclasses import replace
+
 import pytest
 
 from factory_reduce import reduce_value
 
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     Bv32Value,
     EncodedStringValue,
@@ -16,8 +22,24 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.temporal import TemporalContext
 
 NONE = ctor("None", [])
+
+
+def _reduce_value_with_operation_log(expr: str, binds: dict):
+    temporal = TemporalContext.empty()
+    for name, value in binds.items():
+        temporal = temporal.bind_value(name, value)
+    build_ctx = replace(
+        FactoryBuildContext(filename="t.py", catalog=default_catalog()),
+        temporal=temporal,
+    )
+    body = build_ctx.build_body(ast.parse(expr, mode="eval").body, SugarRole.TERM)
+    reduce_ctx = ReduceContext(temporal=temporal)
+    value = complete_value(body.reduce(reduce_ctx), owner="test")
+    return value, reduce_ctx.operation_log
 
 
 def test_subscript_reduces_to_encoded_string_table_and_index():
@@ -25,6 +47,17 @@ def test_subscript_reduces_to_encoded_string_table_and_index():
         "tbl[i]", {"tbl": StringValue("ABCD"), "i": Bv32Value(make_var("i"))}
     )
     assert value == EncodedStringValue(table=(65, 66, 67, 68), indices=(make_var("i"),))
+
+
+def test_subscript_uses_shared_operation_dispatch_path():
+    value, operation_log = _reduce_value_with_operation_log(
+        "tbl[i]", {"tbl": StringValue("ABCD"), "i": Bv32Value(make_var("i"))}
+    )
+
+    assert value == EncodedStringValue(table=(65, 66, 67, 68), indices=(make_var("i"),))
+    assert operation_log == [
+        ("StringSubscriptSugar", "subscript_with", "SubscriptOperation")
+    ]
 
 
 def test_subscript_dispatches_symbolic_receiver_to_symbolic_floor_term():

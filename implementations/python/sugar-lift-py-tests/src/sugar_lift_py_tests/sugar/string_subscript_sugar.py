@@ -3,12 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-)
-from sugar_lift_py_tests.operations import SubscriptOperation
+from sugar_lift_py_tests.operations import SubscriptOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -69,36 +64,11 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
             owner="StringSubscriptSugar",
             blame=self.blame,
         )
-        return _perform_subscript(
-            receiver=receiver,
-            operation=operation,
+        return perform_operation(
+            owner="StringSubscriptSugar",
             blame=self.blame,
+            receiver=receiver,
+            method_name="subscript_with",
+            operation=operation,
             ctx=ctx,
         )
-
-
-def _perform_subscript(*, receiver, operation: SubscriptOperation, blame: str, ctx):
-    method = getattr(receiver, "subscript_with", None)
-    if method is None:
-        info = FactoryGapInfo(
-            owner="StringSubscriptSugar",
-            blame=blame,
-            observed=type(receiver).__name__,
-            requested="subscript_with",
-            fix=f"add subscript_with to {type(receiver).__name__}",
-            gap_kind="Floor",
-            gap_locus="construction",
-        )
-        raise FactoryGap(
-            info,
-            FactoryAuditRow(
-                role="subscript_with",
-                status="floor-gap",
-                observed=type(receiver).__name__,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
-    return method(operation, ctx)

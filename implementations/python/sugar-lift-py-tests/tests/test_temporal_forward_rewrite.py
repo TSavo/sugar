@@ -115,7 +115,15 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
     assert len(value.items) == 3
     assert [item.value for item in value.items] == [14, 15, 16]
     assert reduce_ctx.operation_log == [
+        (
+            "ListLiteralSugar",
+            "construct_sequence_with",
+            "SequenceConstructionOperation",
+        ),
         ("MapSugar", "map_with", "MapOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation"),
         ("AddSugar", "add_with", "AddOperation"),
         ("ToListSugar", "materialize_with", "MaterializeOperation"),
     ]

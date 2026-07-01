@@ -11,6 +11,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import Term, bool_const, ctor, num, str_const
 
 
@@ -25,6 +26,8 @@ def floor_to_term(value: Any, *, owner: str) -> Term:
         return value.term
     if isinstance(value, ArrayLiteral):
         return ctor("array", [floor_to_term(item, owner=owner) for item in value.items])
+    if isinstance(value, TupleLiteralValue):
+        return ctor("tuple", [floor_to_term(item, owner=owner) for item in value.items])
     if isinstance(value, SliceValue):
         return ctor(
             "py.slice",
