@@ -6,6 +6,7 @@ from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
     Bv32Value,
+    SliceValue,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -24,6 +25,21 @@ def floor_to_term(value: Any, *, owner: str) -> Term:
         return value.term
     if isinstance(value, ArrayLiteral):
         return ctor("array", [floor_to_term(item, owner=owner) for item in value.items])
+    if isinstance(value, SliceValue):
+        return ctor(
+            "py.slice",
+            [
+                _optional_slice_term(value.lower, owner=owner),
+                _optional_slice_term(value.upper, owner=owner),
+                _optional_slice_term(value.step, owner=owner),
+            ],
+        )
     raise TypeError(
         f"write more Floor for {owner}: `{type(value).__name__}` cannot project to a term"
     )
+
+
+def _optional_slice_term(value: Any, *, owner: str) -> Term:
+    if value is None:
+        return ctor("None", [])
+    return floor_to_term(value, owner=owner)

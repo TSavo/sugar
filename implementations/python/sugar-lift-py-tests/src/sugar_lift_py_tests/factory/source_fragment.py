@@ -245,6 +245,24 @@ class SourceFragment:
             idx = idx.value  # type: ignore[attr-defined]
         return SourceFragment.from_node(idx, self.filename)
 
+    def slice_lower(self) -> "SourceFragment | None":
+        """Return a SourceFragment for a Slice lower bound, or None for an omitted bound."""
+        self._require(ast.Slice)
+        lower = self.node.lower  # type: ignore[attr-defined]
+        return None if lower is None else SourceFragment.from_node(lower, self.filename)
+
+    def slice_upper(self) -> "SourceFragment | None":
+        """Return a SourceFragment for a Slice upper bound, or None for an omitted bound."""
+        self._require(ast.Slice)
+        upper = self.node.upper  # type: ignore[attr-defined]
+        return None if upper is None else SourceFragment.from_node(upper, self.filename)
+
+    def slice_step(self) -> "SourceFragment | None":
+        """Return a SourceFragment for a Slice step bound, or None for an omitted bound."""
+        self._require(ast.Slice)
+        step = self.node.step  # type: ignore[attr-defined]
+        return None if step is None else SourceFragment.from_node(step, self.filename)
+
     def lambda_body(self) -> "SourceFragment":
         """Return a SourceFragment for the body expression of a Lambda."""
         self._require(ast.Lambda)
