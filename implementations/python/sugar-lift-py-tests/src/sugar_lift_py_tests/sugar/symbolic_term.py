@@ -56,6 +56,15 @@ def can_symbolic_term(site) -> bool:
         return can_symbolic_term(site.subscript_receiver()) and can_symbolic_term(
             site.subscript_index()
         )
+    if site.observed == "Slice":
+        return all(
+            bound is None or can_symbolic_term(bound)
+            for bound in (
+                site.slice_lower(),
+                site.slice_upper(),
+                site.slice_step(),
+            )
+        )
     if site.observed == "BinOp":
         return (
             site.operator_kind() in _BINOP_SYMBOL
@@ -195,6 +204,36 @@ def symbolic_term(
                 ),
                 symbolic_term(
                     site.subscript_index(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
+            ],
+        )
+    if site.observed == "Slice":
+        return ctor(
+            "py.slice",
+            [
+                _optional_slice_term(
+                    site.slice_lower(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
+                _optional_slice_term(
+                    site.slice_upper(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
+                _optional_slice_term(
+                    site.slice_step(),
                     owner=owner,
                     import_aliases=import_aliases,
                     from_imports=from_imports,
@@ -397,6 +436,27 @@ def symbolic_term(
             return ctor(f"call:{target}", args)
     raise TypeError(
         f"write more Sugar for {owner} `{site.observed}`: " "add a symbolic term shape"
+    )
+
+
+def _optional_slice_term(
+    site,
+    *,
+    owner: str,
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    name_resolver,
+    external_bridge_sink,
+) -> Term:
+    if site is None:
+        return ctor("None", [])
+    return symbolic_term(
+        site,
+        owner=owner,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        name_resolver=name_resolver,
+        external_bridge_sink=external_bridge_sink,
     )
 
 
