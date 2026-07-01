@@ -11,6 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 _SYMBOL = {
     "UAdd": "py.pos",
     "USub": "py.neg",
+    "Invert": "py.invert",
 }
 
 

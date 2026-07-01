@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -327,5 +329,121 @@ class X:
 """
 
     value = _reduce_expr(source, "[10, 20, 30][2 - X(1)]")
+
+    assert value == TermValue(20)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "expr"),
+    [
+        ("__truediv__", "Op() / Op()"),
+        ("__floordiv__", "Op() // Op()"),
+        ("__mod__", "Op() % Op()"),
+        ("__pow__", "Op() ** Op()"),
+        ("__matmul__", "Op() @ Op()"),
+        ("__and__", "Op() & Op()"),
+        ("__or__", "Op() | Op()"),
+        ("__xor__", "Op() ^ Op()"),
+        ("__lshift__", "Op() << Op()"),
+        ("__rshift__", "Op() >> Op()"),
+    ],
+)
+def test_expanded_object_binary_projects_to_dunder_method_bridge(
+    method_name: str, expr: str
+) -> None:
+    source = f"""\
+class Op:
+    def {method_name}(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, expr)
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Op.{method_name}"
+    assert len(value.arg_values) == 2
+
+
+@pytest.mark.parametrize(
+    ("method_name", "expr"),
+    [
+        ("__rtruediv__", "2 / Op()"),
+        ("__rfloordiv__", "2 // Op()"),
+        ("__rmod__", "2 % Op()"),
+        ("__rpow__", "2 ** Op()"),
+        ("__rmatmul__", "2 @ Op()"),
+        ("__rand__", "2 & Op()"),
+        ("__ror__", "2 | Op()"),
+        ("__rxor__", "2 ^ Op()"),
+        ("__rlshift__", "2 << Op()"),
+        ("__rrshift__", "2 >> Op()"),
+    ],
+)
+def test_expanded_reflected_object_binary_projects_to_dunder_method_bridge(
+    method_name: str, expr: str
+) -> None:
+    source = f"""\
+class Op:
+    def {method_name}(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, expr)
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Op.{method_name}"
+    assert len(value.arg_values) == 2
+
+
+@pytest.mark.parametrize(
+    ("method_name", "expr"),
+    [
+        ("__pos__", "+Op()"),
+        ("__neg__", "-Op()"),
+        ("__invert__", "~Op()"),
+    ],
+)
+def test_object_unary_projects_to_dunder_method_bridge(
+    method_name: str, expr: str
+) -> None:
+    source = f"""\
+class Op:
+    def {method_name}(self):
+        return 1
+"""
+
+    value = _reduce_expr(source, expr)
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == f"Op.{method_name}"
+    assert len(value.arg_values) == 1
+
+
+def test_expanded_object_binary_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __truediv__(self, other):
+        return other.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][X(0) / X(1)]")
+
+    assert value == TermValue(20)
+
+
+def test_object_unary_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __neg__(self):
+        return self.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][-X(1)]")
 
     assert value == TermValue(20)

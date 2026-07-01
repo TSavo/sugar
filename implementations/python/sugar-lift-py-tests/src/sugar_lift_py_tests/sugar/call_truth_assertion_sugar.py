@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import BoolValue, ObjectValue
-from sugar_lift_py_tests.floor.call_site_value import force_floor
-from sugar_lift_py_tests.ir import Formula, Term, atomic, bool_const, eq
-from sugar_lift_py_tests.operations import MethodCallOperation, perform_operation
+from sugar_lift_py_tests.floor import ObjectValue
+from sugar_lift_py_tests.ir import Formula, Term, atomic
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.sugar.object_truthiness import object_truth_formula
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -60,29 +59,12 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         value = complete_value(call_outcome, owner="CallTruthAssertionSugar call")
         if not isinstance(value, ObjectValue):
             return self.assertion_formula()
-        bool_outcome = perform_operation(
+        return object_truth_formula(
+            value,
+            ctx,
             owner="CallTruthAssertionSugar",
             blame=self.blame,
-            receiver=value,
-            method_name="call_method_with",
-            operation=MethodCallOperation(
-                name="__bool__",
-                arguments=(),
-                owner="CallTruthAssertionSugar",
-                blame=self.blame,
-            ),
-            ctx=ctx,
         )
-        bool_value = force_floor(
-            complete_value(bool_outcome, owner="CallTruthAssertionSugar __bool__"),
-            ctx,
-            owner="CallTruthAssertionSugar __bool__",
-        )
-        if not isinstance(bool_value, BoolValue):
-            raise TypeError(
-                "CallTruthAssertionSugar __bool__ must reduce to BoolValue"
-            )
-        return eq(bool_const(bool_value.value), bool_const(True))
 
 
 def _local_constructor_body(test, ctx) -> SugarBody | None:

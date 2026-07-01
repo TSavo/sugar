@@ -16,6 +16,7 @@ _SYMBOL: dict[str, str] = {
     "FloorDiv": "//",
     "Mod": "%",
     "Pow": "**",
+    "MatMult": "@",
 }
 
 

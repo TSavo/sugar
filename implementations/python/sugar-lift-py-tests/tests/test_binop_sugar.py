@@ -68,6 +68,15 @@ def test_binop_dispatches_through_floor_operation_log():
     ]
 
 
+def test_expanded_numeric_binary_stays_on_binary_operator_floor():
+    value, operation_log = _reduce_with_log("8 // 3")
+
+    assert value.value == 2
+    assert operation_log == [
+        ("BinOpSugar", "binary_operator_with", "BinaryOperatorOperation")
+    ]
+
+
 def test_encoded_string_concat_dispatches_through_left_floor():
     value, operation_log = _reduce_with_log(
         "tbl[i] + tbl[j]",

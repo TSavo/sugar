@@ -97,14 +97,14 @@ def test_refuse_strategy_raises_a_named_factory_gap_on_reduce():
 
 
 def test_refuse_strategy_classifies_builtin_call_frontier():
-    body, ctx = _build("hash(value)")
+    body, ctx = _build("abs(value)")
 
     with pytest.raises(FactoryGap) as raised:
         body.reduce(ctx)
 
-    assert raised.value.info["observed"] == "call-builtin:hash"
+    assert raised.value.info["observed"] == "call-builtin:abs"
     assert raised.value.info["fix"] == (
-        "add builtin call sugar for `hash`, resolve a local body, "
+        "add builtin call sugar for `abs`, resolve a local body, "
         "link an imported .proof, or emit a real effect"
     )
 

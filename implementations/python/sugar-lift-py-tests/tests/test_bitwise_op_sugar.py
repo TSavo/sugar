@@ -48,6 +48,13 @@ def test_bitwise_lshift_dispatches_term_receiver_without_python_solving():
     assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
 
 
+def test_bitwise_xor_dispatches_bv32_receiver_to_floor_operation():
+    result, operation_log = _reduce_value_with_log("x ^ 3", _x())
+
+    assert result == Bv32Value(ctor("bv32.xor", [make_var("x"), num(3)]))
+    assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
+
+
 def test_bitwise_missing_receiver_capability_is_a_named_floor_gap():
     with pytest.raises(FactoryGap) as raised:
         _reduce_value_with_log("'bad' & 1")
