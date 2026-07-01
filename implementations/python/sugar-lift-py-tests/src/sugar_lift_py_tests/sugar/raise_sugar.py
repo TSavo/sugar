@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
+@dataclass(frozen=True)
 class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     """`raise ...` -- a statement that IS an effect.
 
@@ -16,6 +20,9 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     detection: the sugar simply is the Incomplete.
     """
 
+    exception_name: str | None = None
+    blame: str | None = None
+
     @classmethod
     def owns(cls, fragment) -> bool:
         return fragment.observed == "Raise"
@@ -24,10 +31,23 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     def build(cls, fragment, ctx) -> "RaiseSugar":
         if fragment.observed != "Raise":
             raise TypeError("RaiseSugar claim built a non-raise statement")
-        return cls()
+        terms = fragment.terms()
+        return cls(
+            exception_name=_exception_name(terms[0]) if terms else None,
+            blame=fragment.blame,
+        )
 
     def desugar(self, ctx=None) -> Outcome:
-        return Incomplete(
-            "raise: a runtime effect that transfers control and halts "
-            "constraint propagation (every statement after it is unreachable)"
-        )
+        return Incomplete(RaiseEffect(self.exception_name, self.blame))
+
+
+def _exception_name(site) -> str | None:
+    if site.observed == "Call":
+        return site.call_qualified_target_name() or site.call_target_name()
+    if site.observed == "Name":
+        return site.name_id()
+    if site.observed == "Attribute":
+        receiver = _exception_name(site.attr_receiver())
+        if receiver is not None:
+            return f"{receiver}.{site.attr_name()}"
+    return None
