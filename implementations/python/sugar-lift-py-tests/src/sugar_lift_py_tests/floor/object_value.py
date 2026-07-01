@@ -181,6 +181,7 @@ class ObjectValue(FloorValue):
 
 
 _BINARY_DUNDER_METHODS = {
+    "==": "__eq__",
     "+": "__add__",
     "-": "__sub__",
     "*": "__mul__",

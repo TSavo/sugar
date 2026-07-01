@@ -176,6 +176,33 @@ class X:
     assert value == TermValue(20)
 
 
+def test_object_equality_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Eq:
+    def __eq__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "Eq() == Eq()")
+
+    assert isinstance(value, CallSiteValue)
+    assert fol(floor_to_term(value, owner="object equality")) == fol(
+        ctor(
+            "call:Eq.__eq__",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Eq"), str_const("t.py:1:0")],
+                ),
+                ctor(
+                    "py.object.identity",
+                    [str_const("Eq"), str_const("t.py:1:8")],
+                ),
+            ],
+        )
+    )
+
+
 def test_reflected_object_multiply_projects_to_dunder_method_bridge() -> None:
     source = """\
 class Mult:
