@@ -9,6 +9,7 @@ from .encoded_string_value import EncodedStringValue
 from .floor_value import FloorValue
 from .function_callable import FunctionCallable
 from .guarded_return import GuardedReturn
+from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .return_value import ReturnValue
 from .string_value import StringValue
@@ -26,6 +27,7 @@ __all__ = [
     "FloorValue",
     "FunctionCallable",
     "GuardedReturn",
+    "ImportAliasValue",
     "LambdaCallable",
     "ReturnValue",
     "StringValue",
