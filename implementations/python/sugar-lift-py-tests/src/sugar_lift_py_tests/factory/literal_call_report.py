@@ -500,6 +500,8 @@ def _comparison_assertion_uses_nonfree_name(
     comparators = test.compare_comparators()
     if not operators or len(operators) != len(comparators):
         return False
+    if operators != ["Eq"]:
+        return False
     if any(
         operator not in {"Eq", "NotEq", "Lt", "LtE", "Gt", "GtE"}
         for operator in operators

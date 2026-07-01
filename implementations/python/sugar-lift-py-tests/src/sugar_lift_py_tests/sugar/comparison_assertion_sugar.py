@@ -40,10 +40,11 @@ class ComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             return False
         left = test.compare_left()
         right = test.compare_comparators()[0]
-        if operator == "Eq" and left.observed in {"Attribute", "Subscript"}:
-            return False
-        if _contains_call(left) or _contains_call(right):
-            return False
+        if operator == "Eq":
+            if left.observed in {"Attribute", "Subscript"}:
+                return False
+            if _contains_call(left) or _contains_call(right):
+                return False
         return can_symbolic_term(left) and can_symbolic_term(right)
 
     @classmethod

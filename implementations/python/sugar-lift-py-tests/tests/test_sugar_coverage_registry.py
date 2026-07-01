@@ -41,6 +41,7 @@ COVERAGE: dict[str, list[str]] = {
     "attribute_sugar": ["test_attribute_sugar.py"],
     "bitwise_op_sugar": ["test_bitwise_op_sugar.py"],
     "binop_sugar": ["test_binop_sugar.py"],
+    "unary_op_sugar": ["test_unary_op_sugar.py"],
     "array_literal_sugar": ["test_array_literal_sugar.py"],
     "tuple_literal_sugar": ["test_tuple_literal_sugar.py"],
     "tuple_assign_sugar": ["test_assign_sugar.py"],
