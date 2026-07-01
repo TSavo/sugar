@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 from .command_result import CommandResult
 from .extract_panic_records import extract_panic_records
@@ -15,17 +15,52 @@ from .panic_record import PanicRecord
 
 
 RunCommand = Callable[[List[str], Path], CommandResult]
+PackagePathResolver = Callable[[str], Path]
 
 
-def collect_panic_audit(root: Path, run_command: Optional[RunCommand] = None) -> PanicAuditReport:
+def collect_panic_audit(
+    root: Path,
+    run_command: Optional[RunCommand] = None,
+    *,
+    installed_packages: Iterable[str] = (),
+    package_path_resolver: Optional[PackagePathResolver] = None,
+    include_showcases: bool = True,
+) -> PanicAuditReport:
     root = root.resolve()
     runner = run_command or _run_command
-    targets = (
-        LiftTarget("numpy", root / "examples/numpy-showcase"),
-        LiftTarget("pandas", root / "examples/pandas-showcase"),
-    )
+    targets: list[LiftTarget] = []
+    if include_showcases:
+        targets.extend(
+            (
+                LiftTarget("numpy", root / "examples/numpy-showcase"),
+                LiftTarget("pandas", root / "examples/pandas-showcase"),
+            )
+        )
     diagnostics: list[str] = []
     records: list[PanicRecord] = []
+    resolver = package_path_resolver or _resolve_installed_package_path
+    for package in installed_packages:
+        try:
+            package_path = resolver(package).resolve()
+        except Exception as exc:  # pragma: no cover - exact exception is environment-owned
+            target = LiftTarget(f"{package}-all", root)
+            message = f"unable to resolve installed package `{package}`: {exc}"
+            diagnostics.append(message)
+            records.append(
+                PanicRecord(
+                    target=target.name,
+                    kind="unexpected",
+                    owner="idd.collect_panic_audit",
+                    blame=package,
+                    observed="package-resolution-failed",
+                    requested="installed-package-path",
+                    fix=f"install `{package}` in the audit interpreter or pass a resolver",
+                    message=message,
+                )
+            )
+            targets.append(target)
+            continue
+        targets.append(LiftTarget(f"{package}-all", package_path))
     for target in targets:
         if not target.path.exists():
             message = f"missing target: {target.path}"
@@ -65,7 +100,28 @@ def collect_panic_audit(root: Path, run_command: Optional[RunCommand] = None) ->
                     message=message,
                 )
             )
-    return PanicAuditReport(targets=targets, records=records, diagnostics=diagnostics)
+    return PanicAuditReport(targets=tuple(targets), records=records, diagnostics=diagnostics)
+
+
+def _resolve_installed_package_path(package: str) -> Path:
+    code = (
+        "import importlib, os\n"
+        f"mod = importlib.import_module({package!r})\n"
+        "path = getattr(mod, '__file__', None)\n"
+        "if path is None:\n"
+        "    raise SystemExit('package has no __file__')\n"
+        "print(os.path.dirname(os.path.abspath(path)))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(detail or f"import {package} failed")
+    return Path(completed.stdout.strip())
 
 
 def _run_command(command: List[str], cwd: Path) -> CommandResult:

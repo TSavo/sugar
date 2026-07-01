@@ -338,6 +338,19 @@ class SourceFragment:
         self._require(ast.Assert)
         return SourceFragment.from_node(self.node.test, self.filename)  # type: ignore[attr-defined]
 
+    def assert_with_test(self, test: "SourceFragment") -> "SourceFragment":
+        """Return this Assert as a new Assert fragment with a different test.
+
+        This is the SourceFragment-only way to view `assert not <expr>` as
+        `assert <expr>` for child assertion construction. Callers never import
+        or assemble raw ast directly.
+        """
+        self._require(ast.Assert)
+        node = ast.Assert(test=test.node, msg=None)
+        ast.copy_location(node, self.node)
+        ast.fix_missing_locations(node)
+        return SourceFragment.from_node(node, self.filename)
+
     def expr_value(self) -> "SourceFragment":
         """Return a SourceFragment for the expression inside an Expr statement node."""
         self._require(ast.Expr)
