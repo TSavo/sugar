@@ -121,6 +121,40 @@ def test_fluent_builder_constructs_bodies_then_rewrites_forward():
     ]
 
 
+def test_temporal_add_assign_rewrite_dispatches_through_the_bound_floor():
+    temporal = TemporalContext.empty().bind_value("n", TermValue(10))
+    reduce_ctx = ReduceContext(temporal=temporal)
+
+    rewritten = temporal.apply_step(
+        TemporalRewriteStep.add_assign("n", TermValue(1), blame="builder.py:3:0"),
+        ctx=reduce_ctx,
+    )
+
+    assert rewritten.value_for("n") == TermValue(11)
+    assert reduce_ctx.operation_log == [("TemporalContext", "add_with", "AddOperation")]
+
+
+def test_temporal_add_assign_bad_operand_names_the_floor_gap():
+    temporal = TemporalContext.empty().bind_value("n", TermValue(10))
+
+    with pytest.raises(FactoryGap) as gap:
+        temporal.apply_step(
+            TemporalRewriteStep.add_assign(
+                "n",
+                ArrayLiteral((TermValue(1),)),
+                blame="builder.py:3:0",
+            )
+        )
+
+    assert gap.value.info == {
+        "owner": "TemporalContext",
+        "blame": "builder.py:3:0",
+        "observed": "TermValue+ArrayLiteral",
+        "requested": "add operand floor",
+        "fix": "add AddOperation support for TermValue with ArrayLiteral",
+    }
+
+
 def test_unknown_fluent_receiver_mutation_is_a_named_floor_gap():
     ctx = ReduceContext(temporal=TemporalContext.empty())
     receiver = BuilderState(ArrayLiteral((TermValue(1),)))
