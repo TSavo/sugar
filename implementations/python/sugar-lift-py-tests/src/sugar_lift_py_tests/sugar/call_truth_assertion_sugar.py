@@ -27,8 +27,16 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "CallTruthAssertionSugar":
-        del ctx
-        return cls(call=symbolic_term(site.assert_test(), owner="call truth assertion"))
+        return cls(
+            call=symbolic_term(
+                site.assert_test(),
+                owner="call truth assertion",
+                import_aliases=getattr(ctx, "import_aliases", {}) or {},
+                from_imports=getattr(ctx, "from_imports", {}) or {},
+                name_resolver=getattr(ctx, "name_resolver", {}) or {},
+                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+            )
+        )
 
     def assertion_formula(self) -> Formula:
         return atomic("py.truthy", [self.call])

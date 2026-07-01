@@ -118,7 +118,6 @@ def build_literal_call_report(
     memento_file: str | None = None,
     contract_bindings: list | None = None,
 ) -> SourceReportBuild | None:
-    del contract_bindings  # composition is by #euf# callsite name, not a binding/CID
     root_frag = SourceFragment.from_source(source, filename)
     lines = source.splitlines(keepends=True)
     rel_file = memento_file or filename
@@ -132,11 +131,15 @@ def build_literal_call_report(
         for frag in root_frag.walk()
         if frag.observed == "FunctionDef"
     }
+    import_aliases, from_imports = _import_bindings(root_frag)
     # IMPORT SUGAR: a callee reached through `import numpy as np` / `from mod import f`
     # is not local, so the dig cannot see its body. Resolve each imported callee to
     # its installed source FunctionDef so the SAME dig walks it like a local function.
     # Locals win on name collision; the assert-iteration below stays local-only.
-    dig_functions = {**_resolve_imported_callees(root_frag), **local_functions}
+    dig_functions = {
+        **_resolve_imported_callees(root_frag, import_aliases, from_imports),
+        **local_functions,
+    }
     for fn in local_functions.values():
         for stmt in fn.function_body():
             if stmt.observed != "Assert":
@@ -148,6 +151,9 @@ def build_literal_call_report(
                 memento_file=rel_file,
                 source_lines=lines,
                 functions_by_name=dig_functions,
+                import_aliases=import_aliases,
+                from_imports=from_imports,
+                contract_bindings=contract_bindings or [],
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -196,6 +202,9 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    contract_bindings: list,
 ) -> LiftResult | None:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -218,6 +227,9 @@ def _lift_assert(
         memento_file=memento_file,
         source_lines=source_lines,
         functions_by_name=functions_by_name,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
     )
     if assertion_sugar is not None:
         return assertion_sugar
@@ -238,7 +250,7 @@ def _lift_assert(
             fix="lift non-`==` comparison assertions",
         )
     comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
-    callee_name = _callee_name(comparison_left)
+    callee_name = _callee_name(comparison_left, import_aliases, from_imports)
     if callee_name is None:
         _panic_no_sugar(
             comparison_left, memento_file,
@@ -294,6 +306,9 @@ def _lift_assertion_via_factory(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    contract_bindings: list,
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
 
@@ -301,10 +316,15 @@ def _lift_assertion_via_factory(
     candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
     if not candidates:
         return None
+    external_bridge_sink: list[dict[str, Any]] = []
     ctx = FactoryBuildContext(
         filename=filename,
         catalog=catalog,
         name_resolver={name: frag.node for name, frag in functions_by_name.items()},
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        contract_bindings=contract_bindings,
+        external_bridge_sink=external_bridge_sink,
     )
     result = build_node(
         stmt,
@@ -319,7 +339,7 @@ def _lift_assertion_via_factory(
         "source_role",
         f"python.{type(result.sugar).__name__}",
     )
-    return _emit_assertion_surface_fact(
+    lifted = _emit_assertion_surface_fact(
         stmt,
         fn,
         formula,
@@ -329,6 +349,15 @@ def _lift_assertion_via_factory(
         memento_file=memento_file,
         source_lines=source_lines,
     )
+    if external_bridge_sink:
+        edges = _external_bridge_edges(
+            external_bridge_sink,
+            source_contract=lifted[0][0].name,
+            memento_file=memento_file,
+            contract_bindings=contract_bindings,
+        )
+        lifted = (lifted[0], lifted[1], lifted[2], lifted[3], [*lifted[4], *edges])
+    return lifted
 
 
 def _floor_to_term(value: Any) -> Term:
@@ -717,7 +746,7 @@ def _function_universe(
         if len(_universe_formulas) == 1
         else _formula_to_rpc(and_(_universe_formulas))
     )
-    function_contract_name = f"{Path(memento_file).stem}::{callee_name}::callable"
+    function_contract_name = f"{Path(memento_file).stem}::{callee.function_name()}::callable"
     function_memento = _function_source_memento(
         callee, memento_file, source_lines,
         role="python.literal-call-sugar", contract_name=function_contract_name,
@@ -876,7 +905,7 @@ def _dig_universe(
         kind="function-contract",
         # Must equal the callsite ctor head the fact emits (`call:<callee>`), which the
         # verifier matches via `post.source_symbol == callsite.name`.
-        bridge_source_symbol=f"call:{target_fn.function_name()}",
+        bridge_source_symbol=f"call:{call_sugar.target_name}",
     )
     audit = _source_audit(
         target_fn,
@@ -949,6 +978,72 @@ def _panic_no_sugar(frag: SourceFragment, memento_file: str, *, observed: str, r
     )
 
 
+def _external_bridge_edges(
+    sink: list[dict[str, Any]],
+    *,
+    source_contract: str,
+    memento_file: str,
+    contract_bindings: list,
+) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for item in sink:
+        target_symbol = item["targetSymbol"]
+        key = (target_symbol, item["line"], item["column"])
+        if key in seen:
+            continue
+        seen.add(key)
+        binding = _binding_for_bridge_symbol(contract_bindings, target_symbol)
+        edge: dict[str, Any] = {
+            "kind": "call-edge",
+            "schemaVersion": "1",
+            "sourceContract": source_contract,
+            "targetSymbol": target_symbol,
+            "targetContract": binding.get("name") if binding is not None else None,
+            "targetContractCid": _binding_cid(binding) if binding is not None else None,
+            "callSiteLocus": {
+                "file": memento_file,
+                "line": item["line"],
+                "column": item["column"],
+            },
+        }
+        proof_cid = _binding_proof_cid(binding)
+        if proof_cid is not None:
+            edge["targetProofCid"] = proof_cid
+        edges.append(edge)
+    return edges
+
+
+def _binding_for_bridge_symbol(
+    contract_bindings: list,
+    target_symbol: str,
+) -> dict[str, Any] | None:
+    target_name = target_symbol.removeprefix("call:")
+    for binding in contract_bindings:
+        if not isinstance(binding, dict):
+            continue
+        if binding.get("bridgeSourceSymbol") == target_symbol:
+            return binding
+        name = binding.get("name")
+        if name in {target_symbol, target_name}:
+            return binding
+    return None
+
+
+def _binding_cid(binding: dict[str, Any] | None) -> str | None:
+    if binding is None:
+        return None
+    cid = binding.get("contract_cid") or binding.get("contractCid") or binding.get("targetContractCid")
+    return cid if isinstance(cid, str) and cid else None
+
+
+def _binding_proof_cid(binding: dict[str, Any] | None) -> str | None:
+    if binding is None:
+        return None
+    cid = binding.get("target_proof_cid") or binding.get("targetProofCid")
+    return cid if isinstance(cid, str) and cid else None
+
+
 def _import_bindings(tree_frag: SourceFragment) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Scan a module's imports.
 
@@ -1008,39 +1103,45 @@ def _source_funcdef(module_name: str, attr: str) -> SourceFragment | None:
     return None
 
 
-def _resolve_imported_callees(tree_frag: SourceFragment) -> dict[str, SourceFragment]:
+def _resolve_imported_callees(
+    tree_frag: SourceFragment,
+    aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+) -> dict[str, SourceFragment]:
     """For every callsite referencing an imported callee (``np.rot90(...)`` or a
     ``from``-imported ``rot90(...)``), resolve its installed source to a
     SourceFragment keyed by the callee name -- so the dig can walk it. The import
     is the bridge from "the source is on disk" to "the dig can reach it"."""
-    aliases, from_imports = _import_bindings(tree_frag)
     resolved: dict[str, SourceFragment] = {}
     for frag in tree_frag.walk():
         if frag.observed != "Call":
             continue
-        module_name: str | None = None
-        attr: str | None = None
-        if frag.call_is_method_call():
-            receiver = frag.call_receiver()
-            if receiver is not None and receiver.observed == "Name":
-                module_name = aliases.get(receiver.name_id())
-                attr = frag.call_func().attr_name()
-        else:
-            func_frag = frag.call_func()
-            if func_frag.observed == "Name" and func_frag.name_id() in from_imports:
-                module_name, attr = from_imports[func_frag.name_id()]
-        if module_name is None or attr is None or attr in resolved:
+        target = frag.call_import_target_name(aliases, from_imports)
+        if target is None or target in resolved:
             continue
+        module_name, attr = _split_module_attr(target)
         funcdef = _source_funcdef(module_name, attr)
         if funcdef is not None:
-            resolved[attr] = funcdef
+            funcdef.node._sugar_bridge_name = target  # type: ignore[attr-defined]
+            resolved[target] = funcdef
     return resolved
 
 
-def _callee_name(frag: SourceFragment) -> str | None:
+def _split_module_attr(target: str) -> tuple[str, str]:
+    if "." not in target:
+        return "", target
+    module, attr = target.rsplit(".", 1)
+    return module, attr
+
+
+def _callee_name(
+    frag: SourceFragment,
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+) -> str | None:
     if frag.observed != "Call":
         return None
-    return frag.call_target_name()
+    return frag.call_import_target_name(import_aliases, from_imports) or frag.call_target_name()
 
 
 def _formula_to_rpc(formula: Formula) -> dict[str, Any]:

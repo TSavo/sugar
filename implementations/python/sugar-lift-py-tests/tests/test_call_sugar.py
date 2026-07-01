@@ -14,7 +14,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.sugar.call_sugar import CallSugar, RefuseStrategy
+from sugar_lift_py_tests.sugar.call_sugar import CallSugar, ExternalBridgeStrategy, RefuseStrategy
 
 
 def _frag(expr: str) -> SourceFragment:
@@ -58,6 +58,18 @@ def test_addsugar_no_longer_claims_np_add():
     # falls through to the CallSugar fallback.
     body, _ = _build("np.add(2, 3)")
     assert isinstance(body.sugar, CallSugar)
+
+
+def test_import_bound_external_call_builds_bridge_strategy():
+    ctx = FactoryBuildContext(
+        filename="t.py",
+        catalog=default_catalog(),
+        import_aliases={"math": "math"},
+    )
+    body = ctx.build_body(_frag("math.sqrt(4)"), SugarRole.TERM)
+    assert isinstance(body.sugar, CallSugar)
+    assert isinstance(body.sugar.strategy, ExternalBridgeStrategy)
+    assert body.sugar.strategy.target_name == "math.sqrt"
 
 
 # --- RefuseStrategy refuses LOUD and NAMED, never a silent lift --------------------------

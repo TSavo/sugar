@@ -60,7 +60,7 @@ def test_call_truth_assertion_lifts_attribute_call_fact() -> None:
         "args": [
             {
                 "kind": "ctor",
-                "name": "call:allclose",
+                "name": "call:numpy.allclose",
                 "args": [
                     {"kind": "var", "name": "arr"},
                     {"kind": "var", "name": "expected_value"},
@@ -68,6 +68,37 @@ def test_call_truth_assertion_lifts_attribute_call_fact() -> None:
             }
         ],
     }
+
+
+def test_call_truth_assertion_emits_external_bridge_edge_for_import_without_source() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import math\n"
+            "def test_finite(value):\n"
+            "    assert math.isfinite(value)\n"
+        ),
+        filename="test_finite.py",
+        memento_file="test_finite.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.inv["args"][0]["name"] == "call:math.isfinite"
+    assert report.payload.call_edges == [
+        {
+            "kind": "call-edge",
+            "schemaVersion": "1",
+            "sourceContract": contract.name,
+            "targetSymbol": "call:math.isfinite",
+            "targetContract": None,
+            "targetContractCid": None,
+            "callSiteLocus": {
+                "file": "test_finite.py",
+                "line": 3,
+                "column": 11,
+            },
+        }
+    ]
 
 
 def test_call_truth_assertion_leaves_generator_call_to_factory_gap() -> None:

@@ -21,7 +21,7 @@ def can_symbolic_term(site) -> bool:
         )
     if site.observed != "Call":
         return False
-    if site.call_target_name() is None:
+    if site.call_qualified_target_name() is None:
         return False
     if not all(can_symbolic_term(arg) for arg in site.call_args()):
         return False
@@ -32,7 +32,18 @@ def can_symbolic_term(site) -> bool:
     )
 
 
-def symbolic_term(site, *, owner: str) -> Term:
+def symbolic_term(
+    site,
+    *,
+    owner: str,
+    import_aliases: dict[str, str] | None = None,
+    from_imports: dict[str, tuple[str, str]] | None = None,
+    name_resolver=None,
+    external_bridge_sink=None,
+) -> Term:
+    import_aliases = import_aliases or {}
+    from_imports = from_imports or {}
+    name_resolver = name_resolver or {}
     if site.observed == "Name":
         return make_var(site.name_id())
     if site.observed == "PrimitiveLiteral":
@@ -46,12 +57,32 @@ def symbolic_term(site, *, owner: str) -> Term:
         if value is None:
             return ctor("None", [])
     if site.observed == "List":
-        return ctor("array", [symbolic_term(item, owner=owner) for item in site.terms()])
+        return ctor(
+            "array",
+            [
+                symbolic_term(
+                    item,
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                )
+                for item in site.terms()
+            ],
+        )
     if site.observed == "Attribute":
         return ctor(
             "py.attr",
             [
-                symbolic_term(site.attr_receiver(), owner=owner),
+                symbolic_term(
+                    site.attr_receiver(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
                 str_const(site.attr_name()),
             ],
         )
@@ -59,14 +90,52 @@ def symbolic_term(site, *, owner: str) -> Term:
         return ctor(
             "py.subscript",
             [
-                symbolic_term(site.subscript_receiver(), owner=owner),
-                symbolic_term(site.subscript_index(), owner=owner),
+                symbolic_term(
+                    site.subscript_receiver(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
+                symbolic_term(
+                    site.subscript_index(),
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                ),
             ],
         )
     if site.observed == "Call":
-        target = site.call_target_name()
+        import_target = site.call_import_target_name(import_aliases, from_imports)
+        target = import_target or site.call_target_name()
         if target is not None:
-            args = [symbolic_term(arg, owner=owner) for arg in site.call_args()]
+            if (
+                import_target is not None
+                and import_target not in name_resolver
+                and external_bridge_sink is not None
+            ):
+                external_bridge_sink.append(
+                    {
+                        "targetSymbol": f"call:{import_target}",
+                        "targetName": import_target,
+                        "line": site.line,
+                        "column": site.col,
+                    }
+                )
+            args = [
+                symbolic_term(
+                    arg,
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                )
+                for arg in site.call_args()
+            ]
             for keyword in site.call_keywords():
                 arg_name = keyword.keyword_arg_name()
                 if arg_name is None:
@@ -77,7 +146,16 @@ def symbolic_term(site, *, owner: str) -> Term:
                 args.append(
                     ctor(
                         f"kw:{arg_name}",
-                        [symbolic_term(keyword.keyword_value(), owner=owner)],
+                        [
+                            symbolic_term(
+                                keyword.keyword_value(),
+                                owner=owner,
+                                import_aliases=import_aliases,
+                                from_imports=from_imports,
+                                name_resolver=name_resolver,
+                                external_bridge_sink=external_bridge_sink,
+                            )
+                        ],
                     )
                 )
             return ctor(f"call:{target}", args)

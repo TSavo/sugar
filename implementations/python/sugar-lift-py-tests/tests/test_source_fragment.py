@@ -404,6 +404,11 @@ def test_call_keywords():
     assert len(kws) == 2
 
 
+def test_call_qualified_target_name_preserves_attribute_owner():
+    site = _expr("x = np.testing.assert_equal(a, b)\n")
+    assert site.call_qualified_target_name() == "np.testing.assert_equal"
+
+
 def test_keyword_arg_name():
     site = _expr("x = f(key=42)\n")
     kw = site.call_keywords()[0]

@@ -29,11 +29,17 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "IsInstanceAssertionSugar":
-        del ctx
         test = site.assert_test()
         subject, type_expr = test.call_args()
         return cls(
-            subject=symbolic_term(subject, owner="isinstance subject"),
+            subject=symbolic_term(
+                subject,
+                owner="isinstance subject",
+                import_aliases=getattr(ctx, "import_aliases", {}) or {},
+                from_imports=getattr(ctx, "from_imports", {}) or {},
+                name_resolver=getattr(ctx, "name_resolver", {}) or {},
+                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+            ),
             type_name=_type_expr_name(type_expr),
         )
 

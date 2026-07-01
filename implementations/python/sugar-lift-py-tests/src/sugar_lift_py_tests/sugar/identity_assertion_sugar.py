@@ -34,13 +34,27 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "IdentityAssertionSugar":
-        del ctx
         test = site.assert_test()
+        import_aliases = getattr(ctx, "import_aliases", {}) or {}
+        from_imports = getattr(ctx, "from_imports", {}) or {}
+        name_resolver = getattr(ctx, "name_resolver", {}) or {}
+        external_bridge_sink = getattr(ctx, "external_bridge_sink", None)
         return cls(
-            left=symbolic_term(test.compare_left(), owner="identity assertion left"),
+            left=symbolic_term(
+                test.compare_left(),
+                owner="identity assertion left",
+                import_aliases=import_aliases,
+                from_imports=from_imports,
+                name_resolver=name_resolver,
+                external_bridge_sink=external_bridge_sink,
+            ),
             right=symbolic_term(
                 test.compare_comparators()[0],
                 owner="identity assertion right",
+                import_aliases=import_aliases,
+                from_imports=from_imports,
+                name_resolver=name_resolver,
+                external_bridge_sink=external_bridge_sink,
             ),
             polarity=NotSugar() if test.compare_ops() == ["IsNot"] else None,
         )

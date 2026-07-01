@@ -20,8 +20,16 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def build(cls, site, ctx) -> "AttributeSugar":
-        del ctx
-        return cls(term=symbolic_term(site, owner="attribute sugar"))
+        return cls(
+            term=symbolic_term(
+                site,
+                owner="attribute sugar",
+                import_aliases=getattr(ctx, "import_aliases", {}) or {},
+                from_imports=getattr(ctx, "from_imports", {}) or {},
+                name_resolver=getattr(ctx, "name_resolver", {}) or {},
+                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+            )
+        )
 
     def desugar(self, ctx) -> Outcome:
         del ctx

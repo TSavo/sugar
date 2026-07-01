@@ -53,7 +53,7 @@ def test_isinstance_assertion_lifts_call_subject_with_keywords_symbolically() ->
     assert fact["name"] == "is_type"
     assert fact["args"][0] == {
         "kind": "ctor",
-        "name": "call:array",
+        "name": "call:numpy.array",
         "args": [
             {
                 "kind": "ctor",
