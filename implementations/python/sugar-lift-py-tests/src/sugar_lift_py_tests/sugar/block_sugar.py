@@ -69,8 +69,16 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 )
                 continue
             if isinstance(value, BlockValue):
-                for gr in value.statements:
-                    outcomes.append(GuardedReturn(pending + gr.guards, gr.value))
+                for statement in value.statements:
+                    if isinstance(statement, BoundVar):
+                        ctx = replace(
+                            ctx,
+                            temporal=ctx.temporal.bind_value(statement.name, statement),
+                        )
+                        continue
+                    outcomes.append(
+                        GuardedReturn(pending + statement.guards, statement.value)
+                    )
                 pending = pending + value.fall_through
                 continue
             outcomes.append(value)

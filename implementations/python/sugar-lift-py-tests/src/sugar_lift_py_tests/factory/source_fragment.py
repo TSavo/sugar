@@ -270,6 +270,14 @@ class SourceFragment:
             return targets[0].id
         return None
 
+    def assign_targets(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each assignment target."""
+        self._require(ast.Assign)
+        return [
+            SourceFragment.from_node(target, self.filename)
+            for target in self.node.targets  # type: ignore[attr-defined]
+        ]
+
     def assign_target_attribute_receiver_name(self) -> "str | None":
         """Return the receiver name for ``receiver.field = value``, else None."""
         self._require(ast.Assign)

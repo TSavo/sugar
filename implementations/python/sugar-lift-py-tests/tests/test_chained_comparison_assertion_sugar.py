@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -193,3 +196,109 @@ def test_chained_assertion_keeps_call_and_attribute_terms_symbolic() -> None:
             },
         }
     ]
+
+
+def test_chained_assertion_accepts_factory_built_module_binding() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "\n"
+            "info = np.__array_namespace_info__()\n"
+            "\n"
+            "def test_default_device():\n"
+            "    assert info.default_device() == 'cpu' == np.asarray(0).device\n"
+        ),
+        filename="test_array_api_info.py",
+        memento_file="test_array_api_info.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]
+
+
+def test_chained_assertion_accepts_bound_subscript_and_float_call_operand() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "\n"
+            "info = np.__array_namespace_info__()\n"
+            "\n"
+            "def test_default_dtypes():\n"
+            "    dtypes = info.default_dtypes()\n"
+            "    assert dtypes['real floating'] == np.float64 == np.asarray(0.0).dtype\n"
+        ),
+        filename="test_array_api_info.py",
+        memento_file="test_array_api_info.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]
+
+
+def test_chained_assertion_requires_module_binding_to_construct() -> None:
+    with pytest.raises(FactoryGap) as exc:
+        build_literal_call_report(
+            source=(
+                "info = f'{label}'\n"
+                "\n"
+                "def test_default_device():\n"
+                "    assert info == 'cpu' == 'cpu'\n"
+            ),
+            filename="test_array_api_info.py",
+            memento_file="test_array_api_info.py",
+        )
+
+    assert exc.value.info["observed"] == "JoinedStr"
+    assert exc.value.info["requested"] == "term"
+
+
+def test_chained_assertion_accepts_factory_built_local_binding() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "\n"
+            "def test_lengths():\n"
+            "    x, y = [], []\n"
+            "    xa = np.array(x, dtype=complex)\n"
+            "    assert len(xa) == len(x) == len(y)\n"
+        ),
+        filename="test_umath_complex.py",
+        memento_file="test_umath_complex.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]
+
+
+def test_chained_assertion_requires_local_binding_to_construct() -> None:
+    with pytest.raises(FactoryGap) as exc:
+        build_literal_call_report(
+            source=(
+                "def test_default_device():\n"
+                "    info = f'{label}'\n"
+                "    assert info == 'cpu' == 'cpu'\n"
+            ),
+            filename="test_array_api_info.py",
+            memento_file="test_array_api_info.py",
+        )
+
+    assert exc.value.info["observed"] == "JoinedStr"
+    assert exc.value.info["requested"] == "term"

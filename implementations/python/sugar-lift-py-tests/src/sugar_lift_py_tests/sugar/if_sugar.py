@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BlockValue, GuardedReturn, ReturnValue
-from sugar_lift_py_tests.ir import eq, gt, lt, make_var, ne, not_, num, str_const
+from sugar_lift_py_tests.ir import (
+    ctor,
+    eq,
+    gt,
+    gte,
+    identity,
+    lt,
+    lte,
+    make_var,
+    ne,
+    not_,
+    num,
+    real_lit,
+    str_const,
+)
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -68,9 +83,15 @@ def _cf_operand(frag):
         val = frag.literal_value()
         if isinstance(val, int):
             return num(val)
+        if isinstance(val, float):
+            return real_lit(format(Decimal(str(val)), "f"))
         if isinstance(val, str):
             return str_const(val)
-    raise TypeError(f"control-flow operand shape `{frag.observed}`")
+        if val is None:
+            return ctor("None", [])
+    if frag.observed == "Tuple":
+        return ctor("tuple", [_cf_operand(term) for term in frag.terms()])
+    raise TypeError(_cf_gap_message("operand", frag, observed=frag.observed))
 
 
 def _cf_guard(frag):
@@ -86,8 +107,27 @@ def _cf_guard(frag):
             return eq(left, right)
         if op_name == "NotEq":
             return ne(left, right)
+        if op_name == "Is":
+            return identity(left, right)
+        if op_name == "IsNot":
+            return not_(identity(left, right))
         if op_name == "Gt":
             return gt(left, right)
+        if op_name == "GtE":
+            return gte(left, right)
         if op_name == "Lt":
             return lt(left, right)
-    raise TypeError(f"control-flow guard shape `{frag.observed}`")
+        if op_name == "LtE":
+            return lte(left, right)
+    observed = frag.observed
+    if frag.observed == "Compare":
+        observed = f"Compare:{','.join(frag.compare_ops()) or 'unknown'}"
+    raise TypeError(_cf_gap_message("guard", frag, observed=observed))
+
+
+def _cf_gap_message(kind: str, frag, *, observed: str) -> str:
+    return (
+        f"write more Sugar for control-flow {kind}: owner=IfSugar "
+        f"blame={frag.blame} observed={observed} requested=control-flow {kind} "
+        f"fix=add IfSugar lowering for {observed}"
+    )
