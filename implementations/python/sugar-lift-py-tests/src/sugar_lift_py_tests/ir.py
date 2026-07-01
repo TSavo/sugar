@@ -224,6 +224,10 @@ def eq(a: Term, b: Term) -> Formula:
     return atomic("=", [a, b])
 
 
+def identity(a: Term, b: Term) -> Formula:
+    return atomic("identity", [a, b])
+
+
 def ne(a: Term, b: Term) -> Formula:
     return atomic("≠", [a, b])
 

@@ -61,6 +61,7 @@ impl IrCompiler for SmtLibCompiler {
             ],
             supported_predicates: vec![
                 "=".to_string(),
+                "identity".to_string(),
                 "distinct".to_string(),
                 "<".to_string(),
                 "<=".to_string(),
@@ -1503,6 +1504,69 @@ mod tests {
     }
     fn and2(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {
         serde_json::json!({"kind":"and","operands":[a,b]})
+    }
+
+    #[test]
+    fn identity_relation_has_sat_unsat_teeth_under_z3() {
+        // `identity` is the language-neutral object-identity relation. Kits
+        // like Python lower `is` to this predicate; the shared compiler lowers
+        // it to equality over identity-denotation terms, so z3 remains the
+        // authority instead of the lifter.
+        let z3 = which_z3().expect("z3 required for identity relation check");
+
+        let good = and2(
+            atomic("identity", vec![var("r"), none_ctor()]),
+            atomic("identity", vec![var("r"), none_ctor()]),
+        );
+        let parts = compile_asserted_to_parts(&good).expect("compile good identity");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            !script.contains("(declare-fun identity"),
+            "identity is a compiler relation, not an uninterpreted predicate:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-sort SugarIdentity 0)")
+                && script.contains("(declare-const |identity:var:r| SugarIdentity)")
+                && !script.contains("(declare-const r Int)"),
+            "identity facts must ride their own SugarIdentity sort:\n{script}"
+        );
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "sat",
+            "same identity facts must be SAT, got: {out}\nscript:\n{script}"
+        );
+
+        let bad = and2(
+            atomic("identity", vec![var("r"), none_ctor()]),
+            atomic("identity", vec![var("r"), bool_const(true)]),
+        );
+        let parts = compile_asserted_to_parts(&bad).expect("compile bad identity");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            !script.contains("(declare-fun identity"),
+            "identity is a compiler relation, not an uninterpreted predicate:\n{script}"
+        );
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "unsat",
+            "identity(r,None) ∧ identity(r,True) must be UNSAT, got: {out}\nscript:\n{script}"
+        );
+
+        let bool_vs_int_identity = and2(
+            atomic("identity", vec![var("r"), bool_const(true)]),
+            atomic("identity", vec![var("r"), int_const(1)]),
+        );
+        let parts =
+            compile_asserted_to_parts(&bool_vs_int_identity).expect("compile bool/int identity");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let out = run_z3(&z3, &script);
+        assert_eq!(
+            out.trim(),
+            "unsat",
+            "identity(r,True) ∧ identity(r,1) must be UNSAT even though True == 1 is SAT; got: {out}\nscript:\n{script}"
+        );
     }
 
     #[test]
