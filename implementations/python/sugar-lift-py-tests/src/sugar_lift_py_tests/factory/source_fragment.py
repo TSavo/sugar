@@ -336,6 +336,65 @@ class SourceFragment:
         self._require(ast.If)
         return [SourceFragment.from_node(s, self.filename) for s in self.node.orelse]  # type: ignore[attr-defined]
 
+    def try_body(self) -> "SourceFragment":
+        """Return a Block SourceFragment for the Try body suite."""
+        from .block import Block
+
+        self._require(ast.Try, ast.TryStar)
+        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+
+    def try_handlers(self) -> "list[SourceFragment]":
+        """Return SourceFragments for the Try except handlers."""
+        self._require(ast.Try, ast.TryStar)
+        return [SourceFragment.from_node(h, self.filename) for h in self.node.handlers]  # type: ignore[attr-defined]
+
+    def try_orelse(self) -> "SourceFragment | None":
+        """Return a Block SourceFragment for the Try else suite, if present."""
+        from .block import Block
+
+        self._require(ast.Try, ast.TryStar)
+        if not self.node.orelse:  # type: ignore[attr-defined]
+            return None
+        return SourceFragment.from_node(Block.of(self.node.orelse), self.filename)  # type: ignore[attr-defined]
+
+    def try_finalbody(self) -> "SourceFragment | None":
+        """Return a Block SourceFragment for the Try finally suite, if present."""
+        from .block import Block
+
+        self._require(ast.Try, ast.TryStar)
+        if not self.node.finalbody:  # type: ignore[attr-defined]
+            return None
+        return SourceFragment.from_node(Block.of(self.node.finalbody), self.filename)  # type: ignore[attr-defined]
+
+    def except_handler_body(self) -> "SourceFragment":
+        """Return a Block SourceFragment for an ExceptHandler body suite."""
+        from .block import Block
+
+        self._require(ast.ExceptHandler)
+        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+
+    def except_handler_type_names(self) -> "tuple[str, ...] | None":
+        """Return handler exception names, or None for a bare except."""
+        self._require(ast.ExceptHandler)
+        typ = self.node.type  # type: ignore[attr-defined]
+        if typ is None:
+            return None
+        if isinstance(typ, ast.Tuple):
+            return tuple(
+                name
+                for item in typ.elts
+                if (name := _dotted_expr_name(item)) is not None
+            )
+        name = _dotted_expr_name(typ)
+        if name is None:
+            return ()
+        return (name,)
+
+    def except_handler_name(self) -> "str | None":
+        """Return the bound exception name in `except X as name`, if any."""
+        self._require(ast.ExceptHandler)
+        return self.node.name  # type: ignore[attr-defined]
+
     def function_name(self) -> str:
         """Return the name string for a FunctionDef or AsyncFunctionDef."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)

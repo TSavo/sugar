@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import EncodedStringValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -120,8 +121,10 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
                 # never executes, so this effect halts all downstream constraint
                 # propagation. It is Incomplete, not a value and not a refusal.
                 return Incomplete(
-                    f"division by zero (`{self.operator}` by 0): a runtime DivByZero "
-                    f"effect that raises and stops constraint propagation"
+                    RuntimeEffect(
+                        f"division by zero (`{self.operator}` by 0): a runtime "
+                        "DivByZero effect that raises and stops constraint propagation"
+                    )
                 )
             return Complete(TermValue(_FOLD[self.operator](left.value, right.value)))
         # A symbolic operand (a free var, or a term over one) -> EMIT the operation as a
