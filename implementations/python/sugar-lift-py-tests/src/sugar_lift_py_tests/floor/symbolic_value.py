@@ -39,3 +39,6 @@ class SymbolicValue(FloorValue):
 
     def bitwise_with(self, operation, ctx):
         return operation.bitwise_symbolic(self, ctx)
+
+    def contains_with(self, operation, ctx):
+        return operation.contains_symbolic(self, ctx)

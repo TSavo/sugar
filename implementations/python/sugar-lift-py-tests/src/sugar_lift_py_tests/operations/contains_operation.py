@@ -7,10 +7,14 @@ from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
     FloorValue,
+    PredicateValue,
     StringValue,
+    SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,20 @@ class ContainsOperation:
         if not isinstance(self.item, TermValue):
             self._floor_gap(receiver="ArrayLiteral")
         return Complete(BoolValue(any(item == self.item for item in receiver.items)))
+
+    def contains_symbolic(self, receiver: SymbolicValue, ctx: object) -> Outcome:
+        del ctx
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "contains",
+                    [
+                        floor_to_term(receiver, owner=f"{self.owner} container"),
+                        floor_to_term(self.item, owner=f"{self.owner} item"),
+                    ],
+                )
+            )
+        )
 
     def _floor_gap(self, *, receiver: str) -> None:
         info = FactoryGapInfo(

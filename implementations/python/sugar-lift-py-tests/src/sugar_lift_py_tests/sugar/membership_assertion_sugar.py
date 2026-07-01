@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import BoolValue
-from sugar_lift_py_tests.ir import Formula, bool_const, eq
+from sugar_lift_py_tests.floor import BoolValue, PredicateValue
+from sugar_lift_py_tests.ir import Formula, bool_const, eq, not_
 from sugar_lift_py_tests.operations import ContainsOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -73,9 +73,11 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         contains = complete_value(
             contains_outcome, owner="MembershipAssertionSugar contains"
         )
+        if isinstance(contains, PredicateValue):
+            return not_(contains.formula) if self.negated else contains.formula
         if not isinstance(contains, BoolValue):
             raise TypeError(
-                "MembershipAssertionSugar contains must reduce to BoolValue"
+                "MembershipAssertionSugar contains must reduce to BoolValue or PredicateValue"
             )
         result = not contains.value if self.negated else contains.value
         return _assert_true(result)
