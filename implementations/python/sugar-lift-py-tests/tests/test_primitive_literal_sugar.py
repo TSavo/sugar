@@ -5,8 +5,8 @@ import ast
 from factory_reduce import fol, reduce_term
 
 from sugar_lift_py_tests.factory import SourceFragment
-from sugar_lift_py_tests.floor import StringValue, TermValue
-from sugar_lift_py_tests.ir import num, str_const
+from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PrimitiveLiteralSugar
 
@@ -33,4 +33,18 @@ def test_primitive_literal_sugar_is_value_born_from_site() -> None:
     assert complete_value(int_sugar.desugar(), owner="int literal") == TermValue(42)
     assert complete_value(string_sugar.desugar(), owner="string literal") == StringValue(
         "abc"
+    )
+
+
+def test_none_primitive_literal_sugar_reduces_to_none_ctor() -> None:
+    none_node = ast.parse("None", mode="eval").body
+
+    none_sugar = PrimitiveLiteralSugar.from_site(
+        SourceFragment.from_node(none_node, "literals.py")
+    )
+
+    assert none_sugar == PrimitiveLiteralSugar(value=None)
+    assert not hasattr(none_sugar, "node")
+    assert complete_value(none_sugar.desugar(), owner="none literal") == SymbolicValue(
+        ctor("None", [])
     )

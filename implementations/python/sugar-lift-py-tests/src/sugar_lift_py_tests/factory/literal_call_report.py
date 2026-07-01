@@ -12,7 +12,7 @@ from sugar_lift_py_tests.factory.array_map_report import (
     _statement_source_memento,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.ir import (
     Formula,
     Term,
@@ -314,6 +314,20 @@ def _lift_assertion_via_factory(
 
     catalog = default_catalog()
     candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
+    if _comparison_assertion_uses_nonfree_name(
+        stmt,
+        fn,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+    ):
+        catalog = SugarCatalog(
+            [
+                claim
+                for claim in catalog.claims
+                if claim.name != "ComparisonAssertionSugar"
+            ]
+        )
+        candidates = catalog.candidates_for(SugarRole.ASSERTION, stmt)
     if not candidates:
         return None
     external_bridge_sink: list[dict[str, Any]] = []
@@ -358,6 +372,39 @@ def _lift_assertion_via_factory(
         )
         lifted = (lifted[0], lifted[1], lifted[2], lifted[3], [*lifted[4], *edges])
     return lifted
+
+
+def _comparison_assertion_uses_nonfree_name(
+    stmt: SourceFragment,
+    fn: SourceFragment,
+    *,
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+) -> bool:
+    if stmt.observed != "Assert":
+        return False
+    test = stmt.assert_test()
+    if test.observed != "Compare":
+        return False
+    if len(test.compare_ops()) != 1 or len(test.compare_comparators()) != 1:
+        return False
+    operator = test.compare_ops()[0]
+    if operator not in {"Eq", "NotEq", "Lt", "LtE", "Gt", "GtE"}:
+        return False
+    safe_names = set(fn.function_params()) | set(import_aliases) | set(from_imports)
+    for operand in (test.compare_left(), test.compare_comparators()[0]):
+        for name in _names_including_self(operand):
+            if name not in safe_names:
+                return True
+    return False
+
+
+def _names_including_self(site: SourceFragment) -> list[str]:
+    names: list[str] = []
+    for fragment in [site, *site.walk()]:
+        if fragment.observed == "Name":
+            names.append(fragment.name_id())
+    return names
 
 
 def _floor_to_term(value: Any) -> Term:

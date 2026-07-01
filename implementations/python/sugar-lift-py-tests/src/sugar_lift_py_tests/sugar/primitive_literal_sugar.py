@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import StringValue, TermValue
+from sugar_lift_py_tests.floor import StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
-PrimitiveValue = int | float | str
+PrimitiveValue = int | float | str | None
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
         if site.observed != "PrimitiveLiteral":
             return None
         value = site.literal_value()
-        if not isinstance(value, (int, float, str)):
+        if value is not None and not isinstance(value, (int, float, str)):
             return None
         return cls(value)
 
@@ -41,6 +42,8 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
             return Complete(TermValue(self.value))
         if isinstance(self.value, str):
             return Complete(StringValue(self.value))
+        if self.value is None:
+            return Complete(SymbolicValue(ctor("None", [])))
         raise TypeError(
             f"write more Floor for PrimitiveLiteralSugar value `{type(self.value).__name__}`"
         )
