@@ -247,6 +247,31 @@ def test_chained_assertion_accepts_bound_subscript_and_float_call_operand() -> N
     ]
 
 
+def test_chained_assertion_accepts_bound_subscript_and_complex_call_operand() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "\n"
+            "info = np.__array_namespace_info__()\n"
+            "\n"
+            "def test_default_dtypes():\n"
+            "    dtypes = info.default_dtypes()\n"
+            "    assert dtypes['complex floating'] == np.complex128 == np.asarray(0.0j).dtype\n"
+        ),
+        filename="test_array_api_info.py",
+        memento_file="test_array_api_info.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == (
+        "python.chained-comparison-assertion-sugar"
+    )
+    assert [row.selected for row in report.payload.factory_walk] == [
+        "ChainedComparisonAssertionSugar"
+    ]
+
+
 def test_chained_assertion_requires_module_binding_to_construct() -> None:
     with pytest.raises(FactoryGap) as exc:
         build_literal_call_report(

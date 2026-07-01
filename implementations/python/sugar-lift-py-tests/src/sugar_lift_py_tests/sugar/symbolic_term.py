@@ -21,6 +21,8 @@ def can_symbolic_term(site) -> bool:
             site.literal_value(),
             (bool, int, float, str),
         )
+    if site.observed == "Constant":
+        return isinstance(site.literal_value(), complex)
     if site.observed == "List":
         return all(can_symbolic_term(item) for item in site.terms())
     if site.observed == "Attribute":
@@ -63,11 +65,21 @@ def symbolic_term(
         if isinstance(value, int):
             return num(value)
         if isinstance(value, float):
-            return real_lit(format(Decimal(str(value)), "f"))
+            return _real_part_term(value)
         if isinstance(value, str):
             return str_const(value)
         if value is None:
             return ctor("None", [])
+    if site.observed == "Constant":
+        value = site.literal_value()
+        if isinstance(value, complex):
+            return ctor(
+                "py.complex",
+                [
+                    _real_part_term(value.real),
+                    _real_part_term(value.imag),
+                ],
+            )
     if site.observed == "List":
         return ctor(
             "array",
@@ -174,3 +186,7 @@ def symbolic_term(
     raise TypeError(
         f"write more Sugar for {owner} `{site.observed}`: " "add a symbolic term shape"
     )
+
+
+def _real_part_term(value: float) -> Term:
+    return real_lit(format(Decimal(str(value)), "f"))
