@@ -897,10 +897,13 @@ def _construct_callsite(
             continue  # a shape the catalog cannot peel -> leave the bridge as an axiom
         if not isinstance(outcome, Complete):
             continue  # a runtime effect (Incomplete): unclimbable here
-        body_stmts = outcome.value.statements
-        if len(body_stmts) != 1 or not isinstance(body_stmts[0], ReturnValue):
+        result = _concrete_return_value(
+            outcome.value.statements,
+            param_name=callee.function_params()[0],
+            arg_value=arg_value,
+        )
+        if result is None:
             continue
-        result = body_stmts[0].value
         if isinstance(result, TermValue):
             value_term = _floor_to_term(result)  # reached a literal floor
         elif isinstance(result, SymbolicValue):
@@ -936,6 +939,15 @@ def _construct_callsite(
     return merged
 
 
+def _concrete_return_value(statements, *, param_name: str, arg_value):
+    from sugar_lift_py_tests.floor import ReturnValue
+
+    del param_name, arg_value
+    if len(statements) == 1 and isinstance(statements[0], ReturnValue):
+        return statements[0].value
+    return None
+
+
 def _function_universe(
     callee: SourceFragment,
     callee_name: str,
@@ -954,6 +966,8 @@ def _function_universe(
     symbolic-op emission), bypassing build_bridge_body's string-only single-return shortcut.
     Returns None if the body cannot be walked -- the construction still stands; only the
     source-line warrant is absent."""
+    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+
     from .build import default_catalog
     from .sugar_constructors import build_control_flow_body_sugar
 

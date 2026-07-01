@@ -6,7 +6,9 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import (
     BlockValue,
     BoundVar,
+    GuardedRaise,
     GuardedReturn,
+    RaiseValue,
     ReturnValue,
     SupportValue,
 )
@@ -67,8 +69,16 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 outcomes.append(
                     GuardedReturn(pending, value.value) if pending else value
                 )
-                continue
+                return Complete(BlockValue(tuple(outcomes)))
+            if isinstance(value, RaiseValue):
+                outcomes.append(
+                    GuardedRaise(pending, value.effect, value.scope)
+                    if pending
+                    else value
+                )
+                return Complete(BlockValue(tuple(outcomes)))
             if isinstance(value, BlockValue):
+                exit_emitted = False
                 for statement in value.statements:
                     if isinstance(statement, BoundVar):
                         ctx = replace(
@@ -76,16 +86,38 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                             temporal=ctx.temporal.bind_value(statement.name, statement),
                         )
                         continue
+                    if isinstance(statement, RaiseValue):
+                        exit_emitted = True
+                        outcomes.append(
+                            GuardedRaise(pending, statement.effect, statement.scope)
+                            if pending
+                            else statement
+                        )
+                        continue
                     if isinstance(statement, ReturnValue):
+                        exit_emitted = True
                         outcomes.append(
                             GuardedReturn(pending, statement.value)
                             if pending
                             else statement
                         )
                         continue
+                    if isinstance(statement, GuardedRaise):
+                        exit_emitted = True
+                        outcomes.append(
+                            GuardedRaise(
+                                pending + statement.guards,
+                                statement.effect,
+                                statement.scope,
+                            )
+                        )
+                        continue
+                    exit_emitted = True
                     outcomes.append(
                         GuardedReturn(pending + statement.guards, statement.value)
                     )
+                if exit_emitted and not value.fall_through:
+                    return Complete(BlockValue(tuple(outcomes)))
                 pending = pending + value.fall_through
                 continue
             outcomes.append(value)
