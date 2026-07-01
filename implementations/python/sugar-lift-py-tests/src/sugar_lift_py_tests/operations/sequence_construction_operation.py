@@ -15,22 +15,24 @@ class SequenceConstructionOperation:
     owner: str
     blame: str
 
-    def construct_sequence(
-        self, receiver: SequenceConstructor, ctx: object
-    ) -> Outcome:
+    def construct_sequence(self, receiver: SequenceConstructor, ctx: object) -> Outcome:
         del ctx
         if receiver.kind == "tuple":
             return Complete(TupleLiteralValue(self.elements))
         if receiver.kind == "list":
-            return Complete(ArrayLiteral(tuple(self._list_element(item) for item in self.elements)))
+            return Complete(
+                ArrayLiteral(tuple(self._list_element(item) for item in self.elements))
+            )
         self._floor_gap(
             observed=f"SequenceConstructor({receiver.kind})",
             requested="sequence kind",
             fix=f"add SequenceConstructionOperation support for {receiver.kind}",
         )
 
-    def _list_element(self, item: FloorValue) -> TermValue:
-        if isinstance(item, TermValue):
+    def _list_element(
+        self, item: FloorValue
+    ) -> TermValue | ArrayLiteral | TupleLiteralValue:
+        if isinstance(item, (TermValue, ArrayLiteral, TupleLiteralValue)):
             return item
         self._floor_gap(
             observed=f"ListLiteralSugar element {type(item).__name__}",

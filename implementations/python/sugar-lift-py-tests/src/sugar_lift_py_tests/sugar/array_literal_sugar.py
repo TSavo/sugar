@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, TermValue
+from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -49,7 +50,8 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
             ArrayLiteral(
                 tuple(
                     _array_element(
-                        complete_value(element.reduce(ctx), owner="ArrayLiteralSugar")
+                        complete_value(element.reduce(ctx), owner="ArrayLiteralSugar"),
+                        element=element,
                     )
                     for element in self.elements
                 )
@@ -57,11 +59,12 @@ class ArrayLiteralSugar(Sugar, role=SugarRole.TERM, comes_before=("ListLiteralSu
         )
 
 
-def _array_element(value):
-    if not isinstance(value, (TermValue, ArrayLiteral)):
+def _array_element(value, *, element: SugarBody):
+    if not isinstance(value, (TermValue, ArrayLiteral, TupleLiteralValue)):
+        blame = _element_blame(element)
         info = FactoryGapInfo(
             owner="ArrayLiteralSugar",
-            blame="<array element>",
+            blame=blame,
             observed=type(value).__name__,
             requested="array element floor",
             fix=f"add ArrayLiteral element floor for {type(value).__name__}",
@@ -74,13 +77,19 @@ def _array_element(value):
                 role="array element floor",
                 status="floor-gap",
                 observed=info.observed,
-                blame=info.blame,
+                blame=blame,
                 selected=None,
                 candidates=[],
                 message=info.message,
             ),
         )
     return value
+
+
+def _element_blame(element: SugarBody) -> str:
+    row = getattr(element, "audit_row", None)
+    blame = getattr(row, "blame", None)
+    return blame or "<array element>"
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
