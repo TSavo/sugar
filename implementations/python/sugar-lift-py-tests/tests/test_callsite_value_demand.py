@@ -15,7 +15,7 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -172,5 +172,128 @@ class X:
 """
 
     value = _reduce_expr(source, "[10, 20, 30][X(0) * X(1)]")
+
+    assert value == TermValue(20)
+
+
+def test_reflected_object_multiply_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Mult:
+    def __rmul__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "2 * Mult()")
+
+    assert isinstance(value, CallSiteValue)
+    assert fol(floor_to_term(value, owner="reflected object multiply")) == fol(
+        ctor(
+            "call:Mult.__rmul__",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Mult"), str_const("t.py:1:4")],
+                ),
+                num(2),
+            ],
+        )
+    )
+
+
+def test_reflected_object_multiply_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __rmul__(self, other):
+        return self.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][2 * X(1)]")
+
+    assert value == TermValue(20)
+
+
+def test_object_add_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Add:
+    def __add__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "Add() + Add()")
+
+    assert isinstance(value, CallSiteValue)
+    assert fol(floor_to_term(value, owner="object add")) == fol(
+        ctor(
+            "call:Add.__add__",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Add"), str_const("t.py:1:0")],
+                ),
+                ctor(
+                    "py.object.identity",
+                    [str_const("Add"), str_const("t.py:1:8")],
+                ),
+            ],
+        )
+    )
+
+
+def test_reflected_object_add_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __radd__(self, other):
+        return self.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][2 + X(1)]")
+
+    assert value == TermValue(20)
+
+
+def test_object_subtract_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Sub:
+    def __sub__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "Sub() - Sub()")
+
+    assert isinstance(value, CallSiteValue)
+    assert fol(floor_to_term(value, owner="object subtract")) == fol(
+        ctor(
+            "call:Sub.__sub__",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Sub"), str_const("t.py:1:0")],
+                ),
+                ctor(
+                    "py.object.identity",
+                    [str_const("Sub"), str_const("t.py:1:8")],
+                ),
+            ],
+        )
+    )
+
+
+def test_reflected_object_subtract_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __rsub__(self, other):
+        return self.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][2 - X(1)]")
 
     assert value == TermValue(20)

@@ -13,6 +13,7 @@ from .materialize_operation import MaterializeOperation
 from .method_call_operation import MethodCallOperation
 from .perform_operation import perform_operation
 from .route_raises_operation import RouteRaisesOperation
+from .reflected_binary_operator_operation import ReflectedBinaryOperatorOperation
 from .str_coercion_operation import StrCoercionOperation
 from .subscript_operation import SubscriptOperation
 from .unary_operator_operation import UnaryOperatorOperation
@@ -30,6 +31,7 @@ __all__ = [
     "MaterializeOperation",
     "MethodCallOperation",
     "perform_operation",
+    "ReflectedBinaryOperatorOperation",
     "RouteRaisesOperation",
     "StrCoercionOperation",
     "SubscriptOperation",
