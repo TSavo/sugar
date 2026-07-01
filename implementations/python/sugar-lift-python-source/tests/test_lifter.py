@@ -157,7 +157,11 @@ def _str_const(value: str) -> dict[str, object]:
 
 
 def _attr(value: dict[str, object], name: str) -> dict[str, object]:
-    return {"kind": "ctor", "name": "python:attribute", "args": [value, _str_const(name)]}
+    return {
+        "kind": "ctor",
+        "name": "python:attribute",
+        "args": [value, _str_const(name)],
+    }
 
 
 def _subscript(value: dict[str, object], index: dict[str, object]) -> dict[str, object]:
@@ -302,7 +306,9 @@ def _compare_pairs(node: object) -> list[tuple[str, str, str]]:
     return pairs
 
 
-def _assert_guard(term: object, expected_head: str, expected_arg: str) -> dict[str, object]:
+def _assert_guard(
+    term: object, expected_head: str, expected_arg: str
+) -> dict[str, object]:
     assert isinstance(term, dict)
     assert term["kind"] == "ctor"
     assert term["name"] == "cf_guarded"
@@ -330,9 +336,17 @@ def _assert_none_guarded_if(
         "kind": "ctor",
         "name": "python:compare",
         "args": [
-            {"kind": "const", "value": op, "sort": {"kind": "primitive", "name": "String"}},
+            {
+                "kind": "const",
+                "value": op,
+                "sort": {"kind": "primitive", "name": "String"},
+            },
             {"kind": "var", "name": "x"},
-            {"kind": "const", "value": None, "sort": {"kind": "primitive", "name": "Unit"}},
+            {
+                "kind": "const",
+                "value": None,
+                "sort": {"kind": "primitive", "name": "Unit"},
+            },
         ],
     }
     assert _assert_guard(then_branch, then_head, "x")["name"] == "python:return"
@@ -449,7 +463,11 @@ def test_walrus_literal_rhs_lifts_without_runtime_failure_loci_or_effects() -> N
         "args": [
             _walrus(
                 _var("x"),
-                {"kind": "const", "value": 42, "sort": {"kind": "primitive", "name": "Int"}},
+                {
+                    "kind": "const",
+                    "value": 42,
+                    "sort": {"kind": "primitive", "name": "Int"},
+                },
             )
         ],
     }
@@ -596,7 +614,9 @@ def test_tuple_unpack_names_emits_unpack_assign_runtime_failure_locus() -> None:
 
     contract = _contract(result.ir, ".f")
     body = contract["post"]["args"][1]
-    unpack = _unpack_assign("tuple", _unpack_targets(_var("a"), _var("b")), _var("pair"))
+    unpack = _unpack_assign(
+        "tuple", _unpack_targets(_var("a"), _var("b")), _var("pair")
+    )
     assert result.refusals == []
     assert contract["effects"] == [{"kind": "panics"}]
     assert _runtime_failure_loci(contract) == [
@@ -1005,7 +1025,9 @@ def test_slice_load_preserves_slice_shape_in_body_and_locus(
     }
 
 
-def test_nested_slice_load_receiver_emits_intermediate_access_and_slice_access() -> None:
+def test_nested_slice_load_receiver_emits_intermediate_access_and_slice_access() -> (
+    None
+):
     source = "def f(obj, a, b):\n    value = obj.inner[a:b]\n    return value\n"
 
     result = lift_source(source, "nested_slice_access.py")
@@ -1414,7 +1436,9 @@ def test_slice_assign_preserves_slice_shape_in_body_and_locus(
     }
 
 
-def test_nested_slice_assign_receiver_emits_intermediate_access_and_slice_write() -> None:
+def test_nested_slice_assign_receiver_emits_intermediate_access_and_slice_write() -> (
+    None
+):
     source = "def f(obj, a, b, value):\n    obj.inner[a:b] = value\n    return obj\n"
 
     result = lift_source(source, "nested_slice_assign.py")
@@ -1444,7 +1468,9 @@ def test_nested_slice_assign_receiver_emits_intermediate_access_and_slice_write(
     }
 
 
-def test_slice_assign_bound_expressions_resurface_load_loci_before_slice_write() -> None:
+def test_slice_assign_bound_expressions_resurface_load_loci_before_slice_write() -> (
+    None
+):
     source = "def f(xs, obj, value):\n    xs[obj.i:obj.j] = value\n    return xs\n"
 
     result = lift_source(source, "slice_assign_bounds.py")
@@ -1627,7 +1653,9 @@ def test_slice_augassign_preserves_slice_shape_in_body_and_locus(
     expected_target: dict[str, object],
     expected_write: str,
 ) -> None:
-    source = f"def f(xs, a, b, c, value):\n    {source_target} += value\n    return xs\n"
+    source = (
+        f"def f(xs, a, b, c, value):\n    {source_target} += value\n    return xs\n"
+    )
 
     result = lift_source(source, "slice_augassign_shape.py")
 
@@ -1650,7 +1678,9 @@ def test_slice_augassign_preserves_slice_shape_in_body_and_locus(
     assert body["args"][0] == _aug_assign(expected_target, "python:add", _var("value"))
 
 
-def test_nested_slice_augassign_receiver_emits_intermediate_access_and_slice_loci() -> None:
+def test_nested_slice_augassign_receiver_emits_intermediate_access_and_slice_loci() -> (
+    None
+):
     source = "def f(obj, a, b, value):\n    obj.inner[a:b] += value\n    return obj\n"
 
     result = lift_source(source, "nested_slice_augassign.py")
@@ -1678,7 +1708,9 @@ def test_nested_slice_augassign_receiver_emits_intermediate_access_and_slice_loc
     assert body["args"][0] == _aug_assign(target, "python:add", _var("value"))
 
 
-def test_slice_augassign_bound_expressions_resurface_load_loci_before_slice_loci() -> None:
+def test_slice_augassign_bound_expressions_resurface_load_loci_before_slice_loci() -> (
+    None
+):
     source = "def f(xs, obj, value):\n    xs[obj.i:obj.j] += value\n    return xs\n"
 
     result = lift_source(source, "slice_augassign_bounds.py")
@@ -1857,7 +1889,11 @@ def test_augassign_complex_rhs_emits_rhs_load_loci_after_target_loci() -> None:
         "subscript-access",
     ]
     assert [locus["argTerm"] for locus in loci] == [obj_name, obj_name, xs_key]
-    assert [(locus["line"], locus["col"]) for locus in loci] == [(2, 4), (2, 4), (2, 16)]
+    assert [(locus["line"], locus["col"]) for locus in loci] == [
+        (2, 4),
+        (2, 4),
+        (2, 16),
+    ]
 
 
 def test_compile_lift_roundtrip_preserves_attribute_augassign_body() -> None:
@@ -1925,7 +1961,9 @@ def test_name_annassign_with_value_has_no_runtime_failure_loci_or_effects() -> N
     assert body["args"][0] == _ann_assign(_var("x"), _var("int"), _var("y"))
 
 
-def test_direct_attribute_annassign_without_value_does_not_access_final_attribute() -> None:
+def test_direct_attribute_annassign_without_value_does_not_access_final_attribute() -> (
+    None
+):
     source = "def f(obj):\n    obj.name: int\n    return obj\n"
 
     result = lift_source(source, "attr_annassign_no_value.py")
@@ -1960,7 +1998,9 @@ def test_direct_attribute_annassign_with_value_emits_store_write_locus_only() ->
     assert body["args"][0] == _ann_assign(target, _var("int"), _var("y"))
 
 
-def test_direct_subscript_annassign_without_value_does_not_access_final_subscript() -> None:
+def test_direct_subscript_annassign_without_value_does_not_access_final_subscript() -> (
+    None
+):
     source = "def f(xs, key):\n    xs[key]: int\n    return xs\n"
 
     result = lift_source(source, "subscript_annassign_no_value.py")
@@ -2061,7 +2101,9 @@ def test_slice_annassign_preserves_slice_shape_with_and_without_value(
     expected_write: str,
 ) -> None:
     no_value_source = f"def f(xs, a, b, c):\n    {source_target}: int\n    return xs\n"
-    with_value_source = f"def f(xs, a, b, c, value):\n    {source_target}: int = value\n    return xs\n"
+    with_value_source = (
+        f"def f(xs, a, b, c, value):\n    {source_target}: int = value\n    return xs\n"
+    )
 
     no_value = lift_source(no_value_source, "slice_annassign_shape_no_value.py")
     with_value = lift_source(with_value_source, "slice_annassign_shape_value.py")
@@ -2091,7 +2133,9 @@ def test_slice_annassign_preserves_slice_shape_with_and_without_value(
     )
 
 
-def test_nested_slice_annassign_without_value_emits_only_intermediate_receiver_locus() -> None:
+def test_nested_slice_annassign_without_value_emits_only_intermediate_receiver_locus() -> (
+    None
+):
     source = "def f(obj, a, b):\n    obj.inner[a:b]: int\n    return obj\n"
 
     result = lift_source(source, "nested_slice_annassign_no_value.py")
@@ -2110,8 +2154,12 @@ def test_nested_slice_annassign_without_value_emits_only_intermediate_receiver_l
     assert body["args"][0] == _ann_assign(target, _var("int"), _no_value())
 
 
-def test_nested_slice_annassign_with_value_reuses_store_target_navigation_once() -> None:
-    source = "def f(obj, a, b, value):\n    obj.inner[a:b]: int = value\n    return obj\n"
+def test_nested_slice_annassign_with_value_reuses_store_target_navigation_once() -> (
+    None
+):
+    source = (
+        "def f(obj, a, b, value):\n    obj.inner[a:b]: int = value\n    return obj\n"
+    )
 
     result = lift_source(source, "nested_slice_annassign_value.py")
 
@@ -2136,7 +2184,9 @@ def test_nested_slice_annassign_with_value_reuses_store_target_navigation_once()
     assert body["args"][0] == _ann_assign(target, _var("int"), _var("value"))
 
 
-def test_slice_annassign_bound_expressions_resurface_load_loci_without_final_no_value_access() -> None:
+def test_slice_annassign_bound_expressions_resurface_load_loci_without_final_no_value_access() -> (
+    None
+):
     source = "def f(xs, obj):\n    xs[obj.i:obj.j]: int\n    return xs\n"
 
     result = lift_source(source, "slice_annassign_bounds_no_value.py")
@@ -2263,7 +2313,9 @@ def test_compile_lift_roundtrip_preserves_slice_annassign_body(source: str) -> N
     assert canonical_json_bytes(relifted_body) == canonical_json_bytes(body)
 
 
-def test_nested_annassign_without_value_emits_only_intermediate_navigation_loci() -> None:
+def test_nested_annassign_without_value_emits_only_intermediate_navigation_loci() -> (
+    None
+):
     source = (
         "def f(obj, xs, ys, i):\n"
         "    obj.inner.name: int\n"
@@ -2296,7 +2348,9 @@ def test_nested_annassign_without_value_emits_only_intermediate_navigation_loci(
 
 
 def test_annassign_missing_value_and_explicit_none_have_distinct_body_terms() -> None:
-    source = "def f():\n    missing: int\n    explicit: int = None\n    return explicit\n"
+    source = (
+        "def f():\n    missing: int\n    explicit: int = None\n    return explicit\n"
+    )
 
     result = lift_source(source, "annassign_none_discrimination.py")
 
@@ -2385,7 +2439,9 @@ def test_compile_lift_roundtrip_preserves_attribute_annassign_body_with_value() 
     assert canonical_json_bytes(relifted_body) == canonical_json_bytes(body)
 
 
-def test_compile_lift_roundtrip_preserves_attribute_annassign_body_without_value() -> None:
+def test_compile_lift_roundtrip_preserves_attribute_annassign_body_without_value() -> (
+    None
+):
     source = "def f(obj):\n    obj.name: int\n    return obj\n"
     lifted = lift_source(source, "roundtrip_ann_attr_no_value.py")
     assert lifted.refusals == []
@@ -2493,10 +2549,7 @@ def test_slice_13_keeps_complex_unpacking_and_listcomp_out_of_scope(
 
 def test_b1_tuple_and_list_literals_lift_as_faithful_body_terms() -> None:
     source = (
-        "def f(a, b):\n"
-        "    pair = (a, b)\n"
-        "    xs = [a, b]\n"
-        "    return pair\n"
+        "def f(a, b):\n" "    pair = (a, b)\n" "    xs = [a, b]\n" "    return pair\n"
     )
 
     result = lift_source(source, "b1_literals.py")
@@ -2555,14 +2608,27 @@ def test_b1_signature_forms_lift_body_and_preserve_parameter_shape() -> None:
         {"name": "b", "kind": "positional-or-keyword", "default": _none_const()},
         {"name": "items", "kind": "vararg"},
         {"name": "c", "kind": "keyword-only", "default": _bool_const(True)},
-        {"name": "d", "kind": "keyword-only", "default": _tuple(_int_const(1), _str_const("x"))},
+        {
+            "name": "d",
+            "kind": "keyword-only",
+            "default": _tuple(_int_const(1), _str_const("x")),
+        },
         {"name": "kwargs", "kind": "kwarg"},
     ]
     body = contract["post"]["args"][1]
     assert body == {
         "kind": "ctor",
         "name": "python:return",
-        "args": [_tuple(_var("a"), _var("b"), _var("items"), _var("c"), _var("d"), _var("kwargs"))],
+        "args": [
+            _tuple(
+                _var("a"),
+                _var("b"),
+                _var("items"),
+                _var("c"),
+                _var("d"),
+                _var("kwargs"),
+            )
+        ],
     }
 
     compiled = compile_ir_document([contract])
@@ -2724,7 +2790,9 @@ def test_b1_decorated_functions_remain_deferred() -> None:
 
 def test_b1_starred_call_and_dynamic_callee_stay_out_of_scope() -> None:
     starred = lift_source("def f(xs):\n    return make(*xs)\n", "b1_starred_call.py")
-    dynamic = lift_source("def f(factory):\n    return factory()(1)\n", "b1_dynamic_callee.py")
+    dynamic = lift_source(
+        "def f(factory):\n    return factory()(1)\n", "b1_dynamic_callee.py"
+    )
 
     assert starred.refusals == [
         {
@@ -3076,9 +3144,14 @@ def test_class_shape_taxonomy_opens_soundness_boundary_cases() -> None:
     assert receiver_methods["helper"]["instanceReceiver"] is None
 
     for shape in _class_shapes(result.ir):
-        assert "presence-guaranteed-assuming-standard-construction-via-__init__" in shape["assumptions"]
+        assert (
+            "presence-guaranteed-assuming-standard-construction-via-__init__"
+            in shape["assumptions"]
+        )
         assert "not-robust-to-__new__-or-pickle-bypass" in shape["assumptions"]
-        assert "not-robust-to-cross-module-monkey-patch-or-delete" in shape["assumptions"]
+        assert (
+            "not-robust-to-cross-module-monkey-patch-or-delete" in shape["assumptions"]
+        )
 
 
 def test_class_shape_lift_is_soundness_inert_for_attribute_panic_loci() -> None:
@@ -3165,7 +3238,11 @@ def test_hasattr_known_receiver_lifts_attribute_present_cf_guarded_fact() -> Non
         "name": "attribute_present",
         "args": [
             {"kind": "var", "name": "self"},
-            {"kind": "const", "value": "maybe", "sort": {"kind": "primitive", "name": "String"}},
+            {
+                "kind": "const",
+                "value": "maybe",
+                "sort": {"kind": "primitive", "name": "String"},
+            },
         ],
     }
     assert else_branch["name"] == "python:pass"
@@ -3227,7 +3304,9 @@ def test_checked_in_project_registers_python_source_lift_surface() -> None:
     } in entries
 
 
-def test_checked_in_python_source_manifest_invokes_module_form_and_declares_kit() -> None:
+def test_checked_in_python_source_manifest_invokes_module_form_and_declares_kit() -> (
+    None
+):
     manifest = _python_source_manifest()
 
     assert manifest["command"] == [
@@ -3259,7 +3338,9 @@ def test_checked_in_python_source_manifest_invokes_module_form_and_declares_kit(
 
 
 def test_kit_declaration_returns_python_source_lift_surface() -> None:
-    response = dispatch({"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD})
+    response = dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD}
+    )
 
     assert "error" not in response, response
     result = response["result"]

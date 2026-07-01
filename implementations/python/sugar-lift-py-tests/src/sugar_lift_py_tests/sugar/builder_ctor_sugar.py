@@ -55,4 +55,5 @@ def _is_builder_call(site) -> bool:
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 BUILDER_CTOR_CLAIM = next(c for c in _rc() if c.name == "BuilderCtorSugar")

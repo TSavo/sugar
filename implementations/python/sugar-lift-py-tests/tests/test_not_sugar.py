@@ -43,10 +43,7 @@ def test_unary_not_builds_child_assertion_body() -> None:
 
 def test_is_not_lifts_as_not_identity_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_returns_value(ret):\n"
-            "    assert ret is not None\n"
-        ),
+        source=("def test_returns_value(ret):\n" "    assert ret is not None\n"),
         filename="test_not.py",
         memento_file="test_not.py",
     )
@@ -74,10 +71,7 @@ def test_is_not_lifts_as_not_identity_fact() -> None:
 
 def test_unary_not_lifts_as_not_wrapped_child_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_not_truth(checks):\n"
-            "    assert not checks.is_td64(1)\n"
-        ),
+        source=("def test_not_truth(checks):\n" "    assert not checks.is_td64(1)\n"),
         filename="test_not.py",
         memento_file="test_not.py",
     )
@@ -113,10 +107,7 @@ def test_unary_not_lifts_as_not_wrapped_child_fact() -> None:
 def test_is_not_leaves_unsupported_rhs_to_factory_gap() -> None:
     with pytest.raises(FactoryGap) as exc:
         build_literal_call_report(
-            source=(
-                "def test_label(x, label):\n"
-                "    assert x is not f'{label}'\n"
-            ),
+            source=("def test_label(x, label):\n" "    assert x is not f'{label}'\n"),
             filename="test_label.py",
             memento_file="test_label.py",
         )

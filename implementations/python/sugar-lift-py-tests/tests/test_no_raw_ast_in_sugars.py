@@ -10,13 +10,11 @@ Forbidden patterns:
 If any sugar/*.py file contains one of these patterns, this test FAILS with
 the offending file and matched line(s).
 """
+
 import re
 from pathlib import Path
 
-SUGAR_DIR = (
-    Path(__file__).parent.parent
-    / "src" / "sugar_lift_py_tests" / "sugar"
-)
+SUGAR_DIR = Path(__file__).parent.parent / "src" / "sugar_lift_py_tests" / "sugar"
 
 FORBIDDEN = [
     re.compile(r"\bimport\s+ast\b"),
@@ -35,9 +33,7 @@ def test_no_raw_ast_in_sugars():
         for lineno, line in enumerate(text.splitlines(), 1):
             for pattern in FORBIDDEN:
                 if pattern.search(line):
-                    violations.append(
-                        f"{path.name}:{lineno}: {line.rstrip()}"
-                    )
+                    violations.append(f"{path.name}:{lineno}: {line.rstrip()}")
 
     assert not violations, (
         "Raw-ast usage found in sugar/ files (must use SourceFragment API only):\n"

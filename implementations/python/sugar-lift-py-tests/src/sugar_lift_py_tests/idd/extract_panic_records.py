@@ -7,11 +7,14 @@ from typing import Optional
 from .lift_target import LiftTarget
 from .panic_record import PanicKind, PanicRecord
 
+_FIELD = re.compile(
+    r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)"
+)
 
-_FIELD = re.compile(r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)")
 
-
-def extract_panic_records(target: LiftTarget, stdout: str, stderr: str) -> list[PanicRecord]:
+def extract_panic_records(
+    target: LiftTarget, stdout: str, stderr: str
+) -> list[PanicRecord]:
     records: list[PanicRecord] = []
     for line in (stdout + "\n" + stderr).splitlines():
         rpc_records = _records_from_wrapped_rpc_error(target, line)
@@ -52,11 +55,7 @@ def _records_from_wrapped_rpc_error(target: LiftTarget, line: str) -> list[Panic
         return []
     gaps = data.get("auditOnlyGaps")
     if isinstance(gaps, list):
-        return [
-            _record_from_gap(target, gap)
-            for gap in gaps
-            if isinstance(gap, dict)
-        ]
+        return [_record_from_gap(target, gap) for gap in gaps if isinstance(gap, dict)]
     info = data.get("info")
     message = error.get("message")
     if isinstance(info, dict) and isinstance(message, str):
@@ -72,7 +71,9 @@ def _record_from_gap(target: LiftTarget, gap: dict) -> PanicRecord:
     fields = gap.get("gap")
     if not isinstance(fields, dict):
         fields = {key: value.strip() for key, value in _FIELD.findall(message)}
-    return _record_from_fields(target, _panic_kind(message) or "unexpected", fields, message)
+    return _record_from_fields(
+        target, _panic_kind(message) or "unexpected", fields, message
+    )
 
 
 def _record_from_fields(

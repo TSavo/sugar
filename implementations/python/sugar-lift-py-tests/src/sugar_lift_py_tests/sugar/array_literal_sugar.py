@@ -65,4 +65,5 @@ def _array_element(value):
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 ARRAY_LITERAL_CLAIM = next(c for c in _rc() if c.name == "ArrayLiteralSugar")

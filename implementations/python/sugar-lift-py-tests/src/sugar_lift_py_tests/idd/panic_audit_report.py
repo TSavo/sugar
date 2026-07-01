@@ -28,5 +28,8 @@ class PanicAuditReport:
             "r": dict(self.r.values),
             "diagnostics": list(self.diagnostics),
             "records": [record.to_json() for record in self.records],
-            "targets": [{"name": target.name, "path": str(target.path)} for target in self.targets],
+            "targets": [
+                {"name": target.name, "path": str(target.path)}
+                for target in self.targets
+            ],
         }

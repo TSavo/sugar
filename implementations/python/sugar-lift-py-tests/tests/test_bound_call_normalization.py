@@ -10,6 +10,7 @@ The resolution is syntactic and narrow on purpose: ONLY a call RHS substitutes. 
 binding stays a Name and refuses as before -- the over-reach (substituting a literal binding
 and mis-lifting `assert x == 5`) is the bug this discrimination test forbids.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,13 +30,17 @@ def _contracts(src):
 
 # --- positive: the binding is transparent -----------------------------------------------
 
+
 def test_bound_call_lifts_identically_to_the_direct_call():
     bound = _contracts(_F + "def t():\n    x = f(5)\n    assert x == 1\n")
     direct = _contracts(_F + "def t():\n    assert f(5) == 1\n")
-    assert bound == direct, f"binding changed the euf form:\n  bound ={bound}\n  direct={direct}"
+    assert (
+        bound == direct
+    ), f"binding changed the euf form:\n  bound ={bound}\n  direct={direct}"
 
 
 # --- discrimination: a non-call binding does NOT get substituted (no over-reach) ---------
+
 
 def test_a_literal_binding_is_not_a_call_and_still_refuses():
     # x is bound to `5` (not a call), so the LHS stays a Name -> the assertion is not a
@@ -49,6 +54,7 @@ def test_a_literal_binding_is_not_a_call_and_still_refuses():
 
 
 # --- structural: an unbound name (no assign at all) also refuses, not crashes ------------
+
 
 def test_an_unbound_name_lhs_refuses_cleanly():
     with pytest.raises(FactoryGap):

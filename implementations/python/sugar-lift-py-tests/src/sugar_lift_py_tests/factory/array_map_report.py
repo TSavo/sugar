@@ -93,17 +93,23 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
-) -> tuple[
-    list[BodyUniverseDto],
-    list[SourceMementoDto],
-    list[dict[str, Any]],
-    list[FactoryWalkRowDto],
-    list[dict[str, Any]],
-] | None:
+) -> (
+    tuple[
+        list[BodyUniverseDto],
+        list[SourceMementoDto],
+        list[dict[str, Any]],
+        list[FactoryWalkRowDto],
+        list[dict[str, Any]],
+    ]
+    | None
+):
     comparison = stmt.assert_test()
     if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
         return None
-    if comparison.compare_ops()[0] != "Eq" or len(comparison.compare_comparators()) != 1:
+    if (
+        comparison.compare_ops()[0] != "Eq"
+        or len(comparison.compare_comparators()) != 1
+    ):
         return None
     lifted = _lift_fluent_array_map_assert(
         stmt,
@@ -134,13 +140,16 @@ def _lift_fluent_array_map_assert(
     filename: str,
     memento_file: str,
     source_lines: list[str],
-) -> tuple[
-    list[BodyUniverseDto],
-    list[SourceMementoDto],
-    list[dict[str, Any]],
-    list[FactoryWalkRowDto],
-    list[dict[str, Any]],
-] | None:
+) -> (
+    tuple[
+        list[BodyUniverseDto],
+        list[SourceMementoDto],
+        list[dict[str, Any]],
+        list[FactoryWalkRowDto],
+        list[dict[str, Any]],
+    ]
+    | None
+):
     call = comparison.compare_left()
     if not (
         call.observed == "Call"
@@ -157,7 +166,9 @@ def _lift_fluent_array_map_assert(
         map_sugar = MapSugar.build(call, factory_ctx)
     except TypeError:
         return None
-    expected_sugar = _array_literal_sugar(comparison.compare_comparators()[0], factory_ctx)
+    expected_sugar = _array_literal_sugar(
+        comparison.compare_comparators()[0], factory_ctx
+    )
     if expected_sugar is None:
         return None
     reduce_ctx = ReduceContext(temporal=factory_ctx.temporal)
@@ -233,24 +244,31 @@ def _lift_native_list_map_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
-) -> tuple[
-    list[BodyUniverseDto],
-    list[SourceMementoDto],
-    list[dict[str, Any]],
-    list[FactoryWalkRowDto],
-    list[dict[str, Any]],
-] | None:
+) -> (
+    tuple[
+        list[BodyUniverseDto],
+        list[SourceMementoDto],
+        list[dict[str, Any]],
+        list[FactoryWalkRowDto],
+        list[dict[str, Any]],
+    ]
+    | None
+):
     left_frag = comparison.compare_left()
     blame = f"{filename}:{left_frag.line}:{left_frag.col}"
     list_sugar_value = list_sugar(left_frag, functions_by_name, blame=blame)
     if list_sugar_value is None:
         return None
     factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
-    expected_sugar = _array_literal_sugar(comparison.compare_comparators()[0], factory_ctx)
+    expected_sugar = _array_literal_sugar(
+        comparison.compare_comparators()[0], factory_ctx
+    )
     if expected_sugar is None:
         return None
     actual = complete_value(list_sugar_value.desugar(), owner="native list-map actual")
-    expected = complete_value(expected_sugar.desugar(), owner="native list-map expected")
+    expected = complete_value(
+        expected_sugar.desugar(), owner="native list-map expected"
+    )
     if len(actual.items) != len(expected.items):
         return None
 
@@ -258,7 +276,9 @@ def _lift_native_list_map_assert(
     callable_name = callable_sugar.name
     callable_fn = functions_by_name[callable_name]
     callable_contract_name = f"{Path(memento_file).stem}::{callable_name}::callable"
-    assertion_contract_name = f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar"
+    assertion_contract_name = (
+        f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar"
+    )
     callable_memento = _function_source_memento(
         callable_fn,
         memento_file,
@@ -282,9 +302,7 @@ def _lift_native_list_map_assert(
 
     callable_post = json.loads(
         encode_jcs(
-            formula_to_value(
-                eq(make_var("out"), make_var(callable_sugar.return_name))
-            )
+            formula_to_value(eq(make_var("out"), make_var(callable_sugar.return_name)))
         )
     )
     formula = and_(
@@ -364,7 +382,9 @@ def _lift_native_list_map_assert(
                 callable_contract_name,
                 callable_memento,
             ),
-            _source_audit(stmt, fn, memento_file, assertion_contract.name, statement_memento),
+            _source_audit(
+                stmt, fn, memento_file, assertion_contract.name, statement_memento
+            ),
         ],
         rows,
         [
@@ -379,7 +399,9 @@ def _lift_native_list_map_assert(
     )
 
 
-def _array_literal_sugar(node: SourceFragment, ctx: FactoryBuildContext) -> ArrayLiteralSugar | None:
+def _array_literal_sugar(
+    node: SourceFragment, ctx: FactoryBuildContext
+) -> ArrayLiteralSugar | None:
     if node.observed != "List":
         return None
     sugar = ctx.build_child(node, SugarRole.TERM).sugar
@@ -396,7 +418,13 @@ def _array_map_catalog() -> SugarCatalog:
     from sugar_lift_py_tests.sugar import primitive_literal_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar.sugar_base import registered_claims
 
-    names = {"PrimitiveLiteralSugar", "NameSugar", "BinOpSugar", "LambdaSugar", "ArrayLiteralSugar"}
+    names = {
+        "PrimitiveLiteralSugar",
+        "NameSugar",
+        "BinOpSugar",
+        "LambdaSugar",
+        "ArrayLiteralSugar",
+    }
     return SugarCatalog([c for c in registered_claims() if c.name in names])
 
 
@@ -409,10 +437,7 @@ def _callsite_string(memento_file: str, node: SourceFragment) -> str:
 
 
 def _source_locus_string(memento_file: str, *, line: int, col: int) -> str:
-    return (
-        f"{memento_file.replace(os.sep, '/')}:"
-        f"{line}:{col}"
-    )
+    return f"{memento_file.replace(os.sep, '/')}:" f"{line}:{col}"
 
 
 def _callable_source_audit(
@@ -540,7 +565,8 @@ def _function_source_memento(
         template_cid=body_source["template_cid"],
         source_function_name=fn.function_name(),
         role=role,
-        contract_name=contract_name or f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
+        contract_name=contract_name
+        or f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
         param_names=body_source.get("param_names", []),
     )
 

@@ -12,6 +12,7 @@ Outcomes are written as a {nodeid: outcome} JSON map to the path named by the
 SUGAR_WITNESS_OUT env var at session end. Recompute (verify) reuses the SAME
 single-file run so lift and recompute agree on outcome under shared file state.
 """
+
 import json
 import os
 

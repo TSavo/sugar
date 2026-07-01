@@ -1,4 +1,5 @@
 """NameSugar reduces a bound name to its carrier's ProofIR term (a free var)."""
+
 from __future__ import annotations
 
 from factory_reduce import fol, reduce_term

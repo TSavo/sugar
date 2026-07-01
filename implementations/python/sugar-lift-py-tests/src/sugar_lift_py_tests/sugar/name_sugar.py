@@ -47,4 +47,5 @@ class NameSugar(Sugar, role=SugarRole.TERM):
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 NAME_CLAIM = next(c for c in _rc() if c.name == "NameSugar")

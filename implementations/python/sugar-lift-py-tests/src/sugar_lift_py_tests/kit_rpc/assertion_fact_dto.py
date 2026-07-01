@@ -13,7 +13,9 @@ class AssertionFactDto:
     kind: str
     claim_count: int
     source_path: str
-    source_mementos: list[SourceMementoDto | dict[str, Any]] = field(default_factory=list)
+    source_mementos: list[SourceMementoDto | dict[str, Any]] = field(
+        default_factory=list
+    )
 
     def to_rpc(self) -> dict[str, Any]:
         mementos = [to_rpc_value(memento) for memento in self.source_mementos]

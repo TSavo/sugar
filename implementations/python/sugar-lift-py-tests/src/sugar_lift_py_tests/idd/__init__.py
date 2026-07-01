@@ -14,6 +14,7 @@ def main(argv=None):
 
     return cli_main(argv)
 
+
 __all__ = [
     "CommandResult",
     "LiftTarget",

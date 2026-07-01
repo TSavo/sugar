@@ -54,7 +54,7 @@ def head_of(predicate: dict[str, Any]) -> Optional[str]:
     if not isinstance(name, str) or not name.strip():
         return None
     if name.startswith(_CONCEPT_PREFIX):
-        return name[len(_CONCEPT_PREFIX):]
+        return name[len(_CONCEPT_PREFIX) :]
     return name
 
 
@@ -214,7 +214,7 @@ def _render_application(obj: dict[str, Any]) -> Optional[str]:
     if not isinstance(name, str) or not name.strip():
         return None
     if name.startswith(_CONCEPT_PREFIX):
-        name = name[len(_CONCEPT_PREFIX):]
+        name = name[len(_CONCEPT_PREFIX) :]
 
     rendered_args: list[str] = []
     raw_args = obj.get("args")
@@ -282,9 +282,7 @@ _HANDLERS: dict[str, Callable[[list[Any]], Optional[str]]] = {
     "option-is-some": _unary(lambda x: f"assert {x} is not None"),
     "not-null": _unary(lambda x: f"assert {x} is not None"),
     "option-is-none": _unary(lambda x: f"assert {x} is None"),
-    "fallible-err": _unary(
-        lambda x: f"with pytest.raises(Exception):\n        {x}()"
-    ),
+    "fallible-err": _unary(lambda x: f"with pytest.raises(Exception):\n        {x}()"),
 }
 
 

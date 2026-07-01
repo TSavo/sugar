@@ -26,7 +26,9 @@ class EmitPlan:
         if not isinstance(params, dict):
             return EmitPlan()
         contract_id = _first_str(params.get("contract_id"))
-        function = _first_str(params.get("function"), params.get("function_name")) or "test"
+        function = (
+            _first_str(params.get("function"), params.get("function_name")) or "test"
+        )
         formals = _string_list(params.get("params"))
         formal_types = _string_list(params.get("param_types"))
         predicates = [p for p in _list(params.get("predicates")) if isinstance(p, dict)]
@@ -74,7 +76,9 @@ def emit(plan: EmitPlan) -> Emission:
             continue
         emitted.append(head)
         declarations = _free_var_declarations(predicate, head)
-        methods.append(_render_test_method(_method_name(head, idx), declarations, assertion))
+        methods.append(
+            _render_test_method(_method_name(head, idx), declarations, assertion)
+        )
 
     class_name = _class_name(plan.function)
     source = _render_module(class_name, methods)

@@ -22,7 +22,11 @@ def build_node(
     ctx: Optional[FactoryBuildContext] = None,
 ) -> FactoryBuildResult:
     catalog = catalog or (ctx.catalog if ctx is not None else default_catalog())
-    site = node if isinstance(node, SourceFragment) else SourceFragment.from_node(node, filename)
+    site = (
+        node
+        if isinstance(node, SourceFragment)
+        else SourceFragment.from_node(node, filename)
+    )
     return _build_site(
         site,
         role=role,
@@ -126,7 +130,9 @@ def _build_site(
     if selected is None:
         _raise_ambiguous_candidates(site, role, candidates)
     sugar = selected.claim.build(site, ctx)
-    message = f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
+    message = (
+        f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
+    )
     audit_row = FactoryAuditRow(
         role=role.value,
         status="selected",

@@ -160,6 +160,5 @@ def symbolic_term(
                 )
             return ctor(f"call:{target}", args)
     raise TypeError(
-        f"write more Sugar for {owner} `{site.observed}`: "
-        "add a symbolic term shape"
+        f"write more Sugar for {owner} `{site.observed}`: " "add a symbolic term shape"
     )

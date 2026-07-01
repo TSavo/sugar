@@ -23,7 +23,9 @@ class ConstructorStrategy:
         return Complete(
             ObjectValue(
                 class_name=self.class_name,
-                fields=tuple(self._field(name, body, ctx) for name, body in self.fields),
+                fields=tuple(
+                    self._field(name, body, ctx) for name, body in self.fields
+                ),
             )
         )
 

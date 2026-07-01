@@ -32,7 +32,11 @@ from sugar_lift_python_source.verify_dialect import (
     collect_int_signatures,
     to_verify_dialect,
 )
-from sugar_lift_python_source.verify_rpc import dispatch, initialize_result, lift_workspace
+from sugar_lift_python_source.verify_rpc import (
+    dispatch,
+    initialize_result,
+    lift_workspace,
+)
 
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 
@@ -89,9 +93,9 @@ def _python_verify_manifest() -> dict[str, object]:
 def _fn_contract(source: str, source_path: str = "m.py"):
     result = lift_source(source, source_path)
     for item in result.ir:
-        if item.get("kind") == "function-contract" and not str(item["fnName"]).startswith(
-            "<source-unit"
-        ):
+        if item.get("kind") == "function-contract" and not str(
+            item["fnName"]
+        ).startswith("<source-unit"):
             return item
     raise AssertionError("no function-contract lifted")
 
@@ -118,14 +122,20 @@ def _atoms_named(formula: dict[str, object], name: str) -> list[dict[str, object
 
 
 def _int(value: int) -> dict[str, object]:
-    return {"kind": "const", "value": value, "sort": {"kind": "primitive", "name": "Int"}}
+    return {
+        "kind": "const",
+        "value": value,
+        "sort": {"kind": "primitive", "name": "Int"},
+    }
 
 
 def _var(name: str) -> dict[str, object]:
     return {"kind": "var", "name": name}
 
 
-def _atom(name: str, lhs: dict[str, object], rhs: dict[str, object]) -> dict[str, object]:
+def _atom(
+    name: str, lhs: dict[str, object], rhs: dict[str, object]
+) -> dict[str, object]:
     return {"kind": "atomic", "name": name, "args": [lhs, rhs]}
 
 
@@ -201,7 +211,9 @@ def test_precondition_guard_residual_does_not_emit_partial_prefix():
     )
 
     assert contract["pre"] == {"kind": "atomic", "name": "true", "args": []}
-    assert any(item.get("kind") == "precondition-guard-skipped" for item in result.diagnostics)
+    assert any(
+        item.get("kind") == "precondition-guard-skipped" for item in result.diagnostics
+    )
 
 
 def test_addition_and_comparison_normalize():
@@ -261,7 +273,9 @@ def test_leaf_harvester_lifts_call_eq():
     assert call == {
         "kind": "ctor",
         "name": "double",
-        "args": [{"kind": "const", "value": 3, "sort": {"kind": "primitive", "name": "Int"}}],
+        "args": [
+            {"kind": "const", "value": 3, "sort": {"kind": "primitive", "name": "Int"}}
+        ],
     }
     assert inv["args"][1]["value"] == 6
 
@@ -411,7 +425,11 @@ def test_contracts_surface_gates_on_boundary_declaration(tmp_path):
         "def undeclared(x: int) -> int:\n    return x + 1\n"
     )
     ir, _diag = lift_workspace(str(tmp_path), "contracts")
-    fn_names = [i["fnName"].rsplit(".", 1)[-1] for i in ir if i.get("kind") == "function-contract"]
+    fn_names = [
+        i["fnName"].rsplit(".", 1)[-1]
+        for i in ir
+        if i.get("kind") == "function-contract"
+    ]
     assert "declared" in fn_names
     assert "undeclared" not in fn_names
     declared = next(i for i in ir if i.get("kind") == "function-contract")
@@ -422,7 +440,11 @@ def test_contracts_surface_gates_on_boundary_declaration(tmp_path):
 def test_bare_surface_emits_all_functions(tmp_path):
     (tmp_path / "lib.py").write_text("def double(x: int) -> int:\n    return x * 2\n")
     ir, _diag = lift_workspace(str(tmp_path), "bare")
-    fn_names = [i["fnName"].rsplit(".", 1)[-1] for i in ir if i.get("kind") == "function-contract"]
+    fn_names = [
+        i["fnName"].rsplit(".", 1)[-1]
+        for i in ir
+        if i.get("kind") == "function-contract"
+    ]
     assert fn_names == ["double"]
 
 
@@ -482,7 +504,9 @@ def test_checked_in_python_verify_manifest_invokes_module_form_and_declares_kit(
 
 
 def test_verify_rpc_kit_declaration_returns_python_verify_surface():
-    response = dispatch({"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD})
+    response = dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD}
+    )
 
     assert "error" not in response, response
     result = response["result"]
@@ -536,4 +560,6 @@ def test_verify_rpc_module_command_produces_output():
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip(), "verify_rpc module command silently produced no RPC output"
+    assert (
+        completed.stdout.strip()
+    ), "verify_rpc module command silently produced no RPC output"

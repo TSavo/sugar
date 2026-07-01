@@ -53,7 +53,9 @@ class TestPydanticLift:
         assert len(decls) == 1
         assert decls[0].name == "Item.quantity"
 
-    def test_pydantic_bridge_emits_source_and_lifts_lossy_witness_without_importing_pydantic(self):
+    def test_pydantic_bridge_emits_source_and_lifts_lossy_witness_without_importing_pydantic(
+        self,
+    ):
         class FieldInfo:
             metadata = []
             min_length = 1
@@ -93,7 +95,9 @@ class TestPydanticLift:
         assert "name: str = Field(..., min_length=1)" in source
         assert witnesses
         assert all(w["source_kind"] == "native-surface" for w in witnesses)
-        assert {w["extension_fields"]["surface"] for w in witnesses} == {"pydantic-field"}
+        assert {w["extension_fields"]["surface"] for w in witnesses} == {
+            "pydantic-field"
+        }
         assert any(w["extension_fields"]["loss_record"] for w in witnesses)
         predicate_text = " ".join(w["predicate_text"] for w in witnesses)
         assert "name != None" in predicate_text

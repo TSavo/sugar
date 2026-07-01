@@ -8,13 +8,11 @@ Forbidden patterns:
 
 source_fragment.py is the sole permitted ast gateway and is excluded.
 """
+
 import re
 from pathlib import Path
 
-FACTORY_DIR = (
-    Path(__file__).parent.parent
-    / "src" / "sugar_lift_py_tests" / "factory"
-)
+FACTORY_DIR = Path(__file__).parent.parent / "src" / "sugar_lift_py_tests" / "factory"
 
 FORBIDDEN = [
     re.compile(r"\bimport\s+ast\b"),
@@ -36,9 +34,7 @@ def test_no_raw_ast_in_factory():
         for lineno, line in enumerate(text.splitlines(), 1):
             for pattern in FORBIDDEN:
                 if pattern.search(line):
-                    violations.append(
-                        f"{path.name}:{lineno}: {line.rstrip()}"
-                    )
+                    violations.append(f"{path.name}:{lineno}: {line.rstrip()}")
 
     assert not violations, (
         "Raw-ast usage found in factory/ files (must use SourceFragment API only):\n"

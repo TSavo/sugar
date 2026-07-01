@@ -17,7 +17,9 @@ class RangeSugar:
 
     def desugar(self) -> Outcome:
         return Complete(
-            ArrayLiteral(tuple(TermValue(value) for value in range(self.start, self.stop)))
+            ArrayLiteral(
+                tuple(TermValue(value) for value in range(self.start, self.stop))
+            )
         )
 
 

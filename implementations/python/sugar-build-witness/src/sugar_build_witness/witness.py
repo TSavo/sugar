@@ -163,7 +163,9 @@ def witness_body(w: BuildWitness) -> bytes:
     return _canonical_bytes(_witness_value(w))
 
 
-def run_build_witness(project_dir: str, manifest_path: str = DEFAULT_MANIFEST) -> BuildWitness:
+def run_build_witness(
+    project_dir: str, manifest_path: str = DEFAULT_MANIFEST
+) -> BuildWitness:
     root = Path(project_dir)
     manifest_rel = _safe_rel(manifest_path)
     manifest = _read_manifest(root, manifest_rel)

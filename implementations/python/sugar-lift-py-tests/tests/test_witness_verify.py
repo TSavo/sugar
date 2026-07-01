@@ -13,17 +13,24 @@ from sugar_lift_py_tests.witness_verify import (
 
 def _signed(content: bytes):
     import base64
+
     sk = nacl.signing.SigningKey.generate()
     cid = blake3_512_of(content)
-    signature = "ed25519:" + base64.b64encode(sk.sign(cid.encode("utf-8")).signature).decode("ascii")
+    signature = "ed25519:" + base64.b64encode(
+        sk.sign(cid.encode("utf-8")).signature
+    ).decode("ascii")
     signer = "ed25519:" + base64.b64encode(bytes(sk.verify_key)).decode("ascii")
     return cid, signature, signer
 
 
 def _memento(content: bytes):
     cid, signature, signer = _signed(content)
-    return {"witness_cid": cid, "kind": "pytest-witness", "signer": signer,
-            "signature": signature}
+    return {
+        "witness_cid": cid,
+        "kind": "pytest-witness",
+        "signer": signer,
+        "signature": signature,
+    }
 
 
 # A deliberately BROKEN oracle: it approves EVERYTHING, regardless of content.

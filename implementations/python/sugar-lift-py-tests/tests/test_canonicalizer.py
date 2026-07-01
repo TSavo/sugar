@@ -75,6 +75,7 @@ def test_bool_and_null_emit_verbatim():
     assert encode_jcs(vbool(True)) == "true"
     assert encode_jcs(vbool(False)) == "false"
     from sugar_lift_py_tests.canonicalizer import vnull
+
     assert encode_jcs(vnull()) == "null"
 
 
@@ -86,5 +87,6 @@ def test_jcs_hash_self_identifying_prefix():
 
 def test_blake3_rejects_non_bytes():
     import pytest as _pytest
+
     with _pytest.raises(TypeError):
         blake3_512_of("not bytes")  # type: ignore[arg-type]

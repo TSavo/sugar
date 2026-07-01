@@ -12,13 +12,11 @@ the three legacy modules still carrying raw ast (lsp.py, layer2.py,
 translate_universe.py) are marked DEPRECATED-RAW-AST in-source and this guard
 will flag them until they are removed. The red is honest telemetry, not a hole.
 """
+
 import re
 from pathlib import Path
 
-SRC_DIR = (
-    Path(__file__).parent.parent
-    / "src" / "sugar_lift_py_tests"
-)
+SRC_DIR = Path(__file__).parent.parent / "src" / "sugar_lift_py_tests"
 
 FORBIDDEN = [
     re.compile(r"\bimport\s+ast\b"),

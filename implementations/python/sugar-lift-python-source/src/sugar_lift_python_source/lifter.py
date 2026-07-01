@@ -542,9 +542,19 @@ class _ClassBodyPoisonScanner(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = _decorator_name(node.func)
-        if name in {"setattr", "builtins.setattr", "object.__setattr__", "super.__setattr__"}:
+        if name in {
+            "setattr",
+            "builtins.setattr",
+            "object.__setattr__",
+            "super.__setattr__",
+        }:
             self.open_reasons.add("dynamic-setattr")
-        if name in {"delattr", "builtins.delattr", "object.__delattr__", "super.__delattr__"}:
+        if name in {
+            "delattr",
+            "builtins.delattr",
+            "object.__delattr__",
+            "super.__delattr__",
+        }:
             self.open_reasons.add("dynamic-delattr")
         self.generic_visit(node)
 
@@ -601,7 +611,9 @@ class _Emitter:
             emitted.append(self.statement(statement))
         return fold_seq(emitted)
 
-    def statements_with_extra_locals(self, statements: list[ast.stmt], extra_locals: set[str]) -> Json:
+    def statements_with_extra_locals(
+        self, statements: list[ast.stmt], extra_locals: set[str]
+    ) -> Json:
         previous = self.locals
         self.locals = self.locals | extra_locals
         try:
@@ -635,10 +647,14 @@ class _Emitter:
         if isinstance(node, ast.AugAssign):
             op = _BINOPS.get(type(node.op))
             if op is None:
-                raise _UnsupportedSyntax(node, f"unsupported binary operator: {type(node.op).__name__}")
+                raise _UnsupportedSyntax(
+                    node, f"unsupported binary operator: {type(node.op).__name__}"
+                )
             target = self.augassign_target(node.target)
             self._record_write_if_nonlocal(node.target)
-            return ctor("python:aug_assign", target, str_const(op), self.expr(node.value))
+            return ctor(
+                "python:aug_assign", target, str_const(op), self.expr(node.value)
+            )
         if isinstance(node, ast.AnnAssign):
             annotation = self.annotation_expr(node.annotation)
             if node.value is None:
@@ -653,7 +669,9 @@ class _Emitter:
             condition = self.expr(node.test)
             then_branch = self.statements(node.body)
             else_branch = self.statements(node.orelse) if node.orelse else pass_stmt()
-            guarded = self.none_guarded_if(node.test, condition, then_branch, else_branch)
+            guarded = self.none_guarded_if(
+                node.test, condition, then_branch, else_branch
+            )
             if guarded is not None:
                 return guarded
             attribute_guarded = self.attribute_presence_guarded_if(
@@ -671,10 +689,7 @@ class _Emitter:
                 else_branch,
             )
         if isinstance(node, ast.Try):
-            handlers = [
-                self.except_handler(handler)
-                for handler in node.handlers
-            ]
+            handlers = [self.except_handler(handler) for handler in node.handlers]
             return ctor(
                 "python:try",
                 self.statements(node.body),
@@ -687,7 +702,9 @@ class _Emitter:
         if isinstance(node, ast.While):
             if node.orelse:
                 raise _UnsupportedSyntax(node, "while/else is refused")
-            term = ctor("python:while", self.expr(node.test), self.statements(node.body))
+            term = ctor(
+                "python:while", self.expr(node.test), self.statements(node.body)
+            )
             self.effects.add_opaque_loop(term)
             return term
         if isinstance(node, ast.For):
@@ -723,7 +740,9 @@ class _Emitter:
                 )
             )
             return ctor("python:raise", value)
-        raise _UnsupportedSyntax(node, f"unhandled statement kind: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unhandled statement kind: {type(node).__name__}"
+        )
 
     def except_handler(self, node: ast.ExceptHandler) -> Json:
         exception_type = none_const() if node.type is None else self.expr(node.type)
@@ -815,7 +834,9 @@ class _Emitter:
                 )
             )
             return term
-        raise _UnsupportedSyntax(node, f"unsupported assignment target: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unsupported assignment target: {type(node).__name__}"
+        )
 
     def assign_target(self, node: ast.expr) -> Json:
         if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
@@ -841,13 +862,19 @@ class _Emitter:
         elif isinstance(node, ast.List):
             kind = "list"
         else:
-            raise _UnsupportedSyntax(node, f"unsupported assignment target: {type(node).__name__}")
+            raise _UnsupportedSyntax(
+                node, f"unsupported assignment target: {type(node).__name__}"
+            )
         if not node.elts:
-            raise _UnsupportedSyntax(node, f"unsupported assignment target: {type(node).__name__}")
+            raise _UnsupportedSyntax(
+                node, f"unsupported assignment target: {type(node).__name__}"
+            )
         targets: list[Json] = []
         for element in node.elts:
             if not isinstance(element, ast.Name):
-                raise _UnsupportedSyntax(node, f"unsupported assignment target: {type(node).__name__}")
+                raise _UnsupportedSyntax(
+                    node, f"unsupported assignment target: {type(node).__name__}"
+                )
             targets.append(var(element.id))
         return ctor(
             "python:unpack_assign",
@@ -881,7 +908,11 @@ class _Emitter:
             return term
         if isinstance(node, ast.Subscript):
             receiver = self.expr(node.value)
-            index = self.slice_index(node.slice) if isinstance(node.slice, ast.Slice) else self.subscript_index(node)
+            index = (
+                self.slice_index(node.slice)
+                if isinstance(node.slice, ast.Slice)
+                else self.subscript_index(node)
+            )
             term = ctor("python:subscript", receiver, index)
             self.effects.add_panics()
             self.panic_loci.append(
@@ -899,7 +930,9 @@ class _Emitter:
                 )
             )
             return term
-        raise _UnsupportedSyntax(node, f"unsupported augmented assignment target: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unsupported augmented assignment target: {type(node).__name__}"
+        )
 
     def annassign_target_without_value(self, node: ast.expr) -> Json:
         if isinstance(node, ast.Name):
@@ -922,7 +955,9 @@ class _Emitter:
                 self.expr(node.value),
                 self.subscript_index(node),
             )
-        raise _UnsupportedSyntax(node, f"unsupported annotated assignment target: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unsupported annotated assignment target: {type(node).__name__}"
+        )
 
     def annotation_expr(self, node: ast.expr) -> Json:
         if isinstance(node, ast.Constant):
@@ -943,7 +978,9 @@ class _Emitter:
                 self.annotation_expr(node.value),
                 self.annotation_expr(node.slice),
             )
-        raise _UnsupportedSyntax(node, f"unsupported annotation expression: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unsupported annotation expression: {type(node).__name__}"
+        )
 
     def expr(self, node: ast.expr) -> Json:
         if isinstance(node, ast.Constant):
@@ -960,12 +997,16 @@ class _Emitter:
         if isinstance(node, ast.BinOp):
             op = _BINOPS.get(type(node.op))
             if op is None:
-                raise _UnsupportedSyntax(node, f"unsupported binary operator: {type(node.op).__name__}")
+                raise _UnsupportedSyntax(
+                    node, f"unsupported binary operator: {type(node.op).__name__}"
+                )
             return ctor(op, self.expr(node.left), self.expr(node.right))
         if isinstance(node, ast.UnaryOp):
             op = _UNARYOPS.get(type(node.op))
             if op is None:
-                raise _UnsupportedSyntax(node, f"unsupported unary operator: {type(node.op).__name__}")
+                raise _UnsupportedSyntax(
+                    node, f"unsupported unary operator: {type(node.op).__name__}"
+                )
             return ctor(op, self.expr(node.operand))
         if isinstance(node, ast.BoolOp):
             op = "python:and" if isinstance(node.op, ast.And) else "python:or"
@@ -981,10 +1022,7 @@ class _Emitter:
         if isinstance(node, ast.Call):
             return self.call(node)
         if isinstance(node, ast.Attribute):
-            if (
-                isinstance(node.value, ast.Name)
-                and node.value.id not in self.locals
-            ):
+            if isinstance(node.value, ast.Name) and node.value.id not in self.locals:
                 pin = self.value_pins.get(f"{node.value.id}.{node.attr}")
                 if pin is not None:
                     # A pinned IntEnum/StrEnum member: the term IS the value
@@ -1008,7 +1046,11 @@ class _Emitter:
             return term
         if isinstance(node, ast.Subscript):
             receiver = self.expr(node.value)
-            index = self.slice_index(node.slice) if isinstance(node.slice, ast.Slice) else self.subscript_index(node)
+            index = (
+                self.slice_index(node.slice)
+                if isinstance(node.slice, ast.Slice)
+                else self.subscript_index(node)
+            )
             term = ctor("python:subscript", receiver, index)
             self.effects.add_panics()
             self.panic_loci.append(
@@ -1030,7 +1072,9 @@ class _Emitter:
                     f"unsupported walrus target: {type(node.target).__name__}",
                 )
             return ctor("python:walrus", var(node.target.id), self.expr(node.value))
-        raise _UnsupportedSyntax(node, f"unhandled expression kind: {type(node).__name__}")
+        raise _UnsupportedSyntax(
+            node, f"unhandled expression kind: {type(node).__name__}"
+        )
 
     def constant(self, node: ast.Constant) -> Json:
         value = node.value
@@ -1115,8 +1159,12 @@ class _Emitter:
         return substrate_ctor(
             "cf_ite",
             condition,
-            substrate_ctor("cf_guarded", substrate_ctor(then_head, receiver), then_branch),
-            substrate_ctor("cf_guarded", substrate_ctor(else_head, receiver), else_branch),
+            substrate_ctor(
+                "cf_guarded", substrate_ctor(then_head, receiver), then_branch
+            ),
+            substrate_ctor(
+                "cf_guarded", substrate_ctor(else_head, receiver), else_branch
+            ),
         )
 
     def attribute_presence_guarded_if(
@@ -1156,11 +1204,15 @@ class _Emitter:
             or receiver_node.id != self.attribute_receiver.receiver_name
         ):
             return None
-        if not isinstance(attr_node, ast.Constant) or not isinstance(attr_node.value, str):
+        if not isinstance(attr_node, ast.Constant) or not isinstance(
+            attr_node.value, str
+        ):
             return None
         return var(receiver_node.id), attr_node.value
 
-    def none_guard(self, test: ast.expr, condition: Json) -> tuple[str, str, Json] | None:
+    def none_guard(
+        self, test: ast.expr, condition: Json
+    ) -> tuple[str, str, Json] | None:
         if not isinstance(test, ast.Compare):
             return None
         if len(test.ops) != 1 or len(test.comparators) != 1:
@@ -1238,7 +1290,9 @@ def _lift_function(
         # //sugar: pragma). Any OTHER decorator still refuses.
         from .authoring import is_authoring_decorator
 
-        non_authoring = [d for d in node.decorator_list if not is_authoring_decorator(d)]
+        non_authoring = [
+            d for d in node.decorator_list if not is_authoring_decorator(d)
+        ]
         if non_authoring:
             raise _UnsupportedSyntax(node, "decorated functions are refused")
         formals, parameter_shape = _parameter_shape(node)
@@ -1254,7 +1308,9 @@ def _lift_function(
             receiver_context = None
         effects = _EffectSet()
         panic_loci: list[Json] = []
-        precondition = _lift_function_precondition(node, info.fn_name, source_path, result)
+        precondition = _lift_function_precondition(
+            node, info.fn_name, source_path, result
+        )
         emitter = _Emitter(
             fn_name=info.fn_name,
             locals_=locals_,
@@ -1312,7 +1368,9 @@ def _lift_class_shapes(tree: ast.Module, module_path: str) -> list[Json]:
     return shapes
 
 
-def _receiver_contexts_by_method(class_shapes: list[Json]) -> dict[str, _AttributeReceiverContext]:
+def _receiver_contexts_by_method(
+    class_shapes: list[Json],
+) -> dict[str, _AttributeReceiverContext]:
     contexts: dict[str, _AttributeReceiverContext] = {}
     for shape in class_shapes:
         class_name = shape.get("className")
@@ -1329,7 +1387,11 @@ def _receiver_contexts_by_method(class_shapes: list[Json]) -> dict[str, _Attribu
                 continue
             qualname = method.get("qualname")
             receiver = method.get("instanceReceiver")
-            if not isinstance(qualname, str) or not isinstance(receiver, str) or not receiver:
+            if (
+                not isinstance(qualname, str)
+                or not isinstance(receiver, str)
+                or not receiver
+            ):
                 continue
             contexts[qualname] = _AttributeReceiverContext(
                 class_name=class_name,
@@ -1480,7 +1542,10 @@ def _build_class_shape(
 
             for attr_name, sources in scanner.guaranteed.items():
                 existing = attributes.get(attr_name)
-                if existing is not None and existing.get("memberKind") == "class-attribute":
+                if (
+                    existing is not None
+                    and existing.get("memberKind") == "class-attribute"
+                ):
                     sources = [*existing.get("sources", []), *sources]
                 attributes[attr_name] = {
                     "name": attr_name,
@@ -1552,7 +1617,10 @@ def _method_kind(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         return "staticmethod"
     if "property" in names or "builtins.property" in names:
         return "property"
-    if any(name and (name.endswith(".setter") or name.endswith(".deleter")) for name in names):
+    if any(
+        name and (name.endswith(".setter") or name.endswith(".deleter"))
+        for name in names
+    ):
         return "property"
     return "instance"
 
@@ -1594,7 +1662,10 @@ def _class_overrides_setattr(node: ast.ClassDef) -> bool:
 def _slot_entries(stmt: ast.stmt) -> tuple[list[Json], bool]:
     if not isinstance(stmt, ast.Assign):
         return [], False
-    if not any(isinstance(target, ast.Name) and target.id == "__slots__" for target in stmt.targets):
+    if not any(
+        isinstance(target, ast.Name) and target.id == "__slots__"
+        for target in stmt.targets
+    ):
         return [], False
     slots = _literal_slots(stmt.value)
     if slots is None:
@@ -1618,7 +1689,9 @@ def _literal_slots(node: ast.expr) -> list[str] | None:
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         slots: list[str] = []
         for element in node.elts:
-            if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+            if not isinstance(element, ast.Constant) or not isinstance(
+                element.value, str
+            ):
                 return None
             slots.append(element.value)
         return slots
@@ -1637,7 +1710,11 @@ def _class_body_attribute_sources(stmt: ast.stmt) -> list[tuple[str, Json]]:
                     )
                 )
         return sources
-    if isinstance(stmt, ast.AnnAssign) and stmt.value is not None and isinstance(stmt.target, ast.Name):
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and stmt.value is not None
+        and isinstance(stmt.target, ast.Name)
+    ):
         return [
             (
                 stmt.target.id,
@@ -1761,8 +1838,7 @@ def _parameter_shape(node: ast.FunctionDef) -> tuple[list[str], list[Json]]:
     defaults = list(node.args.defaults)
     default_offset = len(positional) - len(defaults)
     default_by_index = {
-        index + default_offset: default
-        for index, default in enumerate(defaults)
+        index + default_offset: default for index, default in enumerate(defaults)
     }
 
     for index, arg in enumerate(node.args.posonlyargs):
@@ -1824,9 +1900,13 @@ def _literal_default(node: ast.expr) -> Json:
                 value = -value
             return int_const(value)
     if isinstance(node, ast.Tuple):
-        return ctor("python:tuple", *[_literal_default(element) for element in node.elts])
+        return ctor(
+            "python:tuple", *[_literal_default(element) for element in node.elts]
+        )
     if isinstance(node, ast.List):
-        return ctor("python:list", *[_literal_default(element) for element in node.elts])
+        return ctor(
+            "python:list", *[_literal_default(element) for element in node.elts]
+        )
     raise _UnsupportedSyntax(node, "non-literal default parameter values are refused")
 
 
@@ -1893,7 +1973,9 @@ def _lift_function_precondition(
     return _simplify_conjunction(parts)
 
 
-def _lift_precondition_guard_statement(statement: ast.stmt) -> tuple[Json | None, str | None]:
+def _lift_precondition_guard_statement(
+    statement: ast.stmt,
+) -> tuple[Json | None, str | None]:
     if not isinstance(statement, ast.If):
         return None, None
     if statement.orelse or not _body_only_raises(statement.body):
@@ -1917,7 +1999,9 @@ def _lift_guard_formula(node: ast.expr) -> Json | None:
         if any(operand is None for operand in operands):
             return None
         kind = "and" if isinstance(node.op, ast.And) else "or"
-        return _fold_connective(kind, [operand for operand in operands if operand is not None])
+        return _fold_connective(
+            kind, [operand for operand in operands if operand is not None]
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         inner = _lift_guard_formula(node.operand)
         return None if inner is None else _negate_formula(inner)
@@ -1994,21 +2078,33 @@ def _negate_formula(formula: Json) -> Json:
         return {"kind": "not", "operands": [formula]}
     if kind == "not":
         operands = formula.get("operands")
-        if isinstance(operands, list) and len(operands) == 1 and isinstance(operands[0], dict):
+        if (
+            isinstance(operands, list)
+            and len(operands) == 1
+            and isinstance(operands[0], dict)
+        ):
             return operands[0]
     if kind == "and":
         operands = formula.get("operands")
         if isinstance(operands, list):
             return _fold_connective(
                 "or",
-                [_negate_formula(operand) for operand in operands if isinstance(operand, dict)],
+                [
+                    _negate_formula(operand)
+                    for operand in operands
+                    if isinstance(operand, dict)
+                ],
             )
     if kind == "or":
         operands = formula.get("operands")
         if isinstance(operands, list):
             return _fold_connective(
                 "and",
-                [_negate_formula(operand) for operand in operands if isinstance(operand, dict)],
+                [
+                    _negate_formula(operand)
+                    for operand in operands
+                    if isinstance(operand, dict)
+                ],
             )
     return {"kind": "not", "operands": [formula]}
 

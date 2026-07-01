@@ -5,10 +5,7 @@ from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_r
 
 def test_comparison_assertion_lifts_name_equality_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_column_sum(total):\n"
-            "    assert total == 6\n"
-        ),
+        source=("def test_column_sum(total):\n" "    assert total == 6\n"),
         filename="test_sum.py",
         memento_file="test_sum.py",
     )
@@ -38,10 +35,7 @@ def test_comparison_assertion_lifts_name_equality_fact() -> None:
 
 def test_comparison_assertion_lifts_not_equal_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_column_sum(total):\n"
-            "    assert total != 7\n"
-        ),
+        source=("def test_column_sum(total):\n" "    assert total != 7\n"),
         filename="test_sum.py",
         memento_file="test_sum.py",
     )
@@ -65,10 +59,7 @@ def test_comparison_assertion_lifts_not_equal_fact() -> None:
 
 def test_comparison_assertion_lifts_order_relation_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_count(count, limit):\n"
-            "    assert count <= limit\n"
-        ),
+        source=("def test_count(count, limit):\n" "    assert count <= limit\n"),
         filename="test_count.py",
         memento_file="test_count.py",
     )

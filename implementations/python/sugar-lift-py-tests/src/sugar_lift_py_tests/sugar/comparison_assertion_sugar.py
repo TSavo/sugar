@@ -8,7 +8,6 @@ from sugar_lift_py_tests.ir import Formula, Term, eq, gt, gte, lt, lte, ne
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
 
-
 _OPERATOR_FORMULAS: dict[str, Callable[[Term, Term], Formula]] = {
     "Eq": eq,
     "NotEq": ne,

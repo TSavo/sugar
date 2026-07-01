@@ -35,9 +35,7 @@ _SCOPE_BOUNDARY_NODES = (
     ast.GeneratorExp,
 )
 
-_TRY_NODES: tuple = (
-    (ast.Try, ast.TryStar) if hasattr(ast, "TryStar") else (ast.Try,)
-)
+_TRY_NODES: tuple = (ast.Try, ast.TryStar) if hasattr(ast, "TryStar") else (ast.Try,)
 _TYPE_ALIAS_NODE = getattr(ast, "TypeAlias", None)
 
 
@@ -252,8 +250,10 @@ def _pin_refusal(candidate: _Candidate, reason: str) -> Json:
 
 
 def _is_rebinding_reason(reason: str) -> bool:
-    return reason.startswith("rebound") or reason.startswith("deleted") or reason.startswith(
-        "global declaration"
+    return (
+        reason.startswith("rebound")
+        or reason.startswith("deleted")
+        or reason.startswith("global declaration")
     )
 
 
@@ -267,8 +267,12 @@ def _admission_failure(
             "global declaration in nested scope at line "
             f"{global_decl_line} can rebind the name at runtime"
         )
-    binding_events = [e for e in events if e.line != candidate.line or e.description != "assignment"]
-    own_events = [e for e in events if e.line == candidate.line and e.description == "assignment"]
+    binding_events = [
+        e for e in events if e.line != candidate.line or e.description != "assignment"
+    ]
+    own_events = [
+        e for e in events if e.line == candidate.line and e.description == "assignment"
+    ]
     if len(own_events) != 1:
         # The candidate's own binding statement must be exactly one plain
         # assignment event; anything else is a scan bookkeeping failure and
@@ -359,9 +363,7 @@ def _render_value_term(node: ast.expr) -> Json:
             return str_const(value)
         if value is None:
             return none_const()
-        raise _NotAdmissible(
-            f"no IR term shape for {type(value).__name__} constants"
-        )
+        raise _NotAdmissible(f"no IR term shape for {type(value).__name__} constants")
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         operand = node.operand
         if isinstance(operand, ast.Constant) and type(operand.value) is int:
@@ -525,6 +527,7 @@ def _global_declarations(tree: ast.Module) -> dict[str, int]:
 # admitted. The audit of silence terminates here, in exhaustion ("there
 # are no more nodes"), not in another oath ("we believe we got them all").
 
+
 def _grammar_classes(base: type) -> frozenset:
     return frozenset(
         cls
@@ -577,9 +580,7 @@ _DECLARED_NONBINDING_STMT = frozenset(
     )
 )
 
-_BINDING_HANDLED_PATTERN = frozenset(
-    (ast.MatchAs, ast.MatchStar, ast.MatchMapping)
-)
+_BINDING_HANDLED_PATTERN = frozenset((ast.MatchAs, ast.MatchStar, ast.MatchMapping))
 
 _DECLARED_NONBINDING_PATTERN = frozenset(
     # Children are recursed generically in _match_pattern_bindings via
@@ -594,7 +595,9 @@ def _unaccounted_grammar() -> dict[str, list[str]]:
     anything else is a hole that must be classified before pins can be
     trusted."""
     unaccounted: dict[str, list[str]] = {}
-    stmt_holes = _grammar_classes(ast.stmt) - _BINDING_HANDLED_STMT - _DECLARED_NONBINDING_STMT
+    stmt_holes = (
+        _grammar_classes(ast.stmt) - _BINDING_HANDLED_STMT - _DECLARED_NONBINDING_STMT
+    )
     if stmt_holes:
         unaccounted["stmt"] = sorted(c.__name__ for c in stmt_holes)
     pattern_holes = (

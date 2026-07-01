@@ -153,7 +153,7 @@ def _encode_string(s: str, out: List[str]) -> None:
     for c in s:
         cp = ord(c)
         if c == '"':
-            out.append("\\\"")
+            out.append('\\"')
         elif c == "\\":
             out.append("\\\\")
         elif cp < 0x20:

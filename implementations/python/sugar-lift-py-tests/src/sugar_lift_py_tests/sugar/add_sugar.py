@@ -61,6 +61,7 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc
+
 ADD_CLAIM = next(c for c in _rc() if c.name == "AddSugar")
 
 

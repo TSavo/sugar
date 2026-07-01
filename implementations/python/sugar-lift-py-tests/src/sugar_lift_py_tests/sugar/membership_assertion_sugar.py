@@ -28,15 +28,18 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         test = site.assert_test()
         if test.observed != "Compare":
             return False
-        return test.compare_ops() in (["In"], ["NotIn"]) and len(
-            test.compare_comparators()
-        ) == 1
+        return (
+            test.compare_ops() in (["In"], ["NotIn"])
+            and len(test.compare_comparators()) == 1
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "MembershipAssertionSugar":
         test = site.assert_test()
         if not cls.owns(site):
-            raise TypeError("MembershipAssertionSugar claim built a non-membership assert")
+            raise TypeError(
+                "MembershipAssertionSugar claim built a non-membership assert"
+            )
         return cls(
             item=ctx.build_body(test.compare_left(), SugarRole.TERM),
             container=ctx.build_body(test.compare_comparators()[0], SugarRole.TERM),
@@ -70,7 +73,9 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             contains_outcome, owner="MembershipAssertionSugar contains"
         )
         if not isinstance(contains, BoolValue):
-            raise TypeError("MembershipAssertionSugar contains must reduce to BoolValue")
+            raise TypeError(
+                "MembershipAssertionSugar contains must reduce to BoolValue"
+            )
         result = not contains.value if self.negated else contains.value
         return _assert_true(result)
 

@@ -40,7 +40,9 @@ def _independent_cid(header: dict) -> str:
         "schemaVersion": header["schemaVersion"],
         "version": header["version"],
     }
-    digest = blake3.blake3(_independent_jcs(cid_input).encode("utf-8")).digest(length=64)
+    digest = blake3.blake3(_independent_jcs(cid_input).encode("utf-8")).digest(
+        length=64
+    )
     return "blake3-512:" + digest.hex()
 
 

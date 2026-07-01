@@ -46,7 +46,9 @@ class ProjectedEqualityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 owner="projected equality left",
             ),
             floor_to_term(
-                complete_value(self.right.reduce(ctx), owner="projected equality right"),
+                complete_value(
+                    self.right.reduce(ctx), owner="projected equality right"
+                ),
                 owner="projected equality right",
             ),
         )

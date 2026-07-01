@@ -34,7 +34,9 @@ def stmt_to_template(stmt: ast.stmt, params: list[str]) -> Json:
         return {
             "kind": "let",
             "pat": pat_to_template(stmt.target, params),
-            "init": expr_to_template(stmt.value, params) if stmt.value is not None else None,
+            "init": (
+                expr_to_template(stmt.value, params) if stmt.value is not None else None
+            ),
         }
     if isinstance(stmt, ast.Expr):
         # Python expression statements do not carry Rust's semicolon signal.
@@ -48,7 +50,11 @@ def stmt_to_template(stmt: ast.stmt, params: list[str]) -> Json:
             "kind": "expr_stmt",
             "expr": {
                 "kind": "return",
-                "expr": expr_to_template(stmt.value, params) if stmt.value is not None else None,
+                "expr": (
+                    expr_to_template(stmt.value, params)
+                    if stmt.value is not None
+                    else None
+                ),
             },
             "trailing_semi": False,
         }
@@ -90,9 +96,15 @@ def expr_to_template(expr: ast.expr, params: list[str]) -> Json:
     if isinstance(expr, ast.Constant):
         return lit_to_template(expr.value)
     if isinstance(expr, ast.Tuple):
-        return {"kind": "tuple", "elems": [expr_to_template(elt, params) for elt in expr.elts]}
+        return {
+            "kind": "tuple",
+            "elems": [expr_to_template(elt, params) for elt in expr.elts],
+        }
     if isinstance(expr, ast.List):
-        return {"kind": "array", "elems": [expr_to_template(elt, params) for elt in expr.elts]}
+        return {
+            "kind": "array",
+            "elems": [expr_to_template(elt, params) for elt in expr.elts],
+        }
     if isinstance(expr, ast.BinOp):
         return {
             "kind": "binary",
@@ -182,7 +194,9 @@ def _attribute_segments(expr: ast.Attribute) -> list[str] | None:
     return None
 
 
-def _field_template_if_param_root(expr: ast.Attribute, params: list[str]) -> Json | None:
+def _field_template_if_param_root(
+    expr: ast.Attribute, params: list[str]
+) -> Json | None:
     parts: list[str] = []
     current: ast.AST = expr
     while isinstance(current, ast.Attribute):

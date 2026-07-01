@@ -60,4 +60,5 @@ def _is_to_list_call(site) -> bool:
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 TO_LIST_CLAIM = next(c for c in _rc() if c.name == "ToListSugar")

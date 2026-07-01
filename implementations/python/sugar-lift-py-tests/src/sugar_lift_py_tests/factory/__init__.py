@@ -9,7 +9,6 @@ from .factory_gap_info import FactoryGapInfo
 from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
 
-
 __all__ = [
     "FactoryAuditRow",
     "FactoryBuildContext",

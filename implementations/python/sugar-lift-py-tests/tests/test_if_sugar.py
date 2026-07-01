@@ -2,6 +2,7 @@
 two child blocks). Each branch's returns become GUARDED returns -- the then branch
 under the test, the else branch under its negation. Control flow is composition of
 child blocks, not a walker."""
+
 from __future__ import annotations
 
 from factory_reduce import compose_block

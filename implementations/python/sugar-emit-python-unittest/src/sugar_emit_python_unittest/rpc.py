@@ -89,4 +89,3 @@ def _send(obj: dict[str, Any]) -> None:
 
 def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
-

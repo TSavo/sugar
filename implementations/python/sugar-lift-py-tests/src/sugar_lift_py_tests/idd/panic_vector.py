@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from .panic_record import PanicRecord
 
-
 PANIC_AXES = (
     "numpy_sugar_panics",
     "numpy_floor_panics",

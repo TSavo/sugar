@@ -38,9 +38,9 @@ def test_oracle_reconstructs_the_template_from_source(tmp_path: Path) -> None:
     expected = function_body_template(ast.parse(src).body[0])
     resolved = _resolve_via_source_oracle(str(tmp_path / "lean"), e)
     assert resolved is not None, "oracle must resolve the SourceMemento"
-    assert resolved["ast_template"] == expected, (
-        "the recognizer's oracle-resolved template must equal the on-disk source"
-    )
+    assert (
+        resolved["ast_template"] == expected
+    ), "the recognizer's oracle-resolved template must equal the on-disk source"
 
 
 def test_recognizer_gets_nothing_when_the_source_drifts(tmp_path: Path) -> None:

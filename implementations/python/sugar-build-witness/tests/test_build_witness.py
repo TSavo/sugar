@@ -13,7 +13,6 @@ from sugar_build_witness.witness import (
     witness_body,
 )
 
-
 SCRIPT = """\
 import pathlib
 import sys
@@ -26,7 +25,9 @@ out.write_text(f"demo-lib\\nmessage={message}\\nversion={version}\\n", encoding=
 """
 
 
-def _write_project(root: Path, *, dist_script: str = SCRIPT, dist_output: str | None = None) -> None:
+def _write_project(
+    root: Path, *, dist_script: str = SCRIPT, dist_output: str | None = None
+) -> None:
     (root / "repo").mkdir()
     (root / "dist").mkdir()
     (root / "src").mkdir()
@@ -35,7 +36,9 @@ def _write_project(root: Path, *, dist_script: str = SCRIPT, dist_output: str | 
     (root / "src" / "message.txt").write_text("hello\n", encoding="utf-8")
     (root / "src" / "version.txt").write_text("1\n", encoding="utf-8")
     expected = "demo-lib\nmessage=hello\nversion=1\n"
-    (root / "dist" / "libdemo.txt").write_text(dist_output or expected, encoding="utf-8")
+    (root / "dist" / "libdemo.txt").write_text(
+        dist_output or expected, encoding="utf-8"
+    )
     (root / "build-witness.json").write_text(
         json.dumps(
             {

@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[4]
 PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
 
@@ -40,7 +39,9 @@ def _run_lift_rpc(project: Path) -> dict:
     )
 
     assert completed.returncode == 0, completed.stderr
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
     response = next(item for item in responses if item.get("id") == 2)
     assert "error" not in response, response
     return response["result"]
@@ -103,7 +104,8 @@ def _assert_base64_payload(formula: dict) -> None:
     assert payload["vars"] == ["byte_value_0", "byte_value_1", "byte_value_2"]
     assert len(payload["per_char"]) == 4
     assert payload["table"] == [
-        ord(ch) for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        ord(ch)
+        for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     ]
 
 
@@ -141,12 +143,16 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
     # `alphabet` definition is dropped (the payload carries the alphabet as a constant),
     # which keeps the post CLOSED for the verifier's ambient-post specialization.
     _assert_base64_payload(function_contract["post"])
-    assert function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
+    assert (
+        function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
+    )
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
         "test_encode_base64"
     )
-    assert assertion_contract["sourceWarrants"][0]["role"] == "python.literal-call-sugar"
+    assert (
+        assertion_contract["sourceWarrants"][0]["role"] == "python.literal-call-sugar"
+    )
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
     # No warrantedBy / callsite-fact anymore: the euf inv IS the fact, and the universe
     # composes via ambient-post specialization rather than a bespoke warrant.

@@ -58,7 +58,6 @@ from ..ir import (
     formula_to_value,
 )
 
-
 # ---------------------------------------------------------------------------
 # Pydantic lift adapter
 # ---------------------------------------------------------------------------
@@ -210,7 +209,9 @@ def emit_pydantic_model_source(model_name: str, fields: List[Dict[str, Any]]) ->
     for field in fields:
         name = str(field["name"])
         type_name = str(field.get("type", "Any"))
-        args = field.get("field_args") if isinstance(field.get("field_args"), dict) else {}
+        args = (
+            field.get("field_args") if isinstance(field.get("field_args"), dict) else {}
+        )
         if args:
             rendered_args = ", ".join(
                 f"{key}={_py_literal(value)}" for key, value in sorted(args.items())
@@ -239,7 +240,9 @@ def lift_pydantic_model_witnesses(
 
     witnesses: List[Dict[str, Any]] = []
     for field_name, field_info in fields.items():
-        annotation = annotations.get(field_name, getattr(field_info, "annotation", None))
+        annotation = annotations.get(
+            field_name, getattr(field_info, "annotation", None)
+        )
         formulas: List[Formula] = []
         if _field_required(field_info) and not _is_optional_annotation(annotation):
             formulas.append(
@@ -247,7 +250,9 @@ def lift_pydantic_model_witnesses(
             )
         type_name = _annotation_name(annotation)
         if type_name and type_name != "Any":
-            formulas.append(atomic("is_type", [make_var(field_name), str_const(type_name)]))
+            formulas.append(
+                atomic("is_type", [make_var(field_name), str_const(type_name)])
+            )
         formulas.extend(_lift_field_constraints(field_name, field_info))
 
         for formula in formulas:
@@ -333,7 +338,10 @@ def _pydantic_loss_record(
     original_predicate_text: str | None,
     surface_predicate_text: str,
 ) -> Dict[str, Any]:
-    if original_predicate_text is None or original_predicate_text == surface_predicate_text:
+    if (
+        original_predicate_text is None
+        or original_predicate_text == surface_predicate_text
+    ):
         return {}
     return {
         "pydantic_expressivity_gap": {
@@ -353,7 +361,9 @@ def _formula_text(formula: Dict[str, Any]) -> str:
             if len(args) == 2:
                 return f"{_term_text(args[0])} {_operator_text(name)} {_term_text(args[1])}"
             return f"{name}({', '.join(_term_text(arg) for arg in args)})"
-    if formula.get("kind") in {"and", "or"} and isinstance(formula.get("operands"), list):
+    if formula.get("kind") in {"and", "or"} and isinstance(
+        formula.get("operands"), list
+    ):
         sep = f" {formula['kind']} "
         return sep.join(_formula_text(part) for part in formula["operands"])
     return "<formula>"

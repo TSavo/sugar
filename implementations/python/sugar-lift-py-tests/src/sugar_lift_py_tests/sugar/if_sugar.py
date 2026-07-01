@@ -44,7 +44,9 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             if len(body_sites) > 1
             else None
         )
-        return cls(test=_cf_guard(site.if_test()), then=then_block, else_block=else_block)
+        return cls(
+            test=_cf_guard(site.if_test()), then=then_block, else_block=else_block
+        )
 
     def desugar(self, ctx) -> Outcome:
         then_bv = complete_value(self.then.reduce(ctx), owner="if then-block")
@@ -60,7 +62,9 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
 def _cf_operand(frag):
     if frag.observed == "Name":
         return make_var(frag.name_id())
-    if frag.observed == "PrimitiveLiteral" and not isinstance(frag.literal_value(), bool):
+    if frag.observed == "PrimitiveLiteral" and not isinstance(
+        frag.literal_value(), bool
+    ):
         val = frag.literal_value()
         if isinstance(val, int):
             return num(val)

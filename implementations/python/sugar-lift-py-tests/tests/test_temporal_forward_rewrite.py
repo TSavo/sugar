@@ -22,14 +22,16 @@ from sugar_lift_py_tests.sugar.builder_ctor_sugar import (
     BuilderCtorSugar,
 )
 from sugar_lift_py_tests.sugar.lambda_sugar import LAMBDA_CLAIM, LambdaSugar
-from sugar_lift_py_tests.sugar.list_literal_sugar import LIST_LITERAL_CLAIM, ListLiteralSugar
+from sugar_lift_py_tests.sugar.list_literal_sugar import (
+    LIST_LITERAL_CLAIM,
+    ListLiteralSugar,
+)
 from sugar_lift_py_tests.sugar.map_sugar import MAP_CLAIM, MapSugar
 from sugar_lift_py_tests.sugar.name_sugar import NAME_CLAIM, NameSugar
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PRIMITIVE_LITERAL_CLAIM
 from sugar_lift_py_tests.sugar.to_list_sugar import TO_LIST_CLAIM, ToListSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import TemporalContext, TemporalRewriteStep
-
 
 SOURCE = """
 n = 10

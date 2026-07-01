@@ -10,6 +10,7 @@ True division `/=` lifts too. And `x /= 0` is not a value -- it raises -- so it 
 completed, and every sugar bubbles that Incomplete upward unchanged, doing no work past
 it (the Outcome short-circuit).
 """
+
 from __future__ import annotations
 
 from factory_reduce import compose_block
@@ -22,10 +23,13 @@ def _block(src: str):
 
 # --- GREEN: the binop exists, so the sugar composes -------------------------------------
 
+
 def test_self_referential_assign_closes_over_the_old_value_and_does_not_loop():
     # The canary's first find: a lazy BoundVar recomposing against the NEW binding loops.
     # A let closes over its definition scope, so the new x is (old x) + 1, and it folds.
-    assert _block("    x = 5\n    x = x + 1\n    return x\n") == _block("    return 6\n")
+    assert _block("    x = 5\n    x = x + 1\n    return x\n") == _block(
+        "    return 6\n"
+    )
 
 
 def test_aug_add_assign_is_the_plain_assign_of_the_sum():
@@ -56,12 +60,14 @@ def test_aug_div_assign_lifts_via_the_collapsed_number():
 # --- the collapsed Number: float and int are one value (Int embeds in Real losslessly),
 # --- so 3.0 == 3 is REFLEXIVELY true -- nothing to assert, nothing to refuse.
 
+
 def test_float_literal_collapses_three_point_zero_equals_three():
     assert _block("    return 3.0\n") == _block("    return 3\n")
 
 
 # --- divide-by-zero is an EFFECT (Incomplete), not a value: the line after it never runs,
 # --- so the account cannot be completed and the unreachable work is never done.
+
 
 def test_divide_by_zero_is_an_incomplete_effect_that_halts_propagation():
     # `x = 1 // 0` binds lazily; the effect surfaces when x is USED -- the reference

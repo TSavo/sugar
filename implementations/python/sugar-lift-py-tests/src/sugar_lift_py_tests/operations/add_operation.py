@@ -17,7 +17,8 @@ class AddOperation:
         return Complete(
             ArrayLiteral(
                 tuple(
-                    TermValue(item.value + self.operand.value) for item in receiver.items
+                    TermValue(item.value + self.operand.value)
+                    for item in receiver.items
                 )
             )
         )

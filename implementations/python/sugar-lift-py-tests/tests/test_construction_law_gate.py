@@ -75,7 +75,7 @@ def crimes_in(path: Path, root: Path) -> list[str]:
     crimes: list[str] = []
     local_sugar = _local_sugar_class(path)
 
-        # Track the enclosing function name so Crime D can distinguish build() from desugar().
+    # Track the enclosing function name so Crime D can distinguish build() from desugar().
     _enclosing_fn: list[str] = []
 
     class Visitor(ast.NodeVisitor):
@@ -128,7 +128,11 @@ def crimes_in(path: Path, root: Path) -> list[str]:
         # desugar() must NEVER call build_body; it receives pre-built children from
         # __init__ and lowers them to FOL.
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "build_body" and _enclosing_fn and _enclosing_fn[-1] == "desugar":
+            if (
+                node.func.attr == "build_body"
+                and _enclosing_fn
+                and _enclosing_fn[-1] == "desugar"
+            ):
                 crimes.append(
                     f"{rel}:{node.lineno}: CRIME D (sugar pulls its own body inside desugar) "
                     f"`{ast.unparse(node.func)}(...)` -- desugar() receives pre-built SugarBody "

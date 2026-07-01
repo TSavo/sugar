@@ -51,7 +51,7 @@ def test_oracle_resolves_when_source_aligns(tmp_path: Path) -> None:
 
 
 def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
-    src = "class Algo:\n    def get_signature(self, key, value):\n        return b\"\"\n"
+    src = 'class Algo:\n    def get_signature(self, key, value):\n        return b""\n'
     rel = "pkg/signer.py"
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)

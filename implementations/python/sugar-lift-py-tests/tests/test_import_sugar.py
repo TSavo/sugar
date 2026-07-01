@@ -2,6 +2,7 @@
 installed source, so the factory walks its body like a local function. Proven
 here with a base64 encoder pulled from a separate module (no .proof) -- the dig
 emits the str.eq-bv-blocks universe walked from the imported source."""
+
 from __future__ import annotations
 
 import json
@@ -9,8 +10,7 @@ import textwrap
 
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
-_ENCODER = textwrap.dedent(
-    '''
+_ENCODER = textwrap.dedent("""
     def encodeBase64(value):
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
         b0 = ord(value[0])
@@ -22,11 +22,12 @@ _ENCODER = textwrap.dedent(
             + alphabet[((b1 & 15) << 2) | (b2 >> 6)]
             + alphabet[b2 & 63]
         )
-    '''
-)
+    """)
 
 
-def test_import_sugar_digs_imported_callee_into_its_module_source(tmp_path, monkeypatch):
+def test_import_sugar_digs_imported_callee_into_its_module_source(
+    tmp_path, monkeypatch
+):
     (tmp_path / "b64importmod.py").write_text(_ENCODER, encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(__import__("sys").modules, "b64importmod", raising=False)

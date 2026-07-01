@@ -7,7 +7,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[4]
 PYTHON_SOURCE_SRC = ROOT / "implementations/python/sugar-lift-python-source/src"
 PYTHON_COMPONENT_MANIFEST = ROOT / ".sugar/components/python/manifest.toml"
@@ -25,7 +24,9 @@ def _component_command() -> tuple[list[str], Path | None]:
     working_dir = manifest.get("working_dir")
     resolved_working_dir = None
     if working_dir is not None:
-        resolved_working_dir = (PYTHON_COMPONENT_MANIFEST.parent / working_dir).resolve()
+        resolved_working_dir = (
+            PYTHON_COMPONENT_MANIFEST.parent / working_dir
+        ).resolve()
     return command, resolved_working_dir
 
 
@@ -164,7 +165,8 @@ def test_python_component_plan_claims_py_evidence_with_lift_manifest(tmp_path) -
     assert lift_manifest["protocol_version"] == "pep/1.7.0"
     assert lift_manifest["kind"] == "lift"
     assert Path(lift_manifest["command"][1]) == (
-        ROOT / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
+        ROOT
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
     )
     assert lift_manifest["command"][2:] == ["--rpc"]
     assert lift_manifest["working_dir"] == "."

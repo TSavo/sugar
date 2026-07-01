@@ -55,8 +55,12 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx=None) -> Outcome:
-        left = _bv32_term(complete_value(self.left.reduce(ctx), owner="BitwiseOpSugar left"))
-        right = _bv32_term(complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right"))
+        left = _bv32_term(
+            complete_value(self.left.reduce(ctx), owner="BitwiseOpSugar left")
+        )
+        right = _bv32_term(
+            complete_value(self.right.reduce(ctx), owner="BitwiseOpSugar right")
+        )
         return Complete(Bv32Value(_bv32_binary(self.operator, left, right)))
 
 
@@ -84,4 +88,5 @@ def _bv32_binary(operator: str, left: Term, right: Term) -> Term:
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 BITWISE_OP_CLAIM = next(c for c in _rc() if c.name == "BitwiseOpSugar")

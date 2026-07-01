@@ -3,6 +3,7 @@ with no reduction and no detection -- the sugar simply is the Incomplete. The bl
 reducing it bubbles the Incomplete upward and does no work past it (the raise transfers
 control, so every statement after it is unreachable).
 """
+
 from __future__ import annotations
 
 from factory_reduce import compose_block

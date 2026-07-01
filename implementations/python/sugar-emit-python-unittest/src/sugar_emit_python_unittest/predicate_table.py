@@ -21,7 +21,7 @@ def head_of(predicate: dict[str, Any]) -> Optional[str]:
     if not isinstance(name, str) or not name.strip():
         return None
     if name.startswith(_CONCEPT_PREFIX):
-        return name[len(_CONCEPT_PREFIX):]
+        return name[len(_CONCEPT_PREFIX) :]
     return name
 
 
@@ -132,7 +132,7 @@ def _render_application(obj: dict[str, Any]) -> Optional[str]:
     if not isinstance(name, str) or not name.strip():
         return None
     if name.startswith(_CONCEPT_PREFIX):
-        name = name[len(_CONCEPT_PREFIX):]
+        name = name[len(_CONCEPT_PREFIX) :]
 
     rendered_args: list[str] = []
     raw_args = obj.get("args")
@@ -193,4 +193,3 @@ _HANDLERS: dict[str, Callable[[list[Any]], Optional[str]]] = {
     "option-is-none": _unary(lambda x: f"self.assertIsNone({x})"),
     "fallible-err": _unary(lambda x: f"with self.assertRaises(Exception):\n    {x}()"),
 }
-

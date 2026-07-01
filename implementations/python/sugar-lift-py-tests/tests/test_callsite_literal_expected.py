@@ -1,6 +1,7 @@
 """The callsite-equality EXPECTED value composes through the factory's literal
 sugars (string, int, ...) -- no string-only special case. A shape the catalog
 can't build panics via its own mouth, naming the next sugar."""
+
 from __future__ import annotations
 
 import ast

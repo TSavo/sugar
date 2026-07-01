@@ -67,7 +67,8 @@ def _canonical_term_sig(term) -> str:
 def euf_call_term(callee_name: str, arg_terms):
     """The EUF callsite term for ``callee(args)`` -- an uninterpreted ``call:<callee>``
     ctor over the argument terms. The SINGLE constructor of the bridge term, so every
-    callsite of the same callee+args builds the byte-identical term that mint coalesces."""
+    callsite of the same callee+args builds the byte-identical term that mint coalesces.
+    """
     return ctor(f"call:{callee_name}", arg_terms)
 
 
@@ -189,7 +190,8 @@ def _resolve_bound_lhs(lhs, fn):
     ``x = y(5); assert x == 9`` lifts IDENTICALLY to ``assert y(5) == 9`` -- the binding is
     transparent and the bridge falls out wherever the call appears (the same dance, the
     binding just different clothes). Only a call RHS substitutes; a non-call binding leaves
-    the Name as-is (which panics as before -- only ``call(...) == literal`` is covered)."""
+    the Name as-is (which panics as before -- only ``call(...) == literal`` is covered).
+    """
     if lhs.observed != "Name":
         return lhs
     name = lhs.name_id()
@@ -246,14 +248,19 @@ def _lift_assert(
     comparison = stmt.assert_test()
     if comparison.observed != "Compare" or len(comparison.compare_ops()) != 1:
         _panic_no_sugar(
-            stmt, memento_file,
+            stmt,
+            memento_file,
             observed=f"assert-test:{comparison.observed}",
             requested="EqualityAssertion",
             fix="lift this assertion shape (only `call(...) == literal` is covered)",
         )
-    if comparison.compare_ops()[0] != "Eq" or len(comparison.compare_comparators()) != 1:
+    if (
+        comparison.compare_ops()[0] != "Eq"
+        or len(comparison.compare_comparators()) != 1
+    ):
         _panic_no_sugar(
-            stmt, memento_file,
+            stmt,
+            memento_file,
             observed=f"assert-compare-op:{comparison.compare_ops()[0]}",
             requested="EqualityAssertion",
             fix="lift non-`==` comparison assertions",
@@ -262,7 +269,8 @@ def _lift_assert(
     callee_name = _callee_name(comparison_left, import_aliases, from_imports)
     if callee_name is None:
         _panic_no_sugar(
-            comparison_left, memento_file,
+            comparison_left,
+            memento_file,
             observed=f"assert-eq-lhs:{comparison_left.observed}",
             requested="CallsiteEquality",
             fix="lift `<lhs> == literal` where the lhs is not a call",
@@ -303,7 +311,7 @@ def _lift_assert(
                 filename=filename,
                 memento_file=memento_file,
                 source_lines=source_lines,
-        )
+            )
     return _merge_lifts(universe, assertion)
 
 
@@ -421,10 +429,13 @@ def _is_constructor_assignment(prior: SourceFragment, ctx: FactoryBuildContext) 
     value = prior.assign_value()
     if value.observed != "Call":
         return False
-    target = value.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
-    ) or value.call_target_name()
+    target = (
+        value.call_import_target_name(
+            getattr(ctx, "import_aliases", {}) or {},
+            getattr(ctx, "from_imports", {}) or {},
+        )
+        or value.call_target_name()
+    )
     resolver = getattr(ctx, "name_resolver", None) or {}
     resolved = resolver.get(target)
     if resolved is None:
@@ -532,7 +543,9 @@ def _lift_callsite_assertion(
     # The expected value composes through the factory's literal sugars (string,
     # int, ...). Anything the catalog can't build panics via its own mouth, which
     # names the next sugar -- no string-only special case here.
-    expected_term = _lift_literal_via_factory(comparison.compare_comparators()[0], filename)
+    expected_term = _lift_literal_via_factory(
+        comparison.compare_comparators()[0], filename
+    )
     # Each arg composes through the factory's literal sugars (string, int, array,
     # ...) -- the same path as the expected. A literal the catalog reduces but can't
     # yet shape into a term (e.g. a nested array) is turned into a clean mouth-panic
@@ -543,7 +556,8 @@ def _lift_callsite_assertion(
             arg_terms.append(_lift_literal_via_factory(arg_frag, filename))
         except TypeError:
             _panic_no_sugar(
-                arg_frag, memento_file,
+                arg_frag,
+                memento_file,
                 observed=f"callsite-arg:{arg_frag.observed}-unliftable",
                 requested="LiftableCallArg",
                 fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
@@ -745,20 +759,26 @@ def _construct_callsite(
         if cn not in universes_seen:
             universes_seen.add(cn)
             uni = _function_universe(
-                callee, cn, functions_by_name=functions_by_name,
-                filename=filename, memento_file=memento_file, source_lines=source_lines,
+                callee,
+                cn,
+                functions_by_name=functions_by_name,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
             )
             if uni is not None:
                 facts.append(uni)
         sink: list[tuple[str, object]] = []
         reduce_ctx = ReduceContext(
-            temporal=TemporalContext.empty().bind_value(callee.function_params()[0], arg_value),
+            temporal=TemporalContext.empty().bind_value(
+                callee.function_params()[0], arg_value
+            ),
             dig_sink=sink,
         )
         try:
-            outcome = build_ctx.build_body(Block.of(callee.node.body), SugarRole.STATEMENT).reduce(
-                reduce_ctx
-            )
+            outcome = build_ctx.build_body(
+                Block.of(callee.node.body), SugarRole.STATEMENT
+            ).reduce(reduce_ctx)
         except (TypeError, ValueError, FactoryGap):
             continue  # a shape the catalog cannot peel -> leave the bridge as an axiom
         if not isinstance(outcome, Complete):
@@ -770,7 +790,9 @@ def _construct_callsite(
         if isinstance(result, TermValue):
             value_term = _floor_to_term(result)  # reached a literal floor
         elif isinstance(result, SymbolicValue):
-            value_term = result.term  # topped out at a bridge `call:h(arg2)` -- the pointer
+            value_term = (
+                result.term
+            )  # topped out at a bridge `call:h(arg2)` -- the pointer
         else:
             continue
         if value_term == euf_call_term(cn, [_floor_to_term(arg_value)]):
@@ -843,7 +865,8 @@ def _function_universe(
         memento_file = getattr(callee.node, "_sugar_file", memento_file)
     body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
     body_step_formula_values = [
-        _formula_to_rpc(formula) if formula is not None else None for formula in body_step_formulas
+        _formula_to_rpc(formula) if formula is not None else None
+        for formula in body_step_formulas
     ]
     _universe_bound = set(callee.function_params()) | {"out"}
     _universe_formulas = [
@@ -858,15 +881,24 @@ def _function_universe(
         if len(_universe_formulas) == 1
         else _formula_to_rpc(and_(_universe_formulas))
     )
-    function_contract_name = f"{Path(memento_file).stem}::{callee.function_name()}::callable"
+    function_contract_name = (
+        f"{Path(memento_file).stem}::{callee.function_name()}::callable"
+    )
     function_memento = _function_source_memento(
-        callee, memento_file, source_lines,
-        role="python.literal-call-sugar", contract_name=function_contract_name,
+        callee,
+        memento_file,
+        source_lines,
+        role="python.literal-call-sugar",
+        contract_name=function_contract_name,
     )
     body_mementos = [
         _statement_source_memento(
-            SourceFragment.from_node(step_stmt, memento_file), callee, memento_file, source_lines,
-            contract_name=function_contract_name, role="python.literal-call-sugar",
+            SourceFragment.from_node(step_stmt, memento_file),
+            callee,
+            memento_file,
+            source_lines,
+            contract_name=function_contract_name,
+            role="python.literal-call-sugar",
         )
         for _, _, step_stmt, _ in body_steps
     ]
@@ -881,21 +913,40 @@ def _function_universe(
         bridge_source_symbol=f"call:{callee_name}",
     )
     audit = _source_audit(
-        callee, return_stmt_frag, memento_file, function_contract_name, body_mementos[-1],
-        role="python.literal-call-sugar", ast_kind="Return",
+        callee,
+        return_stmt_frag,
+        memento_file,
+        function_contract_name,
+        body_mementos[-1],
+        role="python.literal-call-sugar",
+        ast_kind="Return",
     )
     walk_rows = [
         _walk_row(
-            selected, ast_kind, SourceFragment.from_node(step_stmt, memento_file), filename,
-            step_memento, output, requested_role="FunctionBodyConstraint",
-            emitted_formula=body_step_formula_values[index]
-            if index < len(body_step_formula_values) else None,
+            selected,
+            ast_kind,
+            SourceFragment.from_node(step_stmt, memento_file),
+            filename,
+            step_memento,
+            output,
+            requested_role="FunctionBodyConstraint",
+            emitted_formula=(
+                body_step_formula_values[index]
+                if index < len(body_step_formula_values)
+                else None
+            ),
         )
         for index, ((selected, ast_kind, step_stmt, output), step_memento) in enumerate(
             zip(body_steps, body_mementos)
         )
     ]
-    return ([function_contract], [function_memento, *body_mementos], [audit], walk_rows, [])
+    return (
+        [function_contract],
+        [function_memento, *body_mementos],
+        [audit],
+        walk_rows,
+        [],
+    )
 
 
 def _dig_universe(
@@ -928,7 +979,8 @@ def _dig_universe(
         call_body = factory_ctx.build_body(call_frag, SugarRole.TERM)
     except TypeError as exc:
         _panic_no_sugar(
-            call_frag, memento_file,
+            call_frag,
+            memento_file,
             observed=f"dig-body:{call_frag.observed}",
             requested="FunctionBodyConstraint",
             fix=f"lift this function body for the dig ({exc})",
@@ -936,7 +988,8 @@ def _dig_universe(
     call_sugar = getattr(call_body.sugar, "strategy", None)
     if not isinstance(call_sugar, BridgeStrategy):
         _panic_no_sugar(
-            call_frag, memento_file,
+            call_frag,
+            memento_file,
             observed=f"dig-body:{call_frag.observed}",
             requested="FunctionBodyConstraint",
             fix="lift this function body for the dig",
@@ -959,7 +1012,8 @@ def _dig_universe(
         body_step_formulas = call_sugar.constraint_formula_steps()
     except ValueError as exc:
         _panic_no_sugar(
-            target_fn, memento_file,
+            target_fn,
+            memento_file,
             observed=f"dig-body:simple-{target_fn.function_name()}",
             requested="NumericBodyConstraint",
             fix=f"add the numeric simple-body dig (out == <return expr over the formal>): {exc}",
@@ -986,7 +1040,9 @@ def _dig_universe(
         if len(_universe_formulas) == 1
         else _formula_to_rpc(and_(_universe_formulas))
     )
-    function_contract_name = f"{Path(memento_file).stem}::{target_fn.function_name()}::callable"
+    function_contract_name = (
+        f"{Path(memento_file).stem}::{target_fn.function_name()}::callable"
+    )
     function_memento = _function_source_memento(
         target_fn,
         memento_file,
@@ -1037,16 +1093,24 @@ def _dig_universe(
             step_memento,
             output,
             requested_role="FunctionBodyConstraint",
-            emitted_formula=body_step_formula_values[index]
-            if index < len(body_step_formula_values)
-            else None,
+            emitted_formula=(
+                body_step_formula_values[index]
+                if index < len(body_step_formula_values)
+                else None
+            ),
         )
         for index, (
             (selected, ast_kind, step_stmt, output),
             step_memento,
         ) in enumerate(zip(body_steps, body_mementos))
     ]
-    return ([function_contract], [function_memento, *body_mementos], [audit], walk_rows, [])
+    return (
+        [function_contract],
+        [function_memento, *body_mementos],
+        [audit],
+        walk_rows,
+        [],
+    )
 
 
 def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResult:
@@ -1059,7 +1123,9 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
     )
 
 
-def _panic_no_sugar(frag: SourceFragment, memento_file: str, *, observed: str, requested: str, fix: str):
+def _panic_no_sugar(
+    frag: SourceFragment, memento_file: str, *, observed: str, requested: str, fix: str
+):
     """The mouth. The lifter saw an assertion it could not lift and REFUSES to drop it
     silently -- it PANICS, naming the AST shape and the sugar that is missing. A silent
     `return None` here would be the cardinal crime (un-done work disguised as done), so
@@ -1145,7 +1211,11 @@ def _binding_for_bridge_symbol(
 def _binding_cid(binding: dict[str, Any] | None) -> str | None:
     if binding is None:
         return None
-    cid = binding.get("contract_cid") or binding.get("contractCid") or binding.get("targetContractCid")
+    cid = (
+        binding.get("contract_cid")
+        or binding.get("contractCid")
+        or binding.get("targetContractCid")
+    )
     return cid if isinstance(cid, str) and cid else None
 
 
@@ -1156,7 +1226,9 @@ def _binding_proof_cid(binding: dict[str, Any] | None) -> str | None:
     return cid if isinstance(cid, str) and cid else None
 
 
-def _import_bindings(tree_frag: SourceFragment) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+def _import_bindings(
+    tree_frag: SourceFragment,
+) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Scan a module's imports.
 
     Returns ``(aliases, from_imports)`` where ``aliases`` maps a bound name to its
@@ -1169,7 +1241,11 @@ def _import_bindings(tree_frag: SourceFragment) -> tuple[dict[str, str], dict[st
         if frag.observed == "Import":
             for name, asname in frag.import_names():
                 aliases[asname or name] = name
-        elif frag.observed == "ImportFrom" and frag.importfrom_module() and frag.importfrom_level() == 0:
+        elif (
+            frag.observed == "ImportFrom"
+            and frag.importfrom_module()
+            and frag.importfrom_level() == 0
+        ):
             module = frag.importfrom_module()
             for name, asname in frag.importfrom_names():
                 from_imports[asname or name] = (module, name)
@@ -1253,7 +1329,10 @@ def _callee_name(
 ) -> str | None:
     if frag.observed != "Call":
         return None
-    return frag.call_import_target_name(import_aliases, from_imports) or frag.call_target_name()
+    return (
+        frag.call_import_target_name(import_aliases, from_imports)
+        or frag.call_target_name()
+    )
 
 
 def _formula_to_rpc(formula: Formula) -> dict[str, Any]:

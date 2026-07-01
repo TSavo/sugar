@@ -19,7 +19,6 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
 
-
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------

@@ -106,7 +106,9 @@ def _formula_out_eq_x() -> dict:
     }
 
 
-def _contract_comment_payload(role: str, formula: dict, fol_text: str) -> tuple[dict, str]:
+def _contract_comment_payload(
+    role: str, formula: dict, fol_text: str
+) -> tuple[dict, str]:
     payload = {
         "artifact_kind": "sugar-contract-comment-sugar",
         "concept_site_cid": _cid("1"),
@@ -195,7 +197,9 @@ def _assert_absent_keys(value: object, forbidden: set[str]) -> None:
 
 
 def test_library_bindings_layer_lifts_requests_shim_from_real_python_source() -> None:
-    fixture = Path(__file__).parent / "fixtures/library_bindings/requests_fetch_status.py"
+    fixture = (
+        Path(__file__).parent / "fixtures/library_bindings/requests_fetch_status.py"
+    )
     source = fixture.read_text(encoding="utf-8")
 
     result = lift_source(source, "src/shims/requests.py", layer="library-bindings")
@@ -287,7 +291,7 @@ def test_library_bindings_rpc_passes_requested_layer(tmp_path: Path) -> None:
         "from sugar import sugar\n"
         "import requests\n"
         "\n"
-        "@sugar.bind(concept=\"concept:http-request\", library=\"requests\")\n"
+        '@sugar.bind(concept="concept:http-request", library="requests")\n'
         "def fetch_status(url: str) -> int:\n"
         "    response = requests.get(url)\n"
         "    return response.status_code\n",
@@ -333,10 +337,7 @@ def test_bind_lift_erases_signature_types_from_bind_ir_entries() -> None:
 
 
 def test_bind_lift_emits_operand_binding_sidecar_with_integer_positions() -> None:
-    source = (
-        "def nested(a, b, c):\n"
-        "    return (a + b) * c\n"
-    )
+    source = "def nested(a, b, c):\n" "    return (a + b) * c\n"
 
     result = lift_source(source, "pkg/math.py")
 
@@ -407,14 +408,10 @@ def test_bind_lift_source_emits_language_neutral_entries() -> None:
 
 def test_bind_lift_contract_surfaces_do_not_emit_envelope_hash_fields() -> None:
     sources = [
-        (
-            "# @requires: x > 0\n"
-            "def add(x, y):\n"
-            "    return x + y\n"
-        ),
+        ("# @requires: x > 0\n" "def add(x, y):\n" "    return x + y\n"),
         (
             "from sugar_lift_py_tests.decorators import contract\n"
-            "@contract(pre=\"x > 0\")\n"
+            '@contract(pre="x > 0")\n'
             "def add(x, y):\n"
             "    return x + y\n"
         ),
@@ -462,43 +459,31 @@ def test_bind_lift_preserves_nested_gamma_composition() -> None:
 def test_bind_lift_emits_gamma_shape_for_statement_concepts() -> None:
     cases = [
         (
-            "def f():\n"
-            "    while True:\n"
-            "        pass\n",
+            "def f():\n" "    while True:\n" "        pass\n",
             _gamma_shape("concept:while", [{}, _gamma_shape("concept:skip")]),
         ),
         (
-            "def f(items):\n"
-            "    for item in items:\n"
-            "        pass\n",
+            "def f(items):\n" "    for item in items:\n" "        pass\n",
             _gamma_shape("concept:for", [_gamma_shape("concept:skip")]),
         ),
         (
-            "def f():\n"
-            "    while True:\n"
-            "        break\n",
+            "def f():\n" "    while True:\n" "        break\n",
             _gamma_shape("concept:while", [{}, _gamma_shape("concept:break")]),
         ),
         (
-            "def f():\n"
-            "    while True:\n"
-            "        continue\n",
+            "def f():\n" "    while True:\n" "        continue\n",
             _gamma_shape("concept:while", [{}, _gamma_shape("concept:continue")]),
         ),
         (
-            "def f(x, y):\n"
-            "    x = y\n",
+            "def f(x, y):\n" "    x = y\n",
             _gamma_shape("concept:assign", [{}, {}]),
         ),
         (
-            "def f(g, x):\n"
-            "    g(x)\n",
+            "def f(g, x):\n" "    g(x)\n",
             _gamma_shape("concept:call", [{}, {}]),
         ),
         (
-            "def f(g, x, y):\n"
-            "    x = y\n"
-            "    g(x)\n",
+            "def f(g, x, y):\n" "    x = y\n" "    g(x)\n",
             _gamma_shape(
                 "concept:seq",
                 [
@@ -518,15 +503,11 @@ def test_bind_lift_emits_gamma_shape_for_statement_concepts() -> None:
 
 def test_bind_lift_discriminates_while_and_for_statement_concepts() -> None:
     while_entry = lift_source(
-        "def f(items):\n"
-        "    while True:\n"
-        "        pass\n",
+        "def f(items):\n" "    while True:\n" "        pass\n",
         "pkg/while.py",
     ).ir[0]
     for_entry = lift_source(
-        "def f(items):\n"
-        "    for item in items:\n"
-        "        pass\n",
+        "def f(items):\n" "    for item in items:\n" "        pass\n",
         "pkg/for.py",
     ).ir[0]
 
@@ -635,7 +616,9 @@ def test_bind_lift_preserves_operator_concept_cid_atoms() -> None:
         assert atoms[0]["op_cid"] == op_cid
         assert set(atoms[0]) == {"args", "op_cid"}
         assert all(arg == {} for arg in atoms[0]["args"])
-        _assert_absent_keys(atoms[0], {"kind", "op", "file", "fn_line", "line", "column"})
+        _assert_absent_keys(
+            atoms[0], {"kind", "op", "file", "fn_line", "line", "column"}
+        )
 
 
 def test_operand_slot_accepts_op_cid_only_operation_atoms() -> None:
@@ -669,7 +652,9 @@ def test_bind_lift_compare_single_op_discriminates_concept_atom(
     result = lift_source(f"def f(a, b):\n    return {expr}\n", "pkg/compare_single.py")
 
     assert result.diagnostics == []
-    assert _operator_cids(result.ir[0]["term_shape"]) == [_local_op_cid(op) for op in expected]
+    assert _operator_cids(result.ir[0]["term_shape"]) == [
+        _local_op_cid(op) for op in expected
+    ]
 
 
 @pytest.mark.parametrize(
@@ -687,25 +672,40 @@ def test_bind_lift_compare_two_chain_desugars_to_and_composition(
     result = lift_source(f"def f(a, b, c):\n    return {expr}\n", "pkg/compare_two.py")
 
     assert result.diagnostics == []
-    assert _operator_cids(result.ir[0]["term_shape"]) == [_local_op_cid(op) for op in expected]
+    assert _operator_cids(result.ir[0]["term_shape"]) == [
+        _local_op_cid(op) for op in expected
+    ]
 
 
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
-        ("a < b <= c != d", ["concept:ite", "concept:ite", "concept:lt", "concept:le", "concept:ne"]),
-        ("a > b >= c == d", ["concept:ite", "concept:ite", "concept:gt", "concept:ge", "concept:eq"]),
-        ("a != b < c > d", ["concept:ite", "concept:ite", "concept:ne", "concept:lt", "concept:gt"]),
+        (
+            "a < b <= c != d",
+            ["concept:ite", "concept:ite", "concept:lt", "concept:le", "concept:ne"],
+        ),
+        (
+            "a > b >= c == d",
+            ["concept:ite", "concept:ite", "concept:gt", "concept:ge", "concept:eq"],
+        ),
+        (
+            "a != b < c > d",
+            ["concept:ite", "concept:ite", "concept:ne", "concept:lt", "concept:gt"],
+        ),
     ],
 )
 def test_bind_lift_compare_three_chain_mixed_ops_desugars_to_and_composition(
     expr: str,
     expected: list[str],
 ) -> None:
-    result = lift_source(f"def f(a, b, c, d):\n    return {expr}\n", "pkg/compare_three.py")
+    result = lift_source(
+        f"def f(a, b, c, d):\n    return {expr}\n", "pkg/compare_three.py"
+    )
 
     assert result.diagnostics == []
-    assert _operator_cids(result.ir[0]["term_shape"]) == [_local_op_cid(op) for op in expected]
+    assert _operator_cids(result.ir[0]["term_shape"]) == [
+        _local_op_cid(op) for op in expected
+    ]
 
 
 def test_bind_lift_line_comments_as_concept_comment_terms() -> None:
@@ -821,7 +821,9 @@ def test_checked_in_python_bind_manifest_invokes_module_form_and_declares_kit() 
 
 
 def test_bind_rpc_kit_declaration_returns_python_bind_surface() -> None:
-    response = dispatch({"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD})
+    response = dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": KIT_DECLARATION_RPC_METHOD}
+    )
 
     assert "error" not in response, response
     result = response["result"]
@@ -850,7 +852,9 @@ def test_bind_rpc_kit_declaration_returns_python_bind_surface() -> None:
 
 def test_bind_rpc_lift_returns_ir_document(tmp_path: Path) -> None:
     source = tmp_path / "foo.py"
-    source.write_text("# concept: identity\ndef f(x: int) -> int:\n    return x\n", encoding="utf-8")
+    source.write_text(
+        "# concept: identity\ndef f(x: int) -> int:\n    return x\n", encoding="utf-8"
+    )
 
     response = dispatch(
         {
@@ -872,7 +876,9 @@ def test_bind_rpc_lift_returns_ir_document(tmp_path: Path) -> None:
 
 
 def test_bind_lift_recovers_contract_comment_witness() -> None:
-    payload, payload_cid = _contract_comment_payload("pre", _formula_gte_x_zero(), "x >= 0")
+    payload, payload_cid = _contract_comment_payload(
+        "pre", _formula_gte_x_zero(), "x >= 0"
+    )
     source = (
         _comment_lines(payload, payload_cid)
         + "# concept: identity\n"
@@ -905,16 +911,18 @@ def test_bind_lift_recovers_contract_comment_witness() -> None:
 
 
 def test_bind_lift_recovers_docstring_contract_comment_witness() -> None:
-    payload, payload_cid = _contract_comment_payload("post", _formula_out_eq_x(), "out == x")
+    payload, payload_cid = _contract_comment_payload(
+        "post", _formula_out_eq_x(), "out == x"
+    )
     source = (
         "def wrap_identity(x: int) -> int:\n"
-        "    \"\"\"\n"
+        '    """\n'
         "    human prose stays non-authoritative\n"
         "    sugar-contract: "
         + json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         + "\n"
         f"    sugar-contract-payload-cid: {payload_cid}\n"
-        "    \"\"\"\n"
+        '    """\n'
         "    return x\n"
     )
 
@@ -928,26 +936,41 @@ def test_bind_lift_recovers_docstring_contract_comment_witness() -> None:
 
 
 def test_bind_lift_contract_comment_fails_closed_for_bad_payloads() -> None:
-    payload, payload_cid = _contract_comment_payload("pre", _formula_gte_x_zero(), "x >= 0")
+    payload, payload_cid = _contract_comment_payload(
+        "pre", _formula_gte_x_zero(), "x >= 0"
+    )
     cases = [
-        _comment_lines({**payload, "role": "sideways"}, cid_of_json({**payload, "role": "sideways"})),
-        _comment_lines({**payload, "schema_version": "2"}, cid_of_json({**payload, "schema_version": "2"})),
-        _comment_lines({**payload, "ir_formula_jcs_cid": _cid("7")}, cid_of_json({**payload, "ir_formula_jcs_cid": _cid("7")})),
+        _comment_lines(
+            {**payload, "role": "sideways"},
+            cid_of_json({**payload, "role": "sideways"}),
+        ),
+        _comment_lines(
+            {**payload, "schema_version": "2"},
+            cid_of_json({**payload, "schema_version": "2"}),
+        ),
+        _comment_lines(
+            {**payload, "ir_formula_jcs_cid": _cid("7")},
+            cid_of_json({**payload, "ir_formula_jcs_cid": _cid("7")}),
+        ),
         _comment_lines(payload, _cid("8")),
         "# sugar-contract: {not json}\n",
     ]
 
     for prefix in cases:
-        result = lift_source(prefix + "def f(x: int) -> int:\n    return x\n", "pkg/foo.py")
+        result = lift_source(
+            prefix + "def f(x: int) -> int:\n    return x\n", "pkg/foo.py"
+        )
 
         assert result.ir[0].get("witnesses", []) == []
-        assert any(diag["kind"] == "contract-comment-invalid" for diag in result.diagnostics)
+        assert any(
+            diag["kind"] == "contract-comment-invalid" for diag in result.diagnostics
+        )
 
 
 def test_bind_lift_recovers_decorator_contract_witnesses() -> None:
     source = (
         "from sugar_lift_py_tests.decorators import contract\n"
-        "@contract(pre=\"x >= 0\", post=\"out >= 0\")\n"
+        '@contract(pre="x >= 0", post="out >= 0")\n'
         "def nonnegative_identity(x: int) -> int:\n"
         "    return x\n"
     )
@@ -957,7 +980,10 @@ def test_bind_lift_recovers_decorator_contract_witnesses() -> None:
     assert result.diagnostics == []
     witnesses = result.ir[0]["witnesses"]
     assert [witness["role"] for witness in witnesses] == ["pre", "post"]
-    assert [witness["predicate_text"] for witness in witnesses] == ["x >= 0", "out >= 0"]
+    assert [witness["predicate_text"] for witness in witnesses] == [
+        "x >= 0",
+        "out >= 0",
+    ]
     assert all(witness["source_kind"] == "native-surface" for witness in witnesses)
     assert all(
         witness["extension_fields"]["surface"] == "python-decorator-contract"
@@ -975,7 +1001,7 @@ def test_sugar_bind_with_empty_loss_emits_empty_entries() -> None:
         "from sugar import sugar\n"
         "import sqlite3\n"
         "\n"
-        "@sugar.bind(concept=\"concept:sql-connection-close\", library=\"sqlite3\", loss=[])\n"
+        '@sugar.bind(concept="concept:sql-connection-close", library="sqlite3", loss=[])\n'
         "def close_connection(conn: sqlite3.Connection) -> None:\n"
         "    conn.close()\n"
     )
@@ -996,9 +1022,9 @@ def test_sugar_bind_with_multi_dim_loss_populates_entries() -> None:
         "import sqlite3\n"
         "\n"
         "@sugar.bind(\n"
-        "    concept=\"concept:sql-connection-open\",\n"
-        "    library=\"sqlite3\",\n"
-        "    loss=[\"sync-vs-async\", \"auth-mechanism\", \"connection-pooling\"],\n"
+        '    concept="concept:sql-connection-open",\n'
+        '    library="sqlite3",\n'
+        '    loss=["sync-vs-async", "auth-mechanism", "connection-pooling"],\n'
         ")\n"
         "def open_db(path: str) -> sqlite3.Connection:\n"
         "    return sqlite3.connect(path)\n"
@@ -1018,9 +1044,9 @@ def test_sugar_bind_with_observed_dimension_propagates_to_entry() -> None:
         "import sqlite3\n"
         "\n"
         "@sugar.bind(\n"
-        "    concept=\"concept:contract-observation\",\n"
-        "    library=\"sqlite3\",\n"
-        "    observed_dimension=\"autocommit-mode\",\n"
+        '    concept="concept:contract-observation",\n'
+        '    library="sqlite3",\n'
+        '    observed_dimension="autocommit-mode",\n'
         ")\n"
         "def in_transaction(conn: sqlite3.Connection) -> bool:\n"
         "    return conn.in_transaction\n"
@@ -1039,10 +1065,10 @@ def test_refuse_decorator_emits_refusal_memento() -> None:
         "from sugar import refuse\n"
         "\n"
         "@refuse(\n"
-        "    surface=\"sqlite3.Connection.backup\",\n"
-        "    concept=\"concept:sql-physical-backup\",\n"
-        "    reason=\"SQLite-binary-specific physical backup. N=1 across connection-level APIs.\",\n"
-        "    would_close_with_cluster=\"Connection-level physical-backup method on >=2 SQL drivers\",\n"
+        '    surface="sqlite3.Connection.backup",\n'
+        '    concept="concept:sql-physical-backup",\n'
+        '    reason="SQLite-binary-specific physical backup. N=1 across connection-level APIs.",\n'
+        '    would_close_with_cluster="Connection-level physical-backup method on >=2 SQL drivers",\n'
         ")\n"
         "class RefusedBackup:\n"
         "    pass\n"
@@ -1056,7 +1082,10 @@ def test_refuse_decorator_emits_refusal_memento() -> None:
     assert entry["surface"] == "sqlite3.Connection.backup"
     assert entry["concept"] == "concept:sql-physical-backup"
     assert entry["reason"] != ""
-    assert entry["would_close_with_cluster"] == "Connection-level physical-backup method on >=2 SQL drivers"
+    assert (
+        entry["would_close_with_cluster"]
+        == "Connection-level physical-backup method on >=2 SQL drivers"
+    )
 
 
 def test_refuse_decorator_sugar_namespace_also_recognized() -> None:
@@ -1064,10 +1093,10 @@ def test_refuse_decorator_sugar_namespace_also_recognized() -> None:
         "import sugar\n"
         "\n"
         "@sugar.refuse(\n"
-        "    surface=\"sqlite3.Connection.backup\",\n"
-        "    concept=\"concept:sql-physical-backup\",\n"
-        "    reason=\"SQLite-binary-specific physical backup. N=1.\",\n"
-        "    would_close_with_cluster=\"Connection-level physical-backup on >=2 drivers\",\n"
+        '    surface="sqlite3.Connection.backup",\n'
+        '    concept="concept:sql-physical-backup",\n'
+        '    reason="SQLite-binary-specific physical backup. N=1.",\n'
+        '    would_close_with_cluster="Connection-level physical-backup on >=2 drivers",\n'
         ")\n"
         "class RefusedBackupNs:\n"
         "    pass\n"
@@ -1085,8 +1114,8 @@ def test_refuse_missing_field_produces_diagnostic_not_ir() -> None:
         "from sugar import refuse\n"
         "\n"
         "@refuse(\n"
-        "    surface=\"sqlite3.Connection.backup\",\n"
-        "    concept=\"concept:sql-physical-backup\",\n"
+        '    surface="sqlite3.Connection.backup",\n'
+        '    concept="concept:sql-physical-backup",\n'
         "    # reason and would_close_with_cluster intentionally omitted\n"
         ")\n"
         "class RefusedBadBackup:\n"
@@ -1103,18 +1132,18 @@ def test_sugar_and_refuse_coexist_in_same_file() -> None:
         "import sqlite3\n"
         "\n"
         "@sugar.bind(\n"
-        "    concept=\"concept:sql-connection-open\",\n"
-        "    library=\"sqlite3\",\n"
-        "    loss=[\"sync-vs-async\"],\n"
+        '    concept="concept:sql-connection-open",\n'
+        '    library="sqlite3",\n'
+        '    loss=["sync-vs-async"],\n'
         ")\n"
         "def open_db(path: str) -> sqlite3.Connection:\n"
         "    return sqlite3.connect(path)\n"
         "\n"
         "@refuse(\n"
-        "    surface=\"sqlite3.Connection.backup\",\n"
-        "    concept=\"concept:sql-physical-backup\",\n"
-        "    reason=\"SQLite-binary-specific. N=1.\",\n"
-        "    would_close_with_cluster=\"Connection-level backup on >=2 drivers\",\n"
+        '    surface="sqlite3.Connection.backup",\n'
+        '    concept="concept:sql-physical-backup",\n'
+        '    reason="SQLite-binary-specific. N=1.",\n'
+        '    would_close_with_cluster="Connection-level backup on >=2 drivers",\n'
         ")\n"
         "class RefusedBackup:\n"
         "    pass\n"
@@ -1132,19 +1161,17 @@ def test_layer_all_emits_both_bind_entry_and_language_neutral_entry() -> None:
         "from sugar import sugar\n"
         "import sqlite3\n"
         "\n"
-        "@sugar.bind(concept=\"concept:sql-connection-close\", library=\"sqlite3\", loss=[])\n"
+        '@sugar.bind(concept="concept:sql-connection-close", library="sqlite3", loss=[])\n'
         "def close_connection(conn: sqlite3.Connection) -> None:\n"
         "    conn.close()\n"
     )
     result = lift_source(source, "shim.py", layer="all")
     assert result.diagnostics == []
     kinds = [e["kind"] for e in result.ir]
-    assert "library-sugar-binding-entry" in kinds, (
-        "layer='all' must include library-sugar-binding-entry"
-    )
-    assert "bind-lift-entry" in kinds, (
-        "layer='all' must include bind-lift-entry"
-    )
+    assert (
+        "library-sugar-binding-entry" in kinds
+    ), "layer='all' must include library-sugar-binding-entry"
+    assert "bind-lift-entry" in kinds, "layer='all' must include bind-lift-entry"
 
 
 def test_sugar_bind_body_source_is_a_lean_source_memento() -> None:
@@ -1155,7 +1182,7 @@ def test_sugar_bind_body_source_is_a_lean_source_memento() -> None:
         "from sugar import sugar\n"
         "import sqlite3\n"
         "\n"
-        "@sugar.bind(concept=\"concept:sql-connection-close\", library=\"sqlite3\", loss=[])\n"
+        '@sugar.bind(concept="concept:sql-connection-close", library="sqlite3", loss=[])\n'
         "def close_connection(conn: sqlite3.Connection) -> None:\n"
         "    conn.close()\n"
     )
@@ -1163,8 +1190,12 @@ def test_sugar_bind_body_source_is_a_lean_source_memento() -> None:
     assert result.diagnostics == []
     assert len(result.ir) == 1
     bs = result.ir[0]["body_source"]
-    assert "body_text" not in bs and "ast_template" not in bs, "no inline body in the proof"
-    assert bs["source_cid"] and bs["template_cid"], "the body is PINNED by cid, not carried"
+    assert (
+        "body_text" not in bs and "ast_template" not in bs
+    ), "no inline body in the proof"
+    assert (
+        bs["source_cid"] and bs["template_cid"]
+    ), "the body is PINNED by cid, not carried"
 
 
 def _single_sugar_entry(source: str) -> dict:
@@ -1179,7 +1210,7 @@ def test_sugar_body_emits_ast_template_alongside_body_text() -> None:
         "from sugar import sugar\n"
         "import json\n"
         "\n"
-        "@sugar.bind(concept=\"concept:json-parse\", library=\"json\")\n"
+        '@sugar.bind(concept="concept:json-parse", library="json")\n'
         "def json_parse(payload):\n"
         "    return json.loads(payload)\n"
     )
@@ -1222,14 +1253,14 @@ def test_sugar_body_alpha_equivalence_collapses_to_same_cid() -> None:
     src_a = (
         "from sugar import sugar\n"
         "\n"
-        "@sugar.bind(concept=\"concept:json-parse\", library=\"json-a\")\n"
+        '@sugar.bind(concept="concept:json-parse", library="json-a")\n'
         "def json_parse(payload):\n"
         "    return json.loads(payload)\n"
     )
     src_b = (
         "from sugar import sugar\n"
         "\n"
-        "@sugar.bind(concept=\"concept:json-parse\", library=\"json-b\")\n"
+        '@sugar.bind(concept="concept:json-parse", library="json-b")\n'
         "def json_parse(raw_text):\n"
         "    return json.loads(raw_text)\n"
     )
@@ -1240,7 +1271,9 @@ def test_sugar_body_alpha_equivalence_collapses_to_same_cid() -> None:
     # alpha-equivalent bodies pin the SAME template_cid; different parameter names
     # mean different SOURCE bytes -> different source_cid. (No inline template/body
     # in the SourceMemento; the cids carry the invariant.)
-    assert entry_a["body_source"]["template_cid"] == entry_b["body_source"]["template_cid"]
+    assert (
+        entry_a["body_source"]["template_cid"] == entry_b["body_source"]["template_cid"]
+    )
     assert entry_a["body_source"]["source_cid"] != entry_b["body_source"]["source_cid"]
 
 
@@ -1248,14 +1281,14 @@ def test_sugar_body_param_name_swap_canonicalizes() -> None:
     src_a = (
         "from sugar import sugar\n"
         "\n"
-        "@sugar.bind(concept=\"concept:call\", library=\"lib-a\")\n"
+        '@sugar.bind(concept="concept:call", library="lib-a")\n'
         "def f(a, b):\n"
         "    return g(a, b)\n"
     )
     src_b = (
         "from sugar import sugar\n"
         "\n"
-        "@sugar.bind(concept=\"concept:call\", library=\"lib-b\")\n"
+        '@sugar.bind(concept="concept:call", library="lib-b")\n'
         "def f(x, y):\n"
         "    return g(x, y)\n"
     )
@@ -1263,18 +1296,22 @@ def test_sugar_body_param_name_swap_canonicalizes() -> None:
     entry_a = _single_sugar_entry(src_a)
     entry_b = _single_sugar_entry(src_b)
 
-    assert entry_a["body_source"]["template_cid"] == entry_b["body_source"]["template_cid"]
+    assert (
+        entry_a["body_source"]["template_cid"] == entry_b["body_source"]["template_cid"]
+    )
 
 
-def test_recognize_rpc_self_resolves_sugar_templates_from_python_sources(tmp_path: Path) -> None:
+def test_recognize_rpc_self_resolves_sugar_templates_from_python_sources(
+    tmp_path: Path,
+) -> None:
     sugar_source = (
         "from sugar import sugar\n"
         "import requests\n"
         "\n"
         "@sugar.bind(\n"
-        "    concept=\"concept:http-request\",\n"
-        "    library=\"sugar-shim-python-requests\",\n"
-        "    family=\"concept:family:http\",\n"
+        '    concept="concept:http-request",\n'
+        '    library="sugar-shim-python-requests",\n'
+        '    family="concept:family:http",\n'
         ")\n"
         "def fetch(url, headers):\n"
         "    return requests.get(url, headers=headers)\n"
@@ -1330,7 +1367,7 @@ def test_recognize_returns_empty_tags_for_non_matching_source(tmp_path: Path) ->
         "from sugar import sugar\n"
         "import json\n"
         "\n"
-        "@sugar.bind(concept=\"concept:json-parse\", library=\"json\")\n"
+        '@sugar.bind(concept="concept:json-parse", library="json")\n'
         "def json_parse(payload):\n"
         "    return json.loads(payload)\n"
     )
@@ -1367,14 +1404,14 @@ def test_recognize_routes_multiple_bindings_per_call_site_pool(tmp_path: Path) -
         "from sugar import sugar\n"
         "import json\n"
         "\n"
-        "@sugar.bind(concept=\"concept:json-parse\", library=\"json-lib\")\n"
+        '@sugar.bind(concept="concept:json-parse", library="json-lib")\n'
         "def json_parse(payload):\n"
         "    return json.loads(payload)\n"
     )
     sql_source = (
         "from sugar import sugar\n"
         "\n"
-        "@sugar.bind(concept=\"concept:sql-execute\", library=\"sql-lib\")\n"
+        '@sugar.bind(concept="concept:sql-execute", library="sql-lib")\n'
         "def sql_execute(conn, sql, args):\n"
         "    return conn.execute(sql, args)\n"
     )

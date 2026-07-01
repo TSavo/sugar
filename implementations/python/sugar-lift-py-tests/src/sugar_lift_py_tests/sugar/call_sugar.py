@@ -23,14 +23,19 @@ _BODY_TYPES = (SugarBody, FunctionBodyUniverse)
 class RefuseStrategy:
     """Nothing resolves this call -- a clean, NAMED refusal (a FactoryGap), built where the
     fragment's blame lives and raised on reduce. A refusal is sound: it says exactly what is
-    missing (a body, an imported `.proof`, or a sugar), never a silent lift, never a side door."""
+    missing (a body, an imported `.proof`, or a sugar), never a silent lift, never a side door.
+    """
 
     info: FactoryGapInfo
 
     def emit(self, sugar: "CallSugar", ctx) -> Outcome:
         audit = FactoryAuditRow(
-            role="term", status="refused", observed=self.info.observed,
-            blame=self.info.blame, selected="CallSugar", candidates=["CallSugar"],
+            role="term",
+            status="refused",
+            observed=self.info.observed,
+            blame=self.info.blame,
+            selected="CallSugar",
+            candidates=["CallSugar"],
             message=self.info.message,
         )
         raise FactoryGap(self.info, audit)
@@ -65,7 +70,10 @@ class BridgeStrategy:
         # with nothing defining `call:<callee>(arg)` is a dangling free symbol the ground-
         # contradiction check cannot fold (a false discharge), so pointer and obligation are
         # inseparable: we append the dig to the sink as we return the bridge term.
-        from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term, euf_call_term
+        from sugar_lift_py_tests.factory.literal_call_report import (
+            _floor_to_term,
+            euf_call_term,
+        )
 
         arg = complete_value(self.argument.reduce(ctx), owner="BridgeStrategy argument")
         # Only a CONCRETE arg can be dug (curried over a value); a symbolic formal -- the
@@ -74,7 +82,9 @@ class BridgeStrategy:
             sink = getattr(ctx, "dig_sink", None)
             if sink is not None:
                 sink.append((self.target_name, arg))
-        return Complete(SymbolicValue(euf_call_term(self.target_name, [_floor_to_term(arg)])))
+        return Complete(
+            SymbolicValue(euf_call_term(self.target_name, [_floor_to_term(arg)]))
+        )
 
     # --- the UNIVERSE (used by the dig in _dig_universe, via the catalog) -------------------
 
@@ -98,7 +108,9 @@ class BridgeStrategy:
     def callsite_fact_formulas(self, expected: StringValue) -> list[Formula]:
         if isinstance(self.body, SugarBody):
             return [eq(make_var("out"), str_const(expected.value))]
-        argument = complete_value(self.argument.reduce(None), owner="BridgeStrategy argument")
+        argument = complete_value(
+            self.argument.reduce(None), owner="BridgeStrategy argument"
+        )
         if not isinstance(argument, StringValue):
             raise ValueError("write more Floor for BridgeStrategy argument")
         return [
@@ -128,7 +140,9 @@ class ExternalBridgeStrategy:
                 raise TypeError("ExternalBridgeStrategy argument must be factory-built")
         for _name, value in self.keywords:
             if not isinstance(value, SugarBody):
-                raise TypeError("ExternalBridgeStrategy keyword value must be factory-built")
+                raise TypeError(
+                    "ExternalBridgeStrategy keyword value must be factory-built"
+                )
 
     @property
     def target_symbol(self) -> str:
@@ -174,7 +188,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     """A call -- DUMB. `owns` is shape only; `build` is the ONLY place context decides (it
     picks the strategy by resolution); `desugar` is one line, delegating. Every Call-owning
     sugar declares `comes_before=("CallSugar",)`, so CallSugar is the fallback catching every
-    call no specific sugar claimed -- resolved (BridgeStrategy) or not (RefuseStrategy)."""
+    call no specific sugar claimed -- resolved (BridgeStrategy) or not (RefuseStrategy).
+    """
 
     strategy: object
 
@@ -201,7 +216,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         if function_node is not None and target is not None:
             resolved = SourceFragment.from_node(function_node, ctx.filename)
             if resolved.observed == "ClassDef":
-                return cls(strategy=_build_constructor_strategy(fragment, ctx, target, resolved))
+                return cls(
+                    strategy=_build_constructor_strategy(
+                        fragment, ctx, target, resolved
+                    )
+                )
         # RESOLVED + unary + NOT already on the build stack -> the bridge carries its universe.
         # The build-stack check is the recursion guard: eagerly building a callee already being
         # built loops forever, and an infinite recursion is not finitely constructible. So a
@@ -215,8 +234,14 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         ):
             argument = ctx.build_body(fragment.call_args()[0], SugarRole.TERM)
             function = SourceFragment.from_node(function_node, ctx.filename)
-            body = build_bridge_body(function, replace(ctx, building=building | {target}))
-            return cls(strategy=BridgeStrategy(target_name=target, argument=argument, body=body))
+            body = build_bridge_body(
+                function, replace(ctx, building=building | {target})
+            )
+            return cls(
+                strategy=BridgeStrategy(
+                    target_name=target, argument=argument, body=body
+                )
+            )
         if import_target is not None and function_node is None:
             arguments = tuple(
                 ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
@@ -236,7 +261,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         ),
                     )
                     return cls(strategy=RefuseStrategy(info))
-                keywords.append((name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM)))
+                keywords.append(
+                    (name, ctx.build_body(keyword.keyword_value(), SugarRole.TERM))
+                )
             return cls(
                 strategy=ExternalBridgeStrategy(
                     target_name=import_target,
@@ -249,7 +276,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         # Otherwise (unresolved, non-unary, or a recursion cycle): a clean, NAMED refusal --
         # never a silent lift, never a hang.
         info = FactoryGapInfo(
-            owner="python.factory", blame=fragment.blame, observed="Call", requested="term",
+            owner="python.factory",
+            blame=fragment.blame,
+            observed="Call",
+            requested="term",
             fix=f"resolve call to '{target}' (local body, imported .proof, or a sugar)",
         )
         return cls(strategy=RefuseStrategy(info))
@@ -353,7 +383,9 @@ class AssertionFactStrategy:
     def contract_name(self) -> str:
         from sugar_lift_py_tests.factory.literal_call_report import euf_callsite_name
 
-        return euf_callsite_name(self.callee_name, self._euf_term(), suffix="::assertion")
+        return euf_callsite_name(
+            self.callee_name, self._euf_term(), suffix="::assertion"
+        )
 
     def fact_formula(self):
         return eq(self._euf_term(), self.expected_term)

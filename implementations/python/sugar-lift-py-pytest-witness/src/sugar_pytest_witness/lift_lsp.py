@@ -25,8 +25,15 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs, blake3_512_of
 import base64
 
 from .witness import (
-    Witness, run_and_witness, run_file_witnesses, witness_memento, witness_body,
-    write_witness_bundle, build_suite_bundle, witness_package_memento, runtime_cid,
+    Witness,
+    run_and_witness,
+    run_file_witnesses,
+    witness_memento,
+    witness_body,
+    write_witness_bundle,
+    build_suite_bundle,
+    witness_package_memento,
+    runtime_cid,
     _cid_filename,
 )
 
@@ -64,7 +71,9 @@ def _iter_python_files(workspace_root: str, source_paths: List[str]) -> List[str
             out.append(base)
             continue
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if d not in {".git", "__pycache__", ".pytest_cache"}]
+            dirnames[:] = [
+                d for d in dirnames if d not in {".git", "__pycache__", ".pytest_cache"}
+            ]
             for fn in filenames:
                 if fn.endswith(".py"):
                     out.append(os.path.join(dirpath, fn))
@@ -208,43 +217,85 @@ def handle_lift(msg_id: Any, params: dict) -> None:
             # (64 bytes) + ONE contract whose evidence pins the package cid -- not
             # N mementos. The verifier asks the oracle to discharge by re-running
             # the suite and reproducing the package cid (`discharge_bundle`).
-            bundle_bytes, bundle_cid, witnesses = build_suite_bundle(ws, test_rels, code_rels)
+            bundle_bytes, bundle_cid, witnesses = build_suite_bundle(
+                ws, test_rels, code_rels
+            )
             passed = sum(1 for w in witnesses if w.outcome == "passed")
             try:
                 bundle_dir = os.path.join(ws, ".sugar", "witnesses")
                 os.makedirs(bundle_dir, exist_ok=True)
-                with open(os.path.join(bundle_dir, _cid_filename(bundle_cid, ".witness")), "wb") as f:
+                with open(
+                    os.path.join(bundle_dir, _cid_filename(bundle_cid, ".witness")),
+                    "wb",
+                ) as f:
                     f.write(bundle_bytes)
             except OSError:
                 pass  # the package is audit material; never fail the lift on a write error
             proof_data = json.dumps(
-                {"kind": "witness-package", "packageCid": bundle_cid,
-                 "testFiles": sorted(test_rels), "codeFiles": sorted(code_rels),
-                 "count": len(witnesses), "passed": passed},
-                sort_keys=True, separators=(",", ":"),
+                {
+                    "kind": "witness-package",
+                    "packageCid": bundle_cid,
+                    "testFiles": sorted(test_rels),
+                    "codeFiles": sorted(code_rels),
+                    "count": len(witnesses),
+                    "passed": passed,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
             )
             cert = EvidenceCertificate(
-                tool="pytest", version=runtime_cid(), formula_hash=bundle_cid, proof_data=proof_data,
+                tool="pytest",
+                version=runtime_cid(),
+                formula_hash=bundle_cid,
+                proof_data=proof_data,
             )
             ev = EvidenceTerm(proof_type="custom", certificate=cert)
-            decls.append(ContractDecl(name=f"witness-package:{bundle_cid}",
-                                      inv=atomic("witnessed", []), evidence=ev))
-            mementos.append(witness_package_memento(
-                bundle_cid, test_rels, code_rels, len(witnesses), passed))
+            decls.append(
+                ContractDecl(
+                    name=f"witness-package:{bundle_cid}",
+                    inv=atomic("witnessed", []),
+                    evidence=ev,
+                )
+            )
+            mementos.append(
+                witness_package_memento(
+                    bundle_cid, test_rels, code_rels, len(witnesses), passed
+                )
+            )
         ir = json.loads(encode_jcs(declarations_to_value(decls))) if decls else []
         # The signed WitnessMementos flow as `ir` members (kind "witness-memento"):
         # mint envelopes each into the .proof via its per-kind dispatch, so the
         # .proof carries the signed pointer the rust verifier enumerates. (Also
         # surfaced as `witness_mementos` for non-mint consumers.)
         ir = ir + mementos
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-            "kind": "ir-document", "ir": ir, "witness_mementos": mementos,
-            "implications": [], "diagnostics": [], "warnings": [],
-        }})
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "kind": "ir-document",
+                    "ir": ir,
+                    "witness_mementos": mementos,
+                    "implications": [],
+                    "diagnostics": [],
+                    "warnings": [],
+                },
+            }
+        )
     except Exception as e:
         import traceback
-        _send({"jsonrpc": "2.0", "id": msg_id, "error": {
-            "code": -32603, "message": str(e), "data": traceback.format_exc()}})
+
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32603,
+                    "message": str(e),
+                    "data": traceback.format_exc(),
+                },
+            }
+        )
 
 
 def handle_resolve_witness(msg_id: Any, params: dict) -> None:
@@ -271,7 +322,11 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
         resolved_by: Optional[str] = None
         # 1. PACKAGE -- CID-named witness body, deployed separately.
         if package_dir:
-            pdir = package_dir if os.path.isabs(package_dir) else os.path.join(ws or ".", package_dir)
+            pdir = (
+                package_dir
+                if os.path.isabs(package_dir)
+                else os.path.join(ws or ".", package_dir)
+            )
             path = os.path.join(pdir, cid.replace(":", "_") + ".witness")
             if os.path.isfile(path):
                 with open(path, "rb") as f:
@@ -279,10 +334,17 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
                 resolved_by = "package"
         # 2a. PACKAGE RECOMPUTE -- a whole-suite WitnessPackageMemento reproduces
         # by re-running the suite and rebuilding the content-addressed bundle.
-        if body is None and ws and memento.get("witness_kind") == "pytest-witness-package":
+        if (
+            body is None
+            and ws
+            and memento.get("witness_kind") == "pytest-witness-package"
+        ):
             from .witness import build_suite_bundle
+
             buf, rcid, _ = build_suite_bundle(
-                ws, list(memento.get("test_files", [])), list(memento.get("code_files", []))
+                ws,
+                list(memento.get("test_files", [])),
+                list(memento.get("code_files", [])),
             )
             if rcid != cid:
                 raise RuntimeError(
@@ -296,7 +358,12 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
         # file), and `[]` is falsy -- gating on truthiness would wrongly declare
         # a trivially re-runnable witness "not re-runnable". The reconstruction
         # below pins the empty list into the witness body, so this stays sound.
-        if body is None and ws and memento.get("test") and memento.get("code_files") is not None:
+        if (
+            body is None
+            and ws
+            and memento.get("test")
+            and memento.get("code_files") is not None
+        ):
             # Don't execute attacker-supplied paths on a memento whose own fields
             # don't even hash to its pinned CID. The witness body is a pure
             # function of (code_cid, runtime_cid, test, outcome, code_files), so a
@@ -321,15 +388,31 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
             raise RuntimeError(
                 f"cannot resolve witness body for {cid}: no package file and not re-runnable"
             )
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-            "witness_cid": cid,
-            "body_b64": base64.b64encode(body).decode("ascii"),
-            "resolved_by": resolved_by,
-        }})
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "witness_cid": cid,
+                    "body_b64": base64.b64encode(body).decode("ascii"),
+                    "resolved_by": resolved_by,
+                },
+            }
+        )
     except Exception as e:
         import traceback
-        _send({"jsonrpc": "2.0", "id": msg_id, "error": {
-            "code": -32603, "message": str(e), "data": traceback.format_exc()}})
+
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32603,
+                    "message": str(e),
+                    "data": traceback.format_exc(),
+                },
+            }
+        )
 
 
 def main() -> None:
@@ -340,25 +423,62 @@ def main() -> None:
         method = msg.get("method")
         mid = msg.get("id")
         if method == "initialize":
-            _send({"jsonrpc": "2.0", "id": mid, "result": {
-                "name": "sugar-lsp-pytest-witness", "version": KIT_VERSION,
-                "protocol_version": "sugar-lsp-shared/1", "kit_id": KIT_ID,
-                "capabilities": {"source_surfaces": ["python-pytest-witness"], "entry_kinds": [],
-                                 "diagnostic_codes": [], "status_kinds": ["prove"]}}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {
+                        "name": "sugar-lsp-pytest-witness",
+                        "version": KIT_VERSION,
+                        "protocol_version": "sugar-lsp-shared/1",
+                        "kit_id": KIT_ID,
+                        "capabilities": {
+                            "source_surfaces": ["python-pytest-witness"],
+                            "entry_kinds": [],
+                            "diagnostic_codes": [],
+                            "status_kinds": ["prove"],
+                        },
+                    },
+                }
+            )
         elif method == KIT_DECLARATION_RPC_METHOD:
-            _send({"jsonrpc": "2.0", "id": mid, "result": {
-                "kit": {"id": KIT_ID, "language": "python", "version": KIT_VERSION},
-                "rpc": {"methods": [{"name": "initialize", "required": True},
-                                    {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
-                                    {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
-                                    {"name": "lift", "required": True},
-                                    {"name": RESOLVE_WITNESS_RPC_METHOD, "required": False},
-                                    {"name": "shutdown", "required": False}]},
-                "proofResolution": {"strategy": "pip"}, "effectKinds": [], "effectLeaves": [],
-                "guardPredicates": [], "controlCarriers": [], "residueCategories": []}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {
+                        "kit": {
+                            "id": KIT_ID,
+                            "language": "python",
+                            "version": KIT_VERSION,
+                        },
+                        "rpc": {
+                            "methods": [
+                                {"name": "initialize", "required": True},
+                                {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
+                                {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
+                                {"name": "lift", "required": True},
+                                {"name": RESOLVE_WITNESS_RPC_METHOD, "required": False},
+                                {"name": "shutdown", "required": False},
+                            ]
+                        },
+                        "proofResolution": {"strategy": "pip"},
+                        "effectKinds": [],
+                        "effectLeaves": [],
+                        "guardPredicates": [],
+                        "controlCarriers": [],
+                        "residueCategories": [],
+                    },
+                }
+            )
         elif method == COMPONENT_PLAN_RPC_METHOD:
-            _send({"jsonrpc": "2.0", "id": mid,
-                   "result": component_plan_result(msg.get("params", {}))})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": component_plan_result(msg.get("params", {})),
+                }
+            )
         elif method == "lift":
             handle_lift(mid, msg.get("params", {}))
         elif method == RESOLVE_WITNESS_RPC_METHOD:

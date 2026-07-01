@@ -41,8 +41,12 @@ SUPPORTED_CASES = [
 ]
 
 
-@pytest.mark.parametrize("name,predicate", SUPPORTED_CASES, ids=[c[0] for c in SUPPORTED_CASES])
-def test_each_supported_predicate_emits_green_unittest(name, predicate, tmp_path) -> None:
+@pytest.mark.parametrize(
+    "name,predicate", SUPPORTED_CASES, ids=[c[0] for c in SUPPORTED_CASES]
+)
+def test_each_supported_predicate_emits_green_unittest(
+    name, predicate, tmp_path
+) -> None:
     emission = emit(EmitPlan(function=name.replace("-", "_"), predicates=[predicate]))
 
     assert emission.is_complete, emission.unsupported_predicates

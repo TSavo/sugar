@@ -9,7 +9,9 @@ from .rpc import run_rpc
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sugar-emit-python-hypothesis")
-    parser.add_argument("--rpc", action="store_true", help="serve newline-delimited JSON-RPC")
+    parser.add_argument(
+        "--rpc", action="store_true", help="serve newline-delimited JSON-RPC"
+    )
     args = parser.parse_args()
     if args.rpc:
         run_rpc()

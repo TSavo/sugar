@@ -19,9 +19,7 @@ class FactoryAuditSummaryDto:
             if status in counts:
                 counts[status] += 1
         unresolved = [
-            row
-            for row in walk
-            if row.get("status") in ("unresolved", "unclassified")
+            row for row in walk if row.get("status") in ("unresolved", "unclassified")
         ]
         return {
             "sites": len(walk),

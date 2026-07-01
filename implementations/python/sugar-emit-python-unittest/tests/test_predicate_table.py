@@ -14,15 +14,33 @@ def _var(name: str) -> dict:
 
 
 def test_binary_predicates_render_native_unittest_assertions() -> None:
-    assert pt.render(_atomic("concept:eq", _var("a"), _var("b"))) == "self.assertEqual(a, b)"
-    assert pt.render(_atomic("concept:ne", _var("a"), _var("b"))) == "self.assertNotEqual(a, b)"
-    assert pt.render(_atomic("concept:lt", _var("a"), _var("b"))) == "self.assertTrue(a < b)"
-    assert pt.render(_atomic("concept:ge", _var("a"), _var("b"))) == "self.assertTrue(a >= b)"
+    assert (
+        pt.render(_atomic("concept:eq", _var("a"), _var("b")))
+        == "self.assertEqual(a, b)"
+    )
+    assert (
+        pt.render(_atomic("concept:ne", _var("a"), _var("b")))
+        == "self.assertNotEqual(a, b)"
+    )
+    assert (
+        pt.render(_atomic("concept:lt", _var("a"), _var("b")))
+        == "self.assertTrue(a < b)"
+    )
+    assert (
+        pt.render(_atomic("concept:ge", _var("a"), _var("b")))
+        == "self.assertTrue(a >= b)"
+    )
 
 
 def test_option_predicates_render_none_assertions() -> None:
-    assert pt.render(_atomic("concept:option-is-some", _var("x"))) == "self.assertIsNotNone(x)"
-    assert pt.render(_atomic("concept:option-is-none", _var("x"))) == "self.assertIsNone(x)"
+    assert (
+        pt.render(_atomic("concept:option-is-some", _var("x")))
+        == "self.assertIsNotNone(x)"
+    )
+    assert (
+        pt.render(_atomic("concept:option-is-none", _var("x")))
+        == "self.assertIsNone(x)"
+    )
 
 
 def test_fallible_err_renders_assert_raises_block() -> None:

@@ -1,6 +1,7 @@
 """Control flow is lifted into first-order logic, not executed. Each return path
 becomes `guard -> out == expr`; the body universe is the conjunction of those
 implications. z3 does the branching given the bound inputs."""
+
 from __future__ import annotations
 
 import json

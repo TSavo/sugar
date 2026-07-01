@@ -7,10 +7,13 @@ from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
 
 from .audit_only_gap import AuditOnlyGap
 
-
 AuditWalker: TypeAlias = tuple[str, Callable[[], object]]
-_FIELD = re.compile(r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)")
-_EXPECTED_GOT = re.compile(r"expected (?P<requested>[A-Za-z_][A-Za-z0-9_]*) got (?P<observed>[A-Za-z_][A-Za-z0-9_]*)")
+_FIELD = re.compile(
+    r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)"
+)
+_EXPECTED_GOT = re.compile(
+    r"expected (?P<requested>[A-Za-z_][A-Za-z0-9_]*) got (?P<observed>[A-Za-z_][A-Za-z0-9_]*)"
+)
 _EXPECTED = re.compile(r"expected (?P<requested>.+)$")
 _BACKTICK = re.compile(r"`([^`]+)`")
 
@@ -67,7 +70,9 @@ def _loud_gap_kind(message: str) -> str | None:
     return None
 
 
-def _info_from_loud_message(label: str, message: str, *, gap_kind: str) -> dict[str, str]:
+def _info_from_loud_message(
+    label: str, message: str, *, gap_kind: str
+) -> dict[str, str]:
     fields = {key: value.strip() for key, value in _FIELD.findall(message)}
     if fields:
         return {
@@ -119,4 +124,6 @@ def _split_owner_detail(rest: str) -> tuple[str, str]:
 
 
 def _default_fix(gap_kind: str) -> str:
-    return "write the missing floor" if gap_kind == "Floor" else "write the missing sugar"
+    return (
+        "write the missing floor" if gap_kind == "Floor" else "write the missing sugar"
+    )

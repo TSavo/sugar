@@ -52,7 +52,9 @@ def authoring_declaration(decorator: ast.expr) -> dict[str, str] | None:
     decl: dict[str, str] = {"kind": kind}
     if isinstance(decorator, ast.Call):
         for keyword in decorator.keywords:
-            if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            if isinstance(keyword.value, ast.Constant) and isinstance(
+                keyword.value.value, str
+            ):
                 if keyword.arg == "concept":
                     decl["concept"] = keyword.value.value
                 elif keyword.arg == "library":

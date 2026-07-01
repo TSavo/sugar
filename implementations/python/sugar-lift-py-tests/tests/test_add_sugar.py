@@ -1,6 +1,7 @@
 """AddSugar is a leaf BODY sugar on the array-map path: it reduces `x + n` to the
 concrete sum when `x` is a bound element. Supporting `*`, `[]`, string concat, ...
 is MORE SUGAR (more leaf bodies), never a smarter Map or Lambda."""
+
 from __future__ import annotations
 
 from factory_reduce import array_map_reduce

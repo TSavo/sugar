@@ -2,6 +2,7 @@
 operation as a sort-silent structural term `+(x, 1)` -- the universe warrant. We emit the
 SHAPE, not a value; the SMT compiler derives x's carrier from the `+` it appears in. Never a
 mislift, never folding what cannot be folded."""
+
 from __future__ import annotations
 
 from factory_reduce import fol, reduce_term

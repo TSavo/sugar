@@ -50,7 +50,9 @@ def test_fallible_err_renders_pytest_raises_block() -> None:
 def test_const_args_render_python_literals() -> None:
     assert pt.render(_op("concept:eq", _var("a"), _const(7))) == "assert a == 7"
     assert pt.render(_op("concept:eq", _var("a"), _const("hi"))) == "assert a == 'hi'"
-    assert pt.render(_op("concept:option-is-none", _const(None))) == "assert None is None"
+    assert (
+        pt.render(_op("concept:option-is-none", _const(None))) == "assert None is None"
+    )
 
 
 def test_arithmetic_subtree_renders_infix() -> None:
@@ -65,9 +67,9 @@ def test_call_subtree_renders_application() -> None:
 
 def test_bare_name_form_accepted() -> None:
     # Harvester's internal kind:"atomic"/bare-name form.
-    assert pt.render({"kind": "atomic", "name": "eq", "args": [_var("a"), _var("b")]}) == (
-        "assert a == b"
-    )
+    assert pt.render(
+        {"kind": "atomic", "name": "eq", "args": [_var("a"), _var("b")]}
+    ) == ("assert a == b")
 
 
 def test_unsupported_predicate_returns_none() -> None:

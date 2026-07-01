@@ -54,7 +54,9 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
         receiver = getattr(receiver_outcome, "value", None)
-        if isinstance(receiver, SymbolicValue) or not hasattr(receiver, "attribute_with"):
+        if isinstance(receiver, SymbolicValue) or not hasattr(
+            receiver, "attribute_with"
+        ):
             return Complete(SymbolicValue(self.term))
         operation = AttributeLookupOperation(
             name=self.name,
@@ -87,10 +89,13 @@ def _projectable_receiver(site, ctx) -> SugarBody | None:
 
 
 def _is_resolved_local_class_call(site, ctx) -> bool:
-    target = site.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
-    ) or site.call_target_name()
+    target = (
+        site.call_import_target_name(
+            getattr(ctx, "import_aliases", {}) or {},
+            getattr(ctx, "from_imports", {}) or {},
+        )
+        or site.call_target_name()
+    )
     resolver = getattr(ctx, "name_resolver", None) or {}
     resolved_node = resolver.get(target)
     if resolved_node is None:

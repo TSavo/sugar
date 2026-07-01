@@ -37,7 +37,6 @@ from sugar_lift_py_tests import (
     num,
 )
 
-
 # ---------- EvidenceTerm ----------------------------------------------------
 # Rust-emitted goldens (tools/v1-3-fields-probe)
 

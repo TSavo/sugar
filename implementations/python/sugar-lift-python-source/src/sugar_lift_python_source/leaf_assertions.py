@@ -62,7 +62,12 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
         tree = ast.parse(source, filename=source_path)
     except SyntaxError as exc:
         result.diagnostics.append(
-            {"kind": "parse-error", "message": exc.msg, "path": source_path, "line": exc.lineno}
+            {
+                "kind": "parse-error",
+                "message": exc.msg,
+                "path": source_path,
+                "line": exc.lineno,
+            }
         )
         return result
 
@@ -120,7 +125,9 @@ def _lift_assert(stmt: ast.Assert) -> Json:
 
     op = _CMP.get(type(test.ops[0]))
     if op is None:
-        raise _Unsupported(f"comparison op {type(test.ops[0]).__name__} not in whitelist")
+        raise _Unsupported(
+            f"comparison op {type(test.ops[0]).__name__} not in whitelist"
+        )
     return _comparison(op, lhs, rhs)
 
 
@@ -130,18 +137,38 @@ def _translate_term(node: ast.expr) -> Json:
     if isinstance(node, ast.Constant):
         value = node.value
         if isinstance(value, bool):
-            return {"kind": "const", "value": value, "sort": {"kind": "primitive", "name": "Bool"}}
+            return {
+                "kind": "const",
+                "value": value,
+                "sort": {"kind": "primitive", "name": "Bool"},
+            }
         if isinstance(value, int):
-            return {"kind": "const", "value": value, "sort": {"kind": "primitive", "name": "Int"}}
+            return {
+                "kind": "const",
+                "value": value,
+                "sort": {"kind": "primitive", "name": "Int"},
+            }
         if isinstance(value, str):
-            return {"kind": "const", "value": value, "sort": {"kind": "primitive", "name": "String"}}
+            return {
+                "kind": "const",
+                "value": value,
+                "sort": {"kind": "primitive", "name": "String"},
+            }
         if value is None:
             return {"kind": "ctor", "name": "None", "args": []}
         raise _Unsupported(f"unsupported constant {type(value).__name__}")
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         operand = node.operand
-        if isinstance(operand, ast.Constant) and isinstance(operand.value, int) and not isinstance(operand.value, bool):
-            return {"kind": "const", "value": -operand.value, "sort": {"kind": "primitive", "name": "Int"}}
+        if (
+            isinstance(operand, ast.Constant)
+            and isinstance(operand.value, int)
+            and not isinstance(operand.value, bool)
+        ):
+            return {
+                "kind": "const",
+                "value": -operand.value,
+                "sort": {"kind": "primitive", "name": "Int"},
+            }
         raise _Unsupported("unary minus only on int literals")
     if isinstance(node, ast.Call):
         # Single-arg bare call f(arg) -> ctor("f", [<arg>]); the ctor name is
@@ -179,4 +206,8 @@ def _comparison_with_none_guard(name: str, lhs: Json, rhs: Json) -> Json:
 
 
 def _is_none_ctor(term: Json) -> bool:
-    return term.get("kind") == "ctor" and term.get("name") == "None" and term.get("args") == []
+    return (
+        term.get("kind") == "ctor"
+        and term.get("name") == "None"
+        and term.get("args") == []
+    )

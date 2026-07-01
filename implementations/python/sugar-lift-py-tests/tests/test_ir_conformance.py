@@ -23,7 +23,6 @@ from sugar_lift_py_tests.ir import (
     str_const,
 )
 
-
 # Expected JCS bytes. Identical to Rust output captured 2026-04-30.
 PATTERN1_JCS = (
     '{"body":{"kind":"implies","operands":'
@@ -64,6 +63,7 @@ def test_pattern1_bounded_loop_jcs_matches_rust():
     inner = gte(var, num(0))
     body = implies(antecedent, inner)
     from sugar_lift_py_tests.ir import _Quantifier  # type: ignore
+
     q = _Quantifier("forall", "x", Int(), body)
     v = formula_to_value(q)
     assert encode_jcs(v) == PATTERN1_JCS
@@ -76,6 +76,7 @@ def test_pattern1_bounded_loop_hash_matches_rust():
         gte(var, num(0)),
     )
     from sugar_lift_py_tests.ir import _Quantifier  # type: ignore
+
     q = _Quantifier("forall", "x", Int(), body)
     v = formula_to_value(q)
     assert jcs_hash(v) == PATTERN1_HASH
