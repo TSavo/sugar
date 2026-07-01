@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -265,16 +262,64 @@ def test_projected_equality_external_bridge_edge_uses_dependency_binding() -> No
     assert edge["targetProofCid"] == "blake3-512:math-proof"
 
 
-def test_projected_equality_leaves_unsupported_rhs_to_factory_gap() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=(
-                "def test_dtype(arr, dt):\n"
-                "    assert arr.dtype == dtype(f'{dt}1').itemsize\n"
-            ),
-            filename="test_dtype.py",
-            memento_file="test_dtype.py",
-        )
+def test_projected_equality_lifts_fstring_rhs_attribute() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_dtype(arr, dt):\n"
+            "    assert arr.dtype == dtype(f'{dt}1').itemsize\n"
+        ),
+        filename="test_dtype.py",
+        memento_file="test_dtype.py",
+    )
 
-    assert exc.value.info["observed"] == "Attribute"
-    assert exc.value.info["requested"] == "term"
+    assert report is not None
+    assert report.payload.ir[0].inv == {
+        "kind": "atomic",
+        "name": "=",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.attr",
+                "args": [
+                    {"kind": "var", "name": "arr"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "dtype",
+                    },
+                ],
+            },
+            {
+                "kind": "ctor",
+                "name": "py.attr",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "call:dtype",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "py.fstring",
+                                "args": [
+                                    {"kind": "var", "name": "dt"},
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "String",
+                                        },
+                                        "value": "1",
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "itemsize",
+                    },
+                ],
+            },
+        ],
+    }

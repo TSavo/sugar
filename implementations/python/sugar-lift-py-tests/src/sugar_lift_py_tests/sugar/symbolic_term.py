@@ -12,6 +12,28 @@ from sugar_lift_py_tests.ir import (
     str_const,
 )
 
+_BINOP_SYMBOL: dict[str, str] = {
+    "Add": "+",
+    "Sub": "-",
+    "Mult": "*",
+    "Div": "/",
+    "FloorDiv": "//",
+    "Mod": "%",
+    "Pow": "**",
+}
+_COMPARE_TERMS = {
+    "Eq",
+    "NotEq",
+    "Lt",
+    "LtE",
+    "Gt",
+    "GtE",
+    "Is",
+    "IsNot",
+    "In",
+    "NotIn",
+}
+
 
 def can_symbolic_term(site) -> bool:
     if site.observed == "Name":
@@ -31,9 +53,36 @@ def can_symbolic_term(site) -> bool:
         return can_symbolic_term(site.subscript_receiver()) and can_symbolic_term(
             site.subscript_index()
         )
+    if site.observed == "BinOp":
+        return (
+            site.operator_kind() in _BINOP_SYMBOL
+            and can_symbolic_term(site.binop_left())
+            and can_symbolic_term(site.binop_right())
+        )
+    if site.observed == "Compare":
+        comparators = site.compare_comparators()
+        return (
+            bool(comparators)
+            and len(site.compare_ops()) == len(comparators)
+            and all(operator in _COMPARE_TERMS for operator in site.compare_ops())
+            and all(
+                can_symbolic_term(operand)
+                for operand in [site.compare_left(), *comparators]
+            )
+        )
+    if site.observed == "JoinedStr":
+        return all(can_symbolic_term(fragment) for fragment in site.fragments())
+    if site.observed == "FormattedValue":
+        terms = site.terms()
+        return bool(terms) and all(can_symbolic_term(term) for term in terms)
+    if site.observed in {"GeneratorExp", "comprehension"}:
+        return all(can_symbolic_term(fragment) for fragment in site.fragments())
     if site.observed != "Call":
         return False
-    if site.call_qualified_target_name() is None:
+    if site.call_target_name() is None:
+        return False
+    receiver = site.call_receiver()
+    if receiver is not None and not can_symbolic_term(receiver):
         return False
     if not all(can_symbolic_term(arg) for arg in site.call_args()):
         return False
@@ -132,6 +181,105 @@ def symbolic_term(
                 ),
             ],
         )
+    if site.observed == "BinOp":
+        symbol = _BINOP_SYMBOL.get(site.operator_kind())
+        if symbol is not None:
+            return ctor(
+                symbol,
+                [
+                    symbolic_term(
+                        site.binop_left(),
+                        owner=owner,
+                        import_aliases=import_aliases,
+                        from_imports=from_imports,
+                        name_resolver=name_resolver,
+                        external_bridge_sink=external_bridge_sink,
+                    ),
+                    symbolic_term(
+                        site.binop_right(),
+                        owner=owner,
+                        import_aliases=import_aliases,
+                        from_imports=from_imports,
+                        name_resolver=name_resolver,
+                        external_bridge_sink=external_bridge_sink,
+                    ),
+                ],
+            )
+    if site.observed == "Compare":
+        pieces = []
+        operands = [site.compare_left(), *site.compare_comparators()]
+        for operator, left, right in zip(site.compare_ops(), operands, operands[1:]):
+            pieces.append(
+                ctor(
+                    f"py.compare:{operator}",
+                    [
+                        symbolic_term(
+                            left,
+                            owner=owner,
+                            import_aliases=import_aliases,
+                            from_imports=from_imports,
+                            name_resolver=name_resolver,
+                            external_bridge_sink=external_bridge_sink,
+                        ),
+                        symbolic_term(
+                            right,
+                            owner=owner,
+                            import_aliases=import_aliases,
+                            from_imports=from_imports,
+                            name_resolver=name_resolver,
+                            external_bridge_sink=external_bridge_sink,
+                        ),
+                    ],
+                )
+            )
+        if len(pieces) == 1:
+            return pieces[0]
+        return ctor("py.compare:chain", pieces)
+    if site.observed == "JoinedStr":
+        return ctor(
+            "py.fstring",
+            [
+                symbolic_term(
+                    fragment,
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                )
+                for fragment in site.fragments()
+            ],
+        )
+    if site.observed == "FormattedValue":
+        terms = [
+            symbolic_term(
+                term,
+                owner=owner,
+                import_aliases=import_aliases,
+                from_imports=from_imports,
+                name_resolver=name_resolver,
+                external_bridge_sink=external_bridge_sink,
+            )
+            for term in site.terms()
+        ]
+        if len(terms) == 1:
+            return terms[0]
+        return ctor("py.formatted", terms)
+    if site.observed in {"GeneratorExp", "comprehension"}:
+        return ctor(
+            "py.generator" if site.observed == "GeneratorExp" else "py.comprehension",
+            [
+                symbolic_term(
+                    fragment,
+                    owner=owner,
+                    import_aliases=import_aliases,
+                    from_imports=from_imports,
+                    name_resolver=name_resolver,
+                    external_bridge_sink=external_bridge_sink,
+                )
+                for fragment in site.fragments()
+            ],
+        )
     if site.observed == "Call":
         import_target = site.call_import_target_name(import_aliases, from_imports)
         target = import_target or site.call_target_name()
@@ -149,7 +297,20 @@ def symbolic_term(
                         "column": site.col,
                     }
                 )
-            args = [
+            args = []
+            receiver = site.call_receiver()
+            if import_target is None and receiver is not None:
+                args.append(
+                    symbolic_term(
+                        receiver,
+                        owner=owner,
+                        import_aliases=import_aliases,
+                        from_imports=from_imports,
+                        name_resolver=name_resolver,
+                        external_bridge_sink=external_bridge_sink,
+                    )
+                )
+            args.extend(
                 symbolic_term(
                     arg,
                     owner=owner,
@@ -159,7 +320,7 @@ def symbolic_term(
                     external_bridge_sink=external_bridge_sink,
                 )
                 for arg in site.call_args()
-            ]
+            )
             for keyword in site.call_keywords():
                 arg_name = keyword.keyword_arg_name()
                 if arg_name is None:

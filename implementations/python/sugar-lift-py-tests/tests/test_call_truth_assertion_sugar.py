@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
@@ -106,16 +103,377 @@ def test_call_truth_assertion_emits_external_bridge_edge_for_import_without_sour
     ]
 
 
-def test_call_truth_assertion_leaves_generator_call_to_factory_gap() -> None:
-    with pytest.raises(FactoryGap) as exc:
-        build_literal_call_report(
-            source=(
-                "def test_indices(output_indices1):\n"
-                "    assert all(c.isupper() for c in output_indices1)\n"
-            ),
-            filename="test_indices.py",
-            memento_file="test_indices.py",
-        )
+def test_call_truth_assertion_lifts_binop_call_argument() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_w(k, w):\n"
+            "    assert np.allclose(k, w + 1)\n"
+        ),
+        filename="test_crackfortran.py",
+        memento_file="test_crackfortran.py",
+    )
 
-    assert exc.value.info["observed"] == "assert-test:Call"
-    assert exc.value.info["requested"] == "EqualityAssertion"
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:numpy.allclose",
+        "args": [
+            {"kind": "var", "name": "k"},
+            {
+                "kind": "ctor",
+                "name": "+",
+                "args": [
+                    {"kind": "var", "name": "w"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": 1,
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_fstring_call_argument() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_can_cast(floating, string):\n"
+            "    assert np.can_cast(floating, f'{string}100')\n"
+        ),
+        filename="test_casting_unittests.py",
+        memento_file="test_casting_unittests.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:numpy.can_cast",
+        "args": [
+            {"kind": "var", "name": "floating"},
+            {
+                "kind": "ctor",
+                "name": "py.fstring",
+                "args": [
+                    {"kind": "var", "name": "string"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "100",
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_method_receiver_call() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_message(exc, name):\n"
+            "    assert exc.args[0].startswith(f'{name}()')\n"
+        ),
+        filename="test_overrides.py",
+        memento_file="test_overrides.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:startswith",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.subscript",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "py.attr",
+                        "args": [
+                            {"kind": "var", "name": "exc"},
+                            {
+                                "kind": "const",
+                                "sort": {"kind": "primitive", "name": "String"},
+                                "value": "args",
+                            },
+                        ],
+                    },
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "Int"},
+                        "value": 0,
+                    },
+                ],
+            },
+            {
+                "kind": "ctor",
+                "name": "py.fstring",
+                "args": [
+                    {"kind": "var", "name": "name"},
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "()",
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_call_receiver_method() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_out(out):\n"
+            "    assert np.isnan(out).all()\n"
+        ),
+        filename="test_nanfunctions.py",
+        memento_file="test_nanfunctions.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:all",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "call:numpy.isnan",
+                "args": [{"kind": "var", "name": "out"}],
+            }
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_compare_call_argument() -> None:
+    report = build_literal_call_report(
+        source=(
+            "import numpy as np\n"
+            "def test_shape(a):\n"
+            "    assert np.all(a == [[2, 2, 2], [1, 1, 1]])\n"
+        ),
+        filename="test_shape_base.py",
+        memento_file="test_shape_base.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:numpy.all",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.compare:Eq",
+                "args": [
+                    {"kind": "var", "name": "a"},
+                    {
+                        "kind": "ctor",
+                        "name": "array",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "array",
+                                "args": [
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 2,
+                                    },
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 2,
+                                    },
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 2,
+                                    },
+                                ],
+                            },
+                            {
+                                "kind": "ctor",
+                                "name": "array",
+                                "args": [
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 1,
+                                    },
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 1,
+                                    },
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "Int",
+                                        },
+                                        "value": 1,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_generator_method_predicate() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_indices(output_indices1):\n"
+            "    assert all(c.isupper() for c in output_indices1)\n"
+        ),
+        filename="test_indices.py",
+        memento_file="test_indices.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:all",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.generator",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "call:isupper",
+                        "args": [{"kind": "var", "name": "c"}],
+                    },
+                    {
+                        "kind": "ctor",
+                        "name": "py.comprehension",
+                        "args": [
+                            {"kind": "var", "name": "c"},
+                            {"kind": "var", "name": "output_indices1"},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_generator_identity_predicate() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_results(results, val1):\n"
+            "    assert all(r is val1 for r in results)\n"
+        ),
+        filename="test_hashtable.py",
+        memento_file="test_hashtable.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:all",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.generator",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "py.compare:Is",
+                        "args": [
+                            {"kind": "var", "name": "r"},
+                            {"kind": "var", "name": "val1"},
+                        ],
+                    },
+                    {
+                        "kind": "ctor",
+                        "name": "py.comprehension",
+                        "args": [
+                            {"kind": "var", "name": "r"},
+                            {"kind": "var", "name": "results"},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def test_call_truth_assertion_lifts_generator_membership_predicate() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_config(self, config):\n"
+            "    assert all(key in config for key in self.REQUIRED_CONFIG_KEYS)\n"
+        ),
+        filename="test_numpy_config.py",
+        memento_file="test_numpy_config.py",
+    )
+
+    assert report is not None
+    assert _call_term(report) == {
+        "kind": "ctor",
+        "name": "call:all",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "py.generator",
+                "args": [
+                    {
+                        "kind": "ctor",
+                        "name": "py.compare:In",
+                        "args": [
+                            {"kind": "var", "name": "key"},
+                            {"kind": "var", "name": "config"},
+                        ],
+                    },
+                    {
+                        "kind": "ctor",
+                        "name": "py.comprehension",
+                        "args": [
+                            {"kind": "var", "name": "key"},
+                            {
+                                "kind": "ctor",
+                                "name": "py.attr",
+                                "args": [
+                                    {"kind": "var", "name": "self"},
+                                    {
+                                        "kind": "const",
+                                        "sort": {
+                                            "kind": "primitive",
+                                            "name": "String",
+                                        },
+                                        "value": "REQUIRED_CONFIG_KEYS",
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def _call_term(report):
+    return report.payload.ir[0].inv["args"][0]
