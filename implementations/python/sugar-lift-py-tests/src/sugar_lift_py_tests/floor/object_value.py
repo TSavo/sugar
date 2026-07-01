@@ -59,6 +59,9 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def project_sequence_with(self, operation, ctx):
+        return operation.project_object(self, ctx)
+
     def binary_operator_with(self, operation, ctx):
         del ctx
         method_name = _BINARY_DUNDER_METHODS.get(operation.operator)
