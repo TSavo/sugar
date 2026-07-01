@@ -57,7 +57,9 @@ class EmitPlan:
         if not isinstance(params, dict):
             return EmitPlan()
         contract_id = _first_str(params.get("contract_id"))
-        function = _first_str(params.get("function"), params.get("function_name")) or "test"
+        function = (
+            _first_str(params.get("function"), params.get("function_name")) or "test"
+        )
         formals = _string_list(params.get("params"))
         formal_types = _string_list(params.get("param_types"))
         predicates = [p for p in _list(params.get("predicates")) if isinstance(p, dict)]
@@ -113,7 +115,9 @@ def emit(plan: EmitPlan) -> Emission:
         if "pytest.raises" in assertion:
             needs_pytest = True
         declarations = _free_var_declarations(predicate, head)
-        functions.append(_render_test_function(_function_name(head, idx), declarations, assertion))
+        functions.append(
+            _render_test_function(_function_name(head, idx), declarations, assertion)
+        )
 
     source = _render_module(functions, needs_pytest)
     cid = "blake3-512:" + blake3.blake3(source.encode("utf-8")).digest(length=64).hex()

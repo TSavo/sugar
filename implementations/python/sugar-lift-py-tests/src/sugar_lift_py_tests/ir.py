@@ -20,7 +20,6 @@ from typing import Any, List, Optional, Tuple, Union
 
 from .canonicalizer import Value, varr, vbool, vint, vobj, vstr, vnull
 
-
 # Sort ----------------------------------------------------------------------
 
 

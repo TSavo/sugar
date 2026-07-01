@@ -27,5 +27,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
         return cls()
 
     def desugar(self, ctx=None) -> Outcome:
-        return Incomplete("raise: a runtime effect that transfers control and halts "
-                          "constraint propagation (every statement after it is unreachable)")
+        return Incomplete(
+            "raise: a runtime effect that transfers control and halts "
+            "constraint propagation (every statement after it is unreachable)"
+        )

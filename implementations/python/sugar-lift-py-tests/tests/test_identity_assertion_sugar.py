@@ -8,10 +8,7 @@ from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_r
 
 def test_identity_assertion_lifts_none_singleton_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_returns_none(ret):\n"
-            "    assert ret is None\n"
-        ),
+        source=("def test_returns_none(ret):\n" "    assert ret is None\n"),
         filename="test_none.py",
         memento_file="test_none.py",
     )
@@ -38,8 +35,7 @@ def test_identity_assertion_lifts_none_singleton_fact() -> None:
 def test_identity_assertion_lifts_subscript_boolean_fact() -> None:
     report = build_literal_call_report(
         source=(
-            "def test_caps(caps):\n"
-            "    assert caps[\"boolean indexing\"] is True\n"
+            "def test_caps(caps):\n" '    assert caps["boolean indexing"] is True\n'
         ),
         filename="test_caps.py",
         memento_file="test_caps.py",
@@ -104,10 +100,7 @@ def test_identity_assertion_lifts_call_to_call_fact() -> None:
 def test_identity_assertion_leaves_unsupported_rhs_to_factory_gap() -> None:
     with pytest.raises(FactoryGap) as exc:
         build_literal_call_report(
-            source=(
-                "def test_label(x, label):\n"
-                "    assert x is f'{label}'\n"
-            ),
+            source=("def test_label(x, label):\n" "    assert x is f'{label}'\n"),
             filename="test_label.py",
             memento_file="test_label.py",
         )

@@ -2,6 +2,7 @@
 position, a free bv32 var the encoder universe (str.eq-bv-blocks) constrains. It is the
 rhs of `b0 = ord(value[0])`, recomposed through the BoundVar when a later expression
 references b0."""
+
 from __future__ import annotations
 
 from factory_reduce import reduce_value

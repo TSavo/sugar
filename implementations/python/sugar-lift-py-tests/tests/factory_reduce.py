@@ -3,6 +3,7 @@
 Each `test_<sugar>.py` feeds a Python fragment through the factory and asserts the
 exact first-order-logic term it reduces to. This module is the one place that
 knows HOW to drive the factory; every sugar gets its own test file."""
+
 from __future__ import annotations
 
 import ast
@@ -52,7 +53,9 @@ def reduce_value(expr: str, binds: dict | None = None):
         for name, value in binds.items():
             temporal = temporal.bind_value(name, value)
         ctx = replace(ctx, temporal=temporal)
-    return complete_value(ctx.build_body(node, SugarRole.TERM).reduce(ctx), owner="test")
+    return complete_value(
+        ctx.build_body(node, SugarRole.TERM).reduce(ctx), owner="test"
+    )
 
 
 def reduce_term(expr: str, binds: dict | None = None):
@@ -92,7 +95,9 @@ def array_map_reduce(expr: str, binds: dict | None = None):
     return the raw Floor value (these sugars transform to concrete values)."""
     ctx = _array_map_ctx(binds)
     node = ast.parse(expr, mode="eval").body
-    return complete_value(ctx.build_body(node, SugarRole.TERM).reduce(ctx), owner="test")
+    return complete_value(
+        ctx.build_body(node, SugarRole.TERM).reduce(ctx), owner="test"
+    )
 
 
 def array_map_pairs(source: str):
@@ -106,7 +111,9 @@ def array_map_pairs(source: str):
 
     rep = build_array_map_report(source=source, filename="t.py", memento_file="t.py")
     contract = next(
-        c for c in rep.payload.ir if str(getattr(c, "name", "")).endswith("::array-map-sugar")
+        c
+        for c in rep.payload.ir
+        if str(getattr(c, "name", "")).endswith("::array-map-sugar")
     )
     inv = contract.inv
     assert inv["kind"] == "and", inv

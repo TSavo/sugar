@@ -58,7 +58,6 @@ from sugar_lift_py_tests import (
     str_const,
 )
 
-
 # ---------- Rust contract CID goldens --------------------------------------
 #
 # Source: `cargo run --release -p sugar-self-contracts \
@@ -253,9 +252,9 @@ def test_each_bridge_carries_correct_rust_source_cid():
     bridges = [d for d in decls if isinstance(d, BridgeDecl)]
     for b in bridges:
         rust_name = b.source_symbol
-        assert b.source_contract_cid == RUST_CONTRACT_CIDS[rust_name], (
-            f"bridge {b.name} mis-pinned source CID for {rust_name}"
-        )
+        assert (
+            b.source_contract_cid == RUST_CONTRACT_CIDS[rust_name]
+        ), f"bridge {b.name} mis-pinned source CID for {rust_name}"
         assert b.source_layer == RUST_LAYER
         assert b.target_layer == PY_ADAPTER_LAYER
         assert b.target_proof_cid == DEFERRED_PROOF_CID
@@ -352,9 +351,9 @@ def test_python_counterpart_cids_match_goldens():
         cp = _counterpart_contract(name)
         actual = jcs_hash(contract_decl_to_value(cp))
         expected = PY_COUNTERPART_CIDS[name]
-        assert actual == expected, (
-            f"counterpart CID drift for {name}: got {actual}, expected {expected}"
-        )
+        assert (
+            actual == expected
+        ), f"counterpart CID drift for {name}: got {actual}, expected {expected}"
 
 
 def test_bridge_decl_to_value_emits_expected_keys():

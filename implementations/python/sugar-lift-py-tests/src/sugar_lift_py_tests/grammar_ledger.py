@@ -71,8 +71,7 @@ def _membrane(reason: str) -> dict:
 _NAMED: dict = {
     "empty": _lifted(
         "constant_universe_for_callee",
-        "implicit-None equality: falling off the end is None, "
-        "unconditionally",
+        "implicit-None equality: falling off the end is None, " "unconditionally",
     ),
     "unparseable-file": _membrane(
         "not parseable as the pinned Python grammar; the file never enters "
@@ -97,8 +96,7 @@ _NAMED: dict = {
     "return-join": _lifted(
         "_table_loop_charset",
         "chars-in-set over the accumulated table union (acc/for/append/join)",
-        residual="joins over non-loop operands owed (literal-sep concat "
-        "universe)",
+        residual="joins over non-loop operands owed (literal-sep concat " "universe)",
     ),
     "return-encode-decode": _debt(
         "codec universe: .encode/.decode with a pinned codec literal is "
@@ -113,8 +111,7 @@ _NAMED: dict = {
     "return-fstring": _lifted(
         "_format_return_prefix",
         "prefix-of universe (leading literal of the f-string)",
-        residual="full concatenation owed; only the leading-literal arm "
-        "ships",
+        residual="full concatenation owed; only the leading-literal arm " "ships",
     ),
     "return-case-method": _debt(
         "case-mapping universe: upper/lower/casefold/title over pinned "
@@ -295,9 +292,7 @@ _NON_RETURN: dict = {
         "async-ness bites at the CALL, where Await rows are membrane)"
     ),
     "ClassDef": _debt("definition tail (see FunctionDef)"),
-    "Delete": _debt(
-        "del tail: deterministic scope mutation; state-relation owed"
-    ),
+    "Delete": _debt("del tail: deterministic scope mutation; state-relation owed"),
     "TypeAlias": _debt(
         "type-alias tail: deterministic annotation-level binding; returns "
         "None (annotations are not value semantics — constant-None arm)"
@@ -389,8 +384,7 @@ _RETURN_OTHER: dict = {
         "lifts with tuple vocabulary"
     ),
     "Slice": _debt(
-        "slice literal (grammar-marginal; legal only inside subscripts in "
-        "practice)"
+        "slice literal (grammar-marginal; legal only inside subscripts in " "practice)"
     ),
     "FormattedValue": _debt(
         "occurs only inside JoinedStr in legal parses; covered by the "
@@ -462,12 +456,8 @@ def unaccounted_buckets(
     interpreter that the ledger does not classify. Empty list = the floor
     holds. Parameterized so tests can feed synthetic grammar growth."""
     ledger = LEDGER if ledger is None else ledger
-    stmt_classes = (
-        grammar_stmt_classes() if stmt_classes is None else stmt_classes
-    )
-    expr_classes = (
-        grammar_expr_classes() if expr_classes is None else expr_classes
-    )
+    stmt_classes = grammar_stmt_classes() if stmt_classes is None else stmt_classes
+    expr_classes = grammar_expr_classes() if expr_classes is None else expr_classes
     holes = []
     for cls in stmt_classes:
         if f"non-return:{cls.__name__}" not in ledger:
@@ -564,18 +554,11 @@ def join_report(report: dict) -> dict:
     ]
     return {
         "ledger_cid": ledger_cid(),
-        "census": {
-            k: report[k] for k in ("packages", "files", "functions")
-        },
+        "census": {k: report[k] for k in ("packages", "files", "functions")},
         "classified": classified,
         "totals": totals,
-        "pct": {
-            k: round(100 * v / max(1, classified), 2)
-            for k, v in totals.items()
-        },
-        "debt_ranked": sorted(
-            debt_rows, key=lambda r: r["count"], reverse=True
-        ),
+        "pct": {k: round(100 * v / max(1, classified), 2) for k, v in totals.items()},
+        "debt_ranked": sorted(debt_rows, key=lambda r: r["count"], reverse=True),
         "lifted_residuals": residual_rows,
         "membrane": [r for r in rows if r["status"] == MEMBRANE],
     }

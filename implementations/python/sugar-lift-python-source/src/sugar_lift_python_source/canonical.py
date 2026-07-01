@@ -99,7 +99,9 @@ def _encode(value: Value, out: list[str]) -> None:
         out.append("]")
     elif isinstance(value, _Obj):
         out.append("{")
-        for index, (key, item) in enumerate(sorted(value.entries, key=lambda kv: kv[0])):
+        for index, (key, item) in enumerate(
+            sorted(value.entries, key=lambda kv: kv[0])
+        ):
             if index > 0:
                 out.append(",")
             _encode_string(key, out)

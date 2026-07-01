@@ -54,7 +54,10 @@ def solver_imports() -> list[str]:
                             "the lift translates, it never solves; desugar bit-vector ops to IR "
                             "terms and let the rust verify stage own the solver."
                         )
-            elif isinstance(node, ast.ImportFrom) and _root(node.module) in _SOLVER_MODULES:
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and _root(node.module) in _SOLVER_MODULES
+            ):
                 crimes.append(
                     f"{rel}:{node.lineno}: lift imports solver `from {node.module} import ...` -- "
                     "the lift translates, it never solves; desugar bit-vector ops to IR terms and "

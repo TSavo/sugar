@@ -38,18 +38,12 @@ def _literal_chain_status(contract) -> str:
 
 def test_chained_equality_assertion_emits_sat_and_unsat_twins() -> None:
     good = build_literal_call_report(
-        source=(
-            "def test_device():\n"
-            "    assert 'cpu' == 'cpu' == 'cpu'\n"
-        ),
+        source=("def test_device():\n" "    assert 'cpu' == 'cpu' == 'cpu'\n"),
         filename="test_device.py",
         memento_file="test_device.py",
     )
     bad = build_literal_call_report(
-        source=(
-            "def test_device():\n"
-            "    assert 'cpu' == 'cpu' == 'gpu'\n"
-        ),
+        source=("def test_device():\n" "    assert 'cpu' == 'cpu' == 'gpu'\n"),
         filename="test_device.py",
         memento_file="test_device.py",
     )
@@ -68,10 +62,7 @@ def test_chained_equality_assertion_emits_sat_and_unsat_twins() -> None:
 
 def test_chained_order_assertion_lowers_adjacent_pairs() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_order():\n"
-            "    assert 1 < 2 <= 3\n"
-        ),
+        source=("def test_order():\n" "    assert 1 < 2 <= 3\n"),
         filename="test_order.py",
         memento_file="test_order.py",
     )

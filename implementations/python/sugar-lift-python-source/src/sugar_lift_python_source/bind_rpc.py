@@ -172,7 +172,9 @@ def recognize_impl(params: dict[str, Any]) -> dict[str, Any]:
         # Skip call sites already covered by an exact whole-function match (same
         # recognition; the exact tag is richer), so we don't double-emit.
         tags.extend(
-            _recognize_calls_anywhere(rel_path, tree, binding_templates, file_exact_tags)
+            _recognize_calls_anywhere(
+                rel_path, tree, binding_templates, file_exact_tags
+            )
         )
     return {"tags": tags}
 
@@ -285,9 +287,7 @@ def _boundary_decorator(
         name = (
             func.attr
             if isinstance(func, ast.Attribute)
-            else func.id
-            if isinstance(func, ast.Name)
-            else None
+            else func.id if isinstance(func, ast.Name) else None
         )
         if name != "boundary":
             continue
@@ -369,7 +369,9 @@ def _unify_template(pattern: Any, candidate: Any, holes: dict[int, Any]) -> bool
     return pattern == candidate
 
 
-def _import_alias_maps(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+def _import_alias_maps(
+    tree: ast.AST,
+) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Build import maps so the ast_walk canonicalizes aliases — the reason a
     sugar `.proof` recognizes `numpy.add` no matter how the consumer spelled the
     import. `module_aliases`: local name -> canonical dotted module
@@ -410,7 +412,9 @@ def _canonicalize_template(
     vendor symbol's form: `np.add(...)` -> receiver `numpy`; `add(...)` (from
     `from numpy import add`) -> `numpy.add(...)`."""
     if isinstance(template, list):
-        return [_canonicalize_template(x, module_aliases, from_imports) for x in template]
+        return [
+            _canonicalize_template(x, module_aliases, from_imports) for x in template
+        ]
     if not isinstance(template, dict):
         return template
     kind = template.get("kind")
@@ -716,7 +720,10 @@ def _vendor_proof_binding_templates(root: Path) -> list[dict[str, Any]]:
             if not isinstance(member, dict):
                 continue
             header = member.get("header")
-            if not isinstance(header, dict) or header.get("kind") != "library-sugar-binding-entry":
+            if (
+                not isinstance(header, dict)
+                or header.get("kind") != "library-sugar-binding-entry"
+            ):
                 continue
             body = member.get("body")
             if not isinstance(body, dict):
@@ -739,7 +746,11 @@ def _vendor_proof_binding_templates(root: Path) -> list[dict[str, Any]]:
                         ast_template = resolved.get("ast_template")
                     if body_text is None:
                         body_text = resolved.get("body_text")
-            if ast_template is None or not isinstance(template_cid, str) or not template_cid:
+            if (
+                ast_template is None
+                or not isinstance(template_cid, str)
+                or not template_cid
+            ):
                 continue
             templates.append(
                 {
@@ -947,7 +958,9 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rpc", action="store_true", help="run bind JSON-RPC over stdio")
+    parser.add_argument(
+        "--rpc", action="store_true", help="run bind JSON-RPC over stdio"
+    )
     parser.add_argument("--bind-rpc", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.rpc or args.bind_rpc:

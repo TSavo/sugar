@@ -18,7 +18,9 @@ class MapOperation:
     def map_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         if self.mapper is not None:
             return Complete(
-                ArrayLiteral(tuple(self.mapper.apply(item, ctx) for item in receiver.items))
+                ArrayLiteral(
+                    tuple(self.mapper.apply(item, ctx) for item in receiver.items)
+                )
             )
         if self.addend is None:
             raise TypeError("MapOperation needs either mapper or addend")

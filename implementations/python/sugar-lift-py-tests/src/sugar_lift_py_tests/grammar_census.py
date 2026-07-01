@@ -64,8 +64,7 @@ def classify(fn: SourceFragment) -> Tuple[str, List[str]]:
     for s in fn.walk():
         if s.observed in ("For", "AsyncFor"):
             has_sub = any(
-                n.observed == "Subscript"
-                and n.subscript_receiver().observed == "Name"
+                n.observed == "Subscript" and n.subscript_receiver().observed == "Name"
                 for n in s.walk()
             )
             has_acc = any(

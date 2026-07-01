@@ -7,8 +7,10 @@ from typing import List
 
 
 def _is_suite(value) -> bool:
-    return isinstance(value, list) and bool(value) and all(
-        isinstance(item, ast.stmt) for item in value
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, ast.stmt) for item in value)
     )
 
 
@@ -62,7 +64,9 @@ class SourceFragment:
         children: List[SourceFragment] = []
         for _field, value in ast.iter_fields(node):
             if _is_suite(value):
-                children.append(SourceFragment.from_node(Block.of(value), self.filename))
+                children.append(
+                    SourceFragment.from_node(Block.of(value), self.filename)
+                )
             elif isinstance(value, ast.AST):
                 children.append(SourceFragment.from_node(value, self.filename))
             elif isinstance(value, list):

@@ -1,6 +1,7 @@
 """ReturnSugar is a statement sugar: it composes its value expression (built by the
 factory) into a ReturnValue, the path's returned outcome. A block carries it; an
 absorbed comment never disturbs it; a bare return has no value and panics."""
+
 from __future__ import annotations
 
 import pytest

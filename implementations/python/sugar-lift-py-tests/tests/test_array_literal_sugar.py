@@ -1,5 +1,6 @@
 """ArrayLiteralSugar reduces a Python list literal to the `array` ctor, recursively
 for nested lists."""
+
 from __future__ import annotations
 
 from factory_reduce import fol, reduce_term

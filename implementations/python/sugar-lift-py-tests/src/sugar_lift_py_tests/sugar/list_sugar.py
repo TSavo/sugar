@@ -16,6 +16,7 @@ class ListSugar:
     from the factory and passing it in via ``from_site``; this sugar is a dumb
     value that holds its pre-built body.
     """
+
     body: MapBuiltinSugar
 
     @classmethod

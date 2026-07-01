@@ -8,7 +8,6 @@ from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-
 # The arithmetic operators BinOpSugar folds over the collapsed Number (TermValue),
 # AST-kind -> symbol -> fold. Add also concatenates encoded strings (below). Div ('/') is
 # Python true-division (Real): 6/2 == 3.0, and the numeric type is collapsed so the result
@@ -30,7 +29,7 @@ _FOLD = {
     "/": lambda a, b: a / b,
     "//": lambda a, b: a // b,
     "%": lambda a, b: a % b,
-    "**": lambda a, b: a ** b,
+    "**": lambda a, b: a**b,
 }
 
 # Operators whose divisor of 0 is a runtime effect (Python raises), not a value.
@@ -45,11 +44,15 @@ def _operand_term(value):
 
     if isinstance(value, SymbolicValue):
         return value.term
-    if isinstance(value, TermValue) and isinstance(value.value, int) and not isinstance(
-        value.value, bool
+    if (
+        isinstance(value, TermValue)
+        and isinstance(value.value, int)
+        and not isinstance(value.value, bool)
     ):
         return num(value.value)
-    raise TypeError(f"BinOpSugar cannot lift operand `{type(value).__name__}` to a term")
+    raise TypeError(
+        f"BinOpSugar cannot lift operand `{type(value).__name__}` to a term"
+    )
 
 
 @dataclass(frozen=True)
@@ -97,13 +100,19 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
             return right_outcome
         left = complete_value(left_outcome, owner="BinOpSugar left")
         right = complete_value(right_outcome, owner="BinOpSugar right")
-        if isinstance(left, EncodedStringValue) and isinstance(right, EncodedStringValue):
+        if isinstance(left, EncodedStringValue) and isinstance(
+            right, EncodedStringValue
+        ):
             if self.operator != "+":
                 raise TypeError("BinOpSugar only concatenates encoded strings with +")
             if left.table != right.table:
-                raise TypeError("BinOpSugar + concatenates encoded strings over one table")
+                raise TypeError(
+                    "BinOpSugar + concatenates encoded strings over one table"
+                )
             return Complete(
-                EncodedStringValue(table=left.table, indices=left.indices + right.indices)
+                EncodedStringValue(
+                    table=left.table, indices=left.indices + right.indices
+                )
             )
         if isinstance(left, TermValue) and isinstance(right, TermValue):
             if self.operator in _DIVIDES and right.value == 0:
@@ -126,7 +135,9 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.ir import ctor
 
             return Complete(
-                SymbolicValue(ctor(self.operator, [_operand_term(left), _operand_term(right)]))
+                SymbolicValue(
+                    ctor(self.operator, [_operand_term(left), _operand_term(right)])
+                )
             )
         raise TypeError(
             f"BinOpSugar {self.operator} requires TermValue or EncodedStringValue operands"
@@ -134,4 +145,5 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
 
 
 from sugar_lift_py_tests.sugar.sugar_base import registered_claims as _rc  # noqa: E402
+
 BINOP_CLAIM = next(c for c in _rc() if c.name == "BinOpSugar")

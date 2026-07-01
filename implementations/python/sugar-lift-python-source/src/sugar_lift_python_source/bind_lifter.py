@@ -103,7 +103,9 @@ def lift_source(
             )
     if emit_bind:
         for cls_info in collector.class_definitions:
-            entry = _refusal_memento_for_class(cls_info.node, rel_path, result.diagnostics)
+            entry = _refusal_memento_for_class(
+                cls_info.node, rel_path, result.diagnostics
+            )
             if entry is not None:
                 result.ir.append(entry)
     return result
@@ -206,12 +208,15 @@ def _entry_for_function(
     param_names = _signature_param_names(node.args)
     witnesses = []
     witnesses.extend(_contract_comment_witnesses(lines, node, rel_path, diagnostics))
-    witnesses.extend(_decorator_contract_witnesses(node, param_names, rel_path, diagnostics))
+    witnesses.extend(
+        _decorator_contract_witnesses(node, param_names, rel_path, diagnostics)
+    )
 
     # Source-language signature types are diagnostic sidecar metadata only; they
     # do not participate in the CID-bearing term shape.
     realize_param_types = [
-        _annotation_surface(arg.annotation) or "" for arg in _ordered_signature_args(node.args)
+        _annotation_surface(arg.annotation) or ""
+        for arg in _ordered_signature_args(node.args)
     ]
     realize_return_type = _annotation_surface(node.returns) or ""
 
@@ -354,7 +359,8 @@ def _library_binding_entry_for_function(
     term_shape = shape_result.shape
     param_names = _signature_param_names(node.args)
     param_types = [
-        _annotation_surface(arg.annotation) for arg in _ordered_signature_args(node.args)
+        _annotation_surface(arg.annotation)
+        for arg in _ordered_signature_args(node.args)
     ]
     return_type = _annotation_surface(node.returns)
     signature_shape = {
@@ -420,7 +426,9 @@ def _sugar_bind_decorator(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> dict | None:
     for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call) or not _is_sugar_bind_func(decorator.func):
+        if not isinstance(decorator, ast.Call) or not _is_sugar_bind_func(
+            decorator.func
+        ):
             continue
         concept = _keyword_str(decorator, "concept")
         library = _keyword_str(decorator, "library")
@@ -613,7 +621,9 @@ _SOURCE_MEMENTO_FIELDS = ("file", "source_cid", "span", "template_cid", "param_n
 def source_memento_of(full_body_source: Json) -> Json:
     """Strip a full `_body_source_locator` reconstruction down to the SourceMemento
     the proof carries -- locus + CIDs, no body_text, no ast_template."""
-    return {k: full_body_source[k] for k in _SOURCE_MEMENTO_FIELDS if k in full_body_source}
+    return {
+        k: full_body_source[k] for k in _SOURCE_MEMENTO_FIELDS if k in full_body_source
+    }
 
 
 def _extract_body_text(
@@ -733,10 +743,15 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
     if isinstance(node, ast.While):
         return _operator_shape_result(
             "concept:while",
-            [_shape_expr_with_bindings(node.test), _shape_block_with_bindings(node.body)],
+            [
+                _shape_expr_with_bindings(node.test),
+                _shape_block_with_bindings(node.body),
+            ],
         )
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        return _operator_shape_result("concept:for", [_shape_block_with_bindings(node.body)])
+        return _operator_shape_result(
+            "concept:for", [_shape_block_with_bindings(node.body)]
+        )
     if isinstance(node, ast.Return):
         if node.value is None:
             return _empty_shape_result()
@@ -748,19 +763,31 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
     if isinstance(node, ast.Continue):
         return _operator_shape_result("concept:continue", [])
     if isinstance(node, ast.Assign):
-        target = _shape_expr_with_bindings(node.targets[0]) if node.targets else _empty_shape_result()
-        return _operator_shape_result("concept:assign", [target, _shape_expr_with_bindings(node.value)])
+        target = (
+            _shape_expr_with_bindings(node.targets[0])
+            if node.targets
+            else _empty_shape_result()
+        )
+        return _operator_shape_result(
+            "concept:assign", [target, _shape_expr_with_bindings(node.value)]
+        )
     if isinstance(node, ast.AnnAssign):
         if node.value is not None:
             return _operator_shape_result(
                 "concept:assign",
-                [_shape_expr_with_bindings(node.target), _shape_expr_with_bindings(node.value)],
+                [
+                    _shape_expr_with_bindings(node.target),
+                    _shape_expr_with_bindings(node.value),
+                ],
             )
         return _empty_shape_result()
     if isinstance(node, ast.AugAssign):
         return _bin_operator_shape_result(
             node.op,
-            [_shape_expr_with_bindings(node.target), _shape_expr_with_bindings(node.value)],
+            [
+                _shape_expr_with_bindings(node.target),
+                _shape_expr_with_bindings(node.value),
+            ],
         )
     if isinstance(node, ast.Expr):
         return _shape_expr_with_bindings(node.value)
@@ -775,7 +802,10 @@ def _shape_expr_with_bindings(node: ast.expr) -> _ShapeResult:
     if isinstance(node, ast.BinOp):
         return _bin_operator_shape_result(
             node.op,
-            [_shape_expr_with_bindings(node.left), _shape_expr_with_bindings(node.right)],
+            [
+                _shape_expr_with_bindings(node.left),
+                _shape_expr_with_bindings(node.right),
+            ],
         )
     if isinstance(node, ast.BoolOp):
         op = _bool_op(node.op)
@@ -802,7 +832,9 @@ def _shape_expr_with_bindings(node: ast.expr) -> _ShapeResult:
     if isinstance(node, ast.Call):
         args = [_shape_expr_with_bindings(node.func)]
         args.extend(_shape_expr_with_bindings(arg) for arg in node.args)
-        args.extend(_shape_expr_with_bindings(keyword.value) for keyword in node.keywords)
+        args.extend(
+            _shape_expr_with_bindings(keyword.value) for keyword in node.keywords
+        )
         return _operator_shape_result("concept:call", args)
     symbol = _operand_symbol(node)
     if symbol is not None:
@@ -852,7 +884,9 @@ def _bin_operator_shape(op: ast.operator, args: list[Json]) -> Json:
     return _operator_shape(atom, args)
 
 
-def _bin_operator_shape_result(op: ast.operator, args: list[_ShapeResult]) -> _ShapeResult:
+def _bin_operator_shape_result(
+    op: ast.operator, args: list[_ShapeResult]
+) -> _ShapeResult:
     atom = _bin_op(op)
     if atom is None:
         return _empty_shape_result()
@@ -879,7 +913,9 @@ def _compare_shape_result(node: ast.Compare) -> _ShapeResult:
         )
     result = comparisons[0]
     for comparison in comparisons[1:]:
-        result = _operator_shape_result("concept:ite", [result, comparison, _bool_literal(False)])
+        result = _operator_shape_result(
+            "concept:ite", [result, comparison, _bool_literal(False)]
+        )
     return result
 
 
@@ -1076,9 +1112,7 @@ def _contract_comment_witnesses_from_surface_lines(
         if idx + 1 < len(surface_lines):
             _, next_content = surface_lines[idx + 1]
             if next_content.startswith("sugar-contract-payload-cid:"):
-                payload_cid = next_content[
-                    len("sugar-contract-payload-cid:") :
-                ].strip()
+                payload_cid = next_content[len("sugar-contract-payload-cid:") :].strip()
                 idx += 1
         witness = _contract_comment_witness(
             raw_payload,
@@ -1111,7 +1145,9 @@ def _contract_comment_witness(
         )
         return None
     if not isinstance(payload, dict):
-        _contract_comment_diag(diagnostics, rel_path, line_no, "payload is not an object")
+        _contract_comment_diag(
+            diagnostics, rel_path, line_no, "payload is not an object"
+        )
         return None
 
     def require_str(key: str) -> str | None:
@@ -1157,9 +1193,12 @@ def _contract_comment_witness(
             return None
     local_contract_cid = payload.get("local_contract_cid")
     if local_contract_cid is not None and (
-        not isinstance(local_contract_cid, str) or not CID_RE.fullmatch(local_contract_cid)
+        not isinstance(local_contract_cid, str)
+        or not CID_RE.fullmatch(local_contract_cid)
     ):
-        _contract_comment_diag(diagnostics, rel_path, line_no, "malformed local_contract_cid")
+        _contract_comment_diag(
+            diagnostics, rel_path, line_no, "malformed local_contract_cid"
+        )
         return None
 
     predicate = payload.get("ir_formula_jcs")
@@ -1247,7 +1286,9 @@ def _is_sugar_comment_carrier(surface: str) -> bool:
 
 
 def _local_op_cid(name: str) -> str:
-    return cid_of_json({"kind": "local-operator", "name": name.removeprefix("concept:")})
+    return cid_of_json(
+        {"kind": "local-operator", "name": name.removeprefix("concept:")}
+    )
 
 
 def _valid_emitted_by(value: Json) -> bool:

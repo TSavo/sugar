@@ -7,8 +7,9 @@ import shutil
 import subprocess
 from typing import Any, Callable, Mapping, Sequence, TypeAlias
 
-
-JsonValue: TypeAlias = None | bool | int | str | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+JsonValue: TypeAlias = (
+    None | bool | int | str | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+)
 
 
 class RealizationTagError(ValueError):
@@ -179,7 +180,9 @@ def tag_boundary(
     return BoundaryRealization(
         library=_require_text(library, "library"),
         api=_require_text(api, "api"),
-        boundary_contract_cid=_require_text(boundary_contract_cid, "boundary_contract_cid"),
+        boundary_contract_cid=_require_text(
+            boundary_contract_cid, "boundary_contract_cid"
+        ),
     )
 
 
@@ -270,7 +273,9 @@ def _blake3_512_of(data: bytes) -> str:
     except ModuleNotFoundError:
         b3sum = shutil.which("b3sum")
         if b3sum is None:
-            raise RuntimeError("BLAKE3 support requires the blake3 module or b3sum") from None
+            raise RuntimeError(
+                "BLAKE3 support requires the blake3 module or b3sum"
+            ) from None
         process = subprocess.run(
             [b3sum, "--length", "64", "--no-names", "-"],
             input=data,

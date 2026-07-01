@@ -2,6 +2,7 @@
 AST. Feed it Python and it breaks down the right way: a module into its body, a body
 into its statements, a statement into its terms, a term into its sub-terms. An `if`
 breaks into its test term and its branch blocks -- the shape IfSugar composes."""
+
 from __future__ import annotations
 
 import ast
@@ -42,7 +43,11 @@ def test_term_breaks_into_its_subterms():
 
 def test_if_breaks_into_its_test_term_and_branch_blocks():
     # the exact shape IfSugar composes: a test term + a then-block + an else-block
-    if_stmt = _module("if x == 0:\n    a = 1\nelse:\n    a = 2\n").fragments()[0].statements()[0]
+    if_stmt = (
+        _module("if x == 0:\n    a = 1\nelse:\n    a = 2\n")
+        .fragments()[0]
+        .statements()[0]
+    )
     assert [t.observed for t in if_stmt.terms()] == ["Compare"]
     assert [s.observed for s in if_stmt.statements()] == ["Block", "Block"]
 
@@ -56,6 +61,7 @@ def test_a_whole_function_body_decomposes_statements_then_terms():
 # ------------------------------------------------------------------
 # Accessor tests
 # ------------------------------------------------------------------
+
 
 def _stmt(src: str) -> SourceFragment:
     """Return the first statement SourceFragment from a one-liner."""
@@ -286,8 +292,10 @@ def test_wrong_kind_raises_typeerror():
 # New accessors added in numpy-import-sugar sweep
 # ------------------------------------------------------------------
 
+
 def test_from_source_returns_module_fragment():
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
     root = SourceFragment.from_source("x = 1\n", "t.py")
     assert root.observed == "Module"
 
@@ -299,6 +307,7 @@ def test_has_position_true():
 
 def test_has_position_false_on_module():
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
     root = SourceFragment.from_source("x = 1\n", "t.py")
     assert root.has_position() is False
 

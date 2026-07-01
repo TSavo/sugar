@@ -74,7 +74,10 @@ def compute_plugin_cid(header: dict[str, Any]) -> str:
         "schemaVersion": header["schemaVersion"],
         "version": header["version"],
     }
-    return "blake3-512:" + blake3.blake3(_jcs(cid_input).encode("utf-8")).digest(length=64).hex()
+    return (
+        "blake3-512:"
+        + blake3.blake3(_jcs(cid_input).encode("utf-8")).digest(length=64).hex()
+    )
 
 
 def plugin_content() -> dict[str, Any]:

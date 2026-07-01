@@ -65,10 +65,12 @@ def test_invoke_reports_unsupported_gap() -> None:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "sugar.plugin.invoke",
-            "params": {"function": "f", "predicates": [_atomic("concept:mystery", _var("a"))]},
+            "params": {
+                "function": "f",
+                "predicates": [_atomic("concept:mystery", _var("a"))],
+            },
         }
     )
 
     assert response["result"]["unsupported_predicates"] == ["mystery"]
     assert response["result"]["is_complete"] is False
-

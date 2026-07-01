@@ -40,7 +40,9 @@ class TemporalContext:
     def apply_step(self, step: TemporalRewriteStep) -> "TemporalContext":
         if step.kind == "add_assign":
             current = self.value_for(step.name)
-            if not isinstance(current, TermValue) or not isinstance(step.value, TermValue):
+            if not isinstance(current, TermValue) or not isinstance(
+                step.value, TermValue
+            ):
                 self._gap(
                     owner="TemporalContext",
                     blame=step.blame,
@@ -70,7 +72,11 @@ class TemporalContext:
         requested: str,
         fix: str,
     ) -> None:
-        from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGap,
+            FactoryGapInfo,
+        )
 
         info = FactoryGapInfo(
             owner=owner,

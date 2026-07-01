@@ -19,7 +19,10 @@ def test_call_truth_assertion_lifts_plain_call_fact() -> None:
     assert report is not None
     assert len(report.payload.ir) == 1
     contract = report.payload.ir[0]
-    assert contract.name == "test_exception::test_exception_subclass::assert:2:4::assertion"
+    assert (
+        contract.name
+        == "test_exception::test_exception_subclass::assert:2:4::assertion"
+    )
     assert contract.source_warrants[0].role == "python.call-truth-assertion-sugar"
     assert contract.inv == {
         "kind": "atomic",
@@ -70,7 +73,9 @@ def test_call_truth_assertion_lifts_attribute_call_fact() -> None:
     }
 
 
-def test_call_truth_assertion_emits_external_bridge_edge_for_import_without_source() -> None:
+def test_call_truth_assertion_emits_external_bridge_edge_for_import_without_source() -> (
+    None
+):
     report = build_literal_call_report(
         source=(
             "import math\n"

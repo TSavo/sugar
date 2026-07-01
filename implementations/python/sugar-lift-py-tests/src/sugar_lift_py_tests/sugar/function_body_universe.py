@@ -31,7 +31,12 @@ class FunctionBodyUniverse(ABC):
 
     def factory_steps(self, function) -> list[tuple[str, str, object, str]]:
         return [
-            (line.audit_row.selected, line.audit_row.observed, function.body[index], "—")
+            (
+                line.audit_row.selected,
+                line.audit_row.observed,
+                function.body[index],
+                "—",
+            )
             for index, line in enumerate(self.statements)
         ]
 

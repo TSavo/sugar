@@ -39,6 +39,7 @@ _FOUNDATION_PUBKEY = bytes(SigningKey(FOUNDATION_V0_SEED).verify_key)
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _minimal_input(seed: bytes = FOUNDATION_V0_SEED) -> ProofEnvelopeInput:
     """Minimal one-member proof envelope -- the simplest valid shape."""
     return ProofEnvelopeInput(
@@ -69,6 +70,7 @@ def _two_member_input() -> ProofEnvelopeInput:
 # ---------------------------------------------------------------------------
 # Round-trip: build then verify
 # ---------------------------------------------------------------------------
+
 
 class TestRoundTrip:
     def test_build_then_verify(self):
@@ -118,13 +120,15 @@ class TestRoundTrip:
 
     def test_changing_name_changes_cid(self):
         a = build_proof_envelope(_minimal_input())
-        b = build_proof_envelope(ProofEnvelopeInput(
-            name="@other/name",
-            version="1.0.0",
-            members={"blake3-512:aa": b'{"hello":"world"}'},
-            signer_cid="blake3-512:cc",
-            declared_at="2026-04-30T00:00:00.000Z",
-        ))
+        b = build_proof_envelope(
+            ProofEnvelopeInput(
+                name="@other/name",
+                version="1.0.0",
+                members={"blake3-512:aa": b'{"hello":"world"}'},
+                signer_cid="blake3-512:cc",
+                declared_at="2026-04-30T00:00:00.000Z",
+            )
+        )
         assert a.cid != b.cid
 
     def test_changing_members_changes_cid(self):
@@ -249,9 +253,9 @@ class TestCrossKitByteEquivalence:
 
     def test_two_member_cid_matches_rust(self):
         out = build_proof_envelope(_two_member_input())
-        assert out.cid == RUST_FIXTURE_CID, (
-            f"CID mismatch:\n  python: {out.cid}\n  rust:   {RUST_FIXTURE_CID}"
-        )
+        assert (
+            out.cid == RUST_FIXTURE_CID
+        ), f"CID mismatch:\n  python: {out.cid}\n  rust:   {RUST_FIXTURE_CID}"
 
     def test_rust_bytes_verify_with_foundation_key(self):
         """Rust-produced bytes must also verify via the Python verifier."""
@@ -262,6 +266,7 @@ class TestCrossKitByteEquivalence:
 # ---------------------------------------------------------------------------
 # Ed25519 signing + verification with known-good test vectors
 # ---------------------------------------------------------------------------
+
 
 class TestSigning:
     def test_deterministic_signature_for_fixed_seed(self):
@@ -289,7 +294,7 @@ class TestSigning:
         # 32 bytes -> 44 base64 chars
         seed = bytes([0x42] * 32)
         pk = ed25519_pubkey_string(seed)
-        b64 = pk[len("ed25519:"):]
+        b64 = pk[len("ed25519:") :]
         assert len(b64) == 44
 
     def test_verify_round_trip(self):
@@ -332,5 +337,6 @@ class TestSigning:
         assert ed25519_verify_string(pk, sig_str, b"hello")
         # Verify the signature bytes are the ones we signed with
         import base64
-        decoded_sig = base64.b64decode(sig_str[len("ed25519:"):])
+
+        decoded_sig = base64.b64decode(sig_str[len("ed25519:") :])
         assert bytes(decoded_sig) == bytes(sig)

@@ -8,13 +8,16 @@ The composed reduction is the pointwise equality of the transformed array agains
 the asserted expected: all-equal => sat, any unequal => the discrimination (no
 false discharge). This is the unit test for the composition the user described:
 pin the leaves (array, lambda, add) then compose them here."""
+
 from __future__ import annotations
 
 from factory_reduce import array_map_pairs
 
 
 def _pairs(body: str, receiver: str, expected: str):
-    return array_map_pairs(f"def t():\n    assert {receiver}.map({body}) == {expected}\n")
+    return array_map_pairs(
+        f"def t():\n    assert {receiver}.map({body}) == {expected}\n"
+    )
 
 
 def test_map_applies_whatever_body_pointwise_over_whatever_receiver():

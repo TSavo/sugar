@@ -28,7 +28,9 @@ class MapBuiltinSugar:
         return map_builtin_sugar(site, functions_by_name, blame=blame)
 
     def desugar(self) -> Outcome:
-        receiver = complete_value(self.sequence.desugar(), owner="MapBuiltinSugar receiver")
+        receiver = complete_value(
+            self.sequence.desugar(), owner="MapBuiltinSugar receiver"
+        )
         callable_value = complete_value(
             self.callable.desugar(),
             owner="MapBuiltinSugar callable",

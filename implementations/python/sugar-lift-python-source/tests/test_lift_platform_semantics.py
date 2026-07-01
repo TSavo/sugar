@@ -13,7 +13,6 @@ if str(PKG_SRC) not in sys.path:
 
 from sugar_lift_python_source.platform_semantics import declaration, dimension_values
 
-
 EXPECTED_DIMENSIONS = {
     "ArithmeticOverflow": "ArbitraryPrecision",
     "IntegerDivisionRounding": "Floor",
@@ -25,7 +24,9 @@ EXPECTED_DIMENSIONS = {
 
 def test_python_lift_platform_semantics_declaration_shape() -> None:
     values = dimension_values()
-    assert {item["dimension_name"]: item["value_name"] for item in values} == EXPECTED_DIMENSIONS
+    assert {
+        item["dimension_name"]: item["value_name"] for item in values
+    } == EXPECTED_DIMENSIONS
     for item in values:
         assert item["compare_to"] == {
             "kind": "atomic",

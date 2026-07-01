@@ -37,7 +37,9 @@ def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
     assert isinstance(dig, ConstraintDigRequest)
     assert dig.fact_subject == "User.age"
     assert dig.target_symbol == "User"
-    assert dig.reason == "vendor callsite fact warrants constraint-universe dig for User"
+    assert (
+        dig.reason == "vendor callsite fact warrants constraint-universe dig for User"
+    )
 
     body_tree = SourceFragment.from_node(
         ast.parse("class User:\n    age: int = Field(..., ge=18)\n"), "model.py"

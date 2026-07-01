@@ -158,8 +158,14 @@ def to_verify_dialect(contract: Json, sorts: _Sorts) -> Json:
     if not isinstance(args, list) or len(args) != 2:
         raise VerifyDialectRefusal(fn_name, "post `=` does not have exactly two args")
     lhs, rhs = args[0], args[1]
-    if not (isinstance(lhs, dict) and lhs.get("kind") == "var" and lhs.get("name") == "return_value"):
-        raise VerifyDialectRefusal(fn_name, "post LHS is not the `return_value` result var")
+    if not (
+        isinstance(lhs, dict)
+        and lhs.get("kind") == "var"
+        and lhs.get("name") == "return_value"
+    ):
+        raise VerifyDialectRefusal(
+            fn_name, "post LHS is not the `return_value` result var"
+        )
     precondition_guarded_body = _body_has_precondition_guard_prefix(rhs)
 
     # 1. Unwrap the single `python:return(<value>)` the body folds to. A body
@@ -221,18 +227,25 @@ def to_verify_dialect(contract: Json, sorts: _Sorts) -> Json:
 
 
 def _unwrap_return(term: Json, fn_name: str) -> Json:
-    if isinstance(term, dict) and term.get("kind") == "ctor" and term.get("name") == "python:return":
+    if (
+        isinstance(term, dict)
+        and term.get("kind") == "ctor"
+        and term.get("name") == "python:return"
+    ):
         inner = term.get("args")
         if isinstance(inner, list) and len(inner) == 1:
             return inner[0]
         raise VerifyDialectRefusal(fn_name, "python:return wrapper is malformed")
     statements = _flatten_sequence(term)
-    if (
-        len(statements) >= 2
-        and all(_is_precondition_guard_statement(statement) for statement in statements[:-1])
+    if len(statements) >= 2 and all(
+        _is_precondition_guard_statement(statement) for statement in statements[:-1]
     ):
         tail = statements[-1]
-        if isinstance(tail, dict) and tail.get("kind") == "ctor" and tail.get("name") == "python:return":
+        if (
+            isinstance(tail, dict)
+            and tail.get("kind") == "ctor"
+            and tail.get("name") == "python:return"
+        ):
             inner = tail.get("args")
             if isinstance(inner, list) and len(inner) == 1:
                 return inner[0]
@@ -247,7 +260,11 @@ def _unwrap_return(term: Json, fn_name: str) -> Json:
 
 
 def _flatten_sequence(term: Json) -> list[Json]:
-    if isinstance(term, dict) and term.get("kind") == "ctor" and term.get("name") == "python:seq":
+    if (
+        isinstance(term, dict)
+        and term.get("kind") == "ctor"
+        and term.get("name") == "python:seq"
+    ):
         args = term.get("args")
         if isinstance(args, list) and len(args) == 2:
             return [*_flatten_sequence(args[0]), *_flatten_sequence(args[1])]
@@ -256,9 +273,8 @@ def _flatten_sequence(term: Json) -> list[Json]:
 
 def _body_has_precondition_guard_prefix(term: Json) -> bool:
     statements = _flatten_sequence(term)
-    return (
-        len(statements) >= 2
-        and all(_is_precondition_guard_statement(statement) for statement in statements[:-1])
+    return len(statements) >= 2 and all(
+        _is_precondition_guard_statement(statement) for statement in statements[:-1]
     )
 
 
@@ -288,7 +304,11 @@ def _is_guard_raise_effect(effect: object, exception_classes: set[str]) -> bool:
 
 
 def _is_precondition_guard_statement(term: Json) -> bool:
-    if not isinstance(term, dict) or term.get("kind") != "ctor" or term.get("name") != "python:if":
+    if (
+        not isinstance(term, dict)
+        or term.get("kind") != "ctor"
+        or term.get("name") != "python:if"
+    ):
         return False
     args = term.get("args")
     if not isinstance(args, list) or len(args) != 3:
@@ -339,17 +359,27 @@ def _is_flat_guard_term(term: Json) -> bool:
 
 
 def _is_python_raise(term: Json) -> bool:
-    return isinstance(term, dict) and term.get("kind") == "ctor" and term.get("name") == "python:raise"
+    return (
+        isinstance(term, dict)
+        and term.get("kind") == "ctor"
+        and term.get("name") == "python:raise"
+    )
 
 
 def _is_python_pass(term: Json) -> bool:
-    if not isinstance(term, dict) or term.get("kind") != "ctor" or term.get("name") != "python:pass":
+    if (
+        not isinstance(term, dict)
+        or term.get("kind") != "ctor"
+        or term.get("name") != "python:pass"
+    ):
         return False
     args = term.get("args")
     return isinstance(args, list) and len(args) == 1
 
 
-def _normalize_formula(formula: object, fn_name: str, formal_sorts: dict[str, str]) -> Json:
+def _normalize_formula(
+    formula: object, fn_name: str, formal_sorts: dict[str, str]
+) -> Json:
     if not isinstance(formula, dict):
         raise VerifyDialectRefusal(fn_name, "precondition is not an object")
     kind = formula.get("kind")
@@ -362,9 +392,13 @@ def _normalize_formula(formula: object, fn_name: str, formal_sorts: dict[str, st
                 raise VerifyDialectRefusal(fn_name, f"`{name}` precondition has args")
             return {"kind": "atomic", "name": name, "args": []}
         if name not in {"=", "≠", "<", "≤", ">", "≥"}:
-            raise VerifyDialectRefusal(fn_name, f"precondition atom `{name}` is not core")
+            raise VerifyDialectRefusal(
+                fn_name, f"precondition atom `{name}` is not core"
+            )
         if len(args) != 2:
-            raise VerifyDialectRefusal(fn_name, f"precondition atom `{name}` arity != 2")
+            raise VerifyDialectRefusal(
+                fn_name, f"precondition atom `{name}` arity != 2"
+            )
         return {
             "kind": "atomic",
             "name": name,
@@ -376,7 +410,9 @@ def _normalize_formula(formula: object, fn_name: str, formal_sorts: dict[str, st
     if kind in {"and", "or", "not", "implies"}:
         operands = formula.get("operands")
         if not isinstance(operands, list):
-            raise VerifyDialectRefusal(fn_name, f"`{kind}` precondition operands missing")
+            raise VerifyDialectRefusal(
+                fn_name, f"`{kind}` precondition operands missing"
+            )
         return {
             "kind": kind,
             "operands": [
@@ -448,7 +484,9 @@ def _normalize_term(term: Json, fn_name: str, formal_sorts: dict[str, str]) -> J
         return {
             "kind": "ctor",
             "name": name,
-            "args": [_normalize_term_uninterpreted(a, fn_name, formal_sorts) for a in args],
+            "args": [
+                _normalize_term_uninterpreted(a, fn_name, formal_sorts) for a in args
+            ],
         }
     return {
         "kind": "ctor",
@@ -457,7 +495,9 @@ def _normalize_term(term: Json, fn_name: str, formal_sorts: dict[str, str]) -> J
     }
 
 
-def _normalize_term_uninterpreted(term: Json, fn_name: str, formal_sorts: dict[str, str]) -> Json:
+def _normalize_term_uninterpreted(
+    term: Json, fn_name: str, formal_sorts: dict[str, str]
+) -> Json:
     """Normalize the operands of an uninterpreted op. Core arith inside an
     uninterpreted op is still normalized (so `(x + 1) // 2` keeps the `+`),
     but the surrounding uninterpreted op is preserved by `_normalize_term`.

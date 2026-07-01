@@ -24,17 +24,21 @@ from sugar_lift_py_tests.sugar.array_literal_sugar import (
 from sugar_lift_py_tests.sugar.bitwise_op_sugar import BITWISE_OP_CLAIM, BitwiseOpSugar
 from sugar_lift_py_tests.sugar.primitive_literal_sugar import PrimitiveLiteralSugar
 
-
 ROOT = Path(__file__).resolve().parents[4]
 PYTHON_KIT = ROOT / "implementations/python"
 PY_TESTS = PYTHON_KIT / "sugar-lift-py-tests"
 
 
 def test_batch_lift_entrypoints_use_lift_rpc_not_lsp() -> None:
-    manifest = (PYTHON_KIT / ".sugar/lift/python/manifest.toml").read_text(encoding="utf-8")
+    manifest = (PYTHON_KIT / ".sugar/lift/python/manifest.toml").read_text(
+        encoding="utf-8"
+    )
     pyproject = (PY_TESTS / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert 'command = ["python3", "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"]' in manifest
+    assert (
+        'command = ["python3", "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"]'
+        in manifest
+    )
     assert 'sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"' in pyproject
     assert 'sugar-lift-python = "sugar_lift_py_tests.lsp:main"' not in pyproject
 
@@ -70,7 +74,9 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
     lift_response = next(response for response in responses if response.get("id") == 2)
     assert lift_response["error"]["message"].startswith("write more Sugar for this AST")
     assert lift_response["error"]["data"]["info"] == {
@@ -124,7 +130,9 @@ def test_lift_rpc_audit_only_argv_collects_all_factory_gaps(tmp_path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
     lift_response = next(response for response in responses if response.get("id") == 2)
     error = lift_response["error"]
     assert error["message"] == "audit-only construction gaps"
@@ -187,7 +195,9 @@ def test_factory_matches_registered_sugar_for_last_popped_source_fragment() -> N
         ]
     )
 
-    result = build_next(source, filename="base64.py", role=SugarRole.TERM, catalog=catalog)
+    result = build_next(
+        source, filename="base64.py", role=SugarRole.TERM, catalog=catalog
+    )
 
     assert result.sugar == NameSugar("data")
     assert result.audit_row.to_json() == {
@@ -202,7 +212,9 @@ def test_factory_matches_registered_sugar_for_last_popped_source_fragment() -> N
     }
 
 
-def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering() -> None:
+def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering() -> (
+    None
+):
     node = ast.parse("1", mode="eval").body
 
     @dataclass(frozen=True)
@@ -325,12 +337,15 @@ def test_array_literal_factory_requires_primitive_literal_children() -> None:
     assert isinstance(result.sugar, ArrayLiteralSugar)
     assert all(isinstance(child, SugarBody) for child in result.sugar.elements)
     assert all(
-        isinstance(child.sugar, PrimitiveLiteralSugar) for child in result.sugar.elements
+        isinstance(child.sugar, PrimitiveLiteralSugar)
+        for child in result.sugar.elements
     )
-    assert complete_value(result.sugar.desugar(), owner="array literal") == ArrayLiteral(
-        (TermValue(1), TermValue(2), TermValue(3))
-    )
-    with pytest.raises(TypeError, match="ArrayLiteralSugar elements must be factory-built bodies"):
+    assert complete_value(
+        result.sugar.desugar(), owner="array literal"
+    ) == ArrayLiteral((TermValue(1), TermValue(2), TermValue(3)))
+    with pytest.raises(
+        TypeError, match="ArrayLiteralSugar elements must be factory-built bodies"
+    ):
         ArrayLiteralSugar(elements=(node,))  # type: ignore[arg-type]
 
 
@@ -403,7 +418,9 @@ def test_bitwise_op_factory_requires_factory_built_operands() -> None:
         "kind": "ctor",
         "name": "bv32.shl",
     }
-    with pytest.raises(TypeError, match="BitwiseOpSugar operands must be factory-built bodies"):
+    with pytest.raises(
+        TypeError, match="BitwiseOpSugar operands must be factory-built bodies"
+    ):
         BitwiseOpSugar(
             operator="&",
             left=and_node.left,  # type: ignore[arg-type]

@@ -10,7 +10,9 @@ def _cf_operand(frag: SourceFragment):
 
     if frag.observed == "Name":
         return make_var(frag.name_id())
-    if frag.observed == "PrimitiveLiteral" and not isinstance(frag.literal_value(), bool):
+    if frag.observed == "PrimitiveLiteral" and not isinstance(
+        frag.literal_value(), bool
+    ):
         val = frag.literal_value()
         if isinstance(val, int):
             return num(val)
@@ -69,7 +71,11 @@ def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
         if stmt.observed == "If":
             guard = _cf_guard(stmt.if_test())
             _walk_control_flow(
-                stmt.if_body(), tuple(fall_through) + (guard,), paths, build_ctx, reduce_ctx
+                stmt.if_body(),
+                tuple(fall_through) + (guard,),
+                paths,
+                build_ctx,
+                reduce_ctx,
             )
             if stmt.if_orelse():
                 _walk_control_flow(

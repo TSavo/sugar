@@ -54,7 +54,6 @@ from .signing import (
     ed25519_sign_string,
 )
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -276,10 +275,12 @@ def _signing_bytes(header: Value, metadata: Value) -> bytes:
     substrate-layers spec §2 R2. Critical: the key is "metadata", not
     "body". The substrate verifier signs over the metadata field-name.
     """
-    msg = vobj([
-        ("header", header),
-        ("metadata", metadata),
-    ])
+    msg = vobj(
+        [
+            ("header", header),
+            ("metadata", metadata),
+        ]
+    )
     return encode_jcs(msg).encode("utf-8")
 
 
@@ -329,19 +330,23 @@ def _assemble_layered(
     signing_msg = _signing_bytes(header, metadata)
     signature_str = ed25519_sign_string(signer_seed, signing_msg)
 
-    envelope = vobj([
-        ("signer", vstr(signer_str)),
-        ("declaredAt", vstr(declared_at)),
-        ("signature", vstr(signature_str)),
-    ])
+    envelope = vobj(
+        [
+            ("signer", vstr(signer_str)),
+            ("declaredAt", vstr(declared_at)),
+            ("signature", vstr(signature_str)),
+        ]
+    )
     envelope_jcs = encode_jcs(envelope)
     attestation_cid = blake3_512_of(envelope_jcs.encode("utf-8"))
 
-    memento = vobj([
-        ("envelope", envelope),
-        ("header", header),
-        ("metadata", metadata),
-    ])
+    memento = vobj(
+        [
+            ("envelope", envelope),
+            ("header", header),
+            ("metadata", metadata),
+        ]
+    )
     memento_jcs = encode_jcs(memento)
 
     return ClaimEnvelope(
@@ -430,11 +435,13 @@ def mint_contract(
     ph_pairs.append(("outBinding", vstr(out_binding)))
     property_hash = _hash_value(vobj(ph_pairs))
 
-    bh_obj = vobj([
-        ("producerId", vstr(produced_by)),
-        ("contractName", vstr(contract_name)),
-        ("propertyHash", vstr(property_hash)),
-    ])
+    bh_obj = vobj(
+        [
+            ("producerId", vstr(produced_by)),
+            ("contractName", vstr(contract_name)),
+            ("propertyHash", vstr(property_hash)),
+        ]
+    )
     binding_hash = _hash_value(bh_obj)
 
     # Header: schemaVersion + kind + cid + kind-specific REQUIRED fields.
@@ -516,23 +523,27 @@ def mint_bridge(
     """
     arg_sorts_v = varr([vstr(s) for s in ir_arg_sorts])
 
-    bh_obj = vobj([
-        ("sourceLayer", vstr(source_layer)),
-        ("sourceSymbol", vstr(source_symbol)),
-    ])
+    bh_obj = vobj(
+        [
+            ("sourceLayer", vstr(source_layer)),
+            ("sourceSymbol", vstr(source_symbol)),
+        ]
+    )
     binding_hash = _hash_value(bh_obj)
     property_hash = _hash_string(f"bridge:{source_symbol}")
 
     # Bridge content CID: BLAKE3-512(JCS({sourceSymbol, sourceLayer,
     # targetContractCid, targetLayer, irArgSorts, irReturnSort})).
-    header_cid_v = vobj([
-        ("sourceSymbol", vstr(source_symbol)),
-        ("sourceLayer", vstr(source_layer)),
-        ("targetContractCid", vstr(target_contract_cid)),
-        ("targetLayer", vstr(target_layer)),
-        ("irArgSorts", arg_sorts_v),
-        ("irReturnSort", vstr(ir_return_sort)),
-    ])
+    header_cid_v = vobj(
+        [
+            ("sourceSymbol", vstr(source_symbol)),
+            ("sourceLayer", vstr(source_layer)),
+            ("targetContractCid", vstr(target_contract_cid)),
+            ("targetLayer", vstr(target_layer)),
+            ("irArgSorts", arg_sorts_v),
+            ("irReturnSort", vstr(ir_return_sort)),
+        ]
+    )
     header_cid = _hash_value(header_cid_v)
 
     kind_specific: List[Tuple[str, Value]] = [
@@ -592,23 +603,25 @@ def mint_implication(
       - propertyHash = hash("implication:" + ah + ":" + ch)
       - inputCids    = sorted([antecedent_cid, consequent_cid])
     """
-    bh_obj = vobj([
-        ("antecedentHash", vstr(antecedent_hash)),
-        ("consequentHash", vstr(consequent_hash)),
-    ])
-    binding_hash = _hash_value(bh_obj)
-    property_hash = _hash_string(
-        f"implication:{antecedent_hash}:{consequent_hash}"
+    bh_obj = vobj(
+        [
+            ("antecedentHash", vstr(antecedent_hash)),
+            ("consequentHash", vstr(consequent_hash)),
+        ]
     )
+    binding_hash = _hash_value(bh_obj)
+    property_hash = _hash_string(f"implication:{antecedent_hash}:{consequent_hash}")
 
-    header_cid_v = vobj([
-        ("antecedentHash", vstr(antecedent_hash)),
-        ("consequentHash", vstr(consequent_hash)),
-        ("antecedentCid", vstr(antecedent_cid)),
-        ("consequentCid", vstr(consequent_cid)),
-        ("antecedentSlot", vstr(antecedent_slot)),
-        ("consequentSlot", vstr(consequent_slot)),
-    ])
+    header_cid_v = vobj(
+        [
+            ("antecedentHash", vstr(antecedent_hash)),
+            ("consequentHash", vstr(consequent_hash)),
+            ("antecedentCid", vstr(antecedent_cid)),
+            ("consequentCid", vstr(consequent_cid)),
+            ("antecedentSlot", vstr(antecedent_slot)),
+            ("consequentSlot", vstr(consequent_slot)),
+        ]
+    )
     header_cid = _hash_value(header_cid_v)
 
     input_cids_sorted = sorted([antecedent_cid, consequent_cid])

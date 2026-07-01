@@ -61,7 +61,7 @@ def kit_declaration_result() -> dict[str, Any]:
                 "surface": SURFACE,
                 "local": "python:subscript",
                 "concept": "concept:panic-freedom.leaf.runtime-failure-site",
-            }
+            },
         ],
         "guardPredicates": [
             {
@@ -182,7 +182,9 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rpc", action="store_true", help="run JSON-RPC over stdio")
-    parser.add_argument("--bind-rpc", action="store_true", help="run bind JSON-RPC over stdio")
+    parser.add_argument(
+        "--bind-rpc", action="store_true", help="run bind JSON-RPC over stdio"
+    )
     args = parser.parse_args(argv)
     if args.bind_rpc:
         from .bind_rpc import run_rpc as run_bind_rpc

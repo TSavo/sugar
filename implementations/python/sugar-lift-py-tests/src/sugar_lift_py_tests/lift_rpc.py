@@ -15,7 +15,6 @@ from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
 from sugar_lift_py_tests.lib import lift_source
 
-
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
 NO_SOURCE_SITES_MESSAGE = "factory source contained no source sites"
@@ -73,7 +72,9 @@ def _iter_python_files(workspace_root: str, source_paths: List[Any]) -> List[str
     out: List[str] = []
     for raw_path in source_paths or ["."]:
         path = str(raw_path)
-        full_path = os.path.abspath(path if os.path.isabs(path) else os.path.join(root, path))
+        full_path = os.path.abspath(
+            path if os.path.isabs(path) else os.path.join(root, path)
+        )
         if os.path.isfile(full_path):
             if full_path.endswith(".py"):
                 out.append(full_path)
@@ -257,7 +258,13 @@ def _source_memento_response(
     for field_name in ("source_cid", "template_cid", "param_names"):
         if resolved.get(field_name) is not None:
             out[field_name] = resolved[field_name]
-    for forbidden in ("body_text", "ast_template", "bodyText", "astTemplate", "sourceOracle"):
+    for forbidden in (
+        "body_text",
+        "ast_template",
+        "bodyText",
+        "astTemplate",
+        "sourceOracle",
+    ):
         out.pop(forbidden, None)
     return out
 
@@ -274,9 +281,9 @@ def _source_lines_for_memento(
     if not isinstance(end_line, int):
         end_line = start_line
     try:
-        source_lines = (Path(workspace_root) / file_name).read_text(
-            encoding="utf-8"
-        ).splitlines()
+        source_lines = (
+            (Path(workspace_root) / file_name).read_text(encoding="utf-8").splitlines()
+        )
     except OSError:
         return []
     start_index = max(start_line - 1, 0)
@@ -355,7 +362,9 @@ def _handle_initialize(msg_id: Any) -> None:
     )
 
 
-def _handle_lift(msg_id: Any, params: Dict[str, Any], *, audit_only: bool = False) -> None:
+def _handle_lift(
+    msg_id: Any, params: Dict[str, Any], *, audit_only: bool = False
+) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     contract_bindings = params.get("contract_bindings") or []
@@ -502,7 +511,9 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
     handler -- the factory kit must answer this for cross-project federation."""
     import base64
 
-    project_root = str(params.get("project_root") or params.get("workspace_root") or ".")
+    project_root = str(
+        params.get("project_root") or params.get("workspace_root") or "."
+    )
     imports_dir = Path(project_root) / ".sugar" / "imports"
     proofs: List[Dict[str, Any]] = []
     if imports_dir.is_dir():
@@ -515,7 +526,11 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
             # apples-to-apples.  The filename uses underscore for Windows
             # path-safety; the in-memory CID always uses colon.
             stem = path.name[: -len(".proof")]
-            cid = stem.replace("blake3-512_", "blake3-512:", 1) if stem.startswith("blake3-512_") else stem
+            cid = (
+                stem.replace("blake3-512_", "blake3-512:", 1)
+                if stem.startswith("blake3-512_")
+                else stem
+            )
             proofs.append(
                 {
                     "cid": cid,
@@ -546,7 +561,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": _component_plan_result(params if isinstance(params, dict) else {}),
+                    "result": _component_plan_result(
+                        params if isinstance(params, dict) else {}
+                    ),
                 }
             )
         elif method == RESOLVE_SOURCE_MEMENTO_RPC_METHOD:

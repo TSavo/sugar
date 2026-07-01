@@ -52,7 +52,9 @@ def resolve_witness(
         raise WitnessOracleRefusal("witness memento missing `witness_cid`")
 
     # 1. SIGNATURE -- the universal path. A witness is a signed mark; verify whose.
-    if not _verify_signature(witness_cid, memento.get("signature"), memento.get("signer")):
+    if not _verify_signature(
+        witness_cid, memento.get("signature"), memento.get("signer")
+    ):
         raise WitnessOracleRefusal(
             f"witness signature invalid for {witness_cid} "
             f"(signer {memento.get('signer')!r}) -- cannot trust the mark"
@@ -102,7 +104,11 @@ def _verify_signature(message_cid: Any, signature_string: Any, signer: Any) -> b
     import base64
 
     pubkey_b64 = signer.split(":", 1)[1] if ":" in signer else signer
-    sig_b64 = signature_string.split(":", 1)[1] if ":" in signature_string else signature_string
+    sig_b64 = (
+        signature_string.split(":", 1)[1]
+        if ":" in signature_string
+        else signature_string
+    )
     try:
         from nacl.exceptions import BadSignatureError
         from nacl.signing import VerifyKey

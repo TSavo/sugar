@@ -21,7 +21,9 @@ def test_primitive_literal_sugar_is_value_born_from_site() -> None:
     int_node = ast.parse("42", mode="eval").body
     string_node = ast.parse('"abc"', mode="eval").body
 
-    int_sugar = PrimitiveLiteralSugar.from_site(SourceFragment.from_node(int_node, "literals.py"))
+    int_sugar = PrimitiveLiteralSugar.from_site(
+        SourceFragment.from_node(int_node, "literals.py")
+    )
     string_sugar = PrimitiveLiteralSugar.from_site(
         SourceFragment.from_node(string_node, "literals.py")
     )
@@ -31,9 +33,9 @@ def test_primitive_literal_sugar_is_value_born_from_site() -> None:
     assert not hasattr(int_sugar, "node")
     assert not hasattr(string_sugar, "node")
     assert complete_value(int_sugar.desugar(), owner="int literal") == TermValue(42)
-    assert complete_value(string_sugar.desugar(), owner="string literal") == StringValue(
-        "abc"
-    )
+    assert complete_value(
+        string_sugar.desugar(), owner="string literal"
+    ) == StringValue("abc")
 
 
 def test_none_primitive_literal_sugar_reduces_to_none_ctor() -> None:

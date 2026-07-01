@@ -17,15 +17,19 @@ from .source_memento_dto import SourceMementoDto
 @dataclass(frozen=True)
 class LiftReportPayloadDto:
     ir: list[BodyUniverseDto | dict[str, Any]] = field(default_factory=list)
-    source_mementos: list[SourceMementoDto | dict[str, Any]] = field(default_factory=list)
+    source_mementos: list[SourceMementoDto | dict[str, Any]] = field(
+        default_factory=list
+    )
     source_ledger: dict[str, int] | None = None
     source_audits: list[dict[str, Any]] = field(default_factory=list)
-    assertion_surface_audits: list[
-        AssertionSurfaceAuditDto | dict[str, Any]
-    ] = field(default_factory=list)
+    assertion_surface_audits: list[AssertionSurfaceAuditDto | dict[str, Any]] = field(
+        default_factory=list
+    )
     factory_walk: list[FactoryWalkRowDto | dict[str, Any]] = field(default_factory=list)
     factory_audits: list[dict[str, Any]] = field(default_factory=list)
-    plan_mementos: list[ComponentPlanMementoDto | dict[str, Any]] = field(default_factory=list)
+    plan_mementos: list[ComponentPlanMementoDto | dict[str, Any]] = field(
+        default_factory=list
+    )
     implications: list[ImplicationDto | dict[str, Any]] = field(default_factory=list)
     effects: list[EffectDto | dict[str, Any]] = field(default_factory=list)
     call_edges: list[dict[str, Any]] = field(default_factory=list)
@@ -42,7 +46,9 @@ class LiftReportPayloadDto:
             "ir": [to_rpc_value(contract) for contract in self.ir],
             "sourceLedger": to_rpc_value(source_ledger),
             "sourceAudits": [to_rpc_value(audit) for audit in self.source_audits],
-            "sourceMementos": [to_rpc_value(memento) for memento in self.source_mementos],
+            "sourceMementos": [
+                to_rpc_value(memento) for memento in self.source_mementos
+            ],
             "assertionSurfaceAudits": [
                 to_rpc_value(audit) for audit in self.assertion_surface_audits
             ],

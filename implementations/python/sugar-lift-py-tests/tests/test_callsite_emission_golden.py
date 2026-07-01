@@ -10,6 +10,7 @@ pinned golden.
 If a `name` here changes, you broke the join. If a `pre` appears on an assertion, you fell
 off the conjoin path. Either way: STOP, and re-pin only if the change is DELIBERATE.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,14 +29,26 @@ SOURCES = {
     "unresolved_int_arg_b": "def t():\n    assert make_value_xc(5) == 2\n",
     "unresolved_str_arg": 'def t():\n    assert parse_int("42") == 42\n',
     "resolved_literal_body": "def h():\n    return 42\ndef t():\n    assert h() == 42\n",
-    "two_calls_same_callee": "def t():\n    assert make_value_xc(5) == 1\n    assert make_value_xc(5) == 1\n",    "resolved_dig_universe": "def f(x):\n    if x > 0:\n        return 1\n    return 0\ndef t():\n    assert f(5) == 1\n",
+    "two_calls_same_callee": "def t():\n    assert make_value_xc(5) == 1\n    assert make_value_xc(5) == 1\n",
+    "resolved_dig_universe": "def f(x):\n    if x > 0:\n        return 1\n    return 0\ndef t():\n    assert f(5) == 1\n",
 }
-_FIELDS = ("name", "kind", "inv", "pre", "post", "formals", "out_binding", "bridge_source_symbol")
+_FIELDS = (
+    "name",
+    "kind",
+    "inv",
+    "pre",
+    "post",
+    "formals",
+    "out_binding",
+    "bridge_source_symbol",
+)
 
 
 def _capture(src: str) -> dict:
     try:
-        rep = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
+        rep = build_literal_call_report(
+            source=src, filename="t.py", memento_file="t.py"
+        )
         contracts = sorted(
             ({f: repr(getattr(c, f, None)) for f in _FIELDS} for c in rep.payload.ir),
             key=lambda d: d["name"],
@@ -43,7 +56,9 @@ def _capture(src: str) -> dict:
         return {"contracts": contracts}
     except FactoryGap as g:
         return {"panic": {"observed": g.info.get("observed"), "fix": g.info.get("fix")}}
-    except Exception as e:  # noqa: BLE001 -- a captured error is part of the golden behavior
+    except (
+        Exception
+    ) as e:  # noqa: BLE001 -- a captured error is part of the golden behavior
         return {"error": f"{type(e).__name__}: {e}"}
 
 

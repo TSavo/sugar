@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import Bv32Value, EncodedStringValue, StringValue, TermValue
+from sugar_lift_py_tests.floor import (
+    Bv32Value,
+    EncodedStringValue,
+    StringValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import Term, num
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -52,13 +57,17 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
         return cls(receiver=receiver, index=index)
 
     def desugar(self, ctx=None) -> Outcome:
-        receiver = complete_value(self.receiver.reduce(ctx), owner="StringSubscriptSugar receiver")
+        receiver = complete_value(
+            self.receiver.reduce(ctx), owner="StringSubscriptSugar receiver"
+        )
         if not isinstance(receiver, StringValue):
             raise TypeError(
                 "write more Floor for StringSubscriptSugar receiver: expected StringValue "
                 f"got {type(receiver).__name__}"
             )
-        index = complete_value(self.index.reduce(ctx), owner="StringSubscriptSugar index")
+        index = complete_value(
+            self.index.reduce(ctx), owner="StringSubscriptSugar index"
+        )
         return Complete(
             EncodedStringValue(
                 table=tuple(ord(ch) for ch in receiver.value),

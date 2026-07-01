@@ -44,6 +44,12 @@ class SourceMementoDto:
             out["param_names"] = list(self.param_names)
             out["paramNames"] = list(self.param_names)
         out.update({key: to_rpc_value(value) for key, value in self.extra.items()})
-        for forbidden in ("body_text", "ast_template", "bodyText", "astTemplate", "source"):
+        for forbidden in (
+            "body_text",
+            "ast_template",
+            "bodyText",
+            "astTemplate",
+            "source",
+        ):
             out.pop(forbidden, None)
         return out

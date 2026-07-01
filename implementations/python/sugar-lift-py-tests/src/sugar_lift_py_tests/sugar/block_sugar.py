@@ -61,9 +61,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
             if isinstance(value, SupportValue):
                 continue  # Support (a comment) is inert -- absorbed
             if isinstance(value, BoundVar):
-                ctx = replace(
-                    ctx, temporal=ctx.temporal.bind_value(value.name, value)
-                )
+                ctx = replace(ctx, temporal=ctx.temporal.bind_value(value.name, value))
                 continue
             if isinstance(value, ReturnValue):
                 outcomes.append(

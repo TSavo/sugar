@@ -72,6 +72,8 @@ def function_ref_sugar(node, functions_by_name):
     return _from_site_impl(site, functions_by_name)
 
 
-def function_ref_sugar_from_site(site, functions_by_name: dict) -> "FunctionRefSugar | None":
+def function_ref_sugar_from_site(
+    site, functions_by_name: dict
+) -> "FunctionRefSugar | None":
     """Site-based entry point -- no raw AST required."""
     return _from_site_impl(site, functions_by_name)

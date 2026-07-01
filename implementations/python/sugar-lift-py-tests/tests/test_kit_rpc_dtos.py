@@ -19,7 +19,6 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 
-
 CID_A = "blake3-512:" + "a" * 128
 CID_B = "blake3-512:" + "b" * 128
 CID_C = "blake3-512:" + "c" * 128
@@ -153,7 +152,9 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
 
 
 def test_factory_walk_dto_refuses_inline_side_doors() -> None:
-    with pytest.raises(ValueError, match="factory walk rows must carry SourceMemento pins"):
+    with pytest.raises(
+        ValueError, match="factory walk rows must carry SourceMemento pins"
+    ):
         FactoryWalkRowDto(
             file="encoder.py",
             line=2,

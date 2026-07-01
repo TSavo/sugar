@@ -20,7 +20,6 @@ from .canonicalizer import (
     vstr,
 )
 
-
 Json = Any
 LEGACY_CONCEPT_PREFIX = "concept:"
 

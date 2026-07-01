@@ -60,11 +60,7 @@ def test_floor_detects_pattern_growth(monkeypatch):
 @pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="needs except* (3.11+)")
 def test_except_star_as_rebinding_refuses_pin():
     scan = _scan(
-        "X = 1\n"
-        "try:\n"
-        "    pass\n"
-        "except* ValueError as X:\n"
-        "    pass\n"
+        "X = 1\n" "try:\n" "    pass\n" "except* ValueError as X:\n" "    pass\n"
     )
     assert "X" not in scan.pins
     assert _refusals(scan) and "except-as" in _refusals(scan)[0]["reason"]

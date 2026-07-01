@@ -21,7 +21,9 @@ def test_projected_equality_lifts_call_result_attribute_fact() -> None:
     assert len(report.payload.ir) == 1
     contract = report.payload.ir[0]
     assert contract.name == "test_dtype::test_dtype::assert:3:4::assertion"
-    assert contract.source_warrants[0].role == "python.projected-equality-assertion-sugar"
+    assert (
+        contract.source_warrants[0].role == "python.projected-equality-assertion-sugar"
+    )
     assert contract.inv == {
         "kind": "atomic",
         "name": "=",
@@ -105,17 +107,16 @@ def test_projected_equality_lifts_attribute_to_attribute_fact() -> None:
 
 def test_projected_equality_lifts_attribute_to_tuple_fact() -> None:
     report = build_literal_call_report(
-        source=(
-            "def test_shape(arr):\n"
-            "    assert arr.shape == (1, 1)\n"
-        ),
+        source=("def test_shape(arr):\n" "    assert arr.shape == (1, 1)\n"),
         filename="test_shape.py",
         memento_file="test_shape.py",
     )
 
     assert report is not None
     contract = report.payload.ir[0]
-    assert contract.source_warrants[0].role == "python.projected-equality-assertion-sugar"
+    assert (
+        contract.source_warrants[0].role == "python.projected-equality-assertion-sugar"
+    )
     assert contract.inv == {
         "kind": "atomic",
         "name": "=",
@@ -176,7 +177,9 @@ def test_projected_equality_keeps_non_constructor_bound_attribute_symbolic() -> 
     assert left["args"][1]["value"] == "dtype"
 
 
-def test_projected_equality_emits_external_bridge_edge_for_import_without_source() -> None:
+def test_projected_equality_emits_external_bridge_edge_for_import_without_source() -> (
+    None
+):
     report = build_literal_call_report(
         source=(
             "import math\n"

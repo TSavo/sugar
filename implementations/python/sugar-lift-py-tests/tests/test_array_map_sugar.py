@@ -12,7 +12,6 @@ from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import MapOperation, perform_operation
 
-
 ROOT = Path(__file__).resolve().parents[4]
 PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
 
@@ -46,7 +45,9 @@ def _run_lift_rpc(project: Path) -> dict:
     )
 
     assert completed.returncode == 0, completed.stderr
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
     response = next(item for item in responses if item.get("id") == 2)
     assert "error" not in response, response
     return response["result"]
@@ -83,13 +84,14 @@ def _inv_status(contract: dict) -> str:
     equalities = inv["operands"]
     assert all(item["kind"] == "atomic" and item["name"] == "=" for item in equalities)
     values = [
-        (item["args"][0]["value"], item["args"][1]["value"])
-        for item in equalities
+        (item["args"][0]["value"], item["args"][1]["value"]) for item in equalities
     ]
     return "sat" if all(left == right for left, right in values) else "unsat"
 
 
-def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(tmp_path: Path) -> None:
+def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(
+    tmp_path: Path,
+) -> None:
     good = tmp_path / "good"
     bad = tmp_path / "bad"
     _write_twin(good, "[2, 3, 4]")
@@ -199,9 +201,7 @@ def test_map_operation_missing_floor_names_floor_gap() -> None:
             ctx=None,
         )
 
-    assert str(raised.value).startswith(
-        "write more Floor for this construction: "
-    )
+    assert str(raised.value).startswith("write more Floor for this construction: ")
     assert raised.value.info == {
         "owner": "MapSugar",
         "blame": "x.py:1:0",

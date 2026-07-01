@@ -1,6 +1,7 @@
 """EncoderBodySugar lowers a string-encoder body -- composed by the Block to an
 EncodedStringValue -- to the existing str.eq-bv-blocks atom. The new logic is reading
 the byte vars out of the composed index terms, in byte-index order."""
+
 from __future__ import annotations
 
 import json

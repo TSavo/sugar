@@ -1,6 +1,7 @@
 """base20 pins the GENERIC factory: a different string-table encoder (20-char
 alphabet, 1 input byte, 2 output chars, nibble slices) lifts by composing the
 same generic catalog sugars as base64 -- no base64-specific sugar exists."""
+
 from __future__ import annotations
 
 import json

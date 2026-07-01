@@ -39,7 +39,9 @@ class SourceOracleRefusal(Exception):
     the source has drifted from what the `.proof` pins. Never a silent fallback."""
 
 
-def resolve_source_memento(project_root: str, memento: dict[str, Any]) -> dict[str, Any]:
+def resolve_source_memento(
+    project_root: str, memento: dict[str, Any]
+) -> dict[str, Any]:
     """Resolve a SourceMemento to its `{body_text, ast_template}` by RECOMPUTE.
 
     Reads the on-disk source at the memento's locus, re-derives the pinned
@@ -87,13 +89,19 @@ def resolve_source_memento(project_root: str, memento: dict[str, Any]) -> dict[s
     # disk. Function mementos resolve to whole bodies; statement/expression
     # mementos resolve to the exact node that warranted the proof row.
 
-    if pinned_source_cid is not None and recomputed.get("source_cid") != pinned_source_cid:
+    if (
+        pinned_source_cid is not None
+        and recomputed.get("source_cid") != pinned_source_cid
+    ):
         raise SourceOracleRefusal(
             f"source CID misaligned for `{function_name}` in `{file}`: "
             f"pinned {pinned_source_cid}, on-disk {recomputed.get('source_cid')} "
             "-- the source drifted from the proof"
         )
-    if pinned_template_cid is not None and recomputed.get("template_cid") != pinned_template_cid:
+    if (
+        pinned_template_cid is not None
+        and recomputed.get("template_cid") != pinned_template_cid
+    ):
         raise SourceOracleRefusal(
             f"template CID misaligned for `{function_name}` in `{file}`: "
             f"pinned {pinned_template_cid}, on-disk {recomputed.get('template_cid')} "
@@ -133,7 +141,9 @@ def _node_source_locator(
     elif isinstance(node, ast.expr):
         ast_template = expr_to_template(node, params)
     else:
-        raise SourceOracleRefusal(f"unsupported source node kind `{type(node).__name__}`")
+        raise SourceOracleRefusal(
+            f"unsupported source node kind `{type(node).__name__}`"
+        )
     return {
         "file": rel_path,
         "source_cid": blake3_512_of(body_text.encode("utf-8")),
@@ -259,9 +269,7 @@ def _locate_function(
         for n in ast.walk(tree)
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
         and (
-            function_name is None
-            or n.name == function_name
-            or n.name == function_leaf
+            function_name is None or n.name == function_name or n.name == function_leaf
         )
     ]
     if not matches:

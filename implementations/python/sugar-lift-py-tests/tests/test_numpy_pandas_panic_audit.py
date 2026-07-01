@@ -13,7 +13,6 @@ from sugar_lift_py_tests.idd import (
 )
 from sugar_lift_py_tests.idd.collect_panic_audit import _prepare_audit_workspace
 
-
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -56,7 +55,9 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
     }
     assert len(report.records) == 3
     assert all("--audit-only" not in command for command in calls)
-    assert all(command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls)
+    assert all(
+        command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls
+    )
 
     text = render_text(report)
     assert "python numpy/pandas lift panic audit" in text
@@ -71,7 +72,9 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
     (tmp_path / "examples/pandas-showcase").mkdir(parents=True)
     package = tmp_path / "site-packages/numpy"
     package.mkdir(parents=True)
-    (package / "sample.py").write_text("def f():\n    assert not g()\n", encoding="utf-8")
+    (package / "sample.py").write_text(
+        "def f():\n    assert not g()\n", encoding="utf-8"
+    )
     calls: list[list[str]] = []
 
     def fake_runner(command: list[str], cwd: Path) -> CommandResult:
@@ -97,7 +100,11 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         package_path_resolver=lambda package_name: package,
     )
 
-    assert [target.name for target in report.targets] == ["numpy", "pandas", "numpy-all"]
+    assert [target.name for target in report.targets] == [
+        "numpy",
+        "pandas",
+        "numpy-all",
+    ]
     assert report.r.values == {
         "numpy_sugar_panics": 1,
         "numpy_floor_panics": 0,
@@ -105,7 +112,9 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "pandas_floor_panics": 0,
         "unexpected_panics": 0,
     }
-    assert all(command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls)
+    assert all(
+        command[:4] == ["sugar", "lift", "--report", "--visual"] for command in calls
+    )
 
 
 def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -> None:
@@ -127,9 +136,9 @@ def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -
         encoding="utf-8"
     )
     assert (audit_workspace / "pkg/sample.py").is_file()
-    assert "emit = \"ir-document\"" in config
+    assert 'emit = "ir-document"' in config
     assert "sugar_lift_py_tests/lift_rpc.py" in manifest
-    assert "\"--rpc\", \"--audit-only\"" in manifest
+    assert '"--rpc", "--audit-only"' in manifest
     assert "sugar_lift_py_tests.lsp" not in manifest
 
 
@@ -160,7 +169,9 @@ def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) 
 
 def test_failed_lift_without_gap_records_counts_as_unexpected() -> None:
     def failing_runner(command: list[str], cwd: Path) -> CommandResult:
-        return CommandResult(returncode=1, stdout="", stderr="error: no construction gaps\n")
+        return CommandResult(
+            returncode=1, stdout="", stderr="error: no construction gaps\n"
+        )
 
     report = collect_panic_audit(ROOT, run_command=failing_runner)
 
@@ -180,14 +191,14 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
                 '{"code":-32603,"message":"audit-only construction gaps",'
                 '"data":{"auditOnlyGaps":[{"kind":"audit-only-construction-gap",'
                 '"label":"a.py","message":"write more Sugar for this AST: '
-                'owner=python.factory blame=a.py:1:0 observed=Dict requested=term '
+                "owner=python.factory blame=a.py:1:0 observed=Dict requested=term "
                 'fix=create sugar_lift_py_tests.sugar.dict.dict_sugar",'
                 '"gap":{"owner":"python.factory","blame":"a.py:1:0",'
                 '"observed":"Dict","requested":"term",'
                 '"fix":"create sugar_lift_py_tests.sugar.dict.dict_sugar"},'
                 '"auditRow":{}},{"kind":"audit-only-construction-gap",'
                 '"label":"b.py","message":"write more Floor for this construction: '
-                'owner=python-test blame=b.py:2:4 observed=TermValue requested=map_with '
+                "owner=python-test blame=b.py:2:4 observed=TermValue requested=map_with "
                 'fix=add map_with to TermValue or emit a real effect",'
                 '"gap":{"owner":"python-test","blame":"b.py:2:4",'
                 '"observed":"TermValue","requested":"map_with",'

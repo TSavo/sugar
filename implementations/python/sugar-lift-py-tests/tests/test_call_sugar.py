@@ -4,6 +4,7 @@ Step 2 scope: the dumb shell (owns=shape, build=router, desugar=delegate) and th
 RefuseStrategy. BridgeStrategy / AssertionFactStrategy (the in-body EUF bridge + dig, and
 the sworn fact) land in Steps 3-4 with their own tests. No NotImplementedError stubs here.
 """
+
 from __future__ import annotations
 
 import ast
@@ -14,7 +15,11 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.build import FactoryBuildContext, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.sugar.call_sugar import CallSugar, ExternalBridgeStrategy, RefuseStrategy
+from sugar_lift_py_tests.sugar.call_sugar import (
+    CallSugar,
+    ExternalBridgeStrategy,
+    RefuseStrategy,
+)
 
 
 def _frag(expr: str) -> SourceFragment:
@@ -28,6 +33,7 @@ def _build(expr: str):
 
 # --- owns is SHAPE ONLY -----------------------------------------------------------------
 
+
 def test_owns_is_shape_only_a_call_yes_a_non_call_no():
     assert CallSugar.owns(_frag("f(1)")) is True
     assert CallSugar.owns(_frag("5")) is False
@@ -39,13 +45,20 @@ def test_desugar_is_a_single_delegation_no_context_branch():
     import inspect
 
     src = inspect.getsource(CallSugar.desugar)
-    body = [ln.strip() for ln in src.splitlines() if ln.strip() and not ln.strip().startswith(("def", "#"))]
+    body = [
+        ln.strip()
+        for ln in src.splitlines()
+        if ln.strip() and not ln.strip().startswith(("def", "#"))
+    ]
     assert body == ["return self.strategy.emit(self, ctx)"], body
 
 
 # --- the over-claim is fixed: every formerly-panicking shape routes to CallSugar ---------
 
-@pytest.mark.parametrize("expr", ["np.divide(6, 2)", "np.add(2, 3)", "numpy_testing.assert_equal(a, b)"])
+
+@pytest.mark.parametrize(
+    "expr", ["np.divide(6, 2)", "np.add(2, 3)", "numpy_testing.assert_equal(a, b)"]
+)
 def test_unresolved_call_builds_a_callsugar_with_refusestrategy_not_a_crash(expr):
     body, _ = _build(expr)
     assert isinstance(body.sugar, CallSugar)
@@ -73,6 +86,7 @@ def test_import_bound_external_call_builds_bridge_strategy():
 
 
 # --- RefuseStrategy refuses LOUD and NAMED, never a silent lift --------------------------
+
 
 def test_refuse_strategy_raises_a_named_factory_gap_on_reduce():
     body, ctx = _build("np.divide(6, 2)")

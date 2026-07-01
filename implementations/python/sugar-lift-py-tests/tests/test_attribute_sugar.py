@@ -1,4 +1,5 @@
 """AttributeSugar lowers Python attribute access to the `py.attr` ctor."""
+
 from __future__ import annotations
 
 from factory_reduce import fol, reduce_term

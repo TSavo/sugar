@@ -82,8 +82,8 @@ def ed25519_verify_string(pubkey_string: str, sig_string: str, message: bytes) -
     if not sig_string.startswith(ED25519_SIG_PREFIX):
         return False
     try:
-        pk_bytes = base64.b64decode(pubkey_string[len(ED25519_KEY_PREFIX):])
-        sig_bytes = base64.b64decode(sig_string[len(ED25519_SIG_PREFIX):])
+        pk_bytes = base64.b64decode(pubkey_string[len(ED25519_KEY_PREFIX) :])
+        sig_bytes = base64.b64decode(sig_string[len(ED25519_SIG_PREFIX) :])
     except Exception:
         return False
     if len(pk_bytes) != 32 or len(sig_bytes) != 64:
@@ -165,6 +165,7 @@ class Signer:
         signing`` import cycle (claim_envelope itself imports `Signer`).
         """
         from .claim_envelope import ClaimEnvelope
+
         return ClaimEnvelope.from_contract_decl(
             decl,
             self,

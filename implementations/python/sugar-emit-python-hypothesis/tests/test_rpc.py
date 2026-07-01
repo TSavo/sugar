@@ -69,7 +69,9 @@ def test_kit_declaration_stdio_round_trip() -> None:
     src = Path(__file__).resolve().parents[1] / "src"
     env = os.environ.copy()
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(src) if not existing else os.pathsep.join([str(src), existing])
+    env["PYTHONPATH"] = (
+        str(src) if not existing else os.pathsep.join([str(src), existing])
+    )
     messages = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
         {"jsonrpc": "2.0", "id": 2, "method": "sugar.plugin.kit_declaration"},
@@ -86,7 +88,9 @@ def test_kit_declaration_stdio_round_trip() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
     initialize = next(response for response in responses if response.get("id") == 1)
     declaration = next(response for response in responses if response.get("id") == 2)
     assert initialize["result"]["name"] == "python-hypothesis"
@@ -128,7 +132,10 @@ def test_invoke_reports_unsupported_gap() -> None:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "sugar.plugin.invoke",
-            "params": {"function": "f", "predicates": [_op("concept:fallible-err", _var("f"))]},
+            "params": {
+                "function": "f",
+                "predicates": [_op("concept:fallible-err", _var("f"))],
+            },
         }
     )
 

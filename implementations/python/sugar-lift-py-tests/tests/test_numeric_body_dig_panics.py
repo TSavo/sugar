@@ -14,6 +14,7 @@ NOT reach a single literal -- a symbolic arg, an unfoldable op, a runtime effect
 the tower unclimbable -- defer to the symbolic universe / the mouth; that residual stays
 honest, it just isn't this file's subject.)
 """
+
 from __future__ import annotations
 
 import pytest
@@ -39,17 +40,23 @@ def test_numeric_body_constructs_the_python_value(body, arg, expected):
     # Python is the reference: its own `eval` proves the value we expect is the value Python
     # computes -- and the lift below gets it the same way (the catalog's fold IS Python's).
     assert eval(body.removeprefix("return "), {"x": arg}) == expected  # noqa: S307
-    invs = _assertion_invs(f"def g(x):\n    {body}\ndef t():\n    assert g({arg}) == {expected}\n")
+    invs = _assertion_invs(
+        f"def g(x):\n    {body}\ndef t():\n    assert g({arg}) == {expected}\n"
+    )
     # the vendor fact and the constructed fact -- both the #euf# key, agreeing on the value.
     assert len(invs) == 2
-    assert invs[0] == invs[1], "construction must equal the vendor value when the vendor is right"
+    assert (
+        invs[0] == invs[1]
+    ), "construction must equal the vendor value when the vendor is right"
 
 
 def test_a_vendor_lie_is_caught_by_the_construction():
     # g(5) is 6 by Python; the vendor swears 99. Same #euf# key, DIFFERENT values -> the
     # contradiction is present in the contracts (mint conjoins -> UNSAT). The symbolic
     # universe left `+` uninterpreted and could not catch this.
-    invs = _assertion_invs("def g(x):\n    return x + 1\ndef t():\n    assert g(5) == 99\n")
+    invs = _assertion_invs(
+        "def g(x):\n    return x + 1\ndef t():\n    assert g(5) == 99\n"
+    )
     assert len(invs) == 2
     assert invs[0] != invs[1], "the lie (99) and the construction (6) must differ"
 

@@ -3,6 +3,7 @@ ALIAS for the rhs expression, not a snapshot of its value. The binding carries t
 SOURCE (recoverable + recomposable) -- a reference recomposes it, and a later pass
 (map element, curried arg, temporal rewrite) can recover the original expression. The
 block threads the bound var; a comment never disturbs it."""
+
 from __future__ import annotations
 
 import ast

@@ -17,7 +17,14 @@ import json
 
 import pytest
 
-from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs, vobj, vstr, vint, varr
+from sugar_lift_py_tests.canonicalizer import (
+    blake3_512_of,
+    encode_jcs,
+    vobj,
+    vstr,
+    vint,
+    varr,
+)
 from sugar_lift_py_tests.claim_envelope import (
     AuthoringKitAuthor,
     AuthoringLift,
@@ -33,63 +40,109 @@ from sugar_lift_py_tests.claim_envelope import (
     mint_implication,
 )
 from sugar_lift_py_tests.ir import ContractDecl, atomic, forall, gt, num, make_var, Int
-from sugar_lift_py_tests.signing import FOUNDATION_V0_SEED, Signer, ed25519_pubkey_string
-
+from sugar_lift_py_tests.signing import (
+    FOUNDATION_V0_SEED,
+    Signer,
+    ed25519_pubkey_string,
+)
 
 # ---------------------------------------------------------------------------
 # Canonical fixtures (must match implementations/rust/.../tests/cross_kit_pin.rs)
 # ---------------------------------------------------------------------------
 
+
 # `forall n: Int. n > 0` -- the cross-kit pin's `pre` formula.
 def _pre_n_gt_0_value():
-    return vobj([
-        ("kind", vstr("forall")),
-        ("name", vstr("n")),
-        ("sort", vobj([
-            ("kind", vstr("primitive")),
-            ("name", vstr("Int")),
-        ])),
-        ("body", vobj([
-            ("kind", vstr("atomic")),
-            ("name", vstr(">")),
-            ("args", varr([
-                vobj([
-                    ("kind", vstr("var")),
-                    ("name", vstr("n")),
-                ]),
-                vobj([
-                    ("kind", vstr("const")),
-                    ("value", vint(0)),
-                    ("sort", vobj([
+    return vobj(
+        [
+            ("kind", vstr("forall")),
+            ("name", vstr("n")),
+            (
+                "sort",
+                vobj(
+                    [
                         ("kind", vstr("primitive")),
                         ("name", vstr("Int")),
-                    ])),
-                ]),
-            ])),
-        ])),
-    ])
+                    ]
+                ),
+            ),
+            (
+                "body",
+                vobj(
+                    [
+                        ("kind", vstr("atomic")),
+                        ("name", vstr(">")),
+                        (
+                            "args",
+                            varr(
+                                [
+                                    vobj(
+                                        [
+                                            ("kind", vstr("var")),
+                                            ("name", vstr("n")),
+                                        ]
+                                    ),
+                                    vobj(
+                                        [
+                                            ("kind", vstr("const")),
+                                            ("value", vint(0)),
+                                            (
+                                                "sort",
+                                                vobj(
+                                                    [
+                                                        ("kind", vstr("primitive")),
+                                                        ("name", vstr("Int")),
+                                                    ]
+                                                ),
+                                            ),
+                                        ]
+                                    ),
+                                ]
+                            ),
+                        ),
+                    ]
+                ),
+            ),
+        ]
+    )
 
 
 # `out = 0` -- the cross-kit pin's `post` formula.
 def _post_out_eq_0_value():
-    return vobj([
-        ("kind", vstr("atomic")),
-        ("name", vstr("=")),
-        ("args", varr([
-            vobj([
-                ("kind", vstr("var")),
-                ("name", vstr("out")),
-            ]),
-            vobj([
-                ("kind", vstr("const")),
-                ("value", vint(0)),
-                ("sort", vobj([
-                    ("kind", vstr("primitive")),
-                    ("name", vstr("Int")),
-                ])),
-            ]),
-        ])),
-    ])
+    return vobj(
+        [
+            ("kind", vstr("atomic")),
+            ("name", vstr("=")),
+            (
+                "args",
+                varr(
+                    [
+                        vobj(
+                            [
+                                ("kind", vstr("var")),
+                                ("name", vstr("out")),
+                            ]
+                        ),
+                        vobj(
+                            [
+                                ("kind", vstr("const")),
+                                ("value", vint(0)),
+                                (
+                                    "sort",
+                                    vobj(
+                                        [
+                                            ("kind", vstr("primitive")),
+                                            ("name", vstr("Int")),
+                                        ]
+                                    ),
+                                ),
+                            ]
+                        ),
+                    ]
+                ),
+            ),
+        ]
+    )
 
 
 def _fixture_kwargs():
@@ -294,8 +347,14 @@ class TestLayeredShape:
         assert h["kind"] == "contract"
         assert h["cid"].startswith("blake3-512:")
         # Kind-specific REQUIRED for contract:
-        for k in ("name", "outBinding", "verdict", "bindingHash",
-                  "propertyHash", "inputCids"):
+        for k in (
+            "name",
+            "outBinding",
+            "verdict",
+            "bindingHash",
+            "propertyHash",
+            "inputCids",
+        ):
             assert k in h, f"header.{k} missing"
 
     def test_attestation_cid_equals_blake3_of_jcs_envelope(self):
@@ -305,15 +364,17 @@ class TestLayeredShape:
         parsed = self._parse(env)
         # Reconstruct envelope as a Value tree and JCS it.
         e = parsed["envelope"]
-        env_v = vobj([
-            ("signer", vstr(e["signer"])),
-            ("declaredAt", vstr(e["declaredAt"])),
-            ("signature", vstr(e["signature"])),
-        ])
-        recomputed = blake3_512_of(encode_jcs(env_v).encode("utf-8"))
-        assert env.cid == recomputed, (
-            "attestation CID must equal blake3_512(JCS(envelope))"
+        env_v = vobj(
+            [
+                ("signer", vstr(e["signer"])),
+                ("declaredAt", vstr(e["declaredAt"])),
+                ("signature", vstr(e["signature"])),
+            ]
         )
+        recomputed = blake3_512_of(encode_jcs(env_v).encode("utf-8"))
+        assert (
+            env.cid == recomputed
+        ), "attestation CID must equal blake3_512(JCS(envelope))"
 
     def test_signature_covers_jcs_of_header_metadata(self):
         """Signature is over JCS({"header": header, "metadata": metadata})."""
@@ -331,18 +392,20 @@ class TestLayeredShape:
         signer_str = parsed["envelope"]["signer"]
         assert sig_str.startswith("ed25519:")
         assert signer_str.startswith("ed25519:")
-        sig_bytes = base64.b64decode(sig_str[len("ed25519:"):])
-        pk_bytes = base64.b64decode(signer_str[len("ed25519:"):])
+        sig_bytes = base64.b64decode(sig_str[len("ed25519:") :])
+        pk_bytes = base64.b64decode(signer_str[len("ed25519:") :])
         assert len(sig_bytes) == 64
         assert len(pk_bytes) == 32
 
         # The signed message is JCS({"header":..., "metadata":...}).
         # Recompute by JCS-encoding the parsed header/metadata back to
         # canonicalizer Values via a generic JSON-to-Value lift.
-        signing_v = vobj([
-            ("header", _json_to_value(parsed["header"])),
-            ("metadata", _json_to_value(parsed["metadata"])),
-        ])
+        signing_v = vobj(
+            [
+                ("header", _json_to_value(parsed["header"])),
+                ("metadata", _json_to_value(parsed["metadata"])),
+            ]
+        )
         signing_bytes = encode_jcs(signing_v).encode("utf-8")
 
         VerifyKey(pk_bytes).verify(signing_bytes, sig_bytes)  # raises on failure
@@ -352,9 +415,11 @@ def _json_to_value(j):
     """Recursive JSON -> canonicalizer Value lift used in conformance tests."""
     if j is None:
         from sugar_lift_py_tests.canonicalizer import vnull
+
         return vnull()
     if isinstance(j, bool):
         from sugar_lift_py_tests.canonicalizer import vbool
+
         return vbool(j)
     if isinstance(j, int):
         return vint(j)
@@ -378,7 +443,9 @@ class TestErrors:
             mint_contract(
                 contract_name="x",
                 out_binding="out",
-                pre=None, post=None, inv=None,
+                pre=None,
+                post=None,
+                inv=None,
                 produced_by="t",
                 produced_at="2026-04-30T00:00:00.000Z",
                 authoring=AuthoringKitAuthor(author="t"),
@@ -391,7 +458,8 @@ class TestErrors:
                 contract_name="x",
                 out_binding="",
                 pre=_pre_n_gt_0_value(),
-                post=None, inv=None,
+                post=None,
+                inv=None,
                 produced_by="t",
                 produced_at="2026-04-30T00:00:00.000Z",
                 authoring=AuthoringKitAuthor(author="t"),
@@ -421,7 +489,8 @@ class TestFromContractDecl:
         )
         signer = Signer.foundation_v0(producer_id="py-kit@1.0")
         env = ClaimEnvelope.from_contract_decl(
-            decl, signer,
+            decl,
+            signer,
             produced_at="2026-04-30T00:00:00.000Z",
         )
         assert env.cid.startswith("blake3-512:")
@@ -441,7 +510,8 @@ class TestFromContractDecl:
         )
         signer = Signer.foundation_v0(producer_id="py-kit@1.0")
         env = ClaimEnvelope.from_contract_decl(
-            decl, signer,
+            decl,
+            signer,
             produced_at="2026-04-30T00:00:00.000Z",
         )
         parsed = json.loads(env.canonical_bytes.decode("utf-8"))
@@ -461,7 +531,9 @@ class TestFromContractDecl:
         signer = Signer.foundation_v0(producer_id="py-kit@1.0")
         a = signer.sign_claim(decl, produced_at="2026-04-30T00:00:00.000Z")
         b = ClaimEnvelope.from_contract_decl(
-            decl, signer, produced_at="2026-04-30T00:00:00.000Z",
+            decl,
+            signer,
+            produced_at="2026-04-30T00:00:00.000Z",
         )
         assert a.canonical_bytes == b.canonical_bytes
         assert a.cid == b.cid
@@ -502,11 +574,13 @@ class TestAuthoring:
         assert "note" not in a
 
     def test_lift_round_trips(self):
-        env = self._mint_with_authoring(AuthoringLift(
-            lifter="lift-kit@1.0",
-            evidence="tests",
-            source_cid="blake3-512:source",
-        ))
+        env = self._mint_with_authoring(
+            AuthoringLift(
+                lifter="lift-kit@1.0",
+                evidence="tests",
+                source_cid="blake3-512:source",
+            )
+        )
         a = json.loads(env.canonical_bytes.decode("utf-8"))["metadata"]["authoring"]
         assert a["producerKind"] == "lift"
         assert a["lifter"] == "lift-kit@1.0"
@@ -516,13 +590,15 @@ class TestAuthoring:
     def test_llm_confidence_truncates_toward_zero(self):
         """Match Rust's `(confidence * 1000.0) as i64` semantics: truncate,
         do NOT round. 0.9009 -> 900, not 901."""
-        env = self._mint_with_authoring(AuthoringLlm(
-            llm="claude",
-            llm_version="opus-4.7",
-            prompt_cid="blake3-512:p",
-            confidence=0.9009,
-            rationale=None,
-        ))
+        env = self._mint_with_authoring(
+            AuthoringLlm(
+                llm="claude",
+                llm_version="opus-4.7",
+                prompt_cid="blake3-512:p",
+                confidence=0.9009,
+                rationale=None,
+            )
+        )
         a = json.loads(env.canonical_bytes.decode("utf-8"))["metadata"]["authoring"]
         assert a["confidence"] == 900  # truncate, not round (would be 901)
 
@@ -543,11 +619,13 @@ class TestDeterminism:
         a = mint_contract(**_fixture_kwargs())
         kwargs = _fixture_kwargs()
         # Different pre formula
-        kwargs["pre"] = vobj([
-            ("kind", vstr("atomic")),
-            ("name", vstr("=")),
-            ("args", varr([])),
-        ])
+        kwargs["pre"] = vobj(
+            [
+                ("kind", vstr("atomic")),
+                ("name", vstr("=")),
+                ("args", varr([])),
+            ]
+        )
         b = mint_contract(**kwargs)
         assert a.cid != b.cid
 

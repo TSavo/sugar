@@ -14,6 +14,7 @@ the project root is needed.  Output (stdout): one JSON line
 ``{"verdict": "...", "reason": "..."}``.  Exit code: 0 iff DISCHARGED, 1
 otherwise (fail-closed).
 """
+
 from __future__ import annotations
 
 import json
@@ -26,16 +27,23 @@ from .witness import discharge_from_proof
 def main(argv: List[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) < 2:
-        sys.stdout.write(json.dumps({
-            "verdict": "REFUSED",
-            "reason": "usage: <witness.proof> <project_dir>",
-        }) + "\n")
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "verdict": "REFUSED",
+                    "reason": "usage: <witness.proof> <project_dir>",
+                }
+            )
+            + "\n"
+        )
         return 1
     proof_path, project_dir = argv[0], argv[1]
     try:
         verdict, reason = discharge_from_proof(proof_path, project_dir)
     except Exception as e:  # fail-closed: any error is a refusal, never a discharge
-        sys.stdout.write(json.dumps({"verdict": "REFUSED", "reason": f"discharge error: {e}"}) + "\n")
+        sys.stdout.write(
+            json.dumps({"verdict": "REFUSED", "reason": f"discharge error: {e}"}) + "\n"
+        )
         return 1
     sys.stdout.write(json.dumps({"verdict": verdict, "reason": reason}) + "\n")
     return 0 if verdict == "DISCHARGED" else 1

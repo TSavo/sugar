@@ -1,6 +1,7 @@
 """A comment (a docstring / bare-string statement) is inert. The factory classifies
 it as Support, and CommentSugar desugars to SupportValue -- it ALWAYS completes and
 contributes no first-order logic. A non-comment statement is not Support."""
+
 from __future__ import annotations
 
 import ast

@@ -141,7 +141,15 @@ def verify_proof(proof_bytes: bytes, expected_cid: str, signer_pubkey: bytes) ->
         return False
     if catalog.get("kind") != "catalog":
         return False
-    required = {"kind", "name", "version", "members", "signer", "declaredAt", "signature"}
+    required = {
+        "kind",
+        "name",
+        "version",
+        "members",
+        "signer",
+        "declaredAt",
+        "signature",
+    }
     if not required.issubset(catalog.keys()):
         return False
     sig_bytes = catalog.get("signature")
@@ -167,6 +175,7 @@ def verify_proof(proof_bytes: bytes, expected_cid: str, signer_pubkey: bytes) ->
 # for the normative proof-building path.
 # ---------------------------------------------------------------------------
 
+
 def envelope_body_to_value(env: ProofEnvelopeInput) -> Value:
     """Logical body shape as a canonicalizer Value tree.
 
@@ -186,19 +195,22 @@ def envelope_body_to_value(env: ProofEnvelopeInput) -> Value:
         ("name", vstr(env.name)),
         ("version", vstr(env.version)),
         # Insertion-order members; JCS sorts at emit.
-        ("members", vobj([
-            (cid, vstr(_bytes_to_hex(b))) for cid, b in env.members.items()
-        ])),
+        (
+            "members",
+            vobj([(cid, vstr(_bytes_to_hex(b))) for cid, b in env.members.items()]),
+        ),
         ("signer", vstr(env.signer_cid)),
         ("declaredAt", vstr(env.declared_at)),
     ]
     if env.binary_cid is not None:
         pairs.append(("binaryCid", vstr(env.binary_cid)))
     if env.metadata is not None:
-        pairs.append((
-            "metadata",
-            vobj([(k, vstr(v)) for k, v in env.metadata.items()]),
-        ))
+        pairs.append(
+            (
+                "metadata",
+                vobj([(k, vstr(v)) for k, v in env.metadata.items()]),
+            )
+        )
     return vobj(pairs)
 
 

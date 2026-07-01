@@ -40,7 +40,9 @@ class EmitPlan:
         if not isinstance(params, dict):
             return EmitPlan()
         contract_id = _first_str(params.get("contract_id"))
-        function = _first_str(params.get("function"), params.get("function_name")) or "test"
+        function = (
+            _first_str(params.get("function"), params.get("function_name")) or "test"
+        )
         formals = _string_list(params.get("params"))
         formal_types = _string_list(params.get("param_types"))
         predicates = [p for p in _list(params.get("predicates")) if isinstance(p, dict)]
@@ -109,7 +111,9 @@ def emit(plan: EmitPlan) -> Emission:
             continue
         emitted.append(head)
         declarations, assertion = rendered
-        functions.append(_render_test_function(_function_name(head, idx), declarations, assertion))
+        functions.append(
+            _render_test_function(_function_name(head, idx), declarations, assertion)
+        )
 
     source = _render_module(functions)
     cid = "blake3-512:" + blake3.blake3(source.encode("utf-8")).digest(length=64).hex()
@@ -124,7 +128,7 @@ def head_of(predicate: dict[str, Any]) -> str | None:
     if not isinstance(name, str) or not name.strip():
         return None
     if name.startswith(_CONCEPT_PREFIX):
-        return name[len(_CONCEPT_PREFIX):]
+        return name[len(_CONCEPT_PREFIX) :]
     return name
 
 
@@ -204,9 +208,13 @@ def _assign_binary_terms(
     if left.var_name is not None and right.var_name is not None:
         return _assign_var_var(ctx, head, left.var_name, right.var_name)
     if left.var_name is not None and right.has_const:
-        return _assign_var_const(ctx, head, left.var_name, right.const_value, const_on_right=True)
+        return _assign_var_const(
+            ctx, head, left.var_name, right.const_value, const_on_right=True
+        )
     if left.has_const and right.var_name is not None:
-        return _assign_var_const(ctx, head, right.var_name, left.const_value, const_on_right=False)
+        return _assign_var_const(
+            ctx, head, right.var_name, left.const_value, const_on_right=False
+        )
     return False
 
 
@@ -265,10 +273,14 @@ def _assign_var_const(
     inclusive_heads = {"le", "lte", "ge", "gte"}
     delta = 0 if head in inclusive_heads else 1
 
-    if (head in lower_heads and const_on_right) or (head in greater_heads and not const_on_right):
+    if (head in lower_heads and const_on_right) or (
+        head in greater_heads and not const_on_right
+    ):
         ctx.assign(var_name, f"data.draw(st.integers(max_value={const_value - delta}))")
         return True
-    if (head in greater_heads and const_on_right) or (head in lower_heads and not const_on_right):
+    if (head in greater_heads and const_on_right) or (
+        head in lower_heads and not const_on_right
+    ):
         ctx.assign(var_name, f"data.draw(st.integers(min_value={const_value + delta}))")
         return True
     return False
@@ -302,7 +314,9 @@ def _render_const_value(value: Any) -> str:
 
 
 def _is_identifier(value: Any) -> bool:
-    return isinstance(value, str) and value.isidentifier() and not keyword.iskeyword(value)
+    return (
+        isinstance(value, str) and value.isidentifier() and not keyword.iskeyword(value)
+    )
 
 
 def _is_literal_const(value: Any) -> bool:

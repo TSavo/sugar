@@ -1,4 +1,5 @@
 """TupleLiteralSugar reduces a Python tuple literal to the `tuple` ctor."""
+
 from __future__ import annotations
 
 from factory_reduce import fol, reduce_term

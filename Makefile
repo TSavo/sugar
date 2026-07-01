@@ -26,6 +26,7 @@ PYTHON_KIT_VENV ?= /tmp/sugar-python-kit-env
 PYTHON_KIT_BIN := $(PYTHON_KIT_VENV)/bin
 PYTHON_KIT := $(PYTHON_KIT_BIN)/python
 PYTHON_KIT_PIP := $(PYTHON_KIT) -m pip
+PYTHON_FORMAT_PATHS ?= implementations/python
 BCARGO_PYTHON_VENV ?= /tmp/sugar-bcargo-python-kit-env
 BCARGO_PYTHON_BIN := $(BCARGO_PYTHON_VENV)/bin
 BCARGO_PYTHON := $(BCARGO_PYTHON_BIN)/python
@@ -68,6 +69,7 @@ help:
 	@echo ""
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
+	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              go / csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
 	@echo ""
@@ -262,6 +264,13 @@ test-python: build-python
 		pytest) || failed="$$failed sugar-build-witness"; \
 	if [ -n "$$failed" ]; then echo "test-python FAIL:$$failed"; exit 1; fi
 
+.PHONY: test-python-format
+test-python-format:
+	$(PYTHON) -m venv $(PYTHON_KIT_VENV)
+	$(PYTHON_KIT_PIP) install --quiet --upgrade pip
+	$(PYTHON_KIT_PIP) install --quiet --no-cache-dir -e implementations/python/sugar-lift-py-tests[test]
+	$(PYTHON_KIT) -m black --check $(PYTHON_FORMAT_PATHS)
+
 .PHONY: test-php
 test-php:
 	cd implementations/php && composer install && composer test
@@ -452,7 +461,7 @@ coretests-invariants:
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
 .PHONY: ci
-ci: check-cargo-entrypoint test-all test-showcases self-attest coretests-source-audit coretests-invariants
+ci: check-cargo-entrypoint test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 

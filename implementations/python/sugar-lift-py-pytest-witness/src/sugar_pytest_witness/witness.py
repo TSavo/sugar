@@ -17,6 +17,7 @@ has a different code CID (can't borrow a correct program's passing witness) and,
 when run, yields a ``failed`` outcome (can mint no passing witness of its own).
 You cannot witness code right that runs wrong.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,15 +59,19 @@ def runtime_cid() -> str:
     return blake3_512_of(desc.encode("utf-8"))
 
 
-def _witness_value(code: str, runtime: str, test_id: str, outcome: str, code_files: List[str]):
-    return vobj([
-        ("kind", vstr("pytest-witness")),
-        ("codeCid", vstr(code)),
-        ("codeFiles", vstr(",".join(sorted(code_files)))),
-        ("outcome", vstr(outcome)),
-        ("runtimeCid", vstr(runtime)),
-        ("test", vstr(test_id)),
-    ])
+def _witness_value(
+    code: str, runtime: str, test_id: str, outcome: str, code_files: List[str]
+):
+    return vobj(
+        [
+            ("kind", vstr("pytest-witness")),
+            ("codeCid", vstr(code)),
+            ("codeFiles", vstr(",".join(sorted(code_files)))),
+            ("outcome", vstr(outcome)),
+            ("runtimeCid", vstr(runtime)),
+            ("test", vstr(test_id)),
+        ]
+    )
 
 
 @dataclass(frozen=True)
@@ -74,7 +79,7 @@ class Witness:
     code_cid: str
     runtime_cid: str
     test_id: str
-    outcome: str          # "passed" | "failed"
+    outcome: str  # "passed" | "failed"
     code_files: Tuple[str, ...]  # project-relative
     cid: str
 
@@ -106,12 +111,26 @@ def run_file_witnesses(
         # whole kit dependency chain on the path). This makes the per-test run
         # robust to cwd and to a partial PYTHONPATH.
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
-        env_pp = os.pathsep.join(p for p in (plugin_dir, os.environ.get("PYTHONPATH", "")) if p)
+        env_pp = os.pathsep.join(
+            p for p in (plugin_dir, os.environ.get("PYTHONPATH", "")) if p
+        )
         env = dict(os.environ, SUGAR_WITNESS_OUT=out_path, PYTHONPATH=env_pp)
         subprocess.run(
-            [sys.executable, "-m", "pytest", test_file, "-q", "-p", "no:cacheprovider",
-             "-p", "_witness_collect"],
-            cwd=project_dir, capture_output=True, text=True, env=env,
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                test_file,
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-p",
+                "_witness_collect",
+            ],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         results: dict = {}
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
@@ -130,7 +149,9 @@ def run_file_witnesses(
             continue  # a skip is neither a discharge nor a refusal
         outcome = "passed" if raw == "passed" else "failed"
         cid = jcs_hash(_witness_value(cc, rc, nodeid, outcome, code_files))
-        witnesses.append(Witness(cc, rc, nodeid, outcome, tuple(sorted(code_files)), cid))
+        witnesses.append(
+            Witness(cc, rc, nodeid, outcome, tuple(sorted(code_files)), cid)
+        )
     return witnesses
 
 
@@ -157,7 +178,9 @@ def run_and_witness(project_dir: str, test_id: str, code_files: List[str]) -> Wi
     rc = runtime_cid()
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", test_id, "-q", "-p", "no:cacheprovider"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
     )
     outcome = "passed" if proc.returncode == 0 else "failed"
     cid = jcs_hash(_witness_value(cc, rc, test_id, outcome, code_files))
@@ -235,9 +258,11 @@ def witness_body(w: "Witness") -> bytes:
     """The bytes the witness CID addresses: the canonical run record. By
     construction ``blake3_512_of(witness_body(w)) == w.cid`` -- the file content
     IS what was signed for, so the oracle can content-address it."""
-    return encode_jcs(_witness_value(
-        w.code_cid, w.runtime_cid, w.test_id, w.outcome, list(w.code_files)
-    )).encode("utf-8")
+    return encode_jcs(
+        _witness_value(
+            w.code_cid, w.runtime_cid, w.test_id, w.outcome, list(w.code_files)
+        )
+    ).encode("utf-8")
 
 
 def _cid_filename(cid: str, ext: str) -> str:
@@ -281,7 +306,9 @@ def read_witness_body(witness_cid: str, package_dir: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
     for name in sorted(os.listdir(package_dir)):
-        if not name.endswith(".witness") or name == _cid_filename(witness_cid, ".witness"):
+        if not name.endswith(".witness") or name == _cid_filename(
+            witness_cid, ".witness"
+        ):
             continue
         body = read_witness_from_bundle(witness_cid, os.path.join(package_dir, name))
         if body is not None:
@@ -384,17 +411,23 @@ def discharge_bundle(
     buf, cid, witnesses = build_suite_bundle(project_dir, test_files, code_files)
     n = len(witnesses)
     if cid != bundle_cid:
-        return ("REFUSED",
-                f"suite did not reproduce the pinned bundle: recomputed "
-                f"{cid[:28]}... != pinned {bundle_cid[:28]}... ({n} tests re-run)")
+        return (
+            "REFUSED",
+            f"suite did not reproduce the pinned bundle: recomputed "
+            f"{cid[:28]}... != pinned {bundle_cid[:28]}... ({n} tests re-run)",
+        )
     failed = [w.test_id for w in witnesses if w.outcome != "passed"]
     if failed:
         shown = ", ".join(t.rsplit("::", 1)[-1] for t in failed[:6])
         more = f" (+{len(failed) - 6} more)" if len(failed) > 6 else ""
-        return ("REFUSED",
-                f"bundle reproduced but {len(failed)}/{n} tests failed: {shown}{more}")
-    return ("DISCHARGED",
-            f"suite re-ran; all {n} per-test witnesses reproduced and passed")
+        return (
+            "REFUSED",
+            f"bundle reproduced but {len(failed)}/{n} tests failed: {shown}{more}",
+        )
+    return (
+        "DISCHARGED",
+        f"suite re-ran; all {n} per-test witnesses reproduced and passed",
+    )
 
 
 def read_witness_bundle(path: str) -> "dict[str, bytes]":
@@ -434,10 +467,16 @@ def verify(witness: Witness, project_dir: str) -> Tuple[str, str]:
         return ("REFUSED", "code CID mismatch -- this witness is not about this code")
     recomputed = run_and_witness(project_dir, witness.test_id, list(witness.code_files))
     if recomputed.cid != witness.cid:
-        return ("REFUSED", f"witness did not reproduce (re-run outcome: {recomputed.outcome})")
+        return (
+            "REFUSED",
+            f"witness did not reproduce (re-run outcome: {recomputed.outcome})",
+        )
     if witness.outcome != "passed":
         return ("REFUSED", f"witnessed outcome is {witness.outcome!r}, not a discharge")
-    return ("DISCHARGED", "re-ran on pinned code; assertions held; witness CID reproduced")
+    return (
+        "DISCHARGED",
+        "re-ran on pinned code; assertions held; witness CID reproduced",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,21 +487,31 @@ def verify(witness: Witness, project_dir: str) -> Tuple[str, str]:
 
 def _witness_envelope_value(w: Witness):
     proof_data = json.dumps(
-        {"codeCid": w.code_cid, "runtimeCid": w.runtime_cid, "test": w.test_id,
-         "outcome": w.outcome, "codeFiles": list(w.code_files)},
-        sort_keys=True, separators=(",", ":"),
+        {
+            "codeCid": w.code_cid,
+            "runtimeCid": w.runtime_cid,
+            "test": w.test_id,
+            "outcome": w.outcome,
+            "codeFiles": list(w.code_files),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     )
-    cert = vobj([
-        ("tool", vstr("pytest")),
-        ("version", vstr(w.runtime_cid)),
-        ("formulaHash", vstr(w.cid)),
-        ("proofData", vstr(proof_data)),
-    ])
-    return vobj([
-        ("kind", vstr("evidence")),
-        ("proofType", vstr("custom")),
-        ("certificate", cert),
-    ])
+    cert = vobj(
+        [
+            ("tool", vstr("pytest")),
+            ("version", vstr(w.runtime_cid)),
+            ("formulaHash", vstr(w.cid)),
+            ("proofData", vstr(proof_data)),
+        ]
+    )
+    return vobj(
+        [
+            ("kind", vstr("evidence")),
+            ("proofType", vstr("custom")),
+            ("certificate", cert),
+        ]
+    )
 
 
 def emit_witness_proof(w: Witness, out_dir: str) -> str:
@@ -479,8 +528,14 @@ def load_witness_from_proof(proof_path: str) -> Witness:
     env = json.loads(open(proof_path, encoding="utf-8").read())
     pd = json.loads(env["certificate"]["proofData"])
     code_files = tuple(sorted(pd["codeFiles"]))
-    cid = jcs_hash(_witness_value(pd["codeCid"], pd["runtimeCid"], pd["test"], pd["outcome"], list(code_files)))
-    return Witness(pd["codeCid"], pd["runtimeCid"], pd["test"], pd["outcome"], code_files, cid)
+    cid = jcs_hash(
+        _witness_value(
+            pd["codeCid"], pd["runtimeCid"], pd["test"], pd["outcome"], list(code_files)
+        )
+    )
+    return Witness(
+        pd["codeCid"], pd["runtimeCid"], pd["test"], pd["outcome"], code_files, cid
+    )
 
 
 def discharge_from_proof(proof_path: str, project_dir: str) -> Tuple[str, str]:
@@ -496,8 +551,10 @@ def discharge_from_proof(proof_path: str, project_dir: str) -> Tuple[str, str]:
     pd = json.loads(env["certificate"]["proofData"])
     if pd.get("kind") == "witness-package":
         return discharge_bundle(
-            pd["packageCid"], list(pd.get("testFiles", [])),
-            list(pd.get("codeFiles", [])), project_dir,
+            pd["packageCid"],
+            list(pd.get("testFiles", [])),
+            list(pd.get("codeFiles", [])),
+            project_dir,
         )
     w = load_witness_from_proof(proof_path)
     return verify(w, project_dir)

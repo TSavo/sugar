@@ -6,6 +6,7 @@
 and the EUF chain closes: `call:g(5) == call:h(5) == 6`. Cycle-guarded by the #euf# key, so a
 self-call stops at the fixpoint instead of digging forever.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -25,20 +26,27 @@ def _facts(src):
             continue
         lhs = c.inv["args"][0].get("name")
         rhs = c.inv["args"][1]
-        out.setdefault(lhs, []).append(rhs.get("name") if rhs.get("kind") == "ctor" else rhs.get("value"))
+        out.setdefault(lhs, []).append(
+            rhs.get("name") if rhs.get("kind") == "ctor" else rhs.get("value")
+        )
     return out
 
 
 def test_chain_emits_a_tower_per_hop_and_no_bridge_dangles():
     facts = _facts(_CHAIN + "def t():\n    assert g(5) == 6\n")
-    assert "call:h" in facts["call:g"]   # g BRIDGES to h (a pointer, not h inlined)
-    assert 6 in facts["call:g"]          # the vendor's sworn value
-    assert facts["call:h"] == [6]        # h's tower DEFINES call:h -> the bridge resolves
+    assert "call:h" in facts["call:g"]  # g BRIDGES to h (a pointer, not h inlined)
+    assert 6 in facts["call:g"]  # the vendor's sworn value
+    assert facts["call:h"] == [6]  # h's tower DEFINES call:h -> the bridge resolves
     # every call: a tower references is itself defined by a tower (no Absent / dangling symbol):
     referenced = {
-        v for vs in facts.values() for v in vs if isinstance(v, str) and v.startswith("call:")
+        v
+        for vs in facts.values()
+        for v in vs
+        if isinstance(v, str) and v.startswith("call:")
     }
-    assert referenced <= set(facts.keys()), f"dangling bridge(s): {referenced - set(facts)}"
+    assert referenced <= set(
+        facts.keys()
+    ), f"dangling bridge(s): {referenced - set(facts)}"
 
 
 def test_self_recursion_emits_an_honest_universe_never_hangs():
@@ -57,7 +65,9 @@ def test_self_recursion_emits_an_honest_universe_never_hangs():
 def test_a_lie_through_the_chain_is_present_in_the_contracts():
     facts = _facts(_CHAIN + "def t():\n    assert g(5) == 99\n")
     assert "call:h" in facts["call:g"] and 99 in facts["call:g"]
-    assert facts["call:h"] == [6]  # construction says 6; mint sees 6 vs 99 under the chain -> UNSAT
+    assert facts["call:h"] == [
+        6
+    ]  # construction says 6; mint sees 6 vs 99 under the chain -> UNSAT
 
 
 def test_multi_hop_chain_composes_every_call_backed_by_a_tower():
@@ -71,9 +81,14 @@ def test_multi_hop_chain_composes_every_call_backed_by_a_tower():
     assert facts["call:h"] == [10]
     assert "call:g" in facts["call:f"] and "call:h" in facts["call:g"]
     referenced = {
-        v for vs in facts.values() for v in vs if isinstance(v, str) and v.startswith("call:")
+        v
+        for vs in facts.values()
+        for v in vs
+        if isinstance(v, str) and v.startswith("call:")
     }
-    assert referenced <= set(facts.keys()), f"dangling bridge(s): {referenced - set(facts)}"
+    assert referenced <= set(
+        facts.keys()
+    ), f"dangling bridge(s): {referenced - set(facts)}"
 
 
 def test_unresolved_callee_is_axiomatic_not_a_crash():

@@ -5,8 +5,7 @@ from typing import Any, Protocol
 
 
 class RpcDto(Protocol):
-    def to_rpc(self) -> dict[str, Any]:
-        ...
+    def to_rpc(self) -> dict[str, Any]: ...
 
 
 def to_rpc_value(value: Any) -> Any:

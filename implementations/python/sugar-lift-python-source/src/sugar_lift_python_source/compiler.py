@@ -11,14 +11,20 @@ def compile_ir_document(ir: list[Json]) -> str:
     if source is not None:
         return source
 
-    functions = [_compile_contract(contract) for contract in ir if _is_function_contract(contract)]
+    functions = [
+        _compile_contract(contract)
+        for contract in ir
+        if _is_function_contract(contract)
+    ]
     module = ast.Module(body=functions, type_ignores=[])
     ast.fix_missing_locations(module)
     text = ast.unparse(module)
     return text + ("\n" if text else "")
 
 
-def compile_body_term(term: Json, *, fn_name: str = "f", formals: list[str] | None = None) -> str:
+def compile_body_term(
+    term: Json, *, fn_name: str = "f", formals: list[str] | None = None
+) -> str:
     contract = {
         "kind": "function-contract",
         "fnName": fn_name,
@@ -123,7 +129,9 @@ def _arguments(contract: Json) -> ast.arguments:
 
 
 def _trailing_defaults(defaults: list[Json | None]) -> list[ast.expr]:
-    first_default = next((index for index, value in enumerate(defaults) if value is not None), None)
+    first_default = next(
+        (index for index, value in enumerate(defaults) if value is not None), None
+    )
     if first_default is None:
         return []
     trailing = defaults[first_default:]
@@ -178,7 +186,9 @@ def _stmt(term: Json) -> ast.stmt:
         return ast.If(
             test=_expr(args[0]),
             body=_stmt_list(then_branch) or [ast.Pass()],
-            orelse=[] if _name(else_branch) == "python:pass" else _stmt_list(else_branch),
+            orelse=(
+                [] if _name(else_branch) == "python:pass" else _stmt_list(else_branch)
+            ),
         )
     if name == "python:try":
         return ast.Try(
@@ -206,7 +216,9 @@ def _stmt(term: Json) -> ast.stmt:
     if name == "python:continue":
         return ast.Continue()
     if name == "python:raise":
-        return ast.Raise(exc=None if _is_none_const(args[0]) else _expr(args[0]), cause=None)
+        return ast.Raise(
+            exc=None if _is_none_const(args[0]) else _expr(args[0]), cause=None
+        )
     return ast.Expr(value=_expr(term))
 
 
@@ -254,9 +266,13 @@ def _expr(term: Json) -> ast.expr:
             keywords=keywords,
         )
     if name == "python:attribute":
-        return ast.Attribute(value=_expr(args[0]), attr=_const_string(args[1]), ctx=ast.Load())
+        return ast.Attribute(
+            value=_expr(args[0]), attr=_const_string(args[1]), ctx=ast.Load()
+        )
     if name == "python:subscript":
-        return ast.Subscript(value=_expr(args[0]), slice=_slice_or_expr(args[1]), ctx=ast.Load())
+        return ast.Subscript(
+            value=_expr(args[0]), slice=_slice_or_expr(args[1]), ctx=ast.Load()
+        )
     if name == "python:tuple":
         return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name == "python:list":
@@ -406,11 +422,19 @@ def _const_string(term: Json) -> str:
 
 
 def _is_none_const(term: Any) -> bool:
-    return isinstance(term, dict) and term.get("kind") == "const" and term.get("value") is None
+    return (
+        isinstance(term, dict)
+        and term.get("kind") == "const"
+        and term.get("value") is None
+    )
 
 
 def _is_no_value(term: Any) -> bool:
-    return isinstance(term, dict) and term.get("kind") == "ctor" and term.get("name") == "python:no_value"
+    return (
+        isinstance(term, dict)
+        and term.get("kind") == "ctor"
+        and term.get("name") == "python:no_value"
+    )
 
 
 _BINOPS: dict[str, type[ast.operator]] = {

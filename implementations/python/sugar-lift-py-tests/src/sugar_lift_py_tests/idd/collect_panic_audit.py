@@ -13,7 +13,6 @@ from .lift_target import LiftTarget
 from .panic_audit_report import PanicAuditReport
 from .panic_record import PanicRecord
 
-
 RunCommand = Callable[[List[str], Path], CommandResult]
 PackagePathResolver = Callable[[str], Path]
 
@@ -42,7 +41,9 @@ def collect_panic_audit(
     for package in installed_packages:
         try:
             package_path = resolver(package).resolve()
-        except Exception as exc:  # pragma: no cover - exact exception is environment-owned
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - exact exception is environment-owned
             target = LiftTarget(f"{package}-all", root)
             message = f"unable to resolve installed package `{package}`: {exc}"
             diagnostics.append(message)
@@ -100,7 +101,9 @@ def collect_panic_audit(
                     message=message,
                 )
             )
-    return PanicAuditReport(targets=tuple(targets), records=records, diagnostics=diagnostics)
+    return PanicAuditReport(
+        targets=tuple(targets), records=records, diagnostics=diagnostics
+    )
 
 
 def _resolve_installed_package_path(package: str) -> Path:
@@ -136,7 +139,9 @@ def _run_command(command: List[str], cwd: Path) -> CommandResult:
 
 def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
     try:
-        completed = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+        completed = subprocess.run(
+            command, cwd=cwd, text=True, capture_output=True, check=False
+        )
     except FileNotFoundError as exc:
         return CommandResult(127, "", f"unable to execute {command[0]}: {exc}")
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
@@ -160,7 +165,7 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
     (sugar_dir / "config.toml").write_text(
         "\n".join(
             [
-                '[[plugins]]',
+                "[[plugins]]",
                 'name = "python-audit-lift"',
                 'kind = "lift"',
                 'surface = "python"',
@@ -170,7 +175,10 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
         ),
         encoding="utf-8",
     )
-    lift_rpc = root / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
+    lift_rpc = (
+        root
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
+    )
     command = [
         sys.executable,
         str(lift_rpc),
@@ -191,7 +199,7 @@ def _prepare_audit_workspace(target: Path, root: Path, audit_workspace: Path) ->
                 "[capabilities]",
                 'authoring_surfaces = ["python"]',
                 'ir_version = "v1.1.0"',
-                'emits_signed_mementos = false',
+                "emits_signed_mementos = false",
                 "",
             ]
         ),

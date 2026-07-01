@@ -13,6 +13,7 @@ accounting can never silently rot. Each entry names the test file(s) that pin th
 sugar -- a dedicated `test_<module>.py` for the leaf reductions, or the integration
 test that exercises it for the composers / builder-path sugars.
 """
+
 from __future__ import annotations
 
 import re
@@ -115,6 +116,6 @@ def test_every_registered_coverage_file_exists_and_touches_the_sugar() -> None:
         if not dedicated.intersection(files):
             blob = "".join((HERE / f).read_text(encoding="utf-8") for f in files)
             classes = _sugar_classes(module)
-            assert any(re.search(rf"\b{c}\b", blob) for c in classes), (
-                f"{module}: none of {files} reference its class(es) {classes}"
-            )
+            assert any(
+                re.search(rf"\b{c}\b", blob) for c in classes
+            ), f"{module}: none of {files} reference its class(es) {classes}"

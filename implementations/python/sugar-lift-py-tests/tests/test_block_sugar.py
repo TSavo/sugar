@@ -5,6 +5,7 @@ than an external loop faking the composition.
 
 Test-first for the missed step: the suite lands on the stack as a Block, popped AFTER
 its statements (so the statements are built first, then the block composes them)."""
+
 from __future__ import annotations
 
 import ast

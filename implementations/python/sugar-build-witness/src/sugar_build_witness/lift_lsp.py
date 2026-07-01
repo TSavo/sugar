@@ -71,7 +71,9 @@ def handle_lift(msg_id: Any, params: dict) -> None:
         decls = [
             ContractDecl(
                 name=f"build-witness:{w.cid}::repo-script-cid-equals-distributed-script-cid",
-                inv=eq(str_const(w.repo_script_cid), str_const(w.distributed_script_cid)),
+                inv=eq(
+                    str_const(w.repo_script_cid), str_const(w.distributed_script_cid)
+                ),
             )
         ]
         for out in w.outputs:
@@ -81,7 +83,9 @@ def handle_lift(msg_id: Any, params: dict) -> None:
                         f"build-witness:{w.cid}"
                         f"::distributed-output-cid-equals-rebuilt-output-cid::{out['distributed']}"
                     ),
-                    inv=eq(str_const(out["distributedCid"]), str_const(out["rebuiltCid"])),
+                    inv=eq(
+                        str_const(out["distributedCid"]), str_const(out["rebuiltCid"])
+                    ),
                 )
             )
         memento = build_witness_memento(w)
@@ -107,7 +111,11 @@ def handle_lift(msg_id: Any, params: dict) -> None:
             {
                 "jsonrpc": "2.0",
                 "id": msg_id,
-                "error": {"code": -32603, "message": str(e), "data": traceback.format_exc()},
+                "error": {
+                    "code": -32603,
+                    "message": str(e),
+                    "data": traceback.format_exc(),
+                },
             }
         )
 
@@ -144,7 +152,11 @@ def handle_resolve_witness(msg_id: Any, params: dict) -> None:
             {
                 "jsonrpc": "2.0",
                 "id": msg_id,
-                "error": {"code": -32603, "message": str(e), "data": traceback.format_exc()},
+                "error": {
+                    "code": -32603,
+                    "message": str(e),
+                    "data": traceback.format_exc(),
+                },
             }
         )
 
@@ -181,7 +193,11 @@ def main() -> None:
                     "jsonrpc": "2.0",
                     "id": mid,
                     "result": {
-                        "kit": {"id": KIT_ID, "language": "build", "version": KIT_VERSION},
+                        "kit": {
+                            "id": KIT_ID,
+                            "language": "build",
+                            "version": KIT_VERSION,
+                        },
                         "rpc": {
                             "methods": [
                                 {"name": "initialize", "required": True},

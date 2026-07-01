@@ -17,9 +17,15 @@ def _native(call: str, expected: str):
 def test_map_builtin_applies_the_ref_to_each_element_in_composition():
     # map(id, range(1,4)) composes FunctionRef + Range: id applied pointwise to
     # 1,2,3 -> the conjoined equalities all hold (sat).
-    assert all(left == right for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 3]"))
+    assert all(
+        left == right
+        for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 3]")
+    )
     # a wrong expected leaves an unequal pair (unsat) -- no false discharge.
-    assert any(left != right for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 99]"))
+    assert any(
+        left != right
+        for left, right in _native("list(map(id, range(1, 4)))", "[1, 2, 99]")
+    )
 
 
 SOURCE = """

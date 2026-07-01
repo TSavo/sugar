@@ -7,7 +7,6 @@ from sugar_lift_py_tests.floor import FunctionCallable
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.function_ref_sugar import FunctionRefSugar
 
-
 SOURCE = """
 def id(x):
     return x

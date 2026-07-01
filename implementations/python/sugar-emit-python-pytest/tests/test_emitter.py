@@ -61,7 +61,9 @@ def test_cid_deterministic_for_same_source() -> None:
 
 
 def test_pytest_import_only_when_needed() -> None:
-    eq_only = emit(EmitPlan(function="f", predicates=[_op("concept:eq", _var("a"), _var("b"))]))
+    eq_only = emit(
+        EmitPlan(function="f", predicates=[_op("concept:eq", _var("a"), _var("b"))])
+    )
     assert "import pytest" not in eq_only.source
 
     with_raises = emit(

@@ -47,7 +47,6 @@ from .ir import (
 
 from .factory.source_fragment import SourceFragment
 
-
 # ---------------------------------------------------------------------------
 # Contract decorator
 # ---------------------------------------------------------------------------
@@ -210,7 +209,9 @@ def _translate_expr(fragment: SourceFragment, available_names: List[str]) -> For
     obs = fragment.observed
 
     if obs == "BoolOp":
-        operands = [_translate_expr(v, available_names) for v in fragment.boolop_values()]
+        operands = [
+            _translate_expr(v, available_names) for v in fragment.boolop_values()
+        ]
         kind = fragment.boolop_op_kind()
         if kind == "and":
             return and_(operands)

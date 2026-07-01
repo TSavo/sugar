@@ -61,7 +61,9 @@ class RealizationTagsTest(unittest.TestCase):
 
     def test_tagging_primitives_have_distinct_cids(self) -> None:
         cids = {
-            tag_first_class("concept:add", "${x} + ${y}", "binary-operator").recompute_cid(),
+            tag_first_class(
+                "concept:add", "${x} + ${y}", "binary-operator"
+            ).recompute_cid(),
             tag_composition("concept:add", COMPOSITION_TREE_CID).recompute_cid(),
             tag_boundary(
                 "concept:add",

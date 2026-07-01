@@ -43,17 +43,31 @@ from typing import Any
 from .leaf_assertions import harvest_source
 from .bind_lifter import _local_op_cid
 from .lifter import lift_source
-from .verify_dialect import VerifyDialectRefusal, collect_int_signatures, to_verify_dialect
+from .verify_dialect import (
+    VerifyDialectRefusal,
+    collect_int_signatures,
+    to_verify_dialect,
+)
 
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 SURFACE = "python-verify"
 VERSION = "0.1.0"
 
-_IGNORED_DIRS = {".git", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".sugar"}
+_IGNORED_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".sugar",
+}
 
 
 def _is_test_file(name: str) -> bool:
-    return name.startswith("test_") and name.endswith(".py") or name.endswith("_test.py")
+    return (
+        name.startswith("test_") and name.endswith(".py") or name.endswith("_test.py")
+    )
 
 
 def initialize_result() -> dict[str, Any]:
@@ -150,7 +164,9 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
     if mode == "bindings":
         from . import bind_lifter
 
-        bind_result = bind_lifter.lift_paths(str(root_path), ["."], layer="library-bindings")
+        bind_result = bind_lifter.lift_paths(
+            str(root_path), ["."], layer="library-bindings"
+        )
         return bind_result.ir, bind_result.diagnostics
 
     for path in _iter_py_files(root_path):
@@ -193,13 +209,19 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
                 continue
             sorts = sorts_by_fn.get(bare)
             if sorts is None:
-                diagnostics.append({"path": rel, "message": f"{fn_name}: no signature parsed"})
+                diagnostics.append(
+                    {"path": rel, "message": f"{fn_name}: no signature parsed"}
+                )
                 continue
             try:
                 item = to_verify_dialect(contract, sorts)
             except VerifyDialectRefusal as exc:
                 diagnostics.append(
-                    {"path": rel, "message": f"verify-dialect refusal: {exc.reason}", "function": fn_name}
+                    {
+                        "path": rel,
+                        "message": f"verify-dialect refusal: {exc.reason}",
+                        "function": fn_name,
+                    }
                 )
                 continue
             seen_fn.add(fn_name)
@@ -275,7 +297,11 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
         }
     if method == "shutdown":
         return {"jsonrpc": "2.0", "id": msg_id, "result": None}
-    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"METHOD_NOT_FOUND: {method}"}}
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "error": {"code": -32601, "message": f"METHOD_NOT_FOUND: {method}"},
+    }
 
 
 def run_rpc() -> None:
@@ -287,14 +313,25 @@ def run_rpc() -> None:
             request = json.loads(line)
             response = dispatch(request)
         except json.JSONDecodeError as exc:
-            response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"PARSE_ERROR: {exc}"}}
-        except Exception as exc:  # noqa: BLE001 -- surface as RPC error, never crash the loop
             response = {
                 "jsonrpc": "2.0",
                 "id": None,
-                "error": {"code": -32603, "message": f"{exc}\n{traceback.format_exc()}"},
+                "error": {"code": -32700, "message": f"PARSE_ERROR: {exc}"},
             }
-        sys.stdout.write(json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n")
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- surface as RPC error, never crash the loop
+            response = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32603,
+                    "message": f"{exc}\n{traceback.format_exc()}",
+                },
+            }
+        sys.stdout.write(
+            json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n"
+        )
         sys.stdout.flush()
 
 
