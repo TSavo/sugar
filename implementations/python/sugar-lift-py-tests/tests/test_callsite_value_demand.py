@@ -8,7 +8,13 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import ArrayLiteral, ObjectValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
+    CallSiteValue,
+    ObjectValue,
+    ReturnValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -126,3 +132,45 @@ def t():
 """
 
     assert _reduce_function_return(source, "t") == TermValue(20)
+
+
+def test_object_multiply_projects_to_dunder_method_bridge() -> None:
+    source = """\
+class Mult:
+    def __mul__(self, other):
+        return 1
+"""
+
+    value = _reduce_expr(source, "Mult() * Mult()")
+
+    assert isinstance(value, CallSiteValue)
+    assert fol(floor_to_term(value, owner="object multiply")) == fol(
+        ctor(
+            "call:Mult.__mul__",
+            [
+                ctor(
+                    "py.object.identity",
+                    [str_const("Mult"), str_const("t.py:1:0")],
+                ),
+                ctor(
+                    "py.object.identity",
+                    [str_const("Mult"), str_const("t.py:1:9")],
+                ),
+            ],
+        )
+    )
+
+
+def test_object_multiply_can_drive_array_index_value_demand() -> None:
+    source = """\
+class X:
+    def __init__(self, y):
+        self.x = y
+
+    def __mul__(self, other):
+        return other.x
+"""
+
+    value = _reduce_expr(source, "[10, 20, 30][X(0) * X(1)]")
+
+    assert value == TermValue(20)
