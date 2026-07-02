@@ -302,8 +302,7 @@ fn resolve_source_memento_rpc(params: &Value) -> Result<Value, String> {
         .get("sourceMemento")
         .or_else(|| params.get("source_memento"))
         .ok_or("missing `sourceMemento`")?;
-    let memento =
-        source_memento_from_json_value(memento_value).ok_or("invalid `sourceMemento` shape")?;
+    let memento = source_memento_from_json_value(memento_value)?;
     let resolved = resolve_source_memento(Path::new(workspace_root), &memento)
         .map_err(|refusal| refusal.reason)?;
     Ok(json!({
@@ -374,48 +373,77 @@ fn path_has_rs_extension(path: &Path) -> bool {
     path.extension().is_some_and(|x| x == "rs")
 }
 
-fn source_memento_from_json_value(value: &Value) -> Option<SourceMemento> {
-    let file = value.get("file").and_then(Value::as_str)?.to_string();
-    let span = value.get("span")?;
-    let param_names = value
+fn source_memento_from_json_value(value: &Value) -> Result<SourceMemento, String> {
+    let file = value
+        .get("file")
+        .and_then(Value::as_str)
+        .ok_or("invalid `sourceMemento` shape: missing `file`")?
+        .to_string();
+    let span = value
+        .get("span")
+        .ok_or("invalid `sourceMemento` shape: missing `span`")?;
+    let param_names = match value
         .get("paramNames")
         .or_else(|| value.get("param_names"))
         .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(SourceMemento {
+    {
+        Some(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    };
+    let function_name = match value
+        .get("sourceFunctionName")
+        .or_else(|| value.get("source_function_name"))
+        .and_then(Value::as_str)
+    {
+        Some(name) => name.to_string(),
+        None => String::new(),
+    };
+    let source_cid = value
+        .get("source_cid")
+        .or_else(|| value.get("sourceCid"))
+        .and_then(Value::as_str)
+        .filter(|cid| !cid.is_empty())
+        .ok_or("invalid `sourceMemento` shape: missing non-empty `source_cid`")?
+        .to_string();
+    let template_cid = value
+        .get("template_cid")
+        .or_else(|| value.get("templateCid"))
+        .and_then(Value::as_str)
+        .filter(|cid| !cid.is_empty())
+        .ok_or("invalid `sourceMemento` shape: missing non-empty `template_cid`")?
+        .to_string();
+    Ok(SourceMemento {
         file,
-        function_name: value
-            .get("sourceFunctionName")
-            .or_else(|| value.get("source_function_name"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        function_name,
         span: SrcSpan {
-            start_line: span.get("start_line").and_then(Value::as_u64)? as usize,
-            start_col: span.get("start_col").and_then(Value::as_u64)? as usize,
-            end_line: span.get("end_line").and_then(Value::as_u64)? as usize,
-            end_col: span.get("end_col").and_then(Value::as_u64)? as usize,
+            start_line: span
+                .get("start_line")
+                .and_then(Value::as_u64)
+                .ok_or("invalid `sourceMemento` shape: missing `span.start_line`")?
+                as usize,
+            start_col: span
+                .get("start_col")
+                .and_then(Value::as_u64)
+                .ok_or("invalid `sourceMemento` shape: missing `span.start_col`")?
+                as usize,
+            end_line: span
+                .get("end_line")
+                .and_then(Value::as_u64)
+                .ok_or("invalid `sourceMemento` shape: missing `span.end_line`")?
+                as usize,
+            end_col: span
+                .get("end_col")
+                .and_then(Value::as_u64)
+                .ok_or("invalid `sourceMemento` shape: missing `span.end_col`")?
+                as usize,
         },
         param_names,
-        source_cid: value
-            .get("source_cid")
-            .or_else(|| value.get("sourceCid"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        template_cid: value
-            .get("template_cid")
-            .or_else(|| value.get("templateCid"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        source_cid,
+        template_cid,
     })
 }
 
@@ -690,37 +718,65 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     // `name` spelling so dependency proofs can be indexed.
     let mut bindings = Vec::new();
     for (member_cid, member) in parsed_members {
-        let Some(contract) = rust_vendor_contract_binding_member(&member) else {
-            continue;
-        };
         let Some(bridge_source_symbol) = bridge_source_by_target.get(&member_cid).cloned() else {
             continue;
         };
-        let formals_value = Value::Array(contract.formals.into_iter().map(Value::String).collect());
-        let has_pre = contract.has_pre;
-        let has_post = contract.has_post;
+        let contract = match rust_vendor_contract_binding_member(&member) {
+            Ok(Some(contract)) => contract,
+            Ok(None) => continue,
+            Err(error) => {
+                return Err(format!(
+                    "rust vendor proof {proof_cid} contract member {member_cid}: {error}"
+                ));
+            }
+        };
+        let RustVendorContractBindingMember {
+            name,
+            formals,
+            formal_sorts,
+            has_pre,
+            has_post,
+            library,
+            body_discharge_eligible,
+            body_discharge_refusal_reason,
+            discharge_policy,
+        } = contract;
+        let formals_value = Value::Array(formals.into_iter().map(Value::String).collect());
         if !has_pre && !has_post {
             continue;
         }
 
+        let body_discharge_eligible = match body_discharge_eligible {
+            Some(value) => Value::Bool(value),
+            None => Value::Null,
+        };
+        let body_discharge_refusal_reason = match body_discharge_refusal_reason {
+            Some(value) => Value::String(value),
+            None => Value::Null,
+        };
+        let discharge_policy = match discharge_policy {
+            Some(value) => value,
+            None => Value::Null,
+        };
+        let library = match library {
+            Some(library) => Value::String(library),
+            None => Value::Null,
+        };
         let body_policy_input = json!({
-            // Option<bool> → Value::Bool | Value::Null (same wire semantics as old cloned().unwrap_or(Null))
-            "bodyDischargeEligible": contract.body_discharge_eligible.map(Value::Bool).unwrap_or(Value::Null),
-            // Option<String> → Value::String | Value::Null
-            "bodyDischargeRefusalReason": contract.body_discharge_refusal_reason.clone().map(Value::String).unwrap_or(Value::Null),
-            // Option<Json> → Value | Value::Null
-            "dischargePolicy": contract.discharge_policy.clone().unwrap_or(Value::Null),
+            "bodyDischargeEligible": body_discharge_eligible,
+            "bodyDischargeRefusalReason": body_discharge_refusal_reason,
+            "dischargePolicy": discharge_policy,
         });
         let body_policy = body_discharge_policy_from_object(&body_policy_input);
         log_body_discharge_policy_warnings(
             "walk-rust-vendor-proof-contract-binding",
-            &contract.name,
+            &name,
             &body_policy.warnings,
         );
         let body_bearing = (has_pre || has_post) && body_policy.body_discharge_eligible;
 
         let mut binding = json!({
-            "name": contract.name,
+            "name": name,
             "contract_cid": member_cid,
             "body_bearing": body_bearing,
             "has_pre": has_pre,
@@ -730,9 +786,9 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
             "bridgeSourceSymbol": bridge_source_symbol,
             "target_proof_cid": proof_cid,
             "formals": formals_value,
-            "library": contract.library.map(Value::String).unwrap_or(Value::Null),
+            "library": library,
         });
-        if let Some(formal_sorts) = contract.formal_sorts {
+        if let Some(formal_sorts) = formal_sorts {
             binding["formalSorts"] = Value::Array(formal_sorts);
         }
         bindings.push(binding);
@@ -753,22 +809,41 @@ struct RustVendorContractBindingMember {
     discharge_policy: Option<Value>,
 }
 
-fn rust_vendor_contract_binding_member(member: &Value) -> Option<RustVendorContractBindingMember> {
+fn rust_vendor_contract_binding_member(
+    member: &Value,
+) -> Result<Option<RustVendorContractBindingMember>, String> {
     if rust_vendor_member_field(member, "kind").and_then(Value::as_str) != Some("contract") {
-        return None;
+        return Ok(None);
     }
     // Graph-backed Rust contracts prove the body map exists by carrying bodyCid.
-    rust_vendor_member_field(member, "bodyCid").and_then(Value::as_str)?;
-    let name = rust_vendor_member_field(member, "name")
+    if rust_vendor_member_field(member, "bodyCid")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let Some(name) = rust_vendor_member_field(member, "name")
         .or_else(|| rust_vendor_member_field(member, "contractName"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|name| !name.is_empty())?
-        .to_string();
-    let formals = rust_vendor_member_field(member, "formals")
-        .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())?;
-    let formal_sorts = rust_vendor_member_field(member, "formalSorts")
-        .and_then(|value| serde_json::from_value::<Vec<Value>>(value.clone()).ok());
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    let Some(formals_value) = rust_vendor_member_field(member, "formals") else {
+        return Ok(None);
+    };
+    let formals =
+        serde_json::from_value::<Vec<String>>(formals_value.clone()).map_err(|error| {
+            format!("contract member `{name}` has invalid `formals` array: {error}")
+        })?;
+    let formal_sorts = match rust_vendor_member_field(member, "formalSorts") {
+        Some(value) => Some(serde_json::from_value::<Vec<Value>>(value.clone()).map_err(
+            |error| format!("contract member `{name}` has invalid `formalSorts` array: {error}"),
+        )?),
+        None => None,
+    };
     let has_pre = rust_vendor_member_field(member, "pre").is_some_and(has_nontrivial_pre_json)
         || rust_vendor_member_field(member, "preHash")
             .and_then(Value::as_str)
@@ -777,7 +852,7 @@ fn rust_vendor_contract_binding_member(member: &Value) -> Option<RustVendorContr
         || rust_vendor_member_field(member, "postHash")
             .and_then(Value::as_str)
             .is_some_and(|hash| !hash.trim().is_empty());
-    Some(RustVendorContractBindingMember {
+    Ok(Some(RustVendorContractBindingMember {
         name,
         formals,
         formal_sorts,
@@ -795,7 +870,7 @@ fn rust_vendor_contract_binding_member(member: &Value) -> Option<RustVendorContr
         .and_then(Value::as_str)
         .map(str::to_string),
         discharge_policy: rust_vendor_member_field(member, "dischargePolicy").cloned(),
-    })
+    }))
 }
 
 fn rust_vendor_member_field<'a>(member: &'a Value, field: &str) -> Option<&'a Value> {
@@ -890,29 +965,26 @@ fn resolve_cargo_dependency_proof_paths(project_root: &Path) -> Result<Vec<PathB
     let metadata: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("parse cargo metadata JSON: {error}"))?;
 
-    let workspace_members = metadata
-        .get("workspace_members")
-        .and_then(Value::as_array)
-        .map(|members| {
-            members
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-    let reachable = metadata
+    let workspace_members = match metadata.get("workspace_members").and_then(Value::as_array) {
+        Some(members) => members
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>(),
+        None => return Err("cargo metadata missing `workspace_members` array".to_string()),
+    };
+    let reachable = match metadata
         .get("resolve")
         .and_then(|resolve| resolve.get("nodes"))
         .and_then(Value::as_array)
-        .map(|nodes| {
-            nodes
-                .iter()
-                .filter_map(|node| node.get("id").and_then(Value::as_str))
-                .map(str::to_string)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
+    {
+        Some(nodes) => nodes
+            .iter()
+            .filter_map(|node| node.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>(),
+        None => return Err("cargo metadata missing `resolve.nodes` array".to_string()),
+    };
 
     let mut proof_paths = BTreeSet::new();
     let Some(packages) = metadata.get("packages").and_then(Value::as_array) else {
@@ -4561,12 +4633,10 @@ fn method_postcondition_receiver_is_stable(
     if stability.effect_roots.contains(&root) {
         return false;
     }
-    let binding_count = stability
-        .local_bindings
-        .get(&root)
-        .copied()
-        .unwrap_or_default()
-        + usize::from(param_names.contains(&root));
+    let binding_count = match stability.local_bindings.get(&root) {
+        Some(count) => *count,
+        None => 0,
+    } + usize::from(param_names.contains(&root));
     binding_count <= 1
 }
 
@@ -4885,7 +4955,10 @@ fn resolve_method_calls_via_oracle(
     // Opt-in stays identical to the cold path: a mint with the oracle off must
     // never spawn or contact the daemon's RA host. When off we leave every
     // unresolved method call to the syntactic tiers (Tier 1/2a) and return.
-    let raw_oracle_env = std::env::var("SUGAR_RESOLVE_ORACLE").unwrap_or_default();
+    let raw_oracle_env = match std::env::var("SUGAR_RESOLVE_ORACLE") {
+        Ok(value) => value,
+        Err(_) => String::new(),
+    };
     let oracle_on = raw_oracle_env == "rust-analyzer";
     let total_method_calls = callsites.iter().filter(|(cs, _)| cs.is_method).count();
     info!(
@@ -5158,28 +5231,39 @@ fn vendor_bindings_from_proofs(project_root: &Path) -> Result<Vec<VendorBinding>
             if body.get("kind").and_then(Value::as_str) != Some("library-sugar-binding-entry") {
                 continue;
             }
-            let library_tag = body
+            let Some(library_tag) = body
                 .get("target_library_tag")
                 .or_else(|| body.get("library_tag"))
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let source_function_name = body
+                .filter(|tag| !tag.is_empty())
+            else {
+                return Err(format!(
+                    "vendor proof `{}` library-sugar-binding-entry missing target_library_tag",
+                    path.display()
+                ));
+            };
+            let Some(source_function_name) = body
                 .get("source_function_name")
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+                .filter(|name| !name.is_empty())
+            else {
+                return Err(format!(
+                    "vendor proof `{}` library-sugar-binding-entry missing source_function_name",
+                    path.display()
+                ));
+            };
             let Some(body_source) = body.get("body_source") else {
                 continue;
             };
-            let Some(memento) =
-                SourceMemento::from_body_source(Some(source_function_name.clone()), body_source)
-            else {
+            let Some(memento) = SourceMemento::from_body_source(
+                Some(source_function_name.to_string()),
+                body_source,
+            ) else {
                 continue;
             };
             bindings.push(VendorBinding {
-                library_tag,
-                source_function_name,
+                library_tag: library_tag.to_string(),
+                source_function_name: source_function_name.to_string(),
                 memento,
             });
         }
@@ -5204,11 +5288,11 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .collect();
 
-    let mut contract_bindings: Vec<Value> = params
-        .get("contract_bindings")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let mut contract_bindings: Vec<Value> =
+        match params.get("contract_bindings").and_then(|v| v.as_array()) {
+            Some(bindings) => bindings.clone(),
+            None => Vec::new(),
+        };
     let supplied_contract_bindings = contract_bindings.len();
     let vendor_contract_bindings = rust_vendor_contract_bindings_from_proofs(&workspace_root)?;
     let vendor_contract_binding_count = vendor_contract_bindings.len();
@@ -5240,7 +5324,10 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
     // call sites resolve to this; a dependency call site resolves to its own
     // crate. Reading it from the project Cargo.toml is what lets the matcher
     // tell this crate's `foo` from a same-named dependency `foo` (Tier 1).
-    let current_crate = crate_name_for(&workspace_root).unwrap_or_default();
+    let current_crate = match crate_name_for(&workspace_root) {
+        Some(name) => name,
+        None => String::new(),
+    };
     debug!(current_crate = %current_crate, "lift_implications: resolved current crate");
     let infallible_serialize = InfallibleSerializeManifest::load(&workspace_root)?;
     if !infallible_serialize.is_empty() {
@@ -6150,7 +6237,7 @@ fn claimed_base64_vendor_root(params: &Value, workspace_root: &Path) -> Option<S
 }
 
 fn forensic_items(params: &Value) -> Vec<&Value> {
-    params
+    match params
         .get("project_forensics")
         .or_else(|| params.get("projectForensics"))
         .and_then(|value| value.get("items"))
@@ -6161,8 +6248,10 @@ fn forensic_items(params: &Value) -> Vec<&Value> {
                 .and_then(|value| value.get("items"))
         })
         .and_then(Value::as_array)
-        .map(|items| items.iter().collect())
-        .unwrap_or_default()
+    {
+        Some(items) => items.iter().collect(),
+        None => Vec::new(),
+    }
 }
 
 fn bind_lift(params: &Value) -> Result<Value, String> {
@@ -6295,11 +6384,13 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
             };
             let function_symbol = format!("{fn_name}@{rel}");
             let fallback_function_symbol = format!("{}@{rel}", target.source_name);
-            let witnesses = witnesses_by_symbol
+            let witnesses = match witnesses_by_symbol
                 .get(&function_symbol)
                 .or_else(|| witnesses_by_symbol.get(&fallback_function_symbol))
-                .cloned()
-                .unwrap_or_default();
+            {
+                Some(witnesses) => witnesses.clone(),
+                None => Vec::new(),
+            };
 
             let doc_lines = sugar_doc_lines(item_fn);
             // #1075/A9 federation invariant: the bind-lift-entry is a
@@ -6392,15 +6483,22 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
             let param_sort_cids: Vec<String> = param_types
                 .iter()
                 .map(|t| {
-                    rust_source_type_to_concept_hub_sort_cid(t, &mut parametric_sort_expansions)
-                        .unwrap_or_default()
+                    match rust_source_type_to_concept_hub_sort_cid(
+                        t,
+                        &mut parametric_sort_expansions,
+                    ) {
+                        Some(cid) => cid,
+                        None => String::new(),
+                    }
                 })
                 .collect();
-            let return_sort_cid = rust_source_type_to_concept_hub_sort_cid(
+            let return_sort_cid = match rust_source_type_to_concept_hub_sort_cid(
                 &return_type,
                 &mut parametric_sort_expansions,
-            )
-            .unwrap_or_default();
+            ) {
+                Some(cid) => cid,
+                None => String::new(),
+            };
             let doc_lines_sb = sugar_doc_lines(&item_fn);
             let mut entry = json!({
                 "kind": "library-sugar-binding-entry",
@@ -6579,15 +6677,22 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 let param_sort_cids: Vec<String> = param_types
                     .iter()
                     .map(|t| {
-                        rust_source_type_to_concept_hub_sort_cid(t, &mut parametric_sort_expansions)
-                            .unwrap_or_default()
+                        match rust_source_type_to_concept_hub_sort_cid(
+                            t,
+                            &mut parametric_sort_expansions,
+                        ) {
+                            Some(cid) => cid,
+                            None => String::new(),
+                        }
                     })
                     .collect();
-                let return_sort_cid = rust_source_type_to_concept_hub_sort_cid(
+                let return_sort_cid = match rust_source_type_to_concept_hub_sort_cid(
                     &return_type,
                     &mut parametric_sort_expansions,
-                )
-                .unwrap_or_default();
+                ) {
+                    Some(cid) => cid,
+                    None => String::new(),
+                };
                 let doc_lines = sugar_doc_lines(item_fn);
                 let mut entry = json!({
                     "kind": "library-sugar-binding-entry",
@@ -6663,7 +6768,10 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 let mut fields: Vec<Value> = Vec::new();
                 if let syn::Fields::Named(named) = &s.fields {
                     for f in &named.named {
-                        let fname = f.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
+                        let Some(ident) = f.ident.as_ref() else {
+                            continue;
+                        };
+                        let fname = ident.to_string();
                         let fty = f.ty.to_token_stream().to_string().replace(' ', "");
                         fields.push(json!({"name": fname, "type": fty}));
                     }
@@ -6803,7 +6911,12 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
     // Single-crate self-application projects (the only ones minted today) have
     // one package per workspace_root; a true multi-crate workspace would need
     // per-scan-root names, noted as a limitation.
-    let current_crate = crate_name_for(&root).unwrap_or_default();
+    let current_crate = crate_name_for(&root).ok_or_else(|| {
+        format!(
+            "function_contract_lift: missing Cargo package name for workspace root `{}`",
+            root.display()
+        )
+    })?;
     let infallible_serialize = InfallibleSerializeManifest::load(&root)?;
     let function_postconditions = FunctionPostconditionsManifest::load(&root)?;
     let mut entries: Vec<Value> = Vec::new();
@@ -7871,8 +7984,12 @@ fn extract_sugar_attr(item_fn: &syn::ItemFn) -> Option<SugarAttrParsed> {
         if segments.len() == 2 && segments[0].ident == "sugar" && segments[1].ident == "sugar" {
             if let Ok(meta_list) = attr.meta.require_list() {
                 let args = parse_attr_named_args(&meta_list.tokens);
-                let op = args.string("op").unwrap_or_default();
-                let library = args.string("library").unwrap_or_default();
+                let Some(op) = args.string("op") else {
+                    continue;
+                };
+                let Some(library) = args.string("library") else {
+                    continue;
+                };
                 if !op.is_empty() && !library.is_empty() {
                     return Some(SugarAttrParsed {
                         op,
@@ -7901,7 +8018,10 @@ impl ParsedAttrArgs {
     }
 
     fn string_array(&self, key: &str) -> Vec<String> {
-        self.string_arrays.get(key).cloned().unwrap_or_default()
+        match self.string_arrays.get(key) {
+            Some(values) => values.clone(),
+            None => Vec::new(),
+        }
     }
 }
 
@@ -8759,7 +8879,10 @@ fn collapse_binding_groups(groups: Vec<Vec<OperandBinding>>) -> BindingResult {
         0 => BindingResult::default(),
         1 => BindingResult {
             has_operator: true,
-            bindings: groups.into_iter().next().unwrap_or_default(),
+            bindings: match groups.into_iter().next() {
+                Some(bindings) => bindings,
+                None => Vec::new(),
+            },
         },
         _ => {
             let bindings = groups
@@ -8884,19 +9007,17 @@ fn bindings_of_expr(expr: &syn::Expr, ctx: &ShapeContext) -> BindingResult {
             ])
         }
         syn::Expr::Return(e) => {
-            let args = e
-                .expr
-                .as_ref()
-                .map(|expr| vec![bindings_of_expr(expr, ctx)])
-                .unwrap_or_default();
+            let args = match e.expr.as_ref() {
+                Some(expr) => vec![bindings_of_expr(expr, ctx)],
+                None => Vec::new(),
+            };
             operation_binding_result(args)
         }
         syn::Expr::Break(e) => {
-            let args = e
-                .expr
-                .as_ref()
-                .map(|expr| vec![bindings_of_expr(expr, ctx)])
-                .unwrap_or_default();
+            let args = match e.expr.as_ref() {
+                Some(expr) => vec![bindings_of_expr(expr, ctx)],
+                None => Vec::new(),
+            };
             operation_binding_result(args)
         }
         syn::Expr::Continue(_) => BindingResult {
@@ -9437,11 +9558,10 @@ fn shape_of_expr(expr: &syn::Expr, ctx: &ShapeContext) -> Arc<CValue> {
             gamma_operation("concept:while", vec![true_lit, body])
         }
         syn::Expr::Return(e) => {
-            let args = e
-                .expr
-                .as_ref()
-                .map(|expr| vec![shape_of_expr(expr, ctx)])
-                .unwrap_or_default();
+            let args = match e.expr.as_ref() {
+                Some(expr) => vec![shape_of_expr(expr, ctx)],
+                None => Vec::new(),
+            };
             gamma_operation("concept:return", args)
         }
         // `(a, b, c)` — rust tuple literal. No first-class tuple concept
@@ -9460,11 +9580,10 @@ fn shape_of_expr(expr: &syn::Expr, ctx: &ShapeContext) -> Arc<CValue> {
             gamma_operation("concept:call", args)
         }
         syn::Expr::Break(e) => {
-            let args = e
-                .expr
-                .as_ref()
-                .map(|expr| vec![shape_of_expr(expr, ctx)])
-                .unwrap_or_default();
+            let args = match e.expr.as_ref() {
+                Some(expr) => vec![shape_of_expr(expr, ctx)],
+                None => Vec::new(),
+            };
             gamma_operation("concept:break", args)
         }
         syn::Expr::Continue(_) => gamma_operation("concept:continue", Vec::new()),
@@ -10261,6 +10380,35 @@ mod tests {
 
         assert_eq!(resolved["file"], "src/lib.rs");
         assert_eq!(resolved["source"], "let rem = bytes_len % 3;\n    rem + 1");
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_source_memento_rpc_refuses_unpinned_memento() {
+        let dir = unique_tmp("resolve-rpc-unpinned");
+        let src = "pub fn encoded_len(bytes_len: usize) -> usize {\n    bytes_len + 1\n}\n";
+        let memento = mint_memento_for(&dir, "encoded_len", src);
+        let mut unpinned = memento.to_json();
+        unpinned
+            .as_object_mut()
+            .expect("source memento object")
+            .remove("source_cid");
+        unpinned
+            .as_object_mut()
+            .expect("source memento object")
+            .remove("template_cid");
+
+        let err = resolve_source_memento_rpc(&json!({
+            "workspace_root": dir.to_string_lossy(),
+            "sourceMemento": unpinned,
+        }))
+        .expect_err("source memento without CIDs must not resolve unchecked");
+
+        assert!(
+            err.contains("source_cid") || err.contains("template_cid"),
+            "unexpected error: {err}"
+        );
         // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
@@ -12624,6 +12772,21 @@ pub fn bitwise_not() -> i64 {
         root
     }
 
+    fn write_cargo_package(root: &Path, name: &str) {
+        fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                r#"
+[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+"#
+            ),
+        )
+        .expect("write Cargo.toml");
+    }
+
     #[test]
     fn component_plan_claims_base64_vendor_contracts_and_implications() {
         let root = temp_workspace("component_plan_base64_vendor");
@@ -12908,15 +13071,13 @@ reason = "scope discipline probe"
         formals: Value,
     ) -> (String, String) {
         let signer_seed: Ed25519Seed = [0x92; 32];
-        let formals_vec: Vec<String> = formals
-            .as_array()
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let formals_vec: Vec<String> = match formals.as_array() {
+            Some(values) => values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect(),
+            None => Vec::new(),
+        };
         let args = MintContractArgs {
             evidence_term: None,
             contract_name: contract_name.to_string(),
@@ -14131,6 +14292,35 @@ pub fn identity(value: i64) -> i64 {
             .find(|entry| entry["name"] == "identity")
             .expect("identity function contract");
         assert_eq!(entry["library"], "sugar_cli");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_lift_refuses_missing_cargo_package_name() {
+        let root = temp_workspace("function_contract_missing_package_name");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            src_dir.join("lib.rs"),
+            r#"
+pub fn identity(value: i64) -> i64 {
+    value
+}
+"#,
+        )
+        .expect("write source");
+
+        let err = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect_err("missing Cargo package name must refuse before emitting contracts");
+
+        assert!(
+            err.contains("Cargo package name"),
+            "unexpected error: {err}"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -18505,6 +18695,7 @@ pub fn record_only(report: ExitReport) {
         let root = temp_workspace("function_contract_body_discharge_eligibility");
         let src_dir = root.join("src");
         fs::create_dir_all(&src_dir).expect("create src dir");
+        write_cargo_package(&root, "function-contract-body-discharge-eligibility");
         fs::write(src_dir.join("lib.rs"), src).expect("write source");
 
         let resp = function_contract_lift(&json!({
@@ -18582,6 +18773,7 @@ pub fn mint(from: serde_json::Value) -> Result<String, String> {
         let root = temp_workspace("function_contract_json_guard_signature");
         let src_dir = root.join("src");
         fs::create_dir_all(&src_dir).expect("create src dir");
+        write_cargo_package(&root, "function-contract-json-guard-signature");
         fs::write(src_dir.join("lib.rs"), src).expect("write source");
 
         let resp = function_contract_lift(&json!({
