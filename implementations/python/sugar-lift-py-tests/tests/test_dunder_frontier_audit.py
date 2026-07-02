@@ -24,9 +24,9 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "truth_hash_slots": 0,
         "unary_numeric_slots": 0,
         "display_conversion_slots": 0,
-        "context_async_slots": 5,
+        "context_async_slots": 0,
     }
-    assert report.r.total == 8
+    assert report.r.total == 3
     assert not report.is_zero
 
 
@@ -83,10 +83,19 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
 
     for name in (
         "__setitem__",
-        "__aenter__",
     ):
         assert by_name[name].status == "missing", name
         assert by_name[name].fix.startswith("write ")
+
+    for name in (
+        "__aenter__",
+        "__aexit__",
+        "__await__",
+        "__aiter__",
+        "__anext__",
+    ):
+        assert by_name[name].status == "owned", name
+        assert by_name[name].owner
 
 
 def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
@@ -100,7 +109,7 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "R:" in stdout
     assert "  inplace_binary_slots: 0" in stdout
     assert "  attribute_descriptor_slots: 0" in stdout
-    assert "  total: 8" in stdout
+    assert "  total: 3" in stdout
     assert "missing dunder slots:" in stdout
     missing, owned = stdout.split("owned dunder slots:", 1)
     assert "  - call_container __next__" not in missing
@@ -155,6 +164,16 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "  - context_async __enter__: ContextManagerOperation" in owned
     assert "  - context_async __exit__" not in missing
     assert "  - context_async __exit__: ContextManagerOperation" in owned
+    assert "  - context_async __aenter__" not in missing
+    assert "  - context_async __aenter__: AsyncContextManagerOperation" in owned
+    assert "  - context_async __aexit__" not in missing
+    assert "  - context_async __aexit__: AsyncContextManagerOperation" in owned
+    assert "  - context_async __await__" not in missing
+    assert "  - context_async __await__: AwaitOperation" in owned
+    assert "  - context_async __aiter__" not in missing
+    assert "  - context_async __aiter__: AsyncIteratorOperation" in owned
+    assert "  - context_async __anext__" not in missing
+    assert "  - context_async __anext__: AsyncIteratorOperation" in owned
     assert "  - inplace_binary __iadd__" not in missing
     assert (
         "  - inplace_binary __iadd__: ObjectValue._INPLACE_BINARY_DUNDER_METHODS"

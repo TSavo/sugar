@@ -48,6 +48,18 @@ class ObjectValue(FloorValue):
     def context_manager_with(self, operation, ctx):
         return operation.context_object(self, ctx)
 
+    def async_context_manager_with(self, operation, ctx):
+        return operation.async_context_object(self, ctx)
+
+    def await_with(self, operation, ctx):
+        return operation.await_object(self, ctx)
+
+    def async_iter_with(self, operation, ctx):
+        return operation.async_iter_object(self, ctx)
+
+    def async_next_with(self, operation, ctx):
+        return operation.async_next_object(self, ctx)
+
     def next_with(self, operation, ctx):
         del ctx
         return self.call_method_value(

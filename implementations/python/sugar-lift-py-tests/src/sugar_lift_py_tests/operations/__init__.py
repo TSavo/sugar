@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from .add_operation import AddOperation
+from .async_context_manager_operation import AsyncContextManagerOperation
+from .async_iterator_operation import AsyncIteratorOperation
+from .await_operation import AwaitOperation
 from .attribute_delete_operation import AttributeDeleteOperation
 from .attribute_lookup_operation import AttributeLookupOperation
 from .attribute_mutation_operation import AttributeMutationOperation
@@ -26,6 +29,9 @@ from .unary_operator_operation import UnaryOperatorOperation
 
 __all__ = [
     "AddOperation",
+    "AsyncContextManagerOperation",
+    "AsyncIteratorOperation",
+    "AwaitOperation",
     "AttributeDeleteOperation",
     "AttributeLookupOperation",
     "AttributeMutationOperation",

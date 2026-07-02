@@ -161,6 +161,11 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__set_name__": "ConstructorStrategy.__set_name__ floor",
         "__enter__": "ContextManagerOperation",
         "__exit__": "ContextManagerOperation",
+        "__aenter__": "AsyncContextManagerOperation",
+        "__aexit__": "AsyncContextManagerOperation",
+        "__await__": "AwaitOperation",
+        "__aiter__": "AsyncIteratorOperation",
+        "__anext__": "AsyncIteratorOperation",
         "__str__": "StrCoercionOperation",
         "__format__": "FormatBuiltinSugar",
     }
