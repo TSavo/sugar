@@ -1195,6 +1195,8 @@ class _Emitter:
             return ctor("python:tuple", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.List):
             return ctor("python:list", *[self.expr(element) for element in node.elts])
+        if isinstance(node, ast.Lambda):
+            return self.lambda_expr(node)
         if isinstance(node, ast.ListComp):
             return self.listcomp(node)
         if isinstance(node, ast.Dict):
@@ -1309,6 +1311,81 @@ class _Emitter:
         raise _UnsupportedSyntax(
             node,
             f"unsupported f-string conversion: {node.conversion}",
+        )
+
+    def lambda_expr(self, node: ast.Lambda) -> Json:
+        params, local_names = self.lambda_parameters(node.args)
+        previous_locals = self.locals
+        self.locals = previous_locals | local_names
+        try:
+            body = self.expr(node.body)
+        finally:
+            self.locals = previous_locals
+        return ctor("python:lambda", *params, body)
+
+    def lambda_parameters(self, args: ast.arguments) -> tuple[list[Json], set[str]]:
+        params: list[Json] = []
+        local_names: set[str] = set()
+        positional = [*args.posonlyargs, *args.args]
+        defaults = list(args.defaults)
+        default_offset = len(positional) - len(defaults)
+        default_by_index = {
+            index + default_offset: default for index, default in enumerate(defaults)
+        }
+
+        for index, arg in enumerate(args.posonlyargs):
+            params.append(
+                self.lambda_parameter(
+                    arg.arg,
+                    "positional-only",
+                    default_by_index.get(index),
+                )
+            )
+            local_names.add(arg.arg)
+
+        for local_index, arg in enumerate(args.args):
+            index = len(args.posonlyargs) + local_index
+            default = default_by_index.get(index)
+            if default is None:
+                params.append(str_const(arg.arg))
+            else:
+                params.append(
+                    self.lambda_parameter(
+                        arg.arg,
+                        "positional-or-keyword",
+                        default,
+                    )
+                )
+            local_names.add(arg.arg)
+
+        if args.vararg is not None:
+            params.append(self.lambda_parameter(args.vararg.arg, "vararg"))
+            local_names.add(args.vararg.arg)
+
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+            params.append(self.lambda_parameter(arg.arg, "keyword-only", default))
+            local_names.add(arg.arg)
+
+        if args.kwarg is not None:
+            params.append(self.lambda_parameter(args.kwarg.arg, "kwarg"))
+            local_names.add(args.kwarg.arg)
+
+        return params, local_names
+
+    def lambda_parameter(
+        self,
+        name: str,
+        kind: str,
+        default: ast.expr | None = None,
+    ) -> Json:
+        default_term = (
+            ctor("python:no_value") if default is None else _literal_default(default)
+        )
+        return ctor(
+            "python:lambda_param",
+            str_const(name),
+            str_const(kind),
+            default_term,
         )
 
     def constant(self, node: ast.Constant) -> Json:
@@ -2217,6 +2294,9 @@ def _contains_refused_control(fn: ast.FunctionDef) -> _UnsupportedSyntax | None:
             return
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
             return
 
         def visit_Global(self, node: ast.Global) -> None:

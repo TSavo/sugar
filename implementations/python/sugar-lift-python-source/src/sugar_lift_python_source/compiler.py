@@ -333,6 +333,10 @@ def _expr(term: Json) -> ast.expr:
             elt=_expr(args[0]),
             generators=[_comprehension(arg) for arg in args[1:]],
         )
+    if name == "python:lambda":
+        if not args:
+            raise ValueError("python:lambda needs a body")
+        return ast.Lambda(args=_lambda_arguments(args[:-1]), body=_expr(args[-1]))
     if name == "python:dict":
         keys: list[ast.expr | None] = []
         values: list[ast.expr] = []
@@ -420,6 +424,33 @@ def _comprehension(term: Json) -> ast.comprehension:
 
 def _comprehension_target(term: Json) -> ast.expr:
     return _with_comprehension_target_context(_expr(term))
+
+
+def _lambda_arguments(param_terms: list[Json]) -> ast.arguments:
+    if not param_terms:
+        return _arguments({"formals": []})
+    shape: list[Json] = []
+    formals: list[str] = []
+    for term in param_terms:
+        if _is_string_const(term):
+            name = _const_string(term)
+            formals.append(name)
+            shape.append({"name": name, "kind": "positional-or-keyword"})
+            continue
+        if _name(term) != "python:lambda_param":
+            raise ValueError(f"expected lambda parameter term: {term!r}")
+        args = term.get("args", [])
+        if len(args) != 3:
+            raise ValueError(f"python:lambda_param needs name, kind, default: {term!r}")
+        name = _const_string(args[0])
+        kind = _const_string(args[1])
+        default = args[2]
+        entry: Json = {"name": name, "kind": kind}
+        if not _is_no_value(default):
+            entry["default"] = default
+        formals.append(name)
+        shape.append(entry)
+    return _arguments({"formals": formals, "parameterShape": shape})
 
 
 def _with_comprehension_target_context(expr: ast.expr) -> ast.expr:
