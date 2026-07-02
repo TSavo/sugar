@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use libsugar::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use sugar_floor_algebra::{guard_exit, Desugared, GuardedReturn};
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
@@ -38,6 +39,7 @@ use syn::{
 };
 use tracing::debug;
 
+use crate::term_boundary::{lower_ir, lower_ir_formula, raise_ir, raise_ir_formula};
 use crate::wp::{free_vars_formula, free_vars_term, Wp};
 
 // ---- LiftCtx: scope-tracked name resolution ----
@@ -595,8 +597,8 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // branch value in `cf_guarded(<resolved-predicate-term>, <value>)` so the
     // language-blind verifier can thread the already-resolved atom into its
     // path condition without recognizing a single Rust predicate name.
-    let then_term = guarded_return_for_branch(&cond_term, false, then_term).into_value();
-    let else_term = guarded_return_for_branch(&cond_term, true, else_term).into_value();
+    let then_term = guarded_return_for_branch(&cond_term, false, then_term);
+    let else_term = guarded_return_for_branch(&cond_term, true, else_term);
     Some(symbolic_cf_ite(cond_term, then_term, else_term).into_term())
 }
 
@@ -628,24 +630,6 @@ fn symbolic_cf_ite(cond: IrTerm, then_term: IrTerm, else_term: IrTerm) -> Symbol
             name: panic_freedom::CF_ITE.to_string(),
             args: vec![cond, then_term, else_term],
         },
-    }
-}
-
-/// Rust-side GuardedReturn floor for result-position branches. The Python
-/// reference lowers `GuardedReturn(guards, value)` as guarded value facts; this
-/// lift preserves the existing v1 wire shape by materializing each guard as
-/// `cf_guarded(<resolved-predicate>, value)` before the surrounding `cf_ite`.
-struct GuardedReturnTerm {
-    guards: Vec<IrTerm>,
-    value: IrTerm,
-}
-
-impl GuardedReturnTerm {
-    fn into_value(self) -> IrTerm {
-        self.guards
-            .into_iter()
-            .rev()
-            .fold(self.value, |value, guard| wrap_cf_guarded(guard, value))
     }
 }
 
@@ -713,47 +697,56 @@ fn branch_guard_head(cond_head: &str, else_branch: bool) -> Option<&'static str>
 /// the value unchanged when no guard applies also keeps every non-guarded
 /// `cf_ite` byte-identical to before this change (CID stability / reflexive
 /// discharge unperturbed).
-#[cfg(test)]
-fn wrap_branch_guard(cond_term: &IrTerm, else_branch: bool, value: IrTerm) -> IrTerm {
-    guarded_return_for_branch(cond_term, else_branch, value).into_value()
-}
-
-fn guarded_return_for_branch(
-    cond_term: &IrTerm,
-    else_branch: bool,
-    value: IrTerm,
-) -> GuardedReturnTerm {
+fn guarded_return_for_branch(cond_term: &IrTerm, else_branch: bool, value: IrTerm) -> IrTerm {
+    let _lowered_condition = lower_ir(cond_term);
+    let lowered_value = lower_ir(&value);
+    let mut guards = Vec::new();
     if !else_branch {
         if let Some(guard) = len_eq_one_branch_guard(cond_term, &value) {
-            return GuardedReturnTerm {
-                guards: vec![guard],
-                value,
+            let (name, args) = match guard {
+                IrTerm::Ctor { name, args } => (name, args),
+                other => {
+                    panic!("branch guard synthesis produced non-atomic guard term: {other:?}");
+                }
             };
+            guards.push(lower_ir_formula(&IrFormula::Atomic { name, args }));
+            return guarded_return_to_ir_term(guard_exit(
+                Desugared::StmtReturn(lowered_value),
+                &guards,
+                "sugar-walk.branch-guard",
+            ));
         }
     }
     let (head, args) = match &cond_term {
         IrTerm::Ctor { name, args } => (name.as_str(), args),
-        _ => {
-            return GuardedReturnTerm {
-                guards: Vec::new(),
-                value,
-            };
-        }
+        _ => return value,
     };
     let Some(resolved_head) = branch_guard_head(head, else_branch) else {
-        return GuardedReturnTerm {
-            guards: Vec::new(),
-            value,
-        };
+        return value;
     };
-    let guard = IrTerm::Ctor {
+    let guard = IrFormula::Atomic {
         name: resolved_head.to_string(),
         args: args.clone(),
     };
-    GuardedReturnTerm {
-        guards: vec![guard],
-        value,
-    }
+    guards.push(lower_ir_formula(&guard));
+    guarded_return_to_ir_term(guard_exit(
+        Desugared::StmtReturn(lowered_value),
+        &guards,
+        "sugar-walk.branch-guard",
+    ))
+}
+
+fn guarded_return_to_ir_term(guarded_return: GuardedReturn) -> IrTerm {
+    let (guards, term) = guarded_return.into_parts();
+    guards
+        .into_iter()
+        .rev()
+        .fold(raise_ir(&term), |value, guard| {
+            let guard = formula_to_term(raise_ir_formula(&guard)).unwrap_or_else(|| {
+                panic!("ControlFlowGuardOperation produced non-term branch guard")
+            });
+            wrap_cf_guarded(guard, value)
+        })
 }
 
 fn len_eq_one_branch_guard(cond_term: &IrTerm, value: &IrTerm) -> Option<IrTerm> {
@@ -5182,7 +5175,7 @@ mod tests {
     }
 
     #[test]
-    fn wrap_branch_guard_then_carries_positive_else_carries_complement() {
+    fn guarded_return_for_branch_then_carries_positive_else_carries_complement() {
         // Condition `is_some(x)`. The then-branch must wrap to
         // cf_guarded(is_some(x), value); the else-branch to
         // cf_guarded(is_none(x), value) -- the kit-computed complement.
@@ -5193,8 +5186,8 @@ mod tests {
         };
         let val = || IrTerm::Var { name: "v".into() };
 
-        let then_t = wrap_branch_guard(&cond, false, val());
-        let else_t = wrap_branch_guard(&cond, true, val());
+        let then_t = guarded_return_for_branch(&cond, false, val());
+        let else_t = guarded_return_for_branch(&cond, true, val());
 
         match &then_t {
             IrTerm::Ctor { name, args } => {
@@ -5228,7 +5221,7 @@ mod tests {
     }
 
     #[test]
-    fn wrap_branch_guard_unrecognized_condition_wraps_nothing() {
+    fn guarded_return_for_branch_unrecognized_condition_wraps_nothing() {
         // A comparison condition (`cf_lt(...)`) is not a partial-pre predicate:
         // the branch value passes through UNCHANGED (no cf_guarded), so a
         // partial inside it stays undecidable and the cf_ite is byte-stable.
@@ -5237,7 +5230,7 @@ mod tests {
             args: vec![IrTerm::Var { name: "x".into() }, const_int(10)],
         };
         let val = IrTerm::Var { name: "v".into() };
-        let wrapped = wrap_branch_guard(&cond, false, val.clone());
+        let wrapped = guarded_return_for_branch(&cond, false, val.clone());
         assert_eq!(wrapped, val, "unrecognized guard must wrap nothing");
         // A method-call condition likewise.
         let mcond = IrTerm::Ctor {
@@ -5245,9 +5238,74 @@ mod tests {
             args: vec![IrTerm::Var { name: "p".into() }],
         };
         assert_eq!(
-            wrap_branch_guard(&mcond, true, val.clone()),
+            guarded_return_for_branch(&mcond, true, val.clone()),
             val,
             "a method guard must wrap nothing"
+        );
+    }
+
+    #[test]
+    fn guarded_return_for_branch_refuses_unlowerable_condition_sort() {
+        // The boundary conversion is the totality obligation for this slice:
+        // a condition with no algebra image must fail loudly, not silently drop
+        // its guard and over-claim branch facts.
+        let cond = IrTerm::Const {
+            value: serde_json::json!(0),
+            sort: sugar_ir_types::Sort::Function {
+                args: vec![sugar_ir_types::Sort::Primitive { name: "Int".into() }],
+                ret: Box::new(sugar_ir_types::Sort::Primitive {
+                    name: "Bool".into(),
+                }),
+            },
+        };
+        let value = IrTerm::Var { name: "v".into() };
+
+        let refusal = std::panic::catch_unwind(|| guarded_return_for_branch(&cond, false, value));
+        let Err(payload) = refusal else {
+            panic!("Function-sort condition silently crossed the term boundary");
+        };
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|msg| (*msg).to_string()))
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        assert!(
+            message.contains("not supported in symbolic Sort wrapper"),
+            "Function-sort refusal should name the term boundary seam: {message}"
+        );
+    }
+
+    #[test]
+    fn guarded_return_for_branch_refuses_unlowerable_value_sort() {
+        // The branch value crosses the same boundary before guard composition;
+        // if it has no algebra image, the route must fail loudly instead of
+        // fabricating a guarded fact for an unrepresentable value.
+        let cond = IrTerm::Ctor {
+            name: "is_some".into(),
+            args: vec![IrTerm::Var { name: "x".into() }],
+        };
+        let value = IrTerm::Const {
+            value: serde_json::json!(0),
+            sort: sugar_ir_types::Sort::Function {
+                args: vec![sugar_ir_types::Sort::Primitive { name: "Int".into() }],
+                ret: Box::new(sugar_ir_types::Sort::Primitive {
+                    name: "Bool".into(),
+                }),
+            },
+        };
+
+        let refusal = std::panic::catch_unwind(|| guarded_return_for_branch(&cond, false, value));
+        let Err(payload) = refusal else {
+            panic!("Function-sort value silently crossed the term boundary");
+        };
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|msg| (*msg).to_string()))
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        assert!(
+            message.contains("not supported in symbolic Sort wrapper"),
+            "Function-sort refusal should name the term boundary seam: {message}"
         );
     }
 

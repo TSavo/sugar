@@ -54,20 +54,6 @@ const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[
     },
     ExpectedStructuralSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "GuardedReturnTerm",
-        kind: "second_representation_adapter",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "delete adapter after guarded returns are composed by ControlFlowGuardOperation",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "wrap_branch_guard",
-        kind: "irterm_guard_wrapper",
-        owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
-        replacement: "test the algebra operation output instead of an IrTerm-side wrapper",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         symbol: "guarded_return_for_branch",
         kind: "irterm_guard_reasoning",
         owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
