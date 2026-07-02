@@ -103,7 +103,10 @@ impl SourceMemento {
         if start >= end {
             return None;
         }
-        std::str::from_utf8(&bytes[start..end]).ok()
+        match std::str::from_utf8(&bytes[start..end]) {
+            Ok(source) => Some(source),
+            Err(_) => None,
+        }
     }
 
     /// Like `to_json` but stamps a `sourceOracle.source` field with the term
@@ -142,38 +145,45 @@ impl SourceMemento {
     ) -> Option<Self> {
         let file = body_source.get("file").and_then(Value::as_str)?.to_string();
         let span = body_source.get("span")?;
-        let param_names = body_source
+        let param_names = match body_source
             .get("param_names")
             .or_else(|| body_source.get("paramNames"))
             .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
+        {
+            Some(arr) => arr
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            None => Vec::new(),
+        };
+        let function_name = match source_function_name {
+            Some(name) => name,
+            None => String::new(),
+        };
+        let source_cid = body_source
+            .get("source_cid")
+            .or_else(|| body_source.get("sourceCid"))
+            .and_then(Value::as_str)
+            .filter(|cid| !cid.trim().is_empty())?
+            .to_string();
+        let template_cid = body_source
+            .get("template_cid")
+            .or_else(|| body_source.get("templateCid"))
+            .and_then(Value::as_str)
+            .filter(|cid| !cid.trim().is_empty())?
+            .to_string();
         Some(SourceMemento {
             file,
-            function_name: source_function_name.unwrap_or_default(),
+            function_name,
             span: SrcSpan {
-                start_line: span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize,
-                start_col: span.get("start_col").and_then(Value::as_u64).unwrap_or(0) as usize,
-                end_line: span.get("end_line").and_then(Value::as_u64).unwrap_or(0) as usize,
-                end_col: span.get("end_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+                start_line: span.get("start_line").and_then(Value::as_u64)? as usize,
+                start_col: span.get("start_col").and_then(Value::as_u64)? as usize,
+                end_line: span.get("end_line").and_then(Value::as_u64)? as usize,
+                end_col: span.get("end_col").and_then(Value::as_u64)? as usize,
             },
-            source_cid: body_source
-                .get("source_cid")
-                .or_else(|| body_source.get("sourceCid"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            template_cid: body_source
-                .get("template_cid")
-                .or_else(|| body_source.get("templateCid"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+            source_cid,
+            template_cid,
             param_names,
         })
     }
@@ -351,11 +361,11 @@ impl<'a> SourceTextIndex<'a> {
         let start = span.start();
         let end = block.brace_token.span.close().end();
         let param_names = param_names_without_receiver_from_signature(sig);
-        let body_text = self
-            .block_inner_source(block)
-            .map(canonical_sugar_body_text)
-            .unwrap_or_default()
-            .to_string();
+        let source_text = match self.block_inner_source(block) {
+            Some(source_text) => source_text,
+            None => panic!("source oracle could not slice function body for `{name}`"),
+        };
+        let body_text = canonical_sugar_body_text(source_text).to_string();
         let ast_template = block_to_ast_template(block, &param_names);
         SourceFragment {
             file: file_rel.to_string(),
@@ -380,11 +390,11 @@ impl<'a> SourceTextIndex<'a> {
         stmt: &syn::Stmt,
     ) -> SourceFragment {
         let span = span_to_src_span(stmt.span());
-        let body_text = self
-            .source_slice_between(stmt.span().start(), stmt.span().end())
-            .map(canonical_sugar_body_text)
-            .unwrap_or_default()
-            .to_string();
+        let source_text = match self.source_slice_between(stmt.span().start(), stmt.span().end()) {
+            Some(source_text) => source_text,
+            None => panic!("source oracle could not slice statement span for `{owner_name}`"),
+        };
+        let body_text = canonical_sugar_body_text(source_text).to_string();
         let ast_template = stmt_to_template(stmt, param_names);
         SourceFragment {
             file: file_rel.to_string(),
@@ -404,11 +414,11 @@ impl<'a> SourceTextIndex<'a> {
         expr: &syn::Expr,
     ) -> SourceFragment {
         let span = span_to_src_span(expr.span());
-        let body_text = self
-            .source_slice_between(expr.span().start(), expr.span().end())
-            .map(canonical_sugar_body_text)
-            .unwrap_or_default()
-            .to_string();
+        let source_text = match self.source_slice_between(expr.span().start(), expr.span().end()) {
+            Some(source_text) => source_text,
+            None => panic!("source oracle could not slice expression span for `{owner_name}`"),
+        };
+        let body_text = canonical_sugar_body_text(source_text).to_string();
         SourceFragment {
             file: file_rel.to_string(),
             function_name: owner_name.to_string(),
@@ -530,11 +540,13 @@ impl<'a> SourceFragmentCache<'a> {
         let fragment = self
             .index
             .source_fragment_of(file_rel, span, name, sig, block);
-        let source_text = self
+        let source_text = match self
             .index
             .source_slice_between(span.start(), block.brace_token.span.close().end())
-            .unwrap_or_default()
-            .to_string();
+        {
+            Some(source_text) => source_text.to_string(),
+            None => panic!("source oracle cache could not slice function body for `{name}`"),
+        };
         self.insert_fragment(fragment.clone(), source_text);
         fragment
     }
@@ -607,14 +619,18 @@ impl<'a> SourceFragmentCache<'a> {
         stmt: &syn::Stmt,
     ) -> SourceFragment {
         let span = span_to_src_span(stmt.span());
-        let source_text = self
-            .source_text_from_cached_fragment(&span)
-            .unwrap_or_else(|| {
-                self.index
-                    .source_slice_between(stmt.span().start(), stmt.span().end())
-                    .unwrap_or_default()
-                    .to_string()
-            });
+        let source_text = match self.source_text_from_cached_fragment(&span) {
+            Some(source_text) => source_text,
+            None => match self
+                .index
+                .source_slice_between(stmt.span().start(), stmt.span().end())
+            {
+                Some(source_text) => source_text.to_string(),
+                None => {
+                    panic!("source oracle cache could not slice statement span for `{owner_name}`")
+                }
+            },
+        };
         let body_text = canonical_sugar_body_text(&source_text).to_string();
         let fragment = SourceFragment {
             file: file_rel.to_string(),
@@ -636,14 +652,18 @@ impl<'a> SourceFragmentCache<'a> {
         expr: &syn::Expr,
     ) -> SourceFragment {
         let span = span_to_src_span(expr.span());
-        let source_text = self
-            .source_text_from_cached_fragment(&span)
-            .unwrap_or_else(|| {
-                self.index
-                    .source_slice_between(expr.span().start(), expr.span().end())
-                    .unwrap_or_default()
-                    .to_string()
-            });
+        let source_text = match self.source_text_from_cached_fragment(&span) {
+            Some(source_text) => source_text,
+            None => match self
+                .index
+                .source_slice_between(expr.span().start(), expr.span().end())
+            {
+                Some(source_text) => source_text.to_string(),
+                None => {
+                    panic!("source oracle cache could not slice expression span for `{owner_name}`")
+                }
+            },
+        };
         let body_text = canonical_sugar_body_text(&source_text).to_string();
         let fragment = SourceFragment {
             file: file_rel.to_string(),
@@ -956,6 +976,24 @@ pub fn resolve_source_memento(
     project_root: &std::path::Path,
     memento: &SourceMemento,
 ) -> Result<ResolvedSource, SourceOracleRefusal> {
+    if memento.source_cid.trim().is_empty() {
+        return Err(SourceOracleRefusal {
+            reason: format!(
+                "source memento for `{}` in `{}` is missing source_cid",
+                memento_function_display_name(memento),
+                memento.file
+            ),
+        });
+    }
+    if memento.template_cid.trim().is_empty() {
+        return Err(SourceOracleRefusal {
+            reason: format!(
+                "source memento for `{}` in `{}` is missing template_cid",
+                memento_function_display_name(memento),
+                memento.file
+            ),
+        });
+    }
     let path = project_root.join(&memento.file);
     let src = std::fs::read_to_string(&path).map_err(|e| SourceOracleRefusal {
         reason: format!("cannot read source `{}`: {e}", path.display()),
@@ -966,7 +1004,7 @@ pub fn resolve_source_memento(
     let source_fn = locate_source_fn(&file.items, memento).ok_or_else(|| SourceOracleRefusal {
         reason: format!(
             "source function `{}` not found in `{}` near line {}",
-            memento.source_function_name().unwrap_or("<any>"),
+            memento_function_display_name(memento),
             memento.file,
             memento.span.start_line
         ),
@@ -985,9 +1023,7 @@ pub fn resolve_source_memento(
     let whole_fragment = source_index.source_fragment_of(
         &memento.file,
         source_fn.span,
-        memento
-            .source_function_name()
-            .unwrap_or(&source_fn.full_name),
+        memento_function_name_or(memento, &source_fn.full_name),
         source_fn.sig,
         source_fn.block,
     );
@@ -1010,13 +1046,11 @@ pub fn resolve_source_memento(
         // reports drift as "source CID misaligned" -- a function we located by name
         // whose pinned fragment span is now absent IS drift, never a bare "fragment
         // not found".
-        source_index
+        let pinned_fragment = source_index
             .source_fragment_of_term_src_span(
                 &memento.file,
                 &memento.span,
-                memento
-                    .source_function_name()
-                    .unwrap_or(&source_fn.full_name),
+                memento_function_name_or(memento, &source_fn.full_name),
                 source_fn.sig,
                 source_fn.block,
             )
@@ -1024,9 +1058,7 @@ pub fn resolve_source_memento(
                 source_index.source_fragment_of_statement_src_span(
                     &memento.file,
                     &memento.span,
-                    memento
-                        .source_function_name()
-                        .unwrap_or(&source_fn.full_name),
+                    memento_function_name_or(memento, &source_fn.full_name),
                     source_fn.sig,
                     source_fn.block,
                 )
@@ -1035,35 +1067,44 @@ pub fn resolve_source_memento(
                 source_index.source_fragment_of_raw_src_span(
                     &memento.file,
                     &memento.span,
-                    memento
-                        .source_function_name()
-                        .unwrap_or(&source_fn.full_name),
+                    memento_function_name_or(memento, &source_fn.full_name),
                     source_fn.sig,
                 )
-            })
-            .unwrap_or(whole_fragment)
+            });
+        match pinned_fragment {
+            Some(fragment) => fragment,
+            None => whole_fragment,
+        }
     };
     let recomputed = fragment.to_memento();
     let recomputed_source_cid = recomputed.source_cid;
     let recomputed_template_cid = recomputed.template_cid;
 
     if !memento.source_cid.is_empty() && recomputed_source_cid != memento.source_cid {
+        let source_name_change = match source_name_change.as_deref() {
+            Some(reason) => reason,
+            None => "",
+        };
         return Err(SourceOracleRefusal {
             reason: format!(
                 "{}source CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_source_cid} -- the source drifted from the proof",
-                source_name_change.as_deref().unwrap_or(""),
-                memento.source_function_name().unwrap_or("<any>"),
+                source_name_change,
+                memento_function_display_name(memento),
                 memento.file,
                 memento.source_cid
             ),
         });
     }
     if !memento.template_cid.is_empty() && recomputed_template_cid != memento.template_cid {
+        let source_name_change = match source_name_change.as_deref() {
+            Some(reason) => reason,
+            None => "",
+        };
         return Err(SourceOracleRefusal {
             reason: format!(
                 "{}template CID misaligned for `{}` in `{}`: pinned {}, on-disk {recomputed_template_cid} -- the AST drifted from the proof",
-                source_name_change.as_deref().unwrap_or(""),
-                memento.source_function_name().unwrap_or("<any>"),
+                source_name_change,
+                memento_function_display_name(memento),
                 memento.file,
                 memento.template_cid
             ),
@@ -1085,6 +1126,20 @@ pub fn resolve_source_memento(
         source_cid: recomputed_source_cid,
         template_cid: recomputed_template_cid,
     })
+}
+
+fn memento_function_display_name(memento: &SourceMemento) -> &str {
+    match memento.source_function_name() {
+        Some(name) => name,
+        None => "<any>",
+    }
+}
+
+fn memento_function_name_or<'a>(memento: &'a SourceMemento, fallback: &'a str) -> &'a str {
+    match memento.source_function_name() {
+        Some(name) => name,
+        None => fallback,
+    }
 }
 
 fn source_span_eq(a: &SrcSpan, b: &SrcSpan) -> bool {
@@ -1359,11 +1414,10 @@ fn stmt_to_template(stmt: &syn::Stmt, params: &[String]) -> Value {
     match stmt {
         Stmt::Local(local) => {
             let pat = pat_to_template(&local.pat, params);
-            let init = local
-                .init
-                .as_ref()
-                .map(|init| expr_to_template(&init.expr, params))
-                .unwrap_or(Value::Null);
+            let init = match local.init.as_ref() {
+                Some(init) => expr_to_template(&init.expr, params),
+                None => Value::Null,
+            };
             json!({ "kind": "let", "pat": pat, "init": init })
         }
         Stmt::Item(_) => json!({ "kind": "item" }),
@@ -1444,11 +1498,10 @@ fn expr_to_template(expr: &syn::Expr, params: &[String]) -> Value {
         Expr::Match(_) => json!({ "kind": "match" }),
         Expr::If(_) => json!({ "kind": "if" }),
         Expr::Return(r) => {
-            let inner = r
-                .expr
-                .as_ref()
-                .map(|e| expr_to_template(e, params))
-                .unwrap_or(Value::Null);
+            let inner = match r.expr.as_ref() {
+                Some(expr) => expr_to_template(expr, params),
+                None => Value::Null,
+            };
             json!({ "kind": "return", "expr": inner })
         }
         Expr::Binary(b) => {
@@ -1545,11 +1598,10 @@ fn line_column_to_byte_offset_with_starts(
     }
 
     let line_start = *line_starts.get(loc.line - 1)?;
-    let line_end = line_starts
-        .get(loc.line)
-        .copied()
-        .map(|next_start| next_start.saturating_sub(1))
-        .unwrap_or(src.len());
+    let line_end = match line_starts.get(loc.line).copied() {
+        Some(next_start) => next_start.saturating_sub(1),
+        None => src.len(),
+    };
     let line = src.get(line_start..line_end)?;
 
     if loc.column == 0 {
@@ -1959,5 +2011,74 @@ fn emits_fact(x: i64) {
                 "param_names"
             ])
         );
+    }
+
+    #[test]
+    fn from_body_source_refuses_missing_required_pins_and_span_fields() {
+        let body_source_without_cids = json!({
+            "file": "demo.rs",
+            "span": {
+                "start_line": 1,
+                "start_col": 0,
+                "end_line": 1,
+                "end_col": 10,
+            },
+            "param_names": [],
+        });
+        assert!(
+            SourceMemento::from_body_source(Some("f".to_string()), &body_source_without_cids)
+                .is_none(),
+            "body_source without content CIDs must not construct a drift-blind memento"
+        );
+
+        let body_source_without_complete_span = json!({
+            "file": "demo.rs",
+            "span": {
+                "start_line": 1,
+                "start_col": 0,
+                "end_line": 1,
+            },
+            "source_cid": "blake3-512:source",
+            "template_cid": "blake3-512:template",
+        });
+        assert!(
+            SourceMemento::from_body_source(
+                Some("f".to_string()),
+                &body_source_without_complete_span
+            )
+            .is_none(),
+            "body_source with incomplete span must not construct a zero-filled memento"
+        );
+    }
+
+    #[test]
+    fn resolve_source_memento_refuses_missing_content_address() {
+        let root = std::env::temp_dir().join(format!(
+            "sugar-source-oracle-unpinned-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        let src = "fn f(x: i64) -> i64 { x + 1 }\n";
+        std::fs::write(root.join("src/lib.rs"), src).expect("write source");
+        let file: syn::File = syn::parse_str(src).expect("parse");
+        let syn::Item::Fn(item) = &file.items[0] else {
+            panic!("expected fn");
+        };
+        let mut memento = source_memento_of_item_fn("src/lib.rs", src, item);
+        memento.source_cid.clear();
+
+        let refusal =
+            resolve_source_memento(&root, &memento).expect_err("unpinned source CID must refuse");
+
+        assert!(
+            refusal.reason.contains("source_cid"),
+            "unexpected refusal: {}",
+            refusal.reason
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }
