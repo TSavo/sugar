@@ -346,6 +346,8 @@ def _expr(term: Json) -> ast.expr:
         return ast.Attribute(
             value=_expr(args[0]), attr=_const_string(args[1]), ctx=ast.Load()
         )
+    if name == "python:type_application":
+        return _expr(args[1])
     if name == "python:subscript":
         return ast.Subscript(
             value=_expr(args[0]), slice=_slice_or_expr(args[1]), ctx=ast.Load()

@@ -173,6 +173,16 @@ def _subscript(value: dict[str, object], index: dict[str, object]) -> dict[str, 
     return {"kind": "ctor", "name": "python:subscript", "args": [value, index]}
 
 
+def _type_application(
+    base: str, annotation: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:type_application",
+        "args": [_str_const(base), annotation],
+    }
+
+
 def _slice(
     lower: dict[str, object],
     upper: dict[str, object],
@@ -4509,25 +4519,100 @@ def test_triple_chained_call_lifts_nested_dynamic_callees() -> None:
     assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
 
 
-def test_subscript_callees_lift_as_opaque_unresolved_calls() -> None:
+def test_generic_subscript_callee_records_type_application() -> None:
     source = (
-        "def f(cast, Dict, str, int, x):\n"
-        "    value = cast[int](x)\n"
+        "def f(Dict, str, int):\n"
         "    return Dict[str, int]()\n"
     )
 
-    result = lift_source(source, "subscript_callee.py")
+    result = lift_source(source, "generic_subscript_callee.py")
 
     contract = _contract(result.ir, ".f")
     assert result.refusals == []
-    assert _function_body(result) == _seq(
-        _assign(
-            _var("value"),
-            _call_term(_subscript(_var("cast"), _var("int")), _var("x")),
-        ),
-        _return(_call_term(_subscript(_var("Dict"), _tuple(_var("str"), _var("int"))))),
+    assert _function_body(result) == _return(
+        _call_term(
+            _type_application(
+                "Dict",
+                _subscript(_var("Dict"), _annotation_tuple(_var("str"), _var("int"))),
+            )
+        )
     )
-    assert {"kind": "unresolved_call", "name": "(subscript)"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "Dict"} in contract["effects"]
+    assert {"kind": "panics"} in contract["effects"]
+
+
+def test_nested_generic_subscript_callee_roundtrips_stably() -> None:
+    term = _call_term(
+        _type_application(
+            "Dict",
+            _subscript(
+                _var("Dict"),
+                _annotation_tuple(_var("str"), _subscript(_var("List"), _var("int"))),
+            ),
+        )
+    )
+
+    compiled = compile_body_term(_return(term), formals=["Dict", "List", "str", "int"])
+    relifted = lift_source(compiled, "roundtrip_generic_subscript_callee.py")
+
+    contract = _contract(relifted.ir, ".f")
+    body = _function_body(relifted)
+    assert relifted.refusals == []
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+    assert {"kind": "unresolved_call", "name": "Dict"} in contract["effects"]
+    assert {"kind": "panics"} in contract["effects"]
+
+
+def test_dynamic_subscript_callee_stays_refused() -> None:
+    result = lift_source(
+        "def f(registry, key, x):\n    return registry[key](x)\n",
+        "dynamic_subscript_callee.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "callee-subscript-refused",
+            "function": "dynamic_subscript_callee.f",
+            "line": 2,
+            "reason": "callee is a Subscript: not a callable expression",
+        }
+    ]
+
+
+def test_non_typing_cast_subscript_callee_stays_refused() -> None:
+    result = lift_source(
+        "def f(cast, int, x):\n    return cast[int](x)\n",
+        "non_typing_cast_subscript_callee.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "callee-subscript-refused",
+            "function": "non_typing_cast_subscript_callee.f",
+            "line": 2,
+            "reason": "callee is a Subscript: not a callable expression",
+        }
+    ]
+
+
+def test_subscripted_receiver_method_callee_lifts_as_expression_call() -> None:
+    result = lift_source(
+        "def f(df, dtype):\n    return df['a'].astype(dtype)\n",
+        "subscripted_receiver_method.py",
+    )
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _call_term(
+            _attr(_subscript(_var("df"), _str_const("a")), "astype"),
+            _var("dtype"),
+        )
+    )
+    assert {"kind": "unresolved_call", "name": "(subscript-receiver)"} in contract[
+        "effects"
+    ]
     assert {"kind": "panics"} in contract["effects"]
 
 
@@ -4547,18 +4632,20 @@ def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
     ]
 
 
-def test_subscript_callee_roundtrip_is_structurally_stable() -> None:
+def test_dynamic_subscript_callee_roundtrip_refuses_loudly() -> None:
     term = _call_term(_subscript(_var("factory"), _var("key")), _var("x"))
 
     compiled = compile_body_term(_return(term), formals=["factory", "key", "x"])
     relifted = lift_source(compiled, "roundtrip_subscript_callee.py")
 
-    contract = _contract(relifted.ir, ".f")
-    assert relifted.refusals == []
-    body = _function_body(relifted)
-    assert body == _return(term)
-    assert cid_of_json(body) == cid_of_json(_return(term))
-    assert {"kind": "unresolved_call", "name": "(subscript)"} in contract["effects"]
+    assert relifted.refusals == [
+        {
+            "kind": "callee-subscript-refused",
+            "function": "roundtrip_subscript_callee.f",
+            "line": 2,
+            "reason": "callee is a Subscript: not a callable expression",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
