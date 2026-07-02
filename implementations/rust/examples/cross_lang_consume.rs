@@ -31,6 +31,7 @@
 // Usage:
 //   cargo run --release --example cross_lang_consume <path-to-peer.proof>
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -161,6 +162,7 @@ fn run() -> Result<(), String> {
     let produced_by = "rust-consumer@1";
 
     let mut graph = ProofGraph::new();
+    let mut contract_names_by_cid: HashMap<String, String> = HashMap::new();
     for d in &decls {
         let args = MintContractArgs {
             evidence_term: None,
@@ -200,6 +202,7 @@ fn run() -> Result<(), String> {
         println!("  contract minted: {} -> CID {}", d.name, minted.cid);
         let memento = ClaimContractMemento::new(minted.canonical_bytes);
         assert_eq!(memento.cid().as_str(), minted.cid);
+        contract_names_by_cid.insert(minted.cid.clone(), d.name.clone());
         graph.push_claim_contract(memento);
     }
 
@@ -253,20 +256,21 @@ fn run() -> Result<(), String> {
     let mut passing: Option<&_> = None;
     let mut failing: Option<&_> = None;
     for row in &report.rows {
+        let row_property_cid = row.callsite.property_cid.as_ref().map(ToString::to_string);
+        let property_label = row_property_cid
+            .as_ref()
+            .and_then(|cid| contract_names_by_cid.get(cid))
+            .map(String::as_str)
+            .unwrap_or(row.callsite.property_name.as_str());
         let reason = if row.reason.is_empty() {
             String::new()
         } else {
             format!(" -- {}", row.reason)
         };
-        println!(
-            "    {}: {}{}",
-            row.callsite.property_name,
-            row.status.as_str(),
-            reason
-        );
-        if row.callsite.property_name == "calls-parseInt-with-positive-5" {
+        println!("    {}: {}{}", property_label, row.status.as_str(), reason);
+        if property_label == "calls-parseInt-with-positive-5" {
             passing = Some(row);
-        } else if row.callsite.property_name == "calls-parseInt-with-zero" {
+        } else if property_label == "calls-parseInt-with-zero" {
             failing = Some(row);
         }
     }

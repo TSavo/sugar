@@ -2,7 +2,7 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use sugar_verifier::load_all_proofs;
 
@@ -66,6 +66,21 @@ fn only_proof_file(dir: &Path) -> PathBuf {
     proofs[0].clone()
 }
 
+fn run_cross_lang_consume(peer_proof: &Path) -> Output {
+    cargo_command()
+        .args([
+            "run",
+            "-p",
+            "sugar-verifier",
+            "--example",
+            "cross_lang_consume",
+            "--",
+        ])
+        .arg(peer_proof)
+        .output()
+        .expect("run cross_lang_consume example")
+}
+
 #[test]
 fn parse_int_publish_output_loads_through_verifier() {
     let out_dir = unique_dir("parse-int");
@@ -91,18 +106,7 @@ fn cross_lang_consume_output_reaches_solver_without_load_errors() {
     run_parse_int_publish(&peer_out_dir);
     let peer_proof = only_proof_file(&peer_out_dir);
 
-    let output = cargo_command()
-        .args([
-            "run",
-            "-p",
-            "sugar-verifier",
-            "--example",
-            "cross_lang_consume",
-            "--",
-        ])
-        .arg(&peer_proof)
-        .output()
-        .expect("run cross_lang_consume example");
+    let output = run_cross_lang_consume(&peer_proof);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -119,6 +123,41 @@ fn cross_lang_consume_output_reaches_solver_without_load_errors() {
         output.status,
         stdout,
         stderr
+    );
+    let _ = std::fs::remove_dir_all(&peer_out_dir);
+}
+
+#[test]
+fn cross_lang_consume_discharges_end_to_end() {
+    let peer_out_dir = unique_dir("peer-e2e");
+    run_parse_int_publish(&peer_out_dir);
+    let peer_proof = only_proof_file(&peer_out_dir);
+
+    let output = run_cross_lang_consume(&peer_proof);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "cross_lang_consume should discharge end-to-end\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        stdout,
+        stderr
+    );
+    assert!(
+        !stdout.contains("unsupported dialect: smt-lib-v2.6"),
+        "default SMT-LIB dialect must be supported by the verifier runner:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("calls-parseInt-with-positive-5: discharged"),
+        "positive peer precondition call should discharge:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("calls-parseInt-with-zero: unsatisfied"),
+        "zero peer precondition call should be caught as unsatisfied:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("DEMO: Rust verifier caught parse_int(num(0))"),
+        "demo success summary should print:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&peer_out_dir);
 }
