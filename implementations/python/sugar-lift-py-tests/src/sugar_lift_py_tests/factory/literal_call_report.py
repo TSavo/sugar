@@ -38,6 +38,7 @@ from .floor_contract_agreement import (
     floor_contract_agreement_diagnostic,
     floor_contract_agreement_violations_for_fact,
 )
+from .proofir_provenance_diagnostic import proofir_formula_provenance_diagnostic
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
 
@@ -198,6 +199,7 @@ def build_literal_call_report(
             diagnostics=[
                 *[refusal.to_json() for refusal in dig_refusals],
                 floor_contract_agreement_diagnostic(agreement_violations),
+                proofir_formula_provenance_diagnostic(contracts, factory_walk),
             ],
         )
     )
