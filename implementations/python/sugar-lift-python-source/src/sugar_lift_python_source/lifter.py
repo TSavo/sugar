@@ -1137,6 +1137,8 @@ class _Emitter:
                 for key, value in zip(keys, values)
             ]
             return ctor("python:dict", *entries)
+        if isinstance(node, ast.JoinedStr):
+            return self.fstring(node)
         if isinstance(node, ast.NamedExpr):
             if not isinstance(node.target, ast.Name):
                 raise _UnsupportedSyntax(
@@ -1146,6 +1148,41 @@ class _Emitter:
             return ctor("python:walrus", var(node.target.id), self.expr(node.value))
         raise _UnsupportedSyntax(
             node, f"unhandled expression kind: {type(node).__name__}"
+        )
+
+    def fstring(self, node: ast.JoinedStr) -> Json:
+        parts: list[Json] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str_const(str(value.value)))
+            elif isinstance(value, ast.FormattedValue):
+                parts.append(self.fstring_value(value))
+            else:
+                raise _UnsupportedSyntax(
+                    value, f"unknown f-string part: {type(value).__name__}"
+                )
+        return ctor("python:fstring", *parts)
+
+    def fstring_value(self, node: ast.FormattedValue) -> Json:
+        conversion = self.fstring_conversion(node)
+        format_spec = (
+            none_const() if node.format_spec is None else self.fstring(node.format_spec)
+        )
+        return ctor(
+            "python:fstring_value",
+            self.expr(node.value),
+            conversion,
+            format_spec,
+        )
+
+    def fstring_conversion(self, node: ast.FormattedValue) -> Json:
+        if node.conversion == -1:
+            return none_const()
+        if node.conversion in {ord("a"), ord("r"), ord("s")}:
+            return str_const(chr(node.conversion))
+        raise _UnsupportedSyntax(
+            node,
+            f"unsupported f-string conversion: {node.conversion}",
         )
 
     def constant(self, node: ast.Constant) -> Json:
