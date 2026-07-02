@@ -32,7 +32,7 @@ type StmtRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Suga
 
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
-pub(crate) struct ExprSugarClaim {
+pub struct ExprSugarClaim {
     #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
@@ -182,14 +182,14 @@ impl ExprSugarClaim {
         self.role
     }
 
-    pub(crate) fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         self.name
     }
 }
 
 /// A Sugar's claim that it knows how to recognize one source-item position.
 #[derive(Clone, Copy)]
-pub(crate) struct ItemSugarClaim {
+pub struct ItemSugarClaim {
     #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
@@ -230,6 +230,10 @@ impl ItemSugarClaim {
         self.role
     }
 
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
     pub(crate) fn candidate(
         &'static self,
         item: &Item,
@@ -250,7 +254,7 @@ impl ItemSugarClaim {
 /// The factory brokers over these exactly as it does `ExprSugarClaim`/`ItemSugarClaim`
 /// -- a statement is lifted ONLY through a claim, never by a hand-rolled block walker.
 #[derive(Clone, Copy)]
-pub(crate) struct StmtSugarClaim {
+pub struct StmtSugarClaim {
     #[allow(dead_code)]
     name: &'static str,
     role: SugarRole,
@@ -312,6 +316,10 @@ impl StmtSugarClaim {
 
     pub(crate) fn role(&self) -> SugarRole {
         self.role
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
     }
 
     pub(crate) fn candidate(

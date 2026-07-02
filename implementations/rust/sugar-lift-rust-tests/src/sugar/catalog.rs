@@ -45,6 +45,20 @@ use crate::sugar::{
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogClaimKind {
+    Expr,
+    Item,
+    Stmt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatalogClaim {
+    pub kind: CatalogClaimKind,
+    pub name: &'static str,
+    pub role: &'static str,
+}
+
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
@@ -269,6 +283,42 @@ const STMT_CLAIMS: &[&StmtSugarClaim] = &[
     &block_sugar::BLOCK_STMT_SUGAR,
     &block_sugar::SUPPORT_STMT_SUGAR,
 ];
+
+pub fn catalog_claims() -> Vec<CatalogClaim> {
+    let mut claims = Vec::with_capacity(EXPR_CLAIMS.len() + ITEM_CLAIMS.len() + STMT_CLAIMS.len());
+    claims.extend(EXPR_CLAIMS.iter().map(|claim| CatalogClaim {
+        kind: CatalogClaimKind::Expr,
+        name: claim.name(),
+        role: sugar_role_name(claim.role()),
+    }));
+    claims.extend(ITEM_CLAIMS.iter().map(|claim| CatalogClaim {
+        kind: CatalogClaimKind::Item,
+        name: claim.name(),
+        role: sugar_role_name(claim.role()),
+    }));
+    claims.extend(STMT_CLAIMS.iter().map(|claim| CatalogClaim {
+        kind: CatalogClaimKind::Stmt,
+        name: claim.name(),
+        role: sugar_role_name(claim.role()),
+    }));
+    claims
+}
+
+fn sugar_role_name(role: SugarRole) -> &'static str {
+    match role {
+        SugarRole::Term => "Term",
+        SugarRole::Composite => "Composite",
+        SugarRole::Constraint => "Constraint",
+        SugarRole::AssertionSurface => "AssertionSurface",
+        SugarRole::TupleProducer => "TupleProducer",
+        SugarRole::SupportConstraint => "SupportConstraint",
+        SugarRole::StatementEffect => "StatementEffect",
+        SugarRole::Statement => "Statement",
+        SugarRole::ClosureAdaptorVerdict => "ClosureAdaptorVerdict",
+        SugarRole::MatchScrutineeVerdict => "MatchScrutineeVerdict",
+        SugarRole::StatementItem => "StatementItem",
+    }
+}
 
 pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     let mut candidates = matching_expr_claims_for_role(expr, fcx, role);
