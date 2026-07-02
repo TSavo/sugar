@@ -369,17 +369,24 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn exact_loop_replayed(&self, name: &str) -> bool {
-        self.loop_replayed.contains(name) && self.term_for(name).is_some()
+        self.loop_replayed.contains(name) && self.has_exact_replayed_value(name)
     }
 
     pub(crate) fn mark_loop_replayed(&mut self, name: &str) {
-        if self.term_for(name).is_some() {
+        if self.has_exact_replayed_value(name) {
             self.loop_replayed.insert(name.to_string());
         }
     }
 
     pub(crate) fn clear_loop_replayed(&mut self, name: &str) {
         self.loop_replayed.remove(name);
+    }
+
+    fn has_exact_replayed_value(&self, name: &str) -> bool {
+        self.term_for(name).is_some()
+            || self
+                .expr_for(name)
+                .is_some_and(|expr| self.trackable_value(&expr).is_some())
     }
 
     fn clear_value(&mut self, name: &str) {
@@ -396,6 +403,28 @@ impl TemporalRewriteState {
 
     pub(crate) fn apply(&mut self, expr: &Expr) -> bool {
         ExprTemporalRewriteAction::from_expr(expr).is_some_and(|action| action.apply(self, true))
+    }
+
+    pub(crate) fn apply_replayable_loop_assignment(&mut self, expr: &Expr) -> bool {
+        match strip_refs_groups(expr) {
+            Expr::Assign(assign) => {
+                if self.target_for_lhs(&assign.left).is_some() {
+                    return self.apply(expr);
+                }
+                let Some(target) = self.target_for_direct_index_lhs(&assign.left) else {
+                    return false;
+                };
+                let Some(value) = self.trackable_value(&assign.right) else {
+                    return self.invalidate_unknown_assignment(
+                        &target,
+                        &assign.left,
+                        &assign.right,
+                    );
+                };
+                self.set_target(target, value)
+            }
+            _ => self.apply(expr),
+        }
     }
 
     pub(crate) fn can_apply_action(&self, action: &TemporalRewriteAction) -> bool {
@@ -1392,6 +1421,23 @@ impl TemporalRewriteState {
                 None
             }
         }
+    }
+
+    fn target_for_direct_index_lhs(&self, lhs: &Expr) -> Option<Target> {
+        let Expr::Index(index) = strip_refs_groups(lhs) else {
+            return None;
+        };
+        let idx = self.index_value(&index.index)?;
+        let base_name = simple_path_name(&index.expr)?;
+        self.values
+            .get(&base_name)
+            .and_then(aggregate_elems)
+            .filter(|(_, elems)| idx < elems.len())?;
+        Some(Target::Element {
+            base: base_name,
+            index: idx,
+            replayable_alias: true,
+        })
     }
 
     fn target_accepts_term_assignment(&self, target: &Target) -> bool {
@@ -2872,5 +2918,23 @@ mod tests {
             !state.can_apply_action(&action),
             "direct mutable-container element writes are not replayable temporal sugar"
         );
+    }
+
+    #[test]
+    fn replay_loop_direct_index_assignment_rewrites_literal_array_base() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("buf", syn::parse_quote!([0i32, 0, 0]));
+        let expr: Expr = syn::parse_quote!(buf[2] = 7);
+
+        assert!(state.apply_replayable_loop_assignment(&expr));
+        assert_eq!(
+            state
+                .expr_for_index("buf", 2)
+                .and_then(|expr| const_int(&expr)),
+            Some(7)
+        );
+        state.mark_loop_replayed("buf");
+        assert!(state.exact_loop_replayed("buf"));
+        assert!(state.replayed_mutable_alias_base("buf"));
     }
 }

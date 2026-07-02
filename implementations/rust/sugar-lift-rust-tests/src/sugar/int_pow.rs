@@ -93,9 +93,11 @@ impl Sugar for IntPowSugar {
             )));
         };
         let Some(result) = floor.accept(PowVisitor { exponent }) else {
-            panic!(
-                "int pow numeric floor could not compute a result; write the owning typed floor before Outcome"
-            );
+            return Outcome::Complete(Desugared::Term(deferred_primitive_method_term(
+                "pow",
+                receiver,
+                vec![num(i128::from(exponent))],
+            )));
         };
         let Some(term) = result.term() else {
             panic!("int pow numeric floor could not reify its result term");

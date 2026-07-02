@@ -498,14 +498,15 @@ fn order_candidates_or_panic(candidates: &mut Vec<SugarCandidate>) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use syn::{Expr, Item};
+    use syn::{Expr, Item, Stmt};
 
     use crate::sugar::claim::{ExprSugarClaim, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
     use crate::sugar::source_fragment::SourceFragment;
     use crate::{
-        record_simple_value_binding, FactoryAuditLog, FactoryDisposition, LiftOptions,
-        MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalPlan, TemporalScope,
+        item_scope_fn_registry, record_simple_value_binding, FactoryAuditLog, FactoryDisposition,
+        LiftOptions, MacroRegistry, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalPlan,
+        TemporalScope,
     };
 
     struct NoopSugar;
@@ -1204,6 +1205,75 @@ mod tests {
             selected_candidate_name_for_role(&expr, SugarRole::Term),
             Some("map_term"),
             "map_term owns the term role before generic method fallback"
+        );
+    }
+
+    #[test]
+    fn unsigned_count_ones_range_map_is_a_composite_domain() {
+        let expr: Expr =
+            syn::parse_str("(0..<u8>::MAX.count_ones()).map(|exponent| 1 << exponent)").unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("map")
+        );
+    }
+
+    #[test]
+    fn chain_of_unsigned_count_ones_range_map_is_a_composite_domain() {
+        let expr: Expr = syn::parse_str(
+            "(1..=2).chain((0..<u8>::MAX.count_ones()).map(|exponent| 1 << exponent))",
+        )
+        .unwrap();
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("chain")
+        );
+    }
+
+    #[test]
+    fn helper_loop_over_unsigned_count_ones_range_map_is_for_replay() {
+        let file = syn::parse_file(
+            r#"
+fn check_unsigned(n: u32) {
+    if n > 0 {
+        assert_eq!(
+            n.isqrt(),
+            core::num::NonZero::<u32>::new(n).expect("nonzero").isqrt().get(),
+        );
+    }
+}
+
+#[test]
+fn int_sqrt_chain_axioms() {
+    for n in (1..=2)
+        .chain((0..<u8>::MAX.count_ones()).map(|exponent| 1 << exponent))
+    {
+        check_unsigned(n);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let reducer = ReductionCtx::from_items(&file.items);
+        let fn_registry = item_scope_fn_registry(&file.items, &reducer, 0);
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default())
+            .with_fn_registry(fn_registry);
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let Item::Fn(test_fn) = &file.items[1] else {
+            panic!("expected test item");
+        };
+        let Stmt::Expr(expr, _) = &test_fn.block.stmts[0] else {
+            panic!("expected for-loop expr statement");
+        };
+
+        assert_eq!(
+            super::matching_expr_claims_for_role(expr, &fcx, SugarRole::Composite)
+                .into_iter()
+                .map(|candidate| candidate.name())
+                .collect::<Vec<_>>(),
+            vec!["for_replay", "forall_loop"]
         );
     }
 

@@ -6570,15 +6570,19 @@ fn peel_fold_adaptors_inner<'a>(
                                     })
                                 })
                             } else {
+                                let u128_shift_hint =
+                                    sugar::map::receiver_has_unsigned_count_ones_range(&m.receiver);
                                 Box::new(move |inner, fcx| {
                                     Box::new(sugar::map::MapSugar {
                                         inner: sugar::factory::SugarBody::from_node(inner),
-                                        mapper: sugar::map::MapClosure::build(f, fcx, false)
-                                            .unwrap_or_else(|| {
-                                                panic!(
-                                                    "map wrapper could not construct closure body"
-                                                )
-                                            }),
+                                        mapper: sugar::map::MapClosure::build(
+                                            f,
+                                            fcx,
+                                            u128_shift_hint,
+                                        )
+                                        .unwrap_or_else(|| {
+                                            panic!("map wrapper could not construct closure body")
+                                        }),
                                     })
                                 })
                             }
@@ -7999,6 +8003,23 @@ fn const_eval_finite_int_iter(
                     let mut out: Vec<ConstVal> = base.into_iter().step_by(s).collect();
                     if let Some(k) = limit {
                         out.truncate(k);
+                    }
+                    Ok(out)
+                }
+                "map" if call.args.len() == 1 => {
+                    let Expr::Closure(closure) = &call.args[0] else {
+                        return Err(FlatMapIterEval::Gap);
+                    };
+                    let base = const_eval_finite_int_iter(recv, env, limit)?;
+                    let u128_shift_hint = sugar::map::receiver_has_unsigned_count_ones_range(recv);
+                    let mut out = Vec::with_capacity(base.len());
+                    for value in base {
+                        let mapped = if u128_shift_hint {
+                            const_eval_unary_closure_with_u128_shift(closure, &value)
+                        } else {
+                            const_eval_unary_closure(closure, &value)
+                        };
+                        out.push(mapped.ok_or(FlatMapIterEval::Gap)?);
                     }
                     Ok(out)
                 }
@@ -12905,11 +12926,14 @@ fn collect_assertion_entries<'a>(
                 let for_scope = temporal_scope
                     .clone()
                     .with_const_registry(scoped_const_registry_for_stmts(stmts, reducer));
-                let count = count_assertion_surface_sites_in_stmts_with_source(
+                let surface_count = count_assertion_surface_sites_in_stmts_with_source(
                     &f.body.stmts,
                     reducer,
                     macro_depth,
                 );
+                let replay_count =
+                    sugar::for_replay::replay_assert_count(&f.body.stmts, &for_scope);
+                let count = surface_count.max(replay_count);
                 if count == 0 {
                     // Support-only loop body: the panic-freedom visitor already walked
                     // visited finite-loop bodies and queued their callsite facts. With no
@@ -16407,7 +16431,7 @@ fn apply_replayable_for_loop_temporal_rewrite(
                 return BTreeSet::new();
             };
             let substituted = substitute_expr(expr, &bindings);
-            if !scratch.apply(&substituted) {
+            if !scratch.apply_replayable_loop_assignment(&substituted) {
                 return BTreeSet::new();
             }
             targets.insert(target);
@@ -22930,10 +22954,14 @@ fn t() {
             "literal const-fn map should not be refused: {:?}",
             out.skip_reasons
         );
-        let dump = format!("{:?}", out.decls);
+        let dump = value_claim_decl_dump(&out);
         assert!(
-            dump.contains("literal:Array(i:10,i:12,i:2,i:4)") && !dump.contains("method:map"),
-            "function map should materialize the mapped literal array: {dump}"
+            !dump.contains("method:map")
+                && output_contains_grounded_int_eq(&out, 4, 4)
+                && output_contains_grounded_int_eq(&out, 10, 10)
+                && output_contains_grounded_int_eq(&out, 12, 12)
+                && output_contains_grounded_int_eq(&out, 2, 2),
+            "function map should materialize aggregate equality teeth without a residual method map: {dump}"
         );
     }
 
@@ -23017,11 +23045,15 @@ fn t() {
             out.skip_reasons
         );
         // Support-only panic rows keep opaque method callsite identity; the
-        // value claims must still materialize the mapped literal arrays.
+        // value claims must still materialize the mapped arrays as scalar teeth.
         let dump = value_claim_decl_dump(&out);
         assert!(
-            dump.contains("literal:Array(i:2,i:3,i:4)") && !dump.contains("method:map"),
-            "closure map should materialize the mapped literal array: {dump}"
+            !dump.contains("method:map")
+                && output_contains_grounded_int_eq(&out, 3, 3)
+                && output_contains_grounded_int_eq(&out, 2, 2)
+                && output_contains_grounded_int_eq(&out, 4, 4)
+                && output_contains_grounded_int_eq(&out, 1, 1),
+            "closure map should materialize aggregate equality teeth without a residual method map: {dump}"
         );
     }
 

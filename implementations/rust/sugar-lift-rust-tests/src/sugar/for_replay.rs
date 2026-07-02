@@ -338,7 +338,7 @@ fn sequence_adaptor_domain_shape(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     !range_domain_shape(expr) && has_composite(expr, fcx)
 }
 
-fn replay_assert_count(stmts: &[Stmt], scope: &crate::TemporalScope) -> usize {
+pub(crate) fn replay_assert_count(stmts: &[Stmt], scope: &crate::TemporalScope) -> usize {
     count_asserts_in_stmts(stmts) + helper_call_assert_count(stmts, scope)
 }
 
@@ -1814,6 +1814,19 @@ fn finite_domain_body_exprs(
 ) -> Result<Vec<Expr>, Effect> {
     let seq = match domain.reduce(ctx) {
         Outcome::Complete(Desugared::Seq(seq)) => seq,
+        Outcome::Complete(Desugared::TermSeq(terms)) => {
+            return Ok(terms
+                .into_iter()
+                .map(|term| {
+                    term_ground_expr(&term).unwrap_or_else(|| {
+                        for_replay_construction_gap(
+                            "term-sequence domain element did not ground to an expression"
+                                .to_string(),
+                        )
+                    })
+                })
+                .collect());
+        }
         Outcome::Complete(_) => {
             for_replay_construction_gap(
                 "domain body completed as a non-sequence floor".to_string(),
@@ -1855,6 +1868,19 @@ fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Result<Vec<Expr>, Effect>
     let body = SugarBody::<CompositeFloor>::synthesized_composite(expr, ctx);
     let seq = match body.desugar(ctx) {
         Outcome::Complete(Desugared::Seq(seq)) => seq,
+        Outcome::Complete(Desugared::TermSeq(terms)) => {
+            return Ok(terms
+                .into_iter()
+                .map(|term| {
+                    term_ground_expr(&term).unwrap_or_else(|| {
+                        for_replay_construction_gap(
+                            "nested term-sequence domain element did not ground to an expression"
+                                .to_string(),
+                        )
+                    })
+                })
+                .collect());
+        }
         Outcome::Complete(_) => {
             for_replay_construction_gap(
                 "nested finite domain completed as a non-sequence floor".to_string(),
