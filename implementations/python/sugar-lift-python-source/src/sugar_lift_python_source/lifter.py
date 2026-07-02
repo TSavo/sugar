@@ -763,6 +763,10 @@ class _Emitter:
             return ctor("python:import", *[str_const(name) for name in names])
         if isinstance(node, ast.FunctionDef):
             return self.nested_function(node)
+        if isinstance(node, ast.ClassDef):
+            self.locals.add(node.name)
+            self.effects.add_io()
+            return ctor("python:nested_classdef", str_const(node.name))
         if isinstance(node, ast.With):
             extra_locals: set[str] = set()
             for item in node.items:
