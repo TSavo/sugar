@@ -45,13 +45,13 @@ use std::sync::Arc;
 use std::rc::Rc;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_claim_envelope::{
-    compute_contract_set_cid, contract_cid as compute_contract_cid, mint_contract, Authoring,
-    MintContractArgs, KIT_DECLARATION_RPC_METHOD,
+    compute_contract_set_cid, contract_cid as compute_contract_cid, mint_contract_with_body_cid,
+    Authoring, MintContractArgs, KIT_DECLARATION_RPC_METHOD,
 };
 use sugar_ir_symbolic::{serialize::formula_to_value, ContractDecl, Formula};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, ClaimContractMemento, Ed25519Seed,
-    ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, AtomMemento, ClaimContractMemento,
+    ContractBody, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
 pub mod call_edges;
@@ -530,6 +530,42 @@ fn push_unique_operand(operands: &mut Vec<Rc<Formula>>, candidate: Rc<Formula>) 
     }
 }
 
+fn register_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    pre: Option<&Arc<Value>>,
+    post: Option<&Arc<Value>>,
+    inv: Option<&Arc<Value>>,
+) -> Result<ContractBody, String> {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(formula) = pre {
+        slots.push((
+            "pre",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = post {
+        slots.push((
+            "post",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = inv {
+        slots.push((
+            "inv",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if slots.is_empty() {
+        return Err("contract body graph requires at least one formula slot".to_string());
+    }
+
+    let slot_refs = slots
+        .iter()
+        .map(|(slot, atom)| (*slot, atom))
+        .collect::<Vec<_>>();
+    Ok(proof_graph.register_body(ContractBody::from_slots(slot_refs)))
+}
+
 /// Mint each lifted ContractDecl as a signed memento and bundle into a
 /// single `.proof` catalog. CONTENT-ADDRESSED DEDUP: two decls whose
 /// canonical IR encodes to the same byte string mint to the same CID and
@@ -582,7 +618,16 @@ pub fn mint_proof(decls: &[ContractDecl], opts: &LiftOptions) -> Result<MintOutp
         };
         // Compute signer-independent content CID BEFORE minting (spec #94).
         let ccid = compute_contract_cid(&args);
-        let m = mint_contract(&args).map_err(|e| LiftMintError::Mint(e.to_string()))?;
+        let contract_body = register_contract_body_graph(
+            &mut graph,
+            args.pre.as_ref(),
+            args.post.as_ref(),
+            args.inv.as_ref(),
+        )
+        .map_err(|e| LiftMintError::Mint(format!("contract `{}`: {e}", args.contract_name)))?;
+        let body_cid = contract_body.cid().as_str().to_string();
+        let m = mint_contract_with_body_cid(&args, Some(&body_cid))
+            .map_err(|e| LiftMintError::Mint(e.to_string()))?;
 
         if let Some(prev_cid) = contract_cids.get(&d.name) {
             if prev_cid == &m.cid {
