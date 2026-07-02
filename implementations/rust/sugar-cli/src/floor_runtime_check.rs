@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 
 pub const FLOOR_RUNTIME_DOMAIN: &str = "floor";
@@ -37,7 +39,7 @@ pub enum FloorCheckSeverity {
     Hard,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorSignals {
     pub silently_dropped: u64,
     pub false_pass: u64,
@@ -45,6 +47,7 @@ pub struct FloorSignals {
     pub panic_census_unnamed_count: usize,
     pub total_callsites: u64,
     pub discharge_split_present: bool,
+    pub monoid_fold_gaps_by_element_type: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,16 +84,17 @@ impl FloorRuntimeCheck {
 
 pub fn floor_runtime_check(signals: FloorSignals, mode: FloorCheckMode) -> Vec<FloorRuntimeCheck> {
     vec![
-        silently_dropped_check(signals, mode),
-        false_pass_check(signals, mode),
-        dropped_sites_check(signals, mode),
-        panic_census_named_check(signals, mode),
-        total_callsites_check(signals, mode),
-        discharge_split_check(signals, mode),
+        silently_dropped_check(&signals, mode),
+        false_pass_check(&signals, mode),
+        dropped_sites_check(&signals, mode),
+        panic_census_named_check(&signals, mode),
+        monoid_fold_gap_check(&signals, mode),
+        total_callsites_check(&signals, mode),
+        discharge_split_check(&signals, mode),
     ]
 }
 
-fn silently_dropped_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn silently_dropped_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     hard_zero_check(
         "floor.silently_dropped.zero",
         "floor-silently-dropped-zero",
@@ -100,7 +104,7 @@ fn silently_dropped_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorR
     )
 }
 
-fn false_pass_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn false_pass_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     hard_zero_check(
         "floor.false_pass.zero",
         "floor-false-pass-zero",
@@ -110,7 +114,7 @@ fn false_pass_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntime
     )
 }
 
-fn dropped_sites_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn dropped_sites_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     let count = signals.dropped_sites_count as u64;
     hard_zero_check(
         "floor.dropped_sites.empty",
@@ -121,7 +125,7 @@ fn dropped_sites_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRunt
     )
 }
 
-fn panic_census_named_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn panic_census_named_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     let count = signals.panic_census_unnamed_count;
     // Naming coverage is advisory until the exhaustive coverage slice lands.
     // The hard v1 floor is no silent drops and no false passes; unnamed
@@ -150,7 +154,44 @@ fn panic_census_named_check(signals: FloorSignals, mode: FloorCheckMode) -> Floo
     )
 }
 
-fn total_callsites_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn monoid_fold_gap_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+    let total = signals
+        .monoid_fold_gaps_by_element_type
+        .values()
+        .copied()
+        .sum::<u64>();
+    let (status, detail) = if total == 0 {
+        (
+            FloorCheckStatus::Pass,
+            "MonoidFold has no CarrierEmbedding gaps".to_string(),
+        )
+    } else {
+        let breakdown = signals
+            .monoid_fold_gaps_by_element_type
+            .iter()
+            .map(|(element_type, count)| format!("{element_type}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            FloorCheckStatus::Warn,
+            format!("MonoidFold CarrierEmbedding gaps: {breakdown}"),
+        )
+    };
+    FloorRuntimeCheck::new(
+        "floor.monoid_fold.carrier_embedding_gaps",
+        "floor-monoid-fold-carrier-embedding-gaps",
+        status,
+        FloorCheckSeverity::Advisory,
+        detail,
+        json!({
+            "mode": mode.as_str(),
+            "total": total,
+            "byElementType": &signals.monoid_fold_gaps_by_element_type,
+        }),
+    )
+}
+
+fn total_callsites_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     let total = signals.total_callsites;
     let (status, detail) = if total > 0 {
         (
@@ -176,7 +217,7 @@ fn total_callsites_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRu
     )
 }
 
-fn discharge_split_check(signals: FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+fn discharge_split_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     let (status, detail) = if signals.discharge_split_present {
         (
             FloorCheckStatus::Pass,
@@ -242,6 +283,7 @@ mod tests {
             panic_census_unnamed_count: 0,
             total_callsites: 42,
             discharge_split_present: true,
+            monoid_fold_gaps_by_element_type: BTreeMap::new(),
         }
     }
 
@@ -286,6 +328,21 @@ mod tests {
 
         assert_eq!(check.status, FloorCheckStatus::Pass);
         assert_eq!(check.severity, FloorCheckSeverity::Advisory);
+    }
+
+    #[test]
+    fn monoid_fold_gap_counts_warn_advisory_by_element_type() {
+        let mut signals = passing_signals();
+        signals
+            .monoid_fold_gaps_by_element_type
+            .insert("Duration".to_string(), 2);
+
+        let checks = floor_runtime_check(signals, FloorCheckMode::Strict);
+        let check = check_by_id(&checks, "floor.monoid_fold.carrier_embedding_gaps");
+
+        assert_eq!(check.status, FloorCheckStatus::Warn);
+        assert_eq!(check.severity, FloorCheckSeverity::Advisory);
+        assert_eq!(check.evidence["byElementType"]["Duration"], 2);
     }
 
     #[test]
@@ -424,11 +481,12 @@ mod tests {
                 panic_census_unnamed_count: 0,
                 total_callsites: 1,
                 discharge_split_present: true,
+                monoid_fold_gaps_by_element_type: BTreeMap::new(),
             },
             FloorCheckMode::ReleaseGate,
         );
 
-        assert_eq!(checks.len(), 6);
+        assert_eq!(checks.len(), 7);
         assert!(checks
             .iter()
             .all(|check| check.status == FloorCheckStatus::Pass));

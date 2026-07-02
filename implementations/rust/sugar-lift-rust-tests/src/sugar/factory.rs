@@ -89,6 +89,10 @@ pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
 pub(crate) struct IeeeFloatFloor;
 pub(crate) struct IpAddrFloor;
+/// #3125 slice 1 marker only: no CarrierEmbedding constructor exists yet.
+/// MonoidFold reports this missing floor family without inventing values.
+#[allow(dead_code)]
+pub(crate) struct CarrierEmbeddingFloor;
 
 impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
@@ -103,6 +107,7 @@ impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
 impl BodyFloor for IeeeFloatFloor {}
 impl BodyFloor for IpAddrFloor {}
+impl BodyFloor for CarrierEmbeddingFloor {}
 
 /// A factory-built child/body for a parent Sugar.
 ///

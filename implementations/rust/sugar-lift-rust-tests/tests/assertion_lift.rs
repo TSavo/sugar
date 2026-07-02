@@ -18958,6 +18958,54 @@ fn t() {
 }
 
 #[test]
+fn iter_duration_sum_gap_names_monoid_fold_carrier_embedding() {
+    // Structural tooth for #3125 slice 1: a non-Int terminal still reds, but the
+    // refusal must name the MonoidFold dispatch gap a future CarrierEmbedding will fill.
+    let src = r#"
+use std::time::Duration;
+
+#[test]
+fn t() {
+    let total = [
+        Duration::new(1, 999_999_999),
+        Duration::new(2, 999_999_999),
+        Duration::new(3, 999_999_999),
+        Duration::new(5, 0),
+    ]
+    .iter()
+    .sum::<Duration>();
+    assert_eq!(total, Duration::new(13, 999_999_997));
+}
+"#;
+    let panic = std::panic::catch_unwind(|| {
+        lift_file(&parse(src), "tests/time.rs");
+    })
+    .expect_err("Duration `.sum::<Duration>()` must stay red until CarrierEmbedding lands");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
+
+    assert!(
+        message.contains("MonoidFold"),
+        "gap must name the missing fold family: {message}"
+    );
+    assert!(
+        message.contains("terminal=sum"),
+        "gap must name the terminal: {message}"
+    );
+    assert!(
+        message.contains("element_type=Duration"),
+        "gap must name the element type: {message}"
+    );
+    assert!(
+        message.contains("missing=CarrierEmbedding"),
+        "gap must name the missing floor family: {message}"
+    );
+}
+
+#[test]
 fn iter_product_over_literal_array_digs_and_bad_twin_refutes() {
     // POSITIVE: `[1,2,3,4,5].iter().product()` reduces to 120.
     let good = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 120); }"#;

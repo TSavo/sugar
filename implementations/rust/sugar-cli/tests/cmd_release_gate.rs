@@ -258,6 +258,7 @@ fn doctor_floor_aggregation_is_production_surface_for_release_gate() {
             panic_census_unnamed_count: 0,
             total_callsites: 1,
             discharge_split_present: true,
+            monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
         },
     );
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -193,8 +194,11 @@ pub fn run_release_gate_with_executor(
         }
 
         let floor = floor_signals_from_self_check_json(&self_check.stdout_json);
-        let floor_report =
-            report_from_floor_signals(Path::new(&target_path), DoctorMode::ReleaseGate, floor);
+        let floor_report = report_from_floor_signals(
+            Path::new(&target_path),
+            DoctorMode::ReleaseGate,
+            floor.clone(),
+        );
         if !floor_report.ok {
             failures.push(ReleaseGateFailure {
                 target: target_name.clone(),
@@ -373,7 +377,39 @@ fn floor_signals_from_self_check_json(json: &Value) -> FloorSignals {
         discharge_split_present: json
             .get("dischargeSplit")
             .is_some_and(|value| !value.is_null()),
+        monoid_fold_gaps_by_element_type: monoid_fold_gaps_by_element_type_from_json(json),
     }
+}
+
+fn monoid_fold_gaps_by_element_type_from_json(json: &Value) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    let Some(rows) = json.get("panicCensus").and_then(Value::as_array) else {
+        return counts;
+    };
+    for row in rows {
+        let Some(reason) = row.get("reason").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(element_type) = monoid_fold_gap_element_type(reason) else {
+            continue;
+        };
+        *counts.entry(element_type).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn monoid_fold_gap_element_type(reason: &str) -> Option<String> {
+    if !reason.contains("MonoidFold") {
+        return None;
+    }
+    let (_, tail) = reason.split_once("element_type=")?;
+    let element_type = tail
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('`');
+    (!element_type.is_empty()).then(|| element_type.to_string())
 }
 
 fn k_panic_safe(json: &Value) -> u64 {
@@ -519,7 +555,7 @@ fn target_json(target: &TargetReceipt) -> Value {
         "selfCheck": command_json(&target.self_check),
         "evidence": {
             "kPanicSafe": target.evidence.k_panic_safe,
-            "floor": floor_json(target.evidence.floor),
+            "floor": floor_json(&target.evidence.floor),
             "residue": {
                 "residue": target.evidence.residue.residue,
                 "tierToClose": target.evidence.residue.tier_to_close,
@@ -547,12 +583,13 @@ fn command_json(command: &GateCommandReceipt) -> Value {
     })
 }
 
-fn floor_json(floor: FloorSignals) -> Value {
+fn floor_json(floor: &FloorSignals) -> Value {
     json!({
         "silentlyDropped": floor.silently_dropped,
         "falsePass": floor.false_pass,
         "droppedSites": floor.dropped_sites_count,
         "panicCensusUnnamed": floor.panic_census_unnamed_count,
+        "monoidFoldCarrierEmbeddingGaps": &floor.monoid_fold_gaps_by_element_type,
         "totalCallsites": floor.total_callsites,
         "dischargeSplitPresent": floor.discharge_split_present,
     })
