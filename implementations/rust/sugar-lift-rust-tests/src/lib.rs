@@ -7304,6 +7304,9 @@ pub(crate) fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Optio
                 BinOp::Mul(_) => const_numeric_mul(&l, &r),
                 BinOp::Div(_) => const_numeric_div(&l, &r),
                 BinOp::Rem(_) => const_numeric_rem(&l, &r),
+                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
+                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
+                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
                 // comparisons -> Bool (ints or chars).
                 BinOp::Eq(_) => const_eq(&l, &r).map(ConstVal::Bool),
                 BinOp::Ne(_) => const_eq(&l, &r).map(|same| ConstVal::Bool(!same)),
@@ -7597,6 +7600,40 @@ fn const_numeric_rem(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
     (divisor != 0)
         .then(|| l.as_int()?.checked_rem(divisor).map(ConstVal::Int))
         .flatten()
+}
+
+fn const_numeric_bitand(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    const_numeric_bitwise(l, r, |lhs, rhs| lhs & rhs, |lhs, rhs| lhs & rhs)
+}
+
+fn const_numeric_bitor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    const_numeric_bitwise(l, r, |lhs, rhs| lhs | rhs, |lhs, rhs| lhs | rhs)
+}
+
+fn const_numeric_bitxor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    const_numeric_bitwise(l, r, |lhs, rhs| lhs ^ rhs, |lhs, rhs| lhs ^ rhs)
+}
+
+fn const_numeric_bitwise<U, S>(
+    l: &ConstVal,
+    r: &ConstVal,
+    unsigned_op: U,
+    signed_op: S,
+) -> Option<ConstVal>
+where
+    U: Fn(u128, u128) -> u128,
+    S: Fn(i128, i128) -> i128,
+{
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(unsigned_op(lhs, rhs), kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return Some(ConstVal::UInt128(unsigned_op(l.as_u128()?, r.as_u128()?)));
+    }
+    Some(ConstVal::Int(signed_op(l.as_int()?, r.as_int()?)))
 }
 
 fn primitive_operands(l: &ConstVal, r: &ConstVal) -> Option<(u128, u128, PrimitiveIntKind)> {
@@ -8120,6 +8157,9 @@ fn const_eval_u128_shift(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Optio
                 BinOp::Mul(_) => const_numeric_mul(&l, &r),
                 BinOp::Div(_) => const_numeric_div(&l, &r),
                 BinOp::Rem(_) => const_numeric_rem(&l, &r),
+                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
+                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
+                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
                 BinOp::Eq(_) => const_eq(&l, &r).map(ConstVal::Bool),
                 BinOp::Ne(_) => const_eq(&l, &r).map(|same| ConstVal::Bool(!same)),
                 BinOp::Lt(_) => {
@@ -25925,5 +25965,12 @@ fn t() {
             }
             other => panic!("expected typed primitive value, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn const_eval_integer_bitand_keeps_filter_map_bad_twins_liftable() {
+        let expr: Expr = syn::parse_str("6 & 1 == 0").unwrap();
+        let value = const_eval(&expr, &BTreeMap::new()).expect("literal bitand predicate folds");
+        assert_eq!(value, ConstVal::Bool(true));
     }
 }

@@ -176,21 +176,23 @@ pub fn broad_functional_warrant(
         }
         return Some(decl);
     }
-    if let Some(mut value_decl) = emit_value_contract(name, block) {
-        if let Some(assertion_decl) = assertion_decl {
-            let mut atoms = Vec::new();
-            if let Some(inv) = value_decl.inv.take() {
-                atoms.push(inv);
+    if !block_has_for_loop(block) {
+        if let Some(mut value_decl) = emit_value_contract(name, block) {
+            if let Some(assertion_decl) = assertion_decl {
+                let mut atoms = Vec::new();
+                if let Some(inv) = value_decl.inv.take() {
+                    atoms.push(inv);
+                }
+                if let Some(inv) = assertion_decl.inv {
+                    atoms.push(inv);
+                }
+                value_decl.inv = Some(and_(atoms));
             }
-            if let Some(inv) = assertion_decl.inv {
-                atoms.push(inv);
+            if let Some(callable_pre_decl) = callable_pre_decl {
+                value_decl.pre = callable_pre_decl.pre;
             }
-            value_decl.inv = Some(and_(atoms));
+            return Some(value_decl); // structural -- strongest teeth
         }
-        if let Some(callable_pre_decl) = callable_pre_decl {
-            value_decl.pre = callable_pre_decl.pre;
-        }
-        return Some(value_decl); // structural -- strongest teeth
     }
     if let Some(assertion_decl) = assertion_decl {
         if sig_returns_unit(sig) {
@@ -233,6 +235,20 @@ pub fn broad_functional_warrant(
         decl.pre = callable_pre_decl.pre;
     }
     Some(decl)
+}
+
+fn block_has_for_loop(block: &syn::Block) -> bool {
+    struct ForLoopVisitor {
+        seen: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for ForLoopVisitor {
+        fn visit_expr_for_loop(&mut self, _node: &'ast syn::ExprForLoop) {
+            self.seen = true;
+        }
+    }
+    let mut visitor = ForLoopVisitor { seen: false };
+    syn::visit::Visit::visit_block(&mut visitor, block);
+    visitor.seen
 }
 
 /// True iff the signature returns `()` (explicit or default) -- no output to

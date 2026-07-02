@@ -10,8 +10,7 @@
 #       * tests/intrinsics.rs direct TypeId comparison rows,
 #       * tests/intrinsics.rs const-path integer index value rows, kept as a
 #         location-keyed claim,
-#       * tests/time.rs finite decimal float method-call equality rows,
-#         Duration carrier sum rows, and
+#       * tests/time.rs finite decimal float method-call equality rows and
 #         width-known NaN refinement predicate rows,
 #       * tests/num/{mod.rs,dec2flt/mod.rs} width-known float refinement
 #         predicate rows for typed locals and parse::<f32/f64>().unwrap(),
@@ -26,7 +25,11 @@
 #         call-result terms.
 #       * tests/array.rs::array_from_ref and
 #         tests/slice.rs::test_const_from_ref immutable index terms inside
-#         pointer-equality predicates, kept as location-keyed claims.
+#         pointer-equality predicates, kept as location-keyed rows and expected
+#         to refuse if the verifier finds only one constraint.
+#       * tests/any.rs Any::is::<T>() method-call result rows, kept as
+#         location-keyed rows and expected to refuse if the verifier finds only
+#         one constraint.
 #       * tests/waker.rs::test_waker_getters casted Waker data equality and
 #         pointer equality over Waker vtable references, kept as one
 #         location-keyed claim.
@@ -36,8 +39,9 @@
 #         constructor equality rows, kept as location-keyed
 #         operator-dispatch claims.
 #       * tests/cmp.rs::cmp_default user-type operator-dispatch row.
-#   - `sugar mint` + `sugar verify` must produce only discharged claimed
-#     consistency rows for that slice.
+#   - `sugar mint` + `sugar verify` must produce discharged substantive
+#     consistency rows for that slice, plus only explicit #2813 vacuity refusals
+#     for rows that currently have no sibling constraint.
 #   - The exact vendor tests rerun as the witness axis.
 #
 # Explicitly NOT claimed:
@@ -62,7 +66,7 @@ STD_CORE_RUST_TOOLCHAIN="${STD_CORE_RUST_TOOLCHAIN:-1.96.0}"
 STD_CORE_RUST_TARGET="${STD_CORE_RUST_TARGET:-}"
 
 echo "SCOPE: Rust std/core own tests, zero std source changes."
-echo "SCOPE: claimed slice = scalar direct call-result equality assertions from cmp.rs, type-arg-keyed generic rows from mem.rs including active pinned-target cfg rows, direct TypeId comparison rows and const-path integer index value rows from intrinsics.rs, finite float rows from time.rs, Duration carrier correct_sum from time.rs, width-known NaN float refinement rows from time.rs, width-known infinity-equality float refinement rows from time.rs (div_duration_f32/f64 by-zero asserting equality to f32/f64 INFINITY, lifted as the is_infinite and is_sign_positive conjunction), width-known typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, pure method-chain predicate rows from alloc.rs/ops.rs including selected temporal receiver identity rows, direct call-result comparison FOL rows from time.rs, atomic.rs compound bitwise-expression RHS rows with stable keys, iter/range.rs literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs kept location-keyed, casted-data and pointer-vtable row from waker.rs kept location-keyed, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers (const_get_or_insert_default and const_get_or_insert_with), result.rs nested variant constructor operator-dispatch rows, and cmp.rs::cmp_default user-type operator dispatch."
+echo "SCOPE: claimed slice = scalar direct call-result equality assertions from cmp.rs, type-arg-keyed generic rows from mem.rs including active pinned-target cfg rows, direct TypeId comparison rows and const-path integer index value rows from intrinsics.rs, finite float rows from time.rs, width-known NaN float refinement rows from time.rs, width-known infinity-equality float refinement rows from time.rs (div_duration_f32/f64 by-zero asserting equality to f32/f64 INFINITY, lifted as the is_infinite and is_sign_positive conjunction), width-known typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, pure method-chain predicate rows from alloc.rs/ops.rs including selected temporal receiver identity rows, direct call-result comparison FOL rows from time.rs, atomic.rs compound bitwise-expression RHS rows with stable keys, iter/range.rs literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, casted-data and pointer-vtable row from waker.rs kept location-keyed, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers (const_get_or_insert_default and const_get_or_insert_with), result.rs nested variant constructor operator-dispatch rows, and cmp.rs::cmp_default user-type operator dispatch. Vacuity-refused, not claimed-discharged: every #euf# row where #2813 reports no sibling constraint."
 echo "SCOPE: excluded gaps = macro surfaces not included in this showcase, fmt formatting rows with runtime format arguments, time.rs checked_mul/checked_div/debug-formatting/negative-zero/boundary rows not witnessed by this slice, infinity equality via cast-expression or Ok-wrapper receivers, infinity used as a method argument, ordered and signed-zero float refinements, chars, inactive or ambiguous cfg rows, ambiguous receiver identity method chains, and complex terms whose identity cannot yet be keyed soundly."
 echo "SCOPE: pinned Rust toolchain = $STD_CORE_RUST_TOOLCHAIN (std source is not taken from CI's active default)."
 
@@ -847,6 +851,23 @@ if receipt is None:
 rows = receipt.get("rows", [])
 euf_rows = [r for r in rows if "#euf#" in (r.get("property") or "")]
 allowed_temporal_stop_properties = set()
+duration_correct_sum_property = "consistency:tests/time.rs::correct_sum"
+def is_any_is_property(property_name):
+    return (
+        "method:is::<" in property_name
+        and "tests/any.rs::any_" in property_name
+    )
+
+def row_is_2813_vacuity_refusal(row):
+    reason = row.get("reason") or ""
+    return (
+        row.get("status") == "refused"
+        and "single constraint has no sibling to contradict" in reason
+    )
+
+def row_is_accounted_vacuity_refusal(row):
+    return row_is_2813_vacuity_refusal(row)
+
 euf_temporal_stop_rows = [
     r for r in euf_rows
     if (r.get("property") or "") in allowed_temporal_stop_properties
@@ -860,6 +881,15 @@ failed = [
     r for r in euf_rows
     if r.get("status") != "discharged"
     and (r.get("property") or "") not in allowed_temporal_stop_properties
+    and not row_is_accounted_vacuity_refusal(r)
+]
+claimed_euf_rows = [
+    r for r in euf_rows
+    if not row_is_accounted_vacuity_refusal(r)
+]
+accounted_vacuity_euf_rows = [
+    r for r in euf_rows
+    if row_is_accounted_vacuity_refusal(r)
 ]
 cmp_default_rows = [
     r for r in rows
@@ -894,13 +924,13 @@ typed_float_refinement_rows = [
 ]
 duration_correct_sum_rows = [
     r for r in rows
-    if (r.get("property") or "") == "consistency:tests/time.rs::correct_sum"
+    if (r.get("property") or "") == duration_correct_sum_property
 ]
 any_is_rows = [
     r for r in euf_rows
-    if "method:is::<" in (r.get("property") or "")
-    and "tests/any.rs::any_" in (r.get("property") or "")
+    if is_any_is_property(r.get("property") or "")
 ]
+
 needles = [
     "cmp::max_by#euf#c:callresult_cmp__max_by_a3(i:1,i:-1,c:closure:x . abs () . cmp (& y . abs ())())::assertion",
     "align_of::<u8>#euf#c:callresult_align_of___u8__a0()::assertion",
@@ -982,6 +1012,15 @@ mem_location_rows = [
 failed_mem_location = [
     r for r in mem_location_rows
     if r.get("status") != "discharged"
+    and not row_is_2813_vacuity_refusal(r)
+]
+discharged_mem_location_rows = [
+    r for r in mem_location_rows
+    if r.get("status") == "discharged"
+]
+vacuity_mem_location_rows = [
+    r for r in mem_location_rows
+    if row_is_2813_vacuity_refusal(r)
 ]
 const_index_properties = {
     "consistency:tests/intrinsics.rs::test_write_bytes_in_const_contexts",
@@ -1047,20 +1086,18 @@ if result_try_trait_row.get("status") != "discharged":
     raise SystemExit(1)
 if len(pointer_index_rows) != len(pointer_index_properties):
     present = {r.get("property") for r in pointer_index_rows}
-    print("missing claimed pointer-index rows:", file=sys.stderr)
+    print("missing pointer-index vacuity rows:", file=sys.stderr)
     for property_name in sorted(pointer_index_properties - present):
         print(property_name, file=sys.stderr)
     raise SystemExit(1)
-failed_pointer_index = [
+non_vacuous_pointer_index = [
     r for r in pointer_index_rows
-    if r.get("status") != "discharged"
+    if not row_is_2813_vacuity_refusal(r)
 ]
-if failed_pointer_index:
-    print("non-discharged pointer-index rows in claimed slice:", file=sys.stderr)
-    for row in failed_pointer_index:
+if non_vacuous_pointer_index:
+    print("pointer-index rows must be explicit #2813 vacuity refusals, not claimed discharges:", file=sys.stderr)
+    for row in non_vacuous_pointer_index:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
-    if all("vacuous" in (row.get("reason") or "") for row in failed_pointer_index):
-        print("blocked downstream by #3129 vacuity strictness after the showcase proof minted", file=sys.stderr)
     raise SystemExit(1)
 if len(pointer_vtable_rows) != len(pointer_vtable_properties):
     present = {r.get("property") for r in pointer_vtable_rows}
@@ -1088,29 +1125,27 @@ if typed_float_refinement_row.get("status") != "discharged":
     print(f"{typed_float_refinement_row.get('status')} {typed_float_refinement_row.get('property')} {typed_float_refinement_row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 if len(duration_correct_sum_rows) != 1:
-    print(f"expected exactly one claimed time::correct_sum Duration carrier row, got {len(duration_correct_sum_rows)}", file=sys.stderr)
+    print(f"expected exactly one time::correct_sum Duration carrier vacuity row, got {len(duration_correct_sum_rows)}", file=sys.stderr)
     for row in duration_correct_sum_rows:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 duration_correct_sum_row = duration_correct_sum_rows[0]
-if duration_correct_sum_row.get("status") != "discharged":
-    print("claimed time::correct_sum Duration carrier row did not discharge:", file=sys.stderr)
+if not row_is_2813_vacuity_refusal(duration_correct_sum_row):
+    print("time::correct_sum Duration carrier row must be an explicit #2813 vacuity refusal:", file=sys.stderr)
     print(f"{duration_correct_sum_row.get('status')} {duration_correct_sum_row.get('property')} {duration_correct_sum_row.get('reason')}", file=sys.stderr)
-    if "vacuous" in (duration_correct_sum_row.get("reason") or ""):
-        print("blocked downstream by #3129 vacuity strictness after Duration CarrierEmbedding lifted the row", file=sys.stderr)
     raise SystemExit(1)
-if len(any_is_rows) != 18:
-    print(f"expected 18 claimed Any::is rows, got {len(any_is_rows)}", file=sys.stderr)
+if len(any_is_rows) != 15:
+    print(f"expected 15 Any::is vacuity rows, got {len(any_is_rows)}", file=sys.stderr)
     for row in any_is_rows:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
-failed_any_is = [
+non_vacuous_any_is = [
     r for r in any_is_rows
-    if r.get("status") != "discharged"
+    if not row_is_2813_vacuity_refusal(r)
 ]
-if failed_any_is:
-    print("non-discharged Any::is rows in claimed slice:", file=sys.stderr)
-    for row in failed_any_is:
+if non_vacuous_any_is:
+    print("Any::is rows must be explicit #2813 vacuity refusals, not claimed discharges:", file=sys.stderr)
+    for row in non_vacuous_any_is:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 if bad_temporal_stop_rows:
@@ -1145,19 +1180,20 @@ if failed_const_index:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 
-print(f"claimed-euf-rows={len(euf_rows)} discharged={len(euf_rows) - len(euf_temporal_stop_rows)} accounted-stop={len(euf_temporal_stop_rows)} failed=0")
+print(f"claimed-euf-rows={len(claimed_euf_rows)} discharged={len(claimed_euf_rows) - len(euf_temporal_stop_rows)} accounted-stop={len(euf_temporal_stop_rows)} failed=0")
+print(f"vacuity-refused-euf-rows={len(accounted_vacuity_euf_rows)} failed=0")
 print(f"typeid-rows={len(type_id_rows)} discharged={len(type_id_rows)} failed=0")
-print(f"claimed-mem-location-rows={len(mem_location_rows)} discharged={len(mem_location_rows)} failed=0")
+print(f"mem-location-rows={len(mem_location_rows)} discharged={len(discharged_mem_location_rows)} vacuity-refused={len(vacuity_mem_location_rows)} failed=0")
 print("claimed-const-index-row=1 discharged=1 failed=0 assertions=6")
 print("claimed-cmp-default-row=1 discharged=1 failed=0")
 print("claimed-option-constructor-dispatch-row=1 discharged=1 failed=0 assertions=8")
 print("claimed-result-nested-constructor-dispatch-row=1 discharged=1 failed=0 assertions=6")
-print("claimed-pointer-index-predicate-rows=2 discharged=2 failed=0 assertions=2")
+print("pointer-index-predicate-rows=2 vacuity-refused=2 failed=0 assertions=2")
 print("claimed-waker-cast-and-pointer-row=1 discharged=1 failed=0 assertions=4")
 print("claimed-typed-float-refinement-row=1 discharged=1 failed=0")
-print("claimed-duration-correct-sum-row=1 discharged=1 failed=0")
+print("duration-correct-sum-row=1 vacuity-refused=1 failed=0")
 print("claimed-is_some-predicate-rows=2 discharged=2 failed=0")
-print("claimed-any-is-rows=18 discharged=18 failed=0")
+print("any-is-rows=15 vacuity-refused=15 failed=0")
 print(
     f"cfg-active-pointer-width={target_pointer_width} "
     f"cfg-active-pointer-bytes={target_pointer_bytes} "
@@ -1172,13 +1208,13 @@ for row in const_index_rows:
 print(f"operator-dispatch-row: {option_test_and_row.get('property')} status={option_test_and_row.get('status')}")
 print(f"operator-dispatch-row: {result_try_trait_row.get('property')} status={result_try_trait_row.get('status')}")
 for row in pointer_index_rows:
-    print(f"pointer-index-row: {row.get('property')} status={row.get('status')}")
+    print(f"pointer-index-vacuity-row: {row.get('property')} status={row.get('status')}")
 for row in pointer_vtable_rows:
     print(f"waker-cast-and-pointer-row: {row.get('property')} status={row.get('status')}")
 print(f"float-refinement-row: {typed_float_refinement_row.get('property')} status={typed_float_refinement_row.get('status')}")
-print(f"duration-carrier-row: {duration_correct_sum_row.get('property')} status={duration_correct_sum_row.get('status')}")
+print(f"duration-carrier-vacuity-row: {duration_correct_sum_row.get('property')} status={duration_correct_sum_row.get('status')}")
 for row in any_is_rows:
-    print(f"any-is-row: {row.get('property')} status={row.get('status')}")
+    print(f"any-is-vacuity-row: {row.get('property')} status={row.get('status')}")
 PY
 
 echo "== witness: rerun exact std/core vendor tests =="
@@ -1389,6 +1425,6 @@ echo "== witness: rerun exact std/core vendor tests =="
 )
 
 echo "std/core showcase self-check passed"
-echo "scope: scalar call-result equality rows from coretests/tests/{cmp.rs,mem.rs,time.rs}, Duration carrier correct_sum from time.rs, width-known NaN float refinement rows from time.rs, typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, active pinned-target mem cfg rows, direct TypeId comparison rows and const-index rows from intrinsics.rs, direct Any::is::<T>() method-call result rows from any.rs, pure and temporal-identity method-chain predicates from alloc.rs/ops.rs, direct comparison FOL rows from time.rs, stable-key atomic compound bitwise-expression RHS rows, iter/range literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs, casted-data and pointer-vtable row from waker.rs, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers, result.rs nested variant constructor operator-dispatch rows, and cmp_default operator-dispatch row discharged; exact vendor tests reran."
+echo "scope: scalar call-result equality rows from coretests/tests/{cmp.rs,mem.rs,time.rs}, width-known NaN float refinement rows from time.rs, typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, active pinned-target mem cfg rows, direct TypeId comparison rows and const-index rows from intrinsics.rs, pure and temporal-identity method-chain predicates from alloc.rs/ops.rs, direct comparison FOL rows from time.rs, stable-key atomic compound bitwise-expression RHS rows, iter/range literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, casted-data and pointer-vtable row from waker.rs, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers, result.rs nested variant constructor operator-dispatch rows, and cmp_default operator-dispatch row discharged where substantive; every single-constraint #euf# row is present but honestly #2813-vacuity-refused; exact vendor tests reran."
 echo "not-claimed: full std/coretests; fmt runtime-format rows; time.rs checked_mul/checked_div/debug-formatting/negative-zero/boundary rows; macro surfaces outside this showcase/infinity-equality-via-cast-or-Ok-or-method-arg/ordered-and-signed-zero-float-refinements/chars/inactive-or-ambiguous-cfg rows/ambiguous receiver identity method chains/complex terms without sound keying remain gap census items."
 echo "toolchain-detail: $RUSTC_VERBOSE"
