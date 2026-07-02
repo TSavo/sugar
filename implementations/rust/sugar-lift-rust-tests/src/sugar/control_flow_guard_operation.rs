@@ -17,7 +17,9 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::{Formula, Term};
 
+use crate::sugar::guarded_raise::GuardedRaise;
 use crate::sugar::guarded_return::GuardedReturn;
+use crate::sugar::raise_value::RaiseValue;
 use crate::{Desugared, Outcome};
 
 pub(crate) trait ControlFlowGuardVisitor {
@@ -25,9 +27,12 @@ pub(crate) trait ControlFlowGuardVisitor {
 
     fn visit_stmt_return(self, term: Rc<Term>) -> Self::Output;
     fn visit_stmt_guarded(self, guarded_return: GuardedReturn) -> Self::Output;
+    fn visit_stmt_raise(self, raise: RaiseValue) -> Self::Output;
+    fn visit_stmt_guarded_raise(self, guarded_raise: GuardedRaise) -> Self::Output;
     fn visit_stmt_block(
         self,
         guarded: Vec<GuardedReturn>,
+        raises: Vec<GuardedRaise>,
         fall_through: Vec<Rc<Formula>>,
     ) -> Self::Output;
     fn visit_non_control_flow(self, floor: Desugared) -> Self::Output;
@@ -42,10 +47,15 @@ impl ControlFlowGuardAccept for Desugared {
         match self {
             Desugared::StmtReturn(term) => visitor.visit_stmt_return(term),
             Desugared::StmtGuarded(guarded_return) => visitor.visit_stmt_guarded(guarded_return),
+            Desugared::StmtRaise(raise) => visitor.visit_stmt_raise(raise),
+            Desugared::StmtGuardedRaise(guarded_raise) => {
+                visitor.visit_stmt_guarded_raise(guarded_raise)
+            }
             Desugared::StmtBlock {
                 guarded,
+                raises,
                 fall_through,
-            } => visitor.visit_stmt_block(guarded, fall_through),
+            } => visitor.visit_stmt_block(guarded, raises, fall_through),
             other => visitor.visit_non_control_flow(other),
         }
     }
@@ -85,21 +95,49 @@ impl ControlFlowGuardVisitor for ControlFlowGuardOperation<'_> {
         Outcome::Complete(Desugared::StmtGuarded(guarded_return))
     }
 
+    fn visit_stmt_raise(self, raise: RaiseValue) -> Self::Output {
+        if self.guards.is_empty() {
+            Outcome::Complete(Desugared::StmtRaise(raise))
+        } else {
+            Outcome::Complete(Desugared::StmtGuardedRaise(GuardedRaise::from_raise(
+                self.guards,
+                raise,
+            )))
+        }
+    }
+
+    fn visit_stmt_guarded_raise(self, guarded_raise: GuardedRaise) -> Self::Output {
+        let guarded_raise = if self.guards.is_empty() {
+            guarded_raise
+        } else {
+            guarded_raise.with_prefix(&self.guards)
+        };
+        Outcome::Complete(Desugared::StmtGuardedRaise(guarded_raise))
+    }
+
     fn visit_stmt_block(
         self,
         guarded: Vec<GuardedReturn>,
+        raises: Vec<GuardedRaise>,
         fall_through: Vec<Rc<Formula>>,
     ) -> Self::Output {
-        let guarded = if self.guards.is_empty() {
-            guarded
+        let (guarded, raises) = if self.guards.is_empty() {
+            (guarded, raises)
         } else {
-            guarded
-                .into_iter()
-                .map(|guarded_return| guarded_return.with_prefix(&self.guards))
-                .collect()
+            (
+                guarded
+                    .into_iter()
+                    .map(|guarded_return| guarded_return.with_prefix(&self.guards))
+                    .collect(),
+                raises
+                    .into_iter()
+                    .map(|guarded_raise| guarded_raise.with_prefix(&self.guards))
+                    .collect(),
+            )
         };
         Outcome::Complete(Desugared::StmtBlock {
             guarded,
+            raises,
             fall_through,
         })
     }
@@ -129,20 +167,23 @@ pub(crate) fn guard_exit(
 
 pub(crate) fn guard_block(
     guarded: Vec<GuardedReturn>,
+    raises: Vec<GuardedRaise>,
     fall_through: Vec<Rc<Formula>>,
     guards: &[Rc<Formula>],
     owner: &'static str,
-) -> (Vec<GuardedReturn>, Vec<Rc<Formula>>) {
+) -> (Vec<GuardedReturn>, Vec<GuardedRaise>, Vec<Rc<Formula>>) {
     let outcome = Desugared::StmtBlock {
         guarded,
+        raises,
         fall_through,
     }
     .accept_control_flow_guard(ControlFlowGuardOperation::new(guards.to_vec(), owner));
     match complete_guard_operation(outcome, owner) {
         Desugared::StmtBlock {
             guarded,
+            raises,
             fall_through,
-        } => (guarded, fall_through),
+        } => (guarded, raises, fall_through),
         other => guard_operation_gap(owner, "block", &other),
     }
 }
@@ -177,6 +218,8 @@ fn desugared_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::StmtBound(_) => "StmtBound",
         Desugared::StmtReturn(_) => "StmtReturn",
         Desugared::StmtGuarded(_) => "StmtGuarded",
+        Desugared::StmtRaise(_) => "StmtRaise",
+        Desugared::StmtGuardedRaise(_) => "StmtGuardedRaise",
         Desugared::StmtBlock { .. } => "StmtBlock",
     }
 }

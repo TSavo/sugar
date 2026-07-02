@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // IfSugar: lifts `if COND { THEN } [else { ELSE }]` (and `else if ...` chains)
-// to `Desugared::StmtBlock { guarded, fall_through }`.
+// to `Desugared::StmtBlock { guarded, raises, fall_through }`.
 //
 // Recognized shape: `Stmt::Expr(Expr::If(..), _)` (with or without trailing semi).
 //
@@ -10,13 +10,14 @@
 //     `eq(term, bool_const(true))` as a term-level fallback.
 //   - The then-branch (always a `syn::Block`) is wrapped as a synthetic
 //     `Stmt::Expr(Expr::Block(..), None)` and dispatched to BlockSugar via
-//     `build_stmt_role`. BlockSugar produces `StmtBlock { guarded, fall_through }`.
-//   - Guards from the then-branch each get `cond` prepended.
+//     `build_stmt_role`. BlockSugar produces `StmtBlock { guarded, raises,
+//     fall_through }`.
+//   - Guards from the then-branch returns and raises each get `cond` prepended.
 //   - No else: `fall_through = [not_(cond)]`. The outer BlockSugar will prepend
 //     this as a guard for any subsequent statements (they run only when cond is false).
 //   - With else: the else-branch (`Expr::Block` or `Expr::If` for else-if chains) is
-//     dispatched similarly; its guards get `not_(cond)` prepended; `fall_through = []`
-//     (the else clause is exhaustive).
+//     dispatched similarly; its return/raise guards get `not_(cond)` prepended;
+//     `fall_through = []` (the else clause is exhaustive).
 //
 // Nested `else if` chains recurse naturally: the else expression is an `Expr::If`,
 // which becomes `Stmt::Expr(Expr::If(..), None)` -> IfSugar again.
@@ -34,6 +35,7 @@ use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::constraint::assertion_entry_with_audits;
 use crate::sugar::control_flow_guard_operation::guard_block;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::guarded_raise::GuardedRaise;
 use crate::sugar::guarded_return::GuardedReturn;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::translate_term_in_scope;
@@ -91,14 +93,20 @@ impl Sugar for IfSugar {
         };
         let not_cond = not_(cond_formula.clone());
 
-        let (then_guarded, then_fall) = match reduce_branch(self.then_node.as_ref(), ctx, "then") {
-            Ok(branch) => branch,
-            Err(effect) => return Outcome::Incomplete(effect),
-        };
+        let (then_guarded, then_raises, then_fall) =
+            match reduce_branch(self.then_node.as_ref(), ctx, "then") {
+                Ok(branch) => branch,
+                Err(effect) => return Outcome::Incomplete(effect),
+            };
 
         // Prepend `cond` to every guard clause from the then-branch.
-        let (mut all_guarded, _then_fall) =
-            guard_block(then_guarded, then_fall, &[cond_formula.clone()], "IfSugar");
+        let (mut all_guarded, mut all_raises, _then_fall) = guard_block(
+            then_guarded,
+            then_raises,
+            then_fall,
+            &[cond_formula.clone()],
+            "IfSugar",
+        );
 
         match &self.if_expr.else_branch {
             None => {
@@ -106,6 +114,7 @@ impl Sugar for IfSugar {
                 // The outer BlockSugar uses this as a guard for subsequent statements.
                 Outcome::Complete(Desugared::StmtBlock {
                     guarded: all_guarded,
+                    raises: all_raises,
                     fall_through: vec![not_cond],
                 })
             }
@@ -115,19 +124,26 @@ impl Sugar for IfSugar {
                 let Some(else_node) = self.else_node.as_ref() else {
                     panic!("if_sugar: else expression had no constructed branch node");
                 };
-                let (else_guarded, _else_fall) =
+                let (else_guarded, else_raises, _else_fall) =
                     match reduce_branch(else_node.as_ref(), ctx, "else") {
                         Ok(branch) => branch,
                         Err(effect) => return Outcome::Incomplete(effect),
                     };
 
-                let (else_guarded, _else_fall) =
-                    guard_block(else_guarded, _else_fall, &[not_cond.clone()], "IfSugar");
+                let (else_guarded, else_raises, _else_fall) = guard_block(
+                    else_guarded,
+                    else_raises,
+                    _else_fall,
+                    &[not_cond.clone()],
+                    "IfSugar",
+                );
                 all_guarded.extend(else_guarded);
+                all_raises.extend(else_raises);
 
                 // With an else branch the alternatives are exhaustive: no fall_through.
                 Outcome::Complete(Desugared::StmtBlock {
                     guarded: all_guarded,
+                    raises: all_raises,
                     fall_through: vec![],
                 })
             }
@@ -139,12 +155,13 @@ fn reduce_branch(
     node: &dyn Sugar,
     ctx: &SugarCtx,
     branch: &'static str,
-) -> Result<(Vec<GuardedReturn>, Vec<Rc<Formula>>), Effect> {
+) -> Result<(Vec<GuardedReturn>, Vec<GuardedRaise>, Vec<Rc<Formula>>), Effect> {
     match node.reduce(ctx) {
         Outcome::Complete(Desugared::StmtBlock {
             guarded,
+            raises,
             fall_through,
-        }) => Ok((guarded, fall_through)),
+        }) => Ok((guarded, raises, fall_through)),
         Outcome::Incomplete(effect) => Err(effect),
         _ => panic!("if_sugar: {branch}-branch did not reduce to StmtBlock"),
     }

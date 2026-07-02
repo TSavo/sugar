@@ -368,8 +368,10 @@ fn block_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
 
 /// Factory-based block -> Formula conversion. Wraps the block as a
 /// `Stmt::Expr(Expr::Block(..))` and dispatches through `build_stmt_role` ->
-/// BlockSugar, then converts the resulting `StmtBlock { guarded, .. }` to a
-/// conjunction of `implies(guards, eq(out, term))` clauses.
+/// BlockSugar, then converts the resulting fully routed
+/// `StmtBlock { guarded, raises, .. }` to a conjunction of
+/// `implies(guards, eq(out, term))` clauses. Residual raises refuse formula
+/// emission instead of being silently dropped.
 ///
 /// This SUBSUMES `emit_guard_return_value`: the narrow guard-clause shape
 /// (`(if COND { return v; })+ tail`) is now just a special case of the general
@@ -392,7 +394,9 @@ fn block_stmt_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formul
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx_with_factory_audits(scope, &options, &reducer, &mut float_widths, 0, None);
     match block_node.reduce(&ctx) {
-        Outcome::Complete(Desugared::StmtBlock { guarded, .. }) => block_stmt_to_formula(guarded),
+        Outcome::Complete(Desugared::StmtBlock {
+            guarded, raises, ..
+        }) => block_stmt_to_formula(guarded, raises),
         _ => None,
     }
 }
