@@ -294,6 +294,22 @@ def _expr_stmt(value: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:expr", "args": [value]}
 
 
+def _assert_stmt(
+    condition: dict[str, object], message: dict[str, object]
+) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:assert", "args": [condition, message]}
+
+
+def _compare(
+    op: str, left: dict[str, object], right: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:compare",
+        "args": [_str_const(op), left, right],
+    }
+
+
 def _unpack_targets(*targets: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -946,6 +962,83 @@ def test_if_is_not_none_lifts_to_cf_guarded_option_guards() -> None:
         else_head="is_none",
     )
     assert "python:compare" in _ctor_names(body)
+
+
+def test_bare_assert_lifts_to_assert_statement_with_assertion_error_locus() -> None:
+    source = "def f(x):\n    assert x\n"
+
+    result = lift_source(source, "assert_bare.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    condition = _var("x")
+    assert contract["post"]["args"][1] == _assert_stmt(condition, _none_const())
+    assert contract["effects"] == [{"kind": "panics"}]
+    assert _runtime_failure_loci(contract) == [
+        {
+            "effectKind": PANIC_FREEDOM_EFFECT_KIND,
+            "callee": RUNTIME_FAILURE_SITE_CONCEPT,
+            "subkind": "assert",
+            "exceptionClass": "AssertionError",
+            "argTerm": condition,
+            "file": "assert_bare.py",
+            "line": 2,
+            "col": 4,
+        }
+    ]
+
+
+def test_assert_with_message_lifts_message_term_and_locus_condition() -> None:
+    source = 'def f(x):\n    assert x, "must hold"\n'
+
+    result = lift_source(source, "assert_message.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    condition = _var("x")
+    assert contract["post"]["args"][1] == _assert_stmt(
+        condition, _str_const("must hold")
+    )
+    assert _runtime_failure_loci(contract)[0]["argTerm"] == condition
+    assert _runtime_failure_loci(contract)[0]["exceptionClass"] == "AssertionError"
+
+
+def test_assert_with_complex_condition_lifts_condition_tree() -> None:
+    source = "def f(x, y):\n    assert x < y and y < 10\n"
+
+    result = lift_source(source, "assert_complex.py")
+
+    assert result.refusals == []
+    condition = {
+        "kind": "ctor",
+        "name": "python:and",
+        "args": [
+            _compare("<", _var("x"), _var("y")),
+            _compare("<", _var("y"), _int_const(10)),
+        ],
+    }
+    assert _function_body(result) == _assert_stmt(condition, _none_const())
+    assert _runtime_failure_loci(_contract(result.ir, ".f"))[0]["argTerm"] == condition
+
+
+def test_assert_floor_discriminates_other_unhandled_statement_kinds() -> None:
+    result = lift_source("def f(x):\n    del x\n", "delete.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unhandled statement kind: Delete"
+    ]
+
+
+def test_assert_roundtrip_is_structurally_stable() -> None:
+    term = _assert_stmt(_var("x"), _str_const("must hold"))
+
+    compiled = compile_body_term(term, formals=["x"])
+    relifted = lift_source(compiled, "roundtrip_assert.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_raise_emits_runtime_failure_locus_without_changing_effect_set() -> None:

@@ -219,6 +219,11 @@ def _stmt(term: Json) -> ast.stmt:
         return ast.Raise(
             exc=None if _is_none_const(args[0]) else _expr(args[0]), cause=None
         )
+    if name == "python:assert":
+        return ast.Assert(
+            test=_expr(args[0]),
+            msg=None if _is_none_const(args[1]) else _expr(args[1]),
+        )
     return ast.Expr(value=_expr(term))
 
 
