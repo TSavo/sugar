@@ -511,32 +511,18 @@ def _ctx_with_prior_assignments(
     stmt: SourceFragment,
     ctx: FactoryBuildContext,
 ) -> FactoryBuildContext:
-    from sugar_lift_py_tests.floor import BlockValue, BoundVar
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.temporal import bind_temporal
+    from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
 
-    for prior in _needed_prior_assignment_sites(module_statements, fn, stmt):
-        scoped = ctx
-        outcome = scoped.build_body(prior, SugarRole.STATEMENT).reduce(scoped)
-        if isinstance(outcome, Complete) and isinstance(outcome.value, BoundVar):
-            ctx = bind_temporal(
-                ctx,
-                outcome.value.name,
-                outcome.value,
-                owner="literal_call_report.prior_assignments",
-                blame=prior.blame,
-            )
-        elif isinstance(outcome, Complete) and isinstance(outcome.value, BlockValue):
-            for statement in outcome.value.statements:
-                if isinstance(statement, BoundVar):
-                    ctx = bind_temporal(
-                        ctx,
-                        statement.name,
-                        statement,
-                        owner="literal_call_report.prior_assignments",
-                        blame=prior.blame,
-                    )
-    return ctx
+    priors = _needed_prior_assignment_sites(module_statements, fn, stmt)
+    if not priors:
+        return ctx
+    block = BlockSugar(
+        statements=tuple(ctx.build_body(prior, SugarRole.STATEMENT) for prior in priors),
+        blame=stmt.blame,
+    )
+    folded = block.fold_with_context(ctx)
+    complete_value(folded.outcome, owner="literal_call_report.prior_assignment_block")
+    return folded.ctx
 
 
 def _needed_prior_assignment_sites(

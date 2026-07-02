@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import (
@@ -20,6 +21,12 @@ from sugar_lift_py_tests.outcome import (
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
+
+
+@dataclass(frozen=True)
+class BlockFold:
+    outcome: Outcome
+    ctx: Any
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,9 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx) -> Outcome:
+        return self.fold_with_context(ctx).outcome
+
+    def fold_with_context(self, ctx) -> BlockFold:
         outcomes: list[object] = []
         pending: tuple = ()  # guards accumulated from prior fall-through ifs
         for child in self.statements:
@@ -60,7 +70,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 # A statement raised (an effect). Execution halts: every statement after
                 # it is unreachable, so we do NO further work -- no outcomes, no pending
                 # guards -- and bubble the Incomplete upward unchanged.
-                return outcome
+                return BlockFold(outcome, ctx)
             value = complete_value(outcome, owner="block statement")
             if isinstance(value, SupportValue):
                 continue  # Support (a comment) is inert -- absorbed
@@ -75,10 +85,10 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 continue
             if isinstance(value, ReturnValue):
                 outcomes.append(_guard_exit(value, pending, ctx, self.blame))
-                return Complete(BlockValue(tuple(outcomes)))
+                return BlockFold(Complete(BlockValue(tuple(outcomes))), ctx)
             if isinstance(value, RaiseValue):
                 outcomes.append(_guard_exit(value, pending, ctx, self.blame))
-                return Complete(BlockValue(tuple(outcomes)))
+                return BlockFold(Complete(BlockValue(tuple(outcomes))), ctx)
             if isinstance(value, BlockValue):
                 exit_emitted = False
                 for statement in value.statements:
@@ -94,11 +104,11 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                     exit_emitted = True
                     outcomes.append(_guard_exit(statement, pending, ctx, self.blame))
                 if exit_emitted and not value.fall_through:
-                    return Complete(BlockValue(tuple(outcomes)))
+                    return BlockFold(Complete(BlockValue(tuple(outcomes))), ctx)
                 pending = pending + value.fall_through
                 continue
             outcomes.append(value)
-        return Complete(BlockValue(tuple(outcomes), pending))
+        return BlockFold(Complete(BlockValue(tuple(outcomes), pending)), ctx)
 
 
 def _guard_exit(statement: object, guards: tuple, ctx, blame: str):

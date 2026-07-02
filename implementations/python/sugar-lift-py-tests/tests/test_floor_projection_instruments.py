@@ -26,7 +26,7 @@ EXPECTED_FACTORY_SPINE_R = {
     "mini_interpreter_consumers_not_reading_terms": 0,
     "transitive_worklist_drains": 1,
     "projection_ladders": 2,
-    "prior_assignment_replays": 1,
+    "prior_assignment_replays": 0,
 }
 
 
@@ -42,7 +42,7 @@ def test_factory_spine_frontier_pins_current_second_engine_body_reductions() -> 
     report = collect_factory_spine_frontier(ROOT)
 
     assert report.r.values == EXPECTED_FACTORY_SPINE_R
-    assert report.r.total == 6
+    assert report.r.total == 5
     assert not report.is_zero
     rows = {(row.kind, row.path, row.observed) for row in report.offenders}
     assert (
@@ -50,7 +50,7 @@ def test_factory_spine_frontier_pins_current_second_engine_body_reductions() -> 
         "factory/literal_call_report.py",
         "build_body(Block.of(callee.node.body), ...).reduce(...)",
     ) in rows
-    assert any("BlockSugar" in row.fix for row in report.offenders)
+    assert any("force_floor" in row.fix for row in report.offenders)
     assert any("BridgeStrategy dig_sink" in row.fix for row in report.offenders)
 
 
@@ -68,8 +68,8 @@ def test_factory_spine_frontier_cli_exits_red_until_body_side_doors_are_gone(
     assert "  mini_interpreter_consumers_not_reading_terms: 0" in stdout
     assert "  transitive_worklist_drains: 1" in stdout
     assert "  projection_ladders: 2" in stdout
-    assert "  prior_assignment_replays: 1" in stdout
-    assert "  total: 6" in stdout
+    assert "  prior_assignment_replays: 0" in stdout
+    assert "  total: 5" in stdout
     assert "second-engine body reductions:" in stdout
 
 
