@@ -46,6 +46,14 @@ def _has_reads_effect(result, name: str) -> bool:
     return _tree_contains(result.ir, {"kind": "reads", "target": name})
 
 
+def _function_contracts(result):
+    return [
+        item
+        for item in result.ir
+        if not str(item.get("fnName", "")).startswith("<source-unit:")
+    ]
+
+
 def _pin_refusals(refusals):
     return [r for r in refusals if r.get("kind") == VALUE_PIN_REFUSAL_KIND]
 
@@ -255,12 +263,83 @@ def test_list_refuses_as_mutable():
     _assert_single_refusal("X = [1]\n", "mutable value (list) cannot pin")
 
 
+def test_mutable_list_pin_refusal_records_opacity_entry():
+    result = _lift("""
+        REGISTRY: list[str] = []
+
+        def f():
+            return 1
+        """)
+
+    refusals = _pin_refusals(result.refusals)
+    assert len(refusals) == 1
+    assert refusals[0]["name"] == "REGISTRY"
+    assert "mutable value (list) cannot pin" in refusals[0]["reason"]
+    term = ctor("python:mutable_global_pin", str_const("REGISTRY"), str_const("list"))
+    assert result.opacity_report == [
+        {
+            "file": "mod.py",
+            "line": 2,
+            "col": 0,
+            "name": "REGISTRY",
+            "kind": "list",
+            "term": term,
+        }
+    ]
+    assert not _tree_contains(result.ir, term)
+
+
+def test_immutable_pin_keeps_opacity_empty_and_contracts_unchanged():
+    baseline = _lift("""
+        pass
+
+        def f():
+            return 1
+        """)
+    result = _lift("""
+        X = 5
+
+        def f():
+            return 1
+        """)
+
+    assert result.opacity_report == []
+    assert not _pin_refusals(result.refusals)
+    assert _function_contracts(result) == _function_contracts(baseline)
+
+
 def test_set_refuses_as_mutable():
     _assert_single_refusal("X = {1}\n", "mutable value (set) cannot pin")
 
 
 def test_dict_refuses_as_mutable():
     _assert_single_refusal('X = {"a": 1}\n', "mutable value (dict) cannot pin")
+
+
+def test_mutable_dict_and_set_opacity_entries_are_distinct_and_structural():
+    result = _lift("""
+        CACHE = {"a": 1}
+        SEEN = {1}
+        VALUES = [1, 2]
+
+        def f():
+            return 1
+        """)
+
+    assert [(row["name"], row["kind"]) for row in result.opacity_report] == [
+        ("CACHE", "dict"),
+        ("SEEN", "set"),
+        ("VALUES", "list"),
+    ]
+    assert [row["term"] for row in result.opacity_report] == [
+        ctor("python:mutable_global_pin", str_const("CACHE"), str_const("dict")),
+        ctor("python:mutable_global_pin", str_const("SEEN"), str_const("set")),
+        ctor("python:mutable_global_pin", str_const("VALUES"), str_const("list")),
+    ]
+    assert [row["line"] for row in result.opacity_report] == [2, 3, 4]
+    assert all(row["file"] == "mod.py" for row in result.opacity_report)
+    assert all(row["col"] == 0 for row in result.opacity_report)
+    assert len(_pin_refusals(result.refusals)) == 3
 
 
 def test_tuple_containing_list_refuses():

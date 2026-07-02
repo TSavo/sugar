@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .canonical import cid_of_json
-from .value_pins import ValuePin, scan_module_value_pins
+from .value_pins import (
+    ValuePin,
+    mutable_global_pin_opacity_entry,
+    scan_module_value_pins,
+)
 from .ir import (
     Json,
     bool_const,
@@ -163,6 +167,10 @@ def lift_source(source: str, source_path: str) -> LiftResult:
     module_globals = _module_global_names(tree)
     pin_scan = scan_module_value_pins(tree)
     result.refusals.extend(pin_scan.refusals)
+    result.opacity_report.extend(
+        mutable_global_pin_opacity_entry(pin, source_path=source_path)
+        for pin in pin_scan.mutable_global_pins
+    )
     class_shapes = _lift_class_shapes(tree, module_path)
     collector = _DefinitionCollector(module_path)
     collector.visit(tree)
