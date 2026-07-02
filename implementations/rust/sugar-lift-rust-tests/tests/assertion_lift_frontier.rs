@@ -56,26 +56,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:temporal-closure-adaptor",
     ),
     (
-        "emit_value_contract_let_prefix_refuses_mut_and_letelse",
-        "floor-gap:emit-value-contract",
-    ),
-    (
-        "emit_value_contract_let_prefix_warrants_and_composes",
-        "floor-gap:emit-value-contract",
-    ),
-    (
-        "emit_value_contract_let_prefix_with_control_flow_tail",
-        "floor-gap:emit-value-contract",
-    ),
-    (
-        "emit_value_contract_refuses_unemittable_bodies",
-        "floor-gap:emit-value-contract",
-    ),
-    (
-        "emit_value_contract_tuple_destructuring_let",
-        "floor-gap:emit-value-contract",
-    ),
-    (
         "forloop_runtime_body_read_refuses_with_named_body_effect",
         "floor-gap:runtime-boundary-refusal",
     ),

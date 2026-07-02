@@ -114,6 +114,7 @@ pub mod sugar {
     pub mod function_map;
     pub mod future_join;
     pub mod generic_body_sugar;
+    pub mod guarded_return;
     pub mod identity;
     pub mod identity_map;
     pub mod impl_method;
@@ -8679,16 +8680,13 @@ pub(crate) enum Desugared {
     /// A guarded return from an `if`-branch: the accumulated path guards that must
     /// all hold, and the return term for that branch.
     /// Mirrors Python `GuardedReturn(guards, term)`.
-    StmtGuarded {
-        guards: Vec<Rc<Formula>>,
-        term: Rc<Term>,
-    },
+    StmtGuarded(sugar::guarded_return::GuardedReturn),
     /// The composed result of a block (suite of statements): all guarded-return
     /// pairs emitted by the block, plus the fall-through guard set left over by a
     /// terminal `if`-without-else.
     /// Mirrors Python `BlockValue(guarded_returns, fall_through)`.
     StmtBlock {
-        guarded: Vec<(Vec<Rc<Formula>>, Rc<Term>)>,
+        guarded: Vec<sugar::guarded_return::GuardedReturn>,
         fall_through: Vec<Rc<Formula>>,
     },
 }
@@ -8710,7 +8708,7 @@ impl Desugared {
             Desugared::StmtSupport
             | Desugared::StmtBound { .. }
             | Desugared::StmtReturn(_)
-            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8735,7 +8733,7 @@ impl Desugared {
             Desugared::StmtSupport
             | Desugared::StmtBound { .. }
             | Desugared::StmtReturn(_)
-            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8754,7 +8752,7 @@ impl Desugared {
             Desugared::StmtSupport
             | Desugared::StmtBound { .. }
             | Desugared::StmtReturn(_)
-            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8791,7 +8789,7 @@ impl Desugared {
             Desugared::StmtSupport
             | Desugared::StmtBound { .. }
             | Desugared::StmtReturn(_)
-            | Desugared::StmtGuarded { .. }
+            | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => return None,
         };
         let [only] = seq.as_slice() else {
@@ -10650,7 +10648,7 @@ fn emit_desugared(
         Desugared::StmtSupport
         | Desugared::StmtBound { .. }
         | Desugared::StmtReturn(_)
-        | Desugared::StmtGuarded { .. }
+        | Desugared::StmtGuarded(_)
         | Desugared::StmtBlock { .. } => false,
     }
 }

@@ -815,7 +815,7 @@ impl FactoryAuditSeed {
             Outcome::Complete(Desugared::StmtReturn(_)) => {
                 (FactoryDisposition::Warranted, "stmt-return", None)
             }
-            Outcome::Complete(Desugared::StmtGuarded { .. }) => {
+            Outcome::Complete(Desugared::StmtGuarded(_)) => {
                 (FactoryDisposition::Warranted, "stmt-guarded", None)
             }
             Outcome::Complete(Desugared::StmtBlock { .. }) => {

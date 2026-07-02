@@ -595,8 +595,8 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // branch value in `cf_guarded(<resolved-predicate-term>, <value>)` so the
     // language-blind verifier can thread the already-resolved atom into its
     // path condition without recognizing a single Rust predicate name.
-    let then_term = wrap_branch_guard(&cond_term, false, then_term);
-    let else_term = wrap_branch_guard(&cond_term, true, else_term);
+    let then_term = guarded_return_for_branch(&cond_term, false, then_term).into_value();
+    let else_term = guarded_return_for_branch(&cond_term, true, else_term).into_value();
     Some(IrTerm::Ctor {
         // `cf_ite`, not the SMT builtin `ite`: a synthesized control-flow
         // value over uninterpreted Int-sorted operands. Using the builtin
@@ -608,6 +608,24 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
         name: panic_freedom::CF_ITE.to_string(),
         args: vec![cond_term, then_term, else_term],
     })
+}
+
+/// Rust-side GuardedReturn floor for result-position branches. The Python
+/// reference lowers `GuardedReturn(guards, value)` as guarded value facts; this
+/// lift preserves the existing v1 wire shape by materializing each guard as
+/// `cf_guarded(<resolved-predicate>, value)` before the surrounding `cf_ite`.
+struct GuardedReturnTerm {
+    guards: Vec<IrTerm>,
+    value: IrTerm,
+}
+
+impl GuardedReturnTerm {
+    fn into_value(self) -> IrTerm {
+        self.guards
+            .into_iter()
+            .rev()
+            .fold(self.value, |value, guard| wrap_cf_guarded(guard, value))
+    }
 }
 
 /// The closed set of boolean-predicate guards whose POSITIVE form is a
@@ -674,26 +692,46 @@ fn branch_guard_head(cond_head: &str, else_branch: bool) -> Option<&'static str>
 /// the value unchanged when no guard applies also keeps every non-guarded
 /// `cf_ite` byte-identical to before this change (CID stability / reflexive
 /// discharge unperturbed).
+#[cfg(test)]
 fn wrap_branch_guard(cond_term: &IrTerm, else_branch: bool, value: IrTerm) -> IrTerm {
+    guarded_return_for_branch(cond_term, else_branch, value).into_value()
+}
+
+fn guarded_return_for_branch(
+    cond_term: &IrTerm,
+    else_branch: bool,
+    value: IrTerm,
+) -> GuardedReturnTerm {
     if !else_branch {
         if let Some(guard) = len_eq_one_branch_guard(cond_term, &value) {
-            return wrap_cf_guarded(guard, value);
+            return GuardedReturnTerm {
+                guards: vec![guard],
+                value,
+            };
         }
     }
     let (head, args) = match &cond_term {
         IrTerm::Ctor { name, args } => (name.as_str(), args),
-        _ => return value,
+        _ => {
+            return GuardedReturnTerm {
+                guards: Vec::new(),
+                value,
+            };
+        }
     };
     let Some(resolved_head) = branch_guard_head(head, else_branch) else {
-        return value;
+        return GuardedReturnTerm {
+            guards: Vec::new(),
+            value,
+        };
     };
     let guard = IrTerm::Ctor {
         name: resolved_head.to_string(),
         args: args.clone(),
     };
-    IrTerm::Ctor {
-        name: panic_freedom::CF_GUARDED.to_string(),
-        args: vec![guard, value],
+    GuardedReturnTerm {
+        guards: vec![guard],
+        value,
     }
 }
 

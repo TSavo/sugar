@@ -27,7 +27,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{eq, not_, Formula, Term};
+use sugar_ir_symbolic::{eq, not_, Formula};
 use syn::{Expr, ExprIf, Item, Stmt};
 
 use crate::sugar::catalog::build_stmt_role;
@@ -113,11 +113,11 @@ impl Sugar for IfSugar {
         };
 
         // Prepend `cond` to every guard clause from the then-branch.
-        let mut all_guarded: Vec<(Vec<Rc<Formula>>, Rc<Term>)> = then_guarded
+        let mut all_guarded = then_guarded
             .into_iter()
-            .map(|(mut guards, term)| {
-                guards.insert(0, cond_formula.clone());
-                (guards, term)
+            .map(|guarded_return| {
+                let prefix = [cond_formula.clone()];
+                guarded_return.with_prefix(&prefix)
             })
             .collect();
 
@@ -159,9 +159,9 @@ impl Sugar for IfSugar {
                     }
                 };
 
-                for (mut guards, term) in else_guarded {
-                    guards.insert(0, not_cond.clone());
-                    all_guarded.push((guards, term));
+                for guarded_return in else_guarded {
+                    let prefix = [not_cond.clone()];
+                    all_guarded.push(guarded_return.with_prefix(&prefix));
                 }
 
                 // With an else branch the alternatives are exhaustive: no fall_through.
