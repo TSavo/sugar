@@ -259,6 +259,7 @@ fn doctor_floor_aggregation_is_production_surface_for_release_gate() {
             total_callsites: 1,
             discharge_split_present: true,
             monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
+            algebra_gaps_by_boundary: std::collections::BTreeMap::new(),
         },
     );
 

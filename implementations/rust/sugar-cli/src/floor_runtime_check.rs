@@ -48,6 +48,7 @@ pub struct FloorSignals {
     pub total_callsites: u64,
     pub discharge_split_present: bool,
     pub monoid_fold_gaps_by_element_type: BTreeMap<String, u64>,
+    pub algebra_gaps_by_boundary: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +90,7 @@ pub fn floor_runtime_check(signals: FloorSignals, mode: FloorCheckMode) -> Vec<F
         dropped_sites_check(&signals, mode),
         panic_census_named_check(&signals, mode),
         monoid_fold_gap_check(&signals, mode),
+        algebra_gap_check(&signals, mode),
         total_callsites_check(&signals, mode),
         discharge_split_check(&signals, mode),
     ]
@@ -191,6 +193,43 @@ fn monoid_fold_gap_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorR
     )
 }
 
+fn algebra_gap_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
+    let total = signals
+        .algebra_gaps_by_boundary
+        .values()
+        .copied()
+        .sum::<u64>();
+    let (status, detail) = if total == 0 {
+        (
+            FloorCheckStatus::Pass,
+            "algebra dispatch has no structured coverage gaps".to_string(),
+        )
+    } else {
+        let breakdown = signals
+            .algebra_gaps_by_boundary
+            .iter()
+            .map(|(boundary, count)| format!("{boundary}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            FloorCheckStatus::Warn,
+            format!("algebra dispatch coverage gaps: {breakdown}"),
+        )
+    };
+    FloorRuntimeCheck::new(
+        "floor.algebra_gaps.observed",
+        "floor-algebra-gaps-observed",
+        status,
+        FloorCheckSeverity::Advisory,
+        detail,
+        json!({
+            "mode": mode.as_str(),
+            "total": total,
+            "byBoundary": &signals.algebra_gaps_by_boundary,
+        }),
+    )
+}
+
 fn total_callsites_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorRuntimeCheck {
     let total = signals.total_callsites;
     let (status, detail) = if total > 0 {
@@ -242,6 +281,40 @@ fn discharge_split_check(signals: &FloorSignals, mode: FloorCheckMode) -> FloorR
     )
 }
 
+pub(crate) fn algebra_gaps_by_boundary_from_reasons<'a>(
+    reasons: impl IntoIterator<Item = &'a str>,
+) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for reason in reasons {
+        if let Some(boundary) = algebra_gap_boundary(reason) {
+            *counts.entry(boundary).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+pub(crate) fn algebra_gap_boundary(reason: &str) -> Option<String> {
+    let tail = reason.strip_prefix("write more ")?;
+    let (gap_kind, _) = tail.split_once(" for this ")?;
+    if gap_kind == "Sugar" {
+        return None;
+    }
+    let observed = structured_gap_field(reason, "observed")?;
+    let requested = structured_gap_field(reason, "requested")?;
+    (!observed.is_empty() && !requested.is_empty()).then_some(observed)
+}
+
+fn structured_gap_field(reason: &str, field: &str) -> Option<String> {
+    let (_, tail) = reason.split_once(&format!("{field}="))?;
+    let value = tail
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('`');
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 fn hard_zero_check(
     id: &'static str,
     name: &'static str,
@@ -284,6 +357,7 @@ mod tests {
             total_callsites: 42,
             discharge_split_present: true,
             monoid_fold_gaps_by_element_type: BTreeMap::new(),
+            algebra_gaps_by_boundary: BTreeMap::new(),
         }
     }
 
@@ -343,6 +417,34 @@ mod tests {
         assert_eq!(check.status, FloorCheckStatus::Warn);
         assert_eq!(check.severity, FloorCheckSeverity::Advisory);
         assert_eq!(check.evidence["byElementType"]["Duration"], 2);
+    }
+
+    #[test]
+    fn algebra_gap_counts_warn_advisory_by_boundary() {
+        let mut signals = passing_signals();
+        signals
+            .algebra_gaps_by_boundary
+            .insert("ObjectValue".to_string(), 2);
+
+        let checks = floor_runtime_check(signals, FloorCheckMode::Strict);
+        let check = check_by_id(&checks, "floor.algebra_gaps.observed");
+
+        assert_eq!(check.status, FloorCheckStatus::Warn);
+        assert_eq!(check.severity, FloorCheckSeverity::Advisory);
+        assert_eq!(check.evidence["byBoundary"]["ObjectValue"], 2);
+    }
+
+    #[test]
+    fn algebra_gap_parser_counts_structured_non_sugar_gaps_only() {
+        let counts = algebra_gaps_by_boundary_from_reasons([
+            "write more FloorDispatch for this TermFloor: owner=BlockSugar blame=synthetic observed=ObjectValue requested=TermFloor fix=sugar::term_dispatch",
+            "write more ObjectValue for this attribute: owner=ObjectValue blame=synthetic observed=ObjectValue requested=field:x fix=sugar::object_value",
+            "write more Sugar for this AST: owner=rust.factory blame=x.rs:1:0 observed=Expr requested=Term fix=sugar::expr",
+            "iterator terminal did not reach a lawful floor: terminal=Sum element_type=Duration missing_floor=CarrierEmbedding",
+        ]);
+
+        assert_eq!(counts.get("ObjectValue"), Some(&2));
+        assert_eq!(counts.len(), 1);
     }
 
     #[test]
@@ -482,11 +584,12 @@ mod tests {
                 total_callsites: 1,
                 discharge_split_present: true,
                 monoid_fold_gaps_by_element_type: BTreeMap::new(),
+                algebra_gaps_by_boundary: BTreeMap::new(),
             },
             FloorCheckMode::ReleaseGate,
         );
 
-        assert_eq!(checks.len(), 7);
+        assert_eq!(checks.len(), 8);
         assert!(checks
             .iter()
             .all(|check| check.status == FloorCheckStatus::Pass));

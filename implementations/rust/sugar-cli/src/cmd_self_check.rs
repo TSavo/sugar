@@ -19,7 +19,8 @@ use sugar_verifier::types::{EffectSiteAnnotation, LoadError, MementoPool};
 use tracing::{error, info, warn};
 
 use crate::floor_runtime_check::{
-    floor_runtime_check, FloorCheckMode, FloorCheckStatus, FloorRuntimeCheck, FloorSignals,
+    algebra_gaps_by_boundary_from_reasons, floor_runtime_check, FloorCheckMode, FloorCheckStatus,
+    FloorRuntimeCheck, FloorSignals,
 };
 use crate::panic_annotations_runtime::{
     annotation_runtime_check_with_mementos, AnnotationCheckMode, PanicCensusRow,
@@ -378,6 +379,12 @@ fn floor_signals_from_scoreboard(
             .map_or(false, |value| !value.is_null()),
         monoid_fold_gaps_by_element_type: monoid_fold_gaps_by_element_type_from_entries(
             &scoreboard.panic_census,
+        ),
+        algebra_gaps_by_boundary: algebra_gaps_by_boundary_from_reasons(
+            scoreboard
+                .panic_census
+                .iter()
+                .map(|entry| entry.reason.as_str()),
         ),
     }
 }
@@ -1503,6 +1510,22 @@ fn emit_scoreboard(scoreboard: &SelfCheckScoreboard, json: bool) {
             monoid_fold_gaps
                 .iter()
                 .map(|(element_type, count)| format!("{element_type}={count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let algebra_gaps = algebra_gaps_by_boundary_from_reasons(
+        scoreboard
+            .panic_census
+            .iter()
+            .map(|entry| entry.reason.as_str()),
+    );
+    if !algebra_gaps.is_empty() {
+        println!(
+            "algebraGapsByBoundary: {}",
+            algebra_gaps
+                .iter()
+                .map(|(boundary, count)| format!("{boundary}={count}"))
                 .collect::<Vec<_>>()
                 .join(", ")
         );

@@ -3354,6 +3354,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
                 total_callsites: 1,
                 discharge_split_present: true,
                 monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
+                algebra_gaps_by_boundary: std::collections::BTreeMap::new(),
             },
         );
 
@@ -3378,6 +3379,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
                 total_callsites: 1,
                 discharge_split_present: true,
                 monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
+                algebra_gaps_by_boundary: std::collections::BTreeMap::new(),
             },
         );
 
@@ -3402,6 +3404,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
                 total_callsites: 1,
                 discharge_split_present: true,
                 monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
+                algebra_gaps_by_boundary: std::collections::BTreeMap::new(),
             },
         );
         let failing = report_from_floor_signals(
@@ -3415,6 +3418,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
                 total_callsites: 0,
                 discharge_split_present: true,
                 monoid_fold_gaps_by_element_type: std::collections::BTreeMap::new(),
+                algebra_gaps_by_boundary: std::collections::BTreeMap::new(),
             },
         );
 
