@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ObjectValue
@@ -9,6 +10,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
 
 from .dunder_force import force_dunder_floor_or_runtime_effect
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -78,7 +80,7 @@ def _force_dunder(
     blame: str,
 ):
     value = complete_value(
-        receiver.call_method_value(
+        call_object_method_value(receiver,
             name,
             arguments,
             owner=owner,
@@ -94,7 +96,7 @@ def _force_dunder(
     )
 
 
-def _raise_stop_floor_gap(blame: str) -> None:
+def _raise_stop_floor_gap(blame: str) -> NoReturn:
     info = FactoryGapInfo(
         owner="AsyncForSugar",
         blame=blame,

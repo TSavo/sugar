@@ -33,5 +33,7 @@ class FinallyFallthroughOperation:
                 ),
                 owner="finally incoming fallthrough",
             )
+            if not isinstance(incoming, BlockValue):
+                raise TypeError("finally fallthrough guard must produce BlockValue")
             guarded.extend(incoming.statements)
         return Complete(BlockValue(tuple(guarded)))

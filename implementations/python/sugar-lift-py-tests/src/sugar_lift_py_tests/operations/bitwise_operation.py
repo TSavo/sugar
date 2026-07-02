@@ -110,5 +110,5 @@ def _bv32_term(value: FloorValue) -> Term:
     if isinstance(value, SymbolicValue):
         return value.term
     if isinstance(value, TermValue):
-        return num(value.value)
+        return num(int(value.value))
     raise TypeError(type(value).__name__)

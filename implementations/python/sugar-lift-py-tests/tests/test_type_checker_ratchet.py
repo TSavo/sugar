@@ -42,7 +42,7 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "constraint_flow": 0,
     "temporal": 2,
     "audit_only": 0,
-    "operations": 39,
+    "operations": 0,
     "sugar": 25,
     "idd": 0,
     "lift": 1,

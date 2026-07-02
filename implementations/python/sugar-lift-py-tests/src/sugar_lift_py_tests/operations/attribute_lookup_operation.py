@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn, TypeGuard
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
 from .descriptor_operation import DescriptorOperation
+from .object_method_call import call_object_method_value
 from .perform_operation import perform_operation
 
 
@@ -18,7 +20,7 @@ class AttributeLookupOperation:
 
     def attribute_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         if receiver.has_method("__getattribute__"):
-            return receiver.call_method_value(
+            return call_object_method_value(receiver,
                 "__getattribute__",
                 (StringValue(self.name),),
                 owner=self.owner,
@@ -50,7 +52,7 @@ class AttributeLookupOperation:
                     ),
                 )
         if receiver.has_method("__getattr__"):
-            return receiver.call_method_value(
+            return call_object_method_value(receiver,
                 "__getattr__",
                 (StringValue(self.name),),
                 owner=self.owner,
@@ -85,7 +87,7 @@ class AttributeLookupOperation:
             ctx=ctx,
         )
 
-    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> None:
+    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,
@@ -109,7 +111,7 @@ class AttributeLookupOperation:
                 message=info.message,
             ),
         )
-def _is_data_descriptor(value: object) -> bool:
+def _is_data_descriptor(value: object) -> TypeGuard[ObjectValue]:
     return (
         isinstance(value, ObjectValue)
         and value.has_method("__get__")

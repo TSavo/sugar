@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, TermValue
@@ -41,7 +42,7 @@ class AddOperation:
             return item
         self._floor_gap(receiver=f"ArrayLiteral[{type(item).__name__}]")
 
-    def _floor_gap(self, *, receiver: str) -> None:
+    def _floor_gap(self, *, receiver: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,

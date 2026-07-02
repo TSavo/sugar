@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn, cast
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import FloorValue
@@ -40,7 +40,7 @@ class CallsiteProjectionOperation:
             self._floor_gap(type(value).__name__)
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
 
-        return perform_operation(
+        projected = perform_operation(
             owner=self.owner,
             blame=self.blame,
             receiver=value,
@@ -48,6 +48,7 @@ class CallsiteProjectionOperation:
             operation=self,
             ctx=ctx,
         )
+        return cast(Formula | None, projected)
 
     def project_unknown(self, receiver: FloorValue, ctx: Any) -> None:
         del ctx
@@ -58,7 +59,7 @@ class CallsiteProjectionOperation:
 
         return euf_call_term(self.callee_name, list(self.arg_terms))
 
-    def _floor_gap(self, observed: str) -> None:
+    def _floor_gap(self, observed: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,

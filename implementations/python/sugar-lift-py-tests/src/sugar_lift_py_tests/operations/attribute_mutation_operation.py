@@ -6,6 +6,7 @@ from sugar_lift_py_tests.floor import FloorValue, ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Outcome
 
 from .descriptor_operation import DescriptorOperation
+from .object_method_call import call_object_method_value, raise_object_floor_gap
 from .perform_operation import perform_operation
 
 
@@ -36,13 +37,14 @@ class AttributeMutationOperation:
                 ctx=ctx,
             )
         if receiver.has_method("__setattr__"):
-            return receiver.call_method_value(
+            return call_object_method_value(receiver,
                 "__setattr__",
                 (StringValue(self.name), self.value),
                 owner=self.owner,
                 blame=self.blame,
             )
-        return receiver._floor_gap(
+        raise_object_floor_gap(
+            receiver,
             owner=self.owner,
             blame=self.blame,
             observed=f"{receiver.class_name}.{self.name}",

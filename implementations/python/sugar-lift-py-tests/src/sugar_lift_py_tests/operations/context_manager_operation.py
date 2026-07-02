@@ -9,6 +9,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
 
 from .dunder_force import force_dunder_floor_or_runtime_effect
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ def _force_dunder(
     blame: str,
 ):
     value = complete_value(
-        receiver.call_method_value(
+        call_object_method_value(receiver,
             name,
             arguments,
             owner=owner,

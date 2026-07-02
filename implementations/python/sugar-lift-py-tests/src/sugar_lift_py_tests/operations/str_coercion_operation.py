@@ -12,6 +12,8 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
+from .object_method_call import call_object_method_value
+
 
 @dataclass(frozen=True)
 class StrCoercionOperation:
@@ -36,7 +38,7 @@ class StrCoercionOperation:
 
     def str_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx
-        return receiver.call_method_value(
+        return call_object_method_value(receiver,
             "__str__",
             (),
             owner=self.owner,

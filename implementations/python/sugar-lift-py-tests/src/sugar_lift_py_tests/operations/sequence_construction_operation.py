@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, ObjectValue, TermValue
@@ -40,7 +41,7 @@ class SequenceConstructionOperation:
             fix=f"add ListLiteralSugar construction support for {type(item).__name__}",
         )
 
-    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> None:
+    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,
