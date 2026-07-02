@@ -40,13 +40,13 @@ use sugar_proof_envelope::MementoCid;
 
 use crate::solvers::{
     CetaGateConfig, CoqSubprocessSolver, LeanSubprocessSolver, MaudeSubprocessSolver, SolverConfig,
-    SolverHandle, SolverIdentity, SolversConfig, StubSolver, SubprocessSolver,
+    SolverHandle, SolverIdentity, SolverSeat, SolversConfig, StubSolver, SubprocessSolver,
 };
 
-pub fn build(cfg: &SolversConfig) -> HashMap<String, SolverHandle> {
-    let mut out: HashMap<String, SolverHandle> = HashMap::new();
-    for (name, sc) in &cfg.solvers {
-        out.insert(name.clone(), build_one(name, sc));
+pub fn build(cfg: &SolversConfig) -> HashMap<SolverSeat, SolverHandle> {
+    let mut out: HashMap<SolverSeat, SolverHandle> = HashMap::new();
+    for (seat, sc) in &cfg.solvers {
+        out.insert(*seat, build_one(*seat, sc));
     }
     out
 }
@@ -97,7 +97,8 @@ fn default_solver_timeout() -> Option<Duration> {
     }
 }
 
-fn build_one(name: &str, sc: &SolverConfig) -> SolverHandle {
+fn build_one(seat: SolverSeat, sc: &SolverConfig) -> SolverHandle {
+    let name = seat.as_str();
     let bin = if sc.binary.is_empty() && is_lean_compiler(&sc.ir_compiler) {
         "lake".to_string()
     } else if sc.binary.is_empty() {
@@ -234,8 +235,8 @@ fn vendor_pin_scheme(value: &str) -> &str {
 /// receiving EOF (e.g. when inherited in a subprocess chain) can block
 /// indefinitely.  30 s is a conservative upper bound for any SMT-LIB
 /// obligation that would arise from a Sugar proof graph.
-pub fn build_default_z3(z3_path: &str) -> HashMap<String, SolverHandle> {
-    let mut out: HashMap<String, SolverHandle> = HashMap::new();
+pub fn build_default_z3(z3_path: &str) -> HashMap<SolverSeat, SolverHandle> {
+    let mut out: HashMap<SolverSeat, SolverHandle> = HashMap::new();
     let sc = SolverConfig {
         binary: z3_path.to_string(),
         ir_compiler: "smt-lib-v2.6".into(),
@@ -245,7 +246,7 @@ pub fn build_default_z3(z3_path: &str) -> HashMap<String, SolverHandle> {
     };
     let identity = solver_identity("z3", &sc, z3_path);
     out.insert(
-        "z3".into(),
+        SolverSeat::Z3,
         Arc::new(
             SubprocessSolver::new(
                 "z3",
@@ -269,14 +270,14 @@ mod tests {
     fn build_from_stub_config() {
         let toml = r#"
 [solvers]
-default = "stubA"
-[solvers.stubA]
+default = "z3"
+[solvers.z3]
 binary = "stub:unsat"
 "#;
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
-        assert!(r.contains_key("stubA"));
-        let s = r.get("stubA").unwrap();
+        assert!(r.contains_key(&SolverSeat::Z3));
+        let s = r.get(&SolverSeat::Z3).unwrap();
         let res = s.solve("");
         assert_eq!(res.verdict, crate::types::ObligationVerdict::Discharged);
     }
@@ -284,10 +285,10 @@ binary = "stub:unsat"
     #[test]
     fn default_z3_built() {
         let r = build_default_z3("/usr/bin/z3");
-        assert!(r.contains_key("z3"));
-        assert_eq!(r.get("z3").unwrap().name(), "z3");
+        assert!(r.contains_key(&SolverSeat::Z3));
+        assert_eq!(r.get(&SolverSeat::Z3).unwrap().name(), "z3");
         let invocation_cid = r
-            .get("z3")
+            .get(&SolverSeat::Z3)
             .unwrap()
             .identity()
             .invocation_cid
@@ -310,7 +311,7 @@ vendor_pin = "sha512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 "#;
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
-        let identity = r.get("z3").unwrap().identity();
+        let identity = r.get(&SolverSeat::Z3).unwrap().identity();
         assert_eq!(
             identity.artifact_cid.as_deref(),
             Some("blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -353,7 +354,7 @@ vendor_pin = "simon_says:true"
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
         let memento = r
-            .get("coq")
+            .get(&SolverSeat::Coq)
             .unwrap()
             .identity()
             .vendor_memento
@@ -386,7 +387,7 @@ ir_compiler = "coq"
 "#;
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
-        let s = r.get("coq").expect("coq registered");
+        let s = r.get(&SolverSeat::Coq).expect("coq registered");
         assert_eq!(s.ir_compiler(), "coq");
     }
 
@@ -401,7 +402,7 @@ ir_compiler = "lean"
 "#;
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
-        let s = r.get("lean").expect("lean registered");
+        let s = r.get(&SolverSeat::Lean).expect("lean registered");
         assert_eq!(s.ir_compiler(), "lean");
     }
 
@@ -432,19 +433,26 @@ ir_compiler = "lean"
         let r = build(&c);
 
         // All six seats register.
-        for name in ["z3", "cvc5", "vampire", "coq", "maude", "lean"] {
-            assert!(r.contains_key(name), "{name} seat missing from registry");
+        for seat in [
+            SolverSeat::Z3,
+            SolverSeat::Cvc5,
+            SolverSeat::Vampire,
+            SolverSeat::Coq,
+            SolverSeat::Maude,
+            SolverSeat::Lean,
+        ] {
+            assert!(r.contains_key(&seat), "{seat} seat missing from registry");
         }
 
         // SMT seats route to the generic SubprocessSolver
         // (ir_compiler tag round-trips as "smt-lib-v2.6").
-        for name in ["z3", "cvc5", "vampire"] {
-            let s = r.get(name).unwrap();
-            assert_eq!(s.name(), name);
+        for seat in [SolverSeat::Z3, SolverSeat::Cvc5, SolverSeat::Vampire] {
+            let s = r.get(&seat).unwrap();
+            assert_eq!(s.name(), seat.as_str());
             assert_eq!(
                 s.ir_compiler(),
                 "smt-lib-v2.6",
-                "{name} should route to the SMT-LIB SubprocessSolver",
+                "{seat} should route to the SMT-LIB SubprocessSolver",
             );
         }
 
@@ -455,11 +463,11 @@ ir_compiler = "lean"
         // error. We only check the tag here; the load-bearing
         // dispatch assertion already lives in the dedicated test
         // above.
-        let coq = r.get("coq").unwrap();
+        let coq = r.get(&SolverSeat::Coq).unwrap();
         assert_eq!(coq.ir_compiler(), "coq");
-        let maude = r.get("maude").unwrap();
+        let maude = r.get(&SolverSeat::Maude).unwrap();
         assert_eq!(maude.ir_compiler(), "maude");
-        let lean = r.get("lean").unwrap();
+        let lean = r.get(&SolverSeat::Lean).unwrap();
         assert_eq!(lean.ir_compiler(), "lean");
     }
 
@@ -477,7 +485,7 @@ ir_compiler = "smt-lib-v2.6"
 "#;
         let c = SolversConfig::from_toml(toml).unwrap();
         let r = build(&c);
-        let s = r.get("z3").expect("z3 registered");
+        let s = r.get(&SolverSeat::Z3).expect("z3 registered");
         assert_eq!(s.ir_compiler(), "smt-lib-v2.6");
     }
 }

@@ -33,9 +33,11 @@
 // `default` wins if multiple are present (single-solver fallback).
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{de, Deserialize};
 use sugar_proof_envelope::MementoCid;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -119,35 +121,122 @@ pub enum PortfolioMode {
     Consensus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SolverSeat {
+    Maude,
+    Z3,
+    Cvc5,
+    Vampire,
+    Coq,
+    Lean,
+    Bitwuzla,
+    Yices2,
+    Mathsat,
+}
+
+impl SolverSeat {
+    pub const ALL: [Self; 9] = [
+        Self::Maude,
+        Self::Z3,
+        Self::Cvc5,
+        Self::Vampire,
+        Self::Coq,
+        Self::Lean,
+        Self::Bitwuzla,
+        Self::Yices2,
+        Self::Mathsat,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Maude => "maude",
+            Self::Z3 => "z3",
+            Self::Cvc5 => "cvc5",
+            Self::Vampire => "vampire",
+            Self::Coq => "coq",
+            Self::Lean => "lean",
+            Self::Bitwuzla => "bitwuzla",
+            Self::Yices2 => "yices2",
+            Self::Mathsat => "mathsat",
+        }
+    }
+
+    pub fn valid_seats() -> String {
+        Self::ALL
+            .into_iter()
+            .map(Self::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl fmt::Display for SolverSeat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SolverSeat {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "maude" => Ok(Self::Maude),
+            "z3" => Ok(Self::Z3),
+            "cvc5" => Ok(Self::Cvc5),
+            "vampire" => Ok(Self::Vampire),
+            "coq" => Ok(Self::Coq),
+            "lean" => Ok(Self::Lean),
+            "bitwuzla" => Ok(Self::Bitwuzla),
+            "yices2" => Ok(Self::Yices2),
+            "mathsat" => Ok(Self::Mathsat),
+            _ => Err(format!(
+                "unknown solver seat `{raw}`; valid seats: {}",
+                Self::valid_seats()
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SolverSeat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DispatchConfig {
     #[serde(rename = "equational-theory", default)]
-    pub equational_theory: Option<String>,
+    pub equational_theory: Option<SolverSeat>,
     #[serde(rename = "first-order", default)]
-    pub first_order: Option<String>,
+    pub first_order: Option<SolverSeat>,
     #[serde(default)]
-    pub strings: Option<String>,
+    pub strings: Option<SolverSeat>,
     #[serde(default)]
-    pub bitvectors: Option<String>,
+    pub bitvectors: Option<SolverSeat>,
     #[serde(rename = "linear-arithmetic", default)]
-    pub linear_arithmetic: Option<String>,
+    pub linear_arithmetic: Option<SolverSeat>,
     #[serde(rename = "dependent-type", default)]
-    pub dependent_type: Option<String>,
+    pub dependent_type: Option<SolverSeat>,
     #[serde(rename = "categorical-structure", default)]
-    pub categorical_structure: Option<String>,
+    pub categorical_structure: Option<SolverSeat>,
     #[serde(default)]
-    pub default: Option<String>,
+    pub default: Option<SolverSeat>,
 }
 
 /// Top-level `[solvers]` table model.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SolversConfig {
     #[serde(default)]
-    pub default: Option<String>,
+    pub default: Option<SolverSeat>,
     #[serde(default)]
-    pub chain: Option<Vec<String>>,
+    pub chain: Option<Vec<SolverSeat>>,
     #[serde(default)]
-    pub portfolio: Option<Vec<String>>,
+    pub portfolio: Option<Vec<SolverSeat>>,
     #[serde(default)]
     pub mode: Option<PortfolioMode>,
     /// Min number of distinct solvers that must have signed an
@@ -159,7 +248,7 @@ pub struct SolversConfig {
     pub dispatch: Option<DispatchConfig>,
     /// Per-solver configs, keyed by logical solver name.
     #[serde(flatten)]
-    pub solvers: BTreeMap<String, SolverConfig>,
+    pub solvers: BTreeMap<SolverSeat, SolverConfig>,
 }
 
 impl SolversConfig {
@@ -228,10 +317,10 @@ fn has_vendor_pin_scheme(pin: &str) -> bool {
 /// matches on this directly.
 #[derive(Debug, Clone)]
 pub enum SolverPlan {
-    Single(String),
-    Chain(Vec<String>),
+    Single(SolverSeat),
+    Chain(Vec<SolverSeat>),
     Portfolio {
-        names: Vec<String>,
+        names: Vec<SolverSeat>,
         mode: PortfolioMode,
     },
     Dispatch(DispatchConfig),
@@ -261,7 +350,7 @@ impl SolverPlan {
         if let Some(d) = &cfg.dispatch {
             return SolverPlan::Dispatch(d.clone());
         }
-        SolverPlan::Single("z3".into())
+        SolverPlan::Single(SolverSeat::Z3)
     }
 }
 
@@ -279,10 +368,10 @@ default = "z3"
 binary = "z3"
 "#;
         let c = SolversConfig::from_toml(s).unwrap();
-        assert_eq!(c.default.as_deref(), Some("z3"));
-        assert_eq!(c.solvers.get("z3").unwrap().binary, "z3");
+        assert_eq!(c.default, Some(SolverSeat::Z3));
+        assert_eq!(c.solvers.get(&SolverSeat::Z3).unwrap().binary, "z3");
         match SolverPlan::from_config(&c) {
-            SolverPlan::Single(n) => assert_eq!(n, "z3"),
+            SolverPlan::Single(n) => assert_eq!(n, SolverSeat::Z3),
             _ => panic!("expected Single"),
         }
     }
@@ -299,7 +388,7 @@ binary_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 vendor_pin = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 "#;
         let c = SolversConfig::from_toml(s).unwrap();
-        let z3 = c.solvers.get("z3").unwrap();
+        let z3 = c.solvers.get(&SolverSeat::Z3).unwrap();
         assert_eq!(
             z3.binary_cid.as_deref(),
             Some("blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -372,7 +461,7 @@ chain = ["z3", "cvc5"]
 "#;
         let c = SolversConfig::from_toml(s).unwrap();
         match SolverPlan::from_config(&c) {
-            SolverPlan::Chain(v) => assert_eq!(v, vec!["z3", "cvc5"]),
+            SolverPlan::Chain(v) => assert_eq!(v, vec![SolverSeat::Z3, SolverSeat::Cvc5]),
             _ => panic!("expected Chain"),
         }
     }
@@ -408,13 +497,38 @@ default = "z3"
         let c = SolversConfig::from_toml(s).unwrap();
         match SolverPlan::from_config(&c) {
             SolverPlan::Dispatch(d) => {
-                assert_eq!(d.first_order.as_deref(), Some("vampire"));
-                assert_eq!(d.strings.as_deref(), Some("cvc5"));
-                assert_eq!(d.bitvectors.as_deref(), Some("bitwuzla"));
-                assert_eq!(d.linear_arithmetic.as_deref(), Some("z3"));
-                assert_eq!(d.default.as_deref(), Some("z3"));
+                assert_eq!(d.first_order, Some(SolverSeat::Vampire));
+                assert_eq!(d.strings, Some(SolverSeat::Cvc5));
+                assert_eq!(d.bitvectors, Some(SolverSeat::Bitwuzla));
+                assert_eq!(d.linear_arithmetic, Some(SolverSeat::Z3));
+                assert_eq!(d.default, Some(SolverSeat::Z3));
             }
             _ => panic!("expected Dispatch"),
+        }
+    }
+
+    #[test]
+    fn unknown_dispatch_seat_refused_at_config_parse() {
+        let s = r#"
+[solvers]
+[solvers.dispatch]
+strings = "cvv5"
+default = "z3"
+"#;
+        let err = SolversConfig::from_toml(s).expect_err("unknown dispatch seat refused");
+        assert!(
+            err.contains("unknown solver seat `cvv5`"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("valid seats:"),
+            "error should list valid seats: {err}"
+        );
+        for seat in SolverSeat::ALL.map(SolverSeat::as_str) {
+            assert!(
+                err.contains(seat),
+                "error should list valid seat `{seat}`: {err}"
+            );
         }
     }
 
@@ -423,7 +537,7 @@ default = "z3"
         let s = "";
         let c = SolversConfig::from_toml(s).unwrap();
         match SolverPlan::from_config(&c) {
-            SolverPlan::Single(n) => assert_eq!(n, "z3"),
+            SolverPlan::Single(n) => assert_eq!(n, SolverSeat::Z3),
             _ => panic!("expected Single z3 fallback"),
         }
     }

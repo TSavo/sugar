@@ -34,7 +34,7 @@ use crate::handshake::{
 };
 use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
-    SolversConfig,
+    SolverSeat, SolversConfig,
 };
 use crate::types::{AnchoredMember, CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
 use crate::{
@@ -157,7 +157,7 @@ impl TierStats {
 pub struct Runner {
     cfg: RunnerConfig,
     plan: SolverPlan,
-    registry: HashMap<String, SolverHandle>,
+    registry: HashMap<SolverSeat, SolverHandle>,
     compilers: CompilerRegistry,
 }
 
@@ -1190,7 +1190,7 @@ fn build_solve_pool() -> Option<rayon::ThreadPool> {
         .ok()
 }
 
-fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<String, SolverHandle>) {
+fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<SolverSeat, SolverHandle>) {
     if let Some(sc) = &cfg.solvers_config {
         return (SolverPlan::from_config(sc), registry::build(sc));
     }
@@ -1204,7 +1204,7 @@ fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<String, S
         cfg.z3_path.clone()
     };
     (
-        SolverPlan::Single("z3".into()),
+        SolverPlan::Single(SolverSeat::Z3),
         registry::build_default_z3(&z3),
     )
 }
@@ -1304,7 +1304,7 @@ fn callsite_row_is_owned_by_self_post(cs: &CallSite, pool: &MementoPool) -> bool
 fn verify_contract_self_posts(
     pool: &MementoPool,
     plan: &SolverPlan,
-    registry: &HashMap<String, SolverHandle>,
+    registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
     let contracts: Vec<&MementoCid> = pool
@@ -1357,7 +1357,7 @@ fn work_one(
     cs: &CallSite,
     pool: &MementoPool,
     plan: &SolverPlan,
-    registry: &HashMap<String, SolverHandle>,
+    registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
     cfg: &RunnerConfig,
     n_hash: &AtomicUsize,
@@ -2361,7 +2361,7 @@ mod consistency_owned_callsite_tests {
             trusted_implication_signers,
             ..Default::default()
         };
-        let plan = SolverPlan::Single("stub".to_string());
+        let plan = SolverPlan::Single(SolverSeat::Z3);
         let registry = HashMap::new();
         let compilers = CompilerRegistry::new();
         let n_hash = AtomicUsize::new(0);

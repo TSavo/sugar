@@ -21,13 +21,13 @@
 // Spec: protocol/specs/2026-05-02-multi-solver-protocol-v2.md
 // (Coq's seat in the multi-solver portfolio).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::json;
 use sugar_verifier::solvers::{
     plan::{run_plan, Registry},
-    CoqSubprocessSolver, PortfolioMode, SolverHandle, SolverPlan, StubSolver, SubprocessSolver,
+    CoqSubprocessSolver, PortfolioMode, SolverHandle, SolverPlan, SolverSeat, StubSolver,
+    SubprocessSolver,
 };
 use sugar_verifier::types::ObligationVerdict;
 
@@ -78,22 +78,22 @@ fn binary_on_path(name: &str) -> bool {
 /// agree.
 #[test]
 fn portfolio_consensus_three_way_stubs_unanimous() {
-    let mut registry: Registry = HashMap::new();
+    let mut registry: Registry = Registry::new();
     registry.insert(
-        "z3".into(),
+        SolverSeat::Z3,
         Arc::new(StubSolver::new("z3", ObligationVerdict::Discharged)) as SolverHandle,
     );
     registry.insert(
-        "cvc5".into(),
+        SolverSeat::Cvc5,
         Arc::new(StubSolver::new("cvc5", ObligationVerdict::Discharged)) as SolverHandle,
     );
     registry.insert(
-        "coq".into(),
+        SolverSeat::Coq,
         Arc::new(StubSolver::new("coq", ObligationVerdict::Discharged)) as SolverHandle,
     );
 
     let plan = SolverPlan::Portfolio {
-        names: vec!["z3".into(), "cvc5".into(), "coq".into()],
+        names: vec![SolverSeat::Z3, SolverSeat::Cvc5, SolverSeat::Coq],
         mode: PortfolioMode::Consensus,
     };
 
@@ -117,22 +117,22 @@ fn portfolio_consensus_three_way_stubs_unanimous() {
 /// only.
 #[test]
 fn portfolio_consensus_three_way_stubs_disagreement_loud() {
-    let mut registry: Registry = HashMap::new();
+    let mut registry: Registry = Registry::new();
     registry.insert(
-        "z3".into(),
+        SolverSeat::Z3,
         Arc::new(StubSolver::new("z3", ObligationVerdict::Discharged)) as SolverHandle,
     );
     registry.insert(
-        "cvc5".into(),
+        SolverSeat::Cvc5,
         Arc::new(StubSolver::new("cvc5", ObligationVerdict::Discharged)) as SolverHandle,
     );
     registry.insert(
-        "coq".into(),
+        SolverSeat::Coq,
         Arc::new(StubSolver::new("coq", ObligationVerdict::Unsatisfied)) as SolverHandle,
     );
 
     let plan = SolverPlan::Portfolio {
-        names: vec!["z3".into(), "cvc5".into(), "coq".into()],
+        names: vec![SolverSeat::Z3, SolverSeat::Cvc5, SolverSeat::Coq],
         mode: PortfolioMode::Consensus,
     };
 
@@ -157,22 +157,22 @@ fn portfolio_consensus_three_way_stubs_disagreement_loud() {
 /// case is the floor the v2 rule extends.
 #[test]
 fn portfolio_consensus_coq_alone_discharges_when_smt_undecidable() {
-    let mut registry: Registry = HashMap::new();
+    let mut registry: Registry = Registry::new();
     registry.insert(
-        "z3".into(),
+        SolverSeat::Z3,
         Arc::new(StubSolver::new("z3", ObligationVerdict::Undecidable)) as SolverHandle,
     );
     registry.insert(
-        "cvc5".into(),
+        SolverSeat::Cvc5,
         Arc::new(StubSolver::new("cvc5", ObligationVerdict::Undecidable)) as SolverHandle,
     );
     registry.insert(
-        "coq".into(),
+        SolverSeat::Coq,
         Arc::new(StubSolver::new("coq", ObligationVerdict::Discharged)) as SolverHandle,
     );
 
     let plan = SolverPlan::Portfolio {
-        names: vec!["z3".into(), "cvc5".into(), "coq".into()],
+        names: vec![SolverSeat::Z3, SolverSeat::Cvc5, SolverSeat::Coq],
         mode: PortfolioMode::Consensus,
     };
 
@@ -285,9 +285,9 @@ fn z3_and_coq_real_binaries_return_verdicts() {
         );
         return;
     }
-    let mut registry: HashMap<String, SolverHandle> = HashMap::new();
-    registry.insert("z3".to_string(), z3_solver());
-    registry.insert("coq".to_string(), coq_solver());
+    let mut registry: Registry = Registry::new();
+    registry.insert(SolverSeat::Z3, z3_solver());
+    registry.insert(SolverSeat::Coq, coq_solver());
 
     // Z3 on SMT-LIB.
     let z3_smt = r#"
@@ -297,7 +297,7 @@ fn z3_and_coq_real_binaries_return_verdicts() {
 (assert (>= x 0))
 (check-sat)
 "#;
-    let z3_result = registry.get("z3").unwrap().solve(z3_smt);
+    let z3_result = registry.get(&SolverSeat::Z3).unwrap().solve(z3_smt);
 
     // Coq on IR-JSON.
     let coq_ir = json!({
@@ -313,7 +313,10 @@ fn z3_and_coq_real_binaries_return_verdicts() {
             ]
         }
     });
-    let coq_result = registry.get("coq").unwrap().solve(&coq_ir.to_string());
+    let coq_result = registry
+        .get(&SolverSeat::Coq)
+        .unwrap()
+        .solve(&coq_ir.to_string());
 
     // Z3 must Discharge: the obligation is a tautology.
     assert_eq!(
@@ -375,7 +378,7 @@ ir_compiler = "coq"
     match &plan {
         SolverPlan::Portfolio { names, mode } => {
             assert_eq!(names.len(), 3);
-            assert!(names.contains(&"coq".to_string()));
+            assert!(names.contains(&SolverSeat::Coq));
             assert_eq!(*mode, PortfolioMode::Consensus);
         }
         other => panic!("expected Portfolio plan, got {:?}", other),
@@ -384,7 +387,7 @@ ir_compiler = "coq"
     // The registry resolved "coq" to a CoqSubprocessSolver. Solver
     // execution consumes compiled Coq text now; ProofIR-to-Coq lowering
     // happens at the compiler registry boundary before the solver is called.
-    let coq = registry.get("coq").expect("coq registered");
+    let coq = registry.get(&SolverSeat::Coq).expect("coq registered");
     assert_eq!(coq.ir_compiler(), "coq");
     let res = coq.solve("Theorem sugar_obligation : True.\nProof. exact I. Qed.\n");
     assert_eq!(res.verdict, ObligationVerdict::Undecidable);

@@ -67,7 +67,9 @@ use rayon::prelude::*;
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
-use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
+use crate::solvers::{
+    run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
+};
 use crate::types::{MementoCid, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
@@ -1034,7 +1036,7 @@ fn check_inv_consistency(
     inv: Json,
     linked_posts: Vec<LinkedPostInstance>,
     plan: &SolverPlan,
-    registry: &HashMap<String, SolverHandle>,
+    registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> ConsistencyResult {
     let t_local = std::time::Instant::now();
@@ -1884,7 +1886,7 @@ fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
-    registry: &HashMap<String, SolverHandle>,
+    registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<ConsistencyResult> {
     let candidates: Vec<(String, Json)> = pool
@@ -2127,9 +2129,9 @@ mod tests {
         pool
     }
 
-    fn z3_plan_and_registry() -> (SolverPlan, HashMap<String, SolverHandle>) {
+    fn z3_plan_and_registry() -> (SolverPlan, HashMap<SolverSeat, SolverHandle>) {
         let registry = registry::build_default_z3("z3");
-        (SolverPlan::Single("z3".into()), registry)
+        (SolverPlan::Single(SolverSeat::Z3), registry)
     }
 
     fn test_compilers() -> CompilerRegistry {
@@ -3114,10 +3116,10 @@ mod tests {
             point_inv,
         );
 
-        let plan = SolverPlan::Single("z3".into());
+        let plan = SolverPlan::Single(SolverSeat::Z3);
         let mut registry = HashMap::new();
         registry.insert(
-            "z3".into(),
+            SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
         let res = verify_consistency(&pool, &plan, &registry, &test_compilers());
@@ -3158,10 +3160,10 @@ mod tests {
             forall
         ]});
 
-        let plan = SolverPlan::Single("z3".into());
+        let plan = SolverPlan::Single(SolverSeat::Z3);
         let mut registry = HashMap::new();
         registry.insert(
-            "z3".into(),
+            SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
         let res = check_inv_consistency(
@@ -3210,7 +3212,7 @@ mod tests {
         let reg = HashMap::new();
         let res = verify_consistency(
             &pool,
-            &SolverPlan::Single("unused".into()),
+            &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
         );
@@ -3254,7 +3256,7 @@ mod tests {
         let reg = HashMap::new();
         let res = verify_consistency(
             &pool,
-            &SolverPlan::Single("unused".into()),
+            &SolverPlan::Single(SolverSeat::Bitwuzla),
             &reg,
             &test_compilers(),
         );

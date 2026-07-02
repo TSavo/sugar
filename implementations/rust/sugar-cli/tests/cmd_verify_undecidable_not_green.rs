@@ -14,7 +14,7 @@ use sugar_proof_envelope::{
 
 const EXIT_OK: i32 = 0;
 const EXIT_SOLVER_FAIL: i32 = 3;
-const MISSING_SOLVER_REASON: &str = "solver 'missing-seat' not found in registry";
+const MISSING_SOLVER_REASON: &str = "solver 'bitwuzla' not found in registry";
 
 #[derive(Clone, Copy)]
 enum SolverFixture {
@@ -62,10 +62,10 @@ fn write_stub_solver_config(project: &Path) {
         r#"[solvers]
 
 [solvers.dispatch]
-strings = "stubpass"
-default = "stubpass"
+strings = "z3"
+default = "z3"
 
-[solvers.stubpass]
+[solvers.z3]
 binary = "stub:sat"
 ir_compiler = "smt-lib-v2.6"
 flags = []
@@ -82,8 +82,8 @@ fn write_missing_solver_config(project: &Path) {
         r#"[solvers]
 
 [solvers.dispatch]
-strings = "missing-seat"
-default = "missing-seat"
+strings = "bitwuzla"
+default = "bitwuzla"
 "#,
     )
     .expect("write missing solver config");

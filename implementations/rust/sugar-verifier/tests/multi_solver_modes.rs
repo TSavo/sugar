@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use sugar_verifier::solvers::{
     plan::{run_plan, Registry},
-    SolverPlan, SolversConfig, StubSolver,
+    SolverPlan, SolverSeat, SolversConfig, StubSolver,
 };
 use sugar_verifier::types::ObligationVerdict;
 use sugar_verifier::SolverHandle;
@@ -26,12 +26,12 @@ fn parse(toml_body: &str) -> SolversConfig {
 fn end_to_end_chain_falls_through_undecidable_to_unsat() {
     let body = r#"
 [solvers]
-chain = ["alpha", "beta"]
+chain = ["vampire", "z3"]
 
-[solvers.alpha]
+[solvers.vampire]
 binary = "stub:undecidable"
 
-[solvers.beta]
+[solvers.z3]
 binary = "stub:unsat"
 "#;
     let cfg = parse(body);
@@ -48,13 +48,13 @@ binary = "stub:unsat"
 fn end_to_end_portfolio_first_wins_takes_first_definitive() {
     let body = r#"
 [solvers]
-portfolio = ["alpha", "beta"]
+portfolio = ["vampire", "z3"]
 mode = "first-wins"
 
-[solvers.alpha]
+[solvers.vampire]
 binary = "stub:undecidable"
 
-[solvers.beta]
+[solvers.z3]
 binary = "stub:unsat"
 "#;
     let cfg = parse(body);
@@ -69,13 +69,13 @@ binary = "stub:unsat"
 fn end_to_end_portfolio_consensus_disagreement_flags_loud() {
     let body = r#"
 [solvers]
-portfolio = ["a1", "a2"]
+portfolio = ["z3", "cvc5"]
 mode = "consensus"
 
-[solvers.a1]
+[solvers.z3]
 binary = "stub:unsat"
 
-[solvers.a2]
+[solvers.cvc5]
 binary = "stub:sat"
 "#;
     let cfg = parse(body);
@@ -90,16 +90,16 @@ binary = "stub:sat"
 fn end_to_end_portfolio_consensus_unanimous() {
     let body = r#"
 [solvers]
-portfolio = ["a1", "a2", "a3"]
+portfolio = ["z3", "cvc5", "bitwuzla"]
 mode = "consensus"
 
-[solvers.a1]
+[solvers.z3]
 binary = "stub:unsat"
 
-[solvers.a2]
+[solvers.cvc5]
 binary = "stub:unsat"
 
-[solvers.a3]
+[solvers.bitwuzla]
 binary = "stub:unsat"
 "#;
     let cfg = parse(body);
@@ -115,14 +115,14 @@ fn end_to_end_dispatch_routes_strings_to_string_solver() {
     let body = r#"
 [solvers]
 [solvers.dispatch]
-strings = "cvc5stub"
-"linear-arithmetic" = "z3stub"
-default = "z3stub"
+strings = "cvc5"
+"linear-arithmetic" = "z3"
+default = "z3"
 
-[solvers.cvc5stub]
+[solvers.cvc5]
 binary = "stub:unsat"
 
-[solvers.z3stub]
+[solvers.z3]
 binary = "stub:undecidable"
 "#;
     let cfg = parse(body);
@@ -135,7 +135,7 @@ binary = "stub:undecidable"
     });
     let (verdict, _, invs) = run_plan(&plan, &registry, "(check-sat)", Some(&f));
     assert_eq!(verdict, ObligationVerdict::Discharged);
-    assert_eq!(invs[0].result.solver_name, "cvc5stub");
+    assert_eq!(invs[0].result.solver_name, "cvc5");
 }
 
 #[test]
@@ -143,13 +143,13 @@ fn end_to_end_dispatch_routes_lia_to_default_z3() {
     let body = r#"
 [solvers]
 [solvers.dispatch]
-strings = "cvc5stub"
-default = "z3stub"
+strings = "cvc5"
+default = "z3"
 
-[solvers.cvc5stub]
+[solvers.cvc5]
 binary = "stub:unsat"
 
-[solvers.z3stub]
+[solvers.z3]
 binary = "stub:unsat"
 "#;
     let cfg = parse(body);
@@ -160,22 +160,22 @@ binary = "stub:unsat"
         "args":[{"kind":"var","name":"x"},{"kind":"const","value":0}]
     });
     let (_, _, invs) = run_plan(&plan, &registry, "(check-sat)", Some(&f));
-    assert_eq!(invs[0].result.solver_name, "z3stub");
+    assert_eq!(invs[0].result.solver_name, "z3");
 }
 
 #[test]
 fn registry_handles_subprocess_solver_with_missing_binary_gracefully() {
     let mut reg: Registry = std::collections::HashMap::new();
     let s = sugar_verifier::SubprocessSolver::new(
-        "missing",
+        "z3",
         "/nonexistent/binary/that/does/not/exist",
         "0",
         "smt-lib-v2.6",
         vec![],
         Some(std::time::Duration::from_secs(1)),
     );
-    reg.insert("missing".into(), Arc::new(s) as SolverHandle);
-    let plan = SolverPlan::Single("missing".into());
+    reg.insert(SolverSeat::Z3, Arc::new(s) as SolverHandle);
+    let plan = SolverPlan::Single(SolverSeat::Z3);
     let (verdict, _reason, invs) = run_plan(&plan, &reg, "(check-sat)", None);
     assert_eq!(verdict, ObligationVerdict::Undecidable);
     assert_eq!(invs.len(), 1);
@@ -188,9 +188,9 @@ fn end_to_end_dispatch_no_match_no_default_undecidable() {
         r#"
 [solvers]
 [solvers.dispatch]
-strings = "stringssolver"
+strings = "cvc5"
 
-[solvers.stringssolver]
+[solvers.cvc5]
 binary = "stub:unsat"
 "#,
     );
@@ -207,12 +207,12 @@ fn end_to_end_chain_records_all_attempts_in_invs() {
     let cfg = parse(
         r#"
 [solvers]
-chain = ["a", "b", "c"]
-[solvers.a]
+chain = ["z3", "cvc5", "bitwuzla"]
+[solvers.z3]
 binary = "stub:undecidable"
-[solvers.b]
+[solvers.cvc5]
 binary = "stub:undecidable"
-[solvers.c]
+[solvers.bitwuzla]
 binary = "stub:unsat"
 "#,
     );
@@ -222,7 +222,7 @@ binary = "stub:unsat"
     assert_eq!(v, ObligationVerdict::Discharged);
     assert_eq!(invs.len(), 3);
     let names: Vec<_> = invs.iter().map(|i| i.result.solver_name.as_str()).collect();
-    assert_eq!(names, vec!["a", "b", "c"]);
+    assert_eq!(names, vec!["z3", "cvc5", "bitwuzla"]);
 }
 
 #[test]
@@ -230,12 +230,12 @@ fn portfolio_per_solver_telemetry_captures_versions() {
     let cfg = parse(
         r#"
 [solvers]
-portfolio = ["s1", "s2"]
+portfolio = ["z3", "cvc5"]
 mode = "first-wins"
-[solvers.s1]
+[solvers.z3]
 binary = "stub:unsat"
 version = "1.2"
-[solvers.s2]
+[solvers.cvc5]
 binary = "stub:unsat"
 version = "3.4"
 "#,
@@ -277,8 +277,8 @@ fn runner_aggregates_per_solver_telemetry() {
             SolversConfig::from_toml(
                 r#"
 [solvers]
-default = "stub"
-[solvers.stub]
+default = "z3"
+[solvers.z3]
 binary = "stub:unsat"
 "#,
             )

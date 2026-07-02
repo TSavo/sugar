@@ -45,22 +45,22 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
-use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan};
+use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
 /// Re-exports from `sugar-verifier` so callers do not need a direct
 /// dependency on the verifier crate to construct a registry / plan.
 pub mod solver_api {
     pub use sugar_verifier::solvers::{
-        registry, run_plan, SolverConfig, SolverHandle, SolverPlan, SolversConfig, StubSolver,
-        SubprocessSolver,
+        registry, run_plan, SolverConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
+        StubSolver, SubprocessSolver,
     };
     pub use sugar_verifier::types::ObligationVerdict;
 }
 
 /// Solver registry used by `link_with_solvers`. Mirrors the verifier's
-/// `solvers::plan::Registry` shape (`name -> Arc<dyn Solver>`).
-pub type Registry = HashMap<String, SolverHandle>;
+/// `solvers::plan::Registry` shape (`seat -> Arc<dyn Solver>`).
+pub type Registry = HashMap<SolverSeat, SolverHandle>;
 
 // -------------------------------------------------------------------
 // Public input types
@@ -190,9 +190,9 @@ pub struct LinkerOutput {
 /// such cases via the workspace solver registry.
 pub fn link(inputs: LinkerInputs) -> LinkerOutput {
     let empty_registry: Registry = HashMap::new();
-    // Single-solver-named-"none" plan; lookup will miss for any
+    // Single-Z3 plan over an empty registry; lookup will miss for any
     // structurally-distinct discharge, surfacing as Undecidable.
-    let no_op_plan = SolverPlan::Single("__no_solver__".into());
+    let no_op_plan = SolverPlan::Single(SolverSeat::Z3);
     let LinkerInputs {
         contracts,
         call_edges,
