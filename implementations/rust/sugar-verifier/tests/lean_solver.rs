@@ -7,7 +7,7 @@ use std::sync::Arc;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler_lean::LeanCompiler;
 use sugar_verifier::solvers::{
-    plan::run_plan_with_compilers, registry, LeanSubprocessSolver, Solver, SolverPlan,
+    plan::run_plan_with_compilers, registry, LeanSubprocessSolver, Solver, SolverPlan, SolverSeat,
     SolversConfig,
 };
 use sugar_verifier::types::ObligationVerdict;
@@ -78,10 +78,10 @@ ir_compiler = "lean"
     .expect("parse");
     let plan = SolverPlan::from_config(&cfg);
     let registry = registry::build(&cfg);
-    let solver = registry.get("lean").expect("lean registered");
+    let solver = registry.get(&SolverSeat::Lean).expect("lean registered");
     assert_eq!(solver.ir_compiler(), "lean");
     match plan {
-        SolverPlan::Single(name) => assert_eq!(name, "lean"),
+        SolverPlan::Single(name) => assert_eq!(name, SolverSeat::Lean),
         _ => panic!("expected single lean solver"),
     }
     let result = solver.solve("theorem sugar_obligation : True := by trivial\n");

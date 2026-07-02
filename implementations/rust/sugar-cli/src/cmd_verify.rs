@@ -63,7 +63,7 @@ use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
     run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict, Runner,
-    RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
+    RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
 };
 use tracing::{debug, info};
 
@@ -229,14 +229,14 @@ pub struct VerifyArgs {
 /// table, not a hardcoded single backend.
 pub fn verify_dispatch_table() -> DispatchConfig {
     DispatchConfig {
-        equational_theory: Some("maude".into()),
-        first_order: Some("vampire".into()),
-        strings: Some("cvc5".into()),
-        bitvectors: Some("bitwuzla".into()),
-        linear_arithmetic: Some("z3".into()),
-        dependent_type: Some("lean".into()),
-        categorical_structure: Some("lean".into()),
-        default: Some("z3".into()),
+        equational_theory: Some(SolverSeat::Maude),
+        first_order: Some(SolverSeat::Vampire),
+        strings: Some(SolverSeat::Cvc5),
+        bitvectors: Some(SolverSeat::Bitwuzla),
+        linear_arithmetic: Some(SolverSeat::Z3),
+        dependent_type: Some(SolverSeat::Lean),
+        categorical_structure: Some(SolverSeat::Lean),
+        default: Some(SolverSeat::Z3),
     }
 }
 
@@ -798,7 +798,7 @@ fn build_plan_and_registry(
     z3_path: &str,
 ) -> (
     SolverPlan,
-    std::collections::HashMap<String, SolverHandle>,
+    std::collections::HashMap<SolverSeat, SolverHandle>,
     bool,
 ) {
     if let Ok(Some(sc)) = SolversConfig::load(project_root) {
@@ -856,7 +856,7 @@ fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim
 fn verify_direct_formula_claim(
     claim: &DirectFormulaClaim,
     plan: &SolverPlan,
-    solver_registry: &std::collections::HashMap<String, SolverHandle>,
+    solver_registry: &std::collections::HashMap<SolverSeat, SolverHandle>,
     compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
     signer_seed: &[u8; 32],
@@ -924,7 +924,7 @@ fn verify_one_claim(
     cs: &sugar_verifier::CallSite,
     pool: &MementoPool,
     plan: &SolverPlan,
-    solver_registry: &std::collections::HashMap<String, SolverHandle>,
+    solver_registry: &std::collections::HashMap<SolverSeat, SolverHandle>,
     compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
     signer_seed: &[u8; 32],
@@ -1296,23 +1296,31 @@ fn routed_seat(plan: &SolverPlan, theory: FormulaTheory) -> String {
     let d = match plan {
         SolverPlan::Dispatch(d) => d,
         SolverPlan::Single(n) => return format!("single:{n}"),
-        SolverPlan::Chain(names) => return format!("chain:{}", names.join(",")),
-        SolverPlan::Portfolio { names, .. } => return format!("portfolio:{}", names.join(",")),
+        SolverPlan::Chain(names) => return format!("chain:{}", seat_list(names)),
+        SolverPlan::Portfolio { names, .. } => return format!("portfolio:{}", seat_list(names)),
     };
     let by_theory = match theory {
-        FormulaTheory::EquationalTheory => d.equational_theory.as_deref(),
-        FormulaTheory::FirstOrder => d.first_order.as_deref(),
-        FormulaTheory::Strings => d.strings.as_deref(),
-        FormulaTheory::Bitvectors => d.bitvectors.as_deref(),
-        FormulaTheory::LinearArithmetic => d.linear_arithmetic.as_deref(),
-        FormulaTheory::DependentType => d.dependent_type.as_deref(),
-        FormulaTheory::CategoricalStructure => d.categorical_structure.as_deref(),
+        FormulaTheory::EquationalTheory => d.equational_theory,
+        FormulaTheory::FirstOrder => d.first_order,
+        FormulaTheory::Strings => d.strings,
+        FormulaTheory::Bitvectors => d.bitvectors,
+        FormulaTheory::LinearArithmetic => d.linear_arithmetic,
+        FormulaTheory::DependentType => d.dependent_type,
+        FormulaTheory::CategoricalStructure => d.categorical_structure,
         FormulaTheory::Default => None,
     };
     by_theory
-        .or(d.default.as_deref())
-        .unwrap_or("<unrouted>")
-        .to_string()
+        .or(d.default)
+        .map(|seat| seat.to_string())
+        .unwrap_or_else(|| "<unrouted>".to_string())
+}
+
+fn seat_list(names: &[SolverSeat]) -> String {
+    names
+        .iter()
+        .map(|seat| seat.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Mint a signed `WitnessMemento` citing the discharging solver and
@@ -1829,6 +1837,30 @@ mod tests {
         assert_eq!(classify(&lia), FormulaTheory::LinearArithmetic);
         let plan = SolverPlan::Dispatch(verify_dispatch_table());
         assert_eq!(routed_seat(&plan, classify(&lia)), "z3");
+    }
+
+    #[test]
+    fn verify_dispatch_table_does_not_reintroduce_stringly_seats() {
+        let source = include_str!("cmd_verify.rs");
+        let table_source = source
+            .split("pub fn verify_dispatch_table() -> DispatchConfig")
+            .nth(1)
+            .and_then(|tail| tail.split("/// Per-claim verification outcome").next())
+            .expect("verify dispatch table source is present");
+
+        for literal in [
+            "\"z3\"",
+            "\"vampire\"",
+            "\"bitwuzla\"",
+            "\"cvc5\"",
+            "\"maude\"",
+            "\"lean\"",
+        ] {
+            assert!(
+                !table_source.contains(literal),
+                "dispatch table must use SolverSeat variants, not seat literal {literal}"
+            );
+        }
     }
 
     #[test]

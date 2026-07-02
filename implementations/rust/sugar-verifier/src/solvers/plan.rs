@@ -16,7 +16,7 @@ use sugar_ir_compiler::CompiledFormula;
 
 use crate::solvers::{
     dispatch_for_formula, PortfolioMode, SolveResult, Solver, SolverHandle, SolverIdentity,
-    SolverPlan,
+    SolverPlan, SolverSeat,
 };
 use crate::types::ObligationVerdict;
 
@@ -33,9 +33,9 @@ pub struct SolverInvocation {
     pub result: SolveResult,
 }
 
-/// Solver registry: name -> handle. Built once at runner construction
+/// Solver registry: seat -> handle. Built once at runner construction
 /// from the SolversConfig.
-pub type Registry = HashMap<String, SolverHandle>;
+pub type Registry = HashMap<SolverSeat, SolverHandle>;
 
 #[derive(Clone, Copy)]
 enum InputSource<'a> {
@@ -87,7 +87,7 @@ fn run_plan_inner(
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     match plan {
-        SolverPlan::Single(name) => single(name, registry, source, formula),
+        SolverPlan::Single(name) => single(*name, registry, source, formula),
         SolverPlan::Chain(names) => chain(names, registry, source, formula),
         SolverPlan::Portfolio { names, mode } => portfolio(names, *mode, registry, source, formula),
         SolverPlan::Dispatch(d) => match formula {
@@ -108,14 +108,14 @@ fn run_plan_inner(
     }
 }
 
-fn lookup<'a>(name: &str, registry: &'a Registry) -> Result<&'a Arc<dyn Solver>, String> {
+fn lookup(name: SolverSeat, registry: &Registry) -> Result<&Arc<dyn Solver>, String> {
     registry
-        .get(name)
+        .get(&name)
         .ok_or_else(|| format!("solver '{name}' not found in registry"))
 }
 
 fn single(
-    name: &str,
+    name: SolverSeat,
     registry: &Registry,
     source: InputSource<'_>,
     formula: Option<&Json>,
@@ -140,14 +140,14 @@ fn single(
 }
 
 fn chain(
-    names: &[String],
+    names: &[SolverSeat],
     registry: &Registry,
     source: InputSource<'_>,
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     let mut history: Vec<SolverInvocation> = vec![];
     let mut last_reason = String::new();
-    for (idx, n) in names.iter().enumerate() {
+    for (idx, n) in names.iter().copied().enumerate() {
         match lookup(n, registry) {
             Ok(s) => {
                 let compiler = s.ir_compiler().to_string();
@@ -204,7 +204,7 @@ fn chain(
 }
 
 fn portfolio(
-    names: &[String],
+    names: &[SolverSeat],
     mode: PortfolioMode,
     registry: &Registry,
     source: InputSource<'_>,
@@ -212,7 +212,7 @@ fn portfolio(
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     // Resolve handles up front; surface lookup misses as Undecidable.
     let mut handles: Vec<&Arc<dyn Solver>> = vec![];
-    for n in names {
+    for n in names.iter().copied() {
         match lookup(n, registry) {
             Ok(h) => handles.push(h),
             Err(e) => {
@@ -459,16 +459,16 @@ mod tests {
     fn registry() -> Registry {
         let mut r: Registry = HashMap::new();
         r.insert(
-            "a".into(),
-            Arc::new(StubSolver::new("a", ObligationVerdict::Discharged)) as SolverHandle,
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Discharged)) as SolverHandle,
         );
         r.insert(
-            "b".into(),
-            Arc::new(StubSolver::new("b", ObligationVerdict::Unsatisfied)) as SolverHandle,
+            SolverSeat::Cvc5,
+            Arc::new(StubSolver::new("cvc5", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
         r.insert(
-            "u".into(),
-            Arc::new(StubSolver::new("u", ObligationVerdict::Undecidable)) as SolverHandle,
+            SolverSeat::Vampire,
+            Arc::new(StubSolver::new("vampire", ObligationVerdict::Undecidable)) as SolverHandle,
         );
         r
     }
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn single_returns_solver_verdict() {
         let r = registry();
-        let plan = SolverPlan::Single("a".into());
+        let plan = SolverPlan::Single(SolverSeat::Z3);
         let (v, _, invs) = run_plan(&plan, &r, "(check-sat)", None);
         assert_eq!(v, ObligationVerdict::Discharged);
         assert_eq!(invs.len(), 1);
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn chain_falls_through_undecidable() {
         let r = registry();
-        let plan = SolverPlan::Chain(vec!["u".into(), "a".into()]);
+        let plan = SolverPlan::Chain(vec![SolverSeat::Vampire, SolverSeat::Z3]);
         let (v, _, invs) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Discharged);
         assert_eq!(invs.len(), 2);
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn chain_all_undecidable_returns_undecidable() {
         let r = registry();
-        let plan = SolverPlan::Chain(vec!["u".into(), "u".into()]);
+        let plan = SolverPlan::Chain(vec![SolverSeat::Vampire, SolverSeat::Vampire]);
         let (v, _, _) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Undecidable);
     }
@@ -506,21 +506,21 @@ mod tests {
     fn portfolio_first_wins_picks_fastest_definitive() {
         let mut reg: Registry = HashMap::new();
         reg.insert(
-            "fast".into(),
+            SolverSeat::Z3,
             Arc::new(
-                StubSolver::new("fast", ObligationVerdict::Discharged)
+                StubSolver::new("z3", ObligationVerdict::Discharged)
                     .with_delay(Duration::from_millis(5)),
             ) as SolverHandle,
         );
         reg.insert(
-            "slow".into(),
+            SolverSeat::Cvc5,
             Arc::new(
-                StubSolver::new("slow", ObligationVerdict::Discharged)
+                StubSolver::new("cvc5", ObligationVerdict::Discharged)
                     .with_delay(Duration::from_millis(50)),
             ) as SolverHandle,
         );
         let plan = SolverPlan::Portfolio {
-            names: vec!["fast".into(), "slow".into()],
+            names: vec![SolverSeat::Z3, SolverSeat::Cvc5],
             mode: PortfolioMode::FirstWins,
         };
         let (v, _, invs) = run_plan(&plan, &reg, "x", None);
@@ -528,14 +528,14 @@ mod tests {
         assert_eq!(invs.len(), 2);
         let auth: Vec<_> = invs.iter().filter(|i| i.authoritative).collect();
         assert_eq!(auth.len(), 1);
-        assert_eq!(auth[0].result.solver_name, "fast");
+        assert_eq!(auth[0].result.solver_name, "z3");
     }
 
     #[test]
     fn portfolio_consensus_agree() {
         let r = registry();
         let plan = SolverPlan::Portfolio {
-            names: vec!["a".into(), "a".into()],
+            names: vec![SolverSeat::Z3, SolverSeat::Z3],
             mode: PortfolioMode::Consensus,
         };
         let (v, _, _) = run_plan(&plan, &r, "x", None);
@@ -546,7 +546,7 @@ mod tests {
     fn portfolio_consensus_disagree_flags_disagreement() {
         let r = registry();
         let plan = SolverPlan::Portfolio {
-            names: vec!["a".into(), "b".into()],
+            names: vec![SolverSeat::Z3, SolverSeat::Cvc5],
             mode: PortfolioMode::Consensus,
         };
         let (v, reason, _) = run_plan(&plan, &r, "x", None);
@@ -558,22 +558,22 @@ mod tests {
     fn dispatch_picks_strings_solver() {
         let mut reg: Registry = HashMap::new();
         reg.insert(
-            "z3".into(),
+            SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Discharged)) as SolverHandle,
         );
         reg.insert(
-            "cvc5".into(),
+            SolverSeat::Cvc5,
             Arc::new(StubSolver::new("cvc5", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
         let plan = SolverPlan::Dispatch(crate::solvers::DispatchConfig {
             equational_theory: None,
             first_order: None,
-            strings: Some("cvc5".into()),
+            strings: Some(SolverSeat::Cvc5),
             bitvectors: None,
-            linear_arithmetic: Some("z3".into()),
+            linear_arithmetic: Some(SolverSeat::Z3),
             dependent_type: None,
             categorical_structure: None,
-            default: Some("z3".into()),
+            default: Some(SolverSeat::Z3),
         });
         let f = serde_json::json!({"kind":"atomic","name":"length","args":[]});
         let (v, _, invs) = run_plan(&plan, &reg, "x", Some(&f));
@@ -585,7 +585,7 @@ mod tests {
     fn dispatch_falls_back_to_default() {
         let mut reg: Registry = HashMap::new();
         reg.insert(
-            "z3".into(),
+            SolverSeat::Z3,
             Arc::new(StubSolver::new("z3", ObligationVerdict::Discharged)) as SolverHandle,
         );
         let plan = SolverPlan::Dispatch(crate::solvers::DispatchConfig {
@@ -596,7 +596,7 @@ mod tests {
             linear_arithmetic: None,
             dependent_type: None,
             categorical_structure: None,
-            default: Some("z3".into()),
+            default: Some(SolverSeat::Z3),
         });
         let f = serde_json::json!({"kind":"atomic","name":"unknown","args":[]});
         let (v, _, _) = run_plan(&plan, &reg, "x", Some(&f));
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn missing_solver_in_registry_yields_undecidable() {
         let r = registry();
-        let plan = SolverPlan::Single("nonexistent".into());
+        let plan = SolverPlan::Single(SolverSeat::Bitwuzla);
         let (v, _, _) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Undecidable);
     }

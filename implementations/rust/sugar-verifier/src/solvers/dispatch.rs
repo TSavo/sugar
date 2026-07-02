@@ -25,7 +25,7 @@
 
 use serde_json::Value as Json;
 
-use crate::solvers::DispatchConfig;
+use crate::solvers::{DispatchConfig, SolverSeat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormulaTheory {
@@ -195,19 +195,19 @@ fn walk(v: &Json, theory: &mut FormulaTheory) {
 /// Apply the dispatch config: classify the formula, look up the named
 /// solver. Returns `None` if neither the matching tag nor `default` is
 /// configured.
-pub fn dispatch_for_formula<'a>(formula: &Json, dispatch: &'a DispatchConfig) -> Option<&'a str> {
+pub fn dispatch_for_formula(formula: &Json, dispatch: &DispatchConfig) -> Option<SolverSeat> {
     let t = classify(formula);
     let by_theory = match t {
-        FormulaTheory::EquationalTheory => dispatch.equational_theory.as_deref(),
-        FormulaTheory::FirstOrder => dispatch.first_order.as_deref(),
-        FormulaTheory::Strings => dispatch.strings.as_deref(),
-        FormulaTheory::Bitvectors => dispatch.bitvectors.as_deref(),
-        FormulaTheory::LinearArithmetic => dispatch.linear_arithmetic.as_deref(),
-        FormulaTheory::DependentType => dispatch.dependent_type.as_deref(),
-        FormulaTheory::CategoricalStructure => dispatch.categorical_structure.as_deref(),
+        FormulaTheory::EquationalTheory => dispatch.equational_theory,
+        FormulaTheory::FirstOrder => dispatch.first_order,
+        FormulaTheory::Strings => dispatch.strings,
+        FormulaTheory::Bitvectors => dispatch.bitvectors,
+        FormulaTheory::LinearArithmetic => dispatch.linear_arithmetic,
+        FormulaTheory::DependentType => dispatch.dependent_type,
+        FormulaTheory::CategoricalStructure => dispatch.categorical_structure,
         FormulaTheory::Default => None,
     };
-    by_theory.or(dispatch.default.as_deref())
+    by_theory.or(dispatch.default)
 }
 
 #[cfg(test)]
@@ -281,23 +281,23 @@ mod tests {
     #[test]
     fn dispatch_picks_solver() {
         let d = DispatchConfig {
-            equational_theory: Some("maude".into()),
-            first_order: Some("vampire".into()),
-            strings: Some("cvc5".into()),
-            bitvectors: Some("bitwuzla".into()),
-            linear_arithmetic: Some("z3".into()),
-            dependent_type: Some("lean".into()),
-            categorical_structure: Some("lean".into()),
-            default: Some("z3".into()),
+            equational_theory: Some(SolverSeat::Maude),
+            first_order: Some(SolverSeat::Vampire),
+            strings: Some(SolverSeat::Cvc5),
+            bitvectors: Some(SolverSeat::Bitwuzla),
+            linear_arithmetic: Some(SolverSeat::Z3),
+            dependent_type: Some(SolverSeat::Lean),
+            categorical_structure: Some(SolverSeat::Lean),
+            default: Some(SolverSeat::Z3),
         };
         let f = json!({"kind":"atomic","name":"length","args":[]});
-        assert_eq!(dispatch_for_formula(&f, &d), Some("cvc5"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Cvc5));
         let f = json!({"kind":"atomic","name":"bvadd","args":[]});
-        assert_eq!(dispatch_for_formula(&f, &d), Some("bitwuzla"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Bitwuzla));
         let f = json!({"kind":"atomic","name":">","args":[]});
-        assert_eq!(dispatch_for_formula(&f, &d), Some("z3"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Z3));
         let f = json!({"kind":"atomic","name":"unknown","args":[]});
-        assert_eq!(dispatch_for_formula(&f, &d), Some("z3")); // via default
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Z3)); // via default
     }
 
     #[test]
@@ -315,15 +315,15 @@ mod tests {
 
         let d = DispatchConfig {
             equational_theory: None,
-            first_order: Some("vampire".into()),
+            first_order: Some(SolverSeat::Vampire),
             strings: None,
             bitvectors: None,
-            linear_arithmetic: Some("z3".into()),
+            linear_arithmetic: Some(SolverSeat::Z3),
             dependent_type: None,
             categorical_structure: None,
-            default: Some("z3".into()),
+            default: Some(SolverSeat::Z3),
         };
-        assert_eq!(dispatch_for_formula(&f, &d), Some("vampire"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Vampire));
     }
 
     #[test]
@@ -334,9 +334,9 @@ mod tests {
             strings: None,
             bitvectors: None,
             linear_arithmetic: None,
-            dependent_type: Some("lean".into()),
+            dependent_type: Some(SolverSeat::Lean),
             categorical_structure: None,
-            default: Some("z3".into()),
+            default: Some(SolverSeat::Z3),
         };
         let f = json!({
             "kind": "forall",
@@ -349,7 +349,7 @@ mod tests {
             },
             "body": {"kind": "atomic", "name": "true", "args": []}
         });
-        assert_eq!(dispatch_for_formula(&f, &d), Some("lean"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Lean));
     }
 
     #[test]
@@ -361,10 +361,10 @@ mod tests {
             bitvectors: None,
             linear_arithmetic: None,
             dependent_type: None,
-            categorical_structure: Some("lean".into()),
-            default: Some("z3".into()),
+            categorical_structure: Some(SolverSeat::Lean),
+            default: Some(SolverSeat::Z3),
         };
         let f = json!({"kind":"atomic","name":"CategoryTheory.Functor.map_id","args":[]});
-        assert_eq!(dispatch_for_formula(&f, &d), Some("lean"));
+        assert_eq!(dispatch_for_formula(&f, &d), Some(SolverSeat::Lean));
     }
 }

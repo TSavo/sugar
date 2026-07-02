@@ -67,7 +67,7 @@ pub use runner::{
 pub use solvers::{
     classify, dispatch_for_formula, run_plan, run_plan_with_compilers, DispatchConfig,
     FormulaTheory, PortfolioMode, SolveResult, Solver, SolverConfig, SolverHandle,
-    SolverInvocation, SolverPlan, SolversConfig, StubSolver, SubprocessSolver,
+    SolverInvocation, SolverPlan, SolverSeat, SolversConfig, StubSolver, SubprocessSolver,
 };
 pub use types::*;
 // Re-export the api owner's shape-agnostic member readers so crates that
