@@ -159,27 +159,37 @@ pub fn lift_path(root: &Path) -> LiftReport {
             // report's parse_errors / warnings, mirroring the old static path.
             if let Some(diags) = doc.get("diagnostics").and_then(|d| d.as_array()) {
                 for d in diags {
-                    let path = d
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let reason = d
-                        .get("reason")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("lift-gap")
-                        .to_string();
+                    let path = match d.get("path").and_then(|v| v.as_str()) {
+                        Some(path) => path.to_string(),
+                        None => {
+                            report.parse_errors.push((
+                                String::new(),
+                                format!("contracts kit diagnostic missing string path: {d}"),
+                            ));
+                            continue;
+                        }
+                    };
+                    let reason = match d.get("reason").and_then(|v| v.as_str()) {
+                        Some(reason) => reason.to_string(),
+                        None => {
+                            report.parse_errors.push((
+                                path,
+                                format!("contracts kit diagnostic missing string reason: {d}"),
+                            ));
+                            continue;
+                        }
+                    };
                     if reason.starts_with("read:") || reason.starts_with("parse:") {
                         report.parse_errors.push((path, reason));
                     } else {
+                        let item_name = match d.get("item").and_then(|v| v.as_str()) {
+                            Some(item_name) => item_name.to_string(),
+                            None => String::new(),
+                        };
                         contracts_warnings.push(AdapterWarning {
                             adapter: "contracts",
                             source_path: path,
-                            item_name: d
-                                .get("item")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
+                            item_name,
                             reason,
                         });
                     }
@@ -286,7 +296,10 @@ fn to_relative_posix(root: &Path, path: &Path) -> Option<String> {
     // Use `strip_prefix` to get a path relative to root.  Both `root` and
     // `path` come from walkdir which emits descendants of root, so
     // `strip_prefix` will succeed unless something unusual happened.
-    let rel = path.strip_prefix(root).ok()?;
+    let rel = match path.strip_prefix(root) {
+        Ok(rel) => rel,
+        Err(_) => return None,
+    };
     // Convert separators to forward slashes (defensive on Windows too).
     let posix = rel
         .components()
@@ -320,8 +333,14 @@ pub fn enumerate_rs_files(root: &Path) -> Vec<(String, PathBuf)> {
             let n = e.file_name().to_string_lossy();
             !IGNORED_DIRS.iter().any(|&ig| n == ig)
         })
-        .filter_map(|e| e.ok())
     {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => panic!(
+                "failed to enumerate Rust source path under `{}`: {err}",
+                root.display()
+            ),
+        };
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension() {
                 if ext == "rs" {
@@ -771,7 +790,7 @@ fn run_rpc_mode() -> i32 {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
+    'requests: for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
             Err(_) => continue,
@@ -784,8 +803,18 @@ fn run_rpc_mode() -> i32 {
                 continue;
             }
         };
-        let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
-        let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let id = match req.get("id") {
+            Some(id) => id.clone(),
+            None => serde_json::Value::Null,
+        };
+        let method = match req.get("method").and_then(|v| v.as_str()) {
+            Some(method) => method,
+            None => {
+                let resp = serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32600,"message":"invalid request: missing method"}});
+                let _ = writeln!(stdout, "{resp}");
+                continue;
+            }
+        };
         match method {
             "initialize" => {
                 // C1-C8 lift-plugin-protocol conformance: initialize MUST carry a
@@ -828,9 +857,11 @@ fn run_rpc_mode() -> i32 {
                 let emit = params
                     .get("options")
                     .and_then(|o| o.get("emit"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("proof-envelope")
-                    .to_string();
+                    .and_then(|v| v.as_str());
+                let emit = match emit {
+                    Some(emit) => emit.to_string(),
+                    None => "proof-envelope".to_string(),
+                };
                 let opts = LiftOptions::default();
                 if emit == "ir-document" {
                     let report = lift_path(&workspace);
@@ -847,11 +878,14 @@ fn run_rpc_mode() -> i32 {
                     let mut ir: Vec<serde_json::Value> = Vec::new();
                     for decl in &report.decls {
                         let entry = contract_decl_to_memento(decl);
-                        let name = entry
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
+                        let name = match entry.get("name").and_then(|v| v.as_str()) {
+                            Some(name) => name.to_string(),
+                            None => {
+                                let resp = serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32603,"message":"lift failed: contract memento missing name"}});
+                                let _ = writeln!(stdout, "{resp}");
+                                continue 'requests;
+                            }
+                        };
                         if seen.insert(name) {
                             ir.push(entry);
                         }
@@ -880,7 +914,14 @@ fn run_rpc_mode() -> i32 {
                     let out_dir = workspace.join("target").join("release");
                     match lift_and_mint(&workspace, &out_dir, &opts) {
                         Ok((_report, minted, path)) => {
-                            let bytes = std::fs::read(&path).unwrap_or_default();
+                            let bytes = match std::fs::read(&path) {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    let resp = serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32603,"message":format!("lift failed: read minted proof `{}`: {e}", path.display())}});
+                                    let _ = writeln!(stdout, "{resp}");
+                                    continue;
+                                }
+                            };
                             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                             let resp = serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"kind":"proof-envelope","filename_cid":minted.cid,"contract_set_cid":minted.contract_set_cid,"bytes_base64":b64}});
                             let _ = writeln!(stdout, "{resp}");
@@ -944,7 +985,7 @@ fn contract_decl_to_memento(decl: &ContractDecl) -> serde_json::Value {
                 let cv = formula_to_value(formula);
                 let jcs = encode_jcs(&cv);
                 let cid = blake3_512_of(jcs.as_bytes());
-                let value = serde_json::from_str(&jcs).unwrap_or(serde_json::Value::Null);
+                let value = parse_canonical_json(&jcs, "formula");
                 (Some(value), cid)
             }
             None => (None, String::new()),
@@ -986,12 +1027,20 @@ fn contract_decl_to_memento(decl: &ContractDecl) -> serde_json::Value {
         let panic_loci: Vec<serde_json::Value> = normalized_panic_loci(&decl.panic_loci)
             .into_iter()
             .map(|locus| {
-                serde_json::from_str(&encode_jcs(locus.as_ref())).unwrap_or(serde_json::Value::Null)
+                let jcs = encode_jcs(locus.as_ref());
+                parse_canonical_json(&jcs, "panic_loci")
             })
             .collect();
         entry["panicLoci"] = serde_json::Value::Array(panic_loci);
     }
     entry
+}
+
+fn parse_canonical_json(jcs: &str, label: &str) -> serde_json::Value {
+    match serde_json::from_str(jcs) {
+        Ok(value) => value,
+        Err(e) => panic!("canonical {label} JSON failed to parse after JCS encoding: {e}"),
+    }
 }
 
 /// Entry point shared by both bin targets. Returns a process exit code.
@@ -1203,8 +1252,15 @@ fn answer_is_42(x: i64) -> i64 {{ x }}
                     .clone()
             })
             .collect();
-        headers.sort_by_key(|header| header["name"].as_str().unwrap_or_default().to_string());
+        headers.sort_by(|a, b| proof_member_header_name(a).cmp(proof_member_header_name(b)));
         headers
+    }
+
+    fn proof_member_header_name(header: &serde_json::Value) -> &str {
+        match header.get("name").and_then(|value| value.as_str()) {
+            Some(name) => name,
+            None => panic!("proof member header missing string name: {header}"),
+        }
     }
 
     fn only_proof_member_header(minted: &MintOutput) -> serde_json::Value {
@@ -1550,10 +1606,10 @@ mod tempdir_compat {
             use std::sync::atomic::{AtomicU64, Ordering};
             static CTR: AtomicU64 = AtomicU64::new(0);
             let n = CTR.fetch_add(1, Ordering::Relaxed);
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
+            let nanos = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(duration) => duration.as_nanos(),
+                Err(_) => 0,
+            };
             let path = base.join(format!("{prefix}-{}-{}-{}", std::process::id(), nanos, n));
             std::fs::create_dir_all(&path)?;
             Ok(Self { path })

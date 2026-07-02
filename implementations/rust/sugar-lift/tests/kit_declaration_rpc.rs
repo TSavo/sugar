@@ -80,6 +80,37 @@ fn lift_rpc_serves_rust_contracts_kit_declaration() {
     assert!(status.success(), "sugar-lift exited with {status}");
 }
 
+#[test]
+fn lift_rpc_refuses_request_without_method() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sugar-lift"))
+        .arg("--rpc")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn sugar-lift --rpc");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+
+    writeln!(stdin, "{}", json!({"jsonrpc":"2.0","id":41,"params":{}}))
+        .expect("write malformed request");
+    let response = read_response(&mut reader);
+    let message = response
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .expect("missing-method request must return an error");
+    assert!(
+        message.contains("missing method"),
+        "error must name the missing method field: {response}"
+    );
+
+    drop(stdin);
+    let status = child.wait().expect("wait for sugar-lift");
+    assert!(status.success(), "sugar-lift exited with {status}");
+}
+
 fn read_response(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
     let mut line = String::new();
     reader.read_line(&mut line).expect("read response");
