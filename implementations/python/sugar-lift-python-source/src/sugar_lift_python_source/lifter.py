@@ -1183,6 +1183,21 @@ class _Emitter:
         for keyword in node.keywords:
             if keyword.arg is None:
                 raise _UnsupportedSyntax(keyword, "starred call arguments are refused")
+
+        def arguments() -> list[Json]:
+            args = [self.expr(arg) for arg in node.args]
+            args.extend(
+                ctor(
+                    "python:kwarg", str_const(str(keyword.arg)), self.expr(keyword.value)
+                )
+                for keyword in node.keywords
+            )
+            return args
+
+        if _callee_has_call_result(node.func):
+            callee = self.expr(node.func)
+            self.effects.add_unresolved_call("(chained)")
+            return ctor("python:call", callee, *arguments())
         if isinstance(node.func, ast.Attribute):
             self.expr(node.func)
         callee = _callee_name(node.func)
@@ -1190,12 +1205,7 @@ class _Emitter:
             self.effects.add_io()
         else:
             self.effects.add_unresolved_call(callee)
-        args = [self.expr(arg) for arg in node.args]
-        args.extend(
-            ctor("python:kwarg", str_const(str(keyword.arg)), self.expr(keyword.value))
-            for keyword in node.keywords
-        )
-        return ctor("python:call", str_const(callee), *args)
+        return ctor("python:call", str_const(callee), *arguments())
 
     def subscript_index(self, node: ast.Subscript) -> Json:
         if isinstance(node.slice, ast.Slice):
@@ -2263,6 +2273,14 @@ def _callee_name(node: ast.expr) -> str:
         base = _callee_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     raise _UnsupportedSyntax(node, f"unsupported callee kind: {type(node).__name__}")
+
+
+def _callee_has_call_result(node: ast.expr) -> bool:
+    if isinstance(node, ast.Call):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _callee_has_call_result(node.value)
+    return False
 
 
 def _exception_class(node: ast.expr | None) -> str | None:
