@@ -594,10 +594,10 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         Ok(proofs) => proofs,
         Err(error) => {
             eprintln!(
-                "{}: dependency proof resolution skipped: {error}",
-                "warning".yellow().bold()
+                "{}: dependency proof resolution failed: {error}",
+                "error".red().bold()
             );
-            Vec::new()
+            return EXIT_USER_ERROR;
         }
     };
 
@@ -797,13 +797,16 @@ fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim
         {
             continue;
         }
-        let Some(formula) = pool
+        let formula = pool
             .member_field(cid, "inv")
             .filter(|v| v.is_object())
             .cloned()
-        else {
-            continue;
-        };
+            .or_else(|| {
+                let envelope = pool.mementos.get(cid)?;
+                let body = pool.resolve_contract_body(envelope)?;
+                body.get("inv").filter(|v| v.is_object()).cloned()
+            });
+        let Some(formula) = formula else { continue };
         let property_name = pool
             .member_field(cid, "name")
             .and_then(|v| v.as_str())

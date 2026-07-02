@@ -453,15 +453,14 @@ fn publish_contradictory_implication_project() -> PathBuf {
     project
 }
 
-fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_bytes: &[u8]) {
+fn install_dependency_proof_stub_with_entry(project_dir: &Path, proof_entry: &str) {
     install_smt_compiler_manifest(project_dir);
     let bin = project_dir.join("resolve-deps-stub.sh");
-    let proof_bytes_base64 = BASE64.encode(proof_bytes);
     fs::write(
         &bin,
         format!(
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *resolve_dependency_proofs*) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"proofs\":[{{\"cid\":\"{}\",\"bytes_base64\":\"{}\",\"source\":\"stub-package-proof\"}}]}}}}' ;;\n    *shutdown*) echo '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}}'; exit 0 ;;\n    *) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}' ;;\n  esac\ndone\n",
-            proof_cid, proof_bytes_base64
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *resolve_dependency_proofs*) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"proofs\":[{}]}}}}' ;;\n    *shutdown*) echo '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}}'; exit 0 ;;\n    *) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}' ;;\n  esac\ndone\n",
+            proof_entry
         ),
     )
     .expect("write stub");
@@ -483,12 +482,121 @@ fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_byte
     sugar_cli::kit_dispatch::reset_kit_dispatch_registry_cache_for_tests();
 }
 
+fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_bytes: &[u8]) {
+    let proof_bytes_base64 = BASE64.encode(proof_bytes);
+    let entry = format!(
+        "{{\"cid\":\"{}\",\"bytes_base64\":\"{}\",\"source\":\"stub-package-proof\"}}",
+        proof_cid, proof_bytes_base64
+    );
+    install_dependency_proof_stub_with_entry(project_dir, &entry);
+}
+
 fn z3_available() -> bool {
     std::process::Command::new("z3")
         .arg("-version")
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+#[test]
+fn dependency_proof_without_cid_is_refused() {
+    let root = unique_dir("missing-cid");
+    let project = root.join("user");
+    let vendor = root.join("vendor");
+    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
+    let (_target_cid, _bundle_cid, _proof_path, proof_bytes) =
+        publish_vendor_positive_contract(&vendor);
+    let proof_bytes_base64 = BASE64.encode(&proof_bytes);
+    let entry = format!(
+        "{{\"bytes_base64\":\"{}\",\"source\":\"stub-package-proof\"}}",
+        proof_bytes_base64
+    );
+    install_dependency_proof_stub_with_entry(&project, &entry);
+
+    let err = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
+        .expect_err("dependency proof without cid must be a protocol error");
+
+    assert!(
+        err.contains("rust-dependency-proof-stub"),
+        "error must name the kit: {err}"
+    );
+    assert!(
+        err.contains("stub-package-proof"),
+        "error must name the dependency proof label: {err}"
+    );
+    assert!(
+        err.contains("kit returned dependency proof without a content address"),
+        "error must describe the missing trust root: {err}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn dependency_proof_with_wrong_cid_is_refused() {
+    let root = unique_dir("wrong-cid");
+    let project = root.join("user");
+    let vendor = root.join("vendor");
+    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
+    let (_target_cid, _bundle_cid, _proof_path, proof_bytes) =
+        publish_vendor_positive_contract(&vendor);
+    let wrong_cid = format!("blake3-512:{}", "0".repeat(128));
+    install_dependency_proof_stub(&project, &wrong_cid, &proof_bytes);
+
+    let dependency_proofs = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
+        .expect("resolve dependency proofs");
+    let runner = Runner::new(RunnerConfig {
+        project_root: project.clone(),
+        extra_proofs: dependency_proofs,
+        ..Default::default()
+    });
+    let (pool, _callsites) = runner.run_load_and_enumerate();
+
+    assert!(
+        pool.load_errors.iter().any(|err| {
+            err.proof_path.contains("stub-package-proof")
+                && err.reason.contains("rule 1 (trust root)")
+                && err.reason.contains(&wrong_cid)
+                && err.reason.contains("content hash")
+        }),
+        "wrong dependency proof CID must be a load error: {:#?}",
+        pool.load_errors
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn dependency_proof_with_correct_cid_loads() {
+    let root = unique_dir("correct-cid");
+    let project = root.join("user");
+    let vendor = root.join("vendor");
+    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
+    let (target_cid, bundle_cid, _proof_path, proof_bytes) =
+        publish_vendor_positive_contract(&vendor);
+    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
+
+    let dependency_proofs = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
+        .expect("resolve dependency proofs");
+    let runner = Runner::new(RunnerConfig {
+        project_root: project.clone(),
+        extra_proofs: dependency_proofs,
+        ..Default::default()
+    });
+    let (pool, _callsites) = runner.run_load_and_enumerate();
+
+    assert!(
+        pool.load_errors.is_empty(),
+        "correct dependency proof CID must load cleanly: {:#?}",
+        pool.load_errors
+    );
+    assert!(
+        pool.mementos.contains_key(&target_cid),
+        "vendor contract {target_cid} must be reachable"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -507,8 +615,8 @@ fn dependency_rpc_union_makes_vendor_contract_reachable() {
         .expect("resolve dependency proofs");
     assert_eq!(dependency_proofs.len(), 1);
     assert_eq!(
-        dependency_proofs[0].expected_cid.as_deref(),
-        Some(bundle_cid.as_str())
+        dependency_proofs[0].expected_cid.as_str(),
+        bundle_cid.as_str()
     );
 
     let runner = Runner::new(RunnerConfig {
@@ -587,8 +695,15 @@ fn prove_reports_violation_for_contradictory_implication() {
     let report: Json =
         serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("parse prove JSON: {e}\n{stdout}"));
     assert!(
-        report["violations"].as_u64().unwrap_or(0) >= 1,
-        "report: {report}"
+        report["loadErrors"]
+            .as_array()
+            .expect("loadErrors")
+            .is_empty(),
+        "contradictory implication fixture must load cleanly: {report}"
+    );
+    assert!(
+        report["violations"].as_u64().unwrap_or_default() >= 1,
+        "contradictory implication must report at least one violation: {report}"
     );
     assert!(
         report["rows"]

@@ -36,7 +36,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value as Json;
+use serde_json::{json, Value as Json};
 
 #[path = "support/contradiction.rs"]
 mod contradiction;
@@ -86,6 +86,10 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn z3_available() -> bool {
     Command::new("z3")
         .arg("--version")
@@ -132,6 +136,74 @@ dialects = ["smt-lib-v2.6"]
         ),
     )
     .expect("write ir compiler manifest");
+}
+
+fn install_python_component_claim(sugar: &Path) {
+    let component_dir = sugar.join("components").join("python-lift");
+    fs::create_dir_all(&component_dir).expect("mkdir .sugar/components/python-lift");
+    let component_script = component_dir.join("component.sh");
+    let initialize_response = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "name": "python-lift-component",
+            "protocol_version": "sugar-component/1",
+            "capabilities": {}
+        }
+    })
+    .to_string();
+    let plan_response = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "decision": "claim",
+            "plugins": [{
+                "name": "python-lift",
+                "kind": "lift",
+                "surface": "python"
+            }],
+            "diagnostics": [{
+                "level": "info",
+                "message": "python lift component planned"
+            }]
+        }
+    })
+    .to_string();
+    let shutdown_response = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": null
+    })
+    .to_string();
+    fs::write(
+        &component_script,
+        format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{initialize_response}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{plan_response}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{shutdown_response}'
+      exit 0
+      ;;
+  esac
+done
+"#
+        ),
+    )
+    .expect("write python component script");
+    fs::write(
+        component_dir.join("manifest.toml"),
+        format!(
+            "name = \"python-lift-component\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"/bin/sh\", {}]\n",
+            toml_string(&component_script.display().to_string())
+        ),
+    )
+    .expect("write python component manifest");
 }
 
 /// Write a small wrapper shell script that runs the verify-facing Python lift
@@ -197,6 +269,7 @@ fn stage_python_project(suffix: &str, lift_script: &Path, body_factor: i64) -> P
 
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    install_python_component_claim(&sugar);
     install_smt_compiler_manifest(&project);
     fs::write(
         sugar.join("config.toml"),
@@ -258,6 +331,7 @@ fn stage_python_precondition_project(suffix: &str, lift_script: &Path, arg: i64)
 
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    install_python_component_claim(&sugar);
     install_smt_compiler_manifest(&project);
     fs::write(
         sugar.join("config.toml"),
@@ -385,6 +459,7 @@ fn python_production_path_uses_checked_in_python_double_registration() {
     )
     .expect("copy test_double.py");
     copy_dir_recursive(&example.join(".sugar"), &project.join(".sugar"));
+    install_python_component_claim(&project.join(".sugar"));
     install_smt_compiler_manifest(&project);
     rewrite_manifest_command(
         &project

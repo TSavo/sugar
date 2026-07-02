@@ -191,7 +191,7 @@ fn build_lone_opaque_proof_bundle(literal: &str) -> ProofBytes {
 
     ProofBytes {
         label: format!("lone-opaque-{literal}.proof"),
-        expected_cid: Some(built.cid),
+        expected_cid: built.cid,
         bytes: built.bytes,
     }
 }

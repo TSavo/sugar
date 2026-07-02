@@ -63,10 +63,10 @@ while [[ $# -gt 0 ]]; do
 done
 cargo_args=("$@")
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$repo_root" ]]; then
-  echo "bcargo: must be run from inside a git checkout" >&2
-  exit 2
+  repo_root="$(cd "$script_dir/.." && pwd -P)"
 fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 local_cwd="$(pwd -P)"
@@ -209,6 +209,16 @@ sync_dir() {
   "$rsync_bin" -az --delete "${exclude_args[@]}" "$local_path/" "$remote_host:$remote_path/"
 }
 
+sync_fixture_dir() {
+  local rel_path="$1"
+  local local_path="$repo_root/$rel_path"
+  local remote_path="$remote_repo/$rel_path"
+
+  [[ -d "$local_path" ]] || return 0
+  run_ssh "mkdir -p $(quote_sh "$(remote_parent "$remote_path")")"
+  "$rsync_bin" -az --delete "$local_path/" "$remote_host:$remote_path/"
+}
+
 sync_file() {
   local rel_path="$1"
   local local_path="$repo_root/$rel_path"
@@ -249,6 +259,11 @@ sync_dir implementations/python
 sync_dir implementations/go
 sync_dir implementations/java
 sync_dir examples
+# These are tiny checked-in proof fixtures, not local run products. Keep the
+# broad generated-output exclusion above, then put these committed artifacts
+# back so remote integrity tests see the same trust-root corpus as local cargo.
+sync_fixture_dir examples/serde-json-showcase/bad/.sugar/runs
+sync_fixture_dir examples/serde-json-showcase/good/.sugar/runs
 remove_remote_dir menagerie
 sync_dir menagerie/csharp-language-signature/specs
 sync_dir menagerie/python-language-signature/specs

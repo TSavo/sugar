@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use serde_json::Value as Json;
+use serde_json::{json, Value as Json};
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
@@ -46,6 +46,10 @@ fn python_lift_pythonpath() -> String {
     .expect("join Python lift source roots")
     .into_string()
     .expect("Python lift source roots must be UTF-8")
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn python_available() -> bool {
@@ -119,6 +123,8 @@ fn stage_chain_project(suffix: &str, expected: i64) -> PathBuf {
     .expect("write chain source");
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    fs::create_dir_all(sugar.join("components").join("python-lift"))
+        .expect("mkdir .sugar/components/python-lift");
     install_smt_compiler_manifest(&project);
     fs::write(
         sugar.join("config.toml"),
@@ -149,6 +155,75 @@ working_dir = "."
 "#,
     )
     .expect("write python lift manifest");
+    let component_script = sugar
+        .join("components")
+        .join("python-lift")
+        .join("component.sh");
+    let initialize_response = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "name": "python-lift-component",
+            "protocol_version": "sugar-component/1",
+            "capabilities": {}
+        }
+    })
+    .to_string();
+    let plan_response = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "decision": "claim",
+            "plugins": [{
+                "name": "python-lift",
+                "kind": "lift",
+                "surface": "python"
+            }],
+            "diagnostics": [{
+                "level": "info",
+                "message": "python lift component planned"
+            }]
+        }
+    })
+    .to_string();
+    let shutdown_response = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": null
+    })
+    .to_string();
+    fs::write(
+        &component_script,
+        format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{initialize_response}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{plan_response}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{shutdown_response}'
+      exit 0
+      ;;
+  esac
+done
+"#
+        ),
+    )
+    .expect("write python component script");
+    fs::write(
+        sugar
+            .join("components")
+            .join("python-lift")
+            .join("manifest.toml"),
+        format!(
+            "name = \"python-lift-component\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"/bin/sh\", {}]\n",
+            toml_string(&component_script.display().to_string())
+        ),
+    )
+    .expect("write python component manifest");
     project
 }
 
