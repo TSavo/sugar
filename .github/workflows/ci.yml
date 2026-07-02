@@ -25,6 +25,55 @@ permissions:
   actions: read
 
 jobs:
+  rss-floor-smoke:
+    name: RSS floor smoke (synthetic 120)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust target dirs
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            implementations/rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install system deps (z3)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends z3
+
+      - name: Build RSS smoke binaries
+        working-directory: implementations/rust
+        run: cargo build -p sugar-cli --bin sugar -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib
+
+      - name: Generate synthetic RSS fixture
+        working-directory: implementations/rust
+        run: |
+          cargo run -p sugar-cli --example synthetic_rss_fixture -- \
+            "$RUNNER_TEMP/sugar-rss-synthetic-120" \
+            120 \
+            --compiler target/debug/sugar-ir-smt-lib
+
+      - name: Verify sugar verify RSS floor
+        run: |
+          tools/perf/verify-rss.sh \
+            --project-root "$RUNNER_TEMP/sugar-rss-synthetic-120" \
+            --sugar implementations/rust/target/debug/sugar \
+            --reference-kib 33096 \
+            --label ci-linux-synthetic-120 \
+            -- --quiet
+
   acid-test:
     name: acid test (make ci)
     runs-on: [self-hosted, Linux, X64]
