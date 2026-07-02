@@ -61,9 +61,6 @@ _FLOOR_TYPES = {
 _ALLOWED_DIRS = ("floor/", "operations/")
 _LADDER_THRESHOLD = 3
 _RATCHETED_NON_PROJECTION_LADDERS = {
-    # Assignment replay filters block/bind floors into temporal context, not
-    # FloorValue->Term projection. It stays visible here so new sites cannot join.
-    "factory/literal_call_report.py:_ctx_with_prior_assignments": 3,
     # Callsite construction distinguishes literal leaves from symbolic/callsite
     # bridge pointers while building the EUF tower. This is not projection-owned.
     "factory/literal_call_report.py:_construct_callsite": 3,
@@ -72,7 +69,7 @@ _RATCHETED_NON_PROJECTION_LADDERS = {
     "factory/sugar_constructors.py:build_control_flow_body_sugar": 4,
     # Block sequencing owns statement effects/binds/returns/raises; it is the
     # sequencing borderline called out in the Task 7 plan.
-    "sugar/block_sugar.py:desugar": 6,
+    "sugar/block_sugar.py:fold_with_context": 6,
 }
 
 
