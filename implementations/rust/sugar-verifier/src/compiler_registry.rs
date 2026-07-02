@@ -10,7 +10,12 @@ use sugar_ir_compiler::{
 };
 use tracing::warn;
 
-/// Build a dialect-keyed registry from compiler manifests.
+/// Build a dialect-keyed registry from built-in compilers plus compiler manifests.
+///
+/// The bundled SMT-LIB compiler is registered first so the verifier runner
+/// supports the default `smt-lib-v2.6` solver seat even in ad-hoc example
+/// project roots with no manifests. Manifest entries register afterward, so
+/// user/project compiler manifests can still override the built-in dialect.
 ///
 /// Project manifests live at `.sugar/ir-compilers/<name>/manifest.toml`.
 /// Ancestor manifests live at any parent `.sugar/ir-compilers/<name>/manifest.toml`.
@@ -19,6 +24,7 @@ use tracing::warn;
 /// the same dialect.
 pub fn build(project_root: &Path) -> Registry {
     let mut registry = Registry::new();
+    registry.register(Arc::new(sugar_ir_compiler_smt_lib::SmtLibCompiler::new()));
     let mut roots = Vec::new();
     if let Some(home_root) = manifest::default_root() {
         roots.push(DiscoveryRoot {
@@ -115,6 +121,23 @@ fn resolve_working_dir(base: &RelativeBase, entry: &manifest::Manifest) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_registers_builtin_smt_lib_compiler() {
+        let root = std::env::temp_dir().join(format!(
+            "sugar-ir-compiler-registry-builtin-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let registry = build(&root);
+        assert!(
+            registry.get(sugar_ir_compiler_smt_lib::DIALECT).is_some(),
+            "verifier runner must support the default SMT-LIB dialect without a manifest"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn project_manifest_registers_lazy_compiler_without_spawning() {
