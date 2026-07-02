@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
+from sugar_lift_py_tests.factory import floor_contract_agreement as agreement_gate
 from sugar_lift_py_tests.factory.floor_contract_agreement import (
-    floor_contract_agreement_diagnostic,
     floor_contract_agreement_violations_for_fact,
 )
 from sugar_lift_py_tests.factory.literal_call_report import (
@@ -20,12 +22,12 @@ from sugar_lift_py_tests.ir import eq, make_var, num
 ROOT = Path(__file__).resolve().parents[4]
 
 EXPECTED_FACTORY_SPINE_R = {
-    "callee_body_worklists": 1,
-    "block_of_callee_body_reductions": 1,
+    "callee_body_worklists": 0,
+    "block_of_callee_body_reductions": 0,
     "callsite_values_with_null_multistatement_body": 0,
     "mini_interpreter_consumers_not_reading_terms": 0,
-    "transitive_worklist_drains": 1,
-    "projection_ladders": 2,
+    "transitive_worklist_drains": 0,
+    "projection_ladders": 0,
     "prior_assignment_replays": 0,
 }
 
@@ -38,39 +40,32 @@ def _agreement_diagnostic(report):
     )
 
 
-def test_factory_spine_frontier_pins_current_second_engine_body_reductions() -> None:
+def test_factory_spine_frontier_is_a_stable_zero_gate() -> None:
     report = collect_factory_spine_frontier(ROOT)
 
     assert report.r.values == EXPECTED_FACTORY_SPINE_R
-    assert report.r.total == 5
-    assert not report.is_zero
-    rows = {(row.kind, row.path, row.observed) for row in report.offenders}
-    assert (
-        "block_of_callee_body_reductions",
-        "factory/literal_call_report.py",
-        "build_body(Block.of(callee.node.body), ...).reduce(...)",
-    ) in rows
-    assert any("force_floor" in row.fix for row in report.offenders)
-    assert any("BridgeStrategy dig_sink" in row.fix for row in report.offenders)
+    assert report.r.total == 0
+    assert report.is_zero
+    assert report.offenders == []
 
 
-def test_factory_spine_frontier_cli_exits_red_until_body_side_doors_are_gone(
+def test_factory_spine_frontier_cli_exits_green_at_stable_zero(
     capsys,
 ) -> None:
     status = cli.main(["--root", str(ROOT), "--factory-spine-frontier"])
 
-    assert status == 1
+    assert status == 0
     stdout = capsys.readouterr().out
     assert "python factory spine frontier audit" in stdout
-    assert "  callee_body_worklists: 1" in stdout
-    assert "  block_of_callee_body_reductions: 1" in stdout
+    assert "  callee_body_worklists: 0" in stdout
+    assert "  block_of_callee_body_reductions: 0" in stdout
     assert "  callsite_values_with_null_multistatement_body: 0" in stdout
     assert "  mini_interpreter_consumers_not_reading_terms: 0" in stdout
-    assert "  transitive_worklist_drains: 1" in stdout
-    assert "  projection_ladders: 2" in stdout
+    assert "  transitive_worklist_drains: 0" in stdout
+    assert "  projection_ladders: 0" in stdout
     assert "  prior_assignment_replays: 0" in stdout
-    assert "  total: 5" in stdout
-    assert "second-engine body reductions:" in stdout
+    assert "  total: 0" in stdout
+    assert "second-engine body reductions:" not in stdout
 
 
 def test_factory_spine_frontier_bad_twin_flags_fresh_block_reduce(
@@ -80,7 +75,8 @@ def test_factory_spine_frontier_bad_twin_flags_fresh_block_reduce(
     kit_src.mkdir(parents=True)
     (kit_src / "literal_call_report.py").write_text(
         "def planted(callee, ctx):\n"
-        "    return ctx.build_body(Block.of(callee.node.body), SugarRole.STATEMENT).reduce(ctx)\n",
+        "    return ctx.build_body(Block."
+        "of(callee.node.body), SugarRole.STATEMENT).reduce(ctx)\n",
         encoding="utf-8",
     )
 
@@ -91,7 +87,7 @@ def test_factory_spine_frontier_bad_twin_flags_fresh_block_reduce(
     offender = report.offenders[0]
     assert offender.path == "factory/literal_call_report.py"
     assert offender.line == 2
-    assert "Block.of(callee.node.body)" in offender.observed
+    assert "Block." "of(callee.node.body)" in offender.observed
     assert "force_floor" in offender.fix
 
 
@@ -158,7 +154,7 @@ def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> No
     assert diagnostic["violations"] == []
 
 
-def test_floor_contract_agreement_bad_twin_counts_contradictory_callable_post() -> None:
+def test_floor_contract_agreement_bad_twin_trips_gate() -> None:
     report = build_literal_call_report(
         source=(
             "def h(x):\n"
@@ -175,16 +171,18 @@ def test_floor_contract_agreement_bad_twin_counts_contradictory_callable_post() 
         post=_formula_to_rpc(eq(make_var("out"), num(99))),
     )
 
-    diagnostic = floor_contract_agreement_diagnostic(
-        floor_contract_agreement_violations_for_fact(
-            callee="h",
-            callable_contract=planted,
-            arg_terms=[num(5)],
-            floor_term=num(6),
-            callsite_contract="h#euf#c:call:h(i:5)::assertion",
-        )
+    violations = floor_contract_agreement_violations_for_fact(
+        callee="h",
+        callable_contract=planted,
+        arg_terms=[num(5)],
+        floor_term=num(6),
+        callsite_contract="h#euf#c:call:h(i:5)::assertion",
     )
 
-    assert diagnostic["r"] == {"agreement_violations": 1, "total": 1}
-    assert diagnostic["violations"][0]["callee"] == "h"
-    assert diagnostic["violations"][0]["contract"] == "t::h::callable"
+    with pytest.raises(RuntimeError) as exc:
+        agreement_gate.enforce_floor_contract_agreement_gate(violations)
+    message = str(exc.value)
+    assert "floor-contract agreement gate" in message
+    assert "h" in message
+    assert "t::h::callable" in message
+    assert "h#euf#c:call:h(i:5)::assertion" in message
