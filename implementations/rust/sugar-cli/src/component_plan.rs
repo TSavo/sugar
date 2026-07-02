@@ -128,6 +128,7 @@ pub struct PlannedIrCompiler {
 #[derive(Debug, Clone)]
 struct ComponentRegistration {
     name: String,
+    version: Option<String>,
     command: Vec<String>,
     working_dir: Option<PathBuf>,
     source: PathBuf,
@@ -136,10 +137,18 @@ struct ComponentRegistration {
 #[derive(Debug, Deserialize)]
 struct ComponentManifest {
     name: String,
+    #[serde(default)]
+    version: Option<String>,
     protocol_version: String,
     command: Vec<String>,
     #[serde(default)]
     working_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct DiscoveredComponents {
+    components: Vec<ComponentRegistration>,
+    diagnostics: Vec<ComponentDiagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +193,9 @@ pub fn plan_workspace_with_options(
         census,
         ..Default::default()
     };
-    let components = discover_components(&project_root);
+    let discovered = discover_components(&project_root);
+    let components = discovered.components;
+    plan.diagnostics.extend(discovered.diagnostics);
     let census_languages = census_languages(&plan.census);
     let mut claimed_languages = BTreeSet::new();
     let mut declined_languages = BTreeSet::new();
@@ -544,14 +555,31 @@ fn title_case_ascii(value: &str) -> String {
     out
 }
 
-fn discover_components(project_root: &Path) -> Vec<ComponentRegistration> {
+/// Discover component manifests in precedence order: system roots, the user
+/// root, ancestor project roots, then `SUGAR_COMPONENT_PATH`. Later roots
+/// override earlier roots by component name; duplicate names inside a single
+/// root are conflicts instead of precedence.
+fn discover_components(project_root: &Path) -> DiscoveredComponents {
     let mut manifests = BTreeMap::<String, ComponentRegistration>::new();
+    let mut diagnostics = Vec::new();
     for root in component_roots(project_root) {
         debug!(root = %root.display(), "component discovery root");
+        let mut root_manifests = BTreeMap::<String, ComponentRegistration>::new();
+        let mut root_collisions = BTreeMap::<String, Vec<PathBuf>>::new();
         for manifest_path in manifest_paths_under(&root) {
             match parse_component_manifest(&manifest_path) {
                 Ok(component) => {
-                    manifests.insert(component.name.clone(), component);
+                    let name = component.name.clone();
+                    if let Some(existing) = root_manifests.remove(&name) {
+                        root_collisions
+                            .entry(name)
+                            .or_insert_with(|| vec![existing.source])
+                            .push(component.source);
+                    } else if let Some(paths) = root_collisions.get_mut(&name) {
+                        paths.push(component.source);
+                    } else {
+                        root_manifests.insert(name, component);
+                    }
                 }
                 Err(error) => {
                     warn!(
@@ -562,8 +590,70 @@ fn discover_components(project_root: &Path) -> Vec<ComponentRegistration> {
                 }
             }
         }
+        diagnostics.extend(
+            root_collisions
+                .iter()
+                .map(|(name, paths)| same_root_component_collision_diagnostic(name, &root, paths)),
+        );
+        for (name, component) in root_manifests {
+            if let Some(previous) = manifests.insert(name, component.clone()) {
+                diagnostics.push(component_override_diagnostic(&previous, &component));
+            }
+        }
     }
-    manifests.into_values().collect()
+    DiscoveredComponents {
+        components: manifests.into_values().collect(),
+        diagnostics,
+    }
+}
+
+fn same_root_component_collision_diagnostic(
+    name: &str,
+    root: &Path,
+    manifests: &[PathBuf],
+) -> ComponentDiagnostic {
+    let manifest_list = manifests
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    ComponentDiagnostic {
+        level: DiagnosticLevel::Error,
+        message: format!(
+            "component `{name}` is declared more than once in discovery root {}; colliding manifests: {manifest_list}; refusing ambiguous component registration",
+            root.display()
+        ),
+    }
+}
+
+fn component_override_diagnostic(
+    losing: &ComponentRegistration,
+    winning: &ComponentRegistration,
+) -> ComponentDiagnostic {
+    let level = if manifests_carry_different_versions(losing, winning) {
+        DiagnosticLevel::Warning
+    } else {
+        DiagnosticLevel::Info
+    };
+    ComponentDiagnostic {
+        level,
+        message: format!(
+            "component `{}` discovery override: losing manifest {}; winning manifest {}; later discovery roots take precedence",
+            winning.name,
+            losing.source.display(),
+            winning.source.display()
+        ),
+    }
+}
+
+fn manifests_carry_different_versions(
+    losing: &ComponentRegistration,
+    winning: &ComponentRegistration,
+) -> bool {
+    matches!(
+        (&losing.version, &winning.version),
+        (Some(losing_version), Some(winning_version)) if losing_version != winning_version
+    )
 }
 
 fn component_roots(project_root: &Path) -> Vec<PathBuf> {
@@ -644,6 +734,7 @@ fn parse_component_manifest(path: &Path) -> Result<ComponentRegistration, String
     let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
     Ok(ComponentRegistration {
         name: manifest.name,
+        version: manifest.version,
         command: manifest.command,
         working_dir: manifest.working_dir.map(|dir| {
             if dir.is_absolute() {
@@ -1324,7 +1415,34 @@ pub(crate) fn resolve_project_relative_working_dir(
 mod tests {
     use super::*;
     use serde_json::Value as Json;
+    use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
     use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityManifest};
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     struct TestCompiler {
         dialect: String,
@@ -1357,6 +1475,175 @@ mod tests {
                 supported_predicates: vec!["=".to_string()],
             }
         }
+    }
+
+    fn write_claiming_component(
+        root: &Path,
+        dir_name: &str,
+        component_name: &str,
+        surface: &str,
+        version: Option<&str>,
+    ) -> PathBuf {
+        let component_dir = root.join(dir_name);
+        std::fs::create_dir_all(&component_dir).unwrap();
+        let script = component_dir.join("component.sh");
+        let manifest = component_dir.join("manifest.toml");
+        write_executable(
+            &script,
+            &format!(
+                r#"#!/bin/sh
+set -eu
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"name":"{component_name}","protocol_version":"sugar-component/1","capabilities":{{}}}}}}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"decision":"claim","plugins":[{{"name":"{surface}-lift","kind":"lift","surface":"{surface}","emit":"ir-document"}}],"diagnostics":[]}}}}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":3,"result":null}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+            ),
+        );
+        let version_line = version
+            .map(|version| format!("version = \"{version}\"\n"))
+            .unwrap_or_default();
+        std::fs::write(
+            &manifest,
+            format!(
+                "name = \"{component_name}\"\n{version_line}protocol_version = \"sugar-component/1\"\ncommand = [\"sh\", \"{}\"]\n",
+                script.display()
+            ),
+        )
+        .unwrap();
+        manifest
+    }
+
+    fn write_executable(path: &Path, contents: &str) {
+        {
+            let mut file = std::fs::File::create(path).unwrap();
+            file.write_all(contents.as_bytes()).unwrap();
+            file.sync_all().unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+    }
+
+    fn plan_with_component_path(
+        project: &Path,
+        component_path: impl AsRef<OsStr>,
+    ) -> ComponentPlan {
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.join("home"));
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+        plan_workspace(project, PlanIntent::Lift)
+    }
+
+    #[test]
+    fn later_root_override_emits_diagnostic() {
+        let project = tempfile::tempdir().unwrap();
+        let early_root = tempfile::tempdir().unwrap();
+        let late_root = tempfile::tempdir().unwrap();
+        let losing = write_claiming_component(
+            early_root.path(),
+            "component",
+            "collision-kit",
+            "early",
+            None,
+        );
+        let winning =
+            write_claiming_component(late_root.path(), "component", "collision-kit", "late", None);
+        let component_path = std::env::join_paths([early_root.path(), late_root.path()]).unwrap();
+
+        let plan = plan_with_component_path(project.path(), component_path);
+
+        assert!(
+            plan.plugins.iter().any(|plugin| plugin.surface == "late"),
+            "later root should win the component-name override: {:?}",
+            plan.plugins
+        );
+        assert!(
+            !plan.plugins.iter().any(|plugin| plugin.surface == "early"),
+            "earlier root should be replaced by later root: {:?}",
+            plan.plugins
+        );
+        let diagnostic = plan
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("collision-kit"))
+            .unwrap_or_else(|| panic!("missing override diagnostic: {:?}", plan.diagnostics));
+        assert_eq!(diagnostic.level, DiagnosticLevel::Info);
+        assert!(
+            diagnostic.message.contains(&losing.display().to_string())
+                && diagnostic.message.contains(&winning.display().to_string()),
+            "diagnostic should name losing and winning manifests: {:?}",
+            diagnostic
+        );
+    }
+
+    #[test]
+    fn same_root_collision_is_an_error() {
+        let project = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let first = write_claiming_component(root.path(), "first", "collision-kit", "first", None);
+        let second =
+            write_claiming_component(root.path(), "second", "collision-kit", "second", None);
+
+        let plan = plan_with_component_path(project.path(), root.path());
+
+        assert!(
+            !plan
+                .plugins
+                .iter()
+                .any(|plugin| plugin.surface == "first" || plugin.surface == "second"),
+            "same-root component-name collision should refuse that component: {:?}",
+            plan.plugins
+        );
+        let diagnostic = plan
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("collision-kit"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing same-root collision diagnostic: {:?}",
+                    plan.diagnostics
+                )
+            });
+        assert_eq!(diagnostic.level, DiagnosticLevel::Error);
+        assert!(
+            diagnostic.message.contains(&first.display().to_string())
+                && diagnostic.message.contains(&second.display().to_string()),
+            "diagnostic should name both colliding manifests: {:?}",
+            diagnostic
+        );
+    }
+
+    #[test]
+    fn distinct_names_no_diagnostic() {
+        let project = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        write_claiming_component(root.path(), "first", "first-kit", "first", None);
+        write_claiming_component(root.path(), "second", "second-kit", "second", None);
+
+        let plan = plan_with_component_path(project.path(), root.path());
+
+        assert_eq!(plan.plugins.len(), 2);
+        assert!(
+            plan.diagnostics.is_empty(),
+            "distinct component names should not produce discovery diagnostics: {:?}",
+            plan.diagnostics
+        );
     }
 
     #[test]
@@ -1415,6 +1702,7 @@ mod tests {
     fn parses_claimed_component_plan() {
         let component = ComponentRegistration {
             name: "rust-test".to_string(),
+            version: None,
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),
@@ -1449,6 +1737,7 @@ mod tests {
     fn parses_claimed_component_plan_with_item_claims() {
         let component = ComponentRegistration {
             name: "rust-walk".to_string(),
+            version: None,
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),
@@ -1492,6 +1781,7 @@ mod tests {
     fn parses_claimed_component_plan_with_ir_compiler() {
         let component = ComponentRegistration {
             name: "smt-lib-compiler".to_string(),
+            version: None,
             command: vec!["does-not-run".to_string()],
             working_dir: None,
             source: PathBuf::from("manifest.toml"),

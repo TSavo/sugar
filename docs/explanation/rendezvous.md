@@ -32,6 +32,16 @@ of the discovery roots. `discover_components()` reads every manifest under, in o
 - the project's own ancestor `.sugar/components/` directories (project-local)
 - any paths in the `SUGAR_COMPONENT_PATH` env var
 
+### Discovery precedence
+
+The order above is the precedence order. Later roots override earlier roots for the
+same component `name`: a project-local registration overrides a user registration,
+and an explicit `SUGAR_COMPONENT_PATH` entry overrides all earlier roots. Overrides
+are recorded as plan diagnostics naming both the losing and winning manifests; if
+both manifests carry different versions, the diagnostic is a warning. Two manifests
+with the same component `name` inside the same discovery root are not precedence:
+they are an ambiguous registration and the plan records an error.
+
 A manifest is small — it only says *who you are and how to start you*:
 
 ```toml
