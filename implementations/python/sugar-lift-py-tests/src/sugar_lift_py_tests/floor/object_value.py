@@ -18,6 +18,15 @@ class ObjectValue(FloorValue):
     def attribute_with(self, operation, ctx):
         return operation.attribute_object(self, ctx)
 
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "py.object.identity",
+            [str_const(self.class_name), str_const(self.identity)],
+        )
+
     def attribute_assign_with(self, operation, ctx):
         return operation.assign_object(self, ctx)
 
@@ -284,7 +293,9 @@ class ObjectValue(FloorValue):
             observed=observed,
             requested=requested,
             fix=fix,
-            gap_kind="Floor",
+            gap_kind=(
+                "Constructor" if requested.startswith("constructor-bound ") else "Floor"
+            ),
             gap_locus="construction",
         )
         raise FactoryGap(

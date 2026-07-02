@@ -33,12 +33,18 @@ class FactoryWalkRowDto:
                 f"forbidden inline field(s): {joined}"
             )
         status = "unresolved" if self.status == "unclassified" else self.status
-        verdict = {
+        verdict_by_status = {
             "warranted": "complete",
             "support": "complete",
             "refused": "incomplete",
             "unresolved": "gap",
-        }.get(status, "incomplete")
+        }
+        if status not in verdict_by_status:
+            raise ValueError(
+                f"unowned factory walk status {status!r}: add it to verdict_by_status "
+                "deliberately -- a defaulted verdict is a quiet failure"
+            )
+        verdict = verdict_by_status[status]
         output = "gap" if status == "unresolved" else self.output
         out: dict[str, Any] = {
             "kind": "factory-walk-row",

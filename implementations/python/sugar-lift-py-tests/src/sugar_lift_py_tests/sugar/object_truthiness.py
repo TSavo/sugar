@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.floor import BoolValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import Formula, bool_const, eq, ne, num
@@ -15,12 +14,8 @@ def object_truth_formula(
     owner: str,
     blame: str,
 ) -> Formula:
-    try:
+    if value.has_method("__bool__"):
         bool_value = _force_dunder(value, ctx, "__bool__", owner=owner, blame=blame)
-    except FactoryGap as gap:
-        if not _is_missing_dunder_gap(gap, "__bool__"):
-            raise
-    else:
         if not isinstance(bool_value, BoolValue):
             raise TypeError(f"{owner} __bool__ must reduce to BoolValue")
         return eq(bool_const(bool_value.value), bool_const(True))
@@ -59,9 +54,3 @@ def _force_dunder(
         ctx,
         owner=f"{owner} {name}",
     )
-
-
-def _is_missing_dunder_gap(gap: FactoryGap, name: str) -> bool:
-    return gap.info.get("requested") == "constructor-bound method" and str(
-        gap.info.get("observed", "")
-    ).endswith(f".{name}")

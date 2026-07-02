@@ -17,12 +17,9 @@ from sugar_lift_py_tests.ir import (
     Formula,
     Term,
     and_,
-    bool_const,
     ctor,
     eq,
     formula_to_value,
-    num,
-    str_const,
 )
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -32,7 +29,9 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceSpanDto,
 )
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
+from .dig_refusal import DigRefusal
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
 
@@ -128,6 +127,7 @@ def build_literal_call_report(
     source_audits: list[dict[str, Any]] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
+    dig_refusals: list[DigRefusal] = []
     local_functions = {
         frag.function_name(): frag
         for frag in root_frag.walk()
@@ -145,7 +145,9 @@ def build_literal_call_report(
     # its installed source FunctionDef so the SAME dig walks it like a local function.
     # Locals win on name collision; the assert-iteration below stays local-only.
     dig_functions = {
-        **_resolve_imported_callees(root_frag, import_aliases, from_imports),
+        **_resolve_imported_callees(
+            root_frag, import_aliases, from_imports, dig_refusals=dig_refusals
+        ),
         **local_functions,
     }
     for fn in local_functions.values():
@@ -164,6 +166,7 @@ def build_literal_call_report(
                 from_imports=from_imports,
                 contract_bindings=contract_bindings or [],
                 module_statements=module_statements,
+                dig_refusals=dig_refusals,
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -183,6 +186,7 @@ def build_literal_call_report(
             source_audits=source_audits,
             factory_walk=factory_walk,
             call_edges=call_edges,
+            diagnostics=[refusal.to_json() for refusal in dig_refusals],
         )
     )
 
@@ -241,6 +245,7 @@ def _lift_assert(
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
     module_statements: list[SourceFragment],
+    dig_refusals: list[DigRefusal],
 ) -> LiftResult | None:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -344,6 +349,7 @@ def _lift_assert(
             filename=filename,
             memento_file=memento_file,
             source_lines=source_lines,
+            dig_refusals=dig_refusals,
         )
         if universe is None:
             universe = _dig_universe(
@@ -352,6 +358,7 @@ def _lift_assert(
                 filename=filename,
                 memento_file=memento_file,
                 source_lines=source_lines,
+                dig_refusals=dig_refusals,
             )
     return _merge_lifts(universe, assertion)
 
@@ -434,6 +441,7 @@ def _lift_assertion_via_factory(
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
+        reason=getattr(result.sugar, "degraded_reason", None),
     )
     if external_bridge_sink:
         edges = _external_bridge_edges(
@@ -670,45 +678,6 @@ def _names_including_self(site: SourceFragment) -> list[str]:
     return names
 
 
-def _floor_to_term(value: Any) -> Term:
-    """Map a reduced Floor value to its ProofIR term. Composition-agnostic: it does
-    not care WHICH sugar produced the value, only its Floor type."""
-    from sugar_lift_py_tests.floor import (
-        ArrayLiteral,
-        BoolValue,
-        Bv32Value,
-        CallSiteValue,
-        ObjectValue,
-        StringValue,
-        SymbolicValue,
-        TermValue,
-    )
-    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-
-    if isinstance(value, TermValue):
-        return num(value.value)
-    if isinstance(value, BoolValue):
-        return bool_const(value.value)
-    if isinstance(value, StringValue):
-        return str_const(value.value)
-    # A symbolic term (a bound variable or a composed operation over one) already
-    # IS its ProofIR term -- carry it through; the compiler sorts it.
-    if isinstance(value, (SymbolicValue, Bv32Value, CallSiteValue)):
-        return value.term
-    if isinstance(value, ObjectValue):
-        return ctor(
-            "py.object.identity",
-            [str_const(value.class_name), str_const(value.identity)],
-        )
-    if isinstance(value, ArrayLiteral):
-        return ctor("array", [_floor_to_term(item) for item in value.items])
-    if isinstance(value, TupleLiteralValue):
-        return ctor("tuple", [_floor_to_term(item) for item in value.items])
-    raise TypeError(
-        f"write more Floor->Term for `{type(value).__name__}` in the callsite literal"
-    )
-
-
 def _lift_literal_via_factory(
     frag: SourceFragment, filename: str, *, ctx: FactoryBuildContext | None = None
 ) -> Term:
@@ -722,7 +691,10 @@ def _lift_literal_via_factory(
 
     ctx = ctx or FactoryBuildContext(filename=filename, catalog=default_catalog())
     body = ctx.build_body(frag, _Role.TERM)
-    return _floor_to_term(complete_value(body.reduce(ctx), owner="callsite literal"))
+    return floor_to_term(
+        complete_value(body.reduce(ctx), owner="callsite literal"),
+        owner="literal_call_report",
+    )
 
 
 def _lift_callsite_assertion(
@@ -757,13 +729,16 @@ def _lift_callsite_assertion(
     for arg_frag in callsite.call_args():
         try:
             arg_terms.append(_lift_literal_via_factory(arg_frag, filename, ctx=ctx))
-        except TypeError:
+        except TypeError as exc:
             _panic_no_sugar(
                 arg_frag,
                 memento_file,
                 observed=f"callsite-arg:{arg_frag.observed}-unliftable",
                 requested="LiftableCallArg",
-                fix="lift this call-arg shape (e.g. nested arrays, mixed-type lists)",
+                fix=(
+                    "lift this call-arg shape (e.g. nested arrays, mixed-type "
+                    f"lists): {exc}"
+                ),
             )
     return _emit_euf_fact(
         stmt,
@@ -846,6 +821,7 @@ def _emit_assertion_surface_fact(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    reason: str | None = None,
 ) -> LiftResult:
     contract_name = (
         f"{Path(memento_file).stem}::{fn.function_name()}::"
@@ -875,6 +851,7 @@ def _emit_assertion_surface_fact(
         "predicate",
         requested_role="AssertionSurface",
         emitted_formula=inv,
+        reason=reason,
     )
     audit = _source_audit(
         fn,
@@ -898,6 +875,7 @@ def _construct_callsite(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    dig_refusals: list[DigRefusal],
 ) -> LiftResult | None:
     """Construct the callsite tower AND every tower it bridges to, transitively.
 
@@ -923,7 +901,6 @@ def _construct_callsite(
         TermValue,
     )
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.temporal import TemporalContext
 
     if callsite.call_arg_count() != 1:
         return None
@@ -935,16 +912,27 @@ def _construct_callsite(
     # callsite irreducible -> defer to the symbolic universe).
     try:
         top = build_ctx.build_body(callsite.call_args()[0], SugarRole.TERM).reduce(
-            ReduceContext(temporal=TemporalContext.empty())
+            ReduceContext.root(owner="literal_call_report.top_arg")
         )
-    except (TypeError, ValueError, FactoryGap):
+    except (TypeError, ValueError) as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee_name,
+            blame=callsite.blame,
+            caught=exc,
+            reason="top arg did not slam to a concrete value",
+        )
         return None
     if not isinstance(top, Complete) or isinstance(top.value, SymbolicValue):
         return None
 
     def _euf_name(cn, arg_value):
         return euf_callsite_name(
-            cn, euf_call_term(cn, [_floor_to_term(arg_value)]), suffix="::assertion"
+            cn,
+            euf_call_term(
+                cn, [floor_to_term(arg_value, owner="literal_call_report")]
+            ),
+            suffix="::assertion",
         )
 
     seen: set[str] = set()
@@ -973,11 +961,14 @@ def _construct_callsite(
                 filename=filename,
                 memento_file=memento_file,
                 source_lines=source_lines,
+                dig_refusals=dig_refusals,
             )
             if uni is not None:
                 facts.append(uni)
         sink: list[tuple[str, object]] = []
-        reduce_ctx = ReduceContext(temporal=TemporalContext.empty(), dig_sink=sink)
+        reduce_ctx = ReduceContext.root(
+            owner="literal_call_report.tower", dig_sink=sink
+        )
         from sugar_lift_py_tests.temporal import bind_temporal
 
         reduce_ctx = bind_temporal(
@@ -991,7 +982,14 @@ def _construct_callsite(
             outcome = build_ctx.build_body(
                 Block.of(callee.node.body), SugarRole.STATEMENT
             ).reduce(reduce_ctx)
-        except (TypeError, ValueError, FactoryGap):
+        except (TypeError, ValueError, FactoryGap) as exc:
+            _record_dig_refusal(
+                dig_refusals,
+                callee=cn,
+                blame=callee.blame,
+                caught=exc,
+                reason="callee body did not reduce to a constructible tower",
+            )
             continue  # a shape the catalog cannot peel -> leave the bridge as an axiom
         if not isinstance(outcome, Complete):
             continue  # a runtime effect (Incomplete): unclimbable here
@@ -1003,14 +1001,18 @@ def _construct_callsite(
         if result is None:
             continue
         if isinstance(result, TermValue):
-            value_term = _floor_to_term(result)  # reached a literal floor
+            value_term = floor_to_term(
+                result, owner="literal_call_report"
+            )  # reached a literal floor
         elif isinstance(result, (SymbolicValue, CallSiteValue)):
             value_term = (
                 result.term
             )  # topped out at a bridge `call:h(arg2)` -- the pointer
         else:
             continue
-        if value_term == euf_call_term(cn, [_floor_to_term(arg_value)]):
+        if value_term == euf_call_term(
+            cn, [floor_to_term(arg_value, owner="literal_call_report")]
+        ):
             # A reflexive self-bridge `call:f(arg) == call:f(arg)` is a recursion cycle: vacuous,
             # and the tower is not finitely constructible. Skip it -> no fact; the callsite falls
             # to the symbolic universe / the mouth, which refuses cleanly rather than swearing
@@ -1021,7 +1023,7 @@ def _construct_callsite(
                 stmt,
                 caller_fn,
                 cn,
-                [_floor_to_term(arg_value)],
+                [floor_to_term(arg_value, owner="literal_call_report")],
                 value_term,
                 filename=filename,
                 memento_file=memento_file,
@@ -1054,6 +1056,7 @@ def _function_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    dig_refusals: list[DigRefusal],
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
 
@@ -1079,7 +1082,14 @@ def _function_universe(
         body_steps = universe_sugar.factory_steps(callee.node)
         body_formulas = universe_sugar.constraint_formulas()
         body_step_formulas = universe_sugar.constraint_formula_steps()
-    except (TypeError, ValueError, FactoryGap):
+    except (TypeError, ValueError, FactoryGap) as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee.function_name(),
+            blame=callee.blame,
+            caught=exc,
+            reason="function universe body walker refused this body",
+        )
         return None  # a body shape the walker cannot lift yet -> no warrant, construction stands
 
     # IMPORT SUGAR: an imported callee's body lives in its OWN module source -- swap provenance
@@ -1182,6 +1192,7 @@ def _dig_universe(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    dig_refusals: list[DigRefusal],
 ) -> LiftResult | None:
     """The dig, when the source is present. Desugar `callee`'s body into the universe
     post (a forall over the function's formals) and mint it as a `function-contract`.
@@ -1349,6 +1360,24 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
     )
 
 
+def _record_dig_refusal(
+    dig_refusals: list[DigRefusal],
+    *,
+    callee: str,
+    blame: str,
+    caught: BaseException,
+    reason: str,
+) -> None:
+    dig_refusals.append(
+        DigRefusal(
+            callee=callee,
+            blame=blame,
+            caught=type(caught).__name__,
+            reason=f"{reason}: {caught}",
+        )
+    )
+
+
 def _panic_no_sugar(
     frag: SourceFragment, memento_file: str, *, observed: str, requested: str, fix: str
 ):
@@ -1485,7 +1514,9 @@ def _import_bindings(
     return aliases, from_imports
 
 
-def _source_funcdef(module_name: str, attr: str) -> SourceFragment | None:
+def _source_funcdef(
+    module_name: str, attr: str, *, dig_refusals: list[DigRefusal]
+) -> SourceFragment | None:
     """Resolve ``module_name.attr`` to its installed-source FunctionDef SourceFragment.
 
     The callee must be importable in the lifter's environment and have readable
@@ -1496,18 +1527,33 @@ def _source_funcdef(module_name: str, attr: str) -> SourceFragment | None:
     import inspect
     import textwrap
 
+    callee = f"{module_name}.{attr}"
     try:
         module = importlib.import_module(module_name)
         obj = getattr(module, attr)
         source = textwrap.dedent(inspect.getsource(obj))
-    except (ImportError, AttributeError, OSError, TypeError):
+    except (ImportError, AttributeError, OSError, TypeError) as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee,
+            blame=callee,
+            caught=exc,
+            reason="imported callee source was not readable",
+        )
         return None
     # getsourcefile is best-effort: it raises TypeError on dispatch-wrapped callees
     # (e.g. numpy's @array_function_dispatch) where getsource still works -- a failure
     # here must NOT abort the resolution, only drop the filename label.
     try:
         sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
-    except TypeError:
+    except TypeError as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee,
+            blame=callee,
+            caught=exc,
+            reason="imported callee source filename was not readable",
+        )
         sourcefile = f"<{module_name}>"
     try:
         parsed_frag = SourceFragment.from_source(source, sourcefile)
@@ -1528,6 +1574,8 @@ def _resolve_imported_callees(
     tree_frag: SourceFragment,
     aliases: dict[str, str],
     from_imports: dict[str, tuple[str, str]],
+    *,
+    dig_refusals: list[DigRefusal],
 ) -> dict[str, SourceFragment]:
     """For every callsite referencing an imported callee (``np.rot90(...)`` or a
     ``from``-imported ``rot90(...)``), resolve its installed source to a
@@ -1541,7 +1589,7 @@ def _resolve_imported_callees(
         if target is None or target in resolved:
             continue
         module_name, attr = _split_module_attr(target)
-        funcdef = _source_funcdef(module_name, attr)
+        funcdef = _source_funcdef(module_name, attr, dig_refusals=dig_refusals)
         if funcdef is not None:
             funcdef.node._sugar_bridge_name = target  # type: ignore[attr-defined]
             resolved[target] = funcdef
@@ -1622,6 +1670,7 @@ def _walk_row(
     *,
     requested_role: str = "term",
     emitted_formula: dict[str, Any] | None = None,
+    reason: str | None = None,
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(
         file=filename,
@@ -1642,4 +1691,5 @@ def _walk_row(
             end_col=stmt.end_col,
         ),
         emitted_formula=emitted_formula,
+        reason=reason,
     )

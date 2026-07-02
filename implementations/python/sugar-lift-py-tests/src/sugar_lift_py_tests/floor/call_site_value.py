@@ -24,6 +24,10 @@ class CallSiteValue(FloorValue):
     term: Term
     body: SugarBody | None
 
+    def to_term(self, *, owner: str):
+        del owner
+        return self.term
+
     def force_floor(self, ctx: Any, *, owner: str, seen: frozenset[str] = frozenset()):
         key = repr(self.term)
         if key in seen:

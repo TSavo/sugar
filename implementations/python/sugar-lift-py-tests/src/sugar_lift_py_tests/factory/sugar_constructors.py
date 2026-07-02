@@ -49,12 +49,11 @@ def _lift_cf_return(node, build_ctx, reduce_ctx):
     lift stays sort-silent -- the SMT compiler derives each variable's canonical
     carrier from the operations it appears in."""
     from sugar_lift_py_tests.outcome import complete_value
-
-    from .literal_call_report import _floor_to_term
+    from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     body = build_ctx.build_body(node, SugarRole.TERM)
     value = complete_value(body.reduce(reduce_ctx), owner="control-flow return")
-    return _floor_to_term(value)
+    return floor_to_term(value, owner="control-flow return")
 
 
 def _walk_control_flow(stmts, guards, paths, build_ctx, reduce_ctx):
@@ -112,9 +111,9 @@ def build_control_flow_body_sugar(site, ctx):
             blame=site.blame,
         )
     from sugar_lift_py_tests.factory.block import Block
-    from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
     from sugar_lift_py_tests.floor import EncodedStringValue, GuardedReturn, ReturnValue
     from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     block = ctx.build_body(Block.of(site.node.body), SugarRole.STATEMENT)
     block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
@@ -135,9 +134,14 @@ def build_control_flow_body_sugar(site, ctx):
     paths: list = []
     for outcome in stmts:
         if isinstance(outcome, ReturnValue):
-            paths.append(((), _floor_to_term(outcome.value)))
+            paths.append(((), floor_to_term(outcome.value, owner="control-flow body")))
         elif isinstance(outcome, GuardedReturn):
-            paths.append((tuple(outcome.guards), _floor_to_term(outcome.value)))
+            paths.append(
+                (
+                    tuple(outcome.guards),
+                    floor_to_term(outcome.value, owner="control-flow body"),
+                )
+            )
         else:
             raise TypeError(
                 f"control-flow body: unexpected outcome `{type(outcome).__name__}`"

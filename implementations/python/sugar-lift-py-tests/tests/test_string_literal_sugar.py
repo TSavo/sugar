@@ -4,10 +4,10 @@ import ast
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory import SourceFragment
-from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.ir import str_const, term_to_value
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 
 
@@ -28,6 +28,6 @@ def test_string_literal_projects_to_string_const() -> None:
         StringLiteralSugar.from_site(SourceFragment.from_node(node, "s.py")).desugar(),
         owner="string literal",
     )
-    assert encode_jcs(term_to_value(_floor_to_term(value))) == encode_jcs(
-        term_to_value(str_const("abc"))
-    )
+    assert encode_jcs(
+        term_to_value(floor_to_term(value, owner="string literal"))
+    ) == encode_jcs(term_to_value(str_const("abc")))

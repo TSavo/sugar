@@ -35,4 +35,6 @@ def test_add_array_with_tuple_element_names_the_missing_floor():
         "observed": "ArrayLiteral[TupleLiteralValue]+TermValue",
         "requested": "add operand floor",
         "fix": "add AddOperation support for ArrayLiteral[TupleLiteralValue] with TermValue",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
     }

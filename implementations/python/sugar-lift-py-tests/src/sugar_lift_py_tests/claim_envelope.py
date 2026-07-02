@@ -462,6 +462,7 @@ def mint_contract(
         kind_specific.append(("post", post))
     if inv is not None:
         kind_specific.append(("inv", inv))
+    # authoring-time claim only: the substrate verifier recomputes; it never reads this field (verified 2026-07: rust verify path)
     kind_specific.append(("verdict", vstr("holds")))
     kind_specific.append(("bindingHash", vstr(binding_hash)))
     kind_specific.append(("propertyHash", vstr(property_hash)))
@@ -553,6 +554,7 @@ def mint_bridge(
         ("targetLayer", vstr(target_layer)),
         ("irArgSorts", arg_sorts_v),
         ("irReturnSort", vstr(ir_return_sort)),
+        # authoring-time claim only: the substrate verifier recomputes; it never reads this field (verified 2026-07: rust verify path)
         ("verdict", vstr("holds")),
         ("bindingHash", vstr(binding_hash)),
         ("propertyHash", vstr(property_hash)),
@@ -633,6 +635,7 @@ def mint_implication(
         ("consequentCid", vstr(consequent_cid)),
         ("antecedentSlot", vstr(antecedent_slot)),
         ("consequentSlot", vstr(consequent_slot)),
+        # authoring-time claim only: the substrate verifier recomputes; it never reads this field (verified 2026-07: rust verify path)
         ("verdict", vstr("holds")),
         ("bindingHash", vstr(binding_hash)),
         ("propertyHash", vstr(property_hash)),

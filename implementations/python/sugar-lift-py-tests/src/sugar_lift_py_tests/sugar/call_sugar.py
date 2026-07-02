@@ -74,9 +74,9 @@ class BridgeStrategy:
         # contradiction check cannot fold (a false discharge), so pointer and obligation are
         # inseparable: we append the dig to the sink as we return the bridge term.
         from sugar_lift_py_tests.factory.literal_call_report import (
-            _floor_to_term,
             euf_call_term,
         )
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         arg_values = tuple(
             complete_value(argument.reduce(ctx), owner="BridgeStrategy argument")
@@ -91,7 +91,8 @@ class BridgeStrategy:
             if sink is not None:
                 sink.append((self.target_name, arg_values[0]))
         term = euf_call_term(
-            self.target_name, [_floor_to_term(arg) for arg in arg_values]
+            self.target_name,
+            [floor_to_term(arg, owner="bridge strategy argument") for arg in arg_values],
         )
         return Complete(
             CallSiteValue(
@@ -475,6 +476,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}(...)",
                 requested="positional constructor arguments",
                 fix=f"add keyword constructor argument binding sugar for `{target}`",
+                gap_kind="Constructor",
             )
         )
     methods = _build_object_methods(class_site, ctx)
@@ -488,6 +490,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                     observed=f"{target}(...)",
                     requested="zero-arg constructor",
                     fix=f"add constructor argument binding sugar for `{target}`",
+                    gap_kind="Constructor",
                 )
             )
         return ConstructorStrategy(
@@ -506,6 +509,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}.__init__({', '.join(params)})",
                 requested="constructor self parameter",
                 fix=f"add constructor argument binding sugar for `{target}.__init__`",
+                gap_kind="Constructor",
             )
         )
     constructor_params = tuple(params[1:])
@@ -517,6 +521,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}(...)",
                 requested=f"{len(constructor_params)} constructor arguments",
                 fix=f"add constructor argument binding sugar for `{target}`",
+                gap_kind="Constructor",
             )
         )
     self_name = params[0]
@@ -546,6 +551,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                     f"write more constructor sugar for `{target}.__init__`: "
                     "support this statement shape or emit an effect"
                 ),
+                gap_kind="Constructor",
             )
         )
     return ConstructorStrategy(

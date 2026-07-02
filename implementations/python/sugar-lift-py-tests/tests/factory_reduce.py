@@ -13,9 +13,9 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.factory.literal_call_report import _floor_to_term
 from sugar_lift_py_tests.ir import term_to_value
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
@@ -62,7 +62,7 @@ def reduce_term(expr: str, binds: dict | None = None):
     """Feed a Python expression, reduce it through the factory's default catalog,
     and return the ProofIR term it emits. `binds` supplies the symbolic carrier of
     any free name (what a function parameter would be bound to)."""
-    return _floor_to_term(reduce_value(expr, binds))
+    return floor_to_term(reduce_value(expr, binds), owner="test")
 
 
 def fol(term) -> str:

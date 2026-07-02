@@ -3,7 +3,41 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.factory import FactoryGap
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
+from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.sugar.truthy_assertion_sugar import TruthyAssertionSugar
+
+
+class _GapBuildContext:
+    import_aliases = {}
+    from_imports = {}
+    name_resolver = {}
+    external_bridge_sink = None
+
+    def build_body(self, node, role):
+        info = FactoryGapInfo(
+            owner="test",
+            blame="test_truthy.py:1:4",
+            observed="Name",
+            requested="truthy term body",
+            fix="write more Floor for truthy body",
+            gap_kind="Floor",
+            gap_locus="construction",
+        )
+        raise FactoryGap(
+            info,
+            FactoryAuditRow(
+                role="TERM",
+                status="floor-gap",
+                observed="Name",
+                blame="test_truthy.py:1:4",
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
 
 
 def test_truthy_assertion_lifts_name_fact() -> None:
@@ -25,6 +59,18 @@ def test_truthy_assertion_lifts_name_fact() -> None:
         "TruthyAssertionSugar"
     ]
     assert report.payload.factory_walk[0].requested_role == "AssertionSurface"
+
+
+def test_truthy_prebuild_gap_is_recorded_on_the_sugar() -> None:
+    site = SourceFragment.from_source(
+        "def test_flag(flag):\n    assert flag\n", "test_truthy.py"
+    )
+    stmt = next(frag for frag in site.walk() if frag.observed == "Assert")
+
+    sugar = TruthyAssertionSugar.build(stmt, _GapBuildContext())
+
+    assert sugar.term_body is None
+    assert sugar.degraded_reason == "write more Floor for truthy body"
 
 
 def test_truthy_assertion_lifts_attribute_fact() -> None:
@@ -269,6 +315,8 @@ def test_truthy_assertion_without_bool_or_len_is_a_named_floor_gap() -> None:
         "observed": "Empty.__len__",
         "requested": "constructor-bound method",
         "fix": ("define `__len__` on `Empty` or add the floor that owns this method"),
+        "gap_kind": "Constructor",
+        "gap_locus": "construction",
     }
 
 

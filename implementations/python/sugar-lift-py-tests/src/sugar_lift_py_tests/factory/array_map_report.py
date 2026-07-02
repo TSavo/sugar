@@ -25,7 +25,6 @@ from sugar_lift_py_tests.sugar.list_sugar import list_sugar
 
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
-from sugar_lift_py_tests.sugar.map_sugar import MapSugar
 
 
 @dataclass(frozen=True)
@@ -162,17 +161,14 @@ def _lift_fluent_array_map_assert(
     receiver = factory_ctx.build_body(call.call_receiver(), SugarRole.TERM)
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
-    try:
-        map_sugar = MapSugar.build(call, factory_ctx)
-    except TypeError:
-        return None
+    map_body = factory_ctx.build_body(call, SugarRole.TERM)
     expected_sugar = _array_literal_sugar(
         comparison.compare_comparators()[0], factory_ctx
     )
     if expected_sugar is None:
         return None
-    reduce_ctx = ReduceContext(temporal=factory_ctx.temporal)
-    actual = complete_value(map_sugar.desugar(reduce_ctx), owner="array-map actual")
+    reduce_ctx = ReduceContext.derived(factory_ctx, owner="array_map_report")
+    actual = complete_value(map_body.reduce(reduce_ctx), owner="array-map actual")
     expected = complete_value(expected_sugar.desugar(), owner="array-map expected")
     if len(actual.items) != len(expected.items):
         return None
@@ -414,6 +410,7 @@ def _array_map_catalog() -> SugarCatalog:
     from sugar_lift_py_tests.sugar import array_literal_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar import binop_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar import lambda_sugar  # noqa: F401
+    from sugar_lift_py_tests.sugar import map_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar import name_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar import primitive_literal_sugar  # noqa: F401
     from sugar_lift_py_tests.sugar.sugar_base import registered_claims
@@ -424,6 +421,7 @@ def _array_map_catalog() -> SugarCatalog:
         "BinOpSugar",
         "LambdaSugar",
         "ArrayLiteralSugar",
+        "MapSugar",
     }
     return SugarCatalog([c for c in registered_claims() if c.name in names])
 

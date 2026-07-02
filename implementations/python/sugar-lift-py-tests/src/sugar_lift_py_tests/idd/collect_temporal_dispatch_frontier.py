@@ -15,6 +15,7 @@ def collect_temporal_dispatch_frontier(root: Path) -> TemporalDispatchReport:
         rel = path.relative_to(kit_src).as_posix()
         root_fragment = SourceFragment.from_source(path.read_text(encoding="utf-8"), rel)
         in_temporal_package = rel.startswith("temporal/")
+        in_context_package = rel.startswith("context/")
         for fragment in root_fragment.walk():
             if not in_temporal_package and _is_bind_value_call(fragment):
                 offenders.append(
@@ -44,6 +45,20 @@ def collect_temporal_dispatch_frontier(root: Path) -> TemporalDispatchReport:
                         fragment.line,
                         "TemporalContext.apply_step",
                         "route temporal rewrite through temporal dispatch floor",
+                    )
+                )
+            if (
+                not in_temporal_package
+                and not in_context_package
+                and _is_direct_context_minting(fragment)
+            ):
+                offenders.append(
+                    _offender(
+                        "direct_context_minting",
+                        rel,
+                        fragment.line,
+                        "ReduceContext(temporal=...)",
+                        "mint reduce contexts through ReduceContext.root/derived",
                     )
                 )
     return TemporalDispatchReport(offenders=offenders)
@@ -84,6 +99,22 @@ def _is_temporal_replace_call(fragment: SourceFragment) -> bool:
 
 def _is_temporal_rewrite_switch(fragment: SourceFragment) -> bool:
     return fragment.observed == "FunctionDef" and fragment.function_name() == "apply_step"
+
+
+def _is_direct_context_minting(fragment: SourceFragment) -> bool:
+    if fragment.observed != "Call":
+        return False
+    func = fragment.call_func()
+    if func.observed == "Attribute":
+        name = func.attr_name()
+    elif func.observed == "Name":
+        name = func.name_id()
+    else:
+        name = ""
+    return name == "ReduceContext" and any(
+        keyword.keyword_arg_name() == "temporal"
+        for keyword in fragment.call_keywords()
+    )
 
 
 def _offender(

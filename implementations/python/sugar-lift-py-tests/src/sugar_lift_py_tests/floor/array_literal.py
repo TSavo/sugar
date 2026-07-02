@@ -14,6 +14,11 @@ class ArrayLiteral(FloorValue):
     # Each item is a scalar, object, nested array, or a tuple literal.
     items: tuple["TermValue | ObjectValue | ArrayLiteral | TupleLiteralValue", ...]
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor("array", [item.to_term(owner=owner) for item in self.items])
+
     def map_with(self, operation: Any, ctx: Any) -> Any:
         return operation.map_array(self, ctx)
 

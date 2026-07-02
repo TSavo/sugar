@@ -11,6 +11,10 @@ from .floor_value import FloorValue
 class Bv32Value(FloorValue):
     term: Term
 
+    def to_term(self, *, owner: str):
+        del owner
+        return self.term
+
     def str_with(self, operation, ctx):
         return operation.str_bv32(self, ctx)
 

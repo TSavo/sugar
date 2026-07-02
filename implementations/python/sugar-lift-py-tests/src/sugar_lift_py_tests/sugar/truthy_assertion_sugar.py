@@ -19,6 +19,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     term: Term
     term_body: SugarBody | None
+    degraded_reason: str | None
     blame: str
 
     @classmethod
@@ -32,6 +33,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
 
     @classmethod
     def build(cls, site, ctx) -> "TruthyAssertionSugar":
+        term_body, degraded_reason = _projectable_truth_body(site, ctx)
         return cls(
             term=symbolic_term(
                 site.assert_test(),
@@ -41,7 +43,8 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
                 name_resolver=getattr(ctx, "name_resolver", {}) or {},
                 external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
             ),
-            term_body=_projectable_truth_body(site, ctx),
+            term_body=term_body,
+            degraded_reason=degraded_reason,
             blame=site.blame,
         )
 
@@ -51,12 +54,7 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     def desugar(self, ctx):
         if self.term_body is None:
             return self.assertion_formula()
-        try:
-            outcome = self.term_body.reduce(ctx)
-        except TypeError:
-            return self.assertion_formula()
-        except FactoryGap:
-            raise
+        outcome = self.term_body.reduce(ctx)
         if isinstance(outcome, Incomplete):
             return outcome
         value = complete_value(outcome, owner="TruthyAssertionSugar term")
@@ -70,8 +68,18 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         )
 
 
-def _projectable_truth_body(site, ctx) -> SugarBody | None:
+def _projectable_truth_body(site, ctx) -> tuple[SugarBody | None, str | None]:
     try:
-        return ctx.build_body(site.assert_test(), SugarRole.TERM)
-    except (FactoryGap, TypeError):
-        return None
+        return ctx.build_body(site.assert_test(), SugarRole.TERM), None
+    except FactoryGap as gap:
+        return None, _truthy_degraded_reason(gap)
+    except TypeError as exc:
+        return None, _truthy_type_degraded_reason(exc)
+
+
+def _truthy_degraded_reason(gap: FactoryGap) -> str:
+    return gap.info.get("fix", str(gap))
+
+
+def _truthy_type_degraded_reason(exc: TypeError) -> str:
+    return f"pre-build type error: {exc}"

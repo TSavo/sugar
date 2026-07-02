@@ -17,6 +17,7 @@ class TemporalDispatchVector:
             "direct_temporal_bindings": 0,
             "direct_temporal_replacements": 0,
             "temporal_rewrite_switches": 0,
+            "direct_context_minting": 0,
         }
         for offender in offenders:
             values[offender.kind] += 1

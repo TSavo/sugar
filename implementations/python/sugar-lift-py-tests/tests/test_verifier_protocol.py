@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from sugar_lift_py_tests import verifier
 
 
@@ -29,35 +31,36 @@ def _stub_sugar_cli(monkeypatch, completed) -> None:
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
 
 
-def _assert_protocol_drift_report(report) -> None:
-    assert report.success is False
-    assert (
-        report.tier1_discharge_fraction,
-        report.tier2_discharge_fraction,
-        report.tier3_remaining,
-    ) != (1.0, 1.0, 0)
-    assert report.violations
-    detail = "\n".join([report.summary, *report.violations]).lower()
+def _protocol_error_type():
+    return getattr(verifier, "VerifierProtocolError", RuntimeError)
+
+
+def _assert_protocol_error(error: BaseException, *, stdout: str, stderr: str) -> None:
+    assert isinstance(error, verifier.VerifierProtocolError)
+    assert error.stdout == stdout
+    assert error.stderr == stderr
+    detail = str(error).lower()
     assert "malformed" in detail
     assert "json" in detail
     assert "protocol drift" in detail
-    assert "not json" in detail
 
 
-def test_verify_project_reports_malformed_cli_json_as_failure(monkeypatch) -> None:
-    _stub_sugar_cli(monkeypatch, _completed("not json"))
+def test_verify_project_raises_on_malformed_zero_exit_cli_json(monkeypatch) -> None:
+    _stub_sugar_cli(monkeypatch, _completed("not json", stderr="debug stderr"))
 
-    report = verifier.verify_project("/tmp/project")
+    with pytest.raises(_protocol_error_type()) as raised:
+        verifier.verify_project("/tmp/project")
 
-    _assert_protocol_drift_report(report)
+    _assert_protocol_error(raised.value, stdout="not json", stderr="debug stderr")
 
 
-def test_prove_contract_reports_malformed_cli_json_as_failure(monkeypatch) -> None:
-    _stub_sugar_cli(monkeypatch, _completed("not json"))
+def test_prove_contract_raises_on_malformed_zero_exit_cli_json(monkeypatch) -> None:
+    _stub_sugar_cli(monkeypatch, _completed("not json", stderr="debug stderr"))
 
-    report = verifier.prove_contract("/tmp/project/contract.json")
+    with pytest.raises(_protocol_error_type()) as raised:
+        verifier.prove_contract("/tmp/project/contract.json")
 
-    _assert_protocol_drift_report(report)
+    _assert_protocol_error(raised.value, stdout="not json", stderr="debug stderr")
 
 
 def test_verify_project_accepts_valid_cli_json_report(monkeypatch) -> None:
@@ -112,3 +115,31 @@ def test_prove_contract_accepts_valid_cli_json_report(monkeypatch) -> None:
     assert report.tier3_remaining == 1
     assert report.violations == []
     assert report.summary == "proof accepted"
+
+
+def test_verify_project_preserves_nonzero_exit_failure_report(monkeypatch) -> None:
+    _stub_sugar_cli(
+        monkeypatch,
+        _completed(
+            "not json but ignored", stderr="verification failed hard", returncode=2
+        ),
+    )
+
+    report = verifier.verify_project("/tmp/project")
+
+    assert report.success is False
+    assert report.violations == ["verification failed hard"]
+    assert report.summary == "verification failed hard"
+
+
+def test_prove_contract_preserves_nonzero_exit_failure_report(monkeypatch) -> None:
+    _stub_sugar_cli(
+        monkeypatch,
+        _completed("not json but ignored", stderr="proof failed hard", returncode=2),
+    )
+
+    report = verifier.prove_contract("/tmp/project/contract.json")
+
+    assert report.success is False
+    assert report.violations == ["proof failed hard"]
+    assert report.summary == "proof failed hard"
