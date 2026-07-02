@@ -45,6 +45,7 @@ use std::sync::Arc;
 
 use sugar_canonicalizer::Value;
 use sugar_ir_types::{IrFormula, IrTerm};
+use syn::visit::{self, Visit};
 use syn::{Block, Expr, ExprForLoop, ExprLoop, ExprWhile, ItemFn, Pat, Stmt};
 
 use crate::canonical::{cid_of_value, formula_to_canonical, jcs_bytes_of_value};
@@ -94,11 +95,29 @@ pub fn extract_loop_mementos(item_fn: &ItemFn, pre_loop_default: &Wp) -> Vec<Loo
     let fn_name = item_fn.sig.ident.to_string();
     let mut out = Vec::new();
     for (idx, stmt) in item_fn.block.stmts.iter().enumerate() {
-        if let Stmt::Expr(expr, _) = stmt {
-            visit_expr_for_loops(expr, &fn_name, idx, pre_loop_default, &mut out);
-        }
+        visit_stmt_for_loops(stmt, &fn_name, idx, pre_loop_default, &mut out);
     }
     out
+}
+
+fn visit_stmt_for_loops(
+    stmt: &Stmt,
+    fn_name: &str,
+    source_index: usize,
+    pre_loop: &Wp,
+    out: &mut Vec<LoopMemento>,
+) {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some(init) = &local.init {
+                visit_expr_for_loops(&init.expr, fn_name, source_index, pre_loop, out);
+            }
+        }
+        Stmt::Expr(expr, _) => {
+            visit_expr_for_loops(expr, fn_name, source_index, pre_loop, out);
+        }
+        Stmt::Macro(_) | Stmt::Item(_) => {}
+    }
 }
 
 fn visit_expr_for_loops(
@@ -108,73 +127,57 @@ fn visit_expr_for_loops(
     pre_loop: &Wp,
     out: &mut Vec<LoopMemento>,
 ) {
-    match expr {
-        Expr::While(ExprWhile { body, .. }) => {
-            let mutated = collect_mutated_vars(body);
-            out.push(mint_loop_memento(
-                fn_name,
-                source_index,
-                LoopKind::While,
-                pre_loop,
-                mutated,
-                "predicate_quantification",
-            ));
-            for s in &body.stmts {
-                if let Stmt::Expr(e, _) = s {
-                    visit_expr_for_loops(e, fn_name, source_index, pre_loop, out);
-                }
-            }
-        }
-        Expr::ForLoop(ExprForLoop { body, .. }) => {
-            let mutated = collect_mutated_vars(body);
-            out.push(mint_loop_memento(
-                fn_name,
-                source_index,
-                LoopKind::For,
-                pre_loop,
-                mutated,
-                "predicate_quantification",
-            ));
-            for s in &body.stmts {
-                if let Stmt::Expr(e, _) = s {
-                    visit_expr_for_loops(e, fn_name, source_index, pre_loop, out);
-                }
-            }
-        }
-        Expr::Loop(ExprLoop { body, .. }) => {
-            let mutated = collect_mutated_vars(body);
-            out.push(mint_loop_memento(
-                fn_name,
-                source_index,
-                LoopKind::Unconditional,
-                pre_loop,
-                mutated,
-                "predicate_quantification",
-            ));
-            for s in &body.stmts {
-                if let Stmt::Expr(e, _) = s {
-                    visit_expr_for_loops(e, fn_name, source_index, pre_loop, out);
-                }
-            }
-        }
-        Expr::Block(b) => {
-            for s in &b.block.stmts {
-                if let Stmt::Expr(e, _) = s {
-                    visit_expr_for_loops(e, fn_name, source_index, pre_loop, out);
-                }
-            }
-        }
-        Expr::If(if_expr) => {
-            for s in &if_expr.then_branch.stmts {
-                if let Stmt::Expr(e, _) = s {
-                    visit_expr_for_loops(e, fn_name, source_index, pre_loop, out);
-                }
-            }
-            if let Some((_, else_e)) = &if_expr.else_branch {
-                visit_expr_for_loops(else_e, fn_name, source_index, pre_loop, out);
-            }
-        }
-        _ => {}
+    let mut visitor = LoopMementoVisitor {
+        fn_name,
+        source_index,
+        pre_loop,
+        out,
+    };
+    visitor.visit_expr(expr);
+}
+
+struct LoopMementoVisitor<'a, 'out> {
+    fn_name: &'a str,
+    source_index: usize,
+    pre_loop: &'a Wp,
+    out: &'out mut Vec<LoopMemento>,
+}
+
+impl<'ast> Visit<'ast> for LoopMementoVisitor<'_, '_> {
+    fn visit_expr_while(&mut self, node: &'ast ExprWhile) {
+        self.out.push(mint_loop_memento(
+            self.fn_name,
+            self.source_index,
+            LoopKind::While,
+            self.pre_loop,
+            collect_mutated_vars(&node.body),
+            "predicate_quantification",
+        ));
+        visit::visit_expr_while(self, node);
+    }
+
+    fn visit_expr_for_loop(&mut self, node: &'ast ExprForLoop) {
+        self.out.push(mint_loop_memento(
+            self.fn_name,
+            self.source_index,
+            LoopKind::For,
+            self.pre_loop,
+            collect_mutated_vars(&node.body),
+            "predicate_quantification",
+        ));
+        visit::visit_expr_for_loop(self, node);
+    }
+
+    fn visit_expr_loop(&mut self, node: &'ast ExprLoop) {
+        self.out.push(mint_loop_memento(
+            self.fn_name,
+            self.source_index,
+            LoopKind::Unconditional,
+            self.pre_loop,
+            collect_mutated_vars(&node.body),
+            "predicate_quantification",
+        ));
+        visit::visit_expr_loop(self, node);
     }
 }
 
@@ -387,6 +390,31 @@ mod tests {
         let mementos = extract_loop_mementos(&item_fn, &pre);
         assert_eq!(mementos.len(), 1);
         assert_eq!(mementos[0].kind, LoopKind::For);
+    }
+
+    #[test]
+    fn match_arm_loop_emits_memento() {
+        let item_fn = parse_fn(
+            r#"
+            fn branch_loop(flag: bool, n: u32) {
+                match flag {
+                    true => while n > 0 {},
+                    false => {},
+                }
+            }
+        "#,
+        );
+        let pre = Wp(IrFormula::Atomic {
+            name: "true".to_string(),
+            args: vec![],
+        });
+        let mementos = extract_loop_mementos(&item_fn, &pre);
+        assert_eq!(
+            mementos.len(),
+            1,
+            "loop inside a match arm must not be silently dropped"
+        );
+        assert_eq!(mementos[0].kind, LoopKind::While);
     }
 
     #[test]

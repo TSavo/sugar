@@ -1543,12 +1543,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     (
         "wildcard_empty_block",
         "implementations/rust/sugar-walk/src/lift.rs",
-        "collect_guarded_panic_effects_in_expr",
-        "_ => {}",
-    ),
-    (
-        "wildcard_empty_block",
-        "implementations/rust/sugar-walk/src/lift.rs",
         "collect_pat_bound_idents_lift",
         "_ => {}",
     ),
@@ -1580,12 +1574,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
         "wildcard_empty_block",
         "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
         "collect_mutated_in_expr",
-        "_ => {}",
-    ),
-    (
-        "wildcard_empty_block",
-        "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
-        "visit_expr_for_loops",
         "_ => {}",
     ),
     (
