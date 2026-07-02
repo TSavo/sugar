@@ -33,6 +33,7 @@ use syn::{Expr, ExprIf, Item, Stmt};
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::constraint::assertion_entry_with_audits;
+use crate::sugar::control_flow_guard_operation::guard_block;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::translate_term_in_scope;
@@ -88,7 +89,7 @@ impl Sugar for IfSugar {
             }),
             None,
         );
-        let (then_guarded, _then_fall) = {
+        let (then_guarded, then_fall) = {
             let items: Vec<Item> = Vec::new();
             let fcx = SugarBuildCtx::new(ctx.scope, &options, &let_inits);
             let then_node = build_stmt_role(&then_stmt, &fcx, SugarRole::Statement);
@@ -113,13 +114,8 @@ impl Sugar for IfSugar {
         };
 
         // Prepend `cond` to every guard clause from the then-branch.
-        let mut all_guarded = then_guarded
-            .into_iter()
-            .map(|guarded_return| {
-                let prefix = [cond_formula.clone()];
-                guarded_return.with_prefix(&prefix)
-            })
-            .collect();
+        let (mut all_guarded, _then_fall) =
+            guard_block(then_guarded, then_fall, &[cond_formula.clone()], "IfSugar");
 
         match &self.if_expr.else_branch {
             None => {
@@ -159,10 +155,9 @@ impl Sugar for IfSugar {
                     }
                 };
 
-                for guarded_return in else_guarded {
-                    let prefix = [not_cond.clone()];
-                    all_guarded.push(guarded_return.with_prefix(&prefix));
-                }
+                let (else_guarded, _else_fall) =
+                    guard_block(else_guarded, _else_fall, &[not_cond.clone()], "IfSugar");
+                all_guarded.extend(else_guarded);
 
                 // With an else branch the alternatives are exhaustive: no fall_through.
                 Outcome::Complete(Desugared::StmtBlock {

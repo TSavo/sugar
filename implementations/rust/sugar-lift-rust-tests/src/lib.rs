@@ -81,6 +81,7 @@ pub mod sugar {
     pub mod const_path;
     pub mod constraint;
     pub mod constraint_runtime_boundary;
+    pub mod control_flow_guard_operation;
     pub mod control_flow_term;
     pub mod cstr;
     pub mod ctor_term;
