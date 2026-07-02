@@ -22,6 +22,10 @@ from .render_panic_audit import render_text
 from .render_temporal_dispatch_frontier import (
     render_text as render_temporal_dispatch_text,
 )
+from .sugar_witness_instruments import (
+    collect_sugar_witness_frontier,
+    render_text as render_sugar_witness_text,
+)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -64,7 +68,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="audit raw ProofIR emission vocabulary sites instead of panic targets",
     )
+    parser.add_argument(
+        "--sugar-witness-frontier",
+        action="store_true",
+        help="audit sugar witness enrollment and seed triple ownership",
+    )
     args = parser.parse_args(argv)
+
+    if args.sugar_witness_frontier:
+        report = collect_sugar_witness_frontier(Path(args.root))
+        if args.json:
+            print(json.dumps(report.to_json(), sort_keys=True, indent=2))
+        else:
+            print(render_sugar_witness_text(report), end="")
+        return 0 if report.is_zero else 1
 
     if args.proofir_vocab_frontier:
         report = collect_proofir_vocabulary_frontier(Path(args.root))
