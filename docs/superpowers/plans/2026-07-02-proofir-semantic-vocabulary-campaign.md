@@ -105,6 +105,7 @@ This is the load-bearing S2 design, and it must be gotten right: **the vocabular
 5. **Stated-vs-derived is sacred.** Dedup is by `(key, IDENTICAL formula, distinct provenance)` ONLY, never by key alone. Dropping the differing stated fact in the lying case is UNSOUND and forbidden.
 6. **Byte-compat on goldens.** Each migration slice is byte-behavior-preserving on the pinned assertion/golden fixtures, EXCEPT the deliberate golden changes the #3220 collapse requires — those are documented and re-pinned in the same slice (campaign law: a deliberate golden change is stated on the record and re-pinned, never silent).
 7. **Climb the ladder.** The return-type frontier belongs to the compiler (Rust) / a runtime `FactoryGap` seam that recruits the test suite as the enumerator (Python) — the top rung. The auditor survives only for what types cannot yet see: provenance completeness and the single-seat invariant. Prefer the fix that makes the untyped shape unrepresentable over the fix that detects it.
+8. **Every reach for an auditor is the signal to grab the type system instead.** "The type system is there to scream; all we are doing is giving it a mouth." No auditor lands in this campaign without one of two justifications, on the record: (a) it is replaced by a type-level mechanism NOW — a closed enum, a return-type flip, a constructor refusal; or (b) it is watching something the type system cannot yet see, stated in one sentence, WITH its retirement plan naming the later slice/type change that deletes it. An auditor with neither is a bug in the plan. (Audit of this campaign's four instruments against this law is in the Instruments section below.)
 
 ## Instruments
 
@@ -112,17 +113,25 @@ This is the load-bearing S2 design, and it must be gotten right: **the vocabular
 
 A collector/gate (same shape as the second-engine auditor in the floor-projection campaign and the `proof_api_audit` raw-pool axis). It classifies every production site that builds a formula/contract-row/refusal/audit/edge as a raw `dict`/`str` (the census table above), records `R(untyped-emission-sites)` per kit and per class, and prints each offender's typed-node replacement (`EqualityFact`, `FunctionContract`, `RefusalRecord`, `CallEdgeDecl`, …). Exempt: the `ir.py` typed core, serde/JCS/`encode_jcs` boundaries, and cfg(test)/fixture helpers. Red-first: plant one raw-dict emission; the auditor goes red naming file:line + replacement. Pin the baseline (S1); ratchet DOWN.
 
+**Ladder audit (law 8): justification (a) — replaced by a type mechanism, retires at S3.** This auditor is scaffolding for exactly two slices. The moment the return-type flip (Instrument D / S3) arms, the raw-dict shape stops being detectable-after-the-fact and becomes a construction-time refusal + broken test — the compiler/seam owns the frontier. Instrument A is DELETED when S3 lands; it exists only to pin the S1 baseline and name replacements before the type mechanism can speak.
+
 ### Instrument B — provenance-completeness counter
 
-For every emitted formula fragment in a lift, check it carries its `{node-class, construction-site, provenance}` attribution. Report `R(formula-fragments-without-provenance)`. Start as a COUNTER in the payload diagnostics; arm as a gate at close (orphan formulas inexpressible). This is the axis the type system cannot yet fully own (a graph type carrying MANDATORY provenance is the retirement target) — so it stays an auditor after the return-type axis has gone to unrepresentable.
+For every emitted formula fragment in a lift, check it carries its `{node-class, construction-site, provenance}` attribution. Report `R(formula-fragments-without-provenance)`. Start as a COUNTER in the payload diagnostics; arm as a gate at close (orphan formulas inexpressible).
+
+**Ladder audit (law 8): justification (b) — watches what types cannot yet see; retirement plan named.** The return-type flip forces every emission to BE a node, but it cannot force the node to be WIRED into the attributed graph with a live provenance — an orphan node is still constructible. That is the one thing types cannot yet see, so this auditor is justified. Retirement plan: when the graph node type is refactored so a node CANNOT be constructed without a mandatory non-optional `provenance` and a parent-attribution edge (an `Option` a required field outgrew, promoted to a plain field), the orphan becomes a construction error and Instrument B is deleted. Until that type change lands (post-S8 hardening, tracked as the sibling shape/witness campaign's concern), it stays an armed gate — the confession that the graph type is not yet total on provenance.
 
 ### Instrument C — verdict-witness harness (solver-anchored, once per class)
 
 For every ProofIR node class, run its `{truthful → SAT, lying-twin → UNSAT}` pair through the REAL solver, in the vocabulary's own harness (NOT in sugar tests — sugars never touch the solver). Report `R(proofir-classes-without-verdict-witnesses)`. Red-first: a class registered without a passing witness pair is red. This is the instrument that pins "semantics lives on the vocabulary": if a class's denotation is wrong, its lying twin fails to go UNSAT.
 
+**Ladder audit (law 8): justification (b) — watches what types CANNOT see, permanently.** This is not an auditor of drift; it is a test on the test rung, and it is irreducible: the type system cannot encode `SAT`/`UNSAT` — solver semantics is exactly the thing types cannot own (that is WHY the anchor is external, per the decision of record: the solver anchors the vocabulary's semantics). So it has no retirement to the compiler rung. It DOES climb one rung: a class cannot be REGISTERED in the vocabulary without a passing witness pair (registration refuses at construction otherwise), so "a class with no witnesses" is unrepresentable; only "a class whose denotation is wrong" remains, and that is what the solver judges. It stays forever, by design — the solver is the mouth here.
+
 ### Instrument D — return-type frontier (compiler rung in Rust; panic-recruits-test rung in Python; armed in S3)
 
 The abstract emission base's construction method returns ONLY the typed vocabulary (`ProofIRNode`). Rust: rustc's error list is the frontier. Python: a runtime `isinstance` check at the single reduce→emit seam that raises `FactoryGap` on a raw `dict`/`str` return is SUFFICIENT — and it recruits the test suite as the enumerator. The coverage registry guarantees every sugar HAS tests, so the moment the seam raises, every unmigrated sugar's existing unit tests break; the failing-test list IS Python's compiler-error list — complete, self-locating (each failure names the sugar), unsanctionable, no offender can hide. That is the panic rung recruiting the test rung, and it is the load-bearing mechanism. A pyright/mypy annotation on the base is OPTIONAL polish for editor-time feedback, NOT a required CI gate — do not over-engineer the static-typing side. The offender list IS `R(untyped-emission-sites)` — free, undriftable, unsanctionable.
+
+**Ladder audit (law 8): this IS justification (a) — it is not an auditor.** Instrument D is the type mechanism itself (return-type flip → compiler in Rust, panic-seam-recruiting-tests in Python). It is the top of the ladder that Instruments A and B are measured against; it retires A on arrival and is the target rung B aspires to for provenance.
 
 ## Ratchet vector
 
@@ -174,7 +183,7 @@ Flip the abstract emission base's construction method to return ONLY `ProofIRNod
 - Bad-twin: a site returning a raw dict must fail the gate / raise `FactoryGap`; a site returning a `ProofIRNode` passes.
 - Staging tradeoff (documented; hard flip preferred): if a hard flip breaks the build unacceptably long, the fallback is a deprecated union return `ProofIRNode | RawLegacy` + a shrinking warning-as-error allowlist. Recommend the hard flip; name the union only as the escape hatch.
 
-Exit: the frontier is armed; `R(emission-base-returning-raw-dict-or-str)` pinned at N (the census); each subsequent slice shrinks it.
+Exit: the frontier is armed; Instrument A (census auditor) is DELETED — the type mechanism now owns the untyped-emission frontier it was scaffolding (law 8, justification (a)); `R(emission-base-returning-raw-dict-or-str)` pinned at N (the census); each subsequent slice shrinks it.
 
 ### Slice 4 — Migrate `EqualityFact` + subsume #3220 (provenance collapse)
 
