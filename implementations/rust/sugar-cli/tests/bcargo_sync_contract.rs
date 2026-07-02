@@ -19,6 +19,10 @@ fn bcargo_syncs_ir_compiler_manifests() {
         bcargo.contains("sync_dir .sugar/ir-compilers"),
         "bcargo must sync .sugar/ir-compilers so remote verifier runs can resolve manifest-backed ProofIR compiler dialects"
     );
+    assert!(
+        bcargo.contains("sync_dir docs/perf"),
+        "bcargo must sync docs/perf so remote perf-gate tests see the documented RSS and dhat commands"
+    );
 }
 
 #[test]

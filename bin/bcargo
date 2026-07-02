@@ -269,6 +269,7 @@ sync_dir menagerie/csharp-language-signature/specs
 sync_dir menagerie/python-language-signature/specs
 sync_dir tools
 sync_dir protocol
+sync_dir docs/perf
 sync_dir docs/self-application
 sync_dir scripts
 sync_dir bootstrap
