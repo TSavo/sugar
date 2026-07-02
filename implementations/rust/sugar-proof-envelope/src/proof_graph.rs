@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::Value as Json;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, CanonicalizerError, Value};
 
 use crate::sign::{ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed};
 
@@ -132,27 +132,58 @@ impl AuthorityMementoRef {
 }
 
 fn json_to_canonical_value(value: &Json) -> Arc<Value> {
+    json_to_canonical_value_at(value, "$").unwrap_or_else(|err| panic!("{err}"))
+}
+
+fn json_to_canonical_value_at(value: &Json, path: &str) -> Result<Arc<Value>, CanonicalizerError> {
     match value {
-        Json::Null => Value::null(),
-        Json::Bool(v) => Value::boolean(*v),
+        Json::Null => Ok(Value::null()),
+        Json::Bool(v) => Ok(Value::boolean(*v)),
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Value::integer(i128::from(i))
+                Ok(Value::integer(i128::from(i)))
             } else if let Some(u) = n.as_u64() {
-                Value::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                Value::integer(f as i128)
+                Ok(Value::integer(i128::from(u)))
             } else {
-                Value::integer(0)
+                Err(CanonicalizerError::Other(format!(
+                    "non-integer JSON number at {path}: {n}"
+                )))
             }
         }
-        Json::String(s) => Value::string(s.clone()),
-        Json::Array(items) => Value::array(items.iter().map(json_to_canonical_value).collect()),
-        Json::Object(map) => Value::object(
-            map.iter()
-                .map(|(key, value)| (key.clone(), json_to_canonical_value(value)))
-                .collect::<Vec<_>>(),
-        ),
+        Json::String(s) => Ok(Value::string(s.clone())),
+        Json::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for (idx, item) in items.iter().enumerate() {
+                out.push(json_to_canonical_value_at(
+                    item,
+                    &canonical_array_path(path, idx),
+                )?);
+            }
+            Ok(Value::array(out))
+        }
+        Json::Object(map) => {
+            let mut out = Vec::with_capacity(map.len());
+            for (key, value) in map {
+                out.push((
+                    key.clone(),
+                    json_to_canonical_value_at(value, &canonical_object_path(path, key))?,
+                ));
+            }
+            Ok(Value::object(out))
+        }
+    }
+}
+
+fn canonical_array_path(parent: &str, idx: usize) -> String {
+    format!("{parent}[{idx}]")
+}
+
+fn canonical_object_path(parent: &str, key: &str) -> String {
+    if !key.is_empty() && key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        format!("{parent}.{key}")
+    } else {
+        let quoted = serde_json::to_string(key).expect("JSON string key serialization");
+        format!("{parent}[{quoted}]")
     }
 }
 
@@ -738,7 +769,10 @@ pub fn member_signature(envelope: &Json) -> Option<&Json> {
 ///   define the member key.
 pub fn recompute_member_cid(envelope: &Json) -> String {
     if let Some(envelope_value) = envelope.get("envelope") {
-        let canonical = encode_jcs(&json_to_canonical_value(envelope_value));
+        let canonical = encode_jcs(
+            &json_to_canonical_value_at(envelope_value, "$.envelope")
+                .unwrap_or_else(|err| panic!("{err}")),
+        );
         return blake3_512_of(canonical.as_bytes());
     }
 
@@ -1256,6 +1290,33 @@ mod tests {
         let value: Json = serde_json::from_slice(bytes).expect("layered member JSON");
         let envelope = value.get("envelope").expect("layered envelope");
         blake3_512_of(encode_jcs(&json_to_canonical_value(envelope)).as_bytes())
+    }
+
+    #[test]
+    fn proof_graph_json_canonicalization_refuses_non_integer_number_with_path() {
+        let value = serde_json::json!({
+            "envelope": {
+                "body": {
+                    "value": 1.5
+                }
+            }
+        });
+
+        let panic = std::panic::catch_unwind(|| {
+            let _ = recompute_member_cid(&value);
+        })
+        .expect_err("proof-envelope canonicalization must refuse non-integer JSON numbers");
+        let msg = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                panic
+                    .downcast_ref::<&'static str>()
+                    .map(|s| (*s).to_string())
+            })
+            .unwrap_or_else(|| "<non-string panic>".to_string());
+        assert!(msg.contains("non-integer JSON number"), "{msg}");
+        assert!(msg.contains("$.envelope.body.value"), "{msg}");
     }
 
     #[test]
