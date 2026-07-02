@@ -203,10 +203,20 @@ fn collect_mutated_in_stmt(stmt: &Stmt, names: &mut Vec<String>) {
 fn collect_mutated_in_expr(expr: &Expr, names: &mut Vec<String>) {
     match expr {
         Expr::Assign(a) => {
-            if let Expr::Path(p) = a.left.as_ref() {
-                if let Some(seg) = p.path.segments.last() {
-                    names.push(seg.ident.to_string());
-                }
+            collect_assigned_root(&a.left, names);
+            collect_mutated_in_expr(&a.left, names);
+            collect_mutated_in_expr(&a.right, names);
+        }
+        Expr::Call(call) => {
+            collect_mutated_in_expr(&call.func, names);
+            for arg in &call.args {
+                collect_mutated_in_expr(arg, names);
+            }
+        }
+        Expr::MethodCall(method) => {
+            collect_mutated_in_expr(&method.receiver, names);
+            for arg in &method.args {
+                collect_mutated_in_expr(arg, names);
             }
         }
         Expr::Binary(b) => {
@@ -219,6 +229,7 @@ fn collect_mutated_in_expr(expr: &Expr, names: &mut Vec<String>) {
             }
         }
         Expr::If(i) => {
+            collect_mutated_in_expr(&i.cond, names);
             for s in &i.then_branch.stmts {
                 collect_mutated_in_stmt(s, names);
             }
@@ -226,7 +237,169 @@ fn collect_mutated_in_expr(expr: &Expr, names: &mut Vec<String>) {
                 collect_mutated_in_expr(else_e, names);
             }
         }
-        _ => {}
+        Expr::Match(m) => {
+            collect_mutated_in_expr(&m.expr, names);
+            for arm in &m.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    collect_mutated_in_expr(guard, names);
+                }
+                collect_mutated_in_expr(&arm.body, names);
+            }
+        }
+        Expr::While(w) => {
+            collect_mutated_in_expr(&w.cond, names);
+            for s in &w.body.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::ForLoop(f) => {
+            collect_mutated_in_expr(&f.expr, names);
+            for s in &f.body.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::Loop(l) => {
+            for s in &l.body.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::Async(a) => {
+            for s in &a.block.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::Const(c) => {
+            for s in &c.block.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::TryBlock(t) => {
+            for s in &t.block.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::Unsafe(u) => {
+            for s in &u.block.stmts {
+                collect_mutated_in_stmt(s, names);
+            }
+        }
+        Expr::Unary(u) => collect_mutated_in_expr(&u.expr, names),
+        Expr::Cast(c) => collect_mutated_in_expr(&c.expr, names),
+        Expr::Paren(p) => collect_mutated_in_expr(&p.expr, names),
+        Expr::Group(g) => collect_mutated_in_expr(&g.expr, names),
+        Expr::Reference(r) => collect_mutated_in_expr(&r.expr, names),
+        Expr::RawAddr(r) => collect_mutated_in_expr(&r.expr, names),
+        Expr::Field(f) => collect_mutated_in_expr(&f.base, names),
+        Expr::Index(i) => {
+            collect_mutated_in_expr(&i.expr, names);
+            collect_mutated_in_expr(&i.index, names);
+        }
+        Expr::Range(r) => {
+            if let Some(start) = &r.start {
+                collect_mutated_in_expr(start, names);
+            }
+            if let Some(end) = &r.end {
+                collect_mutated_in_expr(end, names);
+            }
+        }
+        Expr::Tuple(t) => {
+            for e in &t.elems {
+                collect_mutated_in_expr(e, names);
+            }
+        }
+        Expr::Array(a) => {
+            for e in &a.elems {
+                collect_mutated_in_expr(e, names);
+            }
+        }
+        Expr::Repeat(r) => {
+            collect_mutated_in_expr(&r.expr, names);
+            collect_mutated_in_expr(&r.len, names);
+        }
+        Expr::Struct(s) => {
+            for field in &s.fields {
+                collect_mutated_in_expr(&field.expr, names);
+            }
+            if let Some(rest) = &s.rest {
+                collect_mutated_in_expr(rest, names);
+            }
+        }
+        Expr::Return(r) => {
+            if let Some(inner) = &r.expr {
+                collect_mutated_in_expr(inner, names);
+            }
+        }
+        Expr::Break(b) => {
+            if let Some(inner) = &b.expr {
+                collect_mutated_in_expr(inner, names);
+            }
+        }
+        Expr::Yield(y) => {
+            if let Some(inner) = &y.expr {
+                collect_mutated_in_expr(inner, names);
+            }
+        }
+        Expr::Try(t) => collect_mutated_in_expr(&t.expr, names),
+        Expr::Await(a) => collect_mutated_in_expr(&a.base, names),
+        Expr::Let(l) => collect_mutated_in_expr(&l.expr, names),
+        Expr::Closure(_) => {}
+        Expr::Continue(_)
+        | Expr::Infer(_)
+        | Expr::Lit(_)
+        | Expr::Macro(_)
+        | Expr::Path(_)
+        | Expr::Verbatim(_) => {}
+        _ => panic!("sugar-walk loop mutation collector refused unknown syn::Expr variant"),
+    }
+}
+
+fn collect_assigned_root(expr: &Expr, names: &mut Vec<String>) {
+    match expr {
+        Expr::Path(p) => {
+            if let Some(seg) = p.path.segments.last() {
+                names.push(seg.ident.to_string());
+            }
+        }
+        Expr::Field(f) => collect_assigned_root(&f.base, names),
+        Expr::Index(i) => collect_assigned_root(&i.expr, names),
+        Expr::Paren(p) => collect_assigned_root(&p.expr, names),
+        Expr::Group(g) => collect_assigned_root(&g.expr, names),
+        Expr::Reference(r) => collect_assigned_root(&r.expr, names),
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => {}
+        _ => panic!("sugar-walk loop assignment collector refused unknown syn::Expr variant"),
     }
 }
 
@@ -334,6 +507,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-function-items)
                 _ => None,
             })
             .unwrap()

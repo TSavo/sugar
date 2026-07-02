@@ -192,6 +192,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == "f" => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();

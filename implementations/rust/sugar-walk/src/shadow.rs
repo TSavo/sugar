@@ -570,6 +570,7 @@ mod shadow_tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == name => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap_or_else(|| panic!("fn `{}` not found", name))

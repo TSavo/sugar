@@ -258,6 +258,16 @@ fn scan_expr_for_effects(expr: &Expr, set: &mut EffectSet) {
                 scan_stmt_for_effects(s, set);
             }
         }
+        Expr::Async(a) => {
+            for s in &a.block.stmts {
+                scan_stmt_for_effects(s, set);
+            }
+        }
+        Expr::Const(c) => {
+            for s in &c.block.stmts {
+                scan_stmt_for_effects(s, set);
+            }
+        }
         Expr::While(w) => {
             scan_expr_for_effects(&w.cond, set);
             for s in &w.body.stmts {
@@ -278,6 +288,9 @@ fn scan_expr_for_effects(expr: &Expr, set: &mut EffectSet) {
         Expr::Match(m) => {
             scan_expr_for_effects(&m.expr, set);
             for arm in &m.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    scan_expr_for_effects(guard, set);
+                }
                 scan_expr_for_effects(&arm.body, set);
             }
         }
@@ -296,18 +309,45 @@ fn scan_expr_for_effects(expr: &Expr, set: &mut EffectSet) {
                 scan_expr_for_effects(inner, set);
             }
         }
+        Expr::Break(b) => {
+            if let Some(inner) = &b.expr {
+                scan_expr_for_effects(inner, set);
+            }
+        }
+        Expr::Yield(y) => {
+            if let Some(inner) = &y.expr {
+                scan_expr_for_effects(inner, set);
+            }
+        }
         Expr::Try(t) => scan_expr_for_effects(&t.expr, set),
+        Expr::TryBlock(t) => {
+            for s in &t.block.stmts {
+                scan_stmt_for_effects(s, set);
+            }
+        }
+        Expr::Await(a) => scan_expr_for_effects(&a.base, set),
         Expr::Binary(b) => {
             scan_expr_for_effects(&b.left, set);
             scan_expr_for_effects(&b.right, set);
         }
         Expr::Unary(u) => scan_expr_for_effects(&u.expr, set),
         Expr::Paren(p) => scan_expr_for_effects(&p.expr, set),
+        Expr::Group(g) => scan_expr_for_effects(&g.expr, set),
         Expr::Reference(r) => scan_expr_for_effects(&r.expr, set),
+        Expr::RawAddr(r) => scan_expr_for_effects(&r.expr, set),
+        Expr::Cast(c) => scan_expr_for_effects(&c.expr, set),
         Expr::Field(f) => scan_expr_for_effects(&f.base, set),
         Expr::Index(i) => {
             scan_expr_for_effects(&i.expr, set);
             scan_expr_for_effects(&i.index, set);
+        }
+        Expr::Range(r) => {
+            if let Some(start) = &r.start {
+                scan_expr_for_effects(start, set);
+            }
+            if let Some(end) = &r.end {
+                scan_expr_for_effects(end, set);
+            }
         }
         Expr::Tuple(t) => {
             for e in &t.elems {
@@ -319,9 +359,25 @@ fn scan_expr_for_effects(expr: &Expr, set: &mut EffectSet) {
                 scan_expr_for_effects(e, set);
             }
         }
-        // Pure expression shapes; no effects to add.
-        Expr::Lit(_) | Expr::Path(_) | Expr::Closure(_) => {}
-        _ => {}
+        Expr::Repeat(r) => {
+            scan_expr_for_effects(&r.expr, set);
+            scan_expr_for_effects(&r.len, set);
+        }
+        Expr::Struct(s) => {
+            for field in &s.fields {
+                scan_expr_for_effects(&field.expr, set);
+            }
+            if let Some(rest) = &s.rest {
+                scan_expr_for_effects(rest, set);
+            }
+        }
+        Expr::Let(l) => scan_expr_for_effects(&l.expr, set),
+        Expr::Lit(_) | Expr::Path(_) | Expr::Infer(_) | Expr::Continue(_) | Expr::Verbatim(_) => {}
+        Expr::Closure(_) => {
+            // Closure body effects happen when the closure is invoked, not when
+            // the closure value is constructed for this function contract.
+        }
+        _ => panic!("sugar-walk contract refused unknown syn::Expr variant"),
     }
 }
 
@@ -459,6 +515,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-function-items)
                 _ => None,
             })
             .unwrap()

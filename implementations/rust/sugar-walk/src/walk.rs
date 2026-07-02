@@ -285,6 +285,7 @@ fn walk_expr_for_callsites(
                     });
                 }
             }
+            walk_expr_for_callsites(func, callee_name, conditions, inner_stmts, hits);
             // Recurse into argument expressions.
             for a in args {
                 walk_expr_for_callsites(a, callee_name, conditions, inner_stmts, hits);
@@ -373,6 +374,28 @@ fn walk_expr_for_callsites(
                 *inner_stmts = saved;
             }
         }
+        Expr::Async(a) => {
+            for (block_idx, s) in a.block.stmts.iter().enumerate() {
+                let mut block_preceding: Vec<Stmt> =
+                    a.block.stmts[..block_idx].iter().rev().cloned().collect();
+                block_preceding.extend(inner_stmts.iter().cloned());
+                let saved = inner_stmts.clone();
+                *inner_stmts = block_preceding;
+                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+                *inner_stmts = saved;
+            }
+        }
+        Expr::Const(c) => {
+            for (block_idx, s) in c.block.stmts.iter().enumerate() {
+                let mut block_preceding: Vec<Stmt> =
+                    c.block.stmts[..block_idx].iter().rev().cloned().collect();
+                block_preceding.extend(inner_stmts.iter().cloned());
+                let saved = inner_stmts.clone();
+                *inner_stmts = block_preceding;
+                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+                *inner_stmts = saved;
+            }
+        }
         // Loops: recurse into the body. The body's callsites are reachable
         // from the loop's pre-state; their conditions are unchanged from
         // outside the loop (we don't yet add loop-iteration invariants
@@ -418,6 +441,16 @@ fn walk_expr_for_callsites(
                 walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
             }
         }
+        Expr::Break(b) => {
+            if let Some(inner) = &b.expr {
+                walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
+            }
+        }
+        Expr::Yield(y) => {
+            if let Some(inner) = &y.expr {
+                walk_expr_for_callsites(inner, callee_name, conditions, inner_stmts, hits);
+            }
+        }
         // Common compound expression forms that can contain callsites. We
         // recurse into their sub-expressions so a callsite inside
         // `foo() && callee(x) > 0` or `(callee(x), y)` is not silently
@@ -435,7 +468,13 @@ fn walk_expr_for_callsites(
         Expr::Paren(p) => {
             walk_expr_for_callsites(&p.expr, callee_name, conditions, inner_stmts, hits);
         }
+        Expr::Group(g) => {
+            walk_expr_for_callsites(&g.expr, callee_name, conditions, inner_stmts, hits);
+        }
         Expr::Reference(r) => {
+            walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
+        }
+        Expr::RawAddr(r) => {
             walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
         }
         Expr::Field(f) => {
@@ -467,9 +506,51 @@ fn walk_expr_for_callsites(
             walk_expr_for_callsites(&a.left, callee_name, conditions, inner_stmts, hits);
             walk_expr_for_callsites(&a.right, callee_name, conditions, inner_stmts, hits);
         }
-        // Other shapes pass through silently. Stretch goals add closure
-        // bodies, async blocks, etc.
-        _ => {}
+        Expr::TryBlock(t) => {
+            for (block_idx, s) in t.block.stmts.iter().enumerate() {
+                let mut block_preceding: Vec<Stmt> =
+                    t.block.stmts[..block_idx].iter().rev().cloned().collect();
+                block_preceding.extend(inner_stmts.iter().cloned());
+                let saved = inner_stmts.clone();
+                *inner_stmts = block_preceding;
+                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+                *inner_stmts = saved;
+            }
+        }
+        Expr::Let(l) => {
+            walk_expr_for_callsites(&l.expr, callee_name, conditions, inner_stmts, hits);
+        }
+        Expr::Repeat(r) => {
+            walk_expr_for_callsites(&r.expr, callee_name, conditions, inner_stmts, hits);
+            walk_expr_for_callsites(&r.len, callee_name, conditions, inner_stmts, hits);
+        }
+        Expr::Struct(s) => {
+            for field in &s.fields {
+                walk_expr_for_callsites(&field.expr, callee_name, conditions, inner_stmts, hits);
+            }
+            if let Some(rest) = &s.rest {
+                walk_expr_for_callsites(rest, callee_name, conditions, inner_stmts, hits);
+            }
+        }
+        Expr::Unsafe(u) => {
+            for (block_idx, s) in u.block.stmts.iter().enumerate() {
+                let mut block_preceding: Vec<Stmt> =
+                    u.block.stmts[..block_idx].iter().rev().cloned().collect();
+                block_preceding.extend(inner_stmts.iter().cloned());
+                let saved = inner_stmts.clone();
+                *inner_stmts = block_preceding;
+                walk_stmt_for_callsites(s, callee_name, conditions, inner_stmts, hits);
+                *inner_stmts = saved;
+            }
+        }
+        Expr::Closure(_) => {}
+        Expr::Continue(_)
+        | Expr::Infer(_)
+        | Expr::Lit(_)
+        | Expr::Macro(_)
+        | Expr::Path(_)
+        | Expr::Verbatim(_) => {}
+        _ => panic!("sugar-walk WP walker refused unknown syn::Expr variant"),
     }
 }
 
@@ -489,7 +570,10 @@ fn let_binding(stmt: &Stmt) -> Option<Vec<(String, IrTerm)>> {
             let rhs = lift_expr_to_term(init.expr.as_ref());
             collect_pat_bindings(pat, rhs)
         }
-        _ => None,
+        Stmt::Local(Local { init: None, .. })
+        | Stmt::Expr(_, _)
+        | Stmt::Item(_)
+        | Stmt::Macro(_) => None,
     }
 }
 
@@ -579,7 +663,15 @@ fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Opt
             }
             Some(())
         }
-        _ => None,
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Macro(_)
+        | Pat::Or(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Verbatim(_) => None,
+        _ => panic!("sugar-walk WP pattern collector refused unknown syn::Pat variant"),
     }
 }
 
@@ -618,6 +710,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-function-items)
                 _ => None,
             })
             .expect("function present")

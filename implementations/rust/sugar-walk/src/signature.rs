@@ -58,6 +58,7 @@ pub fn canonical_operation_name(surface_name: &str) -> Option<&str> {
         | "arm" | "arms" | "guarded_arm" | "if_let" | "while_let" | "pattern_ok"
         | "pattern_err" | "pattern_some" | "pattern_none" | "pattern_wild"
         | "pattern_bind") => Some(op),
+        // sugar-audit: not-mine(non-signature-operation-name-has-no-rust-op-cid)
         _ => None,
     }
 }

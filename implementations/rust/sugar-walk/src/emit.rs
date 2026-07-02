@@ -813,7 +813,21 @@ fn find_term_function_in_items(
                     }
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Fn(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-walk emit find_term_function refused unknown syn::Item variant"),
         }
     }
     None
@@ -867,7 +881,21 @@ fn collect_ffi_declarations_in_items(
                     module_path.pop();
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::Fn(_)
+            | syn::Item::Impl(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-walk emit ffi collector refused unknown syn::Item variant"),
         }
     }
 }
@@ -919,7 +947,10 @@ fn collect_proc_macro_invocations_from_item(
                     syn::ImplItem::Type(item) => {
                         extend_proc_macro_invocations(invocations, &item.attrs)
                     }
-                    _ => {}
+                    syn::ImplItem::Macro(_) | syn::ImplItem::Verbatim(_) => {}
+                    _ => panic!(
+                        "sugar-walk emit proc-macro collector refused unknown syn::ImplItem variant"
+                    ),
                 }
             }
             return;
@@ -937,7 +968,14 @@ fn collect_proc_macro_invocations_from_item(
         syn::Item::Trait(item) => &item.attrs,
         syn::Item::Type(item) => &item.attrs,
         syn::Item::Union(item) => &item.attrs,
-        _ => &[],
+        syn::Item::ExternCrate(_)
+        | syn::Item::ForeignMod(_)
+        | syn::Item::Macro(_)
+        | syn::Item::Static(_)
+        | syn::Item::TraitAlias(_)
+        | syn::Item::Use(_)
+        | syn::Item::Verbatim(_) => &[],
+        _ => panic!("sugar-walk emit proc-macro collector refused unknown syn::Item variant"),
     };
     extend_proc_macro_invocations(invocations, attrs);
 }
@@ -1404,7 +1442,46 @@ fn method_receiver_source_name(expr: &Expr) -> Option<String> {
         Expr::MethodCall(method) => method_receiver_source_name(&method.receiver),
         Expr::Paren(paren) => method_receiver_source_name(&paren.expr),
         Expr::Group(group) => method_receiver_source_name(&group.expr),
-        _ => None,
+        Expr::Field(field) => method_receiver_source_name(&field.base),
+        Expr::Reference(reference) => method_receiver_source_name(&reference.expr),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => {
+            method_receiver_source_name(&unary.expr)
+        }
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        _ => panic!("sugar-walk emit receiver source refused unknown syn::Expr variant"),
     }
 }
 
@@ -1417,7 +1494,44 @@ fn mut_borrow_source_name(expr: &Expr) -> Option<String> {
         Expr::Path(path) => path_name(path),
         Expr::Paren(paren) => mut_borrow_source_name(&paren.expr),
         Expr::Group(group) => mut_borrow_source_name(&group.expr),
-        _ => None,
+        Expr::Field(field) => method_receiver_source_name(&field.base),
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        _ => panic!("sugar-walk emit mutable borrow source refused unknown syn::Expr variant"),
     }
 }
 
@@ -2186,7 +2300,23 @@ fn logical_binary_op(op: &BinOp) -> Option<&'static str> {
     match op {
         BinOp::And(_) => Some("and"),
         BinOp::Or(_) => Some("or"),
-        _ => None,
+        BinOp::Add(_)
+        | BinOp::Sub(_)
+        | BinOp::Mul(_)
+        | BinOp::Div(_)
+        | BinOp::Rem(_)
+        | BinOp::BitXor(_)
+        | BinOp::BitAnd(_)
+        | BinOp::BitOr(_)
+        | BinOp::Shl(_)
+        | BinOp::Shr(_)
+        | BinOp::Eq(_)
+        | BinOp::Lt(_)
+        | BinOp::Le(_)
+        | BinOp::Ne(_)
+        | BinOp::Ge(_)
+        | BinOp::Gt(_) => None,
+        _ => panic!("sugar-walk emit logical op refused unknown syn::BinOp variant"),
     }
 }
 
@@ -2198,7 +2328,19 @@ fn comparison_op(op: &BinOp) -> Option<&'static str> {
         BinOp::Le(_) => Some("le"),
         BinOp::Gt(_) => Some("gt"),
         BinOp::Ge(_) => Some("ge"),
-        _ => None,
+        BinOp::Add(_)
+        | BinOp::Sub(_)
+        | BinOp::Mul(_)
+        | BinOp::Div(_)
+        | BinOp::Rem(_)
+        | BinOp::And(_)
+        | BinOp::Or(_)
+        | BinOp::BitXor(_)
+        | BinOp::BitAnd(_)
+        | BinOp::BitOr(_)
+        | BinOp::Shl(_)
+        | BinOp::Shr(_) => None,
+        _ => panic!("sugar-walk emit comparison op refused unknown syn::BinOp variant"),
     }
 }
 
@@ -2209,7 +2351,20 @@ fn arithmetic_binary_op(op: &BinOp) -> Option<&'static str> {
         BinOp::Mul(_) => Some("mul"),
         BinOp::Div(_) => Some("div"),
         BinOp::Rem(_) => Some("rem"),
-        _ => None,
+        BinOp::And(_)
+        | BinOp::Or(_)
+        | BinOp::BitXor(_)
+        | BinOp::BitAnd(_)
+        | BinOp::BitOr(_)
+        | BinOp::Shl(_)
+        | BinOp::Shr(_)
+        | BinOp::Eq(_)
+        | BinOp::Lt(_)
+        | BinOp::Le(_)
+        | BinOp::Ne(_)
+        | BinOp::Ge(_)
+        | BinOp::Gt(_) => None,
+        _ => panic!("sugar-walk emit arithmetic op refused unknown syn::BinOp variant"),
     }
 }
 
@@ -2220,7 +2375,20 @@ fn bitwise_binary_op(op: &BinOp) -> Option<&'static str> {
         BinOp::BitXor(_) => Some("bit_xor"),
         BinOp::Shl(_) => Some("shl"),
         BinOp::Shr(_) => Some("shr"),
-        _ => None,
+        BinOp::Add(_)
+        | BinOp::Sub(_)
+        | BinOp::Mul(_)
+        | BinOp::Div(_)
+        | BinOp::Rem(_)
+        | BinOp::And(_)
+        | BinOp::Or(_)
+        | BinOp::Eq(_)
+        | BinOp::Lt(_)
+        | BinOp::Le(_)
+        | BinOp::Ne(_)
+        | BinOp::Ge(_)
+        | BinOp::Gt(_) => None,
+        _ => panic!("sugar-walk emit bitwise op refused unknown syn::BinOp variant"),
     }
 }
 
@@ -2281,6 +2449,7 @@ fn sort_from_type_name(name: &str) -> Option<ExprSort> {
         "bool" => Some(ExprSort::Bool),
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
         | "usize" => Some(ExprSort::Int),
+        // sugar-audit: not-mine(user-defined-type-names-flow-to-concept-sort-not-scalar-sort)
         _ => None,
     }
 }
@@ -2340,7 +2509,15 @@ fn concept_sort_from_type(ty: &Type) -> Option<ConceptSort> {
         )),
         Type::Paren(paren) => concept_sort_from_type(&paren.elem),
         Type::Group(group) => concept_sort_from_type(&group.elem),
-        _ => None,
+        Type::BareFn(_)
+        | Type::ImplTrait(_)
+        | Type::Infer(_)
+        | Type::Macro(_)
+        | Type::Never(_)
+        | Type::Path(_)
+        | Type::TraitObject(_)
+        | Type::Verbatim(_) => None,
+        _ => panic!("sugar-walk emit concept_sort refused unknown syn::Type variant"),
     }
 }
 
@@ -2381,6 +2558,7 @@ fn partial_return_loss(ty: &Type) -> Option<&'static str> {
                 "Option" => Some("return-type-option"),
                 "Vec" if path_type_arg_is_u8(segment) => Some("return-type-byte-vec"),
                 "Vec" => Some("return-type-vec"),
+                // sugar-audit: not-mine(non-container-return-type-has-no-partial-loss-record)
                 _ => None,
             }
         }
@@ -2388,7 +2566,19 @@ fn partial_return_loss(ty: &Type) -> Option<&'static str> {
         Type::Reference(reference) => partial_return_loss(&reference.elem),
         Type::Paren(paren) => partial_return_loss(&paren.elem),
         Type::Group(group) => partial_return_loss(&group.elem),
-        _ => None,
+        Type::Array(_)
+        | Type::BareFn(_)
+        | Type::ImplTrait(_)
+        | Type::Infer(_)
+        | Type::Macro(_)
+        | Type::Never(_)
+        | Type::Path(_)
+        | Type::Ptr(_)
+        | Type::Slice(_)
+        | Type::TraitObject(_)
+        | Type::Tuple(_)
+        | Type::Verbatim(_) => None,
+        _ => panic!("sugar-walk emit partial_return_loss refused unknown syn::Type variant"),
     }
 }
 
@@ -2471,7 +2661,23 @@ fn lower_local_let_pattern(
 fn local_pat_type(pat: &syn::Pat) -> Option<&Type> {
     match pat {
         syn::Pat::Type(pat_type) => Some(&pat_type.ty),
-        _ => None,
+        syn::Pat::Const(_)
+        | syn::Pat::Ident(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Or(_)
+        | syn::Pat::Paren(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Reference(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Slice(_)
+        | syn::Pat::Struct(_)
+        | syn::Pat::Tuple(_)
+        | syn::Pat::TupleStruct(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => None,
+        _ => panic!("sugar-walk emit local_pat_type refused unknown syn::Pat variant"),
     }
 }
 
@@ -2632,6 +2838,7 @@ fn expr_kind(expr: &Expr) -> &'static str {
 fn block_single_tail_expr(block: &syn::Block) -> Option<&Expr> {
     match block.stmts.as_slice() {
         [Stmt::Expr(expr, None)] => Some(expr),
+        // sugar-audit: not-mine(non-single-tail-block-is-a-shape-miss-not-a-dropped-obligation)
         _ => None,
     }
 }
@@ -2720,6 +2927,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == name => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap()

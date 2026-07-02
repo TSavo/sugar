@@ -208,7 +208,19 @@ fn walk_items_for_edges(
                 // the call-site walker).
                 let _ = fm;
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-lift call_edges refused unknown syn::Item variant"),
         }
     }
 }
@@ -270,6 +282,7 @@ fn collect_call_sites_in_expr(
                 let edge = mint_call_edge(source_cid, target_cid, locus, &callee_name);
                 edges.push(edge);
             }
+            collect_call_sites_in_expr(&c.func, source_cid, locus, contract_cids, edges);
             // Recurse into arguments.
             for arg in &c.args {
                 collect_call_sites_in_expr(arg, source_cid, locus, contract_cids, edges);
@@ -290,6 +303,12 @@ fn collect_call_sites_in_expr(
         // Recurse into sub-expressions.
         syn::Expr::Block(b) => {
             collect_call_sites_in_block(&b.block, source_cid, locus, contract_cids, edges);
+        }
+        syn::Expr::Async(e) => {
+            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        }
+        syn::Expr::Const(e) => {
+            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
         }
         syn::Expr::If(e) => {
             collect_call_sites_in_expr(&e.cond, source_cid, locus, contract_cids, edges);
@@ -330,6 +349,16 @@ fn collect_call_sites_in_expr(
                 collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
             }
         }
+        syn::Expr::Break(e) => {
+            if let Some(v) = &e.expr {
+                collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
+            }
+        }
+        syn::Expr::Yield(e) => {
+            if let Some(v) = &e.expr {
+                collect_call_sites_in_expr(v, source_cid, locus, contract_cids, edges);
+            }
+        }
         syn::Expr::Assign(e) => {
             collect_call_sites_in_expr(&e.left, source_cid, locus, contract_cids, edges);
             collect_call_sites_in_expr(&e.right, source_cid, locus, contract_cids, edges);
@@ -344,7 +373,13 @@ fn collect_call_sites_in_expr(
         syn::Expr::Paren(e) => {
             collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
         }
+        syn::Expr::Group(e) => {
+            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        }
         syn::Expr::Reference(e) => {
+            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
+        }
+        syn::Expr::RawAddr(e) => {
             collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
         }
         syn::Expr::Cast(e) => {
@@ -361,6 +396,12 @@ fn collect_call_sites_in_expr(
         }
         syn::Expr::Unsafe(e) => {
             collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        }
+        syn::Expr::TryBlock(e) => {
+            collect_call_sites_in_block(&e.block, source_cid, locus, contract_cids, edges);
+        }
+        syn::Expr::Let(e) => {
+            collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
         }
         syn::Expr::Tuple(e) => {
             for elem in &e.elems {
@@ -384,8 +425,13 @@ fn collect_call_sites_in_expr(
             collect_call_sites_in_expr(&e.expr, source_cid, locus, contract_cids, edges);
             collect_call_sites_in_expr(&e.len, source_cid, locus, contract_cids, edges);
         }
-        // Paths, literals, macros: no sub-expressions with calls.
-        _ => {}
+        syn::Expr::Continue(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Verbatim(_) => {}
+        _ => panic!("sugar-lift call_edges refused unknown syn::Expr variant"),
     }
 }
 
@@ -395,7 +441,45 @@ fn callee_name_from_expr(func: &syn::Expr) -> Option<String> {
     match func {
         syn::Expr::Path(p) => Some(path_to_string(&p.path)),
         syn::Expr::Paren(inner) => callee_name_from_expr(&inner.expr),
-        _ => None,
+        syn::Expr::Group(inner) => callee_name_from_expr(&inner.expr),
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Reference(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-lift call_edges refused unknown call callee syn::Expr variant"),
     }
 }
 
@@ -462,6 +546,28 @@ mod tests {
         let e = &edges[0];
         assert!(e.target_contract_cid.is_none(), "target_cid should be None");
         assert_eq!(e.target_symbol, "unknown_extern");
+    }
+
+    #[test]
+    fn async_block_callsite_emits_edge() {
+        let file = parse(
+            r#"
+            fn a() {}
+            fn b() { let _fut = async { a(); }; }
+        "#,
+        );
+        let mut cids = BTreeMap::new();
+        cids.insert("a".to_string(), "blake3-512:aaa".to_string());
+        cids.insert("b".to_string(), "blake3-512:bbb".to_string());
+
+        let edges = extract_call_edges_from_file(&file, "test.rs", &cids);
+
+        assert_eq!(edges.len(), 1, "async block callsite must emit one edge");
+        assert_eq!(
+            edges[0].target_contract_cid.as_deref(),
+            Some("blake3-512:aaa")
+        );
+        assert_eq!(edges[0].target_symbol, "a");
     }
 
     #[test]

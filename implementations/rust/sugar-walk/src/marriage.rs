@@ -122,6 +122,7 @@ pub fn lift_marriage(
         .into_iter()
         .find_map(|item| match item {
             syn::Item::Fn(f) if f.sig.ident == fn_name => Some(f),
+            // sugar-audit: not-mine(top-level-marriage-lookup-continues-until-target-or-errors)
             _ => None,
         })
         .ok_or_else(|| MarriageError::FunctionNotFound(fn_name.to_string()))?;
@@ -384,6 +385,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == fn_name => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();

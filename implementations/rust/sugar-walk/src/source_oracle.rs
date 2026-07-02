@@ -960,16 +960,62 @@ pub fn param_names_without_receiver(item_fn: &syn::ItemFn) -> Vec<String> {
 }
 
 pub fn param_names_without_receiver_from_signature(sig: &syn::Signature) -> Vec<String> {
-    sig.inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-                syn::Pat::Ident(pid) => Some(pid.ident.to_string()),
-                _ => None,
-            },
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect()
+    let mut names = Vec::new();
+    for arg in &sig.inputs {
+        match arg {
+            syn::FnArg::Typed(pat_ty) => collect_param_names_from_pat(&pat_ty.pat, &mut names),
+            syn::FnArg::Receiver(_) => {}
+        }
+    }
+    names
+}
+
+fn collect_param_names_from_pat(pat: &syn::Pat, names: &mut Vec<String>) {
+    match pat {
+        syn::Pat::Ident(pid) => {
+            names.push(pid.ident.to_string());
+            if let Some((_, subpat)) = &pid.subpat {
+                collect_param_names_from_pat(subpat, names);
+            }
+        }
+        syn::Pat::Type(pat_type) => collect_param_names_from_pat(&pat_type.pat, names),
+        syn::Pat::Reference(reference) => collect_param_names_from_pat(&reference.pat, names),
+        syn::Pat::Paren(paren) => collect_param_names_from_pat(&paren.pat, names),
+        syn::Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_param_names_from_pat(elem, names);
+            }
+        }
+        syn::Pat::TupleStruct(tuple_struct) => {
+            for elem in &tuple_struct.elems {
+                collect_param_names_from_pat(elem, names);
+            }
+        }
+        syn::Pat::Struct(pat_struct) => {
+            for field in &pat_struct.fields {
+                collect_param_names_from_pat(&field.pat, names);
+            }
+        }
+        syn::Pat::Slice(slice) => {
+            for elem in &slice.elems {
+                collect_param_names_from_pat(elem, names);
+            }
+        }
+        syn::Pat::Or(or) => {
+            for case in &or.cases {
+                collect_param_names_from_pat(case, names);
+            }
+        }
+        syn::Pat::Const(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => {}
+        _ => panic!("sugar-walk source_oracle refused unknown syn::Pat variant"),
+    }
 }
 
 pub fn resolve_source_memento(
@@ -1297,7 +1343,19 @@ fn collect_source_fns_in_scope<'a>(
                     ));
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-walk source_oracle refused unknown syn::Item variant"),
         }
     }
 }

@@ -36,6 +36,7 @@ pub fn predicate_var_arg(formula: &IrFormula, pred_name: &str) -> Option<String>
             if name == pred_name {
                 args.iter().find_map(|t| match t {
                     IrTerm::Var { name } => Some(name.clone()),
+                    // sugar-audit: not-mine(non-variable-predicate-argument-is-not-a-var-binding)
                     _ => None,
                 })
             } else {
