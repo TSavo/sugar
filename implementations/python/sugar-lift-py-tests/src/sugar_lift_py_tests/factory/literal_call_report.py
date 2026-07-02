@@ -32,6 +32,11 @@ from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
 from .dig_refusal import DigRefusal
+from .floor_contract_agreement import (
+    FloorContractAgreementViolation,
+    floor_contract_agreement_diagnostic,
+    floor_contract_agreement_violations_for_fact,
+)
 from .factory_build_context import FactoryBuildContext
 from .source_fragment import SourceFragment
 
@@ -128,6 +133,7 @@ def build_literal_call_report(
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
     dig_refusals: list[DigRefusal] = []
+    agreement_violations: list[FloorContractAgreementViolation] = []
     local_functions = {
         frag.function_name(): frag
         for frag in root_frag.walk()
@@ -167,6 +173,7 @@ def build_literal_call_report(
                 contract_bindings=contract_bindings or [],
                 module_statements=module_statements,
                 dig_refusals=dig_refusals,
+                agreement_violations=agreement_violations,
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -186,7 +193,10 @@ def build_literal_call_report(
             source_audits=source_audits,
             factory_walk=factory_walk,
             call_edges=call_edges,
-            diagnostics=[refusal.to_json() for refusal in dig_refusals],
+            diagnostics=[
+                *[refusal.to_json() for refusal in dig_refusals],
+                floor_contract_agreement_diagnostic(agreement_violations),
+            ],
         )
     )
 
@@ -246,6 +256,7 @@ def _lift_assert(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     dig_refusals: list[DigRefusal],
+    agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -350,6 +361,7 @@ def _lift_assert(
             memento_file=memento_file,
             source_lines=source_lines,
             dig_refusals=dig_refusals,
+            agreement_violations=agreement_violations,
         )
         if universe is None:
             universe = _dig_universe(
@@ -876,6 +888,7 @@ def _construct_callsite(
     memento_file: str,
     source_lines: list[str],
     dig_refusals: list[DigRefusal],
+    agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
     """Construct the callsite tower AND every tower it bridges to, transitively.
 
@@ -937,6 +950,7 @@ def _construct_callsite(
 
     seen: set[str] = set()
     universes_seen: set[str] = set()
+    callable_contracts: dict[str, BodyUniverseDto] = {}
     worklist: list[tuple[str, object]] = [(callee_name, top.value)]
     facts: list[LiftResult] = []
     while worklist:
@@ -965,6 +979,12 @@ def _construct_callsite(
             )
             if uni is not None:
                 facts.append(uni)
+                for contract in uni[0]:
+                    if (
+                        contract.kind == "function-contract"
+                        and contract.bridge_source_symbol is not None
+                    ):
+                        callable_contracts[contract.bridge_source_symbol] = contract
         sink: list[tuple[str, object]] = []
         reduce_ctx = ReduceContext.root(
             owner="literal_call_report.tower", dig_sink=sink
@@ -1018,6 +1038,18 @@ def _construct_callsite(
             # to the symbolic universe / the mouth, which refuses cleanly rather than swearing
             # a tautology that defines nothing.
             continue
+        callsite_contract_name = _euf_name(cn, arg_value)
+        callable_contract = callable_contracts.get(f"call:{cn}")
+        if callable_contract is not None:
+            agreement_violations.extend(
+                floor_contract_agreement_violations_for_fact(
+                    callee=cn,
+                    callable_contract=callable_contract,
+                    arg_terms=[floor_to_term(arg_value, owner="literal_call_report")],
+                    floor_term=value_term,
+                    callsite_contract=callsite_contract_name,
+                )
+            )
         facts.append(
             _emit_euf_fact(
                 stmt,
