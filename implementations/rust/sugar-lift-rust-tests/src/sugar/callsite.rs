@@ -47,7 +47,7 @@ use crate::{
     count_asserts_in_stmts, expr_head_key, helper_body_runtime_terminal_reason,
     is_consuming_iterator_method, receiver_is_versioned_iterator, refusal_disposition,
     resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped,
-    stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition,
+    stmts_have_runtime_terminal_body_shape, substitute_stmts, AssertionEntry, Disposition, Effect,
     ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, SugarCtx,
     TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
@@ -92,8 +92,12 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
         if callsite_child_is_opaque_value(expr) {
             return callsite_child_identity_term(expr, ctx.scope);
         }
-        if let Some(term) = callsite_child_floor_term(expr, ctx) {
-            return term;
+        match callsite_child_floor_term(expr, ctx) {
+            CallsiteChildFloorTerm::Term(term) => return term,
+            CallsiteChildFloorTerm::NotTerm => {}
+            CallsiteChildFloorTerm::Effect(effect) => {
+                let _ = effect;
+            }
         }
         callsite_child_identity_term(expr, ctx.scope)
     };
@@ -150,10 +154,19 @@ fn callsite_child_is_opaque_value(expr: &Expr) -> bool {
     }
 }
 
-fn callsite_child_floor_term(expr: &Expr, ctx: &SugarCtx) -> Option<Rc<Term>> {
+enum CallsiteChildFloorTerm {
+    Term(Rc<Term>),
+    NotTerm,
+    Effect(Effect),
+}
+
+fn callsite_child_floor_term(expr: &Expr, ctx: &SugarCtx) -> CallsiteChildFloorTerm {
     match crate::sugar::factory::SugarBody::synthesized_term(expr, ctx).reduce(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term(),
-        Outcome::Incomplete(_) => None,
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .map(CallsiteChildFloorTerm::Term)
+            .unwrap_or(CallsiteChildFloorTerm::NotTerm),
+        Outcome::Incomplete(effect) => CallsiteChildFloorTerm::Effect(effect),
     }
 }
 

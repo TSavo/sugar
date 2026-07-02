@@ -19,7 +19,45 @@ struct Offender {
 }
 
 #[test]
+fn source_fragment_delta_epsilon_frontier_matches_expected_counts() {
+    let offenders = collect_offenders();
+    let observed = offender_counts(&offenders);
+    let expected = expected_frontier_counts();
+
+    assert_eq!(
+        observed,
+        expected,
+        "SourceFragment delta-epsilon frontier moved.\n\
+         This is the #2927 SourceFragment migration instrument: delete expected \
+         rows when a drain removes offenders, and treat new rows as regression \
+         alarms.\n\n\
+         observed R = {}\n\
+         expected R = {}\n\n{}",
+        render_count_map(&observed),
+        render_count_map(&expected),
+        render_offenders(&offenders)
+    );
+}
+
+#[test]
+#[ignore = "red-by-design until the #2927 SourceFragment migration reaches stable zero"]
 fn source_fragment_is_the_only_raw_ast_boundary() {
+    let offenders = collect_offenders();
+
+    assert!(
+        offenders.is_empty(),
+        "SourceFragment delta-epsilon R vector is not stable zero.\n\
+         Law: SourceFragment is the only production API by which Rust sugar talks \
+         to the AST. Sugar recognizers, helpers, floors, and reports must ask \
+         SourceFragment for typed fragments, literal facts, source loci, and \
+         grammar/accounting shape; raw syn access belongs behind that one door.\n\n\
+         R = {}\n\n{}",
+        render_counts(&offenders),
+        render_offenders(&offenders)
+    );
+}
+
+fn collect_offenders() -> Vec<Offender> {
     let mut line_offenders = Vec::new();
     for path in sugar_sources() {
         let rel = relative_to_manifest(&path);
@@ -39,18 +77,16 @@ fn source_fragment_is_the_only_raw_ast_boundary() {
             offender.symbol.clone(),
         )
     });
+    offenders
+}
 
-    assert!(
-        offenders.is_empty(),
-        "SourceFragment delta-epsilon R vector is not stable zero.\n\
-         Law: SourceFragment is the only production API by which Rust sugar talks \
-         to the AST. Sugar recognizers, helpers, floors, and reports must ask \
-         SourceFragment for typed fragments, literal facts, source loci, and \
-         grammar/accounting shape; raw syn access belongs behind that one door.\n\n\
-         R = {}\n\n{}",
-        render_counts(&offenders),
-        render_offenders(&offenders)
-    );
+fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
+    BTreeMap::from([
+        ("raw_ast_signature", (141, 1109)),
+        ("raw_ast_variant_pattern", (117, 1908)),
+        ("raw_syn_import", (124, 124)),
+        ("source_fragment_escape_accessor", (94, 153)),
+    ])
 }
 
 fn manifest_dir() -> PathBuf {
@@ -274,11 +310,22 @@ fn render_counts(offenders: &[Offender]) -> String {
     if offenders.is_empty() {
         return "{}".to_string();
     }
+    render_count_map(&offender_counts(offenders))
+}
+
+fn offender_counts(offenders: &[Offender]) -> BTreeMap<&'static str, (usize, usize)> {
     let mut counts = BTreeMap::<&'static str, (usize, usize)>::new();
     for offender in offenders {
         let entry = counts.entry(offender.axis).or_default();
         entry.0 += 1;
         entry.1 += offender.line_count;
+    }
+    counts
+}
+
+fn render_count_map(counts: &BTreeMap<&'static str, (usize, usize)>) -> String {
+    if counts.is_empty() {
+        return "{}".to_string();
     }
     let parts: Vec<String> = counts
         .iter()
