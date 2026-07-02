@@ -6,7 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar, SymbolicValue
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_operation
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -55,7 +55,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
-        receiver = getattr(receiver_outcome, "value", None)
+        receiver = complete_value(receiver_outcome, owner="AttributeSugar receiver")
         if isinstance(receiver, SymbolicValue):
             return Complete(SymbolicValue(self.term))
         operation = AttributeLookupOperation(

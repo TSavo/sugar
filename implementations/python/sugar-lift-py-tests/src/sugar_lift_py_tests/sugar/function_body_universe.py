@@ -22,7 +22,8 @@ class FunctionBodyUniverse(ABC):
     read back out of them.
     """
 
-    # the Block's composed lines, in build order (concrete subclasses hold the field).
+    # the function parameter and composed lines, held by concrete subclasses.
+    parameter: str
     statements: tuple[SugarBody, ...]
 
     @abstractmethod

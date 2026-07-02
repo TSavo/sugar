@@ -38,3 +38,27 @@ def test_add_array_with_tuple_element_names_the_missing_floor():
         "gap_kind": "Floor",
         "gap_locus": "construction",
     }
+
+
+def test_add_array_with_non_term_addend_names_the_missing_floor():
+    receiver = ArrayLiteral((TermValue(1),))
+
+    with pytest.raises(FactoryGap) as raised:
+        receiver.add_with(
+            AddOperation(
+                operand=ArrayLiteral((TermValue(2),)),
+                owner="AddSugar",
+                blame="t.py:1:0",
+            ),
+            ctx=None,
+        )
+
+    assert raised.value.info == {
+        "owner": "AddSugar",
+        "blame": "t.py:1:0",
+        "observed": "ArrayLiteral+ArrayLiteral",
+        "requested": "add operand floor",
+        "fix": "add AddOperation support for ArrayLiteral with ArrayLiteral",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
+    }

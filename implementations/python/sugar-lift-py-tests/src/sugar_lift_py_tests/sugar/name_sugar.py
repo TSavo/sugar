@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class NameSugar(Sugar, role=SugarRole.TERM):
             # that expression. Recompose against the binding's DEFINITION scope (where
             # the name still holds its old value), so `x = x + 1` reads the old x and
             # terminates instead of recomposing against itself.
+            if not isinstance(value.source, SugarBody):
+                raise TypeError("BoundVar source must be a composed SugarBody")
             return value.source.reduce(value.scope if value.scope is not None else ctx)
         return Complete(value)
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.operations.object_method_call import call_object_method_value
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -61,7 +62,8 @@ class ObjectRichComparisonTermSugar(Sugar, role=SugarRole.TERM):
             right_outcome, owner="ObjectRichComparisonTermSugar right"
         )
         if isinstance(left, ObjectValue):
-            return left.call_method_value(
+            return call_object_method_value(
+                left,
                 _RICH_COMPARISON_DUNDERS[self.operator],
                 (right,),
                 owner="ObjectRichComparisonTermSugar",

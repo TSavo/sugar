@@ -4,28 +4,28 @@ from dataclasses import dataclass
 from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
-from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, TermValue
+from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, FloorValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 
 
 @dataclass(frozen=True)
 class AddOperation:
-    operand: TermValue
+    operand: FloorValue
     owner: str = "AddSugar"
     blame: str = "<unknown>"
 
     def add_term(self, receiver: TermValue, ctx: object) -> Outcome:
         del ctx
-        if not isinstance(self.operand, TermValue):
-            self._floor_gap(receiver=type(receiver).__name__)
-        return Complete(TermValue(receiver.value + self.operand.value))
+        operand = self._term_operand(receiver=type(receiver).__name__)
+        return Complete(TermValue(receiver.value + operand.value))
 
     def add_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         del ctx
+        operand = self._term_operand(receiver=type(receiver).__name__)
         return Complete(
             ArrayLiteral(
                 tuple(
-                    TermValue(self._array_term(item).value + self.operand.value)
+                    TermValue(self._array_term(item).value + operand.value)
                     for item in receiver.items
                 )
             )
@@ -41,6 +41,11 @@ class AddOperation:
         if isinstance(item, TermValue):
             return item
         self._floor_gap(receiver=f"ArrayLiteral[{type(item).__name__}]")
+
+    def _term_operand(self, *, receiver: str) -> TermValue:
+        if isinstance(self.operand, TermValue):
+            return self.operand
+        self._floor_gap(receiver=receiver)
 
     def _floor_gap(self, *, receiver: str) -> NoReturn:
         info = FactoryGapInfo(

@@ -40,14 +40,14 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "context": 0,
     "sugar_body": 0,
     "constraint_flow": 0,
-    "temporal": 2,
+    "temporal": 0,
     "audit_only": 0,
     "operations": 0,
-    "sugar": 25,
+    "sugar": 0,
     "idd": 0,
-    "lift": 1,
+    "lift": 0,
     "kit_rpc": 0,
-    "factory": 53,
+    "factory": 52,
 }
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from types import EllipsisType
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import SymbolicValue
@@ -12,7 +13,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 @dataclass(frozen=True)
 class ConstantSugar(Sugar, role=SugarRole.TERM):
-    value: bytes | complex | type(Ellipsis)
+    value: bytes | complex | EllipsisType
 
     @classmethod
     def owns(cls, site) -> bool:

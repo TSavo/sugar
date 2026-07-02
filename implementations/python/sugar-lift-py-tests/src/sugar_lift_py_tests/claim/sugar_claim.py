@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from .sugar_role import SugarRole
 
@@ -10,6 +10,6 @@ from .sugar_role import SugarRole
 class SugarClaim:
     name: str
     role: SugarRole
-    owns: Callable[[Any], bool]
-    build: Callable[[Any], Any]
+    owns: Callable[[object], bool]
+    build: Callable[[object, object], object]
     comes_before: tuple[str, ...] = ()
