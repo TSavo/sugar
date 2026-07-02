@@ -89,6 +89,10 @@ pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
 pub(crate) struct IeeeFloatFloor;
 pub(crate) struct IpAddrFloor;
+/// BoundVar floor family. A let-bound name aliases a source body plus the
+/// definition-scope snapshot used when recomposing that source.
+#[allow(dead_code)]
+pub(crate) struct BoundVarFloor;
 /// SymbolicValue floor family. Carries a sort-neutral symbolic variable; the
 /// backend chooses the carrier sort from surrounding operations.
 #[allow(dead_code)]
@@ -111,6 +115,7 @@ impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
 impl BodyFloor for IeeeFloatFloor {}
 impl BodyFloor for IpAddrFloor {}
+impl BodyFloor for BoundVarFloor {}
 impl BodyFloor for SymbolicValueFloor {}
 impl BodyFloor for CarrierEmbeddingFloor {}
 
@@ -814,7 +819,7 @@ impl FactoryAuditSeed {
             Outcome::Complete(Desugared::StmtSupport) => {
                 (FactoryDisposition::Support, "stmt-support", None)
             }
-            Outcome::Complete(Desugared::StmtBound { .. }) => {
+            Outcome::Complete(Desugared::StmtBound(_)) => {
                 (FactoryDisposition::Support, "stmt-bound", None)
             }
             Outcome::Complete(Desugared::StmtReturn(_)) => {

@@ -6,20 +6,20 @@
 //   - `Stmt::Local(local)` where the init expr is present and has no `else` diverge.
 //
 // Desugar semantics (mirror of Python `AssignSugar`):
-//   - Immutable simple ident `let name = rhs` -> `Desugared::StmtBound { name, rhs }`
-//     The rhs is NOT reduced here; it is stored verbatim so BlockSugar can pass it to
-//     `scope.record_let_binding` before building the next child, enabling later
-//     statements to resolve the name via `translate_term_in_scope`.
+//   - Immutable simple ident `let name = rhs` -> `Desugared::StmtBound(BoundVar)`
+//     The rhs is NOT reduced here; it is stored verbatim with the definition scope so
+//     BlockSugar can thread it before building the next child, enabling later statements
+//     to recompose the name through that captured scope.
 //   - Any other pat shape (mut, destructure, let-else, no-init) -> a named runtime
 //     statement refusal. It is not inert for value-contract composition: silently
 //     skipping it would let a later tail expression fake a guarded return.
 
-use syn::{Expr, Pat, Stmt};
+use syn::{Expr, Pat, Stmt, Type};
 
 use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("assign_sugar", recognize);
 
@@ -33,12 +33,15 @@ fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         // `let x = expr else { ... }` (let-else) is conditional control flow.
         return Some(Box::new(AssignSugar {
             name: None,
+            expected_type: None,
             raw_init: None,
             unsupported_boundary: Some("let-else binding".to_string()),
         }));
     }
     let raw_init = *init.expr.clone();
-    let name = simple_immutable_ident_name(&local.pat);
+    let binding = simple_immutable_ident_binding(&local.pat);
+    let name = binding.as_ref().map(|(name, _)| name.clone());
+    let expected_type = binding.as_ref().and_then(|(_, ty)| ty.map(type_key));
     let unsupported_boundary = name.is_none().then(|| {
         if pattern_is_mutable(&local.pat) {
             "mutable let binding".to_string()
@@ -47,7 +50,8 @@ fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         }
     });
     Some(Box::new(AssignSugar {
-        name,
+        name: binding.map(|(name, _)| name),
+        expected_type,
         raw_init: Some(raw_init),
         unsupported_boundary,
     }))
@@ -55,13 +59,16 @@ fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 
 /// Returns the ident name if the pattern is a simple immutable binding (`let name = ...`),
 /// None for mutable / complex / type-annotated-non-ident patterns.
-fn simple_immutable_ident_name(pat: &Pat) -> Option<String> {
+fn simple_immutable_ident_binding(pat: &Pat) -> Option<(String, Option<&Type>)> {
     match pat {
         Pat::Ident(id) if id.mutability.is_none() && id.by_ref.is_none() && id.subpat.is_none() => {
-            Some(id.ident.to_string())
+            Some((id.ident.to_string(), None))
         }
         // `let name: Type = rhs` -- strip the type annotation and check the inner pattern.
-        Pat::Type(t) => simple_immutable_ident_name(&t.pat),
+        Pat::Type(t) => {
+            let (name, _) = simple_immutable_ident_binding(&t.pat)?;
+            Some((name, Some(t.ty.as_ref())))
+        }
         _ => None,
     }
 }
@@ -89,6 +96,7 @@ fn pattern_is_mutable(pat: &Pat) -> bool {
 struct AssignSugar {
     /// `Some(name)` for an immutable simple-ident binding, `None` for inert.
     name: Option<String>,
+    expected_type: Option<String>,
     /// The raw initializer expression when `name` is `Some`.
     /// Field NOT named `rhs` to stay clear of the build-script banned-field-name list.
     raw_init: Option<Expr>,
@@ -96,12 +104,15 @@ struct AssignSugar {
 }
 
 impl Sugar for AssignSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match (&self.name, &self.raw_init) {
-            (Some(name), Some(raw_init)) => Outcome::Complete(Desugared::StmtBound {
-                name: name.clone(),
-                rhs: raw_init.clone(),
-            }),
+            (Some(name), Some(raw_init)) => {
+                Outcome::Complete(Desugared::StmtBound(ctx.scope.bound_var_for_definition(
+                    name,
+                    raw_init.clone(),
+                    self.expected_type.clone(),
+                )))
+            }
             _ => Outcome::Incomplete(Effect::RuntimeExprStmt {
                 boundary: self
                     .unsupported_boundary

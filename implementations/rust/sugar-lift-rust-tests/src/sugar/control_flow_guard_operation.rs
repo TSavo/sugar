@@ -174,7 +174,7 @@ fn desugared_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
         Desugared::StmtSupport => "StmtSupport",
-        Desugared::StmtBound { .. } => "StmtBound",
+        Desugared::StmtBound(_) => "StmtBound",
         Desugared::StmtReturn(_) => "StmtReturn",
         Desugared::StmtGuarded(_) => "StmtGuarded",
         Desugared::StmtBlock { .. } => "StmtBlock",

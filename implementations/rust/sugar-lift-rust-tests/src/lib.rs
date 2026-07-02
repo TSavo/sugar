@@ -47,6 +47,7 @@ pub mod sugar {
     pub mod bool_predicate;
     pub mod bound;
     pub mod bound_path;
+    pub mod bound_var;
     pub mod bv_binop;
     pub mod call;
     pub mod callsite;
@@ -2110,7 +2111,7 @@ fn source_assertion_entries_in_stmts(
         }
 
         if let Stmt::Local(local) = stmt {
-            record_simple_value_binding(&mut temporal_scope, local);
+            record_simple_value_binding_legacy_projection(&mut temporal_scope, local);
             if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
                 record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
             }
@@ -4697,14 +4698,16 @@ pub(crate) struct TemporalScope {
     /// literals are captured (a non-literal element omits the binding, so the
     /// quantifier path declines rather than over-claims).
     literal_arrays: BTreeMap<String, Vec<Expr>>,
-    /// In-scope simple `let <id> = <init>;` initializer EXPRS for this block, owned.
-    /// Binding-aware sugars and value resolvers use this map to recurse through the
-    /// initializer in effect at the reference's program point. Resolution is gated on
-    /// the mutability of THIS CURRENT binding (a `let mut` binding could be reassigned,
-    /// so its later value is not the written init -- such a binding is NOT resolved).
-    /// EXACT-OR-BAIL: an absent / unresolvable binding makes the caller decline rather
-    /// than over-claim.
-    let_bindings: BTreeMap<String, Expr>,
+    /// In-scope simple `let <id> = <init>;` aliases for this block, owned. A BoundVar
+    /// preserves both the written RHS source and the definition-scope snapshot. Legacy
+    /// expression readers use its compatibility projection; new algebra readers
+    /// recompose the source against the captured definition scope.
+    ///
+    /// Resolution is gated on the mutability of THIS CURRENT binding (a `let mut`
+    /// binding could be reassigned, so its later value is not the written init -- such
+    /// a binding is NOT resolved). EXACT-OR-BAIL: an absent / unresolvable binding makes
+    /// the caller decline rather than over-claim.
+    let_bindings: BTreeMap<String, sugar::bound_var::BoundVar>,
     /// The subset of `let_bindings` whose currently in-scope binding was declared
     /// `let mut`. This is deliberately binding-local, not name-global: a later shadow
     /// `let mut x` must not poison an earlier immutable `let x` at a prior source
@@ -4987,7 +4990,7 @@ impl TemporalScope {
                 .let_bindings
                 .iter()
                 .filter(|(name, _)| parent.stable_let_binding_for_term(name).is_some())
-                .map(|(name, expr)| (name.clone(), expr.clone())),
+                .map(|(name, bound)| (name.clone(), bound.clone())),
         );
         self.mutable_let_bindings.extend(
             parent
@@ -5017,9 +5020,27 @@ impl TemporalScope {
         self
     }
 
-    /// The `let`-bound initializer expr for `name` in this scope, or `None`. Used by
-    /// the closed `try_fold` evaluator to resolve a bound closure / receiver chain.
+    fn let_expr_bindings(&self) -> ExprBindings {
+        self.let_bindings
+            .iter()
+            .filter_map(|(name, bound)| {
+                bound
+                    .stable_projected_source()
+                    .map(|expr| (name.clone(), expr.clone()))
+            })
+            .collect()
+    }
+
+    /// The legacy projected `let`-bound initializer expr for `name` in this scope,
+    /// or `None`. Used by older closed evaluators to resolve a bound closure / receiver
+    /// chain while they are still expression-projection based.
     fn let_binding(&self, name: &str) -> Option<&Expr> {
+        self.let_bindings
+            .get(name)
+            .and_then(|bound| bound.stable_projected_source())
+    }
+
+    fn bound_var(&self, name: &str) -> Option<&sugar::bound_var::BoundVar> {
         self.let_bindings.get(name)
     }
 
@@ -5036,6 +5057,24 @@ impl TemporalScope {
                 .filter(|init| stable_iterator_next_unwrap_snapshot(init));
         }
         self.let_binding(name)
+    }
+
+    pub(crate) fn stable_bound_var_for_term(
+        &self,
+        name: &str,
+    ) -> Option<&sugar::bound_var::BoundVar> {
+        if self.mutable_let_bindings.contains(name)
+            || self.ambiguous_contains(name)
+            || self.plan.interior_mut.contains(name)
+        {
+            return None;
+        }
+        if self.plan.iterators.contains(name) {
+            return self
+                .bound_var(name)
+                .filter(|bound| stable_iterator_next_unwrap_snapshot(bound.projected_source()));
+        }
+        self.bound_var(name)
     }
 
     pub(crate) fn let_binding_expected_type(&self, name: &str) -> Option<&str> {
@@ -5167,11 +5206,32 @@ impl TemporalScope {
     /// evaluator gates resolution on the current binding's mutability (a mutable
     /// binding's later value is not its written init).
     fn record_let_binding(&mut self, name: &str, init: Expr) {
-        self.record_let_value_binding(name, init, false);
+        self.record_let_value_binding(name, init, false, None);
     }
 
-    fn record_let_value_binding(&mut self, name: &str, init: Expr, is_mutable: bool) {
-        let rewritten = substitute_expr(&init, &self.let_bindings);
+    fn record_let_value_binding(
+        &mut self,
+        name: &str,
+        init: Expr,
+        is_mutable: bool,
+        expected_ty: Option<&Type>,
+    ) {
+        let expected_type = expected_ty.map(type_key);
+        let bound = self.bound_var_for_definition(name, init, expected_type);
+        self.record_bound_var_value(bound, is_mutable);
+        if let Some(ty) = expected_ty {
+            self.record_let_binding_expected_type(name, ty);
+        }
+    }
+
+    fn record_legacy_let_value_binding(
+        &mut self,
+        name: &str,
+        init: Expr,
+        is_mutable: bool,
+        expected_ty: Option<&Type>,
+    ) {
+        let rewritten = substitute_expr(&init, &self.let_expr_bindings());
         let temporal_bindings = self.temporal_rewrite.borrow().expr_bindings();
         let rewritten = substitute_expr(&rewritten, &temporal_bindings);
         if names_referenced_in_expr(&rewritten).contains(name) {
@@ -5179,26 +5239,80 @@ impl TemporalScope {
                 target: "sugar_lift_rust_tests::temporal_scope",
                 binding = name,
                 init = %token_key(&rewritten),
-                "declined self-referential stable let binding"
+                "declined self-referential stable let binding for source assertion contract"
             );
-            self.let_bindings.remove(name);
-            self.mutable_let_bindings.remove(name);
-            self.let_binding_types.remove(name);
-            self.term_bindings.remove(name);
-            self.runtime_destructured_locals.remove(name);
-            self.unresolved_destructured_locals.remove(name);
+            self.clear_let_binding(name);
             return;
         }
+        let expected_type = expected_ty.map(type_key);
+        let bound = sugar::bound_var::BoundVar::new(
+            name,
+            init,
+            rewritten,
+            true,
+            expected_type,
+            self.clone(),
+        );
+        self.record_bound_var_value(bound, is_mutable);
+        if let Some(ty) = expected_ty {
+            self.record_let_binding_expected_type(name, ty);
+        }
+    }
+
+    pub(crate) fn bound_var_for_definition(
+        &self,
+        name: &str,
+        init: Expr,
+        expected_type: Option<String>,
+    ) -> sugar::bound_var::BoundVar {
+        let rewritten = substitute_expr(&init, &self.let_expr_bindings());
+        let temporal_bindings = self.temporal_rewrite.borrow().expr_bindings();
+        let rewritten = substitute_expr(&rewritten, &temporal_bindings);
+        let projection_is_stable = !names_referenced_in_expr(&rewritten).contains(name);
+        sugar::bound_var::BoundVar::new(
+            name,
+            init,
+            rewritten,
+            projection_is_stable,
+            expected_type,
+            self.clone(),
+        )
+    }
+
+    pub(crate) fn record_bound_var(&mut self, bound: sugar::bound_var::BoundVar) {
+        self.record_bound_var_value(bound, false);
+    }
+
+    fn record_bound_var_value(&mut self, bound: sugar::bound_var::BoundVar, is_mutable: bool) {
+        let name = bound.name().to_string();
+        if bound.stable_projected_source().is_none() {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::temporal_scope",
+                binding = name.as_str(),
+                init = %token_key(bound.projected_source()),
+                "recorded BoundVar with self-referential legacy projection"
+            );
+        }
+        self.clear_non_expr_binding_state(&name);
+        if is_mutable {
+            self.mutable_let_bindings.insert(name.clone());
+        } else {
+            self.mutable_let_bindings.remove(&name);
+        }
+        self.let_bindings.insert(name, bound);
+    }
+
+    fn clear_let_binding(&mut self, name: &str) {
+        self.let_bindings.remove(name);
+        self.mutable_let_bindings.remove(name);
+        self.clear_non_expr_binding_state(name);
+    }
+
+    fn clear_non_expr_binding_state(&mut self, name: &str) {
         self.term_bindings.remove(name);
         self.let_binding_types.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.remove(name);
-        if is_mutable {
-            self.mutable_let_bindings.insert(name.to_string());
-        } else {
-            self.mutable_let_bindings.remove(name);
-        }
-        self.let_bindings.insert(name.to_string(), rewritten);
     }
 
     fn record_let_binding_expected_type(&mut self, name: &str, ty: &Type) {
@@ -5336,7 +5450,9 @@ impl TemporalScope {
     /// factory's FormatSugar hooks build the IMMUTABLE-only `stable` map from this,
     /// mirroring the inline arms' `scope.let_bindings.iter().filter(..)`.
     pub(crate) fn let_bindings_iter(&self) -> impl Iterator<Item = (&String, &Expr)> {
-        self.let_bindings.iter()
+        self.let_bindings
+            .iter()
+            .filter_map(|(name, bound)| bound.stable_projected_source().map(|expr| (name, expr)))
     }
 
     pub(crate) fn let_binding_for_audit(&self, name: &str) -> Option<&Expr> {
@@ -8672,10 +8788,10 @@ pub(crate) enum Desugared {
     /// Mirrors Python `SupportValue`.
     StmtSupport,
     /// An immutable `let name = rhs` binding. The rhs is NOT reduced here; it is
-    /// threaded into the `TemporalScope` so later statements in the same block can
-    /// resolve the name via `record_let_binding`.
+    /// threaded into the `TemporalScope` as a BoundVar, preserving the written source
+    /// and the definition-scope snapshot used when the name is later recomposed.
     /// Mirrors Python `BoundVar(name, rhs_source)`.
-    StmtBound { name: String, rhs: Expr },
+    StmtBound(sugar::bound_var::BoundVar),
     /// A return statement or tail expression reduced to a single term.
     /// Mirrors Python `ReturnValue(term)`.
     StmtReturn(Rc<Term>),
@@ -8708,7 +8824,7 @@ impl Desugared {
             Desugared::TupleComponents(_) => None,
             // Statement-composition floor variants never flow into seq contexts.
             Desugared::StmtSupport
-            | Desugared::StmtBound { .. }
+            | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
@@ -8733,7 +8849,7 @@ impl Desugared {
             Desugared::TupleComponents(_) => None,
             // Statement-composition floor variants never flow into term contexts.
             Desugared::StmtSupport
-            | Desugared::StmtBound { .. }
+            | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
@@ -8752,7 +8868,7 @@ impl Desugared {
             | Desugared::FormatValue(_) => None,
             // Statement-composition floor variants never flow into tuple contexts.
             Desugared::StmtSupport
-            | Desugared::StmtBound { .. }
+            | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => None,
@@ -8789,7 +8905,7 @@ impl Desugared {
             Desugared::TupleComponents(_) => return None,
             // Statement-composition floor variants never carry a string literal.
             Desugared::StmtSupport
-            | Desugared::StmtBound { .. }
+            | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
             | Desugared::StmtBlock { .. } => return None,
@@ -9568,16 +9684,31 @@ fn record_simple_value_binding(scope: &mut TemporalScope, local: &syn::Local) {
     let Some(name) = let_simple_value_binding(&local.pat) else {
         return;
     };
+    let expected_ty = let_simple_value_binding_type(&local.pat)
+        .and_then(|(typed_name, ty)| (typed_name == name).then_some(ty));
     scope.record_let_value_binding(
         &name,
         (*init.expr).clone(),
         let_simple_value_binding_is_mutable(&local.pat),
+        expected_ty,
     );
-    if let Some((typed_name, ty)) = let_simple_value_binding_type(&local.pat) {
-        if typed_name == name {
-            scope.record_let_binding_expected_type(&name, ty);
-        }
-    }
+}
+
+fn record_simple_value_binding_legacy_projection(scope: &mut TemporalScope, local: &syn::Local) {
+    let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+        return;
+    };
+    let Some(name) = let_simple_value_binding(&local.pat) else {
+        return;
+    };
+    let expected_ty = let_simple_value_binding_type(&local.pat)
+        .and_then(|(typed_name, ty)| (typed_name == name).then_some(ty));
+    scope.record_legacy_let_value_binding(
+        &name,
+        (*init.expr).clone(),
+        let_simple_value_binding_is_mutable(&local.pat),
+        expected_ty,
+    );
 }
 
 /// The closed scalar-literal elements of an array-literal expression (`[1, 2, 3]`)
@@ -10648,7 +10779,7 @@ fn emit_desugared(
         // Statement-composition floor variants are not emitted here; BlockSugar
         // consumes them internally and emits a Constraints when it closes.
         Desugared::StmtSupport
-        | Desugared::StmtBound { .. }
+        | Desugared::StmtBound(_)
         | Desugared::StmtReturn(_)
         | Desugared::StmtGuarded(_)
         | Desugared::StmtBlock { .. } => false,
@@ -21450,6 +21581,33 @@ fn t() {
         assert!(
             scope.stable_let_binding_for_term("read1").is_none(),
             "a shadowed binding that still references its own name must not become a stable binding"
+        );
+    }
+
+    #[test]
+    fn shadowed_bound_var_preserves_source_and_definition_scope() {
+        let mut scope = TemporalScope::new("shadowed_bound_var", TemporalPlan::default());
+        scope.record_let_binding("x", syn::parse_str("5").expect("old x"));
+        scope.record_let_binding("x", syn::parse_str("x + 1").expect("shadowed x"));
+
+        let bound = scope
+            .stable_bound_var_for_term("x")
+            .expect("shadowed x stays a stable bound variable");
+
+        assert_eq!(
+            token_key(bound.source()),
+            "x + 1",
+            "BoundVar keeps the written RHS source instead of eager-substituting the old x"
+        );
+        assert_eq!(
+            token_key(
+                bound
+                    .definition_scope()
+                    .stable_let_binding_for_term("x")
+                    .expect("definition scope keeps old x")
+            ),
+            "5",
+            "self-referential rebinding must close over the pre-binding scope"
         );
     }
 

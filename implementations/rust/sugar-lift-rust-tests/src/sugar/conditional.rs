@@ -480,10 +480,7 @@ fn term_for_guard_operand(
 
 fn branch_stmts_with_stable_bindings(branch_stmts: &[Stmt], ctx: &SugarCtx) -> Vec<Stmt> {
     let mut stmts = Vec::new();
-    for (name, init) in &ctx.scope.let_bindings {
-        if ctx.scope.stable_let_binding_for_term(name).is_none() {
-            continue;
-        }
+    for (name, init) in ctx.scope.let_bindings_iter() {
         let ident = format_ident!("{name}");
         let init = init.clone();
         stmts.push(syn::parse_quote!(let #ident = #init;));
