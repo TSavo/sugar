@@ -148,6 +148,7 @@ class Box:
 
 
 def test_attribute_assign_projects_to_setattr_dunder_floor() -> None:
+    # AttributeAssignSugar owns `obj.value = ...` and dispatches to __setattr__.
     source = """\
 class Box:
     def __setattr__(self, name, value):
@@ -167,6 +168,7 @@ class Box:
 
 
 def test_attribute_delete_projects_to_delattr_dunder_floor() -> None:
+    # AttributeDeleteSugar owns `del obj.value` and dispatches to __delattr__.
     source = """\
 class Box:
     def __delattr__(self, name):
