@@ -313,6 +313,8 @@ def _expr(term: Json) -> ast.expr:
             keys.append(None if _is_none_const(key) else _expr(key))
             values.append(_expr(entry_args[1]))
         return ast.Dict(keys=keys, values=values)
+    if name == "python:fstring":
+        return ast.JoinedStr(values=[_fstring_part(part) for part in args])
     if name == "python:walrus":
         return ast.NamedExpr(target=_walrus_target(args[0]), value=_expr(args[1]))
     raise ValueError(f"unsupported python operation in expression position: {name}")
@@ -386,6 +388,43 @@ def _except_handler(term: Json) -> ast.ExceptHandler:
         name=None if _is_none_const(args[1]) else _const_string(args[1]),
         body=_stmt_list(args[2]) or [ast.Pass()],
     )
+
+
+def _fstring_part(term: Json) -> ast.Constant | ast.FormattedValue:
+    if _is_string_const(term):
+        return ast.Constant(value=_const_string(term))
+    if _name(term) != "python:fstring_value":
+        raise ValueError(f"expected f-string part: {term!r}")
+    args = term.get("args", [])
+    if len(args) != 3:
+        raise ValueError(
+            f"expected python:fstring_value(value, conversion, format): {term!r}"
+        )
+    return ast.FormattedValue(
+        value=_expr(args[0]),
+        conversion=_fstring_conversion(args[1]),
+        format_spec=_fstring_format_spec(args[2]),
+    )
+
+
+def _fstring_conversion(term: Json) -> int:
+    if _is_none_const(term):
+        return -1
+    conversion = _const_string(term)
+    if conversion not in {"a", "r", "s"}:
+        raise ValueError(f"unsupported f-string conversion: {conversion}")
+    return ord(conversion)
+
+
+def _fstring_format_spec(term: Json) -> ast.JoinedStr | None:
+    if _is_none_const(term):
+        return None
+    format_spec = _expr(term)
+    if not isinstance(format_spec, ast.JoinedStr):
+        raise ValueError(
+            f"f-string format spec is not JoinedStr: {ast.dump(format_spec)}"
+        )
+    return format_spec
 
 
 def _walrus_target(term: Json) -> ast.Name:

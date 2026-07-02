@@ -328,6 +328,26 @@ def _with_stmt(body: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:with", "args": [body]}
 
 
+def _fstring(*parts: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:fstring", "args": list(parts)}
+
+
+def _fstring_value(
+    value: dict[str, object],
+    conversion: dict[str, object] | None = None,
+    format_spec: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:fstring_value",
+        "args": [
+            value,
+            _none_const() if conversion is None else conversion,
+            _none_const() if format_spec is None else format_spec,
+        ],
+    }
+
+
 def _compare(
     op: str, left: dict[str, object], right: dict[str, object]
 ) -> dict[str, object]:
@@ -1090,6 +1110,90 @@ def test_empty_dict_and_spread_entry_roundtrip_to_distinct_terms() -> None:
     assert empty_body == _return(empty)
     assert spread_body == _return(spread)
     assert cid_of_json(empty_body) != cid_of_json(spread_body)
+
+
+def test_plain_fstring_with_one_interpolation_lifts_to_fstring_term() -> None:
+    result = lift_source('def f(x):\n    return f"result: {x}"\n', "fstring_plain.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _fstring(_str_const("result: "), _fstring_value(_var("x")))
+    )
+
+
+def test_fstring_multi_part_preserves_constant_and_value_order() -> None:
+    source = 'def f(name, count):\n    return f"{name} has {count} items"\n'
+
+    result = lift_source(source, "fstring_multi.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _fstring(
+            _fstring_value(_var("name")),
+            _str_const(" has "),
+            _fstring_value(_var("count")),
+            _str_const(" items"),
+        )
+    )
+
+
+def test_fstring_conversion_is_carried_not_dropped() -> None:
+    result = lift_source('def f(x):\n    return f"value={x!r}"\n', "fstring_repr.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _fstring(_str_const("value="), _fstring_value(_var("x"), _str_const("r")))
+    )
+
+
+def test_fstring_format_spec_is_carried_as_nested_fstring() -> None:
+    result = lift_source('def f(x):\n    return f"{x:02x}"\n', "fstring_format.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _fstring(_fstring_value(_var("x"), format_spec=_fstring(_str_const("02x"))))
+    )
+
+
+def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
+    source = 'def f(x):\n    return f"outer {f\'inner {x}\'}"\n'
+
+    result = lift_source(source, "fstring_nested.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _fstring(
+            _str_const("outer "),
+            _fstring_value(
+                _fstring(_str_const("inner "), _fstring_value(_var("x")))
+            ),
+        )
+    )
+
+
+def test_fstring_floor_discriminates_other_unhandled_expression_kinds() -> None:
+    result = lift_source("def f(xs):\n    return (x for x in xs)\n", "generator.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unhandled expression kind: GeneratorExp"
+    ]
+
+
+def test_fstring_roundtrip_is_structurally_stable() -> None:
+    term = _fstring(
+        _str_const("value="),
+        _fstring_value(_var("x"), _str_const("r")),
+        _str_const(" hex="),
+        _fstring_value(_var("y"), format_spec=_fstring(_str_const("02x"))),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["x", "y"])
+    relifted = lift_source(compiled, "roundtrip_fstring.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
 
 
 def test_bare_assert_lifts_to_assert_statement_with_assertion_error_locus() -> None:
