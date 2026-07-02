@@ -115,7 +115,6 @@ use std::collections::HashSet;
 
 use serde_json::Value as Json;
 use sugar_ir_types::IrTerm;
-use sugar_proof_envelope;
 
 use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
@@ -183,8 +182,7 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
         Some(b) => b,
         None => return false, // no bridge → no body contract → wp will refuse
     };
-    let target_cid =
-        sugar_proof_envelope::member_field(bridge, "targetContractCid").and_then(|v| v.as_str());
+    let target_cid = bridge.field("targetContractCid").and_then(|v| v.as_str());
     let target_cid = match target_cid {
         Some(c) => match MementoCid::try_parse(c.to_string()) {
             Ok(cid) => cid,
@@ -426,7 +424,7 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid("double-pure"), contract_env);
+        pool.insert_unanchored_for_tests(cid("double-pure"), contract_env);
         pool.insert_bridge_by_symbol("double", cid("double-bridge"), bridge_env);
         pool
     }
@@ -469,7 +467,7 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid("cell-get-impure"), contract_env);
+        pool.insert_unanchored_for_tests(cid("cell-get-impure"), contract_env);
         pool.insert_bridge_by_symbol("cell_get", cid("cell-get-bridge"), bridge_env);
         pool
     }
@@ -511,7 +509,7 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid("mystery-unknown"), contract_env);
+        pool.insert_unanchored_for_tests(cid("mystery-unknown"), contract_env);
         pool.insert_bridge_by_symbol("mystery", cid("mystery-bridge"), bridge_env);
         pool
     }
@@ -734,8 +732,7 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert(cid("unwrap-pre-bearing"), contract_env);
+        pool.insert_unanchored_for_tests(cid("unwrap-pre-bearing"), contract_env);
         pool.insert_bridge_by_symbol("unwrap", cid("unwrap-bridge"), bridge_env);
 
         let c = call("unwrap", vec![var_term("opt")]);

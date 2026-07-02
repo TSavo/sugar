@@ -103,9 +103,8 @@ use libsugar::wp::{
     self, value_expr_of_term, OpContractInfo, OpContractResolver, SlotInfo, WpError,
 };
 use sugar_ir_types::{IrFormula, IrTerm};
-use sugar_proof_envelope;
 
-use crate::types::{CallSite, MemberKind, MementoCid, MementoPool};
+use crate::types::{CallSite, MemberKind, MementoCid, MementoPool, StoredMember};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -141,13 +140,13 @@ pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(target_cid) = cs.bridge_target_cid.as_ref() else {
         return false;
     };
-    let Some(env) = pool.mementos.get(target_cid) else {
+    let Some(member) = pool.mementos.get(target_cid) else {
         return false;
     };
     if !pool.member_is_kind(target_cid, MemberKind::Contract) {
         return false;
     }
-    let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
+    let Some(body) = pool.resolve_contract_body(member).filter(|v| v.is_object()) else {
         return false;
     };
     match body.get("pre") {
@@ -167,8 +166,9 @@ fn pre_is_trivial(pre: &Json) -> bool {
         && pre.get("name").and_then(|v| v.as_str()) == Some("true")
 }
 
-fn memento_cid_field(envelope: &Json, field: &str) -> Option<MementoCid> {
-    sugar_proof_envelope::member_field(envelope, field)
+fn memento_cid_field(member: &StoredMember, field: &str) -> Option<MementoCid> {
+    member
+        .field(field)
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .and_then(|s| MementoCid::try_parse(s.to_string()).ok())
@@ -205,12 +205,12 @@ impl<'a> CatalogResolver<'a> {
     fn target_contract_body(&self, op_name: &str) -> Option<Json> {
         let bridge = self.pool.bridge_by_symbol(op_name)?;
         let target_cid = memento_cid_field(bridge, "targetContractCid")?;
-        let env = self.pool.mementos.get(&target_cid)?;
+        let member = self.pool.mementos.get(&target_cid)?;
         if !self.pool.member_is_kind(&target_cid, MemberKind::Contract) {
             return None;
         }
         self.pool
-            .resolve_contract_body(env)
+            .resolve_contract_body(member)
             .filter(|v| v.is_object())
     }
 }
@@ -790,7 +790,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
     // NO fallback to the per-symbol map for panic sites: a same-symbol totality
     // from elsewhere must never discharge a panic obligation it does not govern.
     // Non-panic sites keep the per-symbol lookup byte-for-byte.
-    let bridge: &Json = if cs.panic_site {
+    let bridge: &StoredMember = if cs.panic_site {
         let producer_file = cs.producer_file.as_deref().or(cs.file.as_deref());
         let producer_line = cs.producer_line.or(cs.line);
         let producer_symbol = cs.producer_symbol.as_deref().unwrap_or(ctor_name);
@@ -851,7 +851,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         return None;
     };
 
-    let Some(env) = pool.mementos.get(&target_cid) else {
+    let Some(member) = pool.mementos.get(&target_cid) else {
         gdbg!("REJECT cond2: target contract {target_cid} not in pool.mementos");
         return None;
     };
@@ -862,7 +862,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         );
         return None;
     }
-    let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
+    let Some(body) = pool.resolve_contract_body(member).filter(|v| v.is_object()) else {
         gdbg!("REJECT cond2: target {target_cid} has no object body");
         return None;
     };
@@ -1378,7 +1378,7 @@ mod routing_predicate_tests {
 
     fn pool_with(cid: &str, env: Json) -> MementoPool {
         let mut pool = MementoPool::default();
-        pool.mementos.insert(
+        pool.insert_unanchored_for_tests(
             MementoCid::try_parse(cid.to_string()).expect("test CID must parse"),
             env,
         );
@@ -1530,7 +1530,7 @@ mod callee_post_guard_fact_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(parse_cid(contract_cid), contract_env);
+        pool.insert_unanchored_for_tests(parse_cid(contract_cid), contract_env);
         pool.insert_bridge_by_symbol(
             bridge_symbol,
             cid(&format!("{bridge_symbol}-bridge")),
@@ -1586,8 +1586,7 @@ mod callee_post_guard_fact_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert(cid(GENERIC_CONTRACT_LABEL), contract_env);
+        pool.insert_unanchored_for_tests(cid(GENERIC_CONTRACT_LABEL), contract_env);
         pool.insert_bridge_by_symbol(
             GENERIC_BRIDGE_SYMBOL,
             cid("generic-result-bridge"),
@@ -1889,7 +1888,7 @@ mod callee_post_guard_fact_tests {
         // refusal seen in the imported libsugar regression.
         let body_contract_cid = cid_string("global-method-expect-body");
         let mut pool = MementoPool::default();
-        pool.mementos.insert(
+        pool.insert_unanchored_for_tests(
             parse_cid(&body_contract_cid),
             json!({
                 "envelope": true,
@@ -2024,7 +2023,7 @@ mod eq_both_calls_discharge_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid(DOUBLE_CID_LABEL), contract_env);
+        pool.insert_unanchored_for_tests(cid(DOUBLE_CID_LABEL), contract_env);
         pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, cid("double-bridge"), bridge_env);
         pool
     }
@@ -2230,8 +2229,7 @@ mod eq_both_calls_discharge_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert(cid("opaque-body-contract"), contract_env);
+        pool.insert_unanchored_for_tests(cid("opaque-body-contract"), contract_env);
         pool.insert_bridge_by_symbol(opaque_symbol, cid("opaque-bridge"), bridge_env);
 
         let cs = CallSite {
@@ -2397,10 +2395,9 @@ mod nested_call_reduce_in_place_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid(DOUBLE_CID_LABEL), double_contract);
+        pool.insert_unanchored_for_tests(cid(DOUBLE_CID_LABEL), double_contract);
         pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, cid("double-bridge"), double_bridge);
-        pool.mementos
-            .insert(cid(PRE_BEARING_CID_LABEL), pre_bearing_contract);
+        pool.insert_unanchored_for_tests(cid(PRE_BEARING_CID_LABEL), pre_bearing_contract);
         pool.insert_bridge_by_symbol(
             PRE_BEARING_SYMBOL,
             cid("pre-bearing-bridge"),

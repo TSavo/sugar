@@ -1683,14 +1683,16 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         let Some(bridge_env) = pool.mementos.get(bridge_cid) else {
             continue;
         };
-        let source_symbol = sugar_proof_envelope::member_field(bridge_env, "sourceSymbol")
+        let source_symbol = bridge_env
+            .field("sourceSymbol")
             .and_then(|v| v.as_str())
             .unwrap_or(indexed_symbol)
             .to_string();
         if source_symbol.is_empty() {
             continue;
         }
-        let Some(target_cid) = sugar_proof_envelope::member_field(bridge_env, "targetContractCid")
+        let Some(target_cid) = bridge_env
+            .field("targetContractCid")
             .and_then(|v| v.as_str())
             .and_then(|raw| MementoCid::try_parse(raw.to_string()).ok())
         else {
@@ -1733,7 +1735,8 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             .filter(|s| !s.is_empty())
             .unwrap_or("out")
             .to_string();
-        let target_proof_cid = sugar_proof_envelope::member_field(bridge_env, "targetProofCid")
+        let target_proof_cid = bridge_env
+            .field("targetProofCid")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
@@ -2594,7 +2597,7 @@ mod tests {
         );
 
         let mut pool = MementoPool::default();
-        pool.mementos.insert(
+        pool.insert_unanchored_for_tests(
             test_cid(&vendor_cid),
             json!({
                 "evidence": {

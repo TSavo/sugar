@@ -2,20 +2,21 @@
 //
 // Pipeline types. Mirrors implementations/cpp/.../verifier/types.hpp.
 //
-// Shape compatibility: envelope accessors are provided by
-// sugar_proof_envelope::{member_kind, member_body, member_field}, which
-// paper over the v1.1 flat / v1.2 layered / lean header/body shapes so
-// the rest of the verifier does not have to branch.
+// Shape compatibility is normalized at the proof-envelope boundary. The pool
+// stores typed member views, not raw member envelope JSON trees.
 
 use std::collections::BTreeMap;
 
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
 use serde::Serialize;
 use serde_json::Value as Json;
-pub use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid};
+pub use sugar_proof_envelope::{
+    AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, StoredMember,
+};
 
-fn contract_body_pointer(envelope: &Json) -> Option<ContractBodyCid> {
-    sugar_proof_envelope::member_field(envelope, "bodyCid")
+fn contract_body_pointer(member: &StoredMember) -> Option<ContractBodyCid> {
+    member
+        .field("bodyCid")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .and_then(|s| ContractBodyCid::try_parse(s.to_string()).ok())
@@ -43,10 +44,10 @@ pub struct EffectSiteAnnotation {
 
 #[derive(Debug, Default, Clone)]
 pub struct MementoPool {
-    /// CID -> the canonical-bytes-decoded memento envelope (as JSON).
+    /// CID -> normalized typed memento storage.
     /// The memento IS the verification. To verify something is to find
     /// its memento in this map.
-    pub mementos: BTreeMap<MementoCid, Json>,
+    pub mementos: BTreeMap<MementoCid, StoredMember>,
     /// Atom CID -> flat atom bytes from the proof catalog.
     ///
     /// Leaves live here exactly once. Body graphs and mementos point to these
@@ -176,8 +177,8 @@ impl MementoPool {
     /// content hash. The memento IS the verification; if found, the
     /// formula is verified. No solver is invoked.
     ///
-    /// Returns the memento envelope that verifies this formula.
-    pub fn verify_by_hash(&self, formula_cid: &str) -> Option<&Json> {
+    /// Returns the memento that verifies this formula.
+    pub fn verify_by_hash(&self, formula_cid: &str) -> Option<&StoredMember> {
         self.formula_to_memento
             .get(formula_cid)
             .and_then(|memento_cid| self.mementos.get(memento_cid))
@@ -185,7 +186,7 @@ impl MementoPool {
 
     /// Compute the CID for a formula JSON node, then look it up.
     /// The canonicalization + hash IS the boundary between systems.
-    pub fn verify(&self, formula: &Json) -> Option<&Json> {
+    pub fn verify(&self, formula: &Json) -> Option<&StoredMember> {
         let cid = compute_formula_cid(formula);
         self.verify_by_hash(&cid)
     }
@@ -198,11 +199,11 @@ impl MementoPool {
         &self,
         cid: &MementoCid,
     ) -> Result<MemberKind, sugar_proof_envelope::MemberError> {
-        let envelope = self
+        let member = self
             .mementos
             .get(cid)
             .ok_or_else(|| sugar_proof_envelope::MemberError::UnknownCid(cid.to_string()))?;
-        sugar_proof_envelope::member_kind(envelope)
+        Ok(member.kind())
     }
 
     pub fn member_is_kind(&self, cid: &MementoCid, kind: MemberKind) -> bool {
@@ -214,53 +215,52 @@ impl MementoPool {
     /// `pool.member_field(cid, "postHash")` instead of
     /// `sugar_proof_envelope::member_field(pool.mementos.get(cid), "postHash")`.
     pub fn member_field<'a>(&'a self, cid: &MementoCid, name: &str) -> Option<&'a Json> {
-        self.mementos
-            .get(cid)
-            .and_then(|env| sugar_proof_envelope::member_field(env, name))
+        self.mementos.get(cid).and_then(|member| member.field(name))
     }
 
-    /// Return the verified bridge envelope indexed for a source symbol.
-    pub fn bridge_by_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a Json> {
+    /// Return the verified bridge member indexed for a source symbol.
+    pub fn bridge_by_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a StoredMember> {
         self.bridges_by_symbol
             .get(source_symbol)
             .and_then(|memento_cid| self.mementos.get(memento_cid))
     }
 
-    /// Return the verified bridge envelope indexed for a callsite-scoped key.
+    /// Return the verified bridge member indexed for a callsite-scoped key.
     pub fn bridge_by_callsite_key<'a>(
         &'a self,
         key: &(MementoCid, String, usize, String),
-    ) -> Option<&'a Json> {
+    ) -> Option<&'a StoredMember> {
         self.bridges_by_callsite
             .get(key)
             .and_then(|memento_cid| self.mementos.get(memento_cid))
     }
 
-    /// Insert a bridge envelope and index it by source symbol.
-    ///
-    /// Production loading validates member CIDs and signatures before calling
-    /// into the pool. This helper preserves the same storage shape for tests
-    /// and synthetic in-memory pools: the envelope is stored once in
-    /// `mementos`, and the bridge index stores only its CID.
+    /// Index an already-stored bridge member by source symbol.
     pub fn insert_bridge_by_symbol(
         &mut self,
         source_symbol: impl Into<String>,
         bridge_cid: MementoCid,
-        bridge_env: Json,
+        _bridge_env: Json,
     ) {
-        self.mementos.insert(bridge_cid.clone(), bridge_env);
+        #[cfg(test)]
+        if !self.mementos.contains_key(&bridge_cid) {
+            self.insert_unanchored_for_tests(bridge_cid.clone(), _bridge_env.clone());
+        }
         self.bridges_by_symbol
             .insert(source_symbol.into(), bridge_cid);
     }
 
-    /// Insert a bridge envelope and index it by exact callsite key.
+    /// Index an already-stored bridge member by exact callsite key.
     pub fn insert_bridge_by_callsite(
         &mut self,
         key: (MementoCid, String, usize, String),
         bridge_cid: MementoCid,
-        bridge_env: Json,
+        _bridge_env: Json,
     ) {
-        self.mementos.insert(bridge_cid.clone(), bridge_env);
+        #[cfg(test)]
+        if !self.mementos.contains_key(&bridge_cid) {
+            self.insert_unanchored_for_tests(bridge_cid.clone(), _bridge_env.clone());
+        }
         self.bridges_by_callsite.insert(key, bridge_cid);
     }
 
@@ -271,11 +271,9 @@ impl MementoPool {
     /// carries only binding/header metadata plus `bodyCid`. Callers that need
     /// semantic slots (`pre`, `post`, `inv`) must resolve through the pool so
     /// the graph, not legacy inline fields, is the source of truth.
-    pub fn resolve_contract_body(&self, envelope: &Json) -> Option<Json> {
-        let mut body = sugar_proof_envelope::member_body(envelope)?
-            .as_object()?
-            .clone();
-        if let Some(body_cid) = contract_body_pointer(envelope) {
+    pub fn resolve_contract_body(&self, member: &StoredMember) -> Option<Json> {
+        let mut body = member.body()?.as_object()?.clone();
+        if let Some(body_cid) = contract_body_pointer(member) {
             for (slot, formula) in self.resolve_body_formula_slots(&body_cid)? {
                 body.insert(slot, formula);
             }
@@ -309,24 +307,23 @@ impl MementoPool {
     ///
     /// This is the core of bridge enforcement: "does the publisher's
     /// post imply the consumer's pre?"
-    pub fn verify_implication(&self, antecedent_cid: &str, consequent_cid: &str) -> Option<&Json> {
+    pub fn verify_implication(
+        &self,
+        antecedent_cid: &str,
+        consequent_cid: &str,
+    ) -> Option<&StoredMember> {
         // The proof of `P → Q` is the implication memento that links them, not
         // the presence of P or Q in `formula_to_memento`. (P, the antecedent,
         // is no longer indexed there at all -- it is an assumption, not a
         // fact.) Scan for an implication memento with these exact endpoints.
         // Shape-agnostic: under v1.2 these references live in the
         // metadata; under v1.1 they live in evidence.body.
-        for envelope in self.mementos.values() {
-            if matches!(
-                sugar_proof_envelope::member_kind(envelope),
-                Ok(MemberKind::Implication)
-            ) {
-                let ant = sugar_proof_envelope::member_field(envelope, "antecedentHash")
-                    .and_then(|v| v.as_str());
-                let con = sugar_proof_envelope::member_field(envelope, "consequentHash")
-                    .and_then(|v| v.as_str());
+        for member in self.mementos.values() {
+            if member.kind() == MemberKind::Implication {
+                let ant = member.field("antecedentHash").and_then(|v| v.as_str());
+                let con = member.field("consequentHash").and_then(|v| v.as_str());
                 if ant == Some(antecedent_cid) && con == Some(consequent_cid) {
-                    return Some(envelope);
+                    return Some(member);
                 }
             }
         }
@@ -348,16 +345,11 @@ impl MementoPool {
         // Build implication graph adjacency list on-the-fly.
         // Shape-agnostic per the body/header accessors.
         let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for envelope in self.mementos.values() {
-            if matches!(
-                sugar_proof_envelope::member_kind(envelope),
-                Ok(MemberKind::Implication)
-            ) {
+        for member in self.mementos.values() {
+            if member.kind() == MemberKind::Implication {
                 if let (Some(ant), Some(con)) = (
-                    sugar_proof_envelope::member_field(envelope, "antecedentHash")
-                        .and_then(|v| v.as_str()),
-                    sugar_proof_envelope::member_field(envelope, "consequentHash")
-                        .and_then(|v| v.as_str()),
+                    member.field("antecedentHash").and_then(|v| v.as_str()),
+                    member.field("consequentHash").and_then(|v| v.as_str()),
                 ) {
                     graph
                         .entry(ant.to_string())
@@ -408,11 +400,7 @@ impl MementoPool {
         // 2. Direct implication
         if let Some(memento) = self.verify_implication(antecedent_cid, consequent_cid) {
             return ImplicationResult::ProvenDirect {
-                memento_cid: memento
-                    .get("cid")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string(),
+                memento_cid: memento.cid().to_string(),
             };
         }
 
@@ -431,16 +419,20 @@ impl MementoPool {
     /// indexing primitive and only accepts a member whose catalog key was
     /// re-derived from its contents and whose member signature has been checked.
     pub fn insert(&mut self, member: AnchoredMember) {
-        let (memento_cid, envelope) = member.into_parts();
-        self.insert_anchored_parts(memento_cid, envelope);
+        let (memento_cid, member) = member
+            .into_stored_member()
+            .expect("anchored member must carry a known member kind");
+        self.insert_anchored_parts(memento_cid, member);
     }
 
     #[cfg(test)]
     pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
-        self.insert_anchored_parts(memento_cid, envelope);
+        let member = StoredMember::from_envelope(memento_cid.clone(), &envelope)
+            .expect("test member must carry a known member kind");
+        self.insert_anchored_parts(memento_cid, member);
     }
 
-    fn insert_anchored_parts(&mut self, memento_cid: MementoCid, envelope: Json) {
+    fn insert_anchored_parts(&mut self, memento_cid: MementoCid, member: StoredMember) {
         // Index ONLY the formula hashes that name an ESTABLISHED FACT into
         // `formula_to_memento` -- the map Tier 0 (`verify`) trusts as "this
         // formula is proven true". A precondition (`preHash`) and an
@@ -458,13 +450,14 @@ impl MementoPool {
         let formula_hashes: Vec<String> = ["postHash", "invHash"]
             .iter()
             .filter_map(|field| {
-                sugar_proof_envelope::member_field(&envelope, field)
+                member
+                    .field(field)
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
             })
             .collect();
         let indexed_memento_cid = memento_cid.clone();
-        self.mementos.insert(memento_cid, envelope);
+        self.mementos.insert(memento_cid, member);
         let memento_cid = indexed_memento_cid;
         for hash in formula_hashes {
             self.formula_to_memento.insert(hash, memento_cid.clone());
@@ -478,17 +471,18 @@ impl MementoPool {
         // mis-resolve call edges.
         let is_contract = self.member_is_kind(&memento_cid, MemberKind::Contract);
         if is_contract {
-            let env_for_name = self.mementos.get(&memento_cid);
-            let name = env_for_name
-                .and_then(|env| {
-                    sugar_proof_envelope::member_field(env, "contractName")
-                        .or_else(|| sugar_proof_envelope::member_field(env, "name"))
+            let member_for_name = self.mementos.get(&memento_cid);
+            let name = member_for_name
+                .and_then(|member| {
+                    member
+                        .field("contractName")
+                        .or_else(|| member.field("name"))
                 })
                 .and_then(|v| v.as_str());
 
             if let Some(n) = name {
                 let n = n.to_string();
-                let body_cid = env_for_name.and_then(contract_body_pointer);
+                let body_cid = member_for_name.and_then(contract_body_pointer);
 
                 // Detect collisions: same contract name, different CIDs.
                 // When two surfaces in the same proof emit a contract with the
@@ -504,8 +498,8 @@ impl MementoPool {
                     if existing != memento_cid {
                         let new_has_pre = self.member_field(&memento_cid, "preHash").is_some();
                         let existing_has_pre = self.member_field(&existing, "preHash").is_some();
-                        let new_env = self.mementos.get(&memento_cid);
-                        let existing_env = self.mementos.get(&existing);
+                        let new_member = self.mementos.get(&memento_cid);
+                        let existing_member = self.mementos.get(&existing);
                         if new_has_pre && !existing_has_pre {
                             // Upgrade: pre-bearing newcomer beats post-only incumbent.
                             self.cid_to_name.remove(&existing);
@@ -516,7 +510,8 @@ impl MementoPool {
                             }
                         } else if !new_has_pre && existing_has_pre {
                             // Incumbent is already pre-bearing; silently drop the new post-only.
-                        } else if is_euf_inv_only_conjoin_duplicate(&n, existing_env, new_env) {
+                        } else if is_euf_inv_only_conjoin_duplicate(&n, existing_member, new_member)
+                        {
                             // Same-name #euf# inv-only contracts are the
                             // intentional cross-proof conjoin case. Keep the
                             // first name index for symbol lookup, keep both
@@ -542,12 +537,10 @@ impl MementoPool {
             }
         }
 
-        let class_shapes_to_index: Vec<Json> = if let Some(env) = self.mementos.get(&memento_cid) {
-            if matches!(
-                sugar_proof_envelope::member_kind(env),
-                Ok(MemberKind::Contract)
-            ) {
-                if let Some(body) = sugar_proof_envelope::member_body(env) {
+        let class_shapes_to_index: Vec<Json> = if let Some(member) = self.mementos.get(&memento_cid)
+        {
+            if member.kind() == MemberKind::Contract {
+                if let Some(body) = member.body() {
                     body.get("classShapes")
                         .and_then(|v| v.as_array())
                         .into_iter()
@@ -677,7 +670,7 @@ impl MementoPool {
     /// sub-formula CIDs that have mementos in the pool. If P is verified
     /// and we need to prove P ∧ Q, this returns P's CID so the solver
     /// can focus on Q.
-    pub fn find_verified_subformulas(&self, formula: &Json) -> Vec<(String, &Json)> {
+    pub fn find_verified_subformulas(&self, formula: &Json) -> Vec<(String, &StoredMember)> {
         let mut verified = Vec::new();
         let mut stack = vec![formula.clone()];
         let mut visited = std::collections::HashSet::new();
@@ -840,33 +833,30 @@ impl MementoPool {
 
 fn is_euf_inv_only_conjoin_duplicate(
     name: &str,
-    existing_env: Option<&Json>,
-    new_env: Option<&Json>,
+    existing_member: Option<&StoredMember>,
+    new_member: Option<&StoredMember>,
 ) -> bool {
     name.contains("#euf#")
-        && existing_env.is_some_and(is_inv_only_consistency_contract)
-        && new_env.is_some_and(is_inv_only_consistency_contract)
+        && existing_member.is_some_and(is_inv_only_consistency_contract)
+        && new_member.is_some_and(is_inv_only_consistency_contract)
 }
 
-fn is_inv_only_consistency_contract(env: &Json) -> bool {
-    if !matches!(
-        sugar_proof_envelope::member_kind(env),
-        Ok(MemberKind::Contract)
-    ) {
+fn is_inv_only_consistency_contract(member: &StoredMember) -> bool {
+    if member.kind() != MemberKind::Contract {
         return false;
     }
-    let Some(body) = sugar_proof_envelope::member_body(env) else {
+    let Some(body) = member.body() else {
         return false;
     };
     let has_inv = body.get("inv").is_some()
         || body.get("invariant").is_some()
-        || sugar_proof_envelope::member_field(env, "invHash").is_some();
+        || member.field("invHash").is_some();
     let has_pre = body.get("pre").is_some()
         || body.get("precondition").is_some()
-        || sugar_proof_envelope::member_field(env, "preHash").is_some();
+        || member.field("preHash").is_some();
     let has_post = body.get("post").is_some()
         || body.get("postcondition").is_some()
-        || sugar_proof_envelope::member_field(env, "postHash").is_some();
+        || member.field("postHash").is_some();
     has_inv && !has_pre && !has_post
 }
 
@@ -911,9 +901,7 @@ impl OpacityMementoLookup for MementoPool {
         let key = format!("{}\x00{}", function_cid, target);
         let memento_cid = self.pin_invariant_to_memento.get(&key)?;
         let memento = self.mementos.get(memento_cid)?;
-        let invariant = sugar_proof_envelope::member_field(memento, "invariant")?
-            .as_str()?
-            .to_string();
+        let invariant = memento.field("invariant")?.as_str()?.to_string();
         Some(PinInvariantMementoView {
             function_cid: function_cid.to_string(),
             pinned_target: target.to_string(),

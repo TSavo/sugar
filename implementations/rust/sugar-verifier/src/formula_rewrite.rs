@@ -98,13 +98,12 @@ fn try_contrapositive(obligation: &Json, pool: &crate::types::MementoPool) -> Op
     let p_implies_q_cid = crate::types::compute_formula_cid(&p_implies_q);
 
     if let Some(memento) = pool.verify_by_hash(&p_implies_q_cid) {
-        let memento_cid = memento.get("cid")?.as_str()?;
         return Some(TacticResult::Discharged {
             reason: format!(
                 "contrapositive: {} → {} proven (memento {})",
                 formula_summary(p),
                 formula_summary(q),
-                short_cid(memento_cid)
+                short_cid(memento.cid().as_str())
             ),
         });
     }

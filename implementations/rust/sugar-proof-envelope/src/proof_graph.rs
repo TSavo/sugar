@@ -869,6 +869,91 @@ pub fn member_field<'a>(envelope: &'a Json, name: &str) -> Option<&'a Json> {
     }
 }
 
+/// Owned verifier-pool storage for an anchored member.
+///
+/// This consumes the raw member envelope shape at the proof-envelope boundary
+/// and retains only the normalized member kind, body object, and first-match
+/// field map needed by downstream verifier accessors.
+#[derive(Clone, Debug)]
+pub struct StoredMember {
+    cid: MementoCid,
+    kind: MemberKind,
+    body: Option<Json>,
+    fields: BTreeMap<String, Json>,
+}
+
+impl StoredMember {
+    pub fn from_envelope(cid: MementoCid, envelope: &Json) -> Result<Self, MemberError> {
+        let kind = member_kind(envelope)?;
+        let body = member_body(envelope).cloned();
+        let mut fields = BTreeMap::new();
+        for layer in member_field_layers(envelope) {
+            for (name, value) in layer {
+                fields.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        Ok(Self {
+            cid,
+            kind,
+            body,
+            fields,
+        })
+    }
+
+    pub fn cid(&self) -> &MementoCid {
+        &self.cid
+    }
+
+    pub fn kind(&self) -> MemberKind {
+        self.kind
+    }
+
+    pub fn body(&self) -> Option<&Json> {
+        self.body.as_ref()
+    }
+
+    pub fn field(&self, name: &str) -> Option<&Json> {
+        self.fields.get(name)
+    }
+}
+
+fn member_field_layers(envelope: &Json) -> Vec<&serde_json::Map<String, Json>> {
+    let mut layers = Vec::new();
+    if envelope.get("envelope").is_some() {
+        if let Some(layer) = envelope.pointer("/header").and_then(Json::as_object) {
+            layers.push(layer);
+        }
+        if let Some(layer) = envelope.pointer("/metadata").and_then(Json::as_object) {
+            layers.push(layer);
+        }
+        if let Some(layer) = envelope
+            .pointer("/envelope/header")
+            .and_then(Json::as_object)
+        {
+            layers.push(layer);
+        }
+        if let Some(layer) = envelope
+            .pointer("/envelope/metadata")
+            .and_then(Json::as_object)
+        {
+            layers.push(layer);
+        }
+    } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
+        if let Some(layer) = envelope.pointer("/header").and_then(Json::as_object) {
+            layers.push(layer);
+        }
+        if let Some(layer) = envelope.pointer("/body").and_then(Json::as_object) {
+            layers.push(layer);
+        }
+        if let Some(layer) = envelope.pointer("/metadata").and_then(Json::as_object) {
+            layers.push(layer);
+        }
+    } else if let Some(layer) = envelope.pointer("/evidence/body").and_then(Json::as_object) {
+        layers.push(layer);
+    }
+    layers
+}
+
 /// Shape-agnostic signer of a member envelope. v1.2 layered: `/envelope/signer`;
 /// v1.1 flat: top-level `signer`. The api owner's reader so consumers stop
 /// hand-fishing the envelope's provenance.
@@ -948,6 +1033,11 @@ impl AnchoredMember {
 
     pub fn into_parts(self) -> (MementoCid, Json) {
         (self.cid, self.envelope)
+    }
+
+    pub fn into_stored_member(self) -> Result<(MementoCid, StoredMember), MemberError> {
+        let stored = StoredMember::from_envelope(self.cid.clone(), &self.envelope)?;
+        Ok((self.cid, stored))
     }
 }
 

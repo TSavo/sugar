@@ -10,7 +10,9 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{AttributeSafetyObligation, CallSite, MemberKind, MementoCid, MementoPool};
+use crate::types::{
+    AttributeSafetyObligation, CallSite, MemberKind, MementoCid, MementoPool, StoredMember,
+};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -217,7 +219,7 @@ fn callsite_from_panic_locus(
     };
     let bridge_env = scoped_bridge;
     let bridge_body = bridge_env
-        .and_then(sugar_proof_envelope::member_body)
+        .and_then(StoredMember::body)
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     if bridge_env.is_none() {
@@ -356,7 +358,7 @@ fn warn_if_panic_callsite_alias_disagrees_for_locus(
     };
     let Some(bridge_body) =
         callsite_scoped_bridge_for_locus(pool, callsite_bundle_cid, callee, locus)
-            .and_then(sugar_proof_envelope::member_body)
+            .and_then(StoredMember::body)
     else {
         return;
     };
@@ -748,7 +750,7 @@ fn callsite_scoped_bridge_for_locus<'a>(
     callsite_bundle_cid: Option<&MementoCid>,
     callee: &str,
     locus: &Json,
-) -> Option<&'a Json> {
+) -> Option<&'a StoredMember> {
     let bundle = callsite_bundle_cid?;
     let callee = callee;
     let file = locus.get("file").and_then(|v| v.as_str())?;
@@ -764,7 +766,7 @@ fn callsite_scoped_bridge_for_arg_terms<'a>(
     callsite_bundle_cid: Option<&MementoCid>,
     callee: &str,
     arg_terms: &[Json],
-) -> Option<&'a Json> {
+) -> Option<&'a StoredMember> {
     let bundle = callsite_bundle_cid?;
     let callee = callee;
     let mut matched = None;
@@ -788,10 +790,10 @@ fn callsite_scoped_bridge_for_arg_terms<'a>(
 
 fn bridge_formal_actuals_match_arg_terms(
     pool: &MementoPool,
-    bridge: &Json,
+    bridge: &StoredMember,
     arg_terms: &[Json],
 ) -> bool {
-    let Some(bridge_body) = sugar_proof_envelope::member_body(bridge) else {
+    let Some(bridge_body) = bridge.body() else {
         return false;
     };
     let Some(target_cid) = memento_cid_field(bridge_body, "targetContractCid") else {
@@ -901,7 +903,8 @@ fn walk_term(
     if let Some(benv) = bridge_env {
         // Shape-agnostic: v1.2-layered bridges carry the fields on
         // `header`; v1.1-flat on `evidence.body`.
-        let bbody = sugar_proof_envelope::member_body(benv)
+        let bbody = benv
+            .body()
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         // Forward pin: REQUIRED by the current BridgeDeclaration grammar
@@ -1309,7 +1312,7 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos.insert(test_cid("caller"), contract);
+        pool.insert_unanchored_for_tests(test_cid("caller"), contract);
         pool
     }
 
@@ -1397,7 +1400,7 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos.insert(caller, contract);
+        pool.insert_unanchored_for_tests(caller, contract);
         pool
     }
 
@@ -1468,7 +1471,7 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos.insert(test_cid(&target), target_contract);
+        pool.insert_unanchored_for_tests(test_cid(&target), target_contract);
         pool.insert_bridge_by_symbol(
             "method:to_digit",
             test_cid("internal-to-digit-bridge"),
@@ -1498,7 +1501,7 @@ mod guard_propagation_tests {
             .entry(bundle)
             .or_default()
             .insert(caller.clone());
-        pool.mementos.insert(
+        pool.insert_unanchored_for_tests(
             caller,
             json!({
                 "envelope": true,
@@ -1587,7 +1590,7 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos.insert(caller, contract);
+        pool.insert_unanchored_for_tests(caller, contract);
         pool
     }
 

@@ -517,13 +517,11 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .mementos
         .iter()
         .find(|(_, env)| {
-            if let Ok(sugar_proof_envelope::Member::Bridge(b)) =
-                sugar_proof_envelope::Member::from_value(env)
-            {
-                b.source_symbol == "double"
-            } else {
-                false
-            }
+            env.kind() == sugar_proof_envelope::MemberKind::Bridge
+                && env
+                    .field("sourceSymbol")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|source| source == "double")
         })
         .map(|(cid, _)| cid.clone())
         .unwrap_or_else(|| {
@@ -537,12 +535,16 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .mementos
         .get(&bridge_cid)
         .expect("bridge CID must exist in pool");
-    let Ok(sugar_proof_envelope::Member::Bridge(bridge_m)) =
-        sugar_proof_envelope::Member::from_value(bridge_env)
-    else {
-        panic!("bridge must parse as typed BridgeMember");
-    };
-    let target_cid = bridge_m.target_contract_cid.as_str().to_string();
+    assert_eq!(
+        bridge_env.kind(),
+        sugar_proof_envelope::MemberKind::Bridge,
+        "bridge must parse as typed bridge member"
+    );
+    let target_cid = bridge_env
+        .field("targetContractCid")
+        .and_then(|v| v.as_str())
+        .expect("bridge must carry targetContractCid")
+        .to_string();
 
     assert!(
         pool.mementos.contains_key(target_cid.as_str()),
@@ -553,13 +555,11 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .get(target_cid.as_str())
         .expect("bridge target must exist in pool");
     assert!(
-        matches!(
-            sugar_proof_envelope::member_kind(target_env),
-            Ok(sugar_proof_envelope::MemberKind::Contract)
-        ),
+        target_env.kind() == sugar_proof_envelope::MemberKind::Contract,
         "bridge target must be a contract memento"
     );
-    let formals = sugar_proof_envelope::member_field(target_env, "formals")
+    let formals = target_env
+        .field("formals")
         .and_then(|v| v.as_array())
         .expect("tool-written op-contract must carry formals");
     assert_eq!(
@@ -568,7 +568,7 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         "op-contract formals must be [x]"
     );
     assert!(
-        sugar_proof_envelope::member_field(target_env, "postHash").is_some(),
+        target_env.field("postHash").is_some(),
         "op-contract must carry a post hash"
     );
     let target_body = pool

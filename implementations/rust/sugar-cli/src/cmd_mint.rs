@@ -4886,8 +4886,7 @@ mod tests {
             .mementos
             .values()
             .find(|env| {
-                member_field(env, "name").and_then(|value| value.as_str())
-                    == Some("body_graph_contract")
+                env.field("name").and_then(|value| value.as_str()) == Some("body_graph_contract")
             })
             .expect("loaded contract memento");
         let resolved = pool
