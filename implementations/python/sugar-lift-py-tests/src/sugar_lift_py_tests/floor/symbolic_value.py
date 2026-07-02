@@ -26,6 +26,9 @@ class SymbolicValue(FloorValue):
         del owner
         return self.term
 
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_symbolic(self, ctx)
+
     def binary_operator_with(self, operation, ctx):
         return operation.binary_symbolic(self, ctx)
 

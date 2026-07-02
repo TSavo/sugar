@@ -15,6 +15,9 @@ class StringValue(FloorValue):
 
         return str_const(self.value)
 
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_literal(self, ctx)
+
     def contains_with(self, operation, ctx):
         return operation.contains_string(self, ctx)
 

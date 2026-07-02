@@ -5,6 +5,9 @@ class FloorValue:
     def inplace_binary_operator_with(self, operation, ctx):
         return operation.inplace_default(self, ctx)
 
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_unknown(self, ctx)
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,

@@ -26,3 +26,6 @@ class BlockValue(FloorValue):
 
     def merge_finally_with(self, operation: Any, ctx: Any) -> Any:
         return operation.merge_finally_block(self, ctx)
+
+    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.project_block(self, ctx)
