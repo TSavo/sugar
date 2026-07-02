@@ -74,17 +74,30 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
   it down, deleting pinned rows in the same PR. Never sanction-comment your way to a lower R.
 
 ## Where things stand (update this section as you go)
-- 2026-07-01 tick: #3065 merged (canonicalizer, closed #2999). #3066 merged (this handoff).
-  Main at 4ac1b51c9. No open PRs. GitHub API rate-limited (~resets hourly); fleet on SSH, unaffected.
-- Crime board (the four-lens audit, #2981–#3001): essentially cleared. Last item #2995 (generated.rs
-  rename + vocabulary-totality instrument) in flight on window 85868.
-- Rust-kit spine campaign: plan #3014/#3015, capstone crime #3043 (five-frontier closure vector),
-  Phase epics #3017/#3025/#3026/#3027/#3028. Live instruments: silent-drop frontier #3021 (R=401 —
-  drains #3022/#3023/#3024), gate parity #3032. Python gap-swallow frontier also live.
-- Perf: instrument #3039 then drains #3040 (bridge-envelope 2-3x clone) / architectural #3041
-  (MementoPool typed-member migration — gated on #3039 numbers + zero crime board).
-- Test debt: #3018 (restore quarantined bad-twin — HIGH, CI-red suspect).
-- Review-bot findings #3050–#3063: still UNREAD (blocked on gh rate limit) — triage them.
+- 2026-07-02 overnight run (T asleep, coordinator autonomous): ~25 PRs merged (#3067–#3162 range).
+  ALL audit issues #2981–#3001 + #3010 CLOSED (#3010 spawned dedicated #3147–#3151; #3150 is
+  ARCHITECT-GATED on T's mini-interpreter decision — do not dispatch).
+- Silent-drop frontier: CLOSED AT ZERO. R 401→0 over 13 slices (#3022/#3023/#3024/#3139 all closed);
+  stable-zero gate live in silent_drop_frontier.rs. That campaign is the template for all frontiers.
+- Baseline reds: ALL cleared (#3018, #3071, #3085, #3129 verdicts). std-core-showcase GREEN
+  end-to-end (first time), 515 vacuity refusals honestly accounted. Masking mechanism found and
+  killed: cargo halts at first failing target — every-binary-summary + explicit bin-target runs
+  now mandatory in briefs.
+- assertion_lift frontier (#3142): instrument live, R 63→41; remaining 41 rows are ALL floor-gap
+  classes = #3017 Phase-1 campaign work (item 1 GuardedReturn in flight on 85868).
+- Ladder rungs closed: #3050 ObligationVerdict, #3051 AnchoredMember, #3052 MementoCid,
+  #3053 SolverSeat, #3054 MemberKind (re-merge in flight after a merge-commit collision — LESSON:
+  verify mergedAt non-null BEFORE branch-delete). #3160 (BridgePin) filed, open.
+- MonoidFold/CarrierEmbedding design #3125: slices 1-2 landed (#3128/#3136); Duration proves vendor
+  correct_sum; #3083 closed.
+- Perf: #3039/#3040/#3081 closed — RSS floor ARMED in CI (ref 33096 KiB, self-hosted Linux).
+  #3041 (typed pool) gates met; plan-doc-first PR in flight on 85870.
+- Py-kit campaign: numpy+pandas audit done (R=27,606), 35 issues #3090–#3124 filed. #3090 opacity
+  instrument closed; constant floors #3091–#3094 in flight on 85873. Debts #3147–#3151 from #3010.
+- Codex usage limits: fleet stalled ~01:30–02:09 PDT once; on "usage limit" tails, note reset time
+  and re-dispatch full briefs after it.
+- CI: acid runs on main have NEVER completed tonight (merge-train supersession) — verdict monitor
+  armed; treat main as unmeasured until one lands.
 - KB: memory_lint.py live, honestly red at dangling:92 (41 never-written memories; top target
   red_gate_is_not_a_gate ×10). T's call: write top 8 or strip. 2026-07-02: T explicitly PAUSED
   this — leave as-is until he has focus; do not draft or strip autonomously.
