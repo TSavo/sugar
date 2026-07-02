@@ -93,6 +93,10 @@ pub(crate) struct IpAddrFloor;
 /// definition-scope snapshot used when recomposing that source.
 #[allow(dead_code)]
 pub(crate) struct BoundVarFloor;
+/// RaiseValue floor family. A raise-like control-flow exit can flow through
+/// block composition as data until a RouteRaisesOperation consumes it.
+#[allow(dead_code)]
+pub(crate) struct RaiseValueFloor;
 /// SymbolicValue floor family. Carries a sort-neutral symbolic variable; the
 /// backend chooses the carrier sort from surrounding operations.
 #[allow(dead_code)]
@@ -116,6 +120,7 @@ impl BodyFloor for BoolFloor {}
 impl BodyFloor for IeeeFloatFloor {}
 impl BodyFloor for IpAddrFloor {}
 impl BodyFloor for BoundVarFloor {}
+impl BodyFloor for RaiseValueFloor {}
 impl BodyFloor for SymbolicValueFloor {}
 impl BodyFloor for CarrierEmbeddingFloor {}
 
@@ -827,6 +832,12 @@ impl FactoryAuditSeed {
             }
             Outcome::Complete(Desugared::StmtGuarded(_)) => {
                 (FactoryDisposition::Warranted, "stmt-guarded", None)
+            }
+            Outcome::Complete(Desugared::StmtRaise(_)) => {
+                (FactoryDisposition::Warranted, "stmt-raise", None)
+            }
+            Outcome::Complete(Desugared::StmtGuardedRaise(_)) => {
+                (FactoryDisposition::Warranted, "stmt-guarded-raise", None)
             }
             Outcome::Complete(Desugared::StmtBlock { .. }) => {
                 (FactoryDisposition::Warranted, "stmt-block", None)

@@ -116,6 +116,7 @@ pub mod sugar {
     pub mod function_map;
     pub mod future_join;
     pub mod generic_body_sugar;
+    pub mod guarded_raise;
     pub mod guarded_return;
     pub mod identity;
     pub mod identity_map;
@@ -169,6 +170,7 @@ pub mod sugar {
     pub mod peekable;
     pub mod primitive_int;
     pub mod ptr_metadata;
+    pub mod raise_value;
     pub mod range_accessor;
     pub mod range_bounds_contains;
     pub mod range_construct;
@@ -183,6 +185,7 @@ pub mod sugar {
     pub mod result_predicate;
     pub mod result_transpose_collect;
     pub mod rev;
+    pub mod route_raises_operation;
     pub mod runtime_iterator_source;
     pub mod scan;
     pub mod sequence_floor;
@@ -8799,12 +8802,20 @@ pub(crate) enum Desugared {
     /// all hold, and the return term for that branch.
     /// Mirrors Python `GuardedReturn(guards, term)`.
     StmtGuarded(sugar::guarded_return::GuardedReturn),
+    /// A raise-like control-flow exit carried as block-interior data. This is
+    /// not `Outcome::Incomplete`: a wrapping router may still handle it.
+    /// Mirrors Python `RaiseValue(effect, scope)`.
+    StmtRaise(sugar::raise_value::RaiseValue),
+    /// A guarded raise-like control-flow exit reached under accumulated path
+    /// guards. Mirrors Python `GuardedRaise(guards, effect, scope)`.
+    StmtGuardedRaise(sugar::guarded_raise::GuardedRaise),
     /// The composed result of a block (suite of statements): all guarded-return
-    /// pairs emitted by the block, plus the fall-through guard set left over by a
-    /// terminal `if`-without-else.
-    /// Mirrors Python `BlockValue(guarded_returns, fall_through)`.
+    /// pairs and raise exits emitted by the block, plus the fall-through guard set
+    /// left over by a terminal `if`-without-else.
+    /// Mirrors Python `BlockValue(statements, fall_through)`.
     StmtBlock {
         guarded: Vec<sugar::guarded_return::GuardedReturn>,
+        raises: Vec<sugar::guarded_raise::GuardedRaise>,
         fall_through: Vec<Rc<Formula>>,
     },
 }
@@ -8827,6 +8838,8 @@ impl Desugared {
             | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
+            | Desugared::StmtRaise(_)
+            | Desugared::StmtGuardedRaise(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8852,6 +8865,8 @@ impl Desugared {
             | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
+            | Desugared::StmtRaise(_)
+            | Desugared::StmtGuardedRaise(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8871,6 +8886,8 @@ impl Desugared {
             | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
+            | Desugared::StmtRaise(_)
+            | Desugared::StmtGuardedRaise(_)
             | Desugared::StmtBlock { .. } => None,
         }
     }
@@ -8908,6 +8925,8 @@ impl Desugared {
             | Desugared::StmtBound(_)
             | Desugared::StmtReturn(_)
             | Desugared::StmtGuarded(_)
+            | Desugared::StmtRaise(_)
+            | Desugared::StmtGuardedRaise(_)
             | Desugared::StmtBlock { .. } => return None,
         };
         let [only] = seq.as_slice() else {
@@ -10782,6 +10801,8 @@ fn emit_desugared(
         | Desugared::StmtBound(_)
         | Desugared::StmtReturn(_)
         | Desugared::StmtGuarded(_)
+        | Desugared::StmtRaise(_)
+        | Desugared::StmtGuardedRaise(_)
         | Desugared::StmtBlock { .. } => false,
     }
 }
