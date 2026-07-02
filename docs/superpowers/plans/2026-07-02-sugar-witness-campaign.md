@@ -107,6 +107,8 @@ Land this document. Post the #3272 and vocab-campaign cross-link comments.
 Exit: merged as "Part 1 of the sugar-witness campaign (plan)".
 
 ### Slice 1 — Instruments + the triple harness (Python), RED/measuring
+**Interface authority (typed-pipeline specs, PR #3312):** the Python `_run_lift_rpc` door is the lift boundary governed by `docs/superpowers/specs/2026-07-02-lift-plugin-interface.md` (the RPC lift surface producing the substrate claim), and the verdict path is governed by `docs/superpowers/specs/2026-07-02-ir-compiler-solver-interface.md` (route the emitted formula through the real `sugar-ir-compiler` + solver, never `_formula_status`). Cite these when wiring the harness's lift and verdict surfaces.
+
 Add Instrument A (enrollment auditor over `registered_claims()`), Instrument B (the parametrized triple harness), and Instrument C (non-circularity). Centralize `_run_lift_rpc` into ONE shared harness helper (it is copy-pasted across ~17 files today). Wire the harness's verdict to the REAL `sugar-ir-compiler-smt-lib` path (the same one PR #3269's witness harness uses), NOT `_formula_status`. Run against the current seed set (the sugars whose decorative twins already exist) and pin the vectors.
 - **#3269 (the RPC-driven witness harness seed) is MERGED (main `01264a8a9`) — dependency SATISFIED.** Seed the harness from the on-main mechanism.
 - Red-first: the harness over a sugar with a deliberately-wrong (lying source that is actually true) witness reds on the verdict; a witness pointing at another sugar's source reds on assertion-1.
@@ -136,6 +138,8 @@ Arm Instrument B as a GATE (`R(witness-triples-failing)=0` catch-all over the wh
 Exit: `R(hand-coverage-registry)=0`; the Python triple is an armed catalog-wide gate.
 
 ### Slice 6 — Instruments + harness (Rust)
+**Interface authority (typed-pipeline specs, PR #3312):** the triple's three assertions ride two typed seams — assertion-1/2 ("that sugar fired / ProofIR came back") is the LIFT door governed by `docs/superpowers/specs/2026-07-02-lift-plugin-interface.md` (`LiftPluginSession{DomainClaim}` / `dispatch_lift_path`; the harness drives the in-process `lift_file` analogue), and assertion-3 (the verdict) is governed by `docs/superpowers/specs/2026-07-02-ir-compiler-solver-interface.md` (`CompiledFormula` → `Solver::solve_compiled` → `SolveResult.verdict`; `z3_verdict`/`compile_asserted_to_parts` are the current path). Cite these as the interface authority when the harness reaches for the RPC/verdict surfaces.
+
 Add the Rust triple harness (`tests/sugar_witness_triple.rs`) reusing `lift_file` + `z3_verdict` + `inv_json`; add the `pub` claim-`name`/recognized accessor for assertion (1). Measure the seed set (the ~26 existing twin tests) and pin the vectors. Assertion-2 targets `sugar_ir_symbolic::ContractDecl` (upgrade to `sugar_ir_types::Declaration` at #3240).
 Exit: Rust harness measuring; assertion-1 reachable; baselines pinned.
 
