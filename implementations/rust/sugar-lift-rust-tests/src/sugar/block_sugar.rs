@@ -5,7 +5,7 @@
 // through the factory (via `build_stmt_role`) and composing the results inside-out:
 //
 //   StmtSupport  -> skip (inert)
-//   StmtBound    -> thread `scope.record_let_binding` so subsequent stmts resolve the name
+//   StmtBound    -> thread `scope.record_bound_var` so subsequent stmts resolve the name
 //   StmtReturn   -> emit `(pending, term)` -- a new guarded return clause
 //   StmtBlock    -> merge its guarded clauses (each prefixed with `pending`), extend `pending`
 //                   with its own fall_through
@@ -120,8 +120,8 @@ impl Sugar for BlockSugar {
                     // Inert statement: side-effect, macro invocation, item definition, etc.
                     Desugared::StmtSupport => {}
                     // Let binding: thread into scope for downstream term translation.
-                    Desugared::StmtBound { name, rhs } => {
-                        scope_clone.record_let_binding(&name, rhs);
+                    Desugared::StmtBound(bound) => {
+                        scope_clone.record_bound_var(bound);
                     }
                     // Single return: emit under the current accumulated pending guards.
                     Desugared::StmtReturn(term) => {
@@ -185,7 +185,7 @@ fn statement_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::FormatValue(_) => "FormatValue",
         Desugared::TupleComponents(_) => "TupleComponents",
         Desugared::StmtSupport => "StmtSupport",
-        Desugared::StmtBound { .. } => "StmtBound",
+        Desugared::StmtBound(_) => "StmtBound",
         Desugared::StmtReturn(_) => "StmtReturn",
         Desugared::StmtGuarded(_) => "StmtGuarded",
         Desugared::StmtBlock { .. } => "StmtBlock",

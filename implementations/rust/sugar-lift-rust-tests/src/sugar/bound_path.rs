@@ -4,6 +4,9 @@
 // ProofIR term it names. Recognition identifies the bound local and the factory hands
 // this sugar its already-built body. Desugar never re-opens the factory from raw syntax.
 
+use std::collections::BTreeMap;
+
+use crate::sugar::bound_var::BoundVarSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
     has_tuple_producer, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
@@ -261,12 +264,27 @@ fn construct_term_body(
         );
         return Some(SugarBody::from_node(resolved_term(term)));
     }
-    let init = fcx
+    if let Some(init) = fcx
         .let_inits()
         .get(name)
         .copied()
-        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
-    Some(SugarBody::term(init, child_fcx))
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))
+    {
+        return Some(SugarBody::term(init, child_fcx));
+    }
+    if let Some(bound) = fcx.scope().stable_bound_var_for_term(name) {
+        debug!(
+            target: "sugar_lift_rust_tests::bound_path",
+            binding = name,
+            role = "Term",
+            "factory constructed bound path BoundVar body"
+        );
+        return Some(SugarBody::from_node(BoundVarSugar::new(
+            bound.clone(),
+            SugarRole::Term,
+        )));
+    }
+    None
 }
 
 fn construct_constraint_body(
@@ -277,12 +295,21 @@ fn construct_constraint_body(
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Constraint) {
         return Some(SugarBody::constraint(&current, child_fcx));
     }
-    let init = fcx
+    if let Some(init) = fcx
         .let_inits()
         .get(name)
         .copied()
-        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
-    Some(SugarBody::constraint(init, child_fcx))
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))
+    {
+        return Some(SugarBody::constraint(init, child_fcx));
+    }
+    if let Some(bound) = fcx.scope().stable_bound_var_for_term(name) {
+        return Some(SugarBody::from_node(BoundVarSugar::new(
+            bound.clone(),
+            SugarRole::Constraint,
+        )));
+    }
+    None
 }
 
 fn construct_composite_body(
@@ -293,12 +320,21 @@ fn construct_composite_body(
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Composite) {
         return Some(SugarBody::composite(&current, child_fcx));
     }
-    let init = fcx
+    if let Some(init) = fcx
         .let_inits()
         .get(name)
         .copied()
-        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
-    Some(SugarBody::composite(init, child_fcx))
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))
+    {
+        return Some(SugarBody::composite(init, child_fcx));
+    }
+    if let Some(bound) = fcx.scope().stable_bound_var_for_term(name) {
+        return Some(SugarBody::from_node(BoundVarSugar::new(
+            bound.clone(),
+            SugarRole::Composite,
+        )));
+    }
+    None
 }
 
 fn construct_tuple_producer_body(
@@ -310,12 +346,24 @@ fn construct_tuple_producer_body(
         return has_tuple_producer(&current, child_fcx)
             .then(|| SugarBody::tuple_producer(&current, child_fcx));
     }
-    let init = fcx
+    if let Some(init) = fcx
         .let_inits()
         .get(name)
         .copied()
-        .or_else(|| fcx.scope().stable_let_binding_for_term(name))?;
-    has_tuple_producer(init, child_fcx).then(|| SugarBody::tuple_producer(init, child_fcx))
+        .or_else(|| fcx.scope().stable_let_binding_for_term(name))
+    {
+        return has_tuple_producer(init, child_fcx)
+            .then(|| SugarBody::tuple_producer(init, child_fcx));
+    }
+    if let Some(bound) = fcx.scope().stable_bound_var_for_term(name) {
+        let let_inits = BTreeMap::new();
+        let definition_fcx =
+            SugarBuildCtx::new(bound.definition_scope(), fcx.options(), &let_inits);
+        return has_tuple_producer(bound.source(), &definition_fcx).then(|| {
+            SugarBody::from_node(BoundVarSugar::new(bound.clone(), SugarRole::TupleProducer))
+        });
+    }
+    None
 }
 
 impl Sugar for BoundPathSugar {
