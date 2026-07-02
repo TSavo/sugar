@@ -1,0 +1,10 @@
+[package]
+name = "sugar-floor-algebra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Sugar floor algebra: shared closed-dispatch floors and operations."
+
+[dependencies]
+sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
