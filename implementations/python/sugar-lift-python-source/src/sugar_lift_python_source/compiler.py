@@ -197,6 +197,21 @@ def _stmt(term: Json) -> ast.stmt:
             orelse=[] if _name(args[2]) == "python:pass" else _stmt_list(args[2]),
             finalbody=[] if _name(args[3]) == "python:pass" else _stmt_list(args[3]),
         )
+    if name == "python:with":
+        return ast.With(
+            items=[
+                ast.withitem(
+                    context_expr=ast.Call(
+                        func=ast.Name(id="__sugar_with_context__", ctx=ast.Load()),
+                        args=[],
+                        keywords=[],
+                    ),
+                    optional_vars=None,
+                )
+            ],
+            body=_stmt_list(args[0]) or [ast.Pass()],
+            type_comment=None,
+        )
     if name == "python:while":
         return ast.While(test=_expr(args[0]), body=_stmt_list(args[1]), orelse=[])
     if name == "python:for":

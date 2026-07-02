@@ -306,6 +306,14 @@ def _return(value: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:return", "args": [value]}
 
 
+def _assign(target: dict[str, object], value: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:assign", "args": [target, value]}
+
+
+def _seq(left: dict[str, object], right: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:seq", "args": [left, right]}
+
+
 def _expr_stmt(value: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:expr", "args": [value]}
 
@@ -314,6 +322,10 @@ def _assert_stmt(
     condition: dict[str, object], message: dict[str, object]
 ) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:assert", "args": [condition, message]}
+
+
+def _with_stmt(body: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:with", "args": [body]}
 
 
 def _compare(
@@ -3113,18 +3125,125 @@ def test_b1_except_handler_name_does_not_leak_after_handler() -> None:
     assert json.dumps(str_const("module")) in json.dumps(contract)
 
 
-def test_b1_with_statement_remains_refused() -> None:
-    source = "def f(lock):\n    with lock:\n        return 1\n"
+def test_with_open_lifts_body_and_records_io_effect() -> None:
+    source = "def f(path):\n    with open(path):\n        return path\n"
 
-    result = lift_source(source, "b1_with_refusal.py")
+    result = lift_source(source, "with_open.py")
 
-    assert result.refusals == [
-        {
-            "kind": "unhandled-syntax",
-            "function": "b1_with_refusal.f",
-            "line": 2,
-            "reason": "with statements are refused",
-        }
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _with_stmt(_return(_var("path")))
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "open"} in contract["effects"]
+
+
+def test_with_as_name_binds_opaque_local_for_body() -> None:
+    source = "def f(ctx):\n    with ctx() as handle:\n        return handle\n"
+
+    result = lift_source(source, "with_as_name.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _with_stmt(_return(_var("handle")))
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "ctx"} in contract["effects"]
+    assert {"kind": "reads", "target": "handle"} not in contract["effects"]
+
+
+def test_with_open_as_handle_lifts_body_claims_under_opaque_binding() -> None:
+    source = (
+        "def f(path):\n"
+        "    with open(path) as handle:\n"
+        "        data = handle.read()\n"
+        "        return data\n"
+    )
+
+    result = lift_source(source, "with_open_as_handle.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _with_stmt(
+        _seq(
+            _assign(_var("data"), _call("handle.read")),
+            _return(_var("data")),
+        )
+    )
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "open"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "handle.read"} in contract["effects"]
+    assert {"kind": "reads", "target": "handle"} not in contract["effects"]
+
+
+def test_nested_with_statements_lift_nested_body_terms() -> None:
+    source = (
+        "def f(outer, inner):\n"
+        "    with outer():\n"
+        "        with inner():\n"
+        "            return 1\n"
+    )
+
+    result = lift_source(source, "with_nested.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _with_stmt(_with_stmt(_return(_int_const(1))))
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "outer"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "inner"} in contract["effects"]
+
+
+def test_with_multiple_items_lifts_single_body_with_each_context_effect() -> None:
+    source = (
+        "def f(first, second):\n"
+        "    with first(), second() as value:\n"
+        "        return value\n"
+    )
+
+    result = lift_source(source, "with_multiple.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _with_stmt(_return(_var("value")))
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "first"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "second"} in contract["effects"]
+    assert {"kind": "reads", "target": "value"} not in contract["effects"]
+
+
+def test_with_floor_discriminates_match_statement() -> None:
+    source = (
+        "def f(x):\n"
+        "    match x:\n"
+        "        case 0:\n"
+        "            return 0\n"
+    )
+
+    result = lift_source(source, "match_statement.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unhandled statement kind: Match"
+    ]
+
+
+def test_with_roundtrip_is_structurally_stable() -> None:
+    term = _with_stmt(_return(_var("x")))
+
+    compiled = compile_body_term(term, formals=["x"])
+    relifted = lift_source(compiled, "roundtrip_with.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
+
+
+def test_with_as_non_name_target_is_named_refusal() -> None:
+    source = "def f(ctx):\n    with ctx() as (left, right):\n        return left\n"
+
+    result = lift_source(source, "with_tuple_target.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unsupported with-as target: Tuple"
     ]
 
 

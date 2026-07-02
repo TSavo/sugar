@@ -722,7 +722,24 @@ class _Emitter:
                 self.statements(node.finalbody) if node.finalbody else pass_stmt(),
             )
         if isinstance(node, ast.With):
-            raise _UnsupportedSyntax(node, "with statements are refused")
+            extra_locals: set[str] = set()
+            for item in node.items:
+                self.expr(item.context_expr)
+                self.effects.add_io()
+                if item.optional_vars is None:
+                    continue
+                if not isinstance(item.optional_vars, ast.Name):
+                    raise _UnsupportedSyntax(
+                        item.optional_vars,
+                        f"unsupported with-as target: {type(item.optional_vars).__name__}",
+                    )
+                extra_locals.add(item.optional_vars.id)
+            body = (
+                self.statements_with_extra_locals(node.body, extra_locals)
+                if extra_locals
+                else self.statements(node.body)
+            )
+            return ctor("python:with", body)
         if isinstance(node, ast.While):
             if node.orelse:
                 raise _UnsupportedSyntax(node, "while/else is refused")
