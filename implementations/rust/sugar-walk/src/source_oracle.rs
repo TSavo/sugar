@@ -1095,9 +1095,25 @@ fn source_span_eq(a: &SrcSpan, b: &SrcSpan) -> bool {
 }
 
 fn source_fn_matches_name(source_fn: &SourceFnRef<'_>, wanted: &str) -> bool {
+    source_fn_matches_candidate_name(source_fn, wanted)
+        || trait_impl_display_name_source_name(wanted)
+            .is_some_and(|source_name| source_fn_matches_candidate_name(source_fn, &source_name))
+}
+
+fn source_fn_matches_candidate_name(source_fn: &SourceFnRef<'_>, wanted: &str) -> bool {
     source_fn.full_name == wanted
         || source_fn.leaf_name == wanted
         || source_fn.full_name.ends_with(&format!("::{wanted}"))
+}
+
+fn trait_impl_display_name_source_name(wanted: &str) -> Option<String> {
+    let after_open = wanted.strip_prefix('<')?;
+    let (self_ty, after_as) = after_open.split_once(" as ")?;
+    let (_, method) = after_as.split_once(">::")?;
+    if self_ty.is_empty() || method.is_empty() {
+        return None;
+    }
+    Some(format!("{self_ty}::{method}"))
 }
 
 #[derive(Clone)]
@@ -1722,6 +1738,73 @@ impl Engine for GeneralPurpose {
             .expect("span-bearing memento should resolve even with display-only function name");
 
         assert_eq!(resolved.fragment.body_text, "let ok = true;");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_oracle_refuses_real_name_drift_even_when_span_matches() {
+        use syn::spanned::Spanned;
+
+        let root = std::env::temp_dir().join(format!(
+            "sugar-source-oracle-real-name-drift-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        let src = r#"
+pub struct GeneralPurpose;
+
+impl GeneralPurpose {
+    fn config(&self) -> bool {
+        let ok = true;
+        ok
+    }
+}
+"#;
+        std::fs::write(root.join("src/lib.rs"), src).expect("write source");
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let syn::Item::Impl(item_impl) = &file.items[1] else {
+            panic!("expected impl");
+        };
+        let syn::ImplItem::Fn(method) = &item_impl.items[0] else {
+            panic!("expected method");
+        };
+        let item_fn = syn::ItemFn {
+            attrs: method.attrs.clone(),
+            vis: method.vis.clone(),
+            sig: method.sig.clone(),
+            block: Box::new(method.block.clone()),
+        };
+        let mut memento = source_memento_of_statement_span(
+            "src/lib.rs",
+            src,
+            item_fn.block.stmts[0].span(),
+            "GeneralPurpose::config",
+            &item_fn.sig,
+            &item_fn.block,
+        )
+        .expect("statement memento");
+        memento.function_name = "OtherPurpose::config".to_string();
+
+        let drift =
+            resolve_source_memento(&root, &memento).expect_err("real name drift must refuse");
+
+        assert!(
+            drift
+                .reason
+                .contains("source function name drifted from the proof"),
+            "unexpected drift reason: {}",
+            drift.reason
+        );
+        assert!(
+            drift.reason.contains("OtherPurpose::config")
+                && drift.reason.contains("GeneralPurpose::config"),
+            "unexpected drift reason: {}",
+            drift.reason
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
