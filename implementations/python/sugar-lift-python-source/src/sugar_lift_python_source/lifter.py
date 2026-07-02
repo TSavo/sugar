@@ -1221,6 +1221,8 @@ class _Emitter:
             return ctor("python:tuple", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.List):
             return ctor("python:list", *[self.expr(element) for element in node.elts])
+        if isinstance(node, ast.Set):
+            return ctor("python:set", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.Lambda):
             return self.lambda_expr(node)
         if isinstance(node, ast.ListComp):
