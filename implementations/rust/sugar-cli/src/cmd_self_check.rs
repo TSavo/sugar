@@ -376,6 +376,9 @@ fn floor_signals_from_scoreboard(
         discharge_split_present: prove_json
             .get("dischargeSplit")
             .map_or(false, |value| !value.is_null()),
+        monoid_fold_gaps_by_element_type: monoid_fold_gaps_by_element_type_from_entries(
+            &scoreboard.panic_census,
+        ),
     }
 }
 
@@ -1384,6 +1387,32 @@ fn row_reason(row: &Value) -> String {
         .to_string()
 }
 
+fn monoid_fold_gaps_by_element_type_from_entries(
+    entries: &[PanicCensusEntry],
+) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for entry in entries {
+        if let Some(element_type) = monoid_fold_gap_element_type(&entry.reason) {
+            *counts.entry(element_type).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn monoid_fold_gap_element_type(reason: &str) -> Option<String> {
+    if !reason.contains("MonoidFold") {
+        return None;
+    }
+    let (_, tail) = reason.split_once("element_type=")?;
+    let element_type = tail
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('`');
+    (!element_type.is_empty()).then(|| element_type.to_string())
+}
+
 fn site_from_diagnostic(diagnostic: &Value, fallback_reason: &str) -> Site {
     Site {
         file: diagnostic
@@ -1467,6 +1496,17 @@ fn emit_scoreboard(scoreboard: &SelfCheckScoreboard, json: bool) {
         scoreboard.discharge_split.false_pass
     );
     println!("panicCensus: {} site(s)", scoreboard.panic_census.len());
+    let monoid_fold_gaps = monoid_fold_gaps_by_element_type_from_entries(&scoreboard.panic_census);
+    if !monoid_fold_gaps.is_empty() {
+        println!(
+            "monoidFoldCarrierEmbeddingGaps: {}",
+            monoid_fold_gaps
+                .iter()
+                .map(|(element_type, count)| format!("{element_type}={count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     for site in &scoreboard.panic_census {
         println!(
             "  {}:{} {} {}, reason: {}",

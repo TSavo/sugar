@@ -71,14 +71,14 @@ use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::sequence_floor::reduce_sequence_elem_term_floor;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::term_dispatch::fold_int_terms;
+use crate::sugar::term_dispatch::{fold_int_terms, ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
     const_eval_binary_option_closure, const_eval_unary_closure, const_fold_acc_update,
     const_fold_int_term, const_int, const_int_acc_init, const_val_term, parse_int_lit,
     receiver_is_versioned_iterator, refusal_disposition, simple_path_name, strip_refs_groups,
-    token_key, ConstVal, Desugared, DesugaredElem, Disposition, Effect, Outcome, Sugar, SugarCtx,
-    TemporalScope,
+    token_key, type_key, ConstVal, Desugared, DesugaredElem, Disposition, Effect, Outcome, Sugar,
+    SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -218,14 +218,28 @@ pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     let advance_by_arg = advance_by_arg_body(&terminal, fcx);
+    let element_type_hint = monoid_terminal_type_hint(&terminal, call);
     Some(Box::new(IterTerminalSugar {
         terminal,
         site_key: token_key(expr),
         closure_refusal: closure_adaptor_refusal(expr, fcx.scope()),
         receiver: IterTerminalReceiver::new((*call.receiver).clone()),
         advance_by_arg,
+        element_type_hint,
         let_inits: capture_let_inits(fcx),
     }))
+}
+
+fn monoid_terminal_type_hint(terminal: &Terminal, call: &syn::ExprMethodCall) -> Option<String> {
+    MonoidFoldTerminal::from_terminal(terminal)?;
+    call.turbofish
+        .as_ref()?
+        .args
+        .iter()
+        .find_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => Some(type_key(ty)),
+            _ => None,
+        })
 }
 
 fn recognized_receiver_is_static_sequence(
@@ -724,6 +738,239 @@ fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
     usize::try_from(const_fold_int_term(term)?).ok()
 }
 
+#[derive(Clone, Copy)]
+enum MonoidFoldTerminal {
+    Sum,
+    Product,
+    Min,
+    Max,
+}
+
+impl MonoidFoldTerminal {
+    fn from_terminal(terminal: &Terminal) -> Option<Self> {
+        Some(match terminal {
+            Terminal::Sum => Self::Sum,
+            Terminal::Product => Self::Product,
+            Terminal::Min => Self::Min,
+            Terminal::Max => Self::Max,
+            _ => return None,
+        })
+    }
+
+    fn method_name(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Product => "product",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// Python-reference check (#3125 slice 1): the Python lift kit has operation
+/// floors and floor-gap telemetry, but no named MonoidFold/CarrierEmbedding
+/// sibling to mirror. Rust names this seam from #3125 while preserving the
+/// existing Int carrier lowering byte-for-byte.
+struct MonoidFold<'a> {
+    terminal: MonoidFoldTerminal,
+    element_type_hint: Option<&'a str>,
+}
+
+impl<'a> MonoidFold<'a> {
+    fn new(terminal: MonoidFoldTerminal, element_type_hint: Option<&'a str>) -> Self {
+        Self {
+            terminal,
+            element_type_hint,
+        }
+    }
+
+    fn lower_term_sequence(self, terms: Vec<Rc<Term>>) -> Result<Rc<Term>, MonoidFoldGap> {
+        if let Some(hint) = self.element_type_hint {
+            if !element_type_hint_has_int_carrier(hint) {
+                return Err(self.gap(None));
+            }
+        }
+        if !terms.iter().all(term_has_int_carrier) {
+            return Err(self.gap(Some("unknown".to_string())));
+        }
+        match self.terminal {
+            MonoidFoldTerminal::Sum => Ok(fold_int_terms("+", 0, terms)),
+            MonoidFoldTerminal::Product => Ok(fold_int_terms("*", 1, terms)),
+            MonoidFoldTerminal::Min | MonoidFoldTerminal::Max => {
+                Err(self.gap(Some("unknown".to_string())))
+            }
+        }
+    }
+
+    fn lower_literal_sequence(self, seq: &[DesugaredElem]) -> Result<Rc<Term>, MonoidFoldGap> {
+        let mut ints = Vec::with_capacity(seq.len());
+        for elem in seq {
+            let Some(value) = elem.value.as_ref() else {
+                return Err(self.gap(element_type_from_expr(&elem.expr)));
+            };
+            let Some(n) = value.as_int() else {
+                return Err(self.gap(element_type_from_const(value)));
+            };
+            ints.push(n);
+        }
+        Ok(match self.terminal {
+            MonoidFoldTerminal::Sum => {
+                let total = ints
+                    .into_iter()
+                    .try_fold(0i128, |acc, n| acc.checked_add(n))
+                    .ok_or_else(|| self.gap(Some("Int".to_string())))?;
+                num(total)
+            }
+            MonoidFoldTerminal::Product => {
+                let product = ints
+                    .into_iter()
+                    .try_fold(1i128, |acc, n| acc.checked_mul(n))
+                    .ok_or_else(|| self.gap(Some("Int".to_string())))?;
+                num(product)
+            }
+            MonoidFoldTerminal::Min => {
+                let Some(n) = ints.into_iter().min() else {
+                    return Ok(monadic::none_term());
+                };
+                monadic::some_term(num(n))
+            }
+            MonoidFoldTerminal::Max => {
+                let Some(n) = ints.into_iter().max() else {
+                    return Ok(monadic::none_term());
+                };
+                monadic::some_term(num(n))
+            }
+        })
+    }
+
+    fn gap(self, observed_type: Option<String>) -> MonoidFoldGap {
+        MonoidFoldGap {
+            terminal: self.terminal,
+            element_type: self
+                .element_type_hint
+                .map(str::to_string)
+                .or(observed_type)
+                .unwrap_or_else(|| "unknown".to_string()),
+        }
+    }
+}
+
+struct MonoidFoldGap {
+    terminal: MonoidFoldTerminal,
+    element_type: String,
+}
+
+impl MonoidFoldGap {
+    fn into_reason(self) -> String {
+        format!(
+            "MonoidFold gap: terminal={}, element_type={}, missing=CarrierEmbedding",
+            self.terminal.method_name(),
+            self.element_type
+        )
+    }
+
+    fn raise(self) -> ! {
+        iter_terminal_gap(&self.into_reason())
+    }
+}
+
+struct IntCarrierVisitor;
+
+impl ScalarFloorVisitor for IntCarrierVisitor {
+    type Output = bool;
+
+    fn visit_numeric(self, _floor: crate::sugar::int_literal::NumericFloor) -> Self::Output {
+        true
+    }
+
+    fn visit_bool(self, _value: bool) -> Self::Output {
+        false
+    }
+
+    fn visit_char(self, _value: char) -> Self::Output {
+        false
+    }
+
+    fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
+        true
+    }
+}
+
+fn term_has_int_carrier(term: &Rc<Term>) -> bool {
+    term.accept_scalar_floor(IntCarrierVisitor)
+}
+
+fn element_type_hint_has_int_carrier(hint: &str) -> bool {
+    matches!(
+        hint.rsplit("::").next().unwrap_or(hint),
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+    )
+}
+
+fn element_type_from_const(value: &ConstVal) -> Option<String> {
+    Some(
+        match value {
+            ConstVal::Bool(_) => "bool",
+            ConstVal::Char(_) => "char",
+            ConstVal::Array(_) => "array",
+            ConstVal::Tuple(_) => "tuple",
+            ConstVal::Struct { name, .. } => return Some(name.clone()),
+            ConstVal::UnitPath(_) => "()",
+            ConstVal::Int(_) | ConstVal::PrimitiveInt { .. } | ConstVal::UInt128(_) => return None,
+        }
+        .to_string(),
+    )
+}
+
+fn element_type_from_expr(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::Call(call) => {
+            let Expr::Path(path) = strip_refs_groups(&call.func) else {
+                return None;
+            };
+            constructed_type_from_path(&path.path)
+        }
+        Expr::Struct(strukt) => strukt.path.segments.last().map(|seg| seg.ident.to_string()),
+        Expr::Path(path) => path.path.segments.last().map(|seg| seg.ident.to_string()),
+        Expr::Lit(lit) => Some(
+            match &lit.lit {
+                syn::Lit::Bool(_) => "bool",
+                syn::Lit::Char(_) => "char",
+                syn::Lit::Str(_) => "str",
+                syn::Lit::ByteStr(_) => "bytes",
+                syn::Lit::Byte(_) => "u8",
+                syn::Lit::Int(_) => return None,
+                syn::Lit::Float(_) => "float",
+                _ => "literal",
+            }
+            .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn constructed_type_from_path(path: &syn::Path) -> Option<String> {
+    let mut segments = path.segments.iter().map(|seg| seg.ident.to_string());
+    let first = segments.next()?;
+    let mut previous = first;
+    let mut current = None;
+    for segment in segments {
+        current = Some(previous);
+        previous = segment;
+    }
+    current.or(Some(previous))
+}
+
 /// The iterator scalar-reduction terminal node. Holds the raw receiver expression and
 /// the captured reduction kind. `desugar` lazily composes the receiver to a literal `Seq`
 /// through the live build context, then reduces it to the scalar value term; if the
@@ -734,6 +981,7 @@ struct IterTerminalSugar {
     closure_refusal: Option<String>,
     receiver: IterTerminalReceiver,
     advance_by_arg: Option<SugarBody<TermFloor>>,
+    element_type_hint: Option<String>,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -945,13 +1193,16 @@ impl IterTerminalSugar {
             };
             return Outcome::Complete(Desugared::Term(term));
         }
-        match self.terminal {
-            Terminal::Sum => Outcome::Complete(Desugared::Term(fold_int_terms("+", 0, terms))),
-            Terminal::Product => Outcome::Complete(Desugared::Term(fold_int_terms("*", 1, terms))),
-            _ => self.named_closure_boundary(ctx).unwrap_or_else(|| {
-                iter_terminal_gap("iterator terminal cannot consume a curried term sequence yet")
-            }),
+        if let Some(terminal) = MonoidFoldTerminal::from_terminal(&self.terminal) {
+            let fold = MonoidFold::new(terminal, self.element_type_hint.as_deref());
+            return match fold.lower_term_sequence(terms) {
+                Ok(term) => Outcome::Complete(Desugared::Term(term)),
+                Err(gap) => gap.raise(),
+            };
         }
+        self.named_closure_boundary(ctx).unwrap_or_else(|| {
+            iter_terminal_gap("iterator terminal cannot consume a curried term sequence yet")
+        })
     }
 
     /// Reduce the literal `Seq` to the value term. Receiver composition happens here,
@@ -1188,28 +1439,15 @@ impl IterTerminalSugar {
             if matches!(self.terminal, Terminal::Count) {
                 return Some(Desugared::Term(num(seq.len() as i128)));
             }
-            // EXTREMUM terminals (`.min()`/`.max()`): fold over the elements' EXACT integer
-            // const values and wrap the extremum in `MonadicSugar`'s `opt:some` (the result of
-            // `.min()`/`.max()` is `Option<&T>`). EXACT-OR-BAIL: a non-int / opaque element
-            // gaps. Empty literal ranges have the real floor `None`;
-            // empty non-range literal domains still decline before this arm.
-            if matches!(self.terminal, Terminal::Min | Terminal::Max) {
-                if seq.is_empty() {
-                    return Some(Desugared::Term(monadic::none_term()));
-                }
-                let mut ext: Option<i128> = None;
-                for elem in &seq {
-                    let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
-                    ext = Some(match (ext, &self.terminal) {
-                        (None, _) => n,
-                        (Some(cur), Terminal::Min) => cur.min(n),
-                        (Some(cur), _) => cur.max(n),
-                    });
-                }
-                // `seq` is non-empty (the `LiteralSugar` floor declines the empty Seq), so
-                // `ext` is `Some`; guard defensively rather than unwrap.
-                let n = ext?;
-                return Some(Desugared::Term(monadic::some_term(num(n))));
+            // EXTREMUM terminals (`.min()`/`.max()`) and numeric reductions
+            // (`.sum()`/`.product()`) route through the MonoidFold dispatch seam. Slice 1
+            // only implements the existing Int carrier; no CarrierEmbedding is available yet.
+            if let Some(terminal) = MonoidFoldTerminal::from_terminal(&self.terminal) {
+                let fold = MonoidFold::new(terminal, self.element_type_hint.as_deref());
+                return match fold.lower_literal_sequence(&seq) {
+                    Ok(term) => Some(Desugared::Term(term)),
+                    Err(gap) => gap.raise(),
+                };
             }
             // PREDICATE-POSITIONAL terminals (`.find(p)`/`.position(p)`): const-evaluate the
             // closure over each literal element (the SAME `const_eval_unary_closure` floor the
@@ -1307,25 +1545,7 @@ impl IterTerminalSugar {
                     .try_fold_values(values, ctx, &let_inits)
                     .map(Desugared::Term);
             }
-            // Numeric reductions: exact const ints only. Empty product uses the Rust
-            // multiplicative identity; empty sum uses additive identity.
-            match self.terminal {
-                Terminal::Sum => {
-                    let mut total = 0i128;
-                    for elem in &seq {
-                        total = total.checked_add(elem.value.as_ref()?.as_int()?)?;
-                    }
-                    Some(Desugared::Term(num(total)))
-                }
-                Terminal::Product => {
-                    let mut product = 1i128;
-                    for elem in &seq {
-                        product = product.checked_mul(elem.value.as_ref()?.as_int()?)?;
-                    }
-                    Some(Desugared::Term(num(product)))
-                }
-                _ => None,
-            }
+            None
         })();
         match reduced {
             Some(d) => Outcome::Complete(d),
