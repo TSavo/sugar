@@ -1526,21 +1526,31 @@ class _Emitter:
         return result
 
     def call(self, node: ast.Call) -> Json:
-        for arg in node.args:
-            if isinstance(arg, ast.Starred):
-                raise _UnsupportedSyntax(arg, "starred call arguments are refused")
-        for keyword in node.keywords:
-            if keyword.arg is None:
-                raise _UnsupportedSyntax(keyword, "starred call arguments are refused")
-
         def arguments() -> list[Json]:
-            args = [self.expr(arg) for arg in node.args]
-            args.extend(
-                ctor(
-                    "python:kwarg", str_const(str(keyword.arg)), self.expr(keyword.value)
-                )
-                for keyword in node.keywords
-            )
+            args: list[Json] = []
+            has_starred = False
+            for arg in node.args:
+                if isinstance(arg, ast.Starred):
+                    args.append(ctor("python:starred_arg", self.expr(arg.value)))
+                    has_starred = True
+                else:
+                    args.append(self.expr(arg))
+            for keyword in node.keywords:
+                if keyword.arg is None:
+                    args.append(
+                        ctor("python:double_starred_kwarg", self.expr(keyword.value))
+                    )
+                    has_starred = True
+                else:
+                    args.append(
+                        ctor(
+                            "python:kwarg",
+                            str_const(str(keyword.arg)),
+                            self.expr(keyword.value),
+                        )
+                    )
+            if has_starred:
+                self.effects.add_unresolved_call("(starred)")
             return args
 
         if isinstance(node.func, ast.Subscript):

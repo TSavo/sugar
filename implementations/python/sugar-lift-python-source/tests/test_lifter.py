@@ -257,6 +257,22 @@ def _kwarg(name: str, value: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _starred_arg(value: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:starred_arg",
+        "args": [value],
+    }
+
+
+def _double_starred_kwarg(value: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:double_starred_kwarg",
+        "args": [value],
+    }
+
+
 def _tuple(*items: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:tuple", "args": list(items)}
 
@@ -3690,17 +3706,71 @@ def test_b1_decorated_functions_remain_deferred() -> None:
     ]
 
 
-def test_b1_starred_call_arguments_remain_refused() -> None:
-    starred = lift_source("def f(xs):\n    return make(*xs)\n", "b1_starred_call.py")
+def test_starred_call_arguments_lift_as_loudly_unresolved_shape() -> None:
+    result = lift_source(
+        "def f(args, kwargs):\n    return make(*args, **kwargs)\n",
+        "starred_call.py",
+    )
 
-    assert starred.refusals == [
+    term = _call(
+        "make",
+        _starred_arg(_var("args")),
+        _double_starred_kwarg(_var("kwargs")),
+    )
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+    assert {"kind": "unresolved_call", "name": "make"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "(starred)"} in contract["effects"]
+
+
+def test_plain_call_does_not_get_starred_unresolved_effect() -> None:
+    result = lift_source(
+        "def f(args):\n    return make(args)\n",
+        "plain_call_no_starred_effect.py",
+    )
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(_call("make", _var("args")))
+    assert {"kind": "unresolved_call", "name": "make"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "(starred)"} not in contract["effects"]
+
+
+def test_starred_call_argument_inner_refusal_propagates_without_shape() -> None:
+    result = lift_source(
+        "def f(xs):\n    return make(*{x for x in xs})\n",
+        "starred_inner_refusal.py",
+    )
+
+    assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "b1_starred_call.f",
+            "function": "starred_inner_refusal.f",
             "line": 2,
-            "reason": "starred call arguments are refused",
+            "reason": "unhandled expression kind: SetComp",
         }
     ]
+
+
+def test_starred_call_arguments_roundtrip_preserves_mixed_order_and_kinds() -> None:
+    term = _call(
+        "f",
+        _var("a"),
+        _starred_arg(_var("b")),
+        _kwarg("c", _int_const(1)),
+        _double_starred_kwarg(_var("d")),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["a", "b", "d"])
+    relifted = lift_source(compiled, "roundtrip_starred_call.py")
+
+    contract = _contract(relifted.ir, ".f")
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+    assert {"kind": "unresolved_call", "name": "(starred)"} in contract["effects"]
 
 
 def test_simple_chained_call_lifts_with_unresolved_chained_effect() -> None:

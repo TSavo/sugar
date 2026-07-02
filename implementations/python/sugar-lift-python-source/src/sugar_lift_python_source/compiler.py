@@ -314,6 +314,14 @@ def _expr(term: Json) -> ast.expr:
                         value=_expr(keyword_args[1]),
                     )
                 )
+            elif _name(arg) == "python:double_starred_kwarg":
+                keyword_args = arg.get("args", [])
+                keywords.append(ast.keyword(arg=None, value=_expr(keyword_args[0])))
+            elif _name(arg) == "python:starred_arg":
+                star_args = arg.get("args", [])
+                positional.append(
+                    ast.Starred(value=_expr(star_args[0]), ctx=ast.Load())
+                )
             else:
                 positional.append(_expr(arg))
         callee = (
