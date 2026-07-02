@@ -254,7 +254,7 @@ fn undecidable_reason_is_printed() {
 }
 
 #[test]
-fn all_discharged_still_green() {
+fn discharged_claim_still_green() {
     let project = publish_inv_project("stub-green", SolverFixture::StubPass);
     let out = run_verify(&project, true);
     let receipt = stdout_json(&out);

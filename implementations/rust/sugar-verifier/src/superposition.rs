@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn all_discharged_is_strong_no_levers() {
+    fn only_discharged_readings_are_strong_no_levers() {
         let items = vec![
             item("double", "discharged", "p1"),
             item("double", "discharged", "p2"),
