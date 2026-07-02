@@ -33,12 +33,13 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, atomic_, eq, implies, make_var, Formula, Term};
+use sugar_ir_symbolic::Formula;
 use syn::{Expr, Item, Stmt};
 
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::guarded_return::{guarded_returns_to_formula, GuardedReturn};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     sugar_ctx_with_factory_audits, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx,
@@ -86,7 +87,7 @@ impl Sugar for BlockSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let options = LiftOptions::default();
         let mut scope_clone = ctx.scope.clone();
-        let mut emitted: Vec<(Vec<Rc<Formula>>, Rc<Term>)> = Vec::new();
+        let mut emitted: Vec<GuardedReturn> = Vec::new();
         let mut pending: Vec<Rc<Formula>> = Vec::new();
 
         for stmt in &self.stmts {
@@ -123,7 +124,10 @@ impl Sugar for BlockSugar {
                     }
                     // Single return: emit under the current accumulated pending guards.
                     Desugared::StmtReturn(term) => {
-                        emitted.push((pending.clone(), term));
+                        emitted.push(GuardedReturn::new(pending.clone(), term));
+                    }
+                    Desugared::StmtGuarded(guarded_return) => {
+                        emitted.push(guarded_return.with_prefix(&pending));
                     }
                     // Nested block/if: merge its guarded clauses (prefixed with pending),
                     // extend pending with any fall_through conditions.
@@ -131,17 +135,15 @@ impl Sugar for BlockSugar {
                         guarded,
                         fall_through,
                     } => {
-                        for (guards, term) in guarded {
-                            let mut merged = pending.clone();
-                            merged.extend(guards);
-                            emitted.push((merged, term));
+                        for guarded_return in guarded {
+                            emitted.push(guarded_return.with_prefix(&pending));
                         }
                         pending.extend(fall_through);
                     }
-                    // Any other floor variant from an upstream node is treated as inert.
-                    // (Should not occur in normal use: the only other variants are for
-                    // Expr/Item roles, not Statement roles.)
-                    _ => {}
+                    other => block_stmt_gap(&format!(
+                        "statement role produced non-statement floor {}",
+                        statement_floor_name(&other)
+                    )),
                 },
             }
         }
@@ -159,26 +161,30 @@ impl Sugar for BlockSugar {
 /// Each `(guards, term)` pair becomes `implies(and_(guards), eq(out, term))`.
 /// An empty guards list uses `atomic_("true", [])` (unconditional).
 /// Returns `None` if `guarded` is empty (no return clause -> no formula to emit).
-pub(crate) fn block_stmt_to_formula(
-    guarded: Vec<(Vec<Rc<Formula>>, Rc<Term>)>,
-) -> Option<Rc<Formula>> {
-    if guarded.is_empty() {
-        return None;
+pub(crate) fn block_stmt_to_formula(guarded: Vec<GuardedReturn>) -> Option<Rc<Formula>> {
+    guarded_returns_to_formula(guarded)
+}
+
+fn statement_floor_name(desugared: &Desugared) -> &'static str {
+    match desugared {
+        Desugared::Seq(_) => "Seq",
+        Desugared::TermSeq(_) => "TermSeq",
+        Desugared::Constraints { .. } => "Constraints",
+        Desugared::Term(_) => "Term",
+        Desugared::LiteralString(_) => "LiteralString",
+        Desugared::LiteralCStr(_) => "LiteralCStr",
+        Desugared::FormatValue(_) => "FormatValue",
+        Desugared::TupleComponents(_) => "TupleComponents",
+        Desugared::StmtSupport => "StmtSupport",
+        Desugared::StmtBound { .. } => "StmtBound",
+        Desugared::StmtReturn(_) => "StmtReturn",
+        Desugared::StmtGuarded(_) => "StmtGuarded",
+        Desugared::StmtBlock { .. } => "StmtBlock",
     }
-    let out = make_var("out");
-    Some(and_(
-        guarded
-            .into_iter()
-            .map(|(guards, term)| {
-                let guard: Rc<Formula> = match guards.len() {
-                    0 => atomic_("true", vec![]),
-                    1 => guards.into_iter().next().unwrap(),
-                    _ => and_(guards),
-                };
-                implies(guard, eq(out.clone(), term))
-            })
-            .collect(),
-    ))
+}
+
+fn block_stmt_gap(reason: &str) -> ! {
+    panic!("guarded return floor did not reach lawful statement composition: {reason}")
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

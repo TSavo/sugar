@@ -13,6 +13,8 @@ use sugar_ir_types::*;
 
 use crate::{COMPILER_NAME, COMPILER_VERSION, DIALECT};
 
+const BV32_SORT: &str = "(_ BitVec 32)";
+
 pub fn emit_term(term: &Term) -> String {
     emit_term_with_expected(term, None)
 }
@@ -27,6 +29,11 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
         // no-op for ordinary names, so plain identifiers are unchanged.
         Term::Var { name, .. } => smt_quote(name),
         Term::Const { value, sort, .. } => {
+            if expected_ret == Some(BV32_SORT) {
+                if let Some(v) = value.as_i64() {
+                    return i32_to_bv32_hex(v);
+                }
+            }
             let sort_name = match sort {
                 Sort::Primitive { name } => name.as_str(),
                 Sort::Function { .. } | Sort::Dependent { .. } | Sort::Region { .. } => {
@@ -1968,6 +1975,12 @@ pub fn collect_free_vars_formula(
             if crate::literal_encoding::routes_to_bv32_theory(name) {
                 return;
             }
+            if name == "=" && args.iter().any(term_is_bv32_value) {
+                for a in args {
+                    collect_free_vars_term_bv32_result(a, out, bound);
+                }
+                return;
+            }
             if is_float_refinement_atomic_predicate(name) {
                 for a in args {
                     collect_free_vars_term_ctx(a, out, bound, true);
@@ -2164,6 +2177,46 @@ fn collect_free_vars_term_ctx_adt(
     }
 }
 
+fn collect_free_vars_term_bv32_result(
+    term: &Term,
+    out: &mut BTreeMap<String, String>,
+    bound: &BTreeSet<String>,
+) {
+    match term {
+        Term::Var { name, .. } => {
+            if !bound.contains(name) {
+                out.insert(name.clone(), BV32_SORT.to_string());
+            }
+        }
+        Term::Const { .. } => {}
+        Term::Ctor { name, args, .. } if is_bv32_ctor_name(name) => {
+            for arg in args {
+                collect_free_vars_term_bv32_result(arg, out, bound);
+            }
+        }
+        Term::Ctor { args, .. } => {
+            for arg in args {
+                collect_free_vars_term_ctx(arg, out, bound, false);
+            }
+        }
+        Term::Lambda {
+            param_name, body, ..
+        } => {
+            let mut nb = bound.clone();
+            nb.insert(param_name.clone());
+            collect_free_vars_term_bv32_result(body, out, &nb);
+        }
+        Term::Let { bindings, body } => {
+            let mut current_bound = bound.clone();
+            for binding in bindings {
+                collect_free_vars_term_bv32_result(&binding.bound_term, out, &current_bound);
+                current_bound.insert(binding.name.clone());
+            }
+            collect_free_vars_term_bv32_result(body, out, &current_bound);
+        }
+    }
+}
+
 fn collect_free_vars_identity_term(
     term: &Term,
     out: &mut BTreeMap<String, String>,
@@ -2295,6 +2348,9 @@ fn known_term_sort(term: &Term) -> Option<String> {
         }
         Term::Var { .. } => Some("Int".to_string()),
         Term::Ctor { name, .. } if name == "str.len" => Some("Int".to_string()),
+        Term::Ctor { name, .. } if is_bv32_ctor_name(name) && term_renders_as_bv32(term) => {
+            Some(BV32_SORT.to_string())
+        }
         // A monadic Option/Result ctor IS its ADT sort. Returning it lets a `=`
         // between a monadic value and an OPAQUE call result (`x.and(Some(2)) ==
         // Some(2)`) declare the opaque call with the matching ADT return sort, so
@@ -2364,7 +2420,7 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
     // declared as uninterpreted functions; they are handled in
     // `emit_bv32_theory_atomic` and are excluded from ctor-decl collection.
     if crate::literal_encoding::routes_to_bv32_theory(name) {
-        return Some("(_ BitVec 32)".to_string());
+        return Some(BV32_SORT.to_string());
     }
     let smt_name = smt_atomic_name(name);
     if matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=") {
@@ -2395,7 +2451,7 @@ fn collect_ctor_decls_formula(formula: &Formula, out: &mut BTreeMap<String, Ctor
             // must NOT be declared as uninterpreted functions (that would shadow
             // the theory and cause false results).
             if crate::literal_encoding::routes_to_bv32_theory(name) {
-                let bv32_sort = "(_ BitVec 32)";
+                let bv32_sort = BV32_SORT;
                 if !args.is_empty() {
                     // Manually declare the subject ctor with all-BV32 signature.
                     // args[0] must be a Ctor; its args (the int literals at the
@@ -2482,6 +2538,19 @@ fn is_builtin_term_operator(name: &str) -> bool {
             | "str.from_code"   // → (str.from_code <int>): SMT string theory builtin
             | "str.table-select" // → ite-chain codepoint lookup: emitted inline
     )
+}
+
+fn is_bv32_ctor_name(name: &str) -> bool {
+    name.starts_with("bv32.")
+}
+
+fn term_renders_as_bv32(term: &Term) -> bool {
+    let subst = std::collections::HashMap::new();
+    emit_bv32_term(term, &subst).is_some()
+}
+
+fn term_is_bv32_value(term: &Term) -> bool {
+    matches!(term, Term::Ctor { name, .. } if is_bv32_ctor_name(name) && term_renders_as_bv32(term))
 }
 
 // ── Monadic Option/Result algebraic datatypes ──────────────────────────────
@@ -2677,7 +2746,9 @@ fn collect_ctor_decls_term(
             // the uninterpreted-fn pass. Still recurse into the arguments so any
             // genuine non-builtin ctor nested underneath (e.g. `method:foo`) is
             // declared.
-            if !is_builtin_term_operator(name) && !is_monadic_ctor(name) {
+            let is_interpreted_builtin = is_builtin_term_operator(name)
+                || (is_bv32_ctor_name(name) && term_renders_as_bv32(term));
+            if !is_interpreted_builtin && !is_monadic_ctor(name) {
                 let decl_key = ctor_decl_key_for_signature(name, args.len(), &arg_sorts);
                 out.entry(decl_key).or_insert_with(|| CtorSignature {
                     args: arg_sorts.clone(),
