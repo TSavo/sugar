@@ -391,3 +391,25 @@ Also from that review: the verdict-witness registry must RUN every registered pa
 **The missed trick (T verbatim):** "well-typed FOL is not enough. We need well-typed ProofIR membership. A formula must know whether it is a vendor fact, a body universe, a bridge obligation, a refusal boundary, or a derived implication. That is how we make 'invalid FOL in the proof' literally impossible, not merely unlikely."
 
 **Sequencing (T's):** next slice = the red instrument plus the first tiny class family: Sort, Term[S], Formula, Eq, And, ClosedFormula, EqualityFact. Then migrate ONE emission seat and let the instrument count the rest.
+
+## Addendum 3b (T Savo, 2026-07-02, verbatim — the authoritative expanded form: ProofIR Construction Law)
+
+T pulled main and confirmed the pressure point: proofir/nodes.py has ProofIRNode/EqualityFact/FunctionContract/RefusalRecord, but ir.py still has union-shaped Sort/Term/Formula, and BodyUniverseDto still accepts raw dict formula slots. That is the gap.
+
+**THE LAW: No naked Formula crosses a boundary.** "A syntactically valid formula is not enough. A formula must be scoped, sorted, provenanced, and installed into a typed ProofIR role before it can enter a proof, report, RPC payload, or solver call." NOT "split the current file and keep the same constructors" — that would be pretty furniture around the same hole.
+
+**The design (T's, exact):**
+1. proofir/sorts/*: one class per sort — IntSort, RealSort, BoolSort, StringSort, IdentitySort, BvSort(width), FunctionSort.
+2. proofir/terms/*: one class per term family — Var[S], Const[S], CallTerm[S], CtorTerm[S], BvAnd, BvShl, IdentityValue. Every term carries a sort. Bit-vector ops only accept bit-vector terms of compatible width. Identity terms never enter numeric sort space.
+3. proofir/formulas/*: one class per logical form — Eq[S], Predicate, And, Or, Not, Implies, ForAll, Exists. Eq(Int, String) cannot construct. Numeric coercion is explicit: Coerce(Int -> Real) or a NumberSort policy object. Identity equality is separate: IdentityEq, not numeric Eq.
+4. proofir/scope/* (THE TRICK): OpenFormula, ScopedFormula, ClosedFormula, PostCondition, PreCondition. FunctionContract does not accept Formula; it accepts PostCondition, whose constructor checks: out is mentioned; free vars are only declared formals plus out; every var has a sort; the formula is closed under the contract's scope.
+5. proofir/provenance/*: provenance is a REQUIRED TYPE, not metadata — ConstructionSite, StatedWarrant, DerivedWarrant, SourceWarrant, PlanMemento, Provenance. A reportable node cannot be built without this.
+6. proofir/nodes/*: one file per semantic role — EqualityFact, FunctionContract, BodyUniverse, UniverseMint, VendorConjoin, CallEdgeDecl, BridgeAtom, AuditMemento, RefusalRecord. These are the ONLY things allowed to serialize to proof/RPC/report. Raw formulas cannot.
+
+**Critical ownership changes:** EqualityFact does NOT take euf_key: str — it takes CallTerm[S] and Term[S]; the key is DERIVED. FunctionContract takes PostCondition[S], not post: Formula. VendorConjoin takes typed members (FactAtom + UniverseAtom), not arbitrary formulas. RefusalRecord remains disjoint from FOL — cannot carry predicates; red function means effect/refusal only. BodyUniverseDto becomes wire-only — lifters never construct it with post=dict/inv=dict; they construct typed nodes and serialization lowers them.
+
+**The instrument (first slice is a red construction-law gate, not a refactor):** red on _formula_to_rpc outside ProofIR serialization; red on BodyUniverseDto(pre=|post=|inv=) outside typed node serializers; red on Formula fields in ProofIR node constructors; red on dict[str, Any] formula slots; red on monolithic ProofIR semantic classes staying in one file after the split begins. **The static baseline in idd/proofir_vocab_instruments.py becomes a LIVE SCANNER. No authored offender tuple. The repo tells us where it is dirty.**
+
+**The missed trick (verbatim):** "We are not just typing FOL. We are typing FOL membership. A naked Eq(out, 5) may be a valid formula, but it is not yet a vendor fact, not yet a body universe, not yet a bridge obligation, not yet an implication, not yet a refusal. The type system has to force that final question: 'What role does this claim play in the proof, and who warranted it?' That is how invalid FOL becomes unconstructible."
+
+**Drain order (T's):** scanner + failing construction tests first, then drain EqualityFact, then FunctionContract, then RefusalRecord, then the remaining vocab nodes. Deliverable name: the "ProofIR Construction Law" plan/spec.
