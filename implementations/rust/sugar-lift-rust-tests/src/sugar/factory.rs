@@ -109,6 +109,10 @@ pub(crate) struct CarrierEmbeddingFloor;
 /// method dispatch through ObjectValue operations.
 #[allow(dead_code)]
 pub(crate) struct ObjectValueFloor;
+/// PredicateValue floor family. Carries assertion-position formulas distinctly
+/// from bool-sorted data terms.
+#[allow(dead_code)]
+pub(crate) struct PredicateValueFloor;
 
 impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
@@ -128,6 +132,7 @@ impl BodyFloor for RaiseValueFloor {}
 impl BodyFloor for SymbolicValueFloor {}
 impl BodyFloor for CarrierEmbeddingFloor {}
 impl BodyFloor for ObjectValueFloor {}
+impl BodyFloor for PredicateValueFloor {}
 
 /// A factory-built child/body for a parent Sugar.
 ///
@@ -220,6 +225,31 @@ impl SugarBody<BoolFloor> {
             frag.as_expr().expect("bool_expr_frag: non-expr fragment"),
             fcx,
         ))
+    }
+}
+
+impl SugarBody<PredicateValueFloor> {
+    pub(crate) fn predicate_value_term(term: SugarBody<TermFloor>) -> Self {
+        Self::from_node(crate::sugar::constraint::build_predicate_value_body(
+            term, true,
+        ))
+    }
+
+    pub(crate) fn reduce_predicate_value(
+        &self,
+        ctx: &SugarCtx,
+        owner: &'static str,
+    ) -> FloorRead<crate::sugar::predicate_value::PredicateValue> {
+        use crate::sugar::term_dispatch::{
+            PredicateValueFloorAccept, RequiredPredicateValueVisitor,
+        };
+
+        match self.reduce(ctx) {
+            Outcome::Complete(desugared) => FloorRead::Complete(
+                desugared.accept_predicate_value_floor(RequiredPredicateValueVisitor { owner }),
+            ),
+            Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
+        }
     }
 }
 
@@ -817,6 +847,9 @@ impl FactoryAuditSeed {
             }
             Outcome::Complete(Desugared::ObjectValue(_)) => {
                 (FactoryDisposition::Warranted, "object-value", None)
+            }
+            Outcome::Complete(Desugared::PredicateValue(_)) => {
+                (FactoryDisposition::Warranted, "predicate-value", None)
             }
             Outcome::Complete(Desugared::TermSeq(_)) => {
                 (FactoryDisposition::Warranted, "term-sequence", None)

@@ -10,6 +10,7 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::ip_addr::{literal_ip_from_term, LiteralIp};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
+use crate::sugar::predicate_value::PredicateValue;
 use crate::sugar::primitive_int::{
     is_deferred_primitive_method_name, try_eval_deferred_primitive_method,
 };
@@ -208,6 +209,68 @@ impl BoolFloorVisitor for RequiredBoolVisitor<'_> {
             self.owner,
             canonical_term_sig(term)
         )
+    }
+}
+
+pub(crate) trait PredicateValueFloorVisitor {
+    type Output;
+
+    fn visit_predicate_value(self, value: PredicateValue) -> Self::Output;
+    fn visit_non_predicate(self, floor: Desugared) -> Self::Output;
+}
+
+pub(crate) trait PredicateValueFloorAccept {
+    fn accept_predicate_value_floor<V: PredicateValueFloorVisitor>(self, visitor: V) -> V::Output;
+}
+
+impl PredicateValueFloorAccept for Desugared {
+    fn accept_predicate_value_floor<V: PredicateValueFloorVisitor>(self, visitor: V) -> V::Output {
+        match self {
+            Desugared::PredicateValue(value) => visitor.visit_predicate_value(value),
+            floor => visitor.visit_non_predicate(floor),
+        }
+    }
+}
+
+pub(crate) struct RequiredPredicateValueVisitor<'a> {
+    pub(crate) owner: &'a str,
+}
+
+impl PredicateValueFloorVisitor for RequiredPredicateValueVisitor<'_> {
+    type Output = PredicateValue;
+
+    fn visit_predicate_value(self, value: PredicateValue) -> Self::Output {
+        value
+    }
+
+    fn visit_non_predicate(self, floor: Desugared) -> Self::Output {
+        panic!(
+            "{} completed {} floor where a PredicateValue floor was required",
+            self.owner,
+            desugared_floor_name(&floor)
+        )
+    }
+}
+
+fn desugared_floor_name(floor: &Desugared) -> &'static str {
+    match floor {
+        Desugared::Seq(_) => "Seq",
+        Desugared::TermSeq(_) => "TermSeq",
+        Desugared::Constraints { .. } => "Constraints",
+        Desugared::Term(_) => "Term",
+        Desugared::LiteralString(_) => "LiteralString",
+        Desugared::LiteralCStr(_) => "LiteralCStr",
+        Desugared::FormatValue(_) => "FormatValue",
+        Desugared::TupleComponents(_) => "TupleComponents",
+        Desugared::ObjectValue(_) => "ObjectValue",
+        Desugared::PredicateValue(_) => "PredicateValue",
+        Desugared::StmtSupport => "StmtSupport",
+        Desugared::StmtBound(_) => "StmtBound",
+        Desugared::StmtReturn(_) => "StmtReturn",
+        Desugared::StmtGuarded(_) => "StmtGuarded",
+        Desugared::StmtRaise(_) => "StmtRaise",
+        Desugared::StmtGuardedRaise(_) => "StmtGuardedRaise",
+        Desugared::StmtBlock { .. } => "StmtBlock",
     }
 }
 
@@ -814,10 +877,100 @@ pub(crate) fn fold_int_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_ir_symbolic::{num, Sort};
+    use sugar_ir_symbolic::{and_, eq, num, Formula, Sort};
 
     fn var(name: &str) -> Rc<Term> {
         make_var(name)
+    }
+
+    struct PredicateKindProbe;
+
+    impl PredicateValueFloorVisitor for PredicateKindProbe {
+        type Output = String;
+
+        fn visit_predicate_value(
+            self,
+            value: crate::sugar::predicate_value::PredicateValue,
+        ) -> Self::Output {
+            match value.formula().as_ref() {
+                Formula::Atomic { name, .. } => format!("predicate:{name}"),
+                Formula::Connective { kind, .. } => format!("predicate:{kind}"),
+                other => panic!("unexpected predicate formula floor: {other:?}"),
+            }
+        }
+
+        fn visit_non_predicate(self, floor: Desugared) -> Self::Output {
+            match floor {
+                Desugared::Term(_) => "non:Term".to_string(),
+                Desugared::Constraints { .. } => "non:Constraints".to_string(),
+                _ => "non:Other".to_string(),
+            }
+        }
+    }
+
+    struct BoolLiteralProbe;
+
+    impl BoolFloorVisitor for BoolLiteralProbe {
+        type Output = Option<bool>;
+
+        fn visit_bool(self, value: bool) -> Self::Output {
+            Some(value)
+        }
+
+        fn visit_non_bool(self, _term: &Rc<Term>) -> Self::Output {
+            None
+        }
+    }
+
+    #[test]
+    fn predicate_value_floor_distinguishes_predicate_position_from_data_bool() {
+        let predicate = Desugared::PredicateValue(
+            crate::sugar::predicate_value::PredicateValue::new(eq(var("flag"), bool_const(true))),
+        );
+
+        assert_eq!(
+            predicate.accept_predicate_value_floor(PredicateKindProbe),
+            "predicate:="
+        );
+        assert_eq!(
+            Desugared::Term(bool_const(true)).accept_predicate_value_floor(PredicateKindProbe),
+            "non:Term"
+        );
+        assert_eq!(
+            bool_const(true).accept_bool_floor(BoolLiteralProbe),
+            Some(true)
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "predicate consumer completed Term floor where a PredicateValue floor was required"
+    )]
+    fn required_predicate_value_rejects_data_bool_term() {
+        Desugared::Term(bool_const(true)).accept_predicate_value_floor(
+            RequiredPredicateValueVisitor {
+                owner: "predicate consumer",
+            },
+        );
+    }
+
+    #[test]
+    fn predicate_value_floor_composes_nested_predicates_without_resniffing_terms() {
+        let predicate = Desugared::PredicateValue(
+            crate::sugar::predicate_value::PredicateValue::new(and_(vec![
+                eq(var("p"), bool_const(true)),
+                eq(var("q"), bool_const(false)),
+            ])),
+        );
+
+        let value = predicate.accept_predicate_value_floor(RequiredPredicateValueVisitor {
+            owner: "nested predicate",
+        });
+        let Formula::Connective { kind, operands } = value.formula().as_ref() else {
+            panic!("expected nested predicate connective");
+        };
+        assert_eq!(kind, "and");
+        assert_eq!(operands.len(), 2);
     }
 
     struct SymbolicProbe;
