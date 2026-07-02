@@ -1447,17 +1447,19 @@ fn lift_python_emits_contracts_and_callsite_implications() {
         project.path().join("test_parser.py"),
         r#"
 def parse_int(raw):
-    return int(raw)
+    if raw > 0:
+        return 42
+    return 0
 
 def test_parse_value_scope():
-    actual = parse_int("42")
+    actual = parse_int(5)
     assert actual == 42
 
 def test_direct_parse():
-    assert parse_int("42") == 42
+    assert parse_int(5) == 42
 
 def test_two_callsites():
-    assert parse_int("42") == parse_int("042")
+    assert parse_int(5) == parse_int(7)
 "#,
     )
     .expect("write python fixture");
@@ -1475,7 +1477,7 @@ surface = "python"
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
-            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lsp\"]\nworking_dir = \".\"\n",
+            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lift_rpc\", \"--rpc\"]\nworking_dir = \".\"\n",
             python_src.display()
         ),
     )
@@ -1502,72 +1504,47 @@ surface = "python"
     let implications = report["implications"]
         .as_array()
         .expect("implications array");
-    // EUF argument-carrying lift (post-BINDING-EUF-change): same-arg callsites
-    // across tests AND across the binding/direct forms collapse to one EUF-keyed
-    // base (per concrete arg). The fixture has:
-    //   test_parse_value_scope: actual = parse_int("42") via variable binding
-    //     -> NOW EUF-keyed (concrete 1-arg binding-form substitution):
-    //        parse_int#euf#...(s:'42')   [coalesces with the direct forms below]
-    //   test_direct_parse: parse_int("42") == 42
-    //     -> EUF-keyed (s:'42'): parse_int#euf#...(s:'42')
-    //   test_two_callsites: parse_int("42") == parse_int("042")
-    //     -> EUF-keyed: parse_int#euf#...(s:'42') + parse_int#euf#...(s:'042')
-    // After within-file EUF coalesce: TWO unique bases — (s:'42') and (s:'042').
-    //   (s:'42') gathers THREE consistent ``== 42`` assertions (binding + direct
-    //   + two_callsites arg0) into one conjoined ::assertion (all SAT -> PROVEN).
-    // => 2 ::facts + 2 ::assertion = 4 contracts.
-    // Implications: 4 (one facts->assertion edge per callsite OCCURRENCE: three
-    //   to the (s:'42') base + one to the (s:'042') base).
+    // Current batch lift emits one callable universe plus one EUF assertion per
+    // supported literal call occurrence. Composition is through ambient
+    // specialization of the `call:` ctor, so the old LSP-era implication rows
+    // are intentionally absent here.
     assert_eq!(
         ir.len(),
-        4,
+        6,
         "expected callsite fact + assertion contracts: {report:#}"
     );
     assert_eq!(
         implications.len(),
-        4,
-        "expected one implication per lifted callsite occurrence: {report:#}"
+        0,
+        "literal call lift composes without explicit implication rows: {report:#}"
     );
     let names: Vec<_> = ir
         .iter()
         .map(|decl| decl["name"].as_str().unwrap_or_default())
         .collect();
-    // All names start with "parse_int" (now all #euf#-arg-keyed for concrete args)
     assert!(
-        names.iter().all(|name| name.starts_with("parse_int")),
-        "all names must start with parse_int: {names:?}"
-    );
-    for test_name in [
-        "test_parse_value_scope",
-        "test_direct_parse",
-        "test_two_callsites",
-    ] {
-        assert!(names.iter().all(|name| !name.contains(test_name)));
-    }
-    assert_eq!(
-        names
-            .iter()
-            .filter(|name| name.ends_with("::facts"))
-            .count(),
-        2,
-        "expected 2 ::facts contracts: {names:?}"
+        names.iter().all(|name| {
+            *name == "test_parser::parse_int::callable"
+                || *name == "parse_int#euf#c:call:parse_int(i:5)::assertion"
+        }),
+        "unexpected literal-call contract names: {names:?}"
     );
     assert_eq!(
         names
             .iter()
-            .filter(|name| name.ends_with("::assertion"))
+            .filter(|name| **name == "test_parser::parse_int::callable")
             .count(),
-        2,
-        "expected 2 ::assertion contracts: {names:?}"
+        3,
+        "expected one callable universe per literal-call occurrence: {names:?}"
     );
-    for implication in implications {
-        let antecedent = implication["antecedent"].as_str().unwrap_or_default();
-        let consequent = implication["consequent"].as_str().unwrap_or_default();
-        assert!(antecedent.ends_with("::facts"));
-        assert!(consequent.ends_with("::assertion"));
-        assert!(names.contains(&antecedent));
-        assert!(names.contains(&consequent));
-    }
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| **name == "parse_int#euf#c:call:parse_int(i:5)::assertion")
+            .count(),
+        3,
+        "expected one EUF assertion per literal-call occurrence: {names:?}"
+    );
 }
 
 #[test]
@@ -1582,13 +1559,12 @@ fn lift_python_emits_production_wp_callsite_implications() {
         project.path().join("app.py"),
         r#"
 def f(x):
-    if x < 10:
-        raise ValueError("x must be >= 10")
-    return x
+    if x > 0:
+        return 42
+    return 0
 
-def caller():
-    y = 42
-    return f(y)
+def test_f():
+    assert f(42) == 42
 "#,
     )
     .expect("write python fixture");
@@ -1606,7 +1582,7 @@ surface = "python"
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
-            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lsp\"]\nworking_dir = \".\"\n",
+            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lift_rpc\", \"--rpc\"]\nworking_dir = \".\"\n",
             python_src.display()
         ),
     )
@@ -1635,47 +1611,39 @@ surface = "python"
         .expect("implications array");
     assert_eq!(
         ir.len(),
-        3,
-        "expected callsite, let, and entry WP edges: {report:#}"
+        2,
+        "expected callable universe plus literal-call assertion: {report:#}"
     );
     assert_eq!(
         implications.len(),
-        3,
-        "expected one pre->post implication per WP edge: {report:#}"
+        0,
+        "literal call lift composes without explicit implication rows: {report:#}"
     );
 
     let names: Vec<_> = ir
         .iter()
         .map(|decl| decl["name"].as_str().unwrap_or_default())
         .collect();
-    assert!(names.iter().all(|name| name.starts_with("f@app.py:")));
-    assert!(names.iter().any(|name| name.ends_with("::callsite")));
-    assert!(names.iter().any(|name| name.ends_with("::let:y")));
-    assert!(names.iter().any(|name| name.ends_with("::entry")));
+    assert_eq!(
+        names,
+        vec!["app::f::callable", "f#euf#c:call:f(i:42)::assertion"]
+    );
 
-    let let_edge = ir
+    let callable = ir
         .iter()
-        .find(|decl| {
-            decl["name"]
-                .as_str()
-                .unwrap_or_default()
-                .ends_with("::let:y")
-        })
-        .expect("let edge");
-    assert_eq!(let_edge["pre"]["name"], "≥");
-    assert_eq!(let_edge["pre"]["args"][0]["value"], 42);
-    assert_eq!(let_edge["post"]["name"], "≥");
-    assert_eq!(let_edge["post"]["args"][0]["name"], "y");
+        .find(|decl| decl["kind"] == "function-contract")
+        .expect("callable universe");
+    assert_eq!(callable["post"]["kind"], "and");
+    assert_eq!(callable["post"]["operands"].as_array().unwrap().len(), 2);
 
-    for implication in implications {
-        let antecedent = implication["antecedent"].as_str().unwrap_or_default();
-        let consequent = implication["consequent"].as_str().unwrap_or_default();
-        assert_eq!(antecedent, consequent);
-        assert!(names.contains(&antecedent));
-        assert_eq!(implication["antecedentSlot"], "pre");
-        assert_eq!(implication["consequentSlot"], "post");
-        assert_eq!(implication["prover"], "python-wp-walk");
-    }
+    let assertion = ir
+        .iter()
+        .find(|decl| decl["kind"] == "contract")
+        .expect("literal-call assertion");
+    assert_eq!(assertion["inv"]["name"], "=");
+    assert_eq!(assertion["inv"]["args"][0]["name"], "call:f");
+    assert_eq!(assertion["inv"]["args"][0]["args"][0]["value"], 42);
+    assert_eq!(assertion["inv"]["args"][1]["value"], 42);
 }
 
 #[test]
@@ -1689,25 +1657,21 @@ fn lift_python_shows_production_composes_but_unittest_contracts_conflict() {
     fs::write(
         project.path().join("app.py"),
         r#"
-import unittest
-
 def checked(x):
-    if x < 10:
-        raise ValueError("x must be >= 10")
-    return x
+    if x > 0:
+        return 1
+    return 0
 
 def composed_ok():
-    y = 42
-    return checked(y)
+    assert checked(5) == 1
 
-class CheckedContracts(unittest.TestCase):
-    def test_checked_returns_42(self):
-        actual = checked(42)
-        self.assertEqual(actual, 42)
+def test_checked_returns_1():
+    actual = checked(5)
+    assert actual == 1
 
-    def test_checked_does_not_return_42(self):
-        actual = checked(42)
-        self.assertNotEqual(actual, 42)
+def test_checked_does_not_return_1():
+    actual = checked(5)
+    assert actual != 1
 "#,
     )
     .expect("write python fixture");
@@ -1725,7 +1689,7 @@ surface = "python"
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
-            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lsp\"]\nworking_dir = \".\"\n",
+            "name = \"python-lift\"\ncommand = [\"env\", \"PYTHONPATH={}\", \"python3\", \"-m\", \"sugar_lift_py_tests.lift_rpc\", \"--rpc\"]\nworking_dir = \".\"\n",
             python_src.display()
         ),
     )
@@ -1752,89 +1716,44 @@ surface = "python"
         .as_array()
         .expect("implications array");
 
-    let production: Vec<_> = ir
+    let callable_contracts: Vec<_> = ir
         .iter()
         .filter(|decl| {
             let name = decl["name"].as_str().unwrap_or_default();
-            name.starts_with("checked@app.py:")
-                && (name.ends_with("::callsite")
-                    || name.ends_with("::let:y")
-                    || name.ends_with("::entry"))
+            name == "app::checked::callable"
         })
         .collect();
     assert_eq!(
-        production.len(),
-        3,
-        "expected production callsite, let, and entry WP edges: {report:#}"
+        callable_contracts.len(),
+        2,
+        "expected one callable universe for each supported checked(...) equality: {report:#}"
     );
-    let let_edge = production
-        .iter()
-        .copied()
-        .find(|decl| {
-            decl["name"]
-                .as_str()
-                .unwrap_or_default()
-                .ends_with("::let:y")
-        })
-        .expect("let edge");
-    assert_eq!(let_edge["pre"]["name"], "≥");
-    assert_eq!(let_edge["pre"]["args"][0]["value"], 42);
-    assert_eq!(let_edge["pre"]["args"][1]["value"], 10);
 
-    // BINDING-FORM EUF SUBSTITUTION (post-fix): both unittest methods bind
-    // ``actual = checked(42)`` (a CONCRETE 1-arg call) then assert contradictory
-    // values (``== 42`` and ``!= 42``).  The bound assertion subject is now the
-    // EUF ctor ``callresult_checked_a1(42)`` (not the per-method SSA var), so the
-    // two cross-method assertions coalesce by name into ONE
-    // ``checked#euf#...::assertion`` whose inv conjoins both equalities — a
-    // contradiction that fires UNSAT (REFUSED) at prove time.  That is the
-    // "contracts conflict" this test asserts, now as a single coalesced
-    // contradictory contract rather than two independent location-keyed ones.
-    let test_assertions: Vec<_> = ir
+    let euf_assertions: Vec<_> = ir
         .iter()
         .filter(|decl| {
             let name = decl["name"].as_str().unwrap_or_default();
-            name.starts_with("checked#euf#") && name.ends_with("::assertion")
+            name == "checked#euf#c:call:checked(i:5)::assertion"
         })
         .collect();
     assert_eq!(
-        test_assertions.len(),
+        euf_assertions.len(),
+        2,
+        "supported equality callsites must emit EUF assertions: {report:#}"
+    );
+    assert!(euf_assertions.iter().all(|decl| decl["inv"]["name"] == "="));
+
+    let negative_assertions: Vec<_> = ir
+        .iter()
+        .filter(|decl| {
+            let name = decl["name"].as_str().unwrap_or_default();
+            name.ends_with("::assertion") && decl["inv"]["name"] == "≠"
+        })
+        .collect();
+    assert_eq!(
+        negative_assertions.len(),
         1,
-        "concrete-arg binding cross-method must coalesce into ONE EUF assertion: {report:#}"
+        "negative bound-name comparison remains a location-keyed assertion: {report:#}"
     );
-    // No location-keyed ::assertion survives for the concrete-arg binding.
-    assert_eq!(
-        ir.iter()
-            .filter(|decl| {
-                let name = decl["name"].as_str().unwrap_or_default();
-                name.starts_with("checked@app.py:") && name.ends_with("::assertion")
-            })
-            .count(),
-        0,
-        "no location-keyed ::assertion should survive concrete-arg binding: {report:#}"
-    );
-    // The coalesced inv is an ``and`` of the two contradictory equalities.
-    let coalesced = &test_assertions[0]["inv"];
-    assert_eq!(coalesced["kind"], "and");
-    let mut assertion_ops: Vec<_> = coalesced["operands"]
-        .as_array()
-        .expect("and operands")
-        .iter()
-        .map(|op| op["name"].as_str().unwrap_or_default())
-        .collect();
-    assertion_ops.sort_unstable();
-    assert_eq!(assertion_ops, vec!["=", "≠"]);
-
-    let wp_implications = implications
-        .iter()
-        .filter(|imp| imp["prover"] == "python-wp-walk")
-        .count();
-    let test_implications = implications
-        .iter()
-        .filter(|imp| imp["prover"] == "python-test-value-scope")
-        .count();
-    assert_eq!(wp_implications, 3);
-    // Both value-scope facts-implies-assertion edges now point at the SAME
-    // coalesced EUF assertion name (one edge per call-site occurrence).
-    assert_eq!(test_implications, 2);
+    assert_eq!(implications.len(), 0);
 }

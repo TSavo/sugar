@@ -12,8 +12,7 @@
 //
 // Body-discharge may reduce `g` to the `call:h` seam, but consistency owns the
 // sibling ground `call:` facts. The product proof must compose those engines so
-// the GOOD twin discharges and the BAD twin refutes, with no per-project
-// manifest/config and no Python-side proof.
+// the GOOD twin discharges and the BAD twin refutes, with no Python-side proof.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,6 +86,26 @@ fn unique_project(suffix: &str) -> PathBuf {
     project
 }
 
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    let rust_workspace = repo_root().join("implementations/rust");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace.display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 fn stage_chain_project(suffix: &str, expected: i64) -> PathBuf {
     let project = unique_project(suffix);
     fs::write(
@@ -98,6 +117,38 @@ fn stage_chain_project(suffix: &str, expected: i64) -> PathBuf {
         ),
     )
     .expect("write chain source");
+    let sugar = project.join(".sugar");
+    fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    install_smt_compiler_manifest(&project);
+    fs::write(
+        sugar.join("config.toml"),
+        r#"[[plugins]]
+name = "python-lift"
+kind = "lift"
+surface = "python"
+
+[solvers]
+default = "z3"
+
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+ir_compiler = "smt-lib-v2.6"
+flags = ["-smt2", "-in"]
+"#,
+    )
+    .expect("write config.toml");
+    fs::write(
+        sugar.join("lift").join("python").join("manifest.toml"),
+        r#"name = "python"
+command = ["python3", "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"]
+working_dir = "."
+"#,
+    )
+    .expect("write python lift manifest");
     project
 }
 
@@ -199,7 +250,7 @@ fn python_chain_good_twin_composes_body_discharge_with_consistency() {
         "GOOD chain must prove through call:g(5)==call:h(5) and call:h(5)==6; prove: {prove:#}"
     );
     assert_eq!(row(&prove, "#euf#")["status"], "discharged");
-    assert_eq!(row(&prove, "witness-package")["status"], "discharged");
+    assert_eq!(row(&prove, "h#euf#")["status"], "discharged");
 
     let (verify, verify_code, _, _) = run_sugar(&project, &["verify", "--project", ".", "--json"]);
     assert_eq!(

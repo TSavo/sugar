@@ -26,6 +26,7 @@ fn bcargo_remote_root_cleanup_contract() {
     let root = repo_root();
     let status = Command::new("bash")
         .arg(root.join("tests").join("bcargo_remote_root_cleanup.sh"))
+        .arg(&root)
         .status()
         .expect("run bcargo remote root cleanup contract");
 

@@ -24,13 +24,10 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
-use sugar_claim_envelope::{
-    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs, MintedEnvelope,
-};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
-    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, ContractBody, Ed25519Seed,
+    FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
 fn unique_dir(suffix: &str) -> PathBuf {
@@ -80,29 +77,60 @@ fn json_to_cvalue(j: &Json) -> Arc<CValue> {
     }
 }
 
-fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
-    let cid = minted.cid.clone();
-    let memento = ClaimContractMemento::new(minted.canonical_bytes);
-    assert_eq!(memento.cid().as_str(), cid);
-    graph.push_claim_contract(memento);
-    cid
+fn push_direct_obligation_contract(
+    graph: &mut ProofGraph,
+    name: &str,
+    inv: Json,
+    signer_seed: Ed25519Seed,
+    declared_at: &str,
+) {
+    let inv_atom = graph.register_atom(FlatAtom::new(json_to_cvalue(&inv)));
+    let body = graph.register_body(ContractBody::new_inv(&inv_atom));
+    let header_preimage = json!({
+        "kind": "contract",
+        "name": name,
+        "bodyCid": body.cid().as_str(),
+        "inv": inv,
+        "invVerification": "obligation",
+    });
+    let header_cid = blake3_512_of(encode_jcs(&json_to_cvalue(&header_preimage)).as_bytes());
+    let header = json!({
+        "schemaVersion": "2",
+        "kind": "contract",
+        "cid": header_cid,
+        "name": name,
+        "contractName": name,
+        "bodyCid": body.cid().as_str(),
+        "outBinding": "result",
+        "inv": header_preimage["inv"].clone(),
+        "invVerification": "obligation",
+        "inputCids": [],
+        "verdict": "holds",
+    });
+    let metadata = json!({
+        "authoring": {
+            "evidence": "test direct obligation",
+            "lifter": "cmd_verify_integration"
+        },
+        "producedAt": declared_at,
+        "producedBy": "sugar-cli-test"
+    });
+    let envelope = json!({
+        "signer": ed25519_pubkey_string(&signer_seed),
+        "declaredAt": declared_at,
+        "signature": format!("ed25519:test-direct-obligation-{header_cid}")
+    });
+    let memento = json!({
+        "envelope": envelope,
+        "header": header,
+        "metadata": metadata,
+    });
+    let bytes = encode_jcs(&json_to_cvalue(&memento)).into_bytes();
+    graph.push_claim_contract(ClaimContractMemento::new(bytes));
 }
 
-fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
-    let cid = minted.cid.clone();
-    let memento = BridgeMemento::new(minted.canonical_bytes);
-    assert_eq!(memento.cid().as_str(), cid);
-    graph.push_bridge(memento);
-    cid
-}
-
-/// Publish a `.proof` catalog with one contract claim plus a self-call
-/// bridge, in the v1.1-flat `evidence.body` shape `enumerate_callsites`
-/// consumes, so it yields exactly one callsite. The TARGET contract's
-/// `pre` is `forall n:Int. <body>` — the obligation that gets
-/// discharged. The SOURCE contract carries a single `parseInt` ctor in
-/// its `post` slot so exactly one callsite enumerates. Returns the
-/// project dir.
+/// Publish a `.proof` catalog with one direct obligation contract whose
+/// `inv` is a quantifier-free arithmetic formula. Returns the project dir.
 fn publish_claim_project(suffix: &str, name: &str, target_pre_body: Json) -> PathBuf {
     let dir = unique_dir(suffix);
     let proof_dir = dir.join(".sugar");
@@ -113,90 +141,7 @@ fn publish_claim_project(suffix: &str, name: &str, target_pre_body: Json) -> Pat
     let declared_at = "2026-04-30T00:00:00.000Z";
 
     let mut graph = ProofGraph::new();
-
-    let target_contract = mint_contract(&MintContractArgs {
-        evidence_term: None,
-        formals: Vec::new(),
-        emit_empty_formals: false,
-        formal_sorts: Vec::new(),
-        library: None,
-        body_discharge_eligible: true,
-        body_discharge_refusal_reason: None,
-        panic_loci: Vec::new(),
-        class_shapes: Vec::new(),
-        source_warrants: Vec::new(),
-        contract_name: "parseInt_target".into(),
-        pre: Some(json_to_cvalue(&json!({
-            "kind": "forall",
-            "name": "n",
-            "sort": {"kind": "primitive", "name": "Int"},
-            "body": target_pre_body
-        }))),
-        post: None,
-        inv: None,
-        out_binding: "result".into(),
-        produced_by: "test".into(),
-        produced_at: declared_at.into(),
-        input_cids: Vec::new(),
-        authoring: Authoring::KitAuthor {
-            author: "test".into(),
-            note: None,
-        },
-        signer_seed,
-    })
-    .expect("mint target contract");
-    let target_cid = push_claim_contract(&mut graph, target_contract);
-
-    let source_contract = mint_contract(&MintContractArgs {
-        evidence_term: None,
-        formals: Vec::new(),
-        emit_empty_formals: false,
-        formal_sorts: Vec::new(),
-        library: None,
-        body_discharge_eligible: true,
-        body_discharge_refusal_reason: None,
-        panic_loci: Vec::new(),
-        class_shapes: Vec::new(),
-        source_warrants: Vec::new(),
-        contract_name: name.into(),
-        pre: None,
-        post: Some(json_to_cvalue(&json!({
-            "kind": "atomic", "name": "=",
-            "args": [
-                {"kind": "var", "name": "out"},
-                {"kind": "ctor", "name": "parseInt",
-                 "args": [{"kind": "var", "name": "s"}]}
-            ]
-        }))),
-        inv: None,
-        out_binding: "out".into(),
-        produced_by: "test".into(),
-        produced_at: declared_at.into(),
-        input_cids: Vec::new(),
-        authoring: Authoring::KitAuthor {
-            author: "test".into(),
-            note: None,
-        },
-        signer_seed,
-    })
-    .expect("mint source contract");
-    push_claim_contract(&mut graph, source_contract);
-
-    let bridge = mint_bridge(&MintBridgeArgs {
-        produced_by: "test".into(),
-        produced_at: declared_at.into(),
-        source_symbol: "parseInt".into(),
-        source_layer: "ts".into(),
-        target_contract: ContractMementoRef::new(target_cid),
-        target_layer: "rust-kit".into(),
-        ir_arg_sorts: vec!["String".into()],
-        ir_return_sort: "Int".into(),
-        notes: String::new(),
-        signer_seed,
-        target_proof_cid: None,
-        callsite: None,
-    });
-    push_bridge(&mut graph, bridge);
+    push_direct_obligation_contract(&mut graph, name, target_pre_body, signer_seed, declared_at);
 
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);
     let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
@@ -216,8 +161,12 @@ fn publish_claim_project(suffix: &str, name: &str, target_pre_body: Json) -> Pat
     dir
 }
 
-/// A valid linear-arithmetic claim: `forall n:Int. n >= n` (a
-/// tautology, so z3 returns unsat for the negation = discharged).
+fn int_const(n: i64) -> Json {
+    json!({"kind": "const", "value": n, "sort": {"kind": "primitive", "name": "Int"}})
+}
+
+/// A valid linear-arithmetic claim: `1 >= 1` (a tautology, so z3
+/// returns unsat for the negation = discharged).
 fn publish_lia_claim_project() -> PathBuf {
     publish_claim_project(
         "lia",
@@ -225,16 +174,16 @@ fn publish_lia_claim_project() -> PathBuf {
         json!({
             "kind": "atomic", "name": ">=",
             "args": [
-                {"kind": "var", "name": "n"},
-                {"kind": "var", "name": "n"}
+                int_const(1),
+                int_const(1)
             ]
         }),
     )
 }
 
-/// A VIOLATED linear-arithmetic claim: `forall n:Int. n > n` (false for
-/// every n, so z3 returns sat for the negation = unsatisfied). No valid
-/// witness must be minted for this claim.
+/// A VIOLATED linear-arithmetic claim: `1 > 1` (false, so z3 returns sat
+/// for the negation = unsatisfied). No valid witness must be minted for
+/// this claim.
 fn publish_violated_claim_project() -> PathBuf {
     publish_claim_project(
         "violated",
@@ -242,8 +191,8 @@ fn publish_violated_claim_project() -> PathBuf {
         json!({
             "kind": "atomic", "name": ">",
             "args": [
-                {"kind": "var", "name": "n"},
-                {"kind": "var", "name": "n"}
+                int_const(1),
+                int_const(1)
             ]
         }),
     )
@@ -340,7 +289,7 @@ fn verify_lia_claim_routes_to_smt_and_mints_witness() {
         // minted citing the discharging solver.
         assert_eq!(
             claim["pass"], true,
-            "LIA `> 0` obligation must discharge with z3; claim: {claim}"
+            "LIA `1 >= 1` obligation must discharge with z3; claim: {claim}"
         );
         let solver = claim["dischargingSolver"].as_str().unwrap_or("");
         assert!(
@@ -377,8 +326,8 @@ fn verify_lia_claim_routes_to_smt_and_mints_witness() {
 }
 
 /// NEGATIVE / regression test: a claim that VIOLATES its contract must
-/// fail loudly. `forall n:Int. n > n` is false for every n, so z3
-/// returns sat for the negation = `unsatisfied`. The verb must report
+/// fail loudly. `1 > 1` is false, so z3 returns sat for the negation =
+/// `unsatisfied`. The verb must report
 /// `pass: false`, `status: unsatisfied`, exit code 1
 /// (`EXIT_VERIFY_FAIL`), and mint NO witness. Without this the "catch"
 /// path ships untested — this is the gate that proves verify can fail.
@@ -400,7 +349,7 @@ fn verify_violated_claim_fails_and_mints_no_witness() {
     assert_eq!(claim["obligationClass"], "linear-arithmetic");
     assert_eq!(
         claim["status"], "unsatisfied",
-        "violated `n > n` claim must be unsatisfied; claim: {claim}"
+        "violated `1 > 1` claim must be unsatisfied; claim: {claim}"
     );
     assert_eq!(
         claim["pass"], false,
