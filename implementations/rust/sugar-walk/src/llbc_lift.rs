@@ -43,6 +43,13 @@ use crate::contract::{
 use crate::llbc::{LlbcError, LlbcFunction};
 use crate::wp::atomic_true;
 
+fn llbc_schema(path: impl Into<String>, detail: impl Into<String>) -> LlbcError {
+    LlbcError::Schema {
+        path: path.into(),
+        detail: detail.into(),
+    }
+}
+
 /// Lift one LLBC function to a FunctionContractMemento. The
 /// `source_path` is annotated into the memento's locus for downstream
 /// developer-feedback paths. `type_decls` is the raw JSON value of
@@ -106,33 +113,44 @@ pub fn lift_llbc_function_with_registry(
     // field on each local) so we can derive accurate Sorts below,
     // replacing the old hardcoded-i64 approach. Local 0 is the return
     // local; its Ty gives us the return Sort.
-    let arg_count = f.arg_count().unwrap_or(0);
+    let arg_count = f.arg_count().ok_or_else(|| {
+        llbc_schema(
+            "body.Structured.locals.arg_count",
+            "missing or non-integer formal count",
+        )
+    })?;
     // Collect locals once into a vec so we can iterate twice.
     let all_locals: Vec<_> = f.locals().collect();
 
-    let formals: Vec<(u32, String)> = all_locals
-        .iter()
-        .filter_map(|l| {
-            let i = l.index()?;
-            if i == 0 || i as usize > arg_count {
-                return None;
-            }
-            l.name().map(|n| (i, n.to_string()))
-        })
-        .collect();
-
     // formal_ty_raws: index → cloned raw Ty JSON for sort derivation.
     // Index 0 = return local; 1..=arg_count = formals.
-    let formal_ty_raws: std::collections::HashMap<u32, Value> = all_locals
+    let mut formal_ty_raws: HashMap<u32, Value> = HashMap::new();
+    let return_local = all_locals
         .iter()
-        .filter_map(|l| {
-            let i = l.index()?;
-            if i as usize > arg_count {
-                return None; // skip temporaries
-            }
-            l.ty_raw().map(|v| (i, v.clone()))
-        })
-        .collect();
+        .find(|l| l.index() == Some(0))
+        .ok_or_else(|| llbc_schema("body.Structured.locals.locals[0]", "missing return local"))?;
+    let return_ty = return_local
+        .ty_raw()
+        .ok_or_else(|| llbc_schema("body.Structured.locals.locals[0].ty", "missing return type"))?;
+    formal_ty_raws.insert(0, return_ty.clone());
+
+    let mut formals: Vec<(u32, String)> = Vec::with_capacity(arg_count);
+    for idx in 1..=arg_count {
+        let idx_u32 = idx as u32;
+        let path = format!("body.Structured.locals.locals[{idx_u32}]");
+        let local = all_locals
+            .iter()
+            .find(|l| l.index() == Some(idx_u32))
+            .ok_or_else(|| llbc_schema(path.clone(), "missing formal local"))?;
+        let name = local
+            .name()
+            .ok_or_else(|| llbc_schema(format!("{path}.name"), "missing formal name"))?;
+        let ty = local
+            .ty_raw()
+            .ok_or_else(|| llbc_schema(format!("{path}.ty"), "missing formal type"))?;
+        formals.push((idx_u32, name.to_string()));
+        formal_ty_raws.insert(idx_u32, ty.clone());
+    }
 
     // Build a named-locals map for non-formal locals that have Charon-preserved
     // source names (i.e. let bindings). When tracing through Use-hops, we stop
@@ -165,22 +183,26 @@ pub fn lift_llbc_function_with_registry(
     // be merged into the main EffectSet after `detect_effects_llbc` runs.
     let mut formal_opacity_effects: Vec<Effect> = Vec::new();
     for (idx, formal_name) in &formals {
-        if let Some(ty_raw) = formal_ty_raws.get(idx) {
-            // Check raw pointer.
-            if let Some(mutable) = ty_raw_is_raw_ptr(ty_raw) {
-                formal_opacity_effects.push(Effect::RawPointerProvenance {
-                    target: formal_name.clone(),
-                    mutable,
-                });
-            }
-            // Check Pin Adt.
-            else if let Some(adt_id) = ty_raw_adt_id(ty_raw) {
-                if let Some(td) = type_decls {
-                    if is_pin_adt(td, adt_id) {
-                        formal_opacity_effects.push(Effect::PinnedReference {
-                            target: formal_name.clone(),
-                        });
-                    }
+        let ty_raw = formal_ty_raws.get(idx).ok_or_else(|| {
+            llbc_schema(
+                format!("body.Structured.locals.locals[{idx}].ty"),
+                "missing formal type",
+            )
+        })?;
+        // Check raw pointer.
+        if let Some(mutable) = ty_raw_is_raw_ptr(ty_raw) {
+            formal_opacity_effects.push(Effect::RawPointerProvenance {
+                target: formal_name.clone(),
+                mutable,
+            });
+        }
+        // Check Pin Adt.
+        else if let Some(adt_id) = ty_raw_adt_id(ty_raw) {
+            if let Some(td) = type_decls {
+                if is_pin_adt(td, adt_id) {
+                    formal_opacity_effects.push(Effect::PinnedReference {
+                        target: formal_name.clone(),
+                    });
                 }
             }
         }
@@ -192,16 +214,16 @@ pub fn lift_llbc_function_with_registry(
 
     let mut shared_ifmt: Vec<String> = Vec::new();
     for (idx, formal_name) in &formals {
-        if let Some(ty_raw) = formal_ty_raws.get(idx) {
-            if crate::aliasing::is_shared_ref_charon_ty(ty_raw)
-                && crate::aliasing::has_unsafecell_transitive(
-                    ty_raw,
-                    type_decls,
-                    &mut HashSet::new(),
-                )
-            {
-                shared_ifmt.push(formal_name.clone());
-            }
+        let ty_raw = formal_ty_raws.get(idx).ok_or_else(|| {
+            llbc_schema(
+                format!("body.Structured.locals.locals[{idx}].ty"),
+                "missing formal type",
+            )
+        })?;
+        if crate::aliasing::is_shared_ref_charon_ty(ty_raw)
+            && crate::aliasing::has_unsafecell_transitive(ty_raw, type_decls, &mut HashSet::new())
+        {
+            shared_ifmt.push(formal_name.clone());
         }
     }
     shared_ifmt.sort();
@@ -212,16 +234,18 @@ pub fn lift_llbc_function_with_registry(
     }
 
     // Auto-mint Disjoint for &mut T formal pairs
-    let mut_ref_names: Vec<&str> = formals
-        .iter()
-        .filter(|(idx, _)| {
-            formal_ty_raws
-                .get(idx)
-                .map(crate::aliasing::is_mut_ref_charon_ty)
-                .unwrap_or(false)
-        })
-        .map(|(_, name)| name.as_str())
-        .collect();
+    let mut mut_ref_names: Vec<&str> = Vec::new();
+    for (idx, name) in &formals {
+        let ty_raw = formal_ty_raws.get(idx).ok_or_else(|| {
+            llbc_schema(
+                format!("body.Structured.locals.locals[{idx}].ty"),
+                "missing formal type",
+            )
+        })?;
+        if crate::aliasing::is_mut_ref_charon_ty(ty_raw) {
+            mut_ref_names.push(name.as_str());
+        }
+    }
 
     for i in 0..mut_ref_names.len() {
         for j in (i + 1)..mut_ref_names.len() {
@@ -248,9 +272,9 @@ pub fn lift_llbc_function_with_registry(
         &named_locals,
         false,
         &mut pre_contribs,
-    );
-    collect_assert_contributions(&stmts, &formals, &named_locals, &mut pre_contribs);
-    let mut effects = detect_effects_llbc(&stmts, fun_decls, registry);
+    )?;
+    collect_assert_contributions(&stmts, &formals, &named_locals, &mut pre_contribs)?;
+    let mut effects = detect_effects_llbc(&stmts, fun_decls, registry)?;
     // Unsafe detection: Charon records `signature.is_unsafe` on the FunDecl
     // JSON; the statement-level scan cannot see it, so we inject it here
     // where we have the full LlbcFunction.
@@ -302,7 +326,7 @@ pub fn lift_llbc_function_with_registry(
             registry,
             &mut pre_contribs,
             &mut effects,
-        );
+        )?;
     }
     let pre_formula = simplify_conjunction(pre_contribs.clone());
 
@@ -322,7 +346,7 @@ pub fn lift_llbc_function_with_registry(
         &named_locals,
         fun_decls,
         registry,
-    ) {
+    )? {
         post_contribs.push(result_eq);
     }
     let post_formula = simplify_conjunction(post_contribs);
@@ -380,10 +404,18 @@ pub fn lift_llbc_function_with_registry(
     let formal_regions: Vec<Option<String>> = formals
         .iter()
         .map(|(idx, _)| {
-            let ty_val = formal_ty_raws.get(idx)?;
-            crate::sort_translate::extract_region_name(ty_val, &region_map)
+            let ty_val = formal_ty_raws.get(idx).ok_or_else(|| {
+                llbc_schema(
+                    format!("body.Structured.locals.locals[{idx}].ty"),
+                    "missing formal type",
+                )
+            })?;
+            Ok(crate::sort_translate::extract_region_name(
+                ty_val,
+                &region_map,
+            ))
         })
-        .collect();
+        .collect::<Result<_, LlbcError>>()?;
 
     // Return region from local 0's Ty.
     let return_region: Option<String> = formal_ty_raws
@@ -489,7 +521,7 @@ fn derive_return_equation(
     named_locals: &HashMap<u32, String>,
     fun_decls: Option<&Value>,
     registry: &crate::llbc_calls::ContractRegistry,
-) -> Option<IrFormula> {
+) -> Result<Option<IrFormula>, LlbcError> {
     // Scan in reverse — both Assign and Call-dest paths.
     for (i, s) in stmts.iter().enumerate().rev() {
         // --- Assign path: _0 := <rvalue> ---
@@ -504,8 +536,8 @@ fn derive_return_equation(
                             formals,
                             type_decls,
                             named_locals,
-                        ) {
-                            return Some(IrFormula::Atomic {
+                        )? {
+                            return Ok(Some(IrFormula::Atomic {
                                 name: "=".to_string(),
                                 args: vec![
                                     IrTerm::Var {
@@ -513,9 +545,9 @@ fn derive_return_equation(
                                     },
                                     term,
                                 ],
-                            });
+                            }));
                         }
-                        return None;
+                        return Ok(None);
                     }
                 }
             }
@@ -536,7 +568,7 @@ fn derive_return_equation(
                             let mut arg_terms: Vec<IrTerm> = Vec::with_capacity(args.len());
                             let mut all_lifted = true;
                             for op in args.iter() {
-                                match operand_to_ir_term(op, prior, formals, named_locals) {
+                                match operand_to_ir_term(op, prior, formals, named_locals)? {
                                     Some(t) => arg_terms.push(t),
                                     None => {
                                         all_lifted = false;
@@ -547,7 +579,7 @@ fn derive_return_equation(
                             if all_lifted {
                                 // `registry` reserved for future post-composition
                                 let _ = registry;
-                                return Some(IrFormula::Atomic {
+                                return Ok(Some(IrFormula::Atomic {
                                     name: "=".to_string(),
                                     args: vec![
                                         IrTerm::Var {
@@ -558,17 +590,17 @@ fn derive_return_equation(
                                             args: arg_terms,
                                         },
                                     ],
-                                });
+                                }));
                             }
                         }
                     }
                 }
                 // Call-dest to _0 but couldn't resolve: stop.
-                return None;
+                return Ok(None);
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Lift an Rvalue to an IrTerm for postcondition derivation. Handles:
@@ -590,7 +622,7 @@ fn rvalue_to_ir_term_for_post(
     formals: &[(u32, String)],
     type_decls: Option<&Value>,
     named_locals: &HashMap<u32, String>,
-) -> Option<IrTerm> {
+) -> Result<Option<IrTerm>, LlbcError> {
     if let Some(use_op) = rvalue.get("Use") {
         if let Some(place) = use_op.get("Move").or_else(|| use_op.get("Copy")) {
             return place_to_term_for_post(place, prior, formals, type_decls, named_locals);
@@ -598,20 +630,28 @@ fn rvalue_to_ir_term_for_post(
         if let Some(constant) = use_op.get("Const") {
             return constant_to_ir_term(constant);
         }
-        return None;
+        return Ok(None);
     }
     if let Some(arr) = rvalue.get("BinaryOp").and_then(|v| v.as_array()) {
         if arr.len() != 3 {
-            return None;
+            return Ok(None);
         }
-        let op = mir_arith_op_tag(&arr[0])?;
-        let ir_op = mir_arith_op_to_ir_ctor(op)?;
-        let l = operand_to_ir_term(&arr[1], prior, formals, named_locals)?;
-        let r = operand_to_ir_term(&arr[2], prior, formals, named_locals)?;
-        return Some(IrTerm::Ctor {
+        let Some(op) = mir_arith_op_tag(&arr[0]) else {
+            return Ok(None);
+        };
+        let Some(ir_op) = mir_arith_op_to_ir_ctor(op) else {
+            return Ok(None);
+        };
+        let Some(l) = operand_to_ir_term(&arr[1], prior, formals, named_locals)? else {
+            return Ok(None);
+        };
+        let Some(r) = operand_to_ir_term(&arr[2], prior, formals, named_locals)? else {
+            return Ok(None);
+        };
+        return Ok(Some(IrTerm::Ctor {
             name: ir_op.to_string(),
             args: vec![l, r],
-        });
+        }));
     }
     // UnaryOp([op_descriptor, operand]): handle Cast transparently.
     // Charon encodes `x as T` as `UnaryOp([{"Cast": ...}, operand])`.
@@ -620,7 +660,7 @@ fn rvalue_to_ir_term_for_post(
             return operand_to_ir_term(&arr[1], prior, formals, named_locals);
         }
     }
-    None
+    Ok(None)
 }
 
 /// Lift a Place to an IrTerm for postcondition return-value derivation.
@@ -655,19 +695,23 @@ fn place_to_term_for_post(
     formals: &[(u32, String)],
     type_decls: Option<&Value>,
     named_locals: &HashMap<u32, String>,
-) -> Option<IrTerm> {
-    let kind = place.get("kind")?;
+) -> Result<Option<IrTerm>, LlbcError> {
+    let Some(kind) = place.get("kind") else {
+        return Ok(None);
+    };
     if let Some(local) = kind.get("Local").and_then(|v| v.as_u64()) {
         let local = local as u32;
         if let Some((_, name)) = formals.iter().find(|(id, _)| *id == local) {
-            return Some(IrTerm::Var { name: name.clone() });
+            return Ok(Some(IrTerm::Var { name: name.clone() }));
         }
-        let rvalue = find_last_assign_rvalue(prior, local)?;
+        let Some(rvalue) = find_last_assign_rvalue(prior, local) else {
+            return Ok(None);
+        };
         return rvalue_to_ir_term_for_post(rvalue, prior, formals, type_decls, named_locals);
     }
     if let Some(proj_arr) = kind.get("Projection").and_then(|v| v.as_array()) {
         if proj_arr.len() != 2 {
-            return None;
+            return Ok(None);
         }
         let base = &proj_arr[0];
         let elem = &proj_arr[1];
@@ -684,19 +728,30 @@ fn place_to_term_for_post(
         // Lift to Ctor("index", [base_term, idx_term]) matching AST's
         // Expr::Index → `Ctor("index", [arr, idx])` byte-for-byte.
         if let Some(idx_obj) = elem.get("Index") {
-            let base_term = place_to_term_for_post(base, prior, formals, type_decls, named_locals)?;
-            let offset_op = idx_obj.get("offset")?;
-            let idx_term = operand_to_ir_term(offset_op, prior, formals, named_locals)?;
-            return Some(IrTerm::Ctor {
+            let Some(base_term) =
+                place_to_term_for_post(base, prior, formals, type_decls, named_locals)?
+            else {
+                return Ok(None);
+            };
+            let Some(offset_op) = idx_obj.get("offset") else {
+                return Ok(None);
+            };
+            let Some(idx_term) = operand_to_ir_term(offset_op, prior, formals, named_locals)?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(IrTerm::Ctor {
                 name: "index".to_string(),
                 args: vec![base_term, idx_term],
-            });
+            }));
         }
 
         if let Some(field_arr) = elem.get("Field").and_then(|v| v.as_array()) {
             if field_arr.len() == 2 {
                 let field_kind = &field_arr[0];
-                let field_idx = field_arr[1].as_u64()? as usize;
+                let Some(field_idx) = field_arr[1].as_u64().map(|n| n as usize) else {
+                    return Ok(None);
+                };
 
                 // Tuple field projection.
                 if field_kind.get("Tuple").is_some() {
@@ -721,22 +776,28 @@ fn place_to_term_for_post(
                                     if arr.len() == 3 {
                                         if let Some(op) = mir_arith_op_tag(&arr[0]) {
                                             if let Some(ir_op) = mir_arith_op_to_ir_ctor(op) {
-                                                let l = operand_to_ir_term(
+                                                let Some(l) = operand_to_ir_term(
                                                     &arr[1],
                                                     prior,
                                                     formals,
                                                     named_locals,
-                                                )?;
-                                                let r = operand_to_ir_term(
+                                                )?
+                                                else {
+                                                    return Ok(None);
+                                                };
+                                                let Some(r) = operand_to_ir_term(
                                                     &arr[2],
                                                     prior,
                                                     formals,
                                                     named_locals,
-                                                )?;
-                                                return Some(IrTerm::Ctor {
+                                                )?
+                                                else {
+                                                    return Ok(None);
+                                                };
+                                                return Ok(Some(IrTerm::Ctor {
                                                     name: ir_op.to_string(),
                                                     args: vec![l, r],
-                                                });
+                                                }));
                                             }
                                         }
                                     }
@@ -746,9 +807,12 @@ fn place_to_term_for_post(
                     }
                     // General tuple element access (non-CheckedOp base, or
                     // idx > 0). Emit Ctor("field", [base_term, Var(".N")]).
-                    let base_term =
-                        place_to_term_for_post(base, prior, formals, type_decls, named_locals)?;
-                    return Some(IrTerm::Ctor {
+                    let Some(base_term) =
+                        place_to_term_for_post(base, prior, formals, type_decls, named_locals)?
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(IrTerm::Ctor {
                         name: "field".to_string(),
                         args: vec![
                             base_term,
@@ -756,7 +820,7 @@ fn place_to_term_for_post(
                                 name: format!(".{}", field_idx),
                             },
                         ],
-                    });
+                    }));
                 }
 
                 // Adt (struct or enum variant) field projection. Look up
@@ -780,16 +844,22 @@ fn place_to_term_for_post(
                 // match arms at all; this is an LlbcExtra site per paper
                 // 07's layered-agreement taxonomy.
                 if let Some(adt_arr) = field_kind.get("Adt").and_then(|v| v.as_array()) {
-                    let adt_id = adt_arr.first().and_then(|v| v.as_u64())? as usize;
+                    let Some(adt_id) = adt_arr.first().and_then(|v| v.as_u64()).map(|n| n as usize)
+                    else {
+                        return Ok(None);
+                    };
                     // adt_arr[1] is variant_id: Some(N) for enum variants,
                     // null or absent for structs.
                     let variant_id = adt_arr.get(1).and_then(|v| v.as_u64()).map(|n| n as usize);
                     let field_name = type_decls
                         .and_then(|td| adt_field_name(td, adt_id, variant_id, field_idx))
                         .unwrap_or_else(|| field_idx.to_string());
-                    let base_term =
-                        place_to_term_for_post(base, prior, formals, type_decls, named_locals)?;
-                    return Some(IrTerm::Ctor {
+                    let Some(base_term) =
+                        place_to_term_for_post(base, prior, formals, type_decls, named_locals)?
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(IrTerm::Ctor {
                         name: "field".to_string(),
                         args: vec![
                             base_term,
@@ -797,12 +867,12 @@ fn place_to_term_for_post(
                                 name: format!(".{}", field_name),
                             },
                         ],
-                    });
+                    }));
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Look up a struct field's source name from the crate's type_decls.
@@ -849,16 +919,24 @@ fn divisor_from_assert_cond(
     prior: &[&Value],
     formals: &[(u32, String)],
     named_locals: &HashMap<u32, String>,
-) -> Option<IrTerm> {
-    let cond = cond?;
-    let cond_local = operand_to_local_id(cond)?;
-    let cond_rvalue = find_last_assign_rvalue(prior, cond_local)?;
-    let arr = cond_rvalue.get("BinaryOp").and_then(|v| v.as_array())?;
+) -> Result<Option<IrTerm>, LlbcError> {
+    let Some(cond) = cond else {
+        return Ok(None);
+    };
+    let Some(cond_local) = operand_to_local_id(cond) else {
+        return Ok(None);
+    };
+    let Some(cond_rvalue) = find_last_assign_rvalue(prior, cond_local) else {
+        return Ok(None);
+    };
+    let Some(arr) = cond_rvalue.get("BinaryOp").and_then(|v| v.as_array()) else {
+        return Ok(None);
+    };
     if arr.len() != 3 {
-        return None;
+        return Ok(None);
     }
     if arr[0].as_str() != Some("Eq") {
-        return None;
+        return Ok(None);
     }
     let lhs = &arr[1];
     let rhs = &arr[2];
@@ -867,7 +945,7 @@ fn divisor_from_assert_cond(
     } else if is_zero_constant(lhs) {
         rhs
     } else {
-        return None;
+        return Ok(None);
     };
     operand_to_ir_term(divisor_op, prior, formals, named_locals)
 }
@@ -1018,7 +1096,7 @@ pub fn detect_effects_llbc(
     stmts: &[&Value],
     fun_decls: Option<&Value>,
     registry: &crate::llbc_calls::ContractRegistry,
-) -> EffectSet {
+) -> Result<EffectSet, LlbcError> {
     let _ = registry; // Io detection uses callee name strings, not registry lookup
     let mut set = EffectSet::empty();
 
@@ -1035,8 +1113,8 @@ pub fn detect_effects_llbc(
                 if if_arr.len() == 3 {
                     let then_block = &if_arr[1];
                     let else_block = &if_arr[2];
-                    if block_leads_to_abort(then_block, false)
-                        || block_leads_to_abort(else_block, false)
+                    if block_leads_to_abort(then_block, false, "Switch.If.then")?
+                        || block_leads_to_abort(else_block, false, "Switch.If.else")?
                     {
                         set.add(Effect::Panics);
                     }
@@ -1113,7 +1191,7 @@ pub fn detect_effects_llbc(
             }
         }
     }
-    set
+    Ok(set)
 }
 
 /// Return true when a Place has a `Deref` projection element and the type
@@ -1210,7 +1288,7 @@ fn collect_call_contributions(
     registry: &crate::llbc_calls::ContractRegistry,
     out: &mut Vec<IrFormula>,
     effects: &mut EffectSet,
-) {
+) -> Result<(), LlbcError> {
     for (i, s) in stmts.iter().enumerate() {
         let Some((func_id, args)) = crate::llbc_calls::extract_call_target(s) else {
             continue;
@@ -1249,7 +1327,7 @@ fn collect_call_contributions(
         let mut arg_terms: Vec<IrTerm> = Vec::with_capacity(args.len());
         let mut all_lifted = true;
         for op in args.iter() {
-            match operand_to_ir_term(op, prior, formals, named_locals) {
+            match operand_to_ir_term(op, prior, formals, named_locals)? {
                 Some(t) => arg_terms.push(t),
                 None => {
                     all_lifted = false;
@@ -1268,6 +1346,7 @@ fn collect_call_contributions(
         let composed = crate::llbc_calls::compose_callsite_pre(callee, &arg_terms);
         out.push(composed);
     }
+    Ok(())
 }
 
 /// Collect predicate atoms from `Assert` statements in the body. This
@@ -1278,7 +1357,7 @@ fn collect_assert_contributions(
     formals: &[(u32, String)],
     named_locals: &HashMap<u32, String>,
     out: &mut Vec<IrFormula>,
-) {
+) -> Result<(), LlbcError> {
     for (i, s) in stmts.iter().enumerate() {
         let Some(assert_payload) = stmt_kind_payload(s, "Assert") else {
             continue;
@@ -1309,13 +1388,11 @@ fn collect_assert_contributions(
                 continue;
             }
             let op_descriptor = &arr[0];
-            let Some(op_tag) = overflow_op_tag(op_descriptor) else {
+            let op_tag = overflow_op_tag(op_descriptor)?;
+            let Some(lhs_term) = operand_to_ir_term(&arr[1], prior, formals, named_locals)? else {
                 continue;
             };
-            let Some(lhs_term) = operand_to_ir_term(&arr[1], prior, formals, named_locals) else {
-                continue;
-            };
-            let Some(rhs_term) = operand_to_ir_term(&arr[2], prior, formals, named_locals) else {
+            let Some(rhs_term) = operand_to_ir_term(&arr[2], prior, formals, named_locals)? else {
                 continue;
             };
             out.push(IrFormula::Atomic {
@@ -1327,7 +1404,7 @@ fn collect_assert_contributions(
 
         // OverflowNeg(operand) -> Atomic("no-overflow:neg", [term]).
         if let Some(operand) = check_kind.get("OverflowNeg") {
-            let Some(t) = operand_to_ir_term(operand, prior, formals, named_locals) else {
+            let Some(t) = operand_to_ir_term(operand, prior, formals, named_locals)? else {
                 continue;
             };
             out.push(IrFormula::Atomic {
@@ -1347,10 +1424,10 @@ fn collect_assert_contributions(
             let Some(index_op) = obj.get("index") else {
                 continue;
             };
-            let Some(len_term) = operand_to_ir_term(len_op, prior, formals, named_locals) else {
+            let Some(len_term) = operand_to_ir_term(len_op, prior, formals, named_locals)? else {
                 continue;
             };
-            let Some(index_term) = operand_to_ir_term(index_op, prior, formals, named_locals)
+            let Some(index_term) = operand_to_ir_term(index_op, prior, formals, named_locals)?
             else {
                 continue;
             };
@@ -1371,7 +1448,7 @@ fn collect_assert_contributions(
         if check_kind.get("DivisionByZero").is_some() || check_kind.get("RemainderByZero").is_some()
         {
             if let Some(divisor_term) =
-                divisor_from_assert_cond(assert_obj.get("cond"), prior, formals, named_locals)
+                divisor_from_assert_cond(assert_obj.get("cond"), prior, formals, named_locals)?
             {
                 out.push(IrFormula::Atomic {
                     name: "≠".to_string(),
@@ -1381,6 +1458,7 @@ fn collect_assert_contributions(
             continue;
         }
     }
+    Ok(())
 }
 
 /// Map Charon's overflow op descriptor to a flat tag for the IR's
@@ -1388,11 +1466,33 @@ fn collect_assert_contributions(
 /// (Mul with wrap-on-overflow arithmetic). We flatten to
 /// `mul-wrap` / `add-wrap` / `sub-wrap` etc. so consumers can
 /// pattern-match on the predicate-name suffix.
-fn overflow_op_tag(descriptor: &Value) -> Option<String> {
-    let obj = descriptor.as_object()?;
-    let (op_name, mode_val) = obj.iter().next()?;
-    let mode = mode_val.as_str().unwrap_or("unknown");
-    Some(format!(
+fn overflow_op_tag(descriptor: &Value) -> Result<String, LlbcError> {
+    let obj = descriptor.as_object().ok_or_else(|| {
+        llbc_schema(
+            "Assert.check_kind.Overflow[0]",
+            "overflow op descriptor must be a single-key object",
+        )
+    })?;
+    let mut entries = obj.iter();
+    let Some((op_name, mode_val)) = entries.next() else {
+        return Err(llbc_schema(
+            "Assert.check_kind.Overflow[0]",
+            "overflow op descriptor is empty",
+        ));
+    };
+    if entries.next().is_some() {
+        return Err(llbc_schema(
+            "Assert.check_kind.Overflow[0]",
+            "overflow op descriptor has multiple operator keys",
+        ));
+    }
+    let mode = mode_val.as_str().ok_or_else(|| {
+        llbc_schema(
+            "Assert.check_kind.Overflow[0]",
+            "overflow mode must be a string",
+        )
+    })?;
+    Ok(format!(
         "{}-{}",
         op_name.to_lowercase(),
         mode.to_lowercase()
@@ -1418,7 +1518,7 @@ fn collect_if_panic_contributions(
     named_locals: &HashMap<u32, String>,
     parent_falls_through_to_abort: bool,
     out: &mut Vec<IrFormula>,
-) {
+) -> Result<(), LlbcError> {
     for (i, s) in stmts.iter().enumerate() {
         let Some(switch) = stmt_kind_payload(s, "Switch") else {
             continue;
@@ -1444,10 +1544,11 @@ fn collect_if_panic_contributions(
                 let then_block = &if_arr[1];
                 let else_block = &if_arr[2];
 
-                let then_aborts = block_leads_to_abort(then_block, post_switch_aborts);
+                let then_aborts =
+                    block_leads_to_abort(then_block, post_switch_aborts, "Switch.If.then")?;
                 if then_aborts {
                     if let Some(pred) =
-                        discriminant_to_formula(discr, &local_prior, formals, named_locals)
+                        discriminant_to_formula(discr, &local_prior, formals, named_locals)?
                     {
                         out.push(negate_predicate(pred));
                     }
@@ -1455,7 +1556,7 @@ fn collect_if_panic_contributions(
                     // emits another Switch nested in the else side.
                     let mut new_prior = local_prior.clone();
                     new_prior.push(s);
-                    let inner_stmts: Vec<&Value> = block_statements(else_block);
+                    let inner_stmts: Vec<&Value> = block_statements(else_block, "Switch.If.else")?;
                     collect_if_panic_contributions(
                         &new_prior,
                         &inner_stmts,
@@ -1463,7 +1564,7 @@ fn collect_if_panic_contributions(
                         named_locals,
                         post_switch_aborts,
                         out,
-                    );
+                    )?;
                 }
                 // If then doesn't abort: not an if-panic. Skip.
             }
@@ -1477,24 +1578,27 @@ fn collect_if_panic_contributions(
         // expects. `arm_scalar_to_ir_term` handles this shape.
         if let Some(si_arr) = switch.get("SwitchInt").and_then(|v| v.as_array()) {
             if si_arr.len() != 4 {
-                continue;
+                return Err(llbc_schema(
+                    "SwitchInt",
+                    "expected [discriminant, type, arms, otherwise] array",
+                ));
             }
             let discr = &si_arr[0];
             let arms = match si_arr[2].as_array() {
                 Some(a) => a,
-                None => continue,
+                None => return Err(llbc_schema("SwitchInt.arms", "arms must be an array")),
             };
             let otherwise_block = &si_arr[3];
 
             // If the otherwise-block aborts, the precondition is a disjunction
             // of matched literals (an `Or`, not a conjunction of `!=` atoms).
             // Out of scope for MVP. Skip.
-            if block_leads_to_abort(otherwise_block, post_switch_aborts) {
+            if block_leads_to_abort(otherwise_block, post_switch_aborts, "SwitchInt.otherwise")? {
                 continue;
             }
 
             // Lift the discriminant to an IR term (e.g. Var("x") for a formal).
-            let Some(discr_term) = operand_to_ir_term(discr, &local_prior, formals, named_locals)
+            let Some(discr_term) = operand_to_ir_term(discr, &local_prior, formals, named_locals)?
             else {
                 continue;
             };
@@ -1514,20 +1618,28 @@ fn collect_if_panic_contributions(
             for arm in arms {
                 let arm_arr = match arm.as_array() {
                     Some(a) => a,
-                    None => continue,
+                    None => return Err(llbc_schema("SwitchInt.arm", "arm must be an array")),
                 };
                 if arm_arr.len() != 2 {
-                    continue;
+                    return Err(llbc_schema(
+                        "SwitchInt.arm",
+                        "arm must contain [patterns, block]",
+                    ));
                 }
                 let patterns = match arm_arr[0].as_array() {
                     Some(p) => p,
-                    None => continue,
+                    None => {
+                        return Err(llbc_schema(
+                            "SwitchInt.arm.patterns",
+                            "patterns must be an array",
+                        ));
+                    }
                 };
                 let arm_block = &arm_arr[1];
-                if block_leads_to_abort(arm_block, post_switch_aborts) {
+                if block_leads_to_abort(arm_block, post_switch_aborts, "SwitchInt.arm.block")? {
                     // Panic arm: emit != atoms.
                     for scalar_val in patterns {
-                        if let Some(lit_term) = arm_scalar_to_ir_term(scalar_val) {
+                        if let Some(lit_term) = arm_scalar_to_ir_term(scalar_val)? {
                             out.push(IrFormula::Atomic {
                                 name: "≠".to_string(),
                                 args: vec![discr_term.clone(), lit_term],
@@ -1537,7 +1649,7 @@ fn collect_if_panic_contributions(
                 } else {
                     // B.7: non-panic arm — recursively collect arm body's
                     // contributions, then wrap in Implies(premise, arm_pre).
-                    let arm_stmts = block_statements(arm_block);
+                    let arm_stmts = block_statements(arm_block, "SwitchInt.arm.block")?;
                     let mut arm_contribs: Vec<IrFormula> = Vec::new();
                     // Build a new prior that includes the switch statement itself
                     // so discriminant traces in the arm body can reach back.
@@ -1550,20 +1662,23 @@ fn collect_if_panic_contributions(
                         named_locals,
                         post_switch_aborts,
                         &mut arm_contribs,
-                    );
+                    )?;
                     if !arm_contribs.is_empty() {
                         // Build premise: Or of all equality atoms for this arm's
                         // patterns. A single-literal arm yields a bare Atomic.
                         let eq_atoms: Vec<IrFormula> = patterns
                             .iter()
-                            .filter_map(|scalar_val| {
-                                arm_scalar_to_ir_term(scalar_val).map(|lit_term| {
-                                    IrFormula::Atomic {
+                            .map(|scalar_val| {
+                                arm_scalar_to_ir_term(scalar_val).map(|maybe_term| {
+                                    maybe_term.map(|lit_term| IrFormula::Atomic {
                                         name: "=".to_string(),
                                         args: vec![discr_term.clone(), lit_term],
-                                    }
+                                    })
                                 })
                             })
+                            .collect::<Result<Vec<_>, LlbcError>>()?
+                            .into_iter()
+                            .flatten()
                             .collect();
                         if eq_atoms.is_empty() {
                             // No resolvable literals — can't form a premise; skip.
@@ -1590,22 +1705,27 @@ fn collect_if_panic_contributions(
             continue;
         }
     }
+    Ok(())
 }
 
 /// True if the block's statements contain an Abort directly, OR all
 /// statements are bookkeeping and falling through the block reaches
 /// an Abort (per the parent-aware tail propagation).
-fn block_leads_to_abort(block: &Value, parent_falls_through_to_abort: bool) -> bool {
-    let stmts = block_statements(block);
+fn block_leads_to_abort(
+    block: &Value,
+    parent_falls_through_to_abort: bool,
+    path: &str,
+) -> Result<bool, LlbcError> {
+    let stmts = block_statements(block, path)?;
     if stmts.iter().any(|s| stmt_kind_tag(s) == Some("Abort")) {
-        return true;
+        return Ok(true);
     }
     // All bookkeeping → falling through this block reaches the parent's
     // post-switch position.
     if stmts.iter().all(is_bookkeeping) {
-        return parent_falls_through_to_abort;
+        return Ok(parent_falls_through_to_abort);
     }
-    false
+    Ok(false)
 }
 
 /// True if the tail (statements after the current Switch) leads to an
@@ -1635,29 +1755,41 @@ fn discriminant_to_formula(
     prior: &[&Value],
     formals: &[(u32, String)],
     named_locals: &HashMap<u32, String>,
-) -> Option<IrFormula> {
-    let local = operand_to_local_id(operand)?;
-    let rvalue = find_last_assign_rvalue(prior, local)?;
+) -> Result<Option<IrFormula>, LlbcError> {
+    let Some(local) = operand_to_local_id(operand) else {
+        return Ok(None);
+    };
+    let Some(rvalue) = find_last_assign_rvalue(prior, local) else {
+        return Ok(None);
+    };
 
     if let Some(arr) = rvalue.get("BinaryOp").and_then(|v| v.as_array()) {
         if arr.len() != 3 {
-            return None;
+            return Ok(None);
         }
-        let mir_op = arr[0].as_str()?;
-        let pred_name = mir_binop_to_ir_predicate(mir_op)?;
-        let lhs = operand_to_ir_term(&arr[1], prior, formals, named_locals)?;
-        let rhs = operand_to_ir_term(&arr[2], prior, formals, named_locals)?;
-        return Some(IrFormula::Atomic {
+        let Some(mir_op) = arr[0].as_str() else {
+            return Ok(None);
+        };
+        let Some(pred_name) = mir_binop_to_ir_predicate(mir_op) else {
+            return Ok(None);
+        };
+        let Some(lhs) = operand_to_ir_term(&arr[1], prior, formals, named_locals)? else {
+            return Ok(None);
+        };
+        let Some(rhs) = operand_to_ir_term(&arr[2], prior, formals, named_locals)? else {
+            return Ok(None);
+        };
+        return Ok(Some(IrFormula::Atomic {
             name: pred_name.to_string(),
             args: vec![lhs, rhs],
-        });
+        }));
     }
 
     if let Some(use_op) = rvalue.get("Use") {
         return discriminant_to_formula(use_op, prior, formals, named_locals);
     }
 
-    None
+    Ok(None)
 }
 
 fn operand_to_ir_term(
@@ -1665,14 +1797,14 @@ fn operand_to_ir_term(
     prior: &[&Value],
     formals: &[(u32, String)],
     named_locals: &HashMap<u32, String>,
-) -> Option<IrTerm> {
+) -> Result<Option<IrTerm>, LlbcError> {
     if let Some(place) = operand.get("Move").or_else(|| operand.get("Copy")) {
         return operand_place_to_ir_term(place, prior, formals, named_locals);
     }
     if let Some(constant) = operand.get("Const") {
         return constant_to_ir_term(constant);
     }
-    None
+    Ok(None)
 }
 
 /// Lift a Place to an IrTerm for the discriminant / Assert-operand
@@ -1696,24 +1828,28 @@ fn operand_place_to_ir_term(
     prior: &[&Value],
     formals: &[(u32, String)],
     named_locals: &HashMap<u32, String>,
-) -> Option<IrTerm> {
-    let kind = place.get("kind")?;
+) -> Result<Option<IrTerm>, LlbcError> {
+    let Some(kind) = place.get("kind") else {
+        return Ok(None);
+    };
     if let Some(local) = kind.get("Local").and_then(|v| v.as_u64()) {
         let local = local as u32;
         if let Some((_, name)) = formals.iter().find(|(id, _)| *id == local) {
-            return Some(IrTerm::Var { name: name.clone() });
+            return Ok(Some(IrTerm::Var { name: name.clone() }));
         }
         // Named-local stop: if this non-formal has a source name, emit
         // Var(name) without tracing further. This keeps the predicate
         // at the source-level name the programmer wrote.
         if let Some(name) = named_locals.get(&local) {
-            return Some(IrTerm::Var { name: name.clone() });
+            return Ok(Some(IrTerm::Var { name: name.clone() }));
         }
-        let rvalue = find_last_assign_rvalue(prior, local)?;
+        let Some(rvalue) = find_last_assign_rvalue(prior, local) else {
+            return Ok(None);
+        };
         if let Some(use_op) = rvalue.get("Use") {
             return operand_to_ir_term(use_op, prior, formals, named_locals);
         }
-        return None;
+        return Ok(None);
     }
     if let Some(proj_arr) = kind.get("Projection").and_then(|v| v.as_array()) {
         if proj_arr.len() == 2 {
@@ -1723,37 +1859,64 @@ fn operand_place_to_ir_term(
                 match name {
                     "Deref" => return operand_place_to_ir_term(base, prior, formals, named_locals),
                     "PtrMetadata" => {
-                        let inner = operand_place_to_ir_term(base, prior, formals, named_locals)?;
-                        return Some(IrTerm::Ctor {
+                        let Some(inner) =
+                            operand_place_to_ir_term(base, prior, formals, named_locals)?
+                        else {
+                            return Ok(None);
+                        };
+                        return Ok(Some(IrTerm::Ctor {
                             name: "len".to_string(),
                             args: vec![inner],
-                        });
+                        }));
                     }
                     _ => {}
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
-fn constant_to_ir_term(constant: &Value) -> Option<IrTerm> {
-    let kind = constant.get("kind")?;
-    let lit = kind.get("Literal")?;
+fn parse_charon_i64(raw: &str, path: &str) -> Result<i64, LlbcError> {
+    raw.parse::<i64>().map_err(|err| {
+        llbc_schema(
+            path,
+            format!("invalid integer scalar payload {raw:?}: {err}"),
+        )
+    })
+}
+
+fn constant_to_ir_term(constant: &Value) -> Result<Option<IrTerm>, LlbcError> {
+    let Some(kind) = constant.get("kind") else {
+        return Ok(None);
+    };
+    let Some(lit) = kind.get("Literal") else {
+        return Ok(None);
+    };
 
     // Integer scalars: {"Scalar": {"Unsigned": ["U32", "10"]}} or
     //                  {"Scalar": {"Signed":   ["I32", "-5"]}}
     if let Some(scalar) = lit.get("Scalar") {
         if let Some(uns) = scalar.get("Unsigned").and_then(|v| v.as_array()) {
             // ["U32", "10"]
-            let s = uns.get(1)?.as_str()?;
-            let n: i64 = s.parse().ok()?;
-            return Some(crate::wp::const_int(n));
+            let s = uns.get(1).and_then(Value::as_str).ok_or_else(|| {
+                llbc_schema(
+                    "Const.kind.Literal.Scalar.Unsigned[1]",
+                    "missing integer payload",
+                )
+            })?;
+            let n = parse_charon_i64(s, "Const.kind.Literal.Scalar.Unsigned[1]")?;
+            return Ok(Some(crate::wp::const_int(n)));
         }
         if let Some(sgn) = scalar.get("Signed").and_then(|v| v.as_array()) {
-            let s = sgn.get(1)?.as_str()?;
-            let n: i64 = s.parse().ok()?;
-            return Some(crate::wp::const_int(n));
+            let s = sgn.get(1).and_then(Value::as_str).ok_or_else(|| {
+                llbc_schema(
+                    "Const.kind.Literal.Scalar.Signed[1]",
+                    "missing integer payload",
+                )
+            })?;
+            let n = parse_charon_i64(s, "Const.kind.Literal.Scalar.Signed[1]")?;
+            return Ok(Some(crate::wp::const_int(n)));
         }
     }
 
@@ -1763,15 +1926,25 @@ fn constant_to_ir_term(constant: &Value) -> Option<IrTerm> {
     // and IEEE refinements (NaN/inf/rounding/orderedness/+0 vs -0) are kit-local
     // FOL refinements, not an IR sort or bit-pattern payload.
     if let Some(float_obj) = lit.get("Float") {
-        let float_str = float_obj.get("float_value")?.as_str()?;
+        let float_str = float_obj
+            .get("float_value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| llbc_schema("Const.kind.Literal.Float.float_value", "missing float"))?;
         // Keep requiring the tag so malformed Charon constants do not silently
         // lift, but do not carry width into ProofIR.
-        float_obj.get("float_ty")?.as_str()?;
-        let real_value = canonical_real_float_constant(float_str)?;
-        return Some(crate::wp::const_real(real_value));
+        float_obj
+            .get("float_ty")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                llbc_schema("Const.kind.Literal.Float.float_ty", "missing float type")
+            })?;
+        let Some(real_value) = canonical_real_float_constant(float_str) else {
+            return Ok(None);
+        };
+        return Ok(Some(crate::wp::const_real(real_value)));
     }
 
-    None
+    Ok(None)
 }
 
 /// Normalize a finite Charon float literal into the canonical Real payload.
@@ -1797,19 +1970,28 @@ fn canonical_real_float_constant(float_str: &str) -> Option<String> {
 /// `{"Scalar": {"Unsigned": ["U32", "0"]}}` or `{"Scalar": {"Signed": ["I32", "1"]}}` --
 /// note the absence of the `kind.Literal` wrapper that `constant_to_ir_term`
 /// expects. This helper handles the bare-Scalar encoding directly.
-fn arm_scalar_to_ir_term(scalar_val: &Value) -> Option<IrTerm> {
-    let scalar = scalar_val.get("Scalar")?;
+fn arm_scalar_to_ir_term(scalar_val: &Value) -> Result<Option<IrTerm>, LlbcError> {
+    let Some(scalar) = scalar_val.get("Scalar") else {
+        return Ok(None);
+    };
     if let Some(uns) = scalar.get("Unsigned").and_then(|v| v.as_array()) {
-        let s = uns.get(1)?.as_str()?;
-        let n: i64 = s.parse().ok()?;
-        return Some(crate::wp::const_int(n));
+        let s = uns.get(1).and_then(Value::as_str).ok_or_else(|| {
+            llbc_schema(
+                "SwitchInt.arm.Scalar.Unsigned[1]",
+                "missing integer payload",
+            )
+        })?;
+        let n = parse_charon_i64(s, "SwitchInt.arm.Scalar.Unsigned[1]")?;
+        return Ok(Some(crate::wp::const_int(n)));
     }
     if let Some(sgn) = scalar.get("Signed").and_then(|v| v.as_array()) {
-        let s = sgn.get(1)?.as_str()?;
-        let n: i64 = s.parse().ok()?;
-        return Some(crate::wp::const_int(n));
+        let s = sgn.get(1).and_then(Value::as_str).ok_or_else(|| {
+            llbc_schema("SwitchInt.arm.Scalar.Signed[1]", "missing integer payload")
+        })?;
+        let n = parse_charon_i64(s, "SwitchInt.arm.Scalar.Signed[1]")?;
+        return Ok(Some(crate::wp::const_int(n)));
     }
-    None
+    Ok(None)
 }
 
 fn operand_to_local_id(operand: &Value) -> Option<u32> {
@@ -1849,12 +2031,12 @@ fn stmt_kind_payload<'a>(stmt: &'a Value, tag: &str) -> Option<&'a Value> {
     stmt.get("kind")?.get(tag)
 }
 
-fn block_statements(block: &Value) -> Vec<&Value> {
-    block
+fn block_statements<'a>(block: &'a Value, path: &str) -> Result<Vec<&'a Value>, LlbcError> {
+    let statements = block
         .get("statements")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().collect())
-        .unwrap_or_default()
+        .and_then(Value::as_array)
+        .ok_or_else(|| llbc_schema(format!("{path}.statements"), "missing statement array"))?;
+    Ok(statements.iter().collect())
 }
 
 fn mir_binop_to_ir_predicate(op: &str) -> Option<&'static str> {
@@ -1964,6 +2146,181 @@ mod tests {
             .join("tests")
             .join("fixtures")
             .join(name)
+    }
+
+    fn fixture_json(name: &str) -> Value {
+        let bytes = std::fs::read(fixture_path(name)).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn fixture_crate_from_json(value: &Value) -> LlbcCrate {
+        let bytes = serde_json::to_vec(value).unwrap();
+        LlbcCrate::from_slice(&bytes).unwrap()
+    }
+
+    fn decl_trailing_ident(decl: &Value) -> Option<&str> {
+        decl.get("item_meta")?
+            .get("name")?
+            .as_array()?
+            .iter()
+            .rev()
+            .find_map(|seg| seg.get("Ident")?.as_array()?.first()?.as_str())
+    }
+
+    fn fun_decl_mut<'a>(root: &'a mut Value, name: &str) -> &'a mut Value {
+        root.pointer_mut("/translated/fun_decls")
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .iter_mut()
+            .find(|decl| decl_trailing_ident(decl) == Some(name))
+            .unwrap()
+    }
+
+    fn lift_mutated_function(
+        root: &Value,
+        name: &str,
+        source_path: &str,
+    ) -> Result<FunctionContractMemento, LlbcError> {
+        let krate = fixture_crate_from_json(root);
+        let f = krate.function_by_name(name).unwrap();
+        lift_llbc_function_with_types(f, Some(source_path), krate.type_decls_raw())
+    }
+
+    fn assert_llbc_schema_error_contains(
+        result: Result<FunctionContractMemento, LlbcError>,
+        needle: &str,
+    ) {
+        match result {
+            Err(LlbcError::Schema { path, detail }) => {
+                let combined = format!("{path}: {detail}");
+                assert!(
+                    combined.contains(needle),
+                    "schema error should mention {needle:?}, got {combined:?}"
+                );
+            }
+            Err(other) => panic!("expected LlbcError::Schema containing {needle}, got {other:?}"),
+            Ok(contract) => panic!(
+                "expected LlbcError::Schema containing {needle}, got successful contract {:?}",
+                contract.cid
+            ),
+        }
+    }
+
+    #[test]
+    fn llbc_lift_rejects_missing_arg_count_in_contract_source() {
+        let mut root = fixture_json("clean.llbc");
+        fun_decl_mut(&mut root, "f")
+            .pointer_mut("/body/Structured/locals")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("arg_count");
+
+        assert_llbc_schema_error_contains(
+            lift_mutated_function(&root, "f", "clean.rs"),
+            "arg_count",
+        );
+    }
+
+    #[test]
+    fn llbc_lift_rejects_missing_formal_type_in_contract_source() {
+        let mut root = fixture_json("clean.llbc");
+        let locals = fun_decl_mut(&mut root, "f")
+            .pointer_mut("/body/Structured/locals/locals")
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        locals
+            .iter_mut()
+            .find(|local| local.get("index").and_then(Value::as_u64) == Some(1))
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("ty");
+
+        assert_llbc_schema_error_contains(lift_mutated_function(&root, "f", "clean.rs"), "ty");
+    }
+
+    #[test]
+    fn llbc_lift_rejects_malformed_overflow_mode_in_contract_source() {
+        let mut root = fixture_json("overflow.llbc");
+        let stmts = fun_decl_mut(&mut root, "g")
+            .pointer_mut("/body/Structured/body/statements")
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        let overflow = stmts
+            .iter_mut()
+            .find_map(|stmt| stmt.pointer_mut("/kind/Assert/assert/check_kind/Overflow"))
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        overflow[0] = serde_json::json!({"Mul": 7});
+
+        assert_llbc_schema_error_contains(
+            lift_mutated_function(&root, "g", "overflow.rs"),
+            "Overflow",
+        );
+    }
+
+    #[test]
+    fn llbc_lift_rejects_malformed_constant_integer_in_contract_source() {
+        let mut root = fixture_json("overflow.llbc");
+        let stmts = fun_decl_mut(&mut root, "g")
+            .pointer_mut("/body/Structured/body/statements")
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        let overflow = stmts
+            .iter_mut()
+            .find_map(|stmt| stmt.pointer_mut("/kind/Assert/assert/check_kind/Overflow"))
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        *overflow[2]
+            .pointer_mut("/Const/kind/Literal/Scalar/Unsigned/1")
+            .unwrap() = Value::String("not-an-int".to_string());
+
+        assert_llbc_schema_error_contains(
+            lift_mutated_function(&root, "g", "overflow.rs"),
+            "Scalar.Unsigned",
+        );
+    }
+
+    #[test]
+    fn llbc_lift_rejects_malformed_switchint_arm_literal_in_contract_source() {
+        let mut root = fixture_json("match_arms.llbc");
+        let stmts = fun_decl_mut(&mut root, "f")
+            .pointer_mut("/body/Structured/body/statements")
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        let switch_int = stmts
+            .iter_mut()
+            .find_map(|stmt| stmt.pointer_mut("/kind/Switch/SwitchInt"))
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        *switch_int[2]
+            .pointer_mut("/0/0/0/Scalar/Unsigned/1")
+            .unwrap() = Value::String("not-an-int".to_string());
+
+        assert_llbc_schema_error_contains(
+            lift_mutated_function(&root, "f", "match_arms.rs"),
+            "SwitchInt",
+        );
+    }
+
+    #[test]
+    fn llbc_lift_rejects_missing_switch_block_statements_in_contract_source() {
+        let mut root = fixture_json("match_arms.llbc");
+        let stmts = fun_decl_mut(&mut root, "f")
+            .pointer_mut("/body/Structured/body/statements")
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        let switch_int = stmts
+            .iter_mut()
+            .find_map(|stmt| stmt.pointer_mut("/kind/Switch/SwitchInt"))
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        switch_int[3].as_object_mut().unwrap().remove("statements");
+
+        assert_llbc_schema_error_contains(
+            lift_mutated_function(&root, "f", "match_arms.rs"),
+            "statements",
+        );
     }
 
     #[test]
@@ -2479,17 +2836,17 @@ mod tests {
 
     #[test]
     fn detect_effects_llbc_emits_unsafe_for_unsafe_fn() {
-        // `drop_in_place` in closure_capture.llbc is a compiler-generated
-        // intrinsic with `signature.is_unsafe: true`. Lifting it must
-        // emit Effect::Unsafe in the contract's effect set.
+        // `write_via_raw` in raw_ptr.llbc is a real structured unsafe fn
+        // with `signature.is_unsafe: true`. Lifting it must emit
+        // Effect::Unsafe in the contract's effect set.
         use crate::contract::Effect;
-        let krate = LlbcCrate::from_path(fixture_path("closure_capture.llbc")).unwrap();
-        let f = krate.function_by_name("drop_in_place").unwrap();
+        let krate = LlbcCrate::from_path(fixture_path("raw_ptr.llbc")).unwrap();
+        let f = krate.function_by_name("write_via_raw").unwrap();
         assert!(
             f.is_unsafe(),
-            "drop_in_place must have is_unsafe=true in the fixture"
+            "write_via_raw must have is_unsafe=true in the fixture"
         );
-        let contract = lift_llbc_function(f, Some("closure_capture.rs")).unwrap();
+        let contract = lift_llbc_function(f, Some("raw_ptr.rs")).unwrap();
         assert!(
             contract.effects.effects.contains(&Effect::Unsafe),
             "unsafe fn must carry Effect::Unsafe; got {:?}",
@@ -2532,7 +2889,7 @@ mod tests {
         });
 
         let stmts = vec![&dyn_call_stmt];
-        let effects = detect_effects_llbc(&stmts, None, &empty_registry());
+        let effects = detect_effects_llbc(&stmts, None, &empty_registry()).unwrap();
         assert!(
             effects
                 .effects
@@ -2605,7 +2962,7 @@ mod tests {
         });
 
         let stmts = vec![&regular_call_stmt];
-        let effects = detect_effects_llbc(&stmts, None, &empty_registry());
+        let effects = detect_effects_llbc(&stmts, None, &empty_registry()).unwrap();
         assert!(
             !effects
                 .effects
@@ -2665,7 +3022,7 @@ mod tests {
         });
 
         let stmts = vec![&assign_stmt];
-        let effects = detect_effects_llbc(&stmts, None, &empty_registry());
+        let effects = detect_effects_llbc(&stmts, None, &empty_registry()).unwrap();
         assert!(
             effects.effects.contains(&Effect::Unsafe),
             "raw-ptr deref must emit Effect::Unsafe; got {:?}",
@@ -2697,7 +3054,7 @@ mod tests {
         });
 
         let stmts = vec![&assign_to_global];
-        let effects = detect_effects_llbc(&stmts, None, &empty_registry());
+        let effects = detect_effects_llbc(&stmts, None, &empty_registry()).unwrap();
         assert!(
             effects.effects.contains(&Effect::Writes {
                 target: "<global:7>".to_string()
@@ -2736,7 +3093,7 @@ mod tests {
         });
 
         let stmts = vec![&read_global];
-        let effects = detect_effects_llbc(&stmts, None, &empty_registry());
+        let effects = detect_effects_llbc(&stmts, None, &empty_registry()).unwrap();
         assert!(
             effects.effects.contains(&Effect::Reads {
                 target: "<global:3>".to_string()
@@ -2802,7 +3159,8 @@ mod tests {
         let named_locals = std::collections::HashMap::new();
         let stmts = vec![&switch_stmt];
         let mut out = Vec::new();
-        collect_if_panic_contributions(&[], &stmts, &formals, &named_locals, false, &mut out);
+        collect_if_panic_contributions(&[], &stmts, &formals, &named_locals, false, &mut out)
+            .unwrap();
 
         // The otherwise-block aborts, so no != atoms (there are no abort-arm
         // patterns to negate). The non-panic arm `2 =>` has an empty body,
@@ -2918,7 +3276,9 @@ mod tests {
                 }
             }
         });
-        let term = constant_to_ir_term(&constant).expect("should lift f64 constant 2.0");
+        let term = constant_to_ir_term(&constant)
+            .unwrap()
+            .expect("should lift f64 constant 2.0");
         match &term {
             IrTerm::Const { value, sort } => {
                 assert_eq!(
@@ -2949,7 +3309,9 @@ mod tests {
                 }
             }
         });
-        let term = constant_to_ir_term(&constant).expect("should lift f32 constant 0.0");
+        let term = constant_to_ir_term(&constant)
+            .unwrap()
+            .expect("should lift f32 constant 0.0");
         match &term {
             IrTerm::Const { value, sort } => {
                 assert_eq!(

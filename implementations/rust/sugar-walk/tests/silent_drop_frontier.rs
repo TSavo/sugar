@@ -42,30 +42,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "ok",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "arm_scalar_to_ir_term",
-        "ok",
-    ),
-    (
-        "ok",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "arm_scalar_to_ir_term",
-        "ok",
-    ),
-    (
-        "ok",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "constant_to_ir_term",
-        "ok",
-    ),
-    (
-        "ok",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "constant_to_ir_term",
-        "ok",
-    ),
-    (
-        "ok",
         "implementations/rust/sugar-walk/src/ra_oracle.rs",
         "ensure_open",
         "ok",
@@ -258,24 +234,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "unwrap_or",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "lift_llbc_function_with_registry",
-        "unwrap_or",
-    ),
-    (
-        "unwrap_or",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "lift_llbc_function_with_registry",
-        "unwrap_or",
-    ),
-    (
-        "unwrap_or",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "overflow_op_tag",
-        "unwrap_or",
-    ),
-    (
-        "unwrap_or",
         "implementations/rust/sugar-walk/src/llbc_loops.rs",
         "locus_of_block",
         "unwrap_or",
@@ -416,12 +374,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
         "unwrap_or_default",
         "implementations/rust/sugar-walk/src/llbc_calls.rs",
         "extract_call_target",
-        "unwrap_or_default",
-    ),
-    (
-        "unwrap_or_default",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        "block_statements",
         "unwrap_or_default",
     ),
     (
