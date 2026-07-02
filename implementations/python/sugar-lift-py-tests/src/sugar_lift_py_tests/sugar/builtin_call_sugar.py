@@ -159,6 +159,7 @@ _BUILTIN_DUNDER_METHODS = {
     "len": "__len__",
     "hash": "__hash__",
     "repr": "__repr__",
+    "reversed": "__reversed__",
     "int": "__int__",
     "float": "__float__",
     "complex": "__complex__",
