@@ -159,6 +159,10 @@ pub struct ProjectConfig {
 
     /// Configured witness sources consumed by `sugar prove --emit-witnesses`.
     pub witnesses: Vec<WitnessEntry>,
+
+    /// Local trust anchors for verifier Tier-2 implication cache entries.
+    /// Empty means implication cache hits are skipped.
+    pub trusted_implication_signers: Vec<String>,
 }
 
 impl ProjectConfig {
@@ -302,6 +306,10 @@ fn parse_config(text: &str) -> ProjectConfig {
                 cfg.solver_portfolio = parse_string_array(&val);
             }
             (Some("solvers"), "mode") => cfg.solver_mode = Some(val),
+            (None, "trusted_implication_signers")
+            | (Some("verify"), "trusted_implication_signers") => {
+                cfg.trusted_implication_signers = parse_string_array(&val);
+            }
             (Some("verify"), "callees") => {
                 cfg.callees = parse_string_array(&val);
             }
@@ -512,6 +520,18 @@ version = "0.39.0"
         assert_eq!(profile.family.as_deref(), Some("concept:family:sql"));
         assert_eq!(profile.library.as_deref(), Some("rusqlite"));
         assert_eq!(profile.version.as_deref(), Some("0.39.0"));
+    }
+
+    #[test]
+    fn parses_trusted_implication_signers() {
+        let raw = r#"
+trusted_implication_signers = ["ed25519:alpha", "ed25519:beta"]
+"#;
+        let cfg = parse_config(raw);
+        assert_eq!(
+            cfg.trusted_implication_signers,
+            vec!["ed25519:alpha".to_string(), "ed25519:beta".to_string()]
+        );
     }
 
     #[test]

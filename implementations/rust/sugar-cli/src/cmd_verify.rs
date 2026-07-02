@@ -606,6 +606,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         z3_path: args.z3.clone(),
         extra_projects,
         extra_proofs: dependency_proofs,
+        trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
