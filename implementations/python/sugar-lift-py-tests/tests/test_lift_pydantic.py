@@ -11,6 +11,14 @@ from sugar_lift_py_tests.lift.pydantic import (
 )
 
 
+def _loss_records(witnesses):
+    return [
+        witness["extension_fields"]["loss_record"]
+        for witness in witnesses
+        if witness["extension_fields"]["loss_record"]
+    ]
+
+
 class TestPydanticLift:
     def test_pydantic_v2_field_constraints(self):
         pytest.importorskip("pydantic")
@@ -104,3 +112,126 @@ class TestPydanticLift:
         assert "is_some(name)" in predicate_text
         assert "type(name) == str" in predicate_text
         assert "strlen(name) >= 1" in predicate_text
+
+    def test_requiredness_exception_records_dropped_not_none_precondition(self):
+        class FieldInfo:
+            metadata = []
+            min_length = None
+            max_length = None
+            ge = None
+            gt = None
+            le = None
+            lt = None
+            pattern = None
+
+            def is_required(self):
+                raise TypeError("requiredness probe exploded")
+
+        class User:
+            __annotations__ = {"name": str}
+            model_fields = {"name": FieldInfo()}
+
+        witnesses = lift_pydantic_model_witnesses(User)
+        records = _loss_records(witnesses)
+
+        assert [record["pydantic_requiredness_loss"] for record in records] == [
+            {
+                "model": "User",
+                "field": "name",
+                "caught": "TypeError",
+                "dropped_precondition": "name != None",
+                "reason": "is_required() raised: requiredness probe exploded",
+            }
+        ]
+        predicate_text = " ".join(witness["predicate_text"] for witness in witnesses)
+        assert "name != None" not in predicate_text
+        assert "type(name) == str" in predicate_text
+
+    def test_not_required_field_does_not_record_requiredness_loss(self):
+        class FieldInfo:
+            metadata = []
+            min_length = None
+            max_length = None
+            ge = None
+            gt = None
+            le = None
+            lt = None
+            pattern = None
+
+            def is_required(self):
+                return False
+
+        class User:
+            __annotations__ = {"nickname": str}
+            model_fields = {"nickname": FieldInfo()}
+
+        witnesses = lift_pydantic_model_witnesses(User)
+
+        assert _loss_records(witnesses) == []
+        predicate_text = " ".join(witness["predicate_text"] for witness in witnesses)
+        assert "nickname != None" not in predicate_text
+        assert "type(nickname) == str" in predicate_text
+
+    def test_multiple_requiredness_exceptions_each_record_loss(self):
+        class RaisingFieldInfo:
+            metadata = []
+            min_length = None
+            max_length = None
+            ge = None
+            gt = None
+            le = None
+            lt = None
+            pattern = None
+
+            def __init__(self, message):
+                self.message = message
+
+            def is_required(self):
+                raise TypeError(self.message)
+
+        class OptionalFieldInfo:
+            metadata = []
+            min_length = None
+            max_length = None
+            ge = None
+            gt = None
+            le = None
+            lt = None
+            pattern = None
+
+            def is_required(self):
+                return False
+
+        class User:
+            __annotations__ = {"first": str, "middle": str, "last": str}
+            model_fields = {
+                "first": RaisingFieldInfo("first probe exploded"),
+                "middle": OptionalFieldInfo(),
+                "last": RaisingFieldInfo("last probe exploded"),
+            }
+
+        witnesses = lift_pydantic_model_witnesses(User)
+        losses = [
+            record["pydantic_requiredness_loss"] for record in _loss_records(witnesses)
+        ]
+
+        assert losses == [
+            {
+                "model": "User",
+                "field": "first",
+                "caught": "TypeError",
+                "dropped_precondition": "first != None",
+                "reason": "is_required() raised: first probe exploded",
+            },
+            {
+                "model": "User",
+                "field": "last",
+                "caught": "TypeError",
+                "dropped_precondition": "last != None",
+                "reason": "is_required() raised: last probe exploded",
+            },
+        ]
+        predicate_text = " ".join(witness["predicate_text"] for witness in witnesses)
+        assert "first != None" not in predicate_text
+        assert "middle != None" not in predicate_text
+        assert "last != None" not in predicate_text

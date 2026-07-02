@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[4]
 # test fails and CI stays red until you either panic or record loudly.
 EXPECTED_FRONTIER: tuple[tuple[str, int, str, str], ...] = (
     ("lift/pydantic.py", 238, "Exception", "passes"),
-    ("lift/pydantic.py", 303, "Exception", "returns-default"),
     ("proof_envelope.py", 138, "Exception", "returns-default"),
     ("proof_envelope.py", 168, "Exception", "returns-default"),
     ("signing.py", 87, "Exception", "returns-default"),
