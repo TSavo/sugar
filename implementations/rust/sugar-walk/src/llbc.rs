@@ -167,11 +167,15 @@ impl<'a> LlbcFunction<'a> {
     /// when the field is absent (non-unsafe functions, or older Charon
     /// versions that don't emit the field).
     pub fn is_unsafe(&self) -> bool {
-        self.raw
+        match self
+            .raw
             .get("signature")
             .and_then(|s| s.get("is_unsafe"))
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+        {
+            Some(is_unsafe) => is_unsafe,
+            None => false,
+        }
     }
 
     fn body_structured(&self) -> Option<&'a Value> {

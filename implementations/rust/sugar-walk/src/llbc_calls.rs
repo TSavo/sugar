@@ -96,8 +96,7 @@ pub fn lift_llbc_crate(
             && new_registry.iter().all(|(name, contract)| {
                 registry
                     .get(name)
-                    .map(|prev| prev.cid == contract.cid)
-                    .unwrap_or(false)
+                    .is_some_and(|prev| prev.cid == contract.cid)
             });
 
         registry = new_registry;
@@ -230,11 +229,8 @@ pub fn extract_call_target(stmt: &Value) -> Option<(u64, Vec<&Value>)> {
     let kind = regular.get("kind")?;
     let fun = kind.get("Fun")?;
     let func_id = fun.get("Regular")?.as_u64()?;
-    let args: Vec<&Value> = call
-        .get("args")
-        .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().collect())
-        .unwrap_or_default();
+    let args_arr = call.get("args")?.as_array()?;
+    let args: Vec<&Value> = args_arr.iter().collect();
     Some((func_id, args))
 }
 

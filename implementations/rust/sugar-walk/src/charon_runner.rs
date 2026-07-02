@@ -84,15 +84,15 @@ pub fn invoke_charon_on_rs_source(
 
     // Place the output in the system temp dir with a unique-ish name
     // so concurrent test runs don't collide.
-    let stem = source_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("source");
+    let stem = match source_path.file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => stem,
+        None => "source",
+    };
     let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let nanos = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(_) => 0,
+    };
     let dest = std::env::temp_dir().join(format!("charon-{}-{}-{}.llbc", stem, pid, nanos));
 
     let output = Command::new(&bin)
@@ -124,10 +124,10 @@ mod tests {
 
     fn write_source(name: &str, body: &str) -> PathBuf {
         let pid = std::process::id();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+        let nanos = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => duration.as_nanos(),
+            Err(_) => 0,
+        };
         let path =
             std::env::temp_dir().join(format!("charon-runner-{}-{}-{}.rs", name, pid, nanos));
         std::fs::write(&path, body).expect("write tmp source");

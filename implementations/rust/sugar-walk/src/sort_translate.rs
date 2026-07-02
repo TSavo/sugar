@@ -270,12 +270,14 @@ fn charon_inner_to_sort_name(
     if let Some(arr) = inner.get("Ref").and_then(|v| v.as_array()) {
         if arr.len() == 3 {
             let inner_ty = &arr[1];
-            let mutability = arr[2].as_str().unwrap_or("Shared");
+            let Some(mutability) = arr[2].as_str() else {
+                return "Unknown".to_string();
+            };
             let inner_sort = ty_to_sort_name(Some(inner_ty), type_decls);
-            return if mutability == "Mut" {
-                format!("RefMut<{}>", inner_sort)
-            } else {
-                format!("Ref<{}>", inner_sort)
+            return match mutability {
+                "Mut" => format!("RefMut<{}>", inner_sort),
+                "Shared" => format!("Ref<{}>", inner_sort),
+                _ => "Unknown".to_string(),
             };
         }
     }
@@ -301,12 +303,14 @@ fn charon_inner_to_sort_name(
     if let Some(arr) = inner.get("RawPtr").and_then(|v| v.as_array()) {
         if arr.len() >= 2 {
             let inner_ty = &arr[0];
-            let mutability = arr[1].as_str().unwrap_or("Not");
+            let Some(mutability) = arr[1].as_str() else {
+                return "Unknown".to_string();
+            };
             let inner_sort = ty_to_sort_name(Some(inner_ty), type_decls);
-            return if mutability == "Mut" {
-                format!("PtrMut<{}>", inner_sort)
-            } else {
-                format!("Ptr<{}>", inner_sort)
+            return match mutability {
+                "Mut" => format!("PtrMut<{}>", inner_sort),
+                "Not" => format!("Ptr<{}>", inner_sort),
+                _ => "Unknown".to_string(),
             };
         }
     }

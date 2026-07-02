@@ -274,7 +274,9 @@ pub fn build_shadow_source(caller: &ItemFn, callees: &[CalleeContract]) -> Shado
 
             // Backfill the callee_root_cid metadata field on every minted
             // arrival, then push them into the source-index buckets.
-            let root_cid = callsite_root_cid.unwrap_or_default();
+            let Some(root_cid) = callsite_root_cid else {
+                continue;
+            };
             for slot in minted.into_iter().flatten() {
                 let mut a = slot;
                 a.callee_root_cid = root_cid.clone();
@@ -289,7 +291,10 @@ pub fn build_shadow_source(caller: &ItemFn, callees: &[CalleeContract]) -> Shado
     // into the slot CID).
     let mut slots: Vec<ShadowSlot> = Vec::with_capacity(n_stmts + 1);
     for source_index in 0..=n_stmts {
-        let mut arrivals = arrivals_by_index.remove(&source_index).unwrap_or_default();
+        let mut arrivals = match arrivals_by_index.remove(&source_index) {
+            Some(arrivals) => arrivals,
+            None => Vec::new(),
+        };
         arrivals.sort_by(|a, b| a.cid.cmp(&b.cid));
         let label = source_kind_label_for(body_stmts, source_index, &arrivals);
         let value = slot_value(&fn_name, source_index, &label, &arrivals);

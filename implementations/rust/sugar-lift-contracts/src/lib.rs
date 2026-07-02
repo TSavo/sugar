@@ -637,11 +637,7 @@ fn is_bare_generic(name: &str) -> bool {
     }
     // Single uppercase letter (T, V, E, etc.).
     if name.len() == 1 {
-        return name
-            .chars()
-            .next()
-            .map(|c| c.is_uppercase())
-            .unwrap_or(false);
+        return matches!(name.chars().next(), Some(c) if c.is_uppercase());
     }
     // Short common generic names used idiomatically.
     matches!(
@@ -795,7 +791,11 @@ fn collect_doc_attrs(attrs: &[syn::Attribute]) -> Vec<DocAttr> {
                 if let syn::Lit::Str(ls) = &el.lit {
                     let raw = ls.value();
                     // `///` lines come as " text" with a leading space; strip it.
-                    let text = raw.strip_prefix(' ').unwrap_or(&raw).to_string();
+                    let text = match raw.strip_prefix(' ') {
+                        Some(stripped) => stripped,
+                        None => raw.as_str(),
+                    }
+                    .to_string();
                     let sp = attr.span();
                     let s = sp.start();
                     let e = sp.end();
@@ -2011,8 +2011,7 @@ mod tests {
                 && e.extension_fields
                     .get("signature_position")
                     .and_then(|v| v.as_str())
-                    .map(|p| p.starts_with("param:"))
-                    .unwrap_or(false)
+                    .is_some_and(|p| p.starts_with("param:"))
         });
         assert!(nz_ev.is_some(), "expected non-zero evidence for NonZeroU32");
         let ev = nz_ev.unwrap();

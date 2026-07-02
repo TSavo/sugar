@@ -199,8 +199,7 @@ fn callee_is_try_branch(func_id: u64, fun_decls: Option<&Value>) -> bool {
         .find_map(|e| e.get("Ident").and_then(|v| v.as_array()))
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .map(|s| s == "branch")
-        .unwrap_or(false)
+        .is_some_and(|s| s == "branch")
 }
 
 #[cfg(test)]

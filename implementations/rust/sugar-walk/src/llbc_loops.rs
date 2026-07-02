@@ -125,16 +125,19 @@ fn locus_of_block(block: &Value) -> Locus {
     let Some(span) = block.get("span") else {
         return Locus::unknown();
     };
-    let data = span.get("data").unwrap_or(span);
+    let data = match span.get("data") {
+        Some(data) => data,
+        None => span,
+    };
     let beg = data.get("beg");
-    let line = beg
-        .and_then(|b| b.get("line"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-    let col = beg
-        .and_then(|b| b.get("col"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let line = match beg.and_then(|b| b.get("line")).and_then(|v| v.as_u64()) {
+        Some(line) => line as usize,
+        None => 0,
+    };
+    let col = match beg.and_then(|b| b.get("col")).and_then(|v| v.as_u64()) {
+        Some(col) => col as usize,
+        None => 0,
+    };
     let file = data
         .get("file_id")
         .and_then(|v| v.as_u64())

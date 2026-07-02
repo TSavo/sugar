@@ -277,12 +277,7 @@ fn walk_expr_for_callsites(
         Expr::Call(ExprCall { func, args, .. }) => {
             // Direct call check at this expression.
             if let Expr::Path(ExprPath { path, .. }) = func.as_ref() {
-                if path
-                    .segments
-                    .last()
-                    .map(|s| s.ident == callee_name)
-                    .unwrap_or(false)
-                {
+                if path.segments.last().is_some_and(|s| s.ident == callee_name) {
                     hits.push(CallsiteHit {
                         args: args.iter().cloned().collect(),
                         conditions: conditions.clone(),

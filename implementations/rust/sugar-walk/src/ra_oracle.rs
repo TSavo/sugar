@@ -110,7 +110,10 @@ impl RaOracle {
     ///   - `SUGAR_RESOLVE_ORACLE` is not exactly `"rust-analyzer"`; or
     ///   - the rust-analyzer binary cannot be located or spawned.
     pub fn start(workspace_root: &Path) -> Option<RaOracle> {
-        let switch = std::env::var("SUGAR_RESOLVE_ORACLE").unwrap_or_default();
+        let switch = match std::env::var("SUGAR_RESOLVE_ORACLE") {
+            Ok(value) => value,
+            Err(_) => String::new(),
+        };
         if switch != "rust-analyzer" {
             debug!(
                 SUGAR_RESOLVE_ORACLE = %switch,
@@ -154,9 +157,29 @@ impl RaOracle {
                 cmd.env(k, v);
             }
         }
-        let mut child = cmd.spawn().ok()?;
-        let stdin = child.stdin.take()?;
-        let stdout = child.stdout.take()?;
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                warn!(error = %err, "oracle unavailable: rust-analyzer spawn failed");
+                return None;
+            }
+        };
+        let stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => {
+                warn!("oracle unavailable: rust-analyzer stdin pipe missing");
+                let _ = child.kill();
+                return None;
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                warn!("oracle unavailable: rust-analyzer stdout pipe missing");
+                let _ = child.kill();
+                return None;
+            }
+        };
         let (tx, rx) = std::sync::mpsc::channel::<Value>();
         // Background reader: frame and parse every LSP message off stdout into
         // the channel. It exits when stdout closes (the channel send then errors
@@ -292,29 +315,36 @@ impl RaOracle {
                 Ok(msg) => {
                     // Keep RA's load unblocked (workDoneProgress/create etc.).
                     self.respond_if_server_request(&msg);
-                    let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                    let method = match msg.get("method").and_then(|m| m.as_str()) {
+                        Some(method) => method,
+                        None => "",
+                    };
                     match method {
                         "$/progress" => {
-                            let token = msg
-                                .pointer("/params/token")
-                                .map(|v| {
-                                    v.as_str()
-                                        .map(str::to_string)
-                                        .unwrap_or_else(|| v.to_string())
-                                })
-                                .unwrap_or_default();
-                            let kind = msg
-                                .pointer("/params/value/kind")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let pmsg = msg
+                            let token = match msg.pointer("/params/token") {
+                                Some(v) => v
+                                    .as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string()),
+                                None => String::new(),
+                            };
+                            let kind =
+                                match msg.pointer("/params/value/kind").and_then(|v| v.as_str()) {
+                                    Some(kind) => kind,
+                                    None => "",
+                                };
+                            let pmsg = match msg
                                 .pointer("/params/value/message")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let title = msg
-                                .pointer("/params/value/title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            {
+                                Some(message) => message,
+                                None => "",
+                            };
+                            let title =
+                                match msg.pointer("/params/value/title").and_then(|v| v.as_str()) {
+                                    Some(title) => title,
+                                    None => "",
+                                };
                             let pct = msg
                                 .pointer("/params/value/percentage")
                                 .and_then(|v| v.as_u64());
@@ -338,18 +368,21 @@ impl RaOracle {
                             }
                         }
                         "experimental/serverStatus" => {
-                            let quiescent = msg
-                                .pointer("/params/quiescent")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let health = msg
-                                .pointer("/params/health")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let smsg = msg
-                                .pointer("/params/message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let quiescent =
+                                match msg.pointer("/params/quiescent").and_then(|v| v.as_bool()) {
+                                    Some(quiescent) => quiescent,
+                                    None => false,
+                                };
+                            let health =
+                                match msg.pointer("/params/health").and_then(|v| v.as_str()) {
+                                    Some(health) => health,
+                                    None => "",
+                                };
+                            let smsg = match msg.pointer("/params/message").and_then(|v| v.as_str())
+                            {
+                                Some(message) => message,
+                                None => "",
+                            };
                             info!(
                                 quiescent,
                                 health = %health,
@@ -403,7 +436,13 @@ impl RaOracle {
     /// discriminator; on a change we resync before any query so the resolution
     /// (and anything cached from it) reflects the new source.
     fn ensure_open(&mut self, abs_path: &Path) -> Option<()> {
-        let text = std::fs::read_to_string(abs_path).ok()?;
+        let text = match std::fs::read_to_string(abs_path) {
+            Ok(text) => text,
+            Err(err) => {
+                warn!(file = %abs_path.display(), error = %err, "oracle: failed to read source for didOpen/didChange");
+                return None;
+            }
+        };
         let hash = content_hash(text.as_bytes());
         let uri = path_to_uri(abs_path);
 
@@ -462,7 +501,10 @@ impl RaOracle {
     /// Returns `None` on any refusal. Call `resolve_crate_classified` for the
     /// reason breakdown (used by `resolve_batch` for the N/M/K summary).
     pub fn resolve_crate(&mut self, q: &ResolveQuery) -> Option<String> {
-        self.resolve_crate_classified(q).ok().flatten()
+        match self.resolve_crate_classified(q) {
+            Ok(result) => result,
+            Err(()) => None,
+        }
     }
 
     /// Like `resolve_crate` but distinguishes the refusal reason so callers
@@ -692,7 +734,10 @@ impl RaOracle {
                 );
                 return Err(());
             }
-            return Ok(Some(resp.get("result").cloned().unwrap_or(Value::Null)));
+            return Ok(Some(match resp.get("result") {
+                Some(result) => result.clone(),
+                None => Value::Null,
+            }));
         }
         Ok(None)
     }
@@ -730,11 +775,14 @@ impl RaOracle {
             return false;
         };
         let result = if method == "workspace/configuration" {
-            let n = msg
+            let n = match msg
                 .pointer("/params/items")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
-                .unwrap_or(1);
+            {
+                Some(n) => n,
+                None => 1,
+            };
             Value::Array(vec![Value::Null; n.max(1)])
         } else {
             Value::Null
@@ -749,10 +797,25 @@ impl RaOracle {
     }
 
     fn write_message(&mut self, msg: &Value) -> Option<()> {
-        let body = serde_json::to_vec(msg).ok()?;
-        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).ok()?;
-        self.stdin.write_all(&body).ok()?;
-        self.stdin.flush().ok()?;
+        let body = match serde_json::to_vec(msg) {
+            Ok(body) => body,
+            Err(err) => {
+                warn!(error = %err, "oracle: failed to serialize LSP message");
+                return None;
+            }
+        };
+        if let Err(err) = write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()) {
+            warn!(error = %err, "oracle: failed to write LSP header");
+            return None;
+        }
+        if let Err(err) = self.stdin.write_all(&body) {
+            warn!(error = %err, "oracle: failed to write LSP body");
+            return None;
+        }
+        if let Err(err) = self.stdin.flush() {
+            warn!(error = %err, "oracle: failed to flush LSP message");
+            return None;
+        }
         Some(())
     }
 
@@ -793,8 +856,10 @@ fn read_framed_message<R: Read>(reader: &mut BufReader<R>) -> Option<Value> {
     let mut header = Vec::new();
     let mut byte = [0u8; 1];
     loop {
-        if reader.read(&mut byte).ok()? == 0 {
-            return None;
+        match reader.read(&mut byte) {
+            Ok(0) => return None,
+            Ok(_) => {}
+            Err(_) => return None,
         }
         header.push(byte[0]);
         if header.ends_with(b"\r\n\r\n") {
@@ -808,15 +873,23 @@ fn read_framed_message<R: Read>(reader: &mut BufReader<R>) -> Option<Value> {
     let mut len = 0usize;
     for line in header_str.split("\r\n") {
         if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-            len = rest.trim().parse().ok()?;
+            len = match rest.trim().parse() {
+                Ok(len) => len,
+                Err(_) => return None,
+            };
         }
     }
     if len == 0 {
         return None;
     }
     let mut body = vec![0u8; len];
-    reader.read_exact(&mut body).ok()?;
-    serde_json::from_slice(&body).ok()
+    if reader.read_exact(&mut body).is_err() {
+        return None;
+    }
+    match serde_json::from_slice(&body) {
+        Ok(msg) => Some(msg),
+        Err(_) => None,
+    }
 }
 
 impl Drop for RaOracle {
@@ -861,8 +934,7 @@ fn locate_rust_analyzer() -> Option<PathBuf> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
     {
         return Some(PathBuf::from("rust-analyzer"));
     }
@@ -890,8 +962,7 @@ fn rustup_toolchain_env_for(bin: &Path) -> Vec<(String, String)> {
     let is_rustup_layout = tc_dir
         .parent()
         .and_then(|p| p.file_name())
-        .map(|n| n == "toolchains")
-        .unwrap_or(false);
+        .is_some_and(|n| n == "toolchains");
     if !is_rustup_layout {
         return Vec::new();
     }
@@ -1013,9 +1084,15 @@ fn file_path_from_uri(uri: &str) -> Option<PathBuf> {
 /// to select the rust-std shim's disambiguated partial (e.g. `(option, unwrap)`
 /// -> `option_unwrap`); the substrate never sees it.
 pub fn type_stem_from_uri(uri: &str) -> Option<String> {
-    let path = uri.strip_prefix("file://").unwrap_or(uri);
+    let path = match uri.strip_prefix("file://") {
+        Some(path) => path,
+        None => uri,
+    };
     let file = path.rsplit('/').next()?;
-    let stem = file.strip_suffix(".rs").unwrap_or(file);
+    let stem = match file.strip_suffix(".rs") {
+        Some(stem) => stem,
+        None => file,
+    };
     if stem == "mod" || stem.is_empty() {
         // A module root (`.../slice/mod.rs`): use the enclosing directory name.
         let without_file = &path[..path.len() - file.len()];
@@ -1270,7 +1347,10 @@ fn first_balanced_parens(s: &str) -> Option<&str> {
 /// locally-determinable receivers, and Tier 2b must not invent a workspace-crate
 /// key it cannot be sure of.
 pub fn crate_from_uri(uri: &str) -> Option<String> {
-    let path = uri.strip_prefix("file://").unwrap_or(uri);
+    let path = match uri.strip_prefix("file://") {
+        Some(path) => path,
+        None => uri,
+    };
     // sysroot rust-src: .../library/{core,alloc,std,...}/...
     if let Some(name) = segment_after(path, "/library/") {
         return Some(name);
@@ -1367,7 +1447,10 @@ pub fn resolve_batch(
         // *did* opt in is a genuine environmental fault worth a WARN. start()
         // already logs the specific cause (debug "oracle disabled" / warn
         // "binary not found"); here we classify the batch-level consequence.
-        let opted_in = std::env::var("SUGAR_RESOLVE_ORACLE").unwrap_or_default() == "rust-analyzer";
+        let opted_in = matches!(
+            std::env::var("SUGAR_RESOLVE_ORACLE").as_deref(),
+            Ok("rust-analyzer")
+        );
         if opted_in {
             warn!(
                 total_queries = total,

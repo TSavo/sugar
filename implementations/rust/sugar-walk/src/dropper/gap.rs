@@ -37,6 +37,9 @@ pub struct Gap {
 pub fn detect_gaps(walks: &[CallsiteWalk], descriptor: &dyn PredicateDescriptor) -> Vec<Gap> {
     let mut gaps = Vec::new();
     for walk in walks {
+        let Some(callsite_stmt_index) = walk.arrivals.first().map(|a| a.stmt_index) else {
+            continue;
+        };
         let entry = walk.entry_wp();
         if !descriptor.contains(entry.as_formula()) {
             continue;
@@ -55,7 +58,6 @@ pub fn detect_gaps(walks: &[CallsiteWalk], descriptor: &dyn PredicateDescriptor)
         if descriptor.is_premise_guarded(entry.as_formula(), &var_name) {
             continue;
         }
-        let callsite_stmt_index = walk.arrivals.first().map(|a| a.stmt_index).unwrap_or(0);
         gaps.push(Gap {
             caller_name: walk.caller_name.clone(),
             callee_name: walk.callee_name.clone(),
@@ -238,6 +240,21 @@ fn caller(x: u32) { f(x); }
         let walk = make_walk_with_entry_wp(plain_wp);
         let gaps = detect_gaps(&[walk], &NotNullPredicate);
         assert_eq!(gaps.len(), 1, "unguarded not_null must emit a gap");
+    }
+
+    #[test]
+    fn detect_gaps_rejects_walk_without_callsite_arrival() {
+        let walk = CallsiteWalk {
+            caller_name: "caller".to_string(),
+            callee_name: "f".to_string(),
+            arrivals: Vec::new(),
+        };
+
+        let gaps = detect_gaps(&[walk], &NotNullPredicate);
+        assert!(
+            gaps.is_empty(),
+            "a walk with no callsite arrival must not fabricate statement index 0"
+        );
     }
 
     #[test]

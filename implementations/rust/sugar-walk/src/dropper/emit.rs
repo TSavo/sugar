@@ -33,9 +33,15 @@ pub fn emit_drop(
 ) -> Option<EmitResult> {
     use syn::spanned::Spanned;
 
-    let guard_text = descriptor.render(template, &gap.var_name).ok()?;
+    let guard_text = match descriptor.render(template, &gap.var_name) {
+        Ok(text) => text,
+        Err(_) => return None,
+    };
 
-    let file: syn::File = syn::parse_str(source).ok()?;
+    let file: syn::File = match syn::parse_str(source) {
+        Ok(file) => file,
+        Err(_) => return None,
+    };
 
     let caller_fn = file.items.iter().find_map(|item| {
         if let syn::Item::Fn(f) = item {
