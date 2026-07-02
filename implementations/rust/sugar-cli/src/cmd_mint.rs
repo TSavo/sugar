@@ -1303,7 +1303,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         ),
     > = std::collections::BTreeMap::new();
     for (cid, env) in &pool.mementos {
-        if pool.member_kind(cid) != Some("contract") {
+        if !pool.member_is_kind(cid, sugar_verifier::MemberKind::Contract) {
             continue;
         }
         let name = match pool
@@ -2568,7 +2568,7 @@ fn mint_bridge_from_decl(
 }
 
 #[cfg(test)]
-use sugar_proof_envelope::{member_field, member_kind, Member};
+use sugar_proof_envelope::{member_field, member_kind, Member, MemberKind};
 
 #[cfg(test)]
 fn mint_from_ir_document(
@@ -4800,7 +4800,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("library binding member");
-        assert_eq!(view.kind().as_deref(), Some("library-sugar-binding-entry"));
+        assert_eq!(view.kind(), Some(MemberKind::LibrarySugarBindingEntry));
         let envelope: Value = serde_json::from_slice(view.bytes()).expect("member JSON");
         let Ok(Member::LibrarySugarBindingEntry(lsbe)) = Member::from_value(&envelope) else {
             panic!("expected library-sugar-binding-entry member");
@@ -4945,7 +4945,7 @@ mod tests {
         graph
             .members_view()
             .find_map(|view| {
-                let is_contract = view.kind().as_deref() == Some("contract");
+                let is_contract = view.kind() == Some(MemberKind::Contract);
                 let has_name = view.field("name").as_deref() == Some(name)
                     || view.field("contractName").as_deref() == Some(name);
                 (is_contract && has_name).then(|| {
@@ -4967,7 +4967,7 @@ mod tests {
     fn factory_walk_memento_members(graph: &ProofGraph) -> Vec<Value> {
         graph
             .members_view()
-            .filter(|v| v.kind().as_deref() == Some("factory-walk-memento"))
+            .filter(|v| v.kind() == Some(MemberKind::FactoryWalkMemento))
             .map(|view| view.json())
             .collect()
     }
@@ -5227,9 +5227,9 @@ mod tests {
         let mut contract_count = 0;
         let mut implication_count = 0;
         for view in &all_members {
-            match view.kind().as_deref() {
-                Some("contract") => contract_count += 1,
-                Some("implication") => {
+            match view.kind() {
+                Some(MemberKind::Contract) => contract_count += 1,
+                Some(MemberKind::Implication) => {
                     implication_count += 1;
                     let envelope = view.json();
                     let Ok(Member::Implication(imp)) = Member::from_value(&envelope) else {
@@ -5392,9 +5392,9 @@ mod tests {
         let mut contract_count = 0;
         let mut bridge_count = 0;
         for view in graph.members_view() {
-            match view.kind().as_deref() {
-                Some("contract") => contract_count += 1,
-                Some("bridge") => {
+            match view.kind() {
+                Some(MemberKind::Contract) => contract_count += 1,
+                Some(MemberKind::Bridge) => {
                     bridge_count += 1;
                     assert_eq!(view.field("targetContractCid").as_deref(), Some(target_cid));
                     assert_eq!(view.field("sourceSymbol").as_deref(), Some("callee"));
@@ -6459,14 +6459,14 @@ mod tests {
             let cid = view.cid().as_str();
             let envelope = view.json();
             match member_kind(&envelope) {
-                Some("authority")
+                Ok(MemberKind::Authority)
                     if member_field(&envelope, "principal").and_then(|v| v.as_str())
                         == Some("bridgeworks.software") =>
                 {
                     authority_member_cid = Some(cid.to_string());
                     authority = Some(envelope);
                 }
-                Some("contract") => contract = Some(envelope),
+                Ok(MemberKind::Contract) => contract = Some(envelope),
                 _ => {}
             }
         }
@@ -6580,7 +6580,7 @@ mod tests {
         let graph = ProofGraph::read(&bytes).expect("decode catalog");
         let contract_cids: Vec<_> = graph
             .members_view()
-            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .filter(|v| v.kind() == Some(MemberKind::Contract))
             .map(|v| v.cid().clone())
             .collect();
         // POSITIVE: exactly one contract (the two were coalesced, not doubled)
@@ -6635,7 +6635,7 @@ mod tests {
         let graph = ProofGraph::read(&bytes).expect("decode catalog");
         let contract_cids: Vec<_> = graph
             .members_view()
-            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .filter(|v| v.kind() == Some(MemberKind::Contract))
             .map(|v| v.cid().clone())
             .collect();
         // POSITIVE: exactly one contract (deduped, not doubled)
@@ -6684,7 +6684,7 @@ mod tests {
         let graph = ProofGraph::read(&bytes).expect("decode catalog");
         let contract_cids: Vec<_> = graph
             .members_view()
-            .filter(|v| v.kind().as_deref() == Some("contract"))
+            .filter(|v| v.kind() == Some(MemberKind::Contract))
             .map(|v| v.cid().clone())
             .collect();
         // DISCRIMINATION: pre-bearing contract must NOT be merged with inv-only.

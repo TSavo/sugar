@@ -62,8 +62,8 @@ use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
-    run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict, Runner,
-    RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
+    run_plan_with_compilers, DispatchConfig, FormulaTheory, MemberKind, MementoPool,
+    ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
 };
 use tracing::{debug, info};
 
@@ -815,7 +815,7 @@ fn build_plan_and_registry(
 fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim> {
     let mut out = Vec::new();
     for (cid, _) in &pool.mementos {
-        if pool.member_kind(cid) != Some("contract") {
+        if !pool.member_is_kind(cid, MemberKind::Contract) {
             continue;
         }
         if pool

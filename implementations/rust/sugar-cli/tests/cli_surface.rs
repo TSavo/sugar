@@ -725,13 +725,13 @@ done
         "bridge target cid {target_cid} must resolve in same proof"
     );
     assert!(
-        pool.member_kind(&target_cid) == Some("contract"),
+        pool.member_is_kind(&target_cid, sugar_verifier::MemberKind::Contract),
         "bridge target must be a contract"
     );
     let implication_count = pool
         .mementos
         .keys()
-        .filter(|cid| pool.member_kind(cid) == Some("implication"))
+        .filter(|cid| pool.member_is_kind(cid, sugar_verifier::MemberKind::Implication))
         .count();
     assert_eq!(
         implication_count, 1,

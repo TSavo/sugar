@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
 use serde::Serialize;
 use serde_json::Value as Json;
-pub use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MementoCid};
+pub use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid};
 
 fn contract_body_pointer(envelope: &Json) -> Option<ContractBodyCid> {
     sugar_proof_envelope::member_field(envelope, "bodyCid")
@@ -194,10 +194,19 @@ impl MementoPool {
     /// envelope shapes (v1.2 layered, lean header/body, v1.1 flat). Typed
     /// accessor so callers write `pool.member_kind(cid)` instead of
     /// `sugar_proof_envelope::member_kind(pool.mementos.get(cid))`.
-    pub fn member_kind(&self, cid: &MementoCid) -> Option<&str> {
-        self.mementos
+    pub fn member_kind(
+        &self,
+        cid: &MementoCid,
+    ) -> Result<MemberKind, sugar_proof_envelope::MemberError> {
+        let envelope = self
+            .mementos
             .get(cid)
-            .and_then(sugar_proof_envelope::member_kind)
+            .ok_or_else(|| sugar_proof_envelope::MemberError::UnknownCid(cid.to_string()))?;
+        sugar_proof_envelope::member_kind(envelope)
+    }
+
+    pub fn member_is_kind(&self, cid: &MementoCid, kind: MemberKind) -> bool {
+        matches!(self.member_kind(cid), Ok(found) if found == kind)
     }
 
     /// Return the JSON value of a kind-specific field from a stored member,
@@ -308,7 +317,10 @@ impl MementoPool {
         // Shape-agnostic: under v1.2 these references live in the
         // metadata; under v1.1 they live in evidence.body.
         for envelope in self.mementos.values() {
-            if sugar_proof_envelope::member_kind(envelope) == Some("implication") {
+            if matches!(
+                sugar_proof_envelope::member_kind(envelope),
+                Ok(MemberKind::Implication)
+            ) {
                 let ant = sugar_proof_envelope::member_field(envelope, "antecedentHash")
                     .and_then(|v| v.as_str());
                 let con = sugar_proof_envelope::member_field(envelope, "consequentHash")
@@ -337,7 +349,10 @@ impl MementoPool {
         // Shape-agnostic per the body/header accessors.
         let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for envelope in self.mementos.values() {
-            if sugar_proof_envelope::member_kind(envelope) == Some("implication") {
+            if matches!(
+                sugar_proof_envelope::member_kind(envelope),
+                Ok(MemberKind::Implication)
+            ) {
                 if let (Some(ant), Some(con)) = (
                     sugar_proof_envelope::member_field(envelope, "antecedentHash")
                         .and_then(|v| v.as_str()),
@@ -461,7 +476,7 @@ impl MementoPool {
         // kinds (implication, etc.) sometimes have a header.name field
         // but it's not a contract identity, so indexing them would
         // mis-resolve call edges.
-        let is_contract = self.member_kind(&memento_cid) == Some("contract");
+        let is_contract = self.member_is_kind(&memento_cid, MemberKind::Contract);
         if is_contract {
             let env_for_name = self.mementos.get(&memento_cid);
             let name = env_for_name
@@ -528,7 +543,10 @@ impl MementoPool {
         }
 
         let class_shapes_to_index: Vec<Json> = if let Some(env) = self.mementos.get(&memento_cid) {
-            if sugar_proof_envelope::member_kind(env) == Some("contract") {
+            if matches!(
+                sugar_proof_envelope::member_kind(env),
+                Ok(MemberKind::Contract)
+            ) {
                 if let Some(body) = sugar_proof_envelope::member_body(env) {
                     body.get("classShapes")
                         .and_then(|v| v.as_array())
@@ -559,9 +577,9 @@ impl MementoPool {
         // The `.map(str::to_string)` at each field lookup converts the
         // borrowed &str to an owned String before the mutable index entry,
         // avoiding a simultaneous shared+mutable borrow on self.
-        let kind = self.member_kind(&memento_cid).map(str::to_string);
-        match kind.as_deref() {
-            Some("loop-invariant") => {
+        let kind = self.member_kind(&memento_cid).ok();
+        match kind {
+            Some(MemberKind::LoopInvariant) => {
                 // header.loopCid (v1.2) or evidence.body.loopCid (v1.1)
                 if let Some(loop_cid) = self
                     .member_field(&memento_cid, "loopCid")
@@ -573,7 +591,7 @@ impl MementoPool {
                         .or_insert(memento_cid.clone());
                 }
             }
-            Some("try-branch") => {
+            Some(MemberKind::TryBranch) => {
                 // header.tryCid (v1.2) or evidence.body.tryCid (v1.1)
                 if let Some(try_cid) = self
                     .member_field(&memento_cid, "tryCid")
@@ -585,7 +603,7 @@ impl MementoPool {
                         .or_insert(memento_cid.clone());
                 }
             }
-            Some("closure-binding") => {
+            Some(MemberKind::ClosureBinding) => {
                 // header.bodyFnCid (v1.2) or evidence.body.bodyFnCid (v1.1)
                 if let Some(body_fn_cid) = self
                     .member_field(&memento_cid, "bodyFnCid")
@@ -597,7 +615,7 @@ impl MementoPool {
                         .or_insert(memento_cid.clone());
                 }
             }
-            Some("aliasing-memento") => {
+            Some(MemberKind::AliasingMemento) => {
                 // header.formal_a and header.formal_b (v1.2) or evidence.body.formal_a/formal_b (v1.1)
                 // Index by the sorted (formal_a, formal_b) pair. Convert to owned
                 // Strings before the mutable entry borrow.
@@ -620,7 +638,7 @@ impl MementoPool {
                         .or_insert(memento_cid.clone());
                 }
             }
-            Some("pin-invariant") => {
+            Some(MemberKind::PinInvariant) => {
                 // header.functionCid + header.pinnedTarget -> composite key
                 let function_cid = self
                     .member_field(&memento_cid, "functionCid")
@@ -637,7 +655,21 @@ impl MementoPool {
                         .or_insert(memento_cid.clone());
                 }
             }
-            _ => {}
+            Some(MemberKind::AssertionSurfaceMemento)
+            | Some(MemberKind::Authority)
+            | Some(MemberKind::Bridge)
+            | Some(MemberKind::Contract)
+            | Some(MemberKind::EffectSiteAnnotation)
+            | Some(MemberKind::FactoryWalkMemento)
+            | Some(MemberKind::Implication)
+            | Some(MemberKind::LibrarySugarBindingEntry)
+            | Some(MemberKind::PlanMemento)
+            | Some(MemberKind::ProofRun)
+            | Some(MemberKind::SourceMemento)
+            | Some(MemberKind::StageReceipt)
+            | Some(MemberKind::Witness)
+            | Some(MemberKind::WitnessMemento)
+            | None => {}
         }
     }
 
@@ -817,7 +849,10 @@ fn is_euf_inv_only_conjoin_duplicate(
 }
 
 fn is_inv_only_consistency_contract(env: &Json) -> bool {
-    if sugar_proof_envelope::member_kind(env) != Some("contract") {
+    if !matches!(
+        sugar_proof_envelope::member_kind(env),
+        Ok(MemberKind::Contract)
+    ) {
         return false;
     }
     let Some(body) = sugar_proof_envelope::member_body(env) else {
@@ -1225,10 +1260,10 @@ mod tests {
             }
         });
 
-        assert_eq!(
+        assert!(matches!(
             sugar_proof_envelope::member_kind(&memento),
-            Some("source-memento")
-        );
+            Ok(MemberKind::SourceMemento)
+        ));
         assert_eq!(
             sugar_proof_envelope::member_body(&memento),
             Some(&memento["body"])

@@ -27,7 +27,9 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::blake3_512_of;
 use tracing::{debug, info, warn};
 
-use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MementoCid, ProofGraph};
+use sugar_proof_envelope::{
+    AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, ProofGraph,
+};
 
 use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
 
@@ -289,29 +291,59 @@ fn load_catalog_bytes(
             }
         };
         let env = anchored.envelope();
-        if sugar_proof_envelope::member_kind(env) == Some("contract") {
-            let Some(body_cid) = sugar_proof_envelope::member_field(env, "bodyCid")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
-            else {
+        let kind = match sugar_proof_envelope::member_kind(env) {
+            Ok(kind) => kind,
+            Err(error) => {
                 pool.load_errors.push(LoadError {
                     proof_path: source_label.clone(),
-                    reason: format!(
-                        "contract {cid}: missing bodyCid; legacy inline contract bodies are not a valid .proof graph"
-                    ),
-                });
-                continue;
-            };
-            if !pool.body.contains_key(&body_cid) {
-                pool.load_errors.push(LoadError {
-                    proof_path: source_label.clone(),
-                    reason: format!(
-                        "contract {cid}: bodyCid {body_cid} is not present in catalog `body` map"
-                    ),
+                    reason: format!("member {cid}: {error}"),
                 });
                 continue;
             }
+        };
+        match kind {
+            MemberKind::Contract => {
+                let Some(body_cid) = sugar_proof_envelope::member_field(env, "bodyCid")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
+                else {
+                    pool.load_errors.push(LoadError {
+                        proof_path: source_label.clone(),
+                        reason: format!(
+                            "contract {cid}: missing bodyCid; legacy inline contract bodies are not a valid .proof graph"
+                        ),
+                    });
+                    continue;
+                };
+                if !pool.body.contains_key(&body_cid) {
+                    pool.load_errors.push(LoadError {
+                        proof_path: source_label.clone(),
+                        reason: format!(
+                            "contract {cid}: bodyCid {body_cid} is not present in catalog `body` map"
+                        ),
+                    });
+                    continue;
+                }
+            }
+            MemberKind::AliasingMemento
+            | MemberKind::AssertionSurfaceMemento
+            | MemberKind::Authority
+            | MemberKind::Bridge
+            | MemberKind::ClosureBinding
+            | MemberKind::EffectSiteAnnotation
+            | MemberKind::FactoryWalkMemento
+            | MemberKind::Implication
+            | MemberKind::LibrarySugarBindingEntry
+            | MemberKind::LoopInvariant
+            | MemberKind::PinInvariant
+            | MemberKind::PlanMemento
+            | MemberKind::ProofRun
+            | MemberKind::SourceMemento
+            | MemberKind::StageReceipt
+            | MemberKind::TryBranch
+            | MemberKind::Witness
+            | MemberKind::WitnessMemento => {}
         }
         // Bridge indexing metadata. Shape-aware helpers (member_kind /
         // member_field) cover both v1.1 (evidence.kind /
@@ -319,8 +351,8 @@ fn load_catalog_bytes(
         // header.sourceSymbol) without branching at the call site. The indexes
         // themselves store only the bridge memento CID; the verified envelope
         // lives once in `pool.mementos`.
-        let bridge_index = if sugar_proof_envelope::member_kind(env) == Some("bridge") {
-            sugar_proof_envelope::member_field(env, "sourceSymbol")
+        let bridge_index = match kind {
+            MemberKind::Bridge => sugar_proof_envelope::member_field(env, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|sym| {
@@ -345,9 +377,25 @@ fn load_catalog_bytes(
                         }
                     });
                     (sym.to_string(), callsite_key)
-                })
-        } else {
-            None
+                }),
+            MemberKind::AliasingMemento
+            | MemberKind::AssertionSurfaceMemento
+            | MemberKind::Authority
+            | MemberKind::ClosureBinding
+            | MemberKind::Contract
+            | MemberKind::EffectSiteAnnotation
+            | MemberKind::FactoryWalkMemento
+            | MemberKind::Implication
+            | MemberKind::LibrarySugarBindingEntry
+            | MemberKind::LoopInvariant
+            | MemberKind::PinInvariant
+            | MemberKind::PlanMemento
+            | MemberKind::ProofRun
+            | MemberKind::SourceMemento
+            | MemberKind::StageReceipt
+            | MemberKind::TryBranch
+            | MemberKind::Witness
+            | MemberKind::WitnessMemento => None,
         };
 
         // Track bundle membership so resolve_target can enforce
@@ -411,7 +459,10 @@ fn index_effect_site_annotation(
     env: &Json,
     pool: &mut MementoPool,
 ) {
-    if sugar_proof_envelope::member_kind(env) != Some("effect-site-annotation") {
+    if !matches!(
+        sugar_proof_envelope::member_kind(env),
+        Ok(MemberKind::EffectSiteAnnotation)
+    ) {
         return;
     }
     let Some(body) = sugar_proof_envelope::member_body(env) else {

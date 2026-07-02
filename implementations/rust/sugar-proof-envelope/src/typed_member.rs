@@ -11,6 +11,9 @@
 // All typed parsing funnels through `normalize`. No other function replicates
 // the shape-ladder logic.
 
+use std::fmt;
+use std::str::FromStr;
+
 use serde_json::Value as Json;
 
 use crate::proof_graph::{AtomCid, ContractBodyCid, MementoCid};
@@ -25,8 +28,11 @@ pub enum MemberError {
     #[error("member has no kind discriminator (checked header.kind, envelope.header.kind, evidence.kind)")]
     MissingKind,
 
-    #[error("unknown member kind: `{0}`")]
-    UnknownKind(String),
+    #[error("unknown member kind: `{kind}` (known kinds: {known})")]
+    UnknownKind { kind: String, known: &'static str },
+
+    #[error("member kind `{0}` is known, but no typed Member wrapper is registered")]
+    UnsupportedTypedWrapper(MemberKind),
 
     #[error("{kind}: required string field `{field}` is absent or not a string")]
     MissingRequiredField { kind: String, field: String },
@@ -47,13 +53,106 @@ pub enum MemberError {
     UnknownCid(String),
 }
 
+// ─── Member kind ────────────────────────────────────────────────────────────
+
+pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
+
+/// Wire member kind. Strings enter and leave only at serde/display boundaries;
+/// production branching should match this enum exhaustively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MemberKind {
+    AliasingMemento,
+    AssertionSurfaceMemento,
+    Authority,
+    Bridge,
+    ClosureBinding,
+    Contract,
+    EffectSiteAnnotation,
+    FactoryWalkMemento,
+    Implication,
+    LibrarySugarBindingEntry,
+    LoopInvariant,
+    PinInvariant,
+    PlanMemento,
+    ProofRun,
+    SourceMemento,
+    StageReceipt,
+    TryBranch,
+    Witness,
+    WitnessMemento,
+}
+
+impl MemberKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemberKind::AliasingMemento => "aliasing-memento",
+            MemberKind::AssertionSurfaceMemento => "assertion-surface-memento",
+            MemberKind::Authority => "authority",
+            MemberKind::Bridge => "bridge",
+            MemberKind::ClosureBinding => "closure-binding",
+            MemberKind::Contract => "contract",
+            MemberKind::EffectSiteAnnotation => "effect-site-annotation",
+            MemberKind::FactoryWalkMemento => "factory-walk-memento",
+            MemberKind::Implication => "implication",
+            MemberKind::LibrarySugarBindingEntry => "library-sugar-binding-entry",
+            MemberKind::LoopInvariant => "loop-invariant",
+            MemberKind::PinInvariant => "pin-invariant",
+            MemberKind::PlanMemento => "plan-memento",
+            MemberKind::ProofRun => "proof-run",
+            MemberKind::SourceMemento => "source-memento",
+            MemberKind::StageReceipt => "stage-receipt",
+            MemberKind::TryBranch => "try-branch",
+            MemberKind::Witness => "witness",
+            MemberKind::WitnessMemento => "witness-memento",
+        }
+    }
+}
+
+impl fmt::Display for MemberKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MemberKind {
+    type Err = MemberError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "aliasing-memento" => Ok(MemberKind::AliasingMemento),
+            "assertion-surface-memento" => Ok(MemberKind::AssertionSurfaceMemento),
+            "authority" => Ok(MemberKind::Authority),
+            "bridge" => Ok(MemberKind::Bridge),
+            "closure-binding" => Ok(MemberKind::ClosureBinding),
+            "contract" => Ok(MemberKind::Contract),
+            "effect-site-annotation" => Ok(MemberKind::EffectSiteAnnotation),
+            "factory-walk-memento" => Ok(MemberKind::FactoryWalkMemento),
+            "implication" => Ok(MemberKind::Implication),
+            "library-sugar-binding-entry" => Ok(MemberKind::LibrarySugarBindingEntry),
+            "loop-invariant" => Ok(MemberKind::LoopInvariant),
+            "pin-invariant" => Ok(MemberKind::PinInvariant),
+            "plan-memento" => Ok(MemberKind::PlanMemento),
+            "proof-run" => Ok(MemberKind::ProofRun),
+            "source-memento" => Ok(MemberKind::SourceMemento),
+            "stage-receipt" => Ok(MemberKind::StageReceipt),
+            "try-branch" => Ok(MemberKind::TryBranch),
+            "witness" => Ok(MemberKind::Witness),
+            "witness-memento" => Ok(MemberKind::WitnessMemento),
+            other => Err(MemberError::UnknownKind {
+                kind: other.to_string(),
+                known: KNOWN_MEMBER_KINDS,
+            }),
+        }
+    }
+}
+
 // ─── Normalizer ──────────────────────────────────────────────────────────────
 
 /// Normalized view of a member envelope, regardless of wire shape.
 /// The `layers` are searched in priority order; first match wins.
 /// This is the ONE place where shape-ladder knowledge lives.
 struct NormalizedBody<'a> {
-    kind: &'a str,
+    kind: MemberKind,
     layers: Vec<&'a serde_json::Map<String, Json>>,
 }
 
@@ -91,7 +190,10 @@ fn normalize(v: &Json) -> Result<NormalizedBody<'_>, MemberError> {
         if let Some(em) = v.pointer("/envelope/metadata").and_then(Json::as_object) {
             layers.push(em);
         }
-        return Ok(NormalizedBody { kind, layers });
+        return Ok(NormalizedBody {
+            kind: kind.parse()?,
+            layers,
+        });
     }
     // lean: has "header" or "body" but no "envelope"
     if v.get("header").is_some() || v.get("body").is_some() {
@@ -109,7 +211,10 @@ fn normalize(v: &Json) -> Result<NormalizedBody<'_>, MemberError> {
         if let Some(m) = v.get("metadata").and_then(Json::as_object) {
             layers.push(m);
         }
-        return Ok(NormalizedBody { kind, layers });
+        return Ok(NormalizedBody {
+            kind: kind.parse()?,
+            layers,
+        });
     }
     // v1.1-flat: has "evidence" key, fields in evidence.body
     if v.get("evidence").is_some() {
@@ -125,7 +230,10 @@ fn normalize(v: &Json) -> Result<NormalizedBody<'_>, MemberError> {
         if let Some(obj) = v.as_object() {
             layers.push(obj);
         }
-        return Ok(NormalizedBody { kind, layers });
+        return Ok(NormalizedBody {
+            kind: kind.parse()?,
+            layers,
+        });
     }
     Err(MemberError::MissingKind)
 }
@@ -809,41 +917,45 @@ impl Member {
     pub fn from_value(value: &Json) -> Result<Self, MemberError> {
         let nb = normalize(value)?;
         match nb.kind {
-            "contract" => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
-            "bridge" => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
-            "implication" => Ok(Member::Implication(ImplicationMember::from_normalized(
+            MemberKind::Contract => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
+            MemberKind::Bridge => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
+            MemberKind::Implication => Ok(Member::Implication(ImplicationMember::from_normalized(
                 &nb,
             )?)),
-            "authority" => Ok(Member::Authority(AuthorityMember::from_normalized(&nb)?)),
-            "witness" => Ok(Member::WitnessClaim(WitnessClaimMember::from_normalized(
+            MemberKind::Authority => Ok(Member::Authority(AuthorityMember::from_normalized(&nb)?)),
+            MemberKind::Witness => Ok(Member::WitnessClaim(WitnessClaimMember::from_normalized(
                 &nb,
             )?)),
-            "witness-memento" => Ok(Member::WitnessMemento(
+            MemberKind::WitnessMemento => Ok(Member::WitnessMemento(
                 WitnessMementoMember::from_normalized(&nb)?,
             )),
-            "source-memento" => Ok(Member::SourceMemento(SourceMementoMember::from_normalized(
+            MemberKind::SourceMemento => Ok(Member::SourceMemento(
+                SourceMementoMember::from_normalized(&nb)?,
+            )),
+            MemberKind::PlanMemento => Ok(Member::PlanMemento(PlanMementoMember::from_normalized(
                 &nb,
             )?)),
-            "plan-memento" => Ok(Member::PlanMemento(PlanMementoMember::from_normalized(
-                &nb,
-            )?)),
-            "factory-walk-memento" => Ok(Member::FactoryWalkMemento(
+            MemberKind::FactoryWalkMemento => Ok(Member::FactoryWalkMemento(
                 FactoryWalkMementoMember::from_normalized(&nb)?,
             )),
-            "assertion-surface-memento" => Ok(Member::AssertionSurfaceMemento(
+            MemberKind::AssertionSurfaceMemento => Ok(Member::AssertionSurfaceMemento(
                 AssertionSurfaceMementoMember::from_normalized(&nb)?,
             )),
-            "library-sugar-binding-entry" => Ok(Member::LibrarySugarBindingEntry(
+            MemberKind::LibrarySugarBindingEntry => Ok(Member::LibrarySugarBindingEntry(
                 LibrarySugarBindingEntryMember::from_normalized(&nb)?,
             )),
-            "effect-site-annotation" => Ok(Member::EffectSiteAnnotation(
+            MemberKind::EffectSiteAnnotation => Ok(Member::EffectSiteAnnotation(
                 EffectSiteAnnotationMember::from_normalized(&nb)?,
             )),
-            "proof-run" => Ok(Member::ProofRun(ProofRunMember::from_normalized(&nb)?)),
-            "stage-receipt" => Ok(Member::StageReceipt(StageReceiptMember::from_normalized(
-                &nb,
-            )?)),
-            other => Err(MemberError::UnknownKind(other.to_string())),
+            MemberKind::ProofRun => Ok(Member::ProofRun(ProofRunMember::from_normalized(&nb)?)),
+            MemberKind::StageReceipt => Ok(Member::StageReceipt(
+                StageReceiptMember::from_normalized(&nb)?,
+            )),
+            MemberKind::AliasingMemento
+            | MemberKind::ClosureBinding
+            | MemberKind::LoopInvariant
+            | MemberKind::PinInvariant
+            | MemberKind::TryBranch => Err(MemberError::UnsupportedTypedWrapper(nb.kind)),
         }
     }
 
@@ -857,8 +969,8 @@ impl Member {
     /// - The kind is known but a required field is missing or has the wrong type.
     /// - A CID-typed field does not carry the `blake3-512:` tag.
     ///
-    /// Does NOT return `Err` for unknown kinds — those are surfaced as
-    /// `MemberError::UnknownKind` so callers can choose to skip or fail.
+    /// Unknown kinds are surfaced as `MemberError::UnknownKind` so callers can
+    /// choose to skip or fail.
     pub fn parse(bytes: &[u8]) -> Result<Self, MemberError> {
         let v: Json =
             serde_json::from_slice(bytes).map_err(|e| MemberError::JsonParse(e.to_string()))?;
@@ -866,22 +978,22 @@ impl Member {
     }
 
     /// The wire kind string for this member.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> MemberKind {
         match self {
-            Member::Contract(_) => "contract",
-            Member::Bridge(_) => "bridge",
-            Member::Implication(_) => "implication",
-            Member::Authority(_) => "authority",
-            Member::WitnessClaim(_) => "witness",
-            Member::WitnessMemento(_) => "witness-memento",
-            Member::SourceMemento(_) => "source-memento",
-            Member::PlanMemento(_) => "plan-memento",
-            Member::FactoryWalkMemento(_) => "factory-walk-memento",
-            Member::AssertionSurfaceMemento(_) => "assertion-surface-memento",
-            Member::LibrarySugarBindingEntry(_) => "library-sugar-binding-entry",
-            Member::EffectSiteAnnotation(_) => "effect-site-annotation",
-            Member::ProofRun(_) => "proof-run",
-            Member::StageReceipt(_) => "stage-receipt",
+            Member::Contract(_) => MemberKind::Contract,
+            Member::Bridge(_) => MemberKind::Bridge,
+            Member::Implication(_) => MemberKind::Implication,
+            Member::Authority(_) => MemberKind::Authority,
+            Member::WitnessClaim(_) => MemberKind::Witness,
+            Member::WitnessMemento(_) => MemberKind::WitnessMemento,
+            Member::SourceMemento(_) => MemberKind::SourceMemento,
+            Member::PlanMemento(_) => MemberKind::PlanMemento,
+            Member::FactoryWalkMemento(_) => MemberKind::FactoryWalkMemento,
+            Member::AssertionSurfaceMemento(_) => MemberKind::AssertionSurfaceMemento,
+            Member::LibrarySugarBindingEntry(_) => MemberKind::LibrarySugarBindingEntry,
+            Member::EffectSiteAnnotation(_) => MemberKind::EffectSiteAnnotation,
+            Member::ProofRun(_) => MemberKind::ProofRun,
+            Member::StageReceipt(_) => MemberKind::StageReceipt,
         }
     }
 }
@@ -1226,7 +1338,61 @@ mod tests {
             "header": { "kind": "totally-unknown-kind-xyz" }
         });
         let result = Member::parse(&wire.to_string().into_bytes());
-        assert!(matches!(result, Err(MemberError::UnknownKind(_))));
+        assert!(matches!(result, Err(MemberError::UnknownKind { .. })));
+    }
+
+    #[test]
+    fn unknown_kind_error_names_known_kinds() {
+        let wire = serde_json::json!({
+            "header": { "kind": "totally-unknown-kind-xyz" }
+        });
+        let result = Member::parse(&wire.to_string().into_bytes());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("totally-unknown-kind-xyz"),
+            "error must name the unknown kind: {msg}"
+        );
+        assert!(
+            msg.contains("contract") && msg.contains("stage-receipt"),
+            "error must list known member kinds: {msg}"
+        );
+    }
+
+    #[test]
+    fn known_member_kind_strings_round_trip_through_enum() {
+        let cases = [
+            ("aliasing-memento", MemberKind::AliasingMemento),
+            (
+                "assertion-surface-memento",
+                MemberKind::AssertionSurfaceMemento,
+            ),
+            ("authority", MemberKind::Authority),
+            ("bridge", MemberKind::Bridge),
+            ("closure-binding", MemberKind::ClosureBinding),
+            ("contract", MemberKind::Contract),
+            ("effect-site-annotation", MemberKind::EffectSiteAnnotation),
+            ("factory-walk-memento", MemberKind::FactoryWalkMemento),
+            ("implication", MemberKind::Implication),
+            (
+                "library-sugar-binding-entry",
+                MemberKind::LibrarySugarBindingEntry,
+            ),
+            ("loop-invariant", MemberKind::LoopInvariant),
+            ("pin-invariant", MemberKind::PinInvariant),
+            ("plan-memento", MemberKind::PlanMemento),
+            ("proof-run", MemberKind::ProofRun),
+            ("source-memento", MemberKind::SourceMemento),
+            ("stage-receipt", MemberKind::StageReceipt),
+            ("try-branch", MemberKind::TryBranch),
+            ("witness", MemberKind::Witness),
+            ("witness-memento", MemberKind::WitnessMemento),
+        ];
+
+        for (raw, expected) in cases {
+            let parsed: MemberKind = raw.parse().expect("known member kind parses");
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.to_string(), raw);
+        }
     }
 
     // ── Invalid JSON → JsonParse error ────────────────────────────────────────

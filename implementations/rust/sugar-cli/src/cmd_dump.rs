@@ -89,7 +89,10 @@ fn dump(path: &PathBuf, as_json: bool, quiet: bool) -> Result<()> {
         let members: Vec<_> = graph.members_view().collect();
         println!("  {} ({})", "members".bold(), members.len());
         for view in &members {
-            let kind = view.kind().unwrap_or_else(|| "<unknown>".to_string());
+            let kind = view
+                .kind()
+                .map(|kind| kind.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
             println!(
                 "    {} {} [{}]",
                 "-".bold(),

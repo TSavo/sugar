@@ -121,7 +121,7 @@ use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
 
 use crate::body_discharge::CatalogResolver;
-use crate::types::{MementoCid, MementoPool};
+use crate::types::{MemberKind, MementoCid, MementoPool};
 use libsugar::core::types::Term;
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
         None => return false,
     };
     // Only contract mementos have a body with pre/post.
-    if pool.member_kind(&target_cid) != Some("contract") {
+    if !pool.member_is_kind(&target_cid, MemberKind::Contract) {
         return false;
     }
     match pool.member_field(&target_cid, "pre") {

@@ -60,8 +60,9 @@ pub use sign::{
 pub use typed_member::{
     AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContractMember,
     EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
-    LibrarySugarBindingEntryMember, Member, MemberError, PlanMementoMember, ProofRunMember,
-    SourceMementoMember, StageReceiptMember, WitnessClaimMember, WitnessMementoMember,
+    LibrarySugarBindingEntryMember, Member, MemberError, MemberKind, PlanMementoMember,
+    ProofRunMember, SourceMementoMember, StageReceiptMember, WitnessClaimMember,
+    WitnessMementoMember,
 };
 
 #[derive(Debug, thiserror::Error)]

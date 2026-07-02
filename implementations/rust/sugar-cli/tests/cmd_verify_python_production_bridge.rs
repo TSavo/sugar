@@ -552,9 +552,11 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .mementos
         .get(target_cid.as_str())
         .expect("bridge target must exist in pool");
-    assert_eq!(
-        sugar_proof_envelope::member_kind(target_env),
-        Some("contract"),
+    assert!(
+        matches!(
+            sugar_proof_envelope::member_kind(target_env),
+            Ok(sugar_proof_envelope::MemberKind::Contract)
+        ),
         "bridge target must be a contract memento"
     );
     let formals = sugar_proof_envelope::member_field(target_env, "formals")

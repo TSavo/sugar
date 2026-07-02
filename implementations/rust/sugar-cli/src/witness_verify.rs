@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 use sugar_canonicalizer::blake3_512_of;
 use sugar_proof_envelope::ed25519_verify_string;
-use sugar_verifier::MementoPool;
+use sugar_verifier::{MemberKind, MementoPool};
 
 /// One witness-memento's verdict from the rust verifier.
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ pub fn verify_witnesses_with_options(
         Ok(resolvers) => resolvers,
         Err(reason) => {
             for (cid, _env) in &pool.mementos {
-                if pool.member_kind(cid) != Some("witness-memento") {
+                if !pool.member_is_kind(cid, MemberKind::WitnessMemento) {
                     continue;
                 }
                 out.push(WitnessVerifyResult {
@@ -84,7 +84,7 @@ pub fn verify_witnesses_with_options(
         }
     };
     for (cid, env) in &pool.mementos {
-        if pool.member_kind(cid) != Some("witness-memento") {
+        if !pool.member_is_kind(cid, MemberKind::WitnessMemento) {
             continue;
         }
         // The envelope separates METADATA from CONTENT. Route + index by the
@@ -237,7 +237,7 @@ pub fn verify_witnesses_with_options(
 pub fn has_witnesses(pool: &MementoPool) -> bool {
     pool.mementos
         .keys()
-        .any(|cid| pool.member_kind(cid) == Some("witness-memento"))
+        .any(|cid| pool.member_is_kind(cid, MemberKind::WitnessMemento))
 }
 
 /// Scan `.sugar/lift/*/manifest.toml` for EVERY kit that declares a
