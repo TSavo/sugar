@@ -225,7 +225,7 @@ def _stmt(term: Json) -> ast.stmt:
 def _expr(term: Json) -> ast.expr:
     kind = term.get("kind")
     if kind == "const":
-        return ast.Constant(value=term.get("value"))
+        return ast.Constant(value=_const_value(term.get("value")))
     if kind == "var":
         return ast.Name(id=str(term.get("name", "x")), ctx=ast.Load())
     if kind != "ctor":
@@ -280,6 +280,21 @@ def _expr(term: Json) -> ast.expr:
     if name == "python:walrus":
         return ast.NamedExpr(target=_walrus_target(args[0]), value=_expr(args[1]))
     raise ValueError(f"unsupported python operation in expression position: {name}")
+
+
+def _const_value(value: Any) -> object:
+    if isinstance(value, dict):
+        tag = value.get("type")
+        if tag == "float":
+            return float(str(value["repr"]))
+        if tag == "bytes":
+            return bytes.fromhex(str(value["repr"]))
+        if tag == "complex":
+            return complex(float(str(value["re"])), float(str(value["im"])))
+        if tag == "ellipsis":
+            return Ellipsis
+        raise ValueError(f"unsupported tagged constant type: {tag}")
+    return value
 
 
 def _slice_or_expr(term: Json) -> ast.expr | ast.slice:

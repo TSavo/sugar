@@ -11,8 +11,12 @@ from .value_pins import ValuePin, scan_module_value_pins
 from .ir import (
     Json,
     bool_const,
+    bytes_const,
+    complex_const,
     ctor,
+    ellipsis_const,
     fold_seq,
+    float_const,
     function_contract,
     int_const,
     none_const,
@@ -1112,6 +1116,14 @@ class _Emitter:
             return int_const(value)
         if isinstance(value, str):
             return str_const(value)
+        if isinstance(value, float):
+            return float_const(value)
+        if isinstance(value, bytes):
+            return bytes_const(value)
+        if isinstance(value, complex):
+            return complex_const(value.real, value.imag)
+        if value is Ellipsis:
+            return ellipsis_const()
         if value is None:
             return none_const()
         raise _UnsupportedSyntax(node, f"unsupported constant: {type(value).__name__}")
@@ -1919,6 +1931,14 @@ def _literal_default(node: ast.expr) -> Json:
             return int_const(value)
         if isinstance(value, str):
             return str_const(value)
+        if isinstance(value, float):
+            return float_const(value)
+        if isinstance(value, bytes):
+            return bytes_const(value)
+        if isinstance(value, complex):
+            return complex_const(value.real, value.imag)
+        if value is Ellipsis:
+            return ellipsis_const()
         if value is None:
             return none_const()
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
