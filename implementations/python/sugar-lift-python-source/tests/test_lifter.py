@@ -450,6 +450,22 @@ def _unpack_targets(*targets: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _tuple_target(*targets: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:tuple_target",
+        "args": list(targets),
+    }
+
+
+def _list_target(*targets: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:list_target",
+        "args": list(targets),
+    }
+
+
 def _unpack_assign(
     kind: str,
     targets: dict[str, object],
@@ -954,6 +970,58 @@ def test_tuple_unpack_three_names_preserves_all_targets() -> None:
     assert _runtime_failure_loci(contract)[0]["argTerm"] == unpack
     assert _runtime_failure_loci(contract)[0]["subkind"] == "iter-unpack"
     assert body["args"][0] == unpack
+
+
+def test_nested_tuple_unpack_target_composes_and_binds_each_name() -> None:
+    source = "def f(pair):\n    (a, (b, c)) = pair\n    return a + b + c\n"
+
+    result = lift_source(source, "nested_tuple_unpack.py")
+
+    contract = _contract(result.ir, ".f")
+    unpack = _unpack_assign(
+        "tuple",
+        _unpack_targets(_var("a"), _tuple_target(_var("b"), _var("c"))),
+        _var("pair"),
+    )
+    expected_body = _seq(
+        unpack,
+        _return(
+            _binary(
+                "python:add",
+                _binary("python:add", _var("a"), _var("b")),
+                _var("c"),
+            )
+        ),
+    )
+    assert result.refusals == []
+    assert contract["effects"] == [{"kind": "panics"}]
+    assert _runtime_failure_loci(contract)[0]["argTerm"] == unpack
+    assert _function_body(result) == expected_body
+
+
+def test_tuple_unpack_assignment_target_elements_reuse_write_loci() -> None:
+    source = "def f(obj, xs, pair):\n    obj.a, xs[0] = pair\n    return obj\n"
+
+    result = lift_source(source, "tuple_unpack_store_targets.py")
+
+    contract = _contract(result.ir, ".f")
+    attr = _attr(_var("obj"), "a")
+    subscript = _subscript(_var("xs"), _int_const(0))
+    unpack = _unpack_assign(
+        "tuple",
+        _unpack_targets(attr, subscript),
+        _var("pair"),
+    )
+    loci = _runtime_failure_loci(contract)
+    assert result.refusals == []
+    assert contract["effects"] == [{"kind": "panics"}]
+    assert [locus["subkind"] for locus in loci] == [
+        "attribute-write",
+        "subscript-write",
+        "iter-unpack",
+    ]
+    assert [locus["argTerm"] for locus in loci] == [attr, subscript, unpack]
+    assert _function_body(result)["args"][0] == unpack
 
 
 def test_single_element_tuple_unpack_preserves_one_target() -> None:
@@ -3039,46 +3107,48 @@ def test_compile_lift_roundtrip_preserves_name_annassign_explicit_none_value() -
     assert "x: int = None" in compiled
 
 
-@pytest.mark.parametrize(
-    ("source", "module", "reason"),
-    [
-        (
-            "def f(pair):\n    (a, (b, c)) = pair\n    return c\n",
-            "nested_unpacking_refusal.py",
-            "unsupported assignment target: Tuple",
-        ),
-        (
-            "def f(pair):\n    a, *rest = pair\n    return rest\n",
-            "starred_unpacking_refusal.py",
-            "unsupported assignment target: Tuple",
-        ),
-        (
-            "def f(obj, pair):\n    obj.a, b = pair\n    return b\n",
-            "attribute_unpack_target_refusal.py",
-            "unsupported assignment target: Tuple",
-        ),
-        (
-            "def f(xs, pair):\n    xs[0], b = pair\n    return b\n",
-            "subscript_unpack_target_refusal.py",
-            "unsupported assignment target: Tuple",
-        ),
-    ],
-)
-def test_slice_13_keeps_complex_unpacking_out_of_scope(
-    source: str,
-    module: str,
-    reason: str,
-) -> None:
-    result = lift_source(source, module)
+def test_tuple_unpack_starred_element_refuses_named_element() -> None:
+    source = "def f(pair):\n    a, *rest = pair\n    return rest\n"
+
+    result = lift_source(source, "starred_unpacking_refusal.py")
 
     assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": f"{module.removesuffix('.py')}.f",
+            "function": "starred_unpacking_refusal.f",
             "line": 2,
-            "reason": reason,
+            "reason": "unsupported assignment target: Starred",
         }
     ]
+
+
+def test_tuple_unpack_multi_target_assignment_still_refuses() -> None:
+    source = "def f(expr):\n    a = b = expr\n    return a\n"
+
+    result = lift_source(source, "multi_target_assignment_refusal.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "multiple-target assignment is refused"
+    ]
+
+
+def test_nested_tuple_unpack_roundtrip_is_structurally_stable() -> None:
+    source = "def f(pair):\n    (a, (b, c)) = pair\n    return c\n"
+
+    lifted = lift_source(source, "roundtrip_nested_unpack.py")
+    assert lifted.refusals == []
+    body = _function_body(lifted)
+
+    compiled = compile_body_term(
+        body,
+        fn_name="f",
+        formals=[str(formal) for formal in _contract(lifted.ir, ".f")["formals"]],
+    )
+    relifted = lift_source(compiled, "roundtrip_nested_unpack.py")
+    assert relifted.refusals == []
+    relifted_body = _function_body(relifted)
+
+    assert canonical_json_bytes(relifted_body) == canonical_json_bytes(body)
 
 
 def test_b1_tuple_and_list_literals_lift_as_faithful_body_terms() -> None:

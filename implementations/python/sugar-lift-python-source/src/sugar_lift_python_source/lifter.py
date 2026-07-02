@@ -982,6 +982,20 @@ class _Emitter:
         )
 
     def assign_target(self, node: ast.expr) -> Json:
+        if isinstance(node, ast.Tuple):
+            if not node.elts:
+                raise _UnsupportedSyntax(
+                    node, f"unsupported assignment target: {type(node).__name__}"
+                )
+            targets = [self.assign_target(element) for element in node.elts]
+            return ctor("python:tuple_target", *targets)
+        if isinstance(node, ast.List):
+            if not node.elts:
+                raise _UnsupportedSyntax(
+                    node, f"unsupported assignment target: {type(node).__name__}"
+                )
+            targets = [self.assign_target(element) for element in node.elts]
+            return ctor("python:list_target", *targets)
         if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
             term = ctor(
                 "python:subscript",
@@ -1012,13 +1026,7 @@ class _Emitter:
             raise _UnsupportedSyntax(
                 node, f"unsupported assignment target: {type(node).__name__}"
             )
-        targets: list[Json] = []
-        for element in node.elts:
-            if not isinstance(element, ast.Name):
-                raise _UnsupportedSyntax(
-                    node, f"unsupported assignment target: {type(node).__name__}"
-                )
-            targets.append(var(element.id))
+        targets = [self.assign_target(element) for element in node.elts]
         return ctor(
             "python:unpack_assign",
             str_const(kind),
