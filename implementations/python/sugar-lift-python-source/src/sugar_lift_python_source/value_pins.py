@@ -30,6 +30,7 @@ from .ir import (
 )
 
 VALUE_PIN_REFUSAL_KIND = "value-pin-refused"
+ENUM_PIN_REFUSAL_KIND = "enum-pin-refused"
 FINAL_CONFESSION = "typing.Final"
 
 # Scope boundaries: bindings inside these do not bind module names.
@@ -219,9 +220,8 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
                 scan.refusals.append(
                     _pin_refusal(
                         candidate,
-                        "plain Enum member identity is not its value under "
-                        "== (Color.RED == 1 is False); only IntEnum/StrEnum "
-                        "members pin",
+                        "plain Enum member: use IntEnum or StrEnum for value pinning",
+                        kind=ENUM_PIN_REFUSAL_KIND,
                     )
                 )
                 continue
@@ -267,14 +267,16 @@ def _class_attr_writes(tree: ast.Module) -> dict:
     return writes
 
 
-def _pin_refusal(candidate: _Candidate, reason: str) -> Json:
+def _pin_refusal(
+    candidate: _Candidate, reason: str, *, kind: str = VALUE_PIN_REFUSAL_KIND
+) -> Json:
     if candidate.confession is not None and _is_rebinding_reason(reason):
         reason = (
             f"vendor contradicted their own {candidate.confession} "
             f"confession: {reason}"
         )
     return {
-        "kind": VALUE_PIN_REFUSAL_KIND,
+        "kind": kind,
         "function": None,
         "line": candidate.line,
         "name": candidate.name,

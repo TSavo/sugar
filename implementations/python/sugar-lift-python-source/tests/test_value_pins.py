@@ -23,6 +23,8 @@ from sugar_lift_python_source.value_pins import (
     scan_module_value_pins,
 )
 
+ENUM_PIN_REFUSAL_KIND = "enum-pin-refused"
+
 
 def _scan(source: str):
     return scan_module_value_pins(ast.parse(textwrap.dedent(source)))
@@ -56,6 +58,10 @@ def _function_contracts(result):
 
 def _pin_refusals(refusals):
     return [r for r in refusals if r.get("kind") == VALUE_PIN_REFUSAL_KIND]
+
+
+def _enum_pin_refusals(refusals):
+    return [r for r in refusals if r.get("kind") == ENUM_PIN_REFUSAL_KIND]
 
 
 def _float_const(value: float):
@@ -448,6 +454,7 @@ def test_int_enum_member_pins():
         """)
     assert scan.pins["Status.OK"].term == int_const(200)
     assert scan.pins["Status.MISSING"].confession == "enum.value"
+    assert scan.refusals == []
     assert scan.totality_holds()
 
 
@@ -459,6 +466,7 @@ def test_str_enum_member_pins():
             RED = "red"
         """)
     assert scan.pins["Color.RED"].term == str_const("red")
+    assert scan.refusals == []
 
 
 def test_plain_enum_member_refuses_by_name():
@@ -471,8 +479,18 @@ def test_plain_enum_member_refuses_by_name():
             RED = 1
         """)
     assert "Color.RED" not in scan.pins
-    reasons = [r["reason"] for r in scan.refusals]
-    assert any("not its value under ==" in r for r in reasons)
+    refusals = _enum_pin_refusals(scan.refusals)
+    assert len(refusals) == 1
+    record = refusals[0]
+    assert record["kind"] == ENUM_PIN_REFUSAL_KIND
+    assert record["function"] is None
+    assert isinstance(record["line"], int)
+    assert record["name"] == "Color.RED"
+    assert (
+        record["reason"]
+        == "plain Enum member: use IntEnum or StrEnum for value pinning"
+    )
+    assert _pin_refusals(scan.refusals) == []
     assert scan.totality_holds()
 
 
