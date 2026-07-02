@@ -24,7 +24,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+use sugar_canonicalizer::blake3_512_of;
 use tracing::{debug, info, warn};
 
 use sugar_proof_envelope::ProofGraph;
@@ -264,7 +264,7 @@ fn load_catalog_bytes(
             }
         }
         // Rule 2: re-derive the member identity from the member content.
-        let derived = compute_member_cid(&env);
+        let derived = sugar_proof_envelope::recompute_member_cid(&env);
         if derived != cid {
             pool.load_errors.push(LoadError {
                 proof_path: source_label.clone(),
@@ -495,64 +495,6 @@ fn required_annotation_line(
                 ),
             });
             None
-        }
-    }
-}
-
-/// Re-derive an envelope's CID. Branches on memento shape:
-///
-/// * v1.2 layered: top-level `envelope` is present; CID is
-///   `blake3_512(JCS(envelope))` directly. The header and metadata
-///   stay outside the hash, but the signature inside the envelope
-///   covers them transitively.
-///
-/// * v1.1 flat: strip `cid` + `producerSignature`, JCS-encode, hash.
-fn compute_envelope_cid(env: &Json) -> String {
-    if let Some(envelope) = env.get("envelope") {
-        let value_tree = json_to_value(envelope);
-        let canonical = encode_jcs(&value_tree);
-        return blake3_512_of(canonical.as_bytes());
-    }
-    let mut stripped = env.clone();
-    if let Json::Object(map) = &mut stripped {
-        map.shift_remove("cid");
-        map.shift_remove("producerSignature");
-    }
-    let value_tree = json_to_value(&stripped);
-    let canonical = encode_jcs(&value_tree);
-    blake3_512_of(canonical.as_bytes())
-}
-
-fn compute_member_cid(env: &Json) -> String {
-    compute_envelope_cid(env)
-}
-
-fn json_to_value(j: &Json) -> std::sync::Arc<Value> {
-    match j {
-        Json::Null => Value::null(),
-        Json::Bool(b) => Value::boolean(*b),
-        Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                Value::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                Value::integer(f as i128)
-            } else {
-                Value::integer(0)
-            }
-        }
-        Json::String(s) => Value::string(s.clone()),
-        Json::Array(items) => {
-            let v: Vec<_> = items.iter().map(json_to_value).collect();
-            Value::array(v)
-        }
-        Json::Object(map) => {
-            let entries: Vec<(String, _)> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), json_to_value(v)))
-                .collect();
-            std::sync::Arc::new(Value::Object(entries))
         }
     }
 }

@@ -371,7 +371,7 @@ fn validate_member_view(
         }
     };
 
-    let derived = compute_envelope_cid(&env);
+    let derived = sugar_proof_envelope::recompute_member_cid(&env);
     if derived != cid {
         report.push_error(
             PFCP_R5_MEMBER_CID,
@@ -389,23 +389,6 @@ fn validate_member_view(
     if let Err(e) = verify_member_signature(&env) {
         report.push_error(PFCP_R6_MEMBER_SIGNATURE, format!("member {cid}: {e}"));
     }
-}
-
-fn compute_envelope_cid(env: &Json) -> String {
-    if let Some(envelope) = env.get("envelope") {
-        let value_tree = json_to_value(envelope);
-        let canonical = encode_jcs(&value_tree);
-        return blake3_512_of(canonical.as_bytes());
-    }
-
-    let mut stripped = env.clone();
-    if let Json::Object(map) = &mut stripped {
-        map.shift_remove("cid");
-        map.shift_remove("producerSignature");
-    }
-    let value_tree = json_to_value(&stripped);
-    let canonical = encode_jcs(&value_tree);
-    blake3_512_of(canonical.as_bytes())
 }
 
 fn verify_member_signature(env: &Json) -> Result<(), String> {

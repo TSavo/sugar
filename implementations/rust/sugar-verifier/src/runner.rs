@@ -2432,7 +2432,7 @@ mod consistency_owned_callsite_tests {
             .expect("flat implication object")
             .insert("producerSignature".to_string(), Json::String(signature));
         let member_bytes = jcs(&env).into_bytes();
-        let member_cid = sugar_canonicalizer::blake3_512_of(&member_bytes);
+        let member_cid = sugar_proof_envelope::recompute_member_cid(&env);
 
         let mut proof_bytes = Vec::new();
         sugar_proof_envelope::cbor_encode_map_head(&mut proof_bytes, 1);
