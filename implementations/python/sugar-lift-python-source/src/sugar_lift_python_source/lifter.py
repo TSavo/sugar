@@ -40,6 +40,51 @@ CLASS_SHAPE_ASSUMPTIONS = [
     "not-robust-to-cross-module-monkey-patch-or-delete",
 ]
 SLOT_PRESENCE_NOTE = "slot-membership alone does not discharge presence"
+_TYPE_PARAMETERIZED_BUILTINS = {"dict", "frozenset", "list", "set", "tuple", "type"}
+_TYPE_PARAMETERIZED_NAMES = {
+    "AbstractSet",
+    "AnyStr",
+    "AsyncContextManager",
+    "AsyncGenerator",
+    "AsyncIterable",
+    "AsyncIterator",
+    "Awaitable",
+    "Callable",
+    "ChainMap",
+    "ClassVar",
+    "Collection",
+    "Container",
+    "ContextManager",
+    "Coroutine",
+    "Counter",
+    "DefaultDict",
+    "Deque",
+    "Dict",
+    "FrozenSet",
+    "Generator",
+    "Generic",
+    "ItemsView",
+    "Iterable",
+    "Iterator",
+    "KeysView",
+    "List",
+    "Literal",
+    "Mapping",
+    "MappingView",
+    "Match",
+    "MutableMapping",
+    "MutableSequence",
+    "MutableSet",
+    "Optional",
+    "Pattern",
+    "Protocol",
+    "Sequence",
+    "Set",
+    "Tuple",
+    "Type",
+    "Union",
+    "ValuesView",
+}
 
 
 @dataclass
@@ -1682,8 +1727,27 @@ class _Emitter:
             return args
 
         if isinstance(node.func, ast.Subscript):
+            # Validate the index first so unsupported syntax inside the callee
+            # still reports its precise refusal instead of being hidden behind
+            # the dynamic-dispatch stop-line.
+            self.subscript_index(node.func)
+            type_base = _type_parameterized_callee_base(node.func)
+            if type_base is None:
+                _callee_name(node.func)
+            self.expr(node.func)
+            self.effects.add_unresolved_call(type_base)
+            return ctor(
+                "python:call",
+                ctor(
+                    "python:type_application",
+                    str_const(type_base),
+                    self.annotation_expr(node.func),
+                ),
+                *arguments(),
+            )
+        if _callee_has_subscript_receiver(node.func):
             callee = self.expr(node.func)
-            self.effects.add_unresolved_call("(subscript)")
+            self.effects.add_unresolved_call("(subscript-receiver)")
             return ctor("python:call", callee, *arguments())
         if _callee_has_call_result(node.func):
             callee = self.expr(node.func)
@@ -1766,7 +1830,13 @@ class _Emitter:
             return None
         if not isinstance(test, ast.Call):
             return None
-        if _callee_name(test.func) not in {"hasattr", "builtins.hasattr"}:
+        try:
+            callee_name = _callee_name(test.func)
+        except _UnsupportedSyntax as exc:
+            if exc.kind != "callee-subscript-refused":
+                raise
+            return None
+        if callee_name not in {"hasattr", "builtins.hasattr"}:
             return None
         if len(test.args) != 2 or test.keywords:
             return None
@@ -2950,6 +3020,61 @@ def _is_docstring_stmt(statement: ast.stmt) -> bool:
 
 def _is_none_literal(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
+
+
+def _dotted_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return None
+
+
+def _type_parameterized_callee_base(node: ast.Subscript) -> str | None:
+    base = _dotted_name(node.value)
+    if base is None or not _is_type_parameterized_base(base):
+        return None
+    if not _is_type_argument_expr(node.slice):
+        return None
+    return base
+
+
+def _is_type_parameterized_base(name: str) -> bool:
+    final = name.rsplit(".", 1)[-1]
+    if final in _TYPE_PARAMETERIZED_BUILTINS or final in _TYPE_PARAMETERIZED_NAMES:
+        return True
+    if name.startswith("typing.") and final in _TYPE_PARAMETERIZED_NAMES:
+        return True
+    if name.startswith("collections.abc.") and final in _TYPE_PARAMETERIZED_NAMES:
+        return True
+    return final[:1].isupper() and not final.isupper()
+
+
+def _is_type_argument_expr(node: ast.expr | ast.slice) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Name):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _dotted_name(node) is not None
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return all(_is_type_argument_expr(element) for element in node.elts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _is_type_argument_expr(node.left) and _is_type_argument_expr(node.right)
+    if isinstance(node, ast.Subscript):
+        return (
+            _dotted_name(node.value) is not None
+            and not isinstance(node.slice, ast.Slice)
+            and _is_type_argument_expr(node.slice)
+        )
+    return False
+
+
+def _callee_has_subscript_receiver(node: ast.expr) -> bool:
+    if isinstance(node, ast.Attribute):
+        return any(isinstance(child, ast.Subscript) for child in ast.walk(node.value))
+    return False
 
 
 def _callee_name(node: ast.expr) -> str:
