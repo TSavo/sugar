@@ -155,3 +155,21 @@ Every new Sugar interface should declare:
 5. **Failure type** — enum/diagnostic/refusal memento, not free-text if it crosses a substrate boundary.
 6. **Replay inputs** — what has to be pinned for another verifier to reconstruct the same decision.
 7. **Legacy escape hatches** — any `serde_json::Value`, raw string script, or ad-hoc parser that remains.
+
+## 5. The discharge law (T Savo, 2026-07-02 — addendum, verbatim)
+
+**"A discharge is only real if the obligation, witness, boundary, and replay inputs are independently typed and addressable. Anything else is ambient testimony."**
+
+This ties three layers together: (1) the §4 seven-point interface rule is not documentation — it is a REVIEW INSTRUMENT; it turns interface design into something CI can inspect. (2) ir-compiler-solver invariant 1: opacity is not free — it creates a new proof obligation. (3) The #3307/#3303 verifier incident (the ambient ground-callsite path letting a stated fact feed itself into its own obligation) is the same failure mode in another costume: discharge without independent testimony.
+
+**The bug class:** *self-referential discharge through an untyped or ambient boundary.* Cross-layer, not solver-local — the verifier incident is the evidence.
+
+**The S10 shape:** `IrCompiler::compile(&self, ir: &Json, ...)` is the naked-formula door. Typed ProofIR members → compiler ingress boundary (currently Json — the real boundary violation to retire or wrap) → CompiledFormula → `metadata: Json` acceptable ONLY as an explicitly classified escape hatch.
+
+**The S1 seed list (the census rows are not cleanup — they are the conformance baseline):** legacy_response in LiftPluginSession; duplicate PluginManifest shapes; LiftPluginError::Failed(String) across machine boundaries; SolveResult.error/stdout as unpinned strings; the z3_path fallback; stage-vocabulary drift. The test does not need to solve them immediately; it needs to make the drift enumerable, named, and non-regressing.
+
+**The capstone at the data-access layer:** unscoped-lookup auditor → typed scoped key (BundleScopedCallsiteKey/VerifiedContract) → impossible-by-construction access path.
+
+**The campaign slogan:** *Types retire auditors when interfaces declare their proof obligations.*
+
+**The immediate instrument:** walk new or modified interfaces; RED on undeclared `serde_json::Value`, raw string machine errors, fallback resolution, unscoped keys, or replay-irrecoverable inputs — unless each is explicitly declared as a legacy escape hatch with an owner and a retirement path.
