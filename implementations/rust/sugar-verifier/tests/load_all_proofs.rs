@@ -170,6 +170,55 @@ fn publish_parseint_proof(dir: &Path) -> String {
     built.cid
 }
 
+fn publish_parseint_proof_with_target_proof_cid(dir: &Path, target_proof_cid: String) -> String {
+    reset_collector();
+    must("parseInt", forall(Int(), |n| gt(n, num(0))));
+    let decls = sugar_ir_symbolic::finish();
+    let signer_seed: Ed25519Seed = [0x42u8; 32];
+    let declared_at = "2026-04-30T00:00:00.000Z";
+    let produced_by = "rust-test@1.0";
+    let mut graph = ProofGraph::new();
+    let mut name_to_cid = std::collections::HashMap::<String, String>::new();
+    for d in &decls {
+        let cid = add_body_graph_contract(&mut graph, &d.name, signer_seed, declared_at);
+        name_to_cid.insert(d.name.clone(), cid);
+    }
+    let bridge_args = MintBridgeArgs {
+        produced_by: produced_by.into(),
+        produced_at: declared_at.into(),
+        source_symbol: "parseInt".into(),
+        source_layer: "ts".into(),
+        target_contract: ContractMementoRef::new(name_to_cid["parseInt"].clone()),
+        target_layer: "rust-kit".into(),
+        ir_arg_sorts: vec!["String".into()],
+        ir_return_sort: "Int".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: Some(target_proof_cid),
+        callsite: None,
+    };
+    let bridge = mint_bridge(&bridge_args);
+    push_bridge(&mut graph, bridge);
+
+    let signer_pubkey = ed25519_pubkey_string(&signer_seed);
+    let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
+    let input = ProofEnvelopeInput {
+        name: "@test/load-all-proofs-invalid-bridge-pin".into(),
+        version: "1.0.0".into(),
+        binary_cid: None,
+        metadata: None,
+        graph,
+        signer_cid,
+        signer_seed,
+        declared_at: declared_at.into(),
+    };
+    let built = build_proof_envelope(&input);
+    let hex = built.cid.strip_prefix("blake3-512:").unwrap();
+    let path = dir.join(format!("{hex}.proof"));
+    fs::write(&path, &built.bytes).expect("write proof");
+    built.cid
+}
+
 fn only_proof_path(dir: &Path) -> PathBuf {
     let entries: Vec<_> = fs::read_dir(dir)
         .unwrap()
@@ -292,6 +341,27 @@ fn loads_published_proof_successfully() {
     assert_eq!(pool.mementos.len(), 2);
     // bridges_by_symbol indexes parseInt.
     assert!(pool.bridges_by_symbol.contains_key("parseInt"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bridge_with_invalid_target_proof_cid_is_load_error_not_self_pinned() {
+    let dir = make_unique_dir("invalid-target-proof-cid");
+    publish_parseint_proof_with_target_proof_cid(&dir, "not-a-cid".to_string());
+
+    let pool = load_all_proofs::run(&dir);
+
+    assert!(
+        pool.load_errors.iter().any(|err| {
+            err.reason.contains("targetProofCid") || err.reason.contains("bridge target proof CID")
+        }),
+        "bad targetProofCid must be a loud load error: {:#?}",
+        pool.load_errors
+    );
+    assert!(
+        !pool.bridges_by_symbol.contains_key("parseInt"),
+        "malformed cross-proof pin must not be indexed as a self-pinned bridge"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

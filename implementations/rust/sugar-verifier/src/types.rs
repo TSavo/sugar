@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as Json;
 pub use sugar_proof_envelope::{
     AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, StoredMember,
@@ -1122,22 +1122,102 @@ pub fn compute_formula_cid(formula: &Json) -> String {
     blake3_512_of(canonical.as_bytes())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgePin {
+    /// The bridge target must be a co-member of the bridge's own bundle.
+    SelfPinned,
+    /// The bridge target must be a member of the named external proof bundle.
+    Cross(MementoCid),
+}
+
+impl Default for BridgePin {
+    fn default() -> Self {
+        Self::SelfPinned
+    }
+}
+
+impl BridgePin {
+    pub fn from_target_proof_cid(cid: Option<MementoCid>) -> Self {
+        match cid {
+            Some(cid) => Self::Cross(cid),
+            None => Self::SelfPinned,
+        }
+    }
+
+    pub fn from_target_proof_value(value: Option<&Json>) -> Result<Self, String> {
+        let Some(value) = value else {
+            return Ok(Self::SelfPinned);
+        };
+        if value.is_null() {
+            return Ok(Self::SelfPinned);
+        }
+        let raw = value
+            .as_str()
+            .ok_or_else(|| "bridge target proof CID must be a CID string or null".to_string())?;
+        if raw.is_empty() {
+            return Err("bridge target proof CID must not be empty".to_string());
+        }
+        MementoCid::try_parse(raw.to_string())
+            .map(Self::Cross)
+            .map_err(|raw| format!("bridge target proof CID has invalid CID format: `{raw}`"))
+    }
+
+    pub fn target_proof_cid(&self) -> Option<&MementoCid> {
+        match self {
+            Self::Cross(cid) => Some(cid),
+            Self::SelfPinned => None,
+        }
+    }
+}
+
+impl Serialize for BridgePin {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::SelfPinned => serializer.serialize_none(),
+            Self::Cross(cid) => serializer.serialize_some(cid),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BridgePin {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Option::<String>::deserialize(deserializer)?;
+        match raw {
+            None => Ok(Self::SelfPinned),
+            Some(raw) if raw.is_empty() => Err(serde::de::Error::custom(
+                "bridge target proof CID must not be empty",
+            )),
+            Some(raw) => MementoCid::try_parse(raw).map(Self::Cross).map_err(|raw| {
+                serde::de::Error::custom(format!(
+                    "bridge target proof CID has invalid CID format: `{raw}`"
+                ))
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct CallSite {
     pub bridge_ir_name: String,
     pub bridge_target_cid: Option<MementoCid>,
     pub bridge_source_layer: String,
     pub bridge_target_layer: String,
-    /// Forward pin: the specific `.proof` bundle CID this bridge commits
-    /// to as its consequent (CROSS-bundle target). `None` means the bridge is
-    /// SELF-pinned: its target contract must be a co-member of the bridge's
-    /// own bundle (see `bridge_self_bundle_cid`). Either way the pin is
-    /// enforced; there is no unpinned path. See
+    /// Forward pin: either a specific `.proof` bundle CID this bridge commits
+    /// to as its consequent (CROSS-bundle target) or an explicit self-pin whose
+    /// target contract must be a co-member of the bridge's own bundle (see
+    /// `bridge_self_bundle_cid`). Either way the pin is enforced; there is no
+    /// unpinned path. See
     /// `protocol/specs/2026-04-30-ir-formal-grammar.md`
     /// § "Bridge target pinning: the shim-poisoning vector".
-    pub bridge_target_proof_cid: Option<MementoCid>,
+    pub bridge_pin: BridgePin,
     /// The `.proof` bundle CID the bridge memento itself was loaded from.
-    /// Used to enforce the self-pinned (`bridge_target_proof_cid == None`)
+    /// Used to enforce the self-pinned (`bridge_pin == BridgePin::SelfPinned`)
     /// case: the target contract must be a co-member of this same bundle.
     /// `None` only if the bridge memento was not associated with any bundle
     /// (a hand-built in-memory pool); resolve_target then cannot self-pin.
@@ -1344,6 +1424,44 @@ mod tests {
 
     fn cid_string(seed: &str) -> String {
         cid(seed).to_string()
+    }
+
+    #[test]
+    fn bridge_pin_self_pinned_serializes_as_null() {
+        let pin = BridgePin::SelfPinned;
+
+        assert_eq!(
+            serde_json::to_string(&pin).expect("serialize self pin"),
+            "null"
+        );
+        assert_eq!(
+            serde_json::from_str::<BridgePin>("null").expect("deserialize self pin"),
+            BridgePin::SelfPinned
+        );
+    }
+
+    #[test]
+    fn bridge_pin_cross_round_trips_as_cid_string() {
+        let cid = cid("cross-bundle");
+        let pin = BridgePin::Cross(cid.clone());
+        let wire = serde_json::to_string(&pin).expect("serialize cross pin");
+
+        assert_eq!(wire, format!("\"{cid}\""));
+        assert_eq!(
+            serde_json::from_str::<BridgePin>(&wire).expect("deserialize cross pin"),
+            pin
+        );
+    }
+
+    #[test]
+    fn bridge_pin_rejects_ill_formed_cid_string() {
+        let err = serde_json::from_str::<BridgePin>("\"not-a-cid\"")
+            .expect_err("invalid bridge pin CID must refuse");
+
+        assert!(
+            err.to_string().contains("bridge target proof CID"),
+            "error should name bridge target proof CID: {err}"
+        );
     }
 
     fn make_implication_memento(ant: &str, con: &str) -> Json {

@@ -2152,6 +2152,7 @@ fn mint_and_cache(
 #[cfg(test)]
 mod consistency_owned_callsite_tests {
     use super::*;
+    use crate::BridgePin;
     use serde_json::json;
 
     fn cid_string(seed: &str) -> String {
@@ -2312,7 +2313,7 @@ mod consistency_owned_callsite_tests {
         let cs = CallSite {
             bridge_ir_name: "consumer_bridge".to_string(),
             bridge_target_cid: Some(memento_cid(&consumer_cid)),
-            bridge_target_proof_cid: Some(memento_cid(&consumer_bundle_cid)),
+            bridge_pin: BridgePin::Cross(memento_cid(&consumer_bundle_cid)),
             property_name: "consumer_pre".to_string(),
             property_cid: Some(generated_cid("tier2-property")),
             arg_term: Some(producer_arg.clone()),

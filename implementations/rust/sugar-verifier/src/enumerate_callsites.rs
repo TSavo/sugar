@@ -10,7 +10,9 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{AttributeSafetyObligation, CallSite, MementoCid, MementoPool, StoredMember};
+use crate::types::{
+    AttributeSafetyObligation, BridgePin, CallSite, MementoCid, MementoPool, StoredMember,
+};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -139,6 +141,10 @@ fn memento_cid_field(body: &Json, key: &str) -> Option<MementoCid> {
         .and_then(|s| MementoCid::try_parse(s.to_string()).ok())
 }
 
+fn bridge_pin_field(body: &Json) -> Result<BridgePin, String> {
+    BridgePin::from_target_proof_value(body.get("targetProofCid"))
+}
+
 fn normalized_loci(loci: &[Json]) -> Vec<String> {
     let mut normalized = loci
         .iter()
@@ -227,6 +233,18 @@ fn callsite_from_panic_locus(
         .then(|| callsite_bundle_cid.cloned())
         .flatten();
 
+    let bridge_pin = match bridge_pin_field(&bridge_body) {
+        Ok(pin) => pin,
+        Err(error) => {
+            warn!(
+                callee = %callee,
+                error = %error,
+                "enumerate_callsites: bridge has malformed targetProofCid; refusing callsite"
+            );
+            return None;
+        }
+    };
+
     Some(CallSite {
         bridge_ir_name: callee.to_string(),
         bridge_target_cid: memento_cid_field(&bridge_body, "targetContractCid"),
@@ -240,7 +258,7 @@ fn callsite_from_panic_locus(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        bridge_target_proof_cid: memento_cid_field(&bridge_body, "targetProofCid"),
+        bridge_pin,
         bridge_self_bundle_cid,
         property_name: property_name.to_string(),
         property_cid: Some(property_cid.clone()),
@@ -314,7 +332,7 @@ fn attribute_safety_callsite_from_locus(
         bridge_target_cid: None,
         bridge_source_layer: String::new(),
         bridge_target_layer: String::new(),
-        bridge_target_proof_cid: None,
+        bridge_pin: BridgePin::SelfPinned,
         bridge_self_bundle_cid: None,
         property_name: property_name.to_string(),
         property_cid: Some(property_cid.clone()),
@@ -894,13 +912,20 @@ fn walk_term(
             .body()
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        // Forward pin: REQUIRED by the current BridgeDeclaration grammar
-        // (see protocol/specs/2026-04-30-ir-formal-grammar.md §
-        // "Bridge target pinning: the shim-poisoning vector"). Older
-        // bridges without this field are tolerated at load time but
-        // can't have ConsequentBundlePinned enforced; resolve_target
-        // emits a soft warning in that case.
-        let bridge_target_proof_cid = memento_cid_field(&bbody, "targetProofCid");
+        // Forward pin: an explicit targetProofCid means cross-bundle pin;
+        // absence means self-pinned same-bundle co-membership. Malformed
+        // targetProofCid cannot collapse to self-pinned.
+        let bridge_pin = match bridge_pin_field(&bbody) {
+            Ok(pin) => pin,
+            Err(error) => {
+                warn!(
+                    name = %bridge_name,
+                    error = %error,
+                    "enumerate_callsites: bridge has malformed targetProofCid; refusing callsite"
+                );
+                return;
+            }
+        };
         let bridge_callsite = bbody.get("callsite");
         let callsite_callee = bbody
             .get("sourceSymbol")
@@ -990,7 +1015,7 @@ fn walk_term(
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            bridge_target_proof_cid,
+            bridge_pin,
             bridge_self_bundle_cid: if scoped_bridge.is_some() {
                 callsite_bundle_cid.cloned()
             } else {

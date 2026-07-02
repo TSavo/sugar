@@ -31,7 +31,7 @@ use sugar_proof_envelope::{
     AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, ProofGraph, StoredMember,
 };
 
-use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
+use crate::types::{BridgePin, EffectSiteAnnotation, LoadError, MementoPool};
 
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
@@ -344,11 +344,21 @@ fn load_catalog_bytes(
                 // themselves store only the bridge memento CID; the verified
                 // member lives once in `pool.mementos`.
                 let bridge_index = match kind {
-                    MemberKind::Bridge => member
-                        .field("sourceSymbol")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(|sym| {
+                    MemberKind::Bridge => {
+                        if let Err(error) =
+                            BridgePin::from_target_proof_value(member.field("targetProofCid"))
+                        {
+                            pool.load_errors.push(LoadError {
+                                proof_path: source_label.clone(),
+                                reason: format!("member {stored_cid}: {error}"),
+                            });
+                            return None;
+                        }
+                        member
+                            .field("sourceSymbol")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|sym| {
                             let callsite_key = member.body().and_then(|body| {
                                 let cs = body.get("callsite");
                                 let file = cs
@@ -370,7 +380,8 @@ fn load_catalog_bytes(
                                 }
                             });
                             (sym.to_string(), callsite_key)
-                        }),
+                        })
+                    }
                     MemberKind::AliasingMemento
                     | MemberKind::AssertionSurfaceMemento
                     | MemberKind::Authority
