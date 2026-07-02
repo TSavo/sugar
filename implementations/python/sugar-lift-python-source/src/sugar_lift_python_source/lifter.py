@@ -760,6 +760,19 @@ class _Emitter:
             return ctor("python:break", none_const())
         if isinstance(node, ast.Continue):
             return ctor("python:continue", none_const())
+        if isinstance(node, ast.Assert):
+            condition = self.expr(node.test)
+            message = none_const() if node.msg is None else self.expr(node.msg)
+            self.effects.add_panics()
+            self.panic_loci.append(
+                self.runtime_failure_locus(
+                    node,
+                    condition,
+                    subkind="assert",
+                    exception_class="AssertionError",
+                )
+            )
+            return ctor("python:assert", condition, message)
         if isinstance(node, ast.Raise):
             self.effects.add_panics()
             value = none_const() if node.exc is None else self.expr(node.exc)
