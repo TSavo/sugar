@@ -54,7 +54,7 @@ impl CoqCompiler {
         if is_term_kind(kind) {
             let term: sugar_ir_types::Term = serde_json::from_value(ir.clone())
                 .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            let term_str = generated::emit_term(&term);
+            let term_str = generated::emit_term(&term)?;
             let preamble =
                 "Require Import ZArith String List.\nOpen Scope Z.\nOpen Scope string.\n\n"
                     .to_string();
@@ -63,7 +63,7 @@ impl CoqCompiler {
         } else {
             let formula: sugar_ir_types::Formula = serde_json::from_value(ir.clone())
                 .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            Ok(generated::compile_formula(&formula))
+            generated::compile_formula(&formula)
         }
     }
 }
