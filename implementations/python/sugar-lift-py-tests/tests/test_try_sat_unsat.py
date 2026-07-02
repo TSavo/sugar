@@ -259,7 +259,7 @@ def test_try_body_sat_and_unsat_twins_go_through_lift_rpc(tmp_path: Path) -> Non
     bad_doc = _run_lift_rpc(bad)
 
     assert _post_rhs(good_doc) == _add_rhs(1)
-    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_values(good_doc) == [6]
     assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
     assert _callsite_status(bad_doc) == "unsat"
@@ -284,7 +284,7 @@ def test_try_except_raise_sat_and_unsat_twins_go_through_lift_rpc(
     bad_doc = _run_lift_rpc(bad)
 
     assert _post_rhs(good_doc) == _add_rhs(1)
-    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_values(good_doc) == [6]
     assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
     assert _callsite_status(bad_doc) == "unsat"
@@ -306,7 +306,7 @@ def test_try_finally_override_sat_and_unsat_twins_go_through_lift_rpc(
     bad_doc = _run_lift_rpc(bad)
 
     assert _post_rhs(good_doc) == _add_rhs(2)
-    assert _callsite_values(good_doc) == [7, 7]
+    assert _callsite_values(good_doc) == [7]
     assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [7, 6]
     assert _callsite_status(bad_doc) == "unsat"
@@ -326,7 +326,7 @@ def test_try_finally_inert_body_preserves_complete_universe_through_lift_rpc(
     bad_doc = _run_lift_rpc(bad)
 
     assert _post_rhs(good_doc) == _add_rhs(1)
-    assert _callsite_values(good_doc) == [6, 6]
+    assert _callsite_values(good_doc) == [6]
     assert _callsite_status(good_doc) == "sat"
     assert _callsite_values(bad_doc) == [6, 7]
     assert _callsite_status(bad_doc) == "unsat"

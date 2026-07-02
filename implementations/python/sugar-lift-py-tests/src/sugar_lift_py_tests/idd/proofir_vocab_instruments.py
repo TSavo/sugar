@@ -99,21 +99,19 @@ class ProofIrVocabularyFrontierReport:
 
 
 _FORMULA_PROVENANCE_BASELINE: tuple[FormulaFragmentProbe, ...] = (
-    FormulaFragmentProbe("EqualityFact", "factory/literal_call_report.py:776", None),
-    FormulaFragmentProbe("EqualityFact", "factory/literal_call_report.py:829", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1254", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1256", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1268", None),
-    FormulaFragmentProbe("UniverseMint", "factory/literal_call_report.py:1294", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1321", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1410", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1412", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1428", None),
-    FormulaFragmentProbe("UniverseMint", "factory/literal_call_report.py:1456", None),
-    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1485", None),
+    FormulaFragmentProbe("EqualityFact", "factory/literal_call_report.py:906", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1443", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1445", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1457", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1483", None),
+    FormulaFragmentProbe("UniverseMint", "factory/literal_call_report.py:1510", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1599", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1601", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1617", None),
+    FormulaFragmentProbe("FunctionContract", "factory/literal_call_report.py:1645", None),
+    FormulaFragmentProbe("UniverseMint", "factory/literal_call_report.py:1674", None),
     FormulaFragmentProbe("FunctionContract", "kit_rpc/body_universe_dto.py:15", None),
     FormulaFragmentProbe("FunctionContract", "kit_rpc/body_universe_dto.py:16", None),
-    FormulaFragmentProbe("EqualityFact", "kit_rpc/body_universe_dto.py:17", None),
 )
 
 

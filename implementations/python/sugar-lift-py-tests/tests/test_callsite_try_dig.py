@@ -41,7 +41,7 @@ def test_try_callee_routes_handled_raise_to_projected_floor() -> None:
 
     facts = _assertion_facts(source)
 
-    assert facts["call:f"].count(9) == 2
+    assert facts["call:f"].count(9) == 1
     assert _dig_refusals(source) == []
 
 

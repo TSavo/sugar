@@ -47,7 +47,7 @@ def test_map_body_projects_exact_mapped_sequence_floor() -> None:
         "    assert f([1, 2, 3]) == [2, 3, 4]\n"
     )
 
-    assert facts["call:f"].count(("array", (2, 3, 4))) >= 2
+    assert facts["call:f"].count(("array", (2, 3, 4))) == 1
 
 
 def test_map_body_lie_twin_conjoins_wrong_vendor_fact_with_derived_floor() -> None:

@@ -203,7 +203,7 @@ class EqualityFact(ProofIRNode):
             name=self.euf_key,
             out_binding="out",
             inv=_formula_to_rpc(self.denotation()),
-            source_warrants=[self.provenance().warrant_memento()],
+            proofir_provenance=self.provenance().warrant_memento(),
         ).to_rpc()
 
     def to_semantic_declaration(self) -> dict[str, Any]:

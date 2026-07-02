@@ -3,6 +3,13 @@ from __future__ import annotations
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 
 
+def _source_warrant_role(contract) -> str | None:
+    warrant = contract.source_warrants[0]
+    if isinstance(warrant, dict):
+        return warrant.get("role")
+    return warrant.role
+
+
 def test_comparison_assertion_lifts_name_equality_fact() -> None:
     report = build_literal_call_report(
         source=("def test_column_sum(total):\n" "    assert total == 6\n"),
@@ -238,7 +245,7 @@ def test_comparison_assertion_does_not_steal_callsite_equality_dig() -> None:
         "CallSugar",
     ]
     assert all(
-        contract.source_warrants[0].role != "python.comparison-assertion-sugar"
+        _source_warrant_role(contract) != "python.comparison-assertion-sugar"
         for contract in report.payload.ir
     )
 
@@ -264,7 +271,7 @@ def test_comparison_assertion_does_not_treat_bound_local_as_vendor_fact() -> Non
         "CallSugar",
     ]
     assert all(
-        contract.source_warrants[0].role != "python.comparison-assertion-sugar"
+        _source_warrant_role(contract) != "python.comparison-assertion-sugar"
         for contract in report.payload.ir
     )
 
