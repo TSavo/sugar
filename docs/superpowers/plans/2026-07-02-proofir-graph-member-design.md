@@ -360,3 +360,10 @@ No slice mapping changed from the campaign plan — this doc adds shape, not sco
 5. **`MementoCid` has no `FromStr`; parse is `try_parse`.** (`proof_graph.rs:150`.) The member's `cid()` uses `from_bytes(encode_jcs(...))`, the construction path — not a parse. Fine, but a slice that needs to reference a CID from wire input uses `try_parse` (the typed-error path), never `new` (which asserts/panics, `:135`).
 
 6. **`Incomplete.effect: object` (Python) is the one untyped hole feeding `RefusalRecord`.** Rust already types it (`Effect`, `lib.rs:9056`). Slice 6 must type Python's `Effect` union FIRST (or `RefusalRecord.from_incomplete` has nothing well-typed to consume) — a small ordering constraint already reflected in Slice 6.
+
+
+## Addendum (2026-07-02, post-S2 review — decision of record, T Savo)
+
+**Two identities per member.** `cid()` (artifact identity: full wire form including warrants/provenance — the memento layer's address) is joined by `semantic_cid()` (claim identity: provenance-free wire form — `euf_key` + denotation only). Graph-level dedup/merge keys on `semantic_cid`: equal semantic_cid + different provenance = ONE node, warrant union (the #3220 collapse); equal semantic_cid + equal provenance = idempotent duplicate; different formula = different semantic_cid = never merged (the stated-vs-derived lie conjunction is preserved by construction). Rationale: the claim and the record of who swore it are different objects — hashing warrants into the only identity made structural collapse impossible (found by adversarial review of PR #3269, finding 1).
+
+Also from that review: the verdict-witness registry must RUN every registered pair through the real solver (labels are not verdicts — Instrument C parametrizes over the registry), and the XSugar-bypass auditor exemption must be default-deny (exempt only provably-proofir builder receivers; receiver-name allowlists invert the instrument's polarity).
