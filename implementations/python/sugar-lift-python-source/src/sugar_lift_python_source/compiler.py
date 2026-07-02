@@ -392,6 +392,18 @@ def _slice_or_expr(term: Json) -> ast.expr | ast.slice:
 
 
 def _target(term: Json) -> ast.expr:
+    name = _name(term)
+    args = term.get("args", [])
+    if name == "python:tuple_target":
+        targets = [_target(arg) for arg in args]
+        if not targets:
+            raise ValueError("tuple target must contain at least one target")
+        return ast.Tuple(elts=targets, ctx=ast.Store())
+    if name == "python:list_target":
+        targets = [_target(arg) for arg in args]
+        if not targets:
+            raise ValueError("list target must contain at least one target")
+        return ast.List(elts=targets, ctx=ast.Store())
     expr = _expr(term)
     return _with_context(expr, ast.Store())
 
@@ -400,7 +412,7 @@ def _unpack_target(kind_term: Json, targets_term: Json) -> ast.expr:
     kind = _const_string(kind_term)
     if _name(targets_term) != "python:unpack_targets":
         raise ValueError(f"expected python:unpack_targets: {targets_term!r}")
-    targets = [_unpack_name_target(term) for term in targets_term.get("args", [])]
+    targets = [_target(term) for term in targets_term.get("args", [])]
     if not targets:
         raise ValueError("unpack target must contain at least one name")
     if kind == "tuple":
