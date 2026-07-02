@@ -1,0 +1,41 @@
+{
+  "package_versions": {
+    "numpy": "2.5.0",
+    "pandas": "3.0.3"
+  },
+  "total_files": 1828,
+  "counts_by_kind": {
+    "callee-binop-refused": 97,
+    "callee-call-refused": 7,
+    "callee-compare-refused": 197,
+    "callee-constant-refused": 260,
+    "callee-dict-refused": 23,
+    "callee-ifexp-refused": 2,
+    "callee-joinedstr-refused": 33,
+    "callee-set-refused": 1,
+    "callee-subscript-refused": 1062,
+    "callee-unaryop-refused": 9,
+    "decorator-refused": 9196,
+    "enum-pin-refused": 50,
+    "match-refused": 14,
+    "multi-target-assign-refused": 65,
+    "non-literal-default": 217,
+    "unhandled-syntax": 1507,
+    "value-pin-refused": 499
+  },
+  "expected_unhandled": {
+    "total": 1507,
+    "reasons": {
+      "async functions are refused": 3,
+      "for/else is refused": 4,
+      "generators are refused": 91,
+      "global/nonlocal declarations are refused": 36,
+      "unhandled expression kind: Slice": 656,
+      "unsupported annotation expression: List": 3,
+      "unsupported assignment target: Starred": 1,
+      "unsupported assignment target: Tuple": 711,
+      "unsupported comprehension target: Starred": 1,
+      "unsupported with-as target: Attribute": 1
+    }
+  }
+}
