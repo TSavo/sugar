@@ -347,11 +347,10 @@ def _lift_assert(
 
     universe: LiftResult | None = None
     if callee_name in functions_by_name:
-        # First try to CONSTRUCT: curry the callee over the concrete arg and slam to the
-        # floor. If it reduces to a literal we swear the Python value (verify). Only if the
-        # peel stops short -- a symbolic arg, an unfoldable op, an effect -- do we fall back
-        # to the symbolic universe (the irreducible residue, checked for consistency).
-        universe = _construct_callsite(
+        # Build the callsite through the factory and then ask the factory term for the floor.
+        # The old mini-interpreter remains below only as Slice-7 dead code; this consumer reads
+        # the CallSiteValue/force_floor/project_callsite_with spine directly.
+        universe = _construct_callsite_from_factory_term(
             stmt,
             comparison_left,
             callee_name,
@@ -363,15 +362,6 @@ def _lift_assert(
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
         )
-        if universe is None:
-            universe = _dig_universe(
-                comparison_left,
-                functions_by_name=functions_by_name,
-                filename=filename,
-                memento_file=memento_file,
-                source_lines=source_lines,
-                dig_refusals=dig_refusals,
-            )
     return _merge_lifts(universe, assertion)
 
 
@@ -875,6 +865,350 @@ def _emit_assertion_surface_fact(
         ast_kind="Assert",
     )
     return ([contract], [memento], [audit], [walk], [])
+
+
+def _empty_lift() -> LiftResult:
+    return ([], [], [], [], [])
+
+
+def _merge_many(lifts: list[LiftResult]) -> LiftResult:
+    if not lifts:
+        return _empty_lift()
+    merged = lifts[0]
+    for extra in lifts[1:]:
+        merged = _merge_lifts(merged, extra)
+    return merged
+
+
+_BRIDGE_PROJECTION_REFUSED = object()
+
+
+def _construct_callsite_from_factory_term(
+    stmt: SourceFragment,
+    callsite: SourceFragment,
+    callee_name: str,
+    caller_fn: SourceFragment,
+    functions_by_name: dict[str, SourceFragment],
+    *,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    dig_refusals: list[DigRefusal],
+    agreement_violations: list[FloorContractAgreementViolation],
+) -> LiftResult:
+    """Construct floor facts by reading the factory's CallSiteValue term.
+
+    This is the Slice-4 consumer path: the callsite is built by the catalog, bridges append
+    their owed digs to ``dig_sink``, and concrete floors are projected through
+    ``project_callsite_with``. No callee body is reduced here by hand.
+    """
+    from .build import default_catalog
+    from .sugar_constructors import build_bridge_body
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.call_site_value import force_floor
+    from sugar_lift_py_tests.operations import (
+        CallsiteProjectionOperation,
+        perform_operation,
+    )
+    from sugar_lift_py_tests.outcome import Complete
+
+    resolver = {name: f.node for name, f in functions_by_name.items()}
+    build_ctx = FactoryBuildContext(
+        filename=filename, catalog=default_catalog(), name_resolver=resolver
+    )
+    sink: list[tuple[str, object]] = []
+    reduce_ctx = ReduceContext.root(
+        owner="literal_call_report.callsite_floor", dig_sink=sink
+    )
+    callable_contracts: dict[str, BodyUniverseDto] = {}
+    facts: list[LiftResult] = []
+    universes_seen: set[str] = set()
+    callsites_seen: set[str] = set()
+    facts_seen: set[tuple[str, str]] = set()
+
+    def mint_universe(cn: str) -> None:
+        if cn in universes_seen:
+            return
+        universes_seen.add(cn)
+        callee = functions_by_name.get(cn)
+        if callee is None:
+            return
+        uni = _function_universe(
+            callee,
+            cn,
+            functions_by_name=functions_by_name,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            dig_refusals=dig_refusals,
+        )
+        if uni is None:
+            return
+        facts.append(uni)
+        for contract in uni[0]:
+            if (
+                contract.kind == "function-contract"
+                and contract.bridge_source_symbol is not None
+            ):
+                callable_contracts[contract.bridge_source_symbol] = contract
+
+    def emit_projected_fact(
+        call_value: CallSiteValue,
+        arg_terms: list[Term],
+        value_term: Term,
+        *,
+        check_agreement: bool,
+    ) -> bool:
+        call_term = euf_call_term(call_value.target_name, arg_terms)
+        if value_term == call_term:
+            return False
+        contract_name = euf_callsite_name(
+            call_value.target_name,
+            call_term,
+            suffix="::assertion",
+        )
+        fact_key = (contract_name, repr(value_term))
+        if fact_key in facts_seen:
+            return False
+        facts_seen.add(fact_key)
+        if check_agreement:
+            callable_contract = callable_contracts.get(f"call:{call_value.target_name}")
+            if callable_contract is not None:
+                agreement_violations.extend(
+                    floor_contract_agreement_violations_for_fact(
+                        callee=call_value.target_name,
+                        callable_contract=callable_contract,
+                        arg_terms=arg_terms,
+                        floor_term=value_term,
+                        callsite_contract=contract_name,
+                    )
+                )
+        facts.append(
+            _emit_euf_fact(
+                stmt,
+                caller_fn,
+                call_value.target_name,
+                arg_terms,
+                value_term,
+                filename=filename,
+                memento_file=memento_file,
+                source_lines=source_lines,
+            )
+        )
+        return True
+
+    def floor_fact(call_value: CallSiteValue) -> None:
+        arg_terms = [
+            floor_to_term(arg, owner="literal_call_report.callsite_floor_arg")
+            for arg in call_value.arg_values
+        ]
+        contract_name = euf_callsite_name(
+            call_value.target_name,
+            euf_call_term(call_value.target_name, arg_terms),
+            suffix="::assertion",
+        )
+        if contract_name in callsites_seen:
+            return
+        callsites_seen.add(contract_name)
+        immediate = _immediate_callsite_term(
+            call_value,
+            reduce_ctx,
+            owner="literal_call_report.callsite_bridge",
+            blame=callsite.blame,
+            dig_refusals=dig_refusals,
+        )
+        immediate_emitted = False
+        if immediate is not None:
+            if immediate is _BRIDGE_PROJECTION_REFUSED:
+                return
+            immediate_emitted = emit_projected_fact(
+                call_value, arg_terms, immediate, check_agreement=True
+            )
+        try:
+            floor = force_floor(
+                call_value,
+                reduce_ctx,
+                owner="literal_call_report.callsite_floor",
+                project_callsite=False,
+            )
+            projection = perform_operation(
+                owner="literal_call_report.callsite_floor",
+                blame=call_value.target_name,
+                receiver=floor,
+                method_name="project_callsite_with",
+                operation=CallsiteProjectionOperation(
+                    callee_name=call_value.target_name,
+                    arg_terms=tuple(arg_terms),
+                    owner="literal_call_report.callsite_floor",
+                    blame=call_value.target_name,
+                ),
+                ctx=reduce_ctx,
+            )
+        except (TypeError, ValueError, FactoryGap) as exc:
+            _record_dig_refusal(
+                dig_refusals,
+                callee=call_value.target_name,
+                blame=callsite.blame,
+                caught=exc,
+                reason="callsite floor projection refused this callee",
+            )
+            return
+        if projection is None:
+            _record_dig_refusal(
+                dig_refusals,
+                callee=call_value.target_name,
+                blame=callsite.blame,
+                caught=ValueError("callsite floor stayed symbolic"),
+                reason="callsite floor projection refused this callee",
+            )
+            return
+        value_term = _projected_value_term(projection)
+        if value_term is None:
+            _record_dig_refusal(
+                dig_refusals,
+                callee=call_value.target_name,
+                blame=callsite.blame,
+                caught=TypeError(
+                    f"project_callsite_with returned {type(projection).__name__}"
+                ),
+                reason="callsite floor projection refused this callee",
+            )
+            return
+        emit_projected_fact(
+            call_value,
+            arg_terms,
+            value_term,
+            check_agreement=not immediate_emitted,
+        )
+
+    def sink_call_value(cn: str, arg_value: object) -> CallSiteValue | None:
+        callee = functions_by_name.get(cn)
+        if callee is None or len(callee.function_params()) != 1:
+            return None
+        try:
+            body = build_bridge_body(
+                callee, replace(build_ctx, building=build_ctx.building | {cn})
+            )
+            arg_term = floor_to_term(
+                arg_value, owner="literal_call_report.callsite_floor_sink_arg"
+            )
+        except (TypeError, ValueError, FactoryGap) as exc:
+            _record_dig_refusal(
+                dig_refusals,
+                callee=cn,
+                blame=callee.blame,
+                caught=exc,
+                reason="transitive bridge floor projection refused this callee",
+            )
+            return None
+        return CallSiteValue(
+            target_name=cn,
+            arg_values=(arg_value,),
+            parameters=tuple(callee.function_params()),
+            term=euf_call_term(cn, [arg_term]),
+            body=body,
+        )
+
+    mint_universe(callee_name)
+    try:
+        call_body = build_ctx.build_body(callsite, SugarRole.TERM)
+        outcome = call_body.reduce(reduce_ctx)
+        if not isinstance(outcome, Complete):
+            raise TypeError(f"callsite reduced to {type(outcome).__name__}")
+        top_value = complete_value(outcome, owner="literal_call_report.callsite_floor")
+        if not isinstance(top_value, CallSiteValue):
+            raise TypeError(f"callsite reduced to {type(top_value).__name__}")
+    except (TypeError, ValueError, FactoryGap) as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=callee_name,
+            blame=callsite.blame,
+            caught=exc,
+            reason="callsite floor projection refused this callee",
+        )
+        return _merge_many(facts)
+
+    floor_fact(top_value)
+    index = 0
+    while index < len(sink):
+        cn, arg_value = sink[index]
+        index += 1
+        mint_universe(cn)
+        bridged = sink_call_value(cn, arg_value)
+        if bridged is not None:
+            floor_fact(bridged)
+    return _merge_many(facts)
+
+
+def _projected_value_term(formula: Formula) -> Term | None:
+    if getattr(formula, "name", None) != "=":
+        return None
+    args = getattr(formula, "args", ())
+    if len(args) != 2:
+        return None
+    return args[1]
+
+
+def _immediate_callsite_term(
+    call_value,
+    ctx,
+    *,
+    owner: str,
+    blame: str,
+    dig_refusals: list[DigRefusal],
+) -> Term | object | None:
+    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+    from sugar_lift_py_tests.floor.call_site_value import (
+        _ctx_with_curried_args,
+        _reduce_callsite_body,
+    )
+    from sugar_lift_py_tests.operations import (
+        CallsiteProjectionOperation,
+        perform_operation,
+    )
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
+
+    try:
+        arg_terms = [
+            floor_to_term(arg, owner="literal_call_report.callsite_bridge_arg")
+            for arg in call_value.arg_values
+        ]
+        reduce_ctx = _ctx_with_curried_args(
+            ctx, call_value.parameters, call_value.arg_values
+        )
+        outcome = _reduce_callsite_body(
+            call_value.body, reduce_ctx, blame=call_value.target_name
+        )
+        if isinstance(outcome, Incomplete):
+            return None
+        value = complete_value(outcome, owner=owner)
+        projection = perform_operation(
+            owner=owner,
+            blame=call_value.target_name,
+            receiver=value,
+            method_name="project_callsite_with",
+            operation=CallsiteProjectionOperation(
+                callee_name=call_value.target_name,
+                arg_terms=tuple(arg_terms),
+                owner=owner,
+                blame=call_value.target_name,
+            ),
+            ctx=reduce_ctx,
+        )
+    except (TypeError, ValueError, FactoryGap) as exc:
+        _record_dig_refusal(
+            dig_refusals,
+            callee=call_value.target_name,
+            blame=blame,
+            caught=exc,
+            reason="callsite floor projection refused this callee",
+        )
+        return _BRIDGE_PROJECTION_REFUSED
+    if projection is None:
+        return None
+    return _projected_value_term(projection)
 
 
 def _construct_callsite(
