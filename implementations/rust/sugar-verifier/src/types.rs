@@ -1101,7 +1101,7 @@ impl ObligationVerdict {
 #[derive(Debug, Clone)]
 pub struct ReportRow {
     pub callsite: CallSite,
-    pub status: String,
+    pub status: ObligationVerdict,
     pub reason: String,
     pub discharge_method: Option<String>,
     pub body_discharge_tier: Option<String>,

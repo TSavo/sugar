@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 
-use crate::types::Report;
+use crate::types::{ObligationVerdict, Report};
 
 /// Strength = the count of surviving consistent readings (universes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,15 +141,16 @@ impl SuperpositionReport {
 /// already ran. The keystone: a symbol with no holding reading is RETRACTED (no
 /// report — our overreach, never an accusation); otherwise it gets a report
 /// whose findings are the readings the body refutes.
-pub fn fold_verdicts(items: &[(String, String, String)]) -> Vec<SuperpositionReport> {
+pub fn fold_verdicts(items: &[(String, ObligationVerdict, String)]) -> Vec<SuperpositionReport> {
     let mut by_symbol: BTreeMap<String, (Vec<String>, Vec<String>)> = BTreeMap::new();
     for (symbol, status, pin) in items {
         let entry = by_symbol.entry(symbol.clone()).or_default();
-        match status.as_str() {
-            "discharged" => entry.0.push(pin.clone()),
-            "unsatisfied" | "disagreement" => entry.1.push(pin.clone()),
-            // undecidable / refused: neither licenses nor accuses.
-            _ => {}
+        match status {
+            ObligationVerdict::Discharged => entry.0.push(pin.clone()),
+            ObligationVerdict::Unsatisfied | ObligationVerdict::Disagreement => {
+                entry.1.push(pin.clone())
+            }
+            ObligationVerdict::Undecidable | ObligationVerdict::Refused => {}
         }
     }
     let mut out = Vec::new();
@@ -168,10 +169,10 @@ pub fn fold_verdicts(items: &[(String, String, String)]) -> Vec<SuperpositionRep
 /// The verdict view over a completed verifier `Report`: group its discharge rows
 /// by the callsite symbol under test and fold them into superposition reports.
 pub fn reports_from_report(report: &Report) -> Vec<SuperpositionReport> {
-    let items: Vec<(String, String, String)> = report
+    let items: Vec<(String, ObligationVerdict, String)> = report
         .rows
         .iter()
-        .map(|r| (symbol_of_row(r), r.status.clone(), pin_id(r)))
+        .map(|r| (symbol_of_row(r), r.status, pin_id(r)))
         .collect();
     fold_verdicts(&items)
 }
@@ -215,15 +216,19 @@ fn pin_id(row: &crate::types::ReportRow) -> String {
 mod tests {
     use super::*;
 
-    fn item(sym: &str, status: &str, pin: &str) -> (String, String, String) {
-        (sym.to_string(), status.to_string(), pin.to_string())
+    fn item(
+        sym: &str,
+        status: ObligationVerdict,
+        pin: &str,
+    ) -> (String, ObligationVerdict, String) {
+        (sym.to_string(), status, pin.to_string())
     }
 
     #[test]
     fn only_discharged_readings_are_strong_no_levers() {
         let items = vec![
-            item("double", "discharged", "p1"),
-            item("double", "discharged", "p2"),
+            item("double", ObligationVerdict::Discharged, "p1"),
+            item("double", ObligationVerdict::Discharged, "p2"),
         ];
         let reports = fold_verdicts(&items);
         assert_eq!(reports.len(), 1);
@@ -238,8 +243,8 @@ mod tests {
     fn a_contradicted_reading_is_a_finding_weak() {
         // double has a holding pin (licenses) and a contradicted one (finding).
         let items = vec![
-            item("double", "discharged", "p_good"),
-            item("double", "unsatisfied", "p_bad"),
+            item("double", ObligationVerdict::Discharged, "p_good"),
+            item("double", ObligationVerdict::Unsatisfied, "p_bad"),
         ];
         let reports = fold_verdicts(&items);
         assert_eq!(reports.len(), 1);
@@ -256,15 +261,18 @@ mod tests {
         // Every reading refuted and none discharged -> no SAT licenses -> retract.
         // No accusation against the vendor (no-false-accusation guarantee).
         let items = vec![
-            item("bogus", "unsatisfied", "p1"),
-            item("bogus", "unsatisfied", "p2"),
+            item("bogus", ObligationVerdict::Unsatisfied, "p1"),
+            item("bogus", ObligationVerdict::Unsatisfied, "p2"),
         ];
         assert!(fold_verdicts(&items).is_empty());
     }
 
     #[test]
     fn undecidable_and_refused_neither_license_nor_accuse() {
-        let items = vec![item("f", "undecidable", "p1"), item("f", "refused", "p2")];
+        let items = vec![
+            item("f", ObligationVerdict::Undecidable, "p1"),
+            item("f", ObligationVerdict::Refused, "p2"),
+        ];
         assert!(
             fold_verdicts(&items).is_empty(),
             "no licensing reading -> no report"
@@ -274,8 +282,8 @@ mod tests {
     #[test]
     fn disagreement_counts_as_a_finding_when_licensed() {
         let items = vec![
-            item("g", "discharged", "ok"),
-            item("g", "disagreement", "conflict"),
+            item("g", ObligationVerdict::Discharged, "ok"),
+            item("g", ObligationVerdict::Disagreement, "conflict"),
         ];
         let reports = fold_verdicts(&items);
         assert_eq!(reports[0].strength, Strength::Weak);
@@ -300,7 +308,10 @@ mod tests {
 
     #[test]
     fn distinct_symbols_get_distinct_reports() {
-        let items = vec![item("a", "discharged", "p"), item("b", "discharged", "p")];
+        let items = vec![
+            item("a", ObligationVerdict::Discharged, "p"),
+            item("b", ObligationVerdict::Discharged, "p"),
+        ];
         let reports = fold_verdicts(&items);
         assert_eq!(reports.len(), 2);
         assert_ne!(reports[0].cid, reports[1].cid);

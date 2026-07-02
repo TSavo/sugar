@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
 use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
-use sugar_verifier::{LoadError, Report, ReportRow};
+use sugar_verifier::{LoadError, ObligationVerdict, Report, ReportRow};
 
 pub fn report_to_json(r: &Report) -> Json {
     let rows: Vec<Json> = r.rows.iter().map(row_to_json).collect();
@@ -85,7 +85,7 @@ fn row_to_json(row: &ReportRow) -> Json {
         "targetLayer": row.callsite.bridge_target_layer,
         "property": row.callsite.property_name,
         "propertyCid": row.callsite.property_cid,
-        "status": row.status,
+        "status": row.status.as_str(),
         "reason": row.reason,
         "dischargeMethod": row.discharge_method,
         "bodyDischargeTier": row.body_discharge_tier,
@@ -108,7 +108,7 @@ fn discharge_split_to_json(r: &Report) -> Json {
     let mut false_pass = 0usize;
 
     for row in &r.rows {
-        if row.status != "discharged" {
+        if row.status != ObligationVerdict::Discharged {
             undecidable += 1;
             continue;
         }
@@ -176,11 +176,12 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
         );
         out.push('\n');
         for row in &r.rows {
-            let status_pretty = match row.status.as_str() {
-                "discharged" => "discharged".green().to_string(),
-                "unsatisfied" => "unsatisfied".red().to_string(),
-                "undecidable" => "undecidable".yellow().to_string(),
-                other => other.to_string(),
+            let status_pretty = match row.status {
+                ObligationVerdict::Discharged => "discharged".green().to_string(),
+                ObligationVerdict::Unsatisfied => "unsatisfied".red().to_string(),
+                ObligationVerdict::Undecidable => "undecidable".yellow().to_string(),
+                ObligationVerdict::Disagreement => "disagreement".to_string(),
+                ObligationVerdict::Refused => "refused".to_string(),
             };
             let _ = writeln!(
                 out,
@@ -371,7 +372,7 @@ pub fn report_exit_code(r: &Report) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_verifier::{CallSite, Report, ReportRow, ToolchainPlanReport};
+    use sugar_verifier::{CallSite, ObligationVerdict, Report, ReportRow, ToolchainPlanReport};
 
     #[test]
     fn empty_report_is_not_a_successful_proof() {
@@ -407,7 +408,7 @@ mod tests {
                 bridge_ir_name: "double".into(),
                 ..CallSite::default()
             },
-            status: "discharged".into(),
+            status: ObligationVerdict::Discharged,
             reason: "ok".into(),
             discharge_method: Some("reflexive".into()),
             body_discharge_tier: Some("body-eq-same-callee".into()),
@@ -426,7 +427,7 @@ mod tests {
                 bridge_ir_name: "consistency".into(),
                 ..CallSite::default()
             },
-            status: "discharged".into(),
+            status: ObligationVerdict::Discharged,
             reason: "ok".into(),
             discharge_method: Some("consistency".into()),
             body_discharge_tier: None,
@@ -532,7 +533,7 @@ mod tests {
         };
         r.rows.push(ReportRow {
             callsite: CallSite::default(),
-            status: "discharged".into(),
+            status: ObligationVerdict::Discharged,
             reason: "ok".into(),
             discharge_method: Some("hash-tier".into()),
             body_discharge_tier: None,
@@ -562,7 +563,7 @@ mod tests {
                 bridge_ir_name: "consistency".into(),
                 ..CallSite::default()
             },
-            status: "discharged".into(),
+            status: ObligationVerdict::Discharged,
             reason: "ok".into(),
             discharge_method: Some("consistency".into()),
             body_discharge_tier: None,
@@ -582,7 +583,7 @@ mod tests {
                 panic_site: true,
                 ..CallSite::default()
             },
-            status: "undecidable".into(),
+            status: ObligationVerdict::Undecidable,
             reason: "synthetic panic row".into(),
             discharge_method: None,
             body_discharge_tier: None,
@@ -606,7 +607,7 @@ mod tests {
                 panic_site: true,
                 ..CallSite::default()
             },
-            status: "undecidable".into(),
+            status: ObligationVerdict::Undecidable,
             reason: "synthetic panic row".into(),
             discharge_method: None,
             body_discharge_tier: None,

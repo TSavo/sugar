@@ -34,7 +34,7 @@ pub fn add_callsite_with_discharge(
     r.total_callsites += 1;
     r.rows.push(ReportRow {
         callsite: cs,
-        status: verdict.as_str().to_string(),
+        status: verdict,
         reason: reason.to_string(),
         discharge_method,
         body_discharge_tier,
@@ -85,7 +85,7 @@ pub fn add_self_post_with_method(
     };
     r.rows.push(ReportRow {
         callsite: cs,
-        status: verdict.as_str().to_string(),
+        status: verdict,
         reason: reason.to_string(),
         discharge_method,
         body_discharge_tier: None,
@@ -137,7 +137,7 @@ pub fn add_consistency_with_verification(
     };
     r.rows.push(ReportRow {
         callsite: cs,
-        status: verdict.as_str().to_string(),
+        status: verdict,
         reason: reason.to_string(),
         discharge_method: Some("consistency".to_string()),
         body_discharge_tier: None,
