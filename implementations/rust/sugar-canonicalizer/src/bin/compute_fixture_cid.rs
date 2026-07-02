@@ -1,26 +1,6 @@
 use serde_json::Value;
 use std::fs;
-use std::sync::Arc;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
-
-fn to_cvalue(v: &Value) -> Arc<CValue> {
-    match v {
-        Value::Null => CValue::null(),
-        Value::Bool(b) => CValue::boolean(*b),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(f) = n.as_f64() {
-                CValue::string(format!("{}", f))
-            } else {
-                CValue::null()
-            }
-        }
-        Value::String(s) => CValue::string(s.clone()),
-        Value::Array(arr) => CValue::array(arr.iter().map(to_cvalue).collect()),
-        Value::Object(obj) => CValue::object(obj.iter().map(|(k, v)| (k.clone(), to_cvalue(v)))),
-    }
-}
+use sugar_canonicalizer::jcs_cid_of_json;
 
 fn main() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -40,8 +20,6 @@ fn main() {
     let json_str = fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("read fixture {:?}: {}", fixture_path, e));
     let v: Value = serde_json::from_str(&json_str).unwrap_or_else(|e| panic!("parse JSON: {}", e));
-    let cv = to_cvalue(&v);
-    let jcs = encode_jcs(&cv);
-    let cid = blake3_512_of(jcs.as_bytes());
+    let cid = jcs_cid_of_json(&v);
     println!("{}", cid);
 }

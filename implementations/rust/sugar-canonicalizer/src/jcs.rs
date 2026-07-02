@@ -5,9 +5,9 @@
 //
 // Rules (RFC 8785 + protocol/specs/2026-04-30-canonicalization-grammar.md
 // pass 7):
-//   - Object keys sorted by Unicode code-point order. For ASCII-only
-//     keys this collapses to byte-order; the protocol's keys are all
-//     ASCII so byte-order suffices.
+//   - Object keys sorted by Unicode code-point order. Rust `String::cmp`
+//     compares UTF-8 bytes; UTF-8 preserves Unicode scalar-value ordering,
+//     so that byte order is RFC 8785's code-point order for all inputs.
 //   - Numbers: integers serialized as plain decimal digits (we only
 //     carry i64; floats are not produced by the kit/mint flow).
 //   - Strings: UTF-8 verbatim, escape `"` and `\\` and U+0000..U+001F
@@ -51,8 +51,8 @@ fn encode_value(v: &Value, out: &mut String) {
             out.push(']');
         }
         Value::Object(entries) => {
-            // Sort by key (byte-order sort works for the ASCII keys
-            // this protocol uses).
+            // Sort by RFC 8785 Unicode code-point order. Rust String::cmp is
+            // UTF-8 byte order, and UTF-8 preserves code-point ordering.
             let mut sorted: Vec<&(String, std::sync::Arc<Value>)> = entries.iter().collect();
             sorted.sort_by(|a, b| a.0.cmp(&b.0));
             out.push('{');

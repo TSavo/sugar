@@ -21,6 +21,8 @@ pub enum CborDecodeError {
     BadUtf8,
     #[error("cbor: indefinite-length items not permitted in deterministic encoding")]
     IndefiniteLength,
+    #[error("cbor: duplicate map key {0:?}")]
+    DuplicateMapKey(String),
 }
 
 #[derive(Debug, Clone)]
@@ -155,7 +157,9 @@ fn decode_value(bytes: &[u8], idx: &mut usize) -> Result<CborValue, CborDecodeEr
                     CborValue::Tstr(s) => s,
                     _ => return Err(CborDecodeError::UnsupportedMajor(0xff)),
                 };
-                out.insert(key_s, val);
+                if out.insert(key_s.clone(), val).is_some() {
+                    return Err(CborDecodeError::DuplicateMapKey(key_s));
+                }
             }
             Ok(CborValue::Map(out))
         }

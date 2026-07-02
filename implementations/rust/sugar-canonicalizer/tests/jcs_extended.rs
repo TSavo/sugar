@@ -3,7 +3,7 @@
 // Extended JCS-JSON encoder tests. Covers the RFC 8785 / spec-pass-7
 // invariants the unit tests in jcs.rs only sample.
 //
-// NOTE: the Value tree is i64-only — there is no Float variant. The
+// NOTE: the Value tree is integer-only — there is no Float variant. The
 // "integer-valued floats render without decimal" rule from RFC 8785
 // §3.2.2.3 is satisfied trivially: integers always render without a
 // decimal point because there is no float path. The first test below
@@ -189,7 +189,7 @@ fn object_keys_are_byte_sorted() {
 
 #[test]
 fn object_keys_sorted_by_unicode_code_point_for_ascii_only() {
-    // Spec: Unicode code-point order. For ASCII this matches byte order.
+    // Spec: Unicode code-point order. For ASCII this matches UTF-8 byte order.
     // Capital letters (0x41..) sort before lowercase (0x61..).
     let v = Value::object([
         ("a", Value::integer(1)),
@@ -197,6 +197,19 @@ fn object_keys_sorted_by_unicode_code_point_for_ascii_only() {
         ("Z", Value::integer(3)),
     ]);
     assert_eq!(encode_jcs(&v), "{\"A\":2,\"Z\":3,\"a\":1}");
+}
+
+#[test]
+fn object_keys_sorted_by_unicode_code_point_for_non_ascii() {
+    // RFC 8785 sorts keys by Unicode code point: A U+0041, z U+007A,
+    // é U+00E9, 😀 U+1F600. UTF-8 preserves that order bytewise.
+    let v = Value::object([
+        ("😀", Value::integer(3)),
+        ("é", Value::integer(2)),
+        ("z", Value::integer(1)),
+        ("A", Value::integer(0)),
+    ]);
+    assert_eq!(encode_jcs(&v), "{\"A\":0,\"z\":1,\"é\":2,\"😀\":3}");
 }
 
 #[test]
