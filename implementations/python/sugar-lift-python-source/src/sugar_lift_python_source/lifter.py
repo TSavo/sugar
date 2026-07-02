@@ -1229,6 +1229,10 @@ class _Emitter:
             return self.listcomp(node)
         if isinstance(node, ast.GeneratorExp):
             return self.generatorexp(node)
+        if isinstance(node, ast.SetComp):
+            return self.setcomp(node)
+        if isinstance(node, ast.DictComp):
+            return self.dictcomp(node)
         if isinstance(node, ast.Dict):
             keys = [
                 none_const() if key is None else self.expr(key) for key in node.keys
@@ -1318,6 +1322,63 @@ class _Emitter:
         finally:
             self.locals = previous_locals
         term = ctor("python:generatorexp", elt, *generators)
+        self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
+        return term
+
+    def setcomp(self, node: ast.SetComp) -> Json:
+        previous_locals = self.locals
+        active_locals: set[str] = set()
+        generators: list[Json] = []
+        try:
+            for generator in node.generators:
+                if generator.is_async:
+                    raise _UnsupportedSyntax(
+                        generator,
+                        "async comprehensions are refused",
+                    )
+                self.locals = previous_locals | active_locals
+                iterator = self.expr(generator.iter)
+                target, target_names = self.comprehension_target(generator.target)
+                active_locals.update(target_names)
+                self.locals = previous_locals | active_locals
+                filters = [self.expr(condition) for condition in generator.ifs]
+                generators.append(
+                    ctor("python:comprehension", target, iterator, *filters)
+                )
+            self.locals = previous_locals | active_locals
+            elt = self.expr(node.elt)
+        finally:
+            self.locals = previous_locals
+        term = ctor("python:setcomp", elt, *generators)
+        self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
+        return term
+
+    def dictcomp(self, node: ast.DictComp) -> Json:
+        previous_locals = self.locals
+        active_locals: set[str] = set()
+        generators: list[Json] = []
+        try:
+            for generator in node.generators:
+                if generator.is_async:
+                    raise _UnsupportedSyntax(
+                        generator,
+                        "async comprehensions are refused",
+                    )
+                self.locals = previous_locals | active_locals
+                iterator = self.expr(generator.iter)
+                target, target_names = self.comprehension_target(generator.target)
+                active_locals.update(target_names)
+                self.locals = previous_locals | active_locals
+                filters = [self.expr(condition) for condition in generator.ifs]
+                generators.append(
+                    ctor("python:comprehension", target, iterator, *filters)
+                )
+            self.locals = previous_locals | active_locals
+            key = self.expr(node.key)
+            value = self.expr(node.value)
+        finally:
+            self.locals = previous_locals
+        term = ctor("python:dictcomp", key, value, *generators)
         self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
         return term
 

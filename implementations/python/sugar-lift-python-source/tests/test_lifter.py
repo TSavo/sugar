@@ -301,6 +301,24 @@ def _generatorexp(
     }
 
 
+def _setcomp(
+    elt: dict[str, object], *generators: dict[str, object]
+) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:setcomp", "args": [elt, *generators]}
+
+
+def _dictcomp(
+    key: dict[str, object],
+    value: dict[str, object],
+    *generators: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:dictcomp",
+        "args": [key, value, *generators],
+    }
+
+
 def _comprehension(
     target: dict[str, object],
     iterator: dict[str, object],
@@ -1268,10 +1286,10 @@ def test_empty_dict_literal_lifts_to_empty_dict_term() -> None:
 
 
 def test_dict_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f(xs):\n    return {x for x in xs}\n", "setcomp.py")
+    result = lift_source("def f(x):\n    return (await x)\n", "await_expr.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled expression kind: SetComp"
+        "await expressions are refused"
     ]
 
 
@@ -1284,7 +1302,7 @@ def test_set_literal_lifts_to_set_term_without_refusal() -> None:
 
 def test_set_literal_element_refusal_propagates_without_swallowing() -> None:
     result = lift_source(
-        "def f(xs):\n    return {{x for x in xs}}\n",
+        "def f(xs):\n    return {(await xs)}\n",
         "set_literal_element_refusal.py",
     )
 
@@ -1293,7 +1311,7 @@ def test_set_literal_element_refusal_propagates_without_swallowing() -> None:
             "kind": "unhandled-syntax",
             "function": "set_literal_element_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
 
@@ -1410,10 +1428,10 @@ def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
 
 
 def test_fstring_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f(xs):\n    return {x for x in xs}\n", "setcomp.py")
+    result = lift_source("def f(x):\n    return (await x)\n", "await_expr.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled expression kind: SetComp"
+        "await expressions are refused"
     ]
 
 
@@ -1840,7 +1858,7 @@ def test_subscript_index_lifts_slice_bounds_and_omissions() -> None:
 
 
 def test_subscript_index_slice_bound_refusal_propagates() -> None:
-    node = ast.parse("xs[1:{i for i in xs}]", mode="eval").body
+    node = ast.parse("xs[1:(await i)]", mode="eval").body
     assert isinstance(node, ast.Subscript)
     emitter = _Emitter(
         fn_name="slice.f",
@@ -1854,7 +1872,7 @@ def test_subscript_index_slice_bound_refusal_propagates() -> None:
     with pytest.raises(_UnsupportedSyntax) as exc:
         emitter.subscript_index(node)
 
-    assert exc.value.reason == "unhandled expression kind: SetComp"
+    assert exc.value.reason == "unhandled expression kind: Await"
 
 
 def test_tuple_slice_index_keeps_existing_refusal() -> None:
@@ -3785,7 +3803,7 @@ def test_plain_call_does_not_get_starred_unresolved_effect() -> None:
 
 def test_starred_call_argument_inner_refusal_propagates_without_shape() -> None:
     result = lift_source(
-        "def f(xs):\n    return make(*{x for x in xs})\n",
+        "def f(xs):\n    return make(*(await xs))\n",
         "starred_inner_refusal.py",
     )
 
@@ -3794,7 +3812,7 @@ def test_starred_call_argument_inner_refusal_propagates_without_shape() -> None:
             "kind": "unhandled-syntax",
             "function": "starred_inner_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
 
@@ -3883,7 +3901,7 @@ def test_subscript_callees_lift_as_opaque_unresolved_calls() -> None:
 
 def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
     result = lift_source(
-        "def f(factory, ys):\n    return factory[{y for y in ys}](1)\n",
+        "def f(factory, ys):\n    return factory[(await ys)](1)\n",
         "subscript_callee_inner_refusal.py",
     )
 
@@ -3892,7 +3910,7 @@ def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
             "kind": "unhandled-syntax",
             "function": "subscript_callee_inner_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
 
@@ -4008,30 +4026,18 @@ def test_listcomp_target_binding_does_not_leak_to_following_statement() -> None:
     )
 
 
-def test_listcomp_floor_discriminates_set_and_dict_comprehensions() -> None:
-    set_result = lift_source(
-        "def f(xs):\n    return {x for x in xs}\n",
-        "setcomp_refusal.py",
-    )
-    dict_result = lift_source(
-        "def f(xs):\n    return {x: x for x in xs}\n",
-        "dictcomp_refusal.py",
+def test_listcomp_floor_discriminates_other_unhandled_expression_kinds() -> None:
+    result = lift_source(
+        "def f(xs):\n    return [x for x in (await xs)]\n",
+        "listcomp_await_refusal.py",
     )
 
-    assert set_result.refusals == [
+    assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "setcomp_refusal.f",
+            "function": "listcomp_await_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
-        }
-    ]
-    assert dict_result.refusals == [
-        {
-            "kind": "unhandled-syntax",
-            "function": "dictcomp_refusal.f",
-            "line": 2,
-            "reason": "unhandled expression kind: DictComp",
+            "reason": "await expressions are refused",
         }
     ]
 
@@ -4083,7 +4089,7 @@ def test_generatorexp_lifts_call_argument_and_records_opaque_loop_effect() -> No
 
 def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(rows):\n    return sum({x for x in row} for row in rows)\n",
+        "def f(rows):\n    return sum((await row) for row in rows)\n",
         "generatorexp_element_refusal.py",
     )
 
@@ -4092,7 +4098,7 @@ def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
             "kind": "unhandled-syntax",
             "function": "generatorexp_element_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -4100,7 +4106,7 @@ def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
 
 def test_generatorexp_iterable_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(xs):\n    return sum(x for x in {y for y in xs})\n",
+        "def f(xs):\n    return sum(x for x in (await xs))\n",
         "generatorexp_iter_refusal.py",
     )
 
@@ -4109,7 +4115,7 @@ def test_generatorexp_iterable_refusal_propagates_without_opaque_term() -> None:
             "kind": "unhandled-syntax",
             "function": "generatorexp_iter_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -4146,6 +4152,230 @@ def test_generatorexp_roundtrip_is_structurally_stable_and_nested() -> None:
 
     compiled = compile_body_term(_return(term), formals=["matrix"])
     relifted = lift_source(compiled, "roundtrip_generatorexp.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_setcomp_lifts_element_generator_and_opaque_loop_effect() -> None:
+    source = "def f(xs):\n    return {x for x in xs}\n"
+
+    result = lift_source(source, "setcomp_simple.py")
+
+    term = _setcomp(_var("x"), _comprehension(_var("x"), _var("xs")))
+    contract = _contract(result.ir, ".f")
+    loop_cid = cid_of_json(term)
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+    assert {"kind": "opaque_loop", "loopCid": loop_cid} in contract["effects"]
+    assert result.opacity_report == [
+        {
+            "file": "setcomp_simple.py",
+            "line": 2,
+            "col": 11,
+            "kind": "opaque_loop",
+            "cid": loop_cid,
+        }
+    ]
+
+
+def test_setcomp_element_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(xs):\n    return {(await x) for x in xs}\n",
+        "setcomp_element_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "setcomp_element_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_setcomp_iterable_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(xs):\n    return {x for x in (await xs)}\n",
+        "setcomp_iter_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "setcomp_iter_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_setcomp_target_binding_does_not_leak_to_following_statement() -> None:
+    source = (
+        'x = "global"\n'
+        "def f(xs):\n"
+        "    values = {x for x in xs}\n"
+        "    return x\n"
+    )
+
+    result = lift_source(source, "setcomp_scope.py")
+
+    term = _setcomp(_var("x"), _comprehension(_var("x"), _var("xs")))
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("values"), term),
+        _return(_str_const("global")),
+    )
+
+
+def test_setcomp_roundtrip_is_structurally_stable_and_nested() -> None:
+    term = _setcomp(
+        _var("x"),
+        _comprehension(_var("row"), _var("matrix")),
+        _comprehension(
+            _var("x"),
+            _var("row"),
+            _compare(">", _var("x"), _int_const(0)),
+        ),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["matrix"])
+    relifted = lift_source(compiled, "roundtrip_setcomp.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_dictcomp_lifts_key_value_generator_and_opaque_loop_effect() -> None:
+    source = "def f(items):\n    return {k: v for k, v in items}\n"
+
+    result = lift_source(source, "dictcomp_simple.py")
+
+    term = _dictcomp(
+        _var("k"),
+        _var("v"),
+        _comprehension(_tuple(_var("k"), _var("v")), _var("items")),
+    )
+    contract = _contract(result.ir, ".f")
+    loop_cid = cid_of_json(term)
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+    assert {"kind": "opaque_loop", "loopCid": loop_cid} in contract["effects"]
+    assert result.opacity_report == [
+        {
+            "file": "dictcomp_simple.py",
+            "line": 2,
+            "col": 11,
+            "kind": "opaque_loop",
+            "cid": loop_cid,
+        }
+    ]
+
+
+def test_dictcomp_key_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(items):\n    return {(await k): v for k, v in items}\n",
+        "dictcomp_key_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "dictcomp_key_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_dictcomp_value_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(items):\n    return {k: (await v) for k, v in items}\n",
+        "dictcomp_value_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "dictcomp_value_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_dictcomp_iterable_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(items):\n    return {k: v for k, v in (await items)}\n",
+        "dictcomp_iter_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "dictcomp_iter_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_dictcomp_target_binding_does_not_leak_to_following_statement() -> None:
+    source = (
+        'k = "global"\n'
+        "def f(items):\n"
+        "    values = {k: v for k, v in items}\n"
+        "    return k\n"
+    )
+
+    result = lift_source(source, "dictcomp_scope.py")
+
+    term = _dictcomp(
+        _var("k"),
+        _var("v"),
+        _comprehension(_tuple(_var("k"), _var("v")), _var("items")),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("values"), term),
+        _return(_str_const("global")),
+    )
+
+
+def test_dictcomp_and_setcomp_lift_to_distinct_term_shapes() -> None:
+    dict_result = lift_source("def f(xs):\n    return {x: x for x in xs}\n", "dc.py")
+    set_result = lift_source("def f(xs):\n    return {x for x in xs}\n", "sc.py")
+
+    assert dict_result.refusals == []
+    assert set_result.refusals == []
+    assert _function_body(dict_result) == _return(
+        _dictcomp(_var("x"), _var("x"), _comprehension(_var("x"), _var("xs")))
+    )
+    assert _function_body(set_result) == _return(
+        _setcomp(_var("x"), _comprehension(_var("x"), _var("xs")))
+    )
+
+
+def test_dictcomp_roundtrip_is_structurally_stable_and_nested() -> None:
+    term = _dictcomp(
+        _var("k"),
+        _var("x"),
+        _comprehension(_var("row"), _var("matrix")),
+        _comprehension(_tuple(_var("k"), _var("x")), _var("row")),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["matrix"])
+    relifted = lift_source(compiled, "roundtrip_dictcomp.py")
 
     assert relifted.refusals == []
     body = _function_body(relifted)
@@ -4557,7 +4787,7 @@ def test_lambda_variadic_parameters_are_carried_and_bound() -> None:
 
 def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(xs):\n    return lambda x: {y for y in x}\n",
+        "def f(xs):\n    return lambda x: (await x)\n",
         "lambda_body_refusal.py",
     )
 
@@ -4566,7 +4796,7 @@ def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
             "kind": "unhandled-syntax",
             "function": "lambda_body_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "unhandled expression kind: Await",
         }
     ]
 
@@ -4599,7 +4829,7 @@ def test_ifexp_lifts_explicit_ternary_condition_and_branches() -> None:
 
 def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(cond, x, ys):\n    return x if cond else {y for y in ys}\n",
+        "def f(cond, x, ys):\n    return x if cond else (await ys)\n",
         "ifexp_else_refusal.py",
     )
 
@@ -4608,7 +4838,7 @@ def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> No
             "kind": "unhandled-syntax",
             "function": "ifexp_else_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: SetComp",
+            "reason": "await expressions are refused",
         }
     ]
 
@@ -4712,7 +4942,7 @@ def test_compile_lift_roundtrip_preserves_cf_guarded_none_if_body() -> None:
 
 
 def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
-    source = "def bad(xs):\n    return {x for x in xs}\n"
+    source = "def bad(xs):\n    return (await xs)\n"
 
     result = lift_source(source, "badmodule.py")
 
@@ -4725,13 +4955,13 @@ def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
     assert refusal["kind"] == "unhandled-syntax"
     assert refusal["function"] == "badmodule.bad"
     assert refusal["line"] == 2
-    assert "SetComp" in refusal["reason"]
+    assert "await expressions are refused" == refusal["reason"]
     assert "python:unknown" not in _canon(result.refusals)
     assert "python:skip" not in _canon(result.refusals)
 
 
-def test_set_comprehension_refusal_does_not_fire_different_variant() -> None:
-    source = "def bad(xs):\n    return {x for x in xs}\n"
+def test_await_expression_refusal_does_not_fire_different_variant() -> None:
+    source = "def bad(xs):\n    return (await xs)\n"
 
     result = lift_source(source, "badmodule.py")
 
