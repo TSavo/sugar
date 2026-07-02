@@ -682,7 +682,6 @@ fn python_precondition_body_guard_discharges_good_and_refuses_bad_callsite() {
 /// witness. The decisive proof the tool-written bridge does not vacuously pass:
 /// a real violation is caught honestly.
 #[test]
-#[ignore = "stale fixture: current Python verify surface does not exercise the mutated body; keep the old negative out of the default gate"]
 fn python_production_path_broken_body_fails_unsatisfied_no_witness() {
     if !python_available() {
         eprintln!("python3 not on PATH: skipping python production-bridge negative test");
