@@ -247,6 +247,14 @@ def _list(*items: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:list", "args": list(items)}
 
 
+def _dict(*entries: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:dict", "args": list(entries)}
+
+
+def _dict_entry(key: dict[str, object], value: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:dict_entry", "args": [key, value]}
+
+
 def _bool_const(value: bool) -> dict[str, object]:
     return {
         "kind": "const",
@@ -962,6 +970,106 @@ def test_if_is_not_none_lifts_to_cf_guarded_option_guards() -> None:
         else_head="is_none",
     )
     assert "python:compare" in _ctor_names(body)
+
+
+def test_simple_dict_literal_lifts_to_ordered_dict_entries() -> None:
+    result = lift_source('def f():\n    return {"a": 1, "b": 2}\n', "dict_simple.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _dict(
+            _dict_entry(_str_const("a"), _int_const(1)),
+            _dict_entry(_str_const("b"), _int_const(2)),
+        )
+    )
+
+
+def test_dict_literal_with_computed_keys_and_values_lifts_terms() -> None:
+    source = "def f(x, y):\n    return {x + 1: y * 2, \"seen\": x}\n"
+
+    result = lift_source(source, "dict_computed.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _dict(
+            _dict_entry(
+                {
+                    "kind": "ctor",
+                    "name": "python:add",
+                    "args": [_var("x"), _int_const(1)],
+                },
+                {
+                    "kind": "ctor",
+                    "name": "python:mul",
+                    "args": [_var("y"), _int_const(2)],
+                },
+            ),
+            _dict_entry(_str_const("seen"), _var("x")),
+        )
+    )
+
+
+def test_dict_literal_with_spread_uses_none_key_sentinel() -> None:
+    source = 'def f(base):\n    return {"a": 1, **base, "b": 2}\n'
+
+    result = lift_source(source, "dict_spread.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _dict(
+            _dict_entry(_str_const("a"), _int_const(1)),
+            _dict_entry(_none_const(), _var("base")),
+            _dict_entry(_str_const("b"), _int_const(2)),
+        )
+    )
+
+
+def test_empty_dict_literal_lifts_to_empty_dict_term() -> None:
+    result = lift_source("def f():\n    return {}\n", "dict_empty.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_dict())
+
+
+def test_dict_floor_discriminates_other_unhandled_expression_kinds() -> None:
+    result = lift_source("def f():\n    return {1, 2}\n", "set_literal.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unhandled expression kind: Set"
+    ]
+
+
+def test_dict_roundtrip_is_structurally_stable_and_ordered() -> None:
+    term = _dict(
+        _dict_entry(_str_const("a"), _int_const(1)),
+        _dict_entry(_str_const("b"), _var("x")),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["x"])
+    relifted = lift_source(compiled, "roundtrip_dict.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_empty_dict_and_spread_entry_roundtrip_to_distinct_terms() -> None:
+    empty = _dict()
+    spread = _dict(_dict_entry(_none_const(), _var("base")))
+
+    empty_compiled = compile_body_term(_return(empty))
+    spread_compiled = compile_body_term(_return(spread), formals=["base"])
+    empty_relifted = lift_source(empty_compiled, "roundtrip_empty_dict.py")
+    spread_relifted = lift_source(spread_compiled, "roundtrip_spread_dict.py")
+
+    assert empty_relifted.refusals == []
+    assert spread_relifted.refusals == []
+    empty_body = _function_body(empty_relifted)
+    spread_body = _function_body(spread_relifted)
+    assert empty_body == _return(empty)
+    assert spread_body == _return(spread)
+    assert cid_of_json(empty_body) != cid_of_json(spread_body)
 
 
 def test_bare_assert_lifts_to_assert_statement_with_assertion_error_locus() -> None:
@@ -2873,6 +2981,29 @@ def test_b1_signed_integer_defaults_are_literal_parameter_shape() -> None:
         {"name": "axis", "kind": "positional-or-keyword", "default": _int_const(-1)},
         {"name": "step", "kind": "keyword-only", "default": _int_const(2)},
     ]
+
+
+def test_dict_literal_defaults_are_literal_parameter_shape() -> None:
+    source = "def f(mapping={'a': 1}, *, options={}):\n    return mapping\n"
+
+    result = lift_source(source, "dict_default.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert contract["parameterShape"] == [
+        {
+            "name": "mapping",
+            "kind": "positional-or-keyword",
+            "default": _dict(_dict_entry(_str_const("a"), _int_const(1))),
+        },
+        {"name": "options", "kind": "keyword-only", "default": _dict()},
+    ]
+
+    compiled = compile_ir_document([contract])
+    relifted = lift_source(compiled, "dict_default.py")
+    relifted_contract = _contract(relifted.ir, ".f")
+    assert relifted.refusals == []
+    assert relifted_contract["parameterShape"] == contract["parameterShape"]
 
 
 def test_b1_nonliteral_default_remains_refused_as_definition_time_hazard() -> None:

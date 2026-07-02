@@ -282,6 +282,17 @@ def _expr(term: Json) -> ast.expr:
         return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name == "python:list":
         return ast.List(elts=[_expr(arg) for arg in args], ctx=ast.Load())
+    if name == "python:dict":
+        keys: list[ast.expr | None] = []
+        values: list[ast.expr] = []
+        for entry in args:
+            if _name(entry) != "python:dict_entry":
+                raise ValueError(f"expected python:dict_entry: {entry!r}")
+            entry_args = entry.get("args", [])
+            key = entry_args[0]
+            keys.append(None if _is_none_const(key) else _expr(key))
+            values.append(_expr(entry_args[1]))
+        return ast.Dict(keys=keys, values=values)
     if name == "python:walrus":
         return ast.NamedExpr(target=_walrus_target(args[0]), value=_expr(args[1]))
     raise ValueError(f"unsupported python operation in expression position: {name}")
