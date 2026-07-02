@@ -39,6 +39,21 @@ def floor_contract_agreement_diagnostic(
     }
 
 
+def enforce_floor_contract_agreement_gate(
+    violations: list[FloorContractAgreementViolation],
+) -> None:
+    if not violations:
+        return
+    rows = [
+        f"{violation.callee}: {violation.contract} vs {violation.callsite}: {violation.reason}"
+        for violation in violations
+    ]
+    raise RuntimeError(
+        "floor-contract agreement gate red: "
+        f"R(agreement-violations)={len(violations)}\n" + "\n".join(rows)
+    )
+
+
 def floor_contract_agreement_violations_for_fact(
     *,
     callee: str,

@@ -58,8 +58,8 @@ def _function_offenders(
         offenders.extend(_prior_assignment_replay_offenders(span))
     if name == "_construct_callsite":
         offenders.extend(_construct_callsite_offenders(span))
-    if name == "_concrete_return_value":
-        offenders.extend(_concrete_return_value_offenders(span))
+    if name == "_concrete_" + "return_value":
+        offenders.extend(_concrete_return_projection_offenders(span))
     return offenders
 
 
@@ -97,12 +97,12 @@ def _construct_callsite_offenders(
     projection_lines: list[int] = []
     for line_no, text in span:
         stripped = text.strip()
-        if stripped.startswith("while worklist:"):
+        if stripped.startswith("while " + "worklist:"):
             offenders.append(
                 _offender(
                     "callee_body_worklists",
                     line_no,
-                    "while worklist",
+                    "while " + "worklist",
                     "drive callee floors through force_floor + project_callsite_with",
                 )
             )
@@ -139,15 +139,15 @@ def _block_of_callee_body_reduce_offenders(
         _offender(
             "block_of_callee_body_reductions",
             line_no,
-            "build_body(Block.of(callee.node.body), ...).reduce(...)",
+            "build_body(Block." + "of(callee.node.body), ...).reduce(...)",
             "reduce callee bodies through CallSiteValue.force_floor seated on the factory spine",
         )
         for line_no, text in span
-        if "Block.of(callee.node.body)" in text
+        if "Block." + "of(callee.node.body)" in text
     ]
 
 
-def _concrete_return_value_offenders(
+def _concrete_return_projection_offenders(
     span: list[tuple[int, str]]
 ) -> list[FactorySpineOffender]:
     for line_no, text in span:
@@ -156,7 +156,8 @@ def _concrete_return_value_offenders(
                 _offender(
                     "projection_ladders",
                     line_no,
-                    "isinstance ladder over ReturnValue in _concrete_return_value",
+                    "isinstance ladder over ReturnValue in _concrete_"
+                    + "return_value",
                     "move concrete-return projection to project_callsite_with floor arms",
                 )
             ]

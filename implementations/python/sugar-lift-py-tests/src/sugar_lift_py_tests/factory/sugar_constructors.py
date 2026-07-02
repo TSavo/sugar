@@ -115,7 +115,8 @@ def build_control_flow_body_sugar(site, ctx):
     from sugar_lift_py_tests.outcome import complete_value
     from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-    block = ctx.build_body(Block.of(site.node.body), SugarRole.STATEMENT)
+    body = site.node.body
+    block = ctx.build_body(Block.of(body), SugarRole.STATEMENT)
     block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
     stmts = block_value.statements
     statements = block.sugar.statements

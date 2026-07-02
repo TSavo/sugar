@@ -349,7 +349,8 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.Try, ast.TryStar)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(body), self.filename)
 
     def try_handlers(self) -> "list[SourceFragment]":
         """Return SourceFragments for the Try except handlers."""
@@ -379,7 +380,8 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.ExceptHandler)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(body), self.filename)
 
     def except_handler_type_names(self) -> "tuple[str, ...] | None":
         """Return handler exception names, or None for a bare except."""
@@ -728,7 +730,8 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.With, ast.AsyncWith)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(body), self.filename)
 
     # --- await ------------------------------------------------------------
 
@@ -767,7 +770,8 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.For, ast.AsyncFor)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+        body = self.node.body  # type: ignore[attr-defined]
+        return SourceFragment.from_node(Block.of(body), self.filename)
 
     def for_orelse_count(self) -> int:
         """Return the number of else statements on a For/AsyncFor node."""

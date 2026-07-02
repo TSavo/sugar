@@ -34,6 +34,7 @@ from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from .dig_refusal import DigRefusal
 from .floor_contract_agreement import (
     FloorContractAgreementViolation,
+    enforce_floor_contract_agreement_gate,
     floor_contract_agreement_diagnostic,
     floor_contract_agreement_violations_for_fact,
 )
@@ -185,6 +186,7 @@ def build_literal_call_report(
             call_edges.extend(edges)
     if not contracts:
         return None
+    enforce_floor_contract_agreement_gate(agreement_violations)
     return SourceReportBuild(
         LiftReportPayloadDto(
             ir=contracts,
@@ -348,8 +350,7 @@ def _lift_assert(
     universe: LiftResult | None = None
     if callee_name in functions_by_name:
         # Build the callsite through the factory and then ask the factory term for the floor.
-        # The old mini-interpreter remains below only as Slice-7 dead code; this consumer reads
-        # the CallSiteValue/force_floor/project_callsite_with spine directly.
+        # The consumer reads the CallSiteValue/force_floor/project_callsite_with spine directly.
         universe = _construct_callsite_from_factory_term(
             stmt,
             comparison_left,
@@ -1195,209 +1196,6 @@ def _immediate_callsite_term(
     if projection is None:
         return None
     return _projected_value_term(projection)
-
-
-def _construct_callsite(
-    stmt: SourceFragment,
-    callsite: SourceFragment,
-    callee_name: str,
-    caller_fn: SourceFragment,
-    functions_by_name: dict[str, SourceFragment],
-    *,
-    filename: str,
-    memento_file: str,
-    source_lines: list[str],
-    dig_refusals: list[DigRefusal],
-    agreement_violations: list[FloorContractAgreementViolation],
-) -> LiftResult | None:
-    """Construct the callsite tower AND every tower it bridges to, transitively.
-
-    Curry the callee over the concrete arg and reduce the body through the catalog -- every
-    operation delegates to Python (the reference), leak-impossible by construction. The body
-    reaches one of two floors (the Outcome algebra):
-      * a LITERAL -> we swear `call:callee(arg) == <value>` (the leaf).
-      * a BRIDGE `call:h(arg2)` -> we swear `call:callee(arg) == call:h(arg2)` AND the reduce
-        ENQUEUED h's dig (emit's job: pointer + obligation are one act). h owes a tower, so we
-        drain it next -- the bridge's `vendor source` goes Resolved, not Absent.
-    The worklist drains transitively, cycle-guarded by the #euf# key so a tower never re-digs
-    itself (the fixpoint). A callee with no body, a symbolic arg, or a runtime effect leaves
-    the bridge as a dangling axiom and that branch defers; if NOTHING constructs, return None
-    and the symbolic universe / the mouth takes over."""
-    from .build import default_catalog
-    from sugar_lift_py_tests.context.reduce_context import ReduceContext
-    from sugar_lift_py_tests.factory.block import Block
-    from sugar_lift_py_tests.factory.factory_gap import FactoryGap
-    from sugar_lift_py_tests.floor import (
-        CallSiteValue,
-        ReturnValue,
-        SymbolicValue,
-        TermValue,
-    )
-    from sugar_lift_py_tests.outcome import Complete
-
-    if callsite.call_arg_count() != 1:
-        return None
-    resolver = {name: f.node for name, f in functions_by_name.items()}
-    build_ctx = FactoryBuildContext(
-        filename=filename, catalog=default_catalog(), name_resolver=resolver
-    )
-    # The TOP arg must itself slam to a concrete value (a symbolic arg leaves the whole
-    # callsite irreducible -> defer to the symbolic universe).
-    try:
-        top = build_ctx.build_body(callsite.call_args()[0], SugarRole.TERM).reduce(
-            ReduceContext.root(owner="literal_call_report.top_arg")
-        )
-    except (TypeError, ValueError) as exc:
-        _record_dig_refusal(
-            dig_refusals,
-            callee=callee_name,
-            blame=callsite.blame,
-            caught=exc,
-            reason="top arg did not slam to a concrete value",
-        )
-        return None
-    if not isinstance(top, Complete) or isinstance(top.value, SymbolicValue):
-        return None
-
-    def _euf_name(cn, arg_value):
-        return euf_callsite_name(
-            cn,
-            euf_call_term(
-                cn, [floor_to_term(arg_value, owner="literal_call_report")]
-            ),
-            suffix="::assertion",
-        )
-
-    seen: set[str] = set()
-    universes_seen: set[str] = set()
-    callable_contracts: dict[str, BodyUniverseDto] = {}
-    worklist: list[tuple[str, object]] = [(callee_name, top.value)]
-    facts: list[LiftResult] = []
-    while worklist:
-        cn, arg_value = worklist.pop()
-        key = _euf_name(cn, arg_value)
-        if key in seen:
-            continue  # fixpoint: this tower is already minted (cycle / shared callee)
-        seen.add(key)
-        callee = functions_by_name.get(cn)
-        if callee is None or len(callee.function_params()) != 1:
-            continue  # no tower to dig -> `call:cn(arg)` stays a dangling axiom (the vendor's word)
-        # Emit the callee's ::callable UNIVERSE once -- the symbolic body walk, warranting each
-        # source line (`return h(x)` -> `out == call:h(x)`, `return x+1` -> `out == +(x,1)`). The
-        # construction below swears the concrete VALUE at the callsite; the universe warrants the
-        # body where its constraints originate, so the visual walk paints the body green too.
-        if cn not in universes_seen:
-            universes_seen.add(cn)
-            uni = _function_universe(
-                callee,
-                cn,
-                functions_by_name=functions_by_name,
-                filename=filename,
-                memento_file=memento_file,
-                source_lines=source_lines,
-                dig_refusals=dig_refusals,
-            )
-            if uni is not None:
-                facts.append(uni)
-                for contract in uni[0]:
-                    if (
-                        contract.kind == "function-contract"
-                        and contract.bridge_source_symbol is not None
-                    ):
-                        callable_contracts[contract.bridge_source_symbol] = contract
-        sink: list[tuple[str, object]] = []
-        reduce_ctx = ReduceContext.root(
-            owner="literal_call_report.tower", dig_sink=sink
-        )
-        from sugar_lift_py_tests.temporal import bind_temporal
-
-        reduce_ctx = bind_temporal(
-            reduce_ctx,
-            callee.function_params()[0],
-            arg_value,
-            owner="literal_call_report.construct_callsite",
-            blame=callee.blame,
-        )
-        try:
-            outcome = build_ctx.build_body(
-                Block.of(callee.node.body), SugarRole.STATEMENT
-            ).reduce(reduce_ctx)
-        except (TypeError, ValueError, FactoryGap) as exc:
-            _record_dig_refusal(
-                dig_refusals,
-                callee=cn,
-                blame=callee.blame,
-                caught=exc,
-                reason="callee body did not reduce to a constructible tower",
-            )
-            continue  # a shape the catalog cannot peel -> leave the bridge as an axiom
-        if not isinstance(outcome, Complete):
-            continue  # a runtime effect (Incomplete): unclimbable here
-        result = _concrete_return_value(
-            outcome.value.statements,
-            param_name=callee.function_params()[0],
-            arg_value=arg_value,
-        )
-        if result is None:
-            continue
-        if isinstance(result, TermValue):
-            value_term = floor_to_term(
-                result, owner="literal_call_report"
-            )  # reached a literal floor
-        elif isinstance(result, (SymbolicValue, CallSiteValue)):
-            value_term = (
-                result.term
-            )  # topped out at a bridge `call:h(arg2)` -- the pointer
-        else:
-            continue
-        if value_term == euf_call_term(
-            cn, [floor_to_term(arg_value, owner="literal_call_report")]
-        ):
-            # A reflexive self-bridge `call:f(arg) == call:f(arg)` is a recursion cycle: vacuous,
-            # and the tower is not finitely constructible. Skip it -> no fact; the callsite falls
-            # to the symbolic universe / the mouth, which refuses cleanly rather than swearing
-            # a tautology that defines nothing.
-            continue
-        callsite_contract_name = _euf_name(cn, arg_value)
-        callable_contract = callable_contracts.get(f"call:{cn}")
-        if callable_contract is not None:
-            agreement_violations.extend(
-                floor_contract_agreement_violations_for_fact(
-                    callee=cn,
-                    callable_contract=callable_contract,
-                    arg_terms=[floor_to_term(arg_value, owner="literal_call_report")],
-                    floor_term=value_term,
-                    callsite_contract=callsite_contract_name,
-                )
-            )
-        facts.append(
-            _emit_euf_fact(
-                stmt,
-                caller_fn,
-                cn,
-                [floor_to_term(arg_value, owner="literal_call_report")],
-                value_term,
-                filename=filename,
-                memento_file=memento_file,
-                source_lines=source_lines,
-            )
-        )
-        worklist.extend(sink)  # the bridges this body emitted now owe their own towers
-    if not facts:
-        return None
-    merged = facts[0]
-    for extra in facts[1:]:
-        merged = _merge_lifts(merged, extra)
-    return merged
-
-
-def _concrete_return_value(statements, *, param_name: str, arg_value):
-    from sugar_lift_py_tests.floor import ReturnValue
-
-    del param_name, arg_value
-    if len(statements) == 1 and isinstance(statements[0], ReturnValue):
-        return statements[0].value
-    return None
 
 
 def _function_universe(
