@@ -27,7 +27,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::blake3_512_of;
 use tracing::{debug, info, warn};
 
-use sugar_proof_envelope::{AtomCid, ContractBodyCid, MementoCid, ProofGraph};
+use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MementoCid, ProofGraph};
 
 use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
 
@@ -278,26 +278,19 @@ fn load_catalog_bytes(
                 continue;
             }
         };
-        // Rule 2: re-derive the member identity from the member content.
-        let derived = computed_memento_cid(sugar_proof_envelope::recompute_member_cid(&env));
-        if derived != cid {
-            pool.load_errors.push(LoadError {
-                proof_path: source_label.clone(),
-                reason: format!("rule 2: member {cid} derives to {derived}"),
-            });
-            continue;
-        }
-        if sugar_proof_envelope::member_signature(&env).is_some() {
-            if let Err(error) = crate::proof_conformance::verify_member_signature(&env) {
+        let anchored = match AnchoredMember::new(cid.clone(), env) {
+            Ok(member) => member,
+            Err(error) => {
                 pool.load_errors.push(LoadError {
                     proof_path: source_label.clone(),
-                    reason: format!("member {cid}: {error}"),
+                    reason: error,
                 });
                 continue;
             }
-        }
-        if sugar_proof_envelope::member_kind(&env) == Some("contract") {
-            let Some(body_cid) = sugar_proof_envelope::member_field(&env, "bodyCid")
+        };
+        let env = anchored.envelope();
+        if sugar_proof_envelope::member_kind(env) == Some("contract") {
+            let Some(body_cid) = sugar_proof_envelope::member_field(env, "bodyCid")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
@@ -326,12 +319,12 @@ fn load_catalog_bytes(
         // header.sourceSymbol) without branching at the call site. The indexes
         // themselves store only the bridge memento CID; the verified envelope
         // lives once in `pool.mementos`.
-        let bridge_index = if sugar_proof_envelope::member_kind(&env) == Some("bridge") {
-            sugar_proof_envelope::member_field(&env, "sourceSymbol")
+        let bridge_index = if sugar_proof_envelope::member_kind(env) == Some("bridge") {
+            sugar_proof_envelope::member_field(env, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|sym| {
-                    let callsite_key = sugar_proof_envelope::member_body(&env).and_then(|body| {
+                    let callsite_key = sugar_proof_envelope::member_body(env).and_then(|body| {
                         let cs = body.get("callsite");
                         let file = cs
                             .and_then(|v| v.get("file"))
@@ -366,11 +359,11 @@ fn load_catalog_bytes(
             .entry(derived_full.clone())
             .or_default()
             .insert(cid.clone());
-        index_effect_site_annotation(&source_label, &derived_full, &cid, &env, pool);
+        index_effect_site_annotation(&source_label, &derived_full, &cid, env, pool);
 
         // Index for handshake. The memento IS the verification;
         // inserting it into the pool IS caching the verification result.
-        pool.insert(cid.clone(), env);
+        pool.insert(anchored);
 
         if let Some((sym, callsite_key)) = bridge_index {
             pool.bridges_by_symbol.insert(sym.clone(), cid.clone());

@@ -19,7 +19,7 @@ use serde::{Serialize, Serializer};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, CanonicalizerError, Value};
 
-use crate::sign::{ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed};
+use crate::sign::{ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AtomCid(String);
@@ -908,6 +908,120 @@ pub fn recompute_member_cid(envelope: &Json) -> String {
     blake3_512_of(canonical.as_bytes())
 }
 
+/// A member envelope that has earned its pool key at ingress.
+///
+/// This is the one construction door for verifier pool insertion: the caller
+/// supplies the catalog key and decoded member envelope, and the constructor
+/// re-derives the member CID and verifies any carried member signature before
+/// handing the value to downstream indexes.
+#[derive(Clone, Debug)]
+pub struct AnchoredMember {
+    cid: MementoCid,
+    envelope: Json,
+}
+
+impl AnchoredMember {
+    pub fn new(cid: MementoCid, envelope: Json) -> Result<Self, String> {
+        let derived = MementoCid::try_parse(recompute_member_cid(&envelope))
+            .expect("computed member CID must parse");
+        if derived != cid {
+            return Err(format!("rule 2: member {cid} derives to {derived}"));
+        }
+        if member_signature(&envelope).is_some() {
+            verify_member_signature(&envelope).map_err(|error| format!("member {cid}: {error}"))?;
+        }
+        Ok(Self { cid, envelope })
+    }
+
+    pub fn cid(&self) -> &MementoCid {
+        &self.cid
+    }
+
+    pub fn envelope(&self) -> &Json {
+        &self.envelope
+    }
+
+    pub fn into_parts(self) -> (MementoCid, Json) {
+        (self.cid, self.envelope)
+    }
+}
+
+pub fn verify_member_signature(envelope: &Json) -> Result<(), String> {
+    if let Some(layered_envelope) = envelope.get("envelope") {
+        let signer = layered_envelope
+            .get("signer")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "layered envelope signer missing".to_string())?;
+        let signature = layered_envelope
+            .get("signature")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "layered envelope signature missing".to_string())?;
+        let header = envelope
+            .get("header")
+            .ok_or_else(|| "layered envelope header missing".to_string())?;
+        let metadata = envelope
+            .get("metadata")
+            .ok_or_else(|| "layered envelope metadata missing".to_string())?;
+        let signing_header = layered_signature_header(envelope, header)?;
+        let signing_value = Json::Object(
+            [
+                ("header".to_string(), signing_header),
+                ("metadata".to_string(), metadata.clone()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let signing_canonical = encode_jcs(&json_to_canonical_value(&signing_value));
+        if ed25519_verify_string(signer, signature, signing_canonical.as_bytes()) {
+            return Ok(());
+        }
+        return Err("layered envelope signature does not verify".to_string());
+    }
+
+    let Some(sig) = envelope.get("producerSignature").and_then(|v| v.as_str()) else {
+        return Err("legacy envelope producerSignature missing".to_string());
+    };
+    let Some(pubkey) = member_signer(envelope).and_then(|v| v.as_str()) else {
+        return Err("legacy envelope signer missing".to_string());
+    };
+    let mut unsigned = envelope.clone();
+    if let Json::Object(map) = &mut unsigned {
+        map.shift_remove("cid");
+        map.shift_remove("producerSignature");
+    }
+    let signing_canonical = encode_jcs(&json_to_canonical_value(&unsigned));
+    if ed25519_verify_string(pubkey, sig, signing_canonical.as_bytes()) {
+        Ok(())
+    } else {
+        Err("legacy envelope producerSignature does not verify".to_string())
+    }
+}
+
+fn layered_signature_header(envelope: &Json, header: &Json) -> Result<Json, String> {
+    let mut signing_header = header.clone();
+    // Proof-run and stage-receipt producers store the member identity in
+    // `header.cid`; their signed preimage uses the derived header-content CID
+    // to avoid a signature/CID fixed point.
+    if matches!(member_kind(envelope), Some("proof-run" | "stage-receipt")) {
+        let cid = layered_header_content_cid(header)?;
+        let Json::Object(map) = &mut signing_header else {
+            return Err("layered envelope header is not an object".to_string());
+        };
+        map.insert("cid".to_string(), Json::String(cid));
+    }
+    Ok(signing_header)
+}
+
+fn layered_header_content_cid(header: &Json) -> Result<String, String> {
+    let mut preimage = header.clone();
+    let Json::Object(map) = &mut preimage else {
+        return Err("layered envelope header is not an object".to_string());
+    };
+    map.shift_remove("cid");
+    let canonical = encode_jcs(&json_to_canonical_value(&preimage));
+    Ok(blake3_512_of(canonical.as_bytes()))
+}
+
 /// A `.proof` catalog read through the api: the envelope identity + metadata
 /// that are NOT graph content, plus the reconstructed `ProofGraph`. Consumers
 /// that need catalog-level fields (signer, declaredAt, metadata) read them here
@@ -1410,6 +1524,15 @@ mod tests {
         out
     }
 
+    fn contract_member_json() -> (MementoCid, Json) {
+        let atom = FlatAtom::result_eq_int(1);
+        let atom = AtomMemento::new(&atom);
+        let body = ContractBody::new(&atom);
+        let contract = ContractMemento::new("crate::f", &body, [0x11; 32]);
+        let envelope: Json = serde_json::from_slice(contract.bytes()).expect("contract JSON");
+        (contract.cid().clone(), envelope)
+    }
+
     fn canonical_bytes(value: Json) -> Vec<u8> {
         encode_jcs(&json_to_canonical_value(&value)).into_bytes()
     }
@@ -1578,6 +1701,62 @@ mod tests {
         assert!(
             err.to_string().contains("blake3-512:"),
             "error should name the bad member CID: {err}"
+        );
+    }
+
+    #[test]
+    fn anchored_member_refuses_wrong_cid() {
+        let (_cid, envelope) = contract_member_json();
+        let wrong = MementoCid::try_parse(format!("blake3-512:{}", "9".repeat(128)))
+            .expect("synthetic CID parses");
+
+        let err =
+            AnchoredMember::new(wrong.clone(), envelope).expect_err("wrong member CID must refuse");
+
+        assert!(
+            err.to_string().contains(wrong.as_str()) && err.to_string().contains("derives to"),
+            "error should name the wrong CID and derived CID: {err}"
+        );
+    }
+
+    #[test]
+    fn anchored_member_refuses_tampered_payload() {
+        let (cid, mut envelope) = contract_member_json();
+        let contract_name = envelope
+            .pointer_mut("/header/contractName")
+            .expect("contractName exists");
+        *contract_name = Json::String("crate::tampered".to_string());
+        envelope
+            .pointer("/header/contractName")
+            .and_then(Json::as_str)
+            .expect("contractName exists");
+
+        let err = AnchoredMember::new(cid.clone(), envelope)
+            .expect_err("tampered member payload must refuse");
+
+        assert!(
+            err.to_string().contains(cid.as_str()) && err.to_string().contains("signature"),
+            "error should name the original CID and signature refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn anchored_member_refuses_bad_signature_even_when_cid_matches() {
+        let (_cid, mut envelope) = contract_member_json();
+        let signature = envelope
+            .pointer_mut("/envelope/signature")
+            .expect("signature exists");
+        let bad_signature = format!("{}A", signature.as_str().expect("signature is string"));
+        *signature = Json::String(bad_signature);
+        let tampered_cid = MementoCid::try_parse(recompute_member_cid(&envelope))
+            .expect("recomputed tampered CID parses");
+
+        let err = AnchoredMember::new(tampered_cid, envelope)
+            .expect_err("bad member signature must refuse");
+
+        assert!(
+            err.to_string().contains("signature"),
+            "error should name signature verification: {err}"
         );
     }
 

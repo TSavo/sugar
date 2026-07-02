@@ -36,7 +36,7 @@ use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolversConfig,
 };
-use crate::types::{CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
+use crate::types::{AnchoredMember, CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
 use crate::{
     body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -328,7 +328,9 @@ impl Runner {
 
         let minted = minted_sink.into_inner().unwrap_or_default();
         for (cid, envelope) in minted.iter() {
-            pool.insert(cid.clone(), envelope.clone());
+            let member = AnchoredMember::new(cid.clone(), envelope.clone())
+                .unwrap_or_else(|error| panic!("freshly minted memento failed anchoring: {error}"));
+            pool.insert(member);
         }
         let output_artifact_cids = sorted(minted.iter().map(|(cid, _)| cid.to_string()).collect());
 
@@ -646,7 +648,11 @@ impl Runner {
         // so subsequent stages can use them immediately.
         if let Ok(minted) = minted_sink.lock() {
             for (cid, envelope) in minted.iter() {
-                pool.insert(cid.clone(), envelope.clone());
+                let member =
+                    AnchoredMember::new(cid.clone(), envelope.clone()).unwrap_or_else(|error| {
+                        panic!("freshly minted memento failed anchoring: {error}")
+                    });
+                pool.insert(member);
             }
         }
 
@@ -2226,7 +2232,7 @@ mod consistency_owned_callsite_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.insert(memento_cid(&assertion_cid), assertion);
+        pool.insert_unanchored_for_tests(memento_cid(&assertion_cid), assertion);
         pool.mementos.insert(memento_cid(&vendor_cid), vendor);
         pool.insert_bridge_by_symbol(source_symbol, generated_cid("linked-post-bridge"), bridge);
         let cs = CallSite {
