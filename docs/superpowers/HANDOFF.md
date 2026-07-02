@@ -86,7 +86,8 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
 - Test debt: #3018 (restore quarantined bad-twin — HIGH, CI-red suspect).
 - Review-bot findings #3050–#3063: still UNREAD (blocked on gh rate limit) — triage them.
 - KB: memory_lint.py live, honestly red at dangling:92 (41 never-written memories; top target
-  red_gate_is_not_a_gate ×10). T's call: write top 8 or strip.
+  red_gate_is_not_a_gate ×10). T's call: write top 8 or strip. 2026-07-02: T explicitly PAUSED
+  this — leave as-is until he has focus; do not draft or strip autonomously.
 
 ## Loops running
 - Cron (30-min): poll fleet, merge, redispatch, reconcile main, stop when crime board zero.
