@@ -24,45 +24,56 @@
 // LAW: no hand-rolled Formula/post construction. Condition lifting uses the constraint
 // factory; branch reduction uses `build_stmt_role` -> BlockSugar.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{eq, not_, Formula};
-use syn::{Expr, ExprIf, Item, Stmt};
+use syn::{Expr, ExprIf, Stmt};
 
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
 use crate::sugar::constraint::assertion_entry_with_audits;
 use crate::sugar::control_flow_guard_operation::guard_block;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::guarded_return::GuardedReturn;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::translate_term_in_scope;
-use crate::{
-    bool_const, sugar_ctx_with_factory_audits, Desugared, FloatWidthScope, LiftOptions, Outcome,
-    ReductionCtx, Sugar, SugarCtx,
-};
+use crate::{bool_const, Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("if_sugar", recognize);
 
-fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stmt = frag.as_stmt()?;
     let Stmt::Expr(Expr::If(if_expr), _) = stmt else {
         return None;
     };
+    let then_stmt = Stmt::Expr(
+        Expr::Block(syn::ExprBlock {
+            attrs: vec![],
+            label: None,
+            block: if_expr.then_branch.clone(),
+        }),
+        None,
+    );
+    let then_node = build_stmt_role(&then_stmt, fcx, SugarRole::Statement);
+    let else_node = if_expr.else_branch.as_ref().map(|(_, else_expr)| {
+        let else_stmt = Stmt::Expr(*else_expr.clone(), None);
+        build_stmt_role(&else_stmt, fcx, SugarRole::Statement)
+    });
     Some(Box::new(IfSugar {
         if_expr: if_expr.clone(),
+        then_node,
+        else_node,
     }))
 }
 
 struct IfSugar {
     if_expr: ExprIf,
+    then_node: Box<dyn Sugar>,
+    else_node: Option<Box<dyn Sugar>>,
 }
 
 impl Sugar for IfSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let options = LiftOptions::default();
-        let let_inits = BTreeMap::new();
-
         // Lift condition as a Formula. The assertion_entry_with_audits path handles
         // comparisons, boolean ops, and matches!. On failure we fall back to a raw
         // term and wrap it as eq(t, true).
@@ -80,37 +91,9 @@ impl Sugar for IfSugar {
         };
         let not_cond = not_(cond_formula.clone());
 
-        // Reduce then-branch as a BlockSugar via build_stmt_role.
-        let then_stmt = Stmt::Expr(
-            Expr::Block(syn::ExprBlock {
-                attrs: vec![],
-                label: None,
-                block: self.if_expr.then_branch.clone(),
-            }),
-            None,
-        );
-        let (then_guarded, then_fall) = {
-            let items: Vec<Item> = Vec::new();
-            let fcx = SugarBuildCtx::new(ctx.scope, &options, &let_inits);
-            let then_node = build_stmt_role(&then_stmt, &fcx, SugarRole::Statement);
-            let reducer = ReductionCtx::from_items_with_imports(&items, ctx.scope.macro_registry());
-            let mut fw = FloatWidthScope::new();
-            let child_ctx = sugar_ctx_with_factory_audits(
-                ctx.scope,
-                &options,
-                &reducer,
-                &mut fw,
-                0,
-                ctx.factory_audits,
-            );
-            match then_node.reduce(&child_ctx) {
-                Outcome::Complete(Desugared::StmtBlock {
-                    guarded,
-                    fall_through,
-                }) => (guarded, fall_through),
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-                _ => panic!("if_sugar: then-branch did not reduce to StmtBlock"),
-            }
+        let (then_guarded, then_fall) = match reduce_branch(self.then_node.as_ref(), ctx, "then") {
+            Ok(branch) => branch,
+            Err(effect) => return Outcome::Incomplete(effect),
         };
 
         // Prepend `cond` to every guard clause from the then-branch.
@@ -126,34 +109,17 @@ impl Sugar for IfSugar {
                     fall_through: vec![not_cond],
                 })
             }
-            Some((_, else_expr)) => {
+            Some(_) => {
                 // The else expression is Expr::Block (plain `else { ... }`) or
                 // Expr::If (an `else if ...` chain). Both are dispatched via build_stmt_role.
-                let else_stmt = Stmt::Expr(*else_expr.clone(), None);
-                let (else_guarded, _else_fall) = {
-                    let items: Vec<Item> = Vec::new();
-                    let else_fcx = SugarBuildCtx::new(ctx.scope, &options, &let_inits);
-                    let else_node = build_stmt_role(&else_stmt, &else_fcx, SugarRole::Statement);
-                    let reducer =
-                        ReductionCtx::from_items_with_imports(&items, ctx.scope.macro_registry());
-                    let mut fw = FloatWidthScope::new();
-                    let else_ctx = sugar_ctx_with_factory_audits(
-                        ctx.scope,
-                        &options,
-                        &reducer,
-                        &mut fw,
-                        0,
-                        ctx.factory_audits,
-                    );
-                    match else_node.reduce(&else_ctx) {
-                        Outcome::Complete(Desugared::StmtBlock {
-                            guarded,
-                            fall_through,
-                        }) => (guarded, fall_through),
-                        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-                        _ => panic!("if_sugar: else-branch did not reduce to StmtBlock"),
-                    }
+                let Some(else_node) = self.else_node.as_ref() else {
+                    panic!("if_sugar: else expression had no constructed branch node");
                 };
+                let (else_guarded, _else_fall) =
+                    match reduce_branch(else_node.as_ref(), ctx, "else") {
+                        Ok(branch) => branch,
+                        Err(effect) => return Outcome::Incomplete(effect),
+                    };
 
                 let (else_guarded, _else_fall) =
                     guard_block(else_guarded, _else_fall, &[not_cond.clone()], "IfSugar");
@@ -166,5 +132,20 @@ impl Sugar for IfSugar {
                 })
             }
         }
+    }
+}
+
+fn reduce_branch(
+    node: &dyn Sugar,
+    ctx: &SugarCtx,
+    branch: &'static str,
+) -> Result<(Vec<GuardedReturn>, Vec<Rc<Formula>>), Effect> {
+    match node.reduce(ctx) {
+        Outcome::Complete(Desugared::StmtBlock {
+            guarded,
+            fall_through,
+        }) => Ok((guarded, fall_through)),
+        Outcome::Incomplete(effect) => Err(effect),
+        _ => panic!("if_sugar: {branch}-branch did not reduce to StmtBlock"),
     }
 }
