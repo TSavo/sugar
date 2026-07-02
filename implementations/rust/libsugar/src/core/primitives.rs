@@ -2,7 +2,7 @@
 
 use sugar_canonicalizer::blake3_512_of;
 use sugar_proof_envelope::{
-    ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed,
+    ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed, Signature,
 };
 use thiserror::Error;
 
@@ -95,9 +95,12 @@ pub fn verify_sig(claim: &DomainClaim) -> bool {
     if attestation.signed_cid != claim.cid() {
         return false;
     }
+    let Ok(signature) = Signature::try_parse(attestation.signature.clone()) else {
+        return false;
+    };
     ed25519_verify_string(
         &attestation.signer,
-        &attestation.signature,
+        &signature,
         &claim.unsigned().canonical_bytes(),
     )
 }

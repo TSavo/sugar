@@ -29,7 +29,7 @@ use std::path::Path;
 use serde_json::Value as Json;
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::ed25519_verify_string;
+use sugar_proof_envelope::{ed25519_verify_string, Signature};
 use tracing::debug;
 
 use crate::types::{MementoCid, StoredMember};
@@ -268,6 +268,7 @@ fn scan_proof_for_implication(
 
         // Verify the producer signature.
         let sig = env.get("producerSignature").and_then(|v| v.as_str())?;
+        let sig = Signature::try_parse(sig.to_string()).ok()?;
         // Re-build the unsigned canonical bytes and verify.
         let unsigned = strip_cid_and_sig(&env);
         let unsigned_v = serde_to_canonical(&unsigned);
@@ -290,7 +291,7 @@ fn scan_proof_for_implication(
             );
             continue;
         }
-        if !ed25519_verify_string(&pubkey, sig, unsigned_bytes.as_bytes()) {
+        if !ed25519_verify_string(&pubkey, &sig, unsigned_bytes.as_bytes()) {
             continue;
         }
         return Some(cid);

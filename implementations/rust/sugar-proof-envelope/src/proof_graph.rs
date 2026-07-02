@@ -19,7 +19,9 @@ use serde::{Serialize, Serializer};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, CanonicalizerError, Value};
 
-use crate::sign::{ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed};
+use crate::sign::{
+    ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed, Signature,
+};
 use crate::typed_member::{MemberError, MemberKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1051,6 +1053,8 @@ pub fn verify_member_signature(envelope: &Json) -> Result<(), String> {
             .get("signature")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "layered envelope signature missing".to_string())?;
+        let signature = Signature::try_parse(signature.to_string())
+            .map_err(|err| format!("layered envelope invalid Ed25519 signature format: {err}"))?;
         let header = envelope
             .get("header")
             .ok_or_else(|| "layered envelope header missing".to_string())?;
@@ -1067,7 +1071,7 @@ pub fn verify_member_signature(envelope: &Json) -> Result<(), String> {
             .collect(),
         );
         let signing_canonical = encode_jcs(&json_to_canonical_value(&signing_value));
-        if ed25519_verify_string(signer, signature, signing_canonical.as_bytes()) {
+        if ed25519_verify_string(signer, &signature, signing_canonical.as_bytes()) {
             return Ok(());
         }
         return Err("layered envelope signature does not verify".to_string());
@@ -1076,6 +1080,8 @@ pub fn verify_member_signature(envelope: &Json) -> Result<(), String> {
     let Some(sig) = envelope.get("producerSignature").and_then(|v| v.as_str()) else {
         return Err("legacy envelope producerSignature missing".to_string());
     };
+    let sig = Signature::try_parse(sig.to_string())
+        .map_err(|err| format!("legacy envelope invalid Ed25519 signature format: {err}"))?;
     let Some(pubkey) = member_signer(envelope).and_then(|v| v.as_str()) else {
         return Err("legacy envelope signer missing".to_string());
     };
@@ -1085,7 +1091,7 @@ pub fn verify_member_signature(envelope: &Json) -> Result<(), String> {
         map.shift_remove("producerSignature");
     }
     let signing_canonical = encode_jcs(&json_to_canonical_value(&unsigned));
-    if ed25519_verify_string(pubkey, sig, signing_canonical.as_bytes()) {
+    if ed25519_verify_string(pubkey, &sig, signing_canonical.as_bytes()) {
         Ok(())
     } else {
         Err("legacy envelope producerSignature does not verify".to_string())
@@ -1872,6 +1878,25 @@ mod tests {
         assert!(
             err.to_string().contains("signature"),
             "error should name signature verification: {err}"
+        );
+    }
+
+    #[test]
+    fn anchored_member_refuses_prefix_only_signature_shape_even_when_cid_matches() {
+        let (_cid, mut envelope) = contract_member_json();
+        *envelope
+            .pointer_mut("/envelope/signature")
+            .expect("signature exists") = Json::String("ed25519:AAAA".to_string());
+        let tampered_cid = MementoCid::try_parse(recompute_member_cid(&envelope))
+            .expect("recomputed tampered CID parses");
+
+        let err = AnchoredMember::new(tampered_cid, envelope)
+            .expect_err("prefix-only signature shape must refuse at parse");
+
+        assert!(
+            err.to_string().contains("invalid Ed25519 signature format")
+                && err.to_string().contains("64-byte Ed25519 signature"),
+            "error should name signature shape, not only failed verification: {err}"
         );
     }
 

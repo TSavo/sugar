@@ -136,14 +136,16 @@ fn memento_signature_verifies_over_bundle_cid() {
     assert_eq!(m["witness_cid"], cid);
     assert_eq!(m["witness_kind"], "cargo-test-witness-package");
     let signer = m["signer"].as_str().unwrap();
-    let signature = m["signature"].as_str().unwrap();
+    let signature =
+        sugar_proof_envelope::Signature::try_parse(m["signature"].as_str().unwrap().to_string())
+            .expect("witness signature must parse");
     // The rust verifier checks the mark with THIS primitive, over the cid bytes.
     assert!(
-        ed25519_verify_string(signer, signature, cid.as_bytes()),
+        ed25519_verify_string(signer, &signature, cid.as_bytes()),
         "memento signature must verify over the bundle cid (the verifier's check)"
     );
     // A wrong message must NOT verify (discrimination).
-    assert!(!ed25519_verify_string(signer, signature, b"not the cid"));
+    assert!(!ed25519_verify_string(signer, &signature, b"not the cid"));
 }
 
 #[test]
