@@ -774,6 +774,13 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
     )
     inv = _formula_to_rpc(fact.fact_formula())
+    _require_proofir_emission_node(
+        inv,
+        construction_site=(
+            f"_emit_euf_fact:{memento.role or 'unknown-sugar'}:{contract_name}"
+        ),
+        replacement="EqualityFact",
+    )
     contract = BodyUniverseDto(
         name=contract_name,
         out_binding="out",
@@ -800,6 +807,51 @@ def _emit_euf_fact(
         ast_kind="Assert",
     )
     return ([contract], [memento], [audit], [walk], [])
+
+
+def _require_proofir_emission_node(
+    value: object,
+    *,
+    construction_site: str,
+    replacement: str,
+):
+    """ProofIR Slice 3 return-type seam: raw formula rows must become nodes."""
+    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.proofir import ProofIRNode
+
+    if isinstance(value, ProofIRNode):
+        return value
+
+    if isinstance(value, dict):
+        observed = "raw dict emission"
+    elif isinstance(value, str):
+        observed = "raw str emission"
+    else:
+        observed = f"raw {type(value).__name__} emission"
+    info = FactoryGapInfo(
+        owner="python.proofir.return-type-frontier",
+        blame=construction_site,
+        observed=observed,
+        requested=f"ProofIRNode ({replacement})",
+        fix=(
+            f"construct {replacement} at the emission site; raw dict/str "
+            "emission is retired by #3234"
+        ),
+        gap_kind="ProofIR",
+        gap_locus="Emission",
+    )
+    raise FactoryGap(
+        info,
+        FactoryAuditRow(
+            role="ProofIRNode",
+            status="proofir-return-type-gap",
+            observed=observed,
+            blame=construction_site,
+            selected=None,
+            candidates=[replacement],
+            message=info.message,
+        ),
+    )
 
 
 def _emit_assertion_surface_fact(
