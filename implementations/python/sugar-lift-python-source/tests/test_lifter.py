@@ -3493,19 +3493,56 @@ def test_triple_chained_call_lifts_nested_dynamic_callees() -> None:
     assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
 
 
-def test_chained_call_floor_discriminates_subscript_callee() -> None:
-    dynamic = lift_source(
-        "def f(table):\n    return table[0](1)\n", "subscript_callee.py"
+def test_subscript_callees_lift_as_opaque_unresolved_calls() -> None:
+    source = (
+        "def f(cast, Dict, str, int, x):\n"
+        "    value = cast[int](x)\n"
+        "    return Dict[str, int]()\n"
     )
 
-    assert dynamic.refusals == [
+    result = lift_source(source, "subscript_callee.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(
+            _var("value"),
+            _call_term(_subscript(_var("cast"), _var("int")), _var("x")),
+        ),
+        _return(_call_term(_subscript(_var("Dict"), _tuple(_var("str"), _var("int"))))),
+    )
+    assert {"kind": "unresolved_call", "name": "(subscript)"} in contract["effects"]
+    assert {"kind": "panics"} in contract["effects"]
+
+
+def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
+    result = lift_source(
+        "def f(factory, ys):\n    return factory[(y for y in ys)](1)\n",
+        "subscript_callee_inner_refusal.py",
+    )
+
+    assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "subscript_callee.f",
+            "function": "subscript_callee_inner_refusal.f",
             "line": 2,
-            "reason": "unsupported callee kind: Subscript",
+            "reason": "unhandled expression kind: GeneratorExp",
         }
     ]
+
+
+def test_subscript_callee_roundtrip_is_structurally_stable() -> None:
+    term = _call_term(_subscript(_var("factory"), _var("key")), _var("x"))
+
+    compiled = compile_body_term(_return(term), formals=["factory", "key", "x"])
+    relifted = lift_source(compiled, "roundtrip_subscript_callee.py")
+
+    contract = _contract(relifted.ir, ".f")
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+    assert {"kind": "unresolved_call", "name": "(subscript)"} in contract["effects"]
 
 
 def test_chained_call_roundtrip_is_structurally_stable() -> None:
