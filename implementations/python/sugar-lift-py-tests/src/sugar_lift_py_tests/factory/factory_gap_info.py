@@ -29,4 +29,6 @@ class FactoryGapInfo:
             "observed": self.observed,
             "requested": self.requested,
             "fix": self.fix,
+            "gap_kind": self.gap_kind,
+            "gap_locus": self.gap_locus,
         }

@@ -126,4 +126,6 @@ def test_tuple_unpack_projection_unsupported_floor_names_floor_gap() -> None:
         "observed": "TermValue",
         "requested": "project_sequence_with",
         "fix": "add project_sequence_with to TermValue or emit a real effect",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
     }

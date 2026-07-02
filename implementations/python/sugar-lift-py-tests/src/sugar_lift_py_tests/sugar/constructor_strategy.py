@@ -71,7 +71,7 @@ class ConstructorStrategy:
                 observed=type(exc).__name__,
                 requested="constructor field floor",
                 fix=f"write more constructor floor for `{self.class_name}.{name}`: {exc}",
-                gap_kind="Floor",
+                gap_kind="Constructor",
                 gap_locus="construction",
             )
             raise FactoryGap(
@@ -104,7 +104,7 @@ class ConstructorStrategy:
                     f"`{self.class_name}.{name}` or emit an explicit "
                     "__set_name__ effect"
                 ),
-                gap_kind="Floor",
+                gap_kind="Constructor",
                 gap_locus="construction",
             )
             raise FactoryGap(

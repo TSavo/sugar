@@ -117,4 +117,6 @@ def test_list_literal_bad_element_floor_is_named_by_sequence_operation() -> None
         "observed": "ListLiteralSugar element StringValue",
         "requested": "list element floor",
         "fix": "add ListLiteralSugar construction support for StringValue",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
     }

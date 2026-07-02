@@ -22,6 +22,10 @@ class SymbolicValue(FloorValue):
 
     term: Term
 
+    def to_term(self, *, owner: str):
+        del owner
+        return self.term
+
     def binary_operator_with(self, operation, ctx):
         return operation.binary_symbolic(self, ctx)
 

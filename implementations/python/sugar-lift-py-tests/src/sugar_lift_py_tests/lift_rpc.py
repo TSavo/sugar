@@ -27,6 +27,7 @@ LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
 PYTHON_LIFT_NAME = "python-lift"
 PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
+PARSE_ERROR = object()
 
 
 def _send(obj: Dict[str, Any]) -> None:
@@ -34,15 +35,15 @@ def _send(obj: Dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _recv() -> Optional[Dict[str, Any]]:
+def _recv() -> Optional[Dict[str, Any]] | object:
     line = sys.stdin.readline()
     if not line:
         return None
     try:
         value = json.loads(line)
     except json.JSONDecodeError:
-        return None
-    return value if isinstance(value, dict) else None
+        return PARSE_ERROR
+    return value if isinstance(value, dict) else PARSE_ERROR
 
 
 def _kit_declaration_result() -> Dict[str, Any]:
@@ -548,6 +549,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         msg = _recv()
         if msg is None:
             break
+        if msg is PARSE_ERROR:
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": "parse error: line was not a JSON-RPC object",
+                    },
+                }
+            )
+            continue
         msg_id = msg.get("id")
         method = msg.get("method")
         params = msg.get("params", {})

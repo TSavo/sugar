@@ -14,6 +14,11 @@ class TupleLiteralValue(FloorValue):
         if not all(isinstance(item, FloorValue) for item in self.items):
             raise TypeError("TupleLiteralValue items must be floor values")
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor("tuple", [item.to_term(owner=owner) for item in self.items])
+
     def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
         return operation.binary_tuple(self, ctx)
 

@@ -53,6 +53,15 @@ class VerifierNotFoundError(Exception):
     pass
 
 
+class VerifierProtocolError(RuntimeError):
+    """Raised when the sugar CLI replies outside the verifier wire format."""
+
+    def __init__(self, message: str, *, stdout: str, stderr: str) -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(message)
+
+
 # ---------------------------------------------------------------------------
 # Verifier API
 # ---------------------------------------------------------------------------
@@ -63,21 +72,15 @@ def find_sugar_cli() -> Optional[str]:
     return shutil.which("sugar")
 
 
-def _malformed_cli_json_report(action: str, stdout: str) -> HandshakeReport:
+def _raise_malformed_cli_json(action: str, stdout: str, stderr: str) -> None:
     context = stdout.strip() or "<empty stdout>"
     if len(context) > 500:
         context = context[:500] + "...<truncated>"
-    summary = (
+    raise VerifierProtocolError(
         f"{action} failed: malformed verifier JSON from sugar CLI "
-        f"(verifier protocol drift); stdout={context!r}"
-    )
-    return HandshakeReport(
-        success=False,
-        tier1_discharge_fraction=0.0,
-        tier2_discharge_fraction=0.0,
-        tier3_remaining=0,
-        violations=[summary],
-        summary=summary,
+        f"(verifier protocol drift); stdout={context!r}",
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -114,7 +117,7 @@ def verify_project(
             data = json.loads(result.stdout)
             return HandshakeReport.from_json(data)
         except json.JSONDecodeError:
-            return _malformed_cli_json_report("verification", result.stdout)
+            _raise_malformed_cli_json("verification", result.stdout, result.stderr)
 
     # Failure: try to parse error output.
     return HandshakeReport(
@@ -149,7 +152,7 @@ def prove_contract(
             data = json.loads(result.stdout)
             return HandshakeReport.from_json(data)
         except json.JSONDecodeError:
-            return _malformed_cli_json_report("proof", result.stdout)
+            _raise_malformed_cli_json("proof", result.stdout, result.stderr)
 
     return HandshakeReport(
         success=False,

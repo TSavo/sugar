@@ -16,6 +16,12 @@ class TermValue(FloorValue):
     def add_with(self, operation: Any, ctx: Any) -> Any:
         return operation.add_term(self, ctx)
 
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import num
+
+        return num(self.value)
+
     def str_with(self, operation: Any, ctx: Any) -> Any:
         return operation.str_term(self, ctx)
 

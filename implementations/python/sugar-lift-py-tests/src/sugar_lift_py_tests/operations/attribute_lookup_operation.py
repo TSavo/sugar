@@ -92,7 +92,9 @@ class AttributeLookupOperation:
             observed=observed,
             requested=requested,
             fix=fix,
-            gap_kind="Floor",
+            gap_kind=(
+                "Constructor" if requested.startswith("constructor-bound ") else "Floor"
+            ),
             gap_locus="construction",
         )
         raise FactoryGap(

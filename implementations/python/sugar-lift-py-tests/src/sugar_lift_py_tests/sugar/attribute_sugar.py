@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryGap
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.floor import BoundVar, SymbolicValue
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
@@ -17,6 +16,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class AttributeSugar(Sugar, role=SugarRole.TERM):
     term: Term
     receiver: SugarBody | None
+    receiver_name: str | None
     name: str
     blame: str
 
@@ -36,6 +36,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
                 external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
             ),
             receiver=_projectable_receiver(site, ctx),
+            receiver_name=_receiver_name(site),
             name=site.attr_name(),
             blame=site.blame,
         )
@@ -43,20 +44,19 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx) -> Outcome:
         if self.receiver is None:
             return Complete(SymbolicValue(self.term))
-        try:
-            receiver_outcome = self.receiver.reduce(ctx)
-        except FactoryGap as gap:
-            if _is_constructor_gap(gap):
-                raise
+        if self.receiver_name is not None and not _temporal_has_binding(
+            ctx, self.receiver_name
+        ):
             return Complete(SymbolicValue(self.term))
-        except TypeError:
+        if self.receiver_name is not None and _temporal_binding_is_external_bridge(
+            ctx, self.receiver_name
+        ):
             return Complete(SymbolicValue(self.term))
+        receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
         receiver = getattr(receiver_outcome, "value", None)
-        if isinstance(receiver, SymbolicValue) or not hasattr(
-            receiver, "attribute_with"
-        ):
+        if isinstance(receiver, SymbolicValue):
             return Complete(SymbolicValue(self.term))
         operation = AttributeLookupOperation(
             name=self.name,
@@ -73,19 +73,6 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         )
 
 
-def _is_constructor_gap(gap: FactoryGap) -> bool:
-    requested = gap.info.get("requested", "")
-    fix = gap.info.get("fix", "")
-    return (
-        "constructor" in requested
-        or "constructor" in fix
-        or "construction" in requested
-        or "construction" in fix
-        or "__set_name__" in requested
-        or "__set_name__" in fix
-    )
-
-
 def _projectable_receiver(site, ctx) -> SugarBody | None:
     receiver = site.attr_receiver()
     if receiver.observed == "Name":
@@ -93,6 +80,34 @@ def _projectable_receiver(site, ctx) -> SugarBody | None:
     if receiver.observed == "Call" and _is_resolved_local_class_call(receiver, ctx):
         return ctx.build_body(receiver, SugarRole.TERM)
     return None
+
+
+def _receiver_name(site) -> str | None:
+    receiver = site.attr_receiver()
+    if receiver.observed == "Name":
+        return receiver.name_id()
+    return None
+
+
+def _temporal_has_binding(ctx, name: str) -> bool:
+    return _temporal_binding_value(ctx, name) is not None
+
+
+def _temporal_binding_value(ctx, name: str):
+    temporal = getattr(ctx, "temporal", None)
+    for binding in reversed(getattr(temporal, "bindings", ())):
+        if binding.name == name:
+            return binding.value
+    return None
+
+
+def _temporal_binding_is_external_bridge(ctx, name: str) -> bool:
+    value = _temporal_binding_value(ctx, name)
+    if not isinstance(value, BoundVar):
+        return False
+    sugar = getattr(value.source, "sugar", None)
+    strategy = getattr(sugar, "strategy", None)
+    return type(strategy).__name__ == "ExternalBridgeStrategy"
 
 
 def _is_resolved_local_class_call(site, ctx) -> bool:

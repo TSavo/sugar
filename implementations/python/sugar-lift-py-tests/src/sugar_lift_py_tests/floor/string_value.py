@@ -9,6 +9,12 @@ from .floor_value import FloorValue
 class StringValue(FloorValue):
     value: str
 
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import str_const
+
+        return str_const(self.value)
+
     def contains_with(self, operation, ctx):
         return operation.contains_string(self, ctx)
 

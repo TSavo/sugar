@@ -85,6 +85,8 @@ def test_lift_rpc_reports_factory_gap_without_old_lsp_entry(tmp_path) -> None:
         "observed": "Dict",
         "requested": "term",
         "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
+        "gap_kind": "Sugar",
+        "gap_locus": "AST",
     }
 
 
@@ -158,6 +160,8 @@ def test_factory_without_sugar_panics_on_last_popped_source_fragment() -> None:
         "observed": "Dict",
         "requested": "term",
         "fix": "create sugar_lift_py_tests.sugar.dict.dict_sugar",
+        "gap_kind": "Sugar",
+        "gap_locus": "AST",
     }
     assert gap.audit_row.to_json() == {
         "kind": "factory-audit-row",
@@ -251,6 +255,8 @@ def test_factory_panics_when_multiple_claims_own_the_same_ast_without_ordering()
         "observed": "PrimitiveLiteral candidates=[AlphaLiteralSugar, BetaLiteralSugar]",
         "requested": "term",
         "fix": "declare comes_before or split the sugar role",
+        "gap_kind": "Sugar ordering",
+        "gap_locus": "AST",
     }
     assert raised.value.audit_row.to_json() == {
         "kind": "factory-audit-row",
@@ -326,6 +332,8 @@ def test_array_literal_factory_hits_missing_primitive_literal_leaf_first() -> No
         "observed": "PrimitiveLiteral",
         "requested": "term",
         "fix": "create sugar_lift_py_tests.sugar.primitive_literal_sugar",
+        "gap_kind": "Sugar",
+        "gap_locus": "AST",
     }
 
 
@@ -366,6 +374,8 @@ def test_bitwise_op_factory_hits_missing_primitive_literal_leaf_first() -> None:
         "observed": "PrimitiveLiteral",
         "requested": "term",
         "fix": "create sugar_lift_py_tests.sugar.primitive_literal_sugar",
+        "gap_kind": "Sugar",
+        "gap_locus": "AST",
     }
 
 

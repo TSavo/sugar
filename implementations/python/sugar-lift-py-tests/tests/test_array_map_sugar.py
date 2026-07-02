@@ -208,4 +208,6 @@ def test_map_operation_missing_floor_names_floor_gap() -> None:
         "observed": "TermValue",
         "requested": "map_with",
         "fix": "add map_with to TermValue or emit a real effect",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
     }

@@ -100,11 +100,13 @@ def test_temporal_dispatch_gap_names_missing_operation() -> None:
         "blame": "t.py:1:0",
         "observed": "TemporalContext",
         "requested": "unknown_with",
-        "fix": (
-            "add unknown_with to TemporalContext or route this curry/rewrite "
-            "through the temporal floor"
-        ),
-    }
+            "fix": (
+                "add unknown_with to TemporalContext or route this curry/rewrite "
+                "through the temporal floor"
+            ),
+            "gap_kind": "Floor",
+            "gap_locus": "construction",
+        }
 
 
 def test_rewrite_temporal_add_assign_bad_operand_names_floor_gap() -> None:
@@ -136,4 +138,6 @@ def test_rewrite_temporal_add_assign_bad_operand_names_floor_gap() -> None:
         "observed": "TermValue+ArrayLiteral",
         "requested": "add operand floor",
         "fix": "add AddOperation support for TermValue with ArrayLiteral",
+        "gap_kind": "Floor",
+        "gap_locus": "construction",
     }
