@@ -22,7 +22,7 @@ use sugar_lift_rust_tests::{
     ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
     MacroRegistry, TargetCfg,
 };
-use sugar_verifier::member_body;
+use sugar_proof_envelope::StoredMember;
 use syn::parse::Parser;
 use tracing::{debug, info, warn};
 
@@ -3582,31 +3582,31 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             let Some(bridge_env) = pool.bridge_by_symbol(source_symbol) else {
                 continue;
             };
-            // The bridge index points at verified pool storage; the _ arm is
-            // unreachable in practice but preserves old stringly control flow
-            // (sourceSymbol -> source_symbol fallback, targetContractCid
-            // absent -> panic).
-            let bridge_m = match sugar_proof_envelope::Member::from_value(bridge_env) {
-                Ok(sugar_proof_envelope::Member::Bridge(b)) => b,
-                _ => continue,
+            let bridge_source_symbol = bridge_env
+                .field("sourceSymbol")
+                .and_then(Value::as_str)
+                .unwrap_or(source_symbol);
+            let Some(target_cid) = bridge_env
+                .field("targetContractCid")
+                .and_then(Value::as_str)
+            else {
+                continue;
             };
-            let bridge_source_symbol: &str = bridge_m.source_symbol.as_str();
-            let target_cid: &str = bridge_m.target_contract_cid.as_str();
             let Ok(target_memento_cid) =
                 sugar_verifier::MementoCid::try_parse(target_cid.to_string())
             else {
                 continue;
             };
-            let proof_cid = bridge_m
-                .target_proof_cid
-                .as_ref()
-                .map(|c| c.as_str().to_string())
+            let proof_cid = bridge_env
+                .field("targetProofCid")
+                .and_then(Value::as_str)
+                .map(str::to_string)
                 .or_else(|| {
                     pool.bridge_self_bundle_by_symbol
                         .get(bridge_source_symbol)
                         .map(|cid| cid.to_string())
                 });
-            let target_env = pool.mementos.get(target_cid).unwrap_or_else(|| {
+            let target_env = pool.mementos.get(&target_memento_cid).unwrap_or_else(|| {
                 let proof = proof_cid.as_deref().unwrap_or("<unknown proof>");
                 panic!(
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
@@ -3615,7 +3615,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             if !pool.member_is_kind(&target_memento_cid, sugar_verifier::MemberKind::Contract) {
                 continue;
             }
-            let Some(target_body) = member_body(target_env) else {
+            let Some(target_body) = target_env.body() else {
                 continue;
             };
             let Some(post) = target_body
@@ -3927,8 +3927,8 @@ fn source_memento_member_for_contract(
     None
 }
 
-fn source_memento_payload(env: &Value) -> Option<&Value> {
-    env.get("body").or_else(|| member_body(env))
+fn source_memento_payload(env: &StoredMember) -> Option<&Value> {
+    env.body()
 }
 
 fn factory_audit_row(
@@ -4274,14 +4274,14 @@ fn factory_audit_status_counts(rows: &[Value]) -> Value {
 }
 
 fn source_memento_string_field<'a>(
-    env: &'a Value,
+    env: &'a StoredMember,
     payload: &'a Value,
     field: &str,
 ) -> Option<&'a str> {
-    payload.get(field).and_then(Value::as_str).or_else(|| {
-        env.pointer(&format!("/header/{field}"))
-            .and_then(Value::as_str)
-    })
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .or_else(|| env.field(field).and_then(Value::as_str))
 }
 
 fn resolve_proof_by_cid_for_report(workspace_root: &Path, cid: &str) -> Value {
@@ -7126,33 +7126,34 @@ fn summary_good() {
     #[test]
     fn vendor_source_memento_resolves_from_proof_member_by_contract_name() {
         let mut pool = sugar_verifier::types::MementoPool::default();
-        pool.mementos.insert(
-            sugar_verifier::MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
-                b"source-memento",
-            ))
-            .expect("test CID must parse"),
-            json!({
-                "schemaVersion": "1",
-                "header": {
-                    "kind": "source-memento",
-                    "contractName": "rust-source::enc",
-                    "claimName": "rust-source::enc",
-                    "sourceFunctionName": "enc",
-                    "file": "src/lib.rs"
-                },
-                "body": {
-                    "kind": "source-memento",
-                    "contractName": "rust-source::enc",
-                    "claimName": "rust-source::enc",
-                    "sourceFunctionName": "enc",
-                    "file": "src/lib.rs",
-                    "span": {"start_line": 1, "start_col": 0, "end_line": 3, "end_col": 1},
-                    "paramNames": ["input"],
-                    "source_cid": "blake3-512:source",
-                    "template_cid": "blake3-512:template"
-                }
-            }),
-        );
+        let source_cid = sugar_verifier::MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
+            b"source-memento",
+        ))
+        .expect("test CID must parse");
+        let source_env = json!({
+            "schemaVersion": "1",
+            "header": {
+                "kind": "source-memento",
+                "contractName": "rust-source::enc",
+                "claimName": "rust-source::enc",
+                "sourceFunctionName": "enc",
+                "file": "src/lib.rs"
+            },
+            "body": {
+                "kind": "source-memento",
+                "contractName": "rust-source::enc",
+                "claimName": "rust-source::enc",
+                "sourceFunctionName": "enc",
+                "file": "src/lib.rs",
+                "span": {"start_line": 1, "start_col": 0, "end_line": 3, "end_col": 1},
+                "paramNames": ["input"],
+                "source_cid": "blake3-512:source",
+                "template_cid": "blake3-512:template"
+            }
+        });
+        let source_member = StoredMember::from_envelope(source_cid.clone(), &source_env)
+            .expect("test source memento must normalize");
+        pool.mementos.insert(source_cid, source_member);
         let contract_body = json!({"name": "rust-source::enc"});
 
         let memento =

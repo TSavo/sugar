@@ -1635,10 +1635,10 @@ fn source_report_from_proof_pool(
 
     let mut source_mementos = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(Member::from_value(envelope), Ok(Member::SourceMemento(_))) {
+        if envelope.kind() != MemberKind::SourceMemento {
             continue;
         }
-        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
+        let Some(body) = envelope.body() else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !proof_source_memento_matches_filter(body, filter))
@@ -1650,13 +1650,10 @@ fn source_report_from_proof_pool(
 
     let mut factory_walk = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(
-            Member::from_value(envelope),
-            Ok(Member::FactoryWalkMemento(_))
-        ) {
+        if envelope.kind() != MemberKind::FactoryWalkMemento {
             continue;
         }
-        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
+        let Some(body) = envelope.body() else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !factory_audit_matches_filter(body, filter)) {
@@ -1667,13 +1664,10 @@ fn source_report_from_proof_pool(
 
     let mut assertion_surface_audits = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(
-            Member::from_value(envelope),
-            Ok(Member::AssertionSurfaceMemento(_))
-        ) {
+        if envelope.kind() != MemberKind::AssertionSurfaceMemento {
             continue;
         }
-        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
+        let Some(body) = envelope.body() else {
             continue;
         };
         if contract_filter
@@ -1686,7 +1680,7 @@ fn source_report_from_proof_pool(
 
     let mut plan_mementos = Vec::new();
     for (_, envelope) in &pool.mementos {
-        if !matches!(Member::from_value(envelope), Ok(Member::PlanMemento(_))) {
+        if envelope.kind() != MemberKind::PlanMemento {
             continue;
         }
         if let Some(plan) = proof_plan_memento_with_atoms(pool, envelope) {
@@ -1734,13 +1728,13 @@ fn source_report_from_proof_pool(
     // have contractName and are excluded here.
     let mut source_warrants_map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for (_, envelope) in &pool.mementos {
-        let Ok(Member::SourceMemento(sm)) = Member::from_value(envelope) else {
+        if envelope.kind() != MemberKind::SourceMemento {
             continue;
         };
-        let Some(contract_name) = sm.contract_name.as_deref() else {
+        let Some(contract_name) = envelope.field("contractName").and_then(Value::as_str) else {
             continue;
         };
-        let Some(body) = sugar_proof_envelope::member_body(envelope) else {
+        let Some(body) = envelope.body() else {
             continue;
         };
         source_warrants_map
@@ -2181,7 +2175,7 @@ fn source_oracle_attempt_json(route: &SourceOracleRoute, reason: Option<String>)
 fn proof_contract_value(
     pool: &sugar_verifier::types::MementoPool,
     cid: &sugar_verifier::MementoCid,
-    envelope: &Value,
+    envelope: &sugar_verifier::StoredMember,
 ) -> Value {
     let name = pool
         .member_field(cid, "contractName")
@@ -2232,9 +2226,9 @@ fn proof_source_memento_matches_filter(source: &Value, filter: &str) -> bool {
 
 fn proof_plan_memento_with_atoms(
     pool: &sugar_verifier::types::MementoPool,
-    envelope: &Value,
+    envelope: &sugar_verifier::StoredMember,
 ) -> Option<Value> {
-    let mut body = sugar_proof_envelope::member_body(envelope)?.clone();
+    let mut body = envelope.body()?.clone();
     let refs = body
         .get("planAtoms")
         .or_else(|| body.get("plan_atoms"))
@@ -7794,7 +7788,9 @@ mod tests {
                 }
             }
         }
-        pool.mementos.insert(cid, envelope);
+        let member = sugar_verifier::StoredMember::from_envelope(cid.clone(), &envelope)
+            .expect("test member must parse");
+        pool.mementos.insert(cid, member);
     }
 
     fn minimal_source_report() -> LiftSourceReport {
@@ -9514,6 +9510,7 @@ mod tests {
             },
             "schemaVersion": "1"
         });
+        insert_unanchored_test_member(&mut pool, bridge_cid.clone(), bridge.clone());
         pool.insert_bridge_by_symbol("method:unwrap", bridge_cid, bridge);
 
         let report = source_report_from_proof_pool(&pool, Some("callee"));

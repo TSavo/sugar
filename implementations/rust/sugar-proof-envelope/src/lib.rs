@@ -49,8 +49,8 @@ pub use proof_graph::{
     ContractBodyCid, ContractEntry, ContractMemento, ContractMementoRef,
     EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom, ImplicationMemento,
     LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemento, ProofCatalog, ProofGraph,
-    ProofIdentity, ProofRunMemento, SourceMemento, StageReceiptMemento, WitnessClaimMemento,
-    WitnessMemento,
+    ProofIdentity, ProofRunMemento, SourceMemento, StageReceiptMemento, StoredMember,
+    WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,

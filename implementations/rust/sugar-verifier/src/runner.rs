@@ -1128,7 +1128,7 @@ fn sorted(mut values: Vec<String>) -> Vec<String> {
     values
 }
 
-fn sorted_keys<K: ToString + Ord>(map: &BTreeMap<K, Json>) -> Vec<String> {
+fn sorted_keys<K: ToString + Ord, V>(map: &BTreeMap<K, V>) -> Vec<String> {
     map.keys().map(|key| key.to_string()).collect()
 }
 
@@ -1580,16 +1580,12 @@ fn work_one(
     if let Some(pre_formula) = consumer_pre {
         if let Some(memento) = pool.verify(pre_formula) {
             n_hash.fetch_add(1, Ordering::Relaxed);
-            let memento_cid = memento
-                .get("cid")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
             return (
                 cs.clone(),
                 ObligationVerdict::Discharged,
                 format!(
                     "tier0: memento-is-verification (cid={})",
-                    short(memento_cid)
+                    short(memento.cid().as_str())
                 ),
                 Some("hash-tier".to_string()),
                 None,
@@ -2235,7 +2231,7 @@ mod consistency_owned_callsite_tests {
         });
         let mut pool = MementoPool::default();
         pool.insert_unanchored_for_tests(memento_cid(&assertion_cid), assertion);
-        pool.mementos.insert(memento_cid(&vendor_cid), vendor);
+        pool.insert_unanchored_for_tests(memento_cid(&vendor_cid), vendor);
         pool.insert_bridge_by_symbol(source_symbol, generated_cid("linked-post-bridge"), bridge);
         let cs = CallSite {
             bridge_ir_name: source_symbol.to_string(),
@@ -2311,8 +2307,8 @@ mod consistency_owned_callsite_tests {
         });
 
         let mut pool = MementoPool::default();
-        pool.mementos.insert(memento_cid(&producer_cid), producer);
-        pool.mementos.insert(memento_cid(&consumer_cid), consumer);
+        pool.insert_unanchored_for_tests(memento_cid(&producer_cid), producer);
+        pool.insert_unanchored_for_tests(memento_cid(&consumer_cid), consumer);
         pool.insert_bridge_by_symbol(
             producer_symbol,
             generated_cid("tier2-producer-bridge"),

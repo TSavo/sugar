@@ -17,7 +17,7 @@
 
 use serde_json::{json, Value as Json};
 
-use sugar_verifier::{resolve_target, CallSite, MementoCid, MementoPool};
+use sugar_verifier::{resolve_target, CallSite, MementoCid, MementoPool, StoredMember};
 
 /// Bundle the basic happy-path tests treat as the bridge's own. Registered
 /// in `pool_with` and pinned by `callsite_targeting` so a no-`targetProofCid`
@@ -35,9 +35,36 @@ fn cid_string(label: &str) -> String {
     memento_cid(label).to_string()
 }
 
+trait TestPoolInsert {
+    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json);
+    fn try_insert_unanchored_for_tests(
+        &mut self,
+        cid: MementoCid,
+        envelope: Json,
+    ) -> Result<(), String>;
+}
+
+impl TestPoolInsert for MementoPool {
+    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json) {
+        self.try_insert_unanchored_for_tests(cid, envelope)
+            .expect("test member must parse");
+    }
+
+    fn try_insert_unanchored_for_tests(
+        &mut self,
+        cid: MementoCid,
+        envelope: Json,
+    ) -> Result<(), String> {
+        let member = StoredMember::from_envelope(cid.clone(), &envelope)
+            .map_err(|err| format!("{err:?}"))?;
+        self.mementos.insert(cid, member);
+        Ok(())
+    }
+}
+
 fn pool_with(cid: &str, env: Json) -> MementoPool {
     let mut pool = MementoPool::default();
-    pool.mementos.insert(memento_cid(cid), env);
+    pool.insert_unanchored_for_tests(memento_cid(cid), env);
     // Co-member of the self bundle: lets self-pinned callsites resolve.
     // Some-pin tests add their own bundle_members and pins on top.
     pool.bundle_members
@@ -214,10 +241,11 @@ fn errors_when_target_kind_is_implication() {
 fn errors_when_evidence_is_missing() {
     let target_cid = "blake3-512:bad1";
     let env = json!({"otherStuff": "no evidence"});
-    let pool = pool_with(target_cid, env);
-    let cs = callsite_targeting(target_cid);
-    let r = resolve_target::run(&cs, &pool);
-    assert!(r.is_err());
+    let mut pool = MementoPool::default();
+    let err = pool
+        .try_insert_unanchored_for_tests(memento_cid(target_cid), env)
+        .expect_err("typed test storage refuses members without a kind");
+    assert!(err.contains("MissingKind"));
 }
 
 #[test]
@@ -239,10 +267,12 @@ fn errors_when_evidence_kind_is_unknown() {
     let env = json!({
         "evidence": {"kind": "weird-kind", "body": {"pre": {}}}
     });
-    let pool = pool_with(target_cid, env);
-    let cs = callsite_targeting(target_cid);
-    let r = resolve_target::run(&cs, &pool);
-    assert!(r.is_err());
+    let mut pool = MementoPool::default();
+    let err = pool
+        .try_insert_unanchored_for_tests(memento_cid(target_cid), env)
+        .expect_err("typed test storage refuses unknown member kinds");
+    assert!(err.contains("UnknownKind"));
+    assert!(err.contains("weird-kind"));
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +369,7 @@ fn accepts_self_pinned_when_target_is_co_member() {
     let self_bundle = "blake3-512:my-own-bundle";
 
     let mut pool = MementoPool::default();
-    pool.mementos
-        .insert(memento_cid(target_cid), contract_env(trivial_pre()));
+    pool.insert_unanchored_for_tests(memento_cid(target_cid), contract_env(trivial_pre()));
     pool.bundle_members
         .entry(memento_cid(self_bundle))
         .or_default()
@@ -368,8 +397,7 @@ fn rejects_self_pinned_when_target_not_co_member() {
     let other_bundle = "blake3-512:some-dependency";
 
     let mut pool = MementoPool::default();
-    pool.mementos
-        .insert(memento_cid(target_cid), contract_env(trivial_pre()));
+    pool.insert_unanchored_for_tests(memento_cid(target_cid), contract_env(trivial_pre()));
     // The target lives only in a DIFFERENT bundle, not the bridge's own.
     pool.bundle_members
         .entry(memento_cid(other_bundle))
@@ -406,8 +434,7 @@ fn rejects_self_pinned_when_self_bundle_unknown() {
     let target_cid = "blake3-512:contract-unbundled";
     let pool = {
         let mut p = MementoPool::default();
-        p.mementos
-            .insert(memento_cid(target_cid), contract_env(trivial_pre()));
+        p.insert_unanchored_for_tests(memento_cid(target_cid), contract_env(trivial_pre()));
         p
     };
 

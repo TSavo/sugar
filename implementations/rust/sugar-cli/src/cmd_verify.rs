@@ -1705,6 +1705,16 @@ mod tests {
         test_cid(label).to_string()
     }
 
+    fn insert_unanchored_test_member(
+        pool: &mut MementoPool,
+        cid: sugar_verifier::MementoCid,
+        envelope: Json,
+    ) {
+        let member = sugar_verifier::StoredMember::from_envelope(cid.clone(), &envelope)
+            .expect("test member must parse");
+        pool.mementos.insert(cid, member);
+    }
+
     fn test_compilers() -> CompilerRegistry {
         let mut compilers = CompilerRegistry::new();
         compilers.register(std::sync::Arc::new(
@@ -1994,8 +2004,7 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert(test_cid(PRE_BEARING_BODY_BEARING_CID), env);
+        insert_unanchored_test_member(&mut pool, test_cid(PRE_BEARING_BODY_BEARING_CID), env);
         pool.bundle_members
             .entry(test_cid(TRAP_BUNDLE))
             .or_default()
@@ -2052,7 +2061,8 @@ mod tests {
         // A post-only contract (no `pre`) must NOT reroute: stays on the
         // body-discharge path (the `double()` family is unaffected).
         let mut post_only = MementoPool::default();
-        post_only.mementos.insert(
+        insert_unanchored_test_member(
+            &mut post_only,
             test_cid("post-only"),
             json!({"evidence": {"kind": "contract", "body": {
                 "post": {"kind": "atomic", "name": "=", "args": []},
@@ -2068,7 +2078,8 @@ mod tests {
         // A `pre = true` total contract (e.g. unwrap_or) is trivial -> no
         // reroute (a vacuous pre is nothing to discharge under guards).
         let mut total = MementoPool::default();
-        total.mementos.insert(
+        insert_unanchored_test_member(
+            &mut total,
             test_cid("total"),
             json!({"evidence": {"kind": "contract", "body": {
                 "pre": {"kind": "atomic", "name": "true", "args": []},
@@ -2349,37 +2360,65 @@ mod tests {
         });
 
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert(test_cid(DLIB_TOTALITY_CONTRACT_CID), totality_contract);
-        pool.mementos.insert(
+        insert_unanchored_test_member(
+            &mut pool,
+            test_cid(DLIB_TOTALITY_CONTRACT_CID),
+            totality_contract,
+        );
+        insert_unanchored_test_member(
+            &mut pool,
             test_cid(DLIB_OPTION_TOTALITY_CONTRACT_CID),
             option_totality_contract,
         );
-        pool.mementos
-            .insert(test_cid(DLIB_RESULT_UNWRAP_CID), result_unwrap_contract);
-        pool.mementos
-            .insert(test_cid(DLIB_OPTION_EXPECT_CID), option_expect_contract);
-        pool.mementos.insert(
+        insert_unanchored_test_member(
+            &mut pool,
+            test_cid(DLIB_RESULT_UNWRAP_CID),
+            result_unwrap_contract,
+        );
+        insert_unanchored_test_member(
+            &mut pool,
+            test_cid(DLIB_OPTION_EXPECT_CID),
+            option_expect_contract,
+        );
+        insert_unanchored_test_member(
+            &mut pool,
             test_cid(DLIB_OPTION_EXPECT_MISMATCH_CID),
             option_expect_mismatch_contract,
         );
-        pool.mementos
-            .insert(test_cid(DLIB_GENERIC_CONTRACT_CID), generic_contract);
+        insert_unanchored_test_member(
+            &mut pool,
+            test_cid(DLIB_GENERIC_CONTRACT_CID),
+            generic_contract,
+        );
+        let totality_bridge_cid = test_cid("dlib-totality-bridge");
+        insert_unanchored_test_member(
+            &mut pool,
+            totality_bridge_cid.clone(),
+            totality_bridge.clone(),
+        );
         pool.insert_bridge_by_symbol(
             "serde_json_to_string_value",
-            test_cid("dlib-totality-bridge"),
+            totality_bridge_cid,
             totality_bridge,
+        );
+        let option_totality_bridge_cid = test_cid("dlib-option-totality-bridge");
+        insert_unanchored_test_member(
+            &mut pool,
+            option_totality_bridge_cid.clone(),
+            option_totality_bridge.clone(),
         );
         pool.insert_bridge_by_symbol(
             "grammar_op_registry_cid_known",
-            test_cid("dlib-option-totality-bridge"),
+            option_totality_bridge_cid,
             option_totality_bridge,
         );
-        pool.insert_bridge_by_symbol(
-            "to_string_generic",
-            test_cid("dlib-generic-bridge"),
-            generic_bridge,
+        let generic_bridge_cid = test_cid("dlib-generic-bridge");
+        insert_unanchored_test_member(
+            &mut pool,
+            generic_bridge_cid.clone(),
+            generic_bridge.clone(),
         );
+        pool.insert_bridge_by_symbol("to_string_generic", generic_bridge_cid, generic_bridge);
         pool.bundle_members
             .entry(test_cid(DLIB_BUNDLE))
             .or_default()

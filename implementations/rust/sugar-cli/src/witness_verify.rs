@@ -102,7 +102,7 @@ pub fn verify_witnesses_with_options(
             .unwrap_or("");
         // body is kept as-is: no pool-level full-body accessor exists, and
         // the kit oracle resolver requires the whole body object.
-        let body = env.get("body").cloned().unwrap_or(Value::Null);
+        let body = env.body().cloned().unwrap_or(Value::Null);
         let signature = pool
             .member_field(cid, "signature")
             .and_then(|v| v.as_str())

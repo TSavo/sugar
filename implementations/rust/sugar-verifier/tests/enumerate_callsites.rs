@@ -12,10 +12,10 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use serde_json::json;
+use serde_json::{json, Value as Json};
 use tracing_subscriber::fmt::MakeWriter;
 
-use sugar_verifier::{enumerate_callsites, MementoCid, MementoPool};
+use sugar_verifier::{enumerate_callsites, MementoCid, MementoPool, StoredMember};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -28,6 +28,38 @@ fn memento_cid(label: &str) -> MementoCid {
 
 fn memento_cid_string(label: &str) -> String {
     memento_cid(label).to_string()
+}
+
+trait TestPoolInsert {
+    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json);
+}
+
+impl TestPoolInsert for MementoPool {
+    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json) {
+        let member =
+            StoredMember::from_envelope(cid.clone(), &envelope).expect("test member must parse");
+        self.mementos.insert(cid, member);
+    }
+}
+
+fn insert_test_bridge_by_symbol(
+    pool: &mut MementoPool,
+    source_symbol: &str,
+    bridge_cid: MementoCid,
+    bridge_env: Json,
+) {
+    pool.insert_unanchored_for_tests(bridge_cid.clone(), bridge_env.clone());
+    pool.insert_bridge_by_symbol(source_symbol, bridge_cid, bridge_env);
+}
+
+fn insert_test_bridge_by_callsite(
+    pool: &mut MementoPool,
+    key: (MementoCid, String, usize, String),
+    bridge_cid: MementoCid,
+    bridge_env: Json,
+) {
+    pool.insert_unanchored_for_tests(bridge_cid.clone(), bridge_env.clone());
+    pool.insert_bridge_by_callsite(key, bridge_cid, bridge_env);
 }
 
 #[derive(Clone, Default)]
@@ -86,7 +118,8 @@ fn pool_with_bridge_and_contract(
             }
         }
     });
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         bridge_symbol,
         memento_cid(&format!("bridge-{bridge_symbol}")),
         bridge_env,
@@ -98,7 +131,7 @@ fn pool_with_bridge_and_contract(
             "body": contract_body
         }
     });
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         memento_cid(&format!("contract-{bridge_symbol}")),
         contract_env,
     );
@@ -139,7 +172,8 @@ fn finds_ctor_in_atomic_args_in_pre() {
 fn callsite_carries_formal_actuals_from_bridge_callsite() {
     let target_cid = memento_cid_string("target");
     let mut pool = MementoPool::default();
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:to_digit",
         memento_cid("method-to-digit-bridge"),
         json!({
@@ -161,7 +195,7 @@ fn callsite_carries_formal_actuals_from_bridge_callsite() {
             }
         }),
     );
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         memento_cid("caller"),
         json!({
             "evidence": {
@@ -289,7 +323,7 @@ fn finds_ctor_inside_connective_operands() {
 #[test]
 fn no_callsite_when_no_bridges_registered() {
     let mut pool = MementoPool::default();
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         memento_cid("contract-c"),
         json!({
             "evidence": {
@@ -336,7 +370,7 @@ fn no_callsite_for_ctor_name_with_no_matching_bridge() {
 fn skips_non_contract_envelopes() {
     let mut pool = MementoPool::default();
     // A bridge envelope (kind=bridge): should not be walked.
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         memento_cid("bridge-member"),
         json!({
             "evidence": {
@@ -354,7 +388,8 @@ fn skips_non_contract_envelopes() {
             }
         }),
     );
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "parseInt",
         memento_cid("parse-int-bridge"),
         json!({
@@ -533,12 +568,14 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
             }
         }
     });
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:expect",
         memento_cid("expect-imported-bridge"),
         bridge.clone(),
     );
-    pool.insert_bridge_by_callsite(
+    insert_test_bridge_by_callsite(
+        &mut pool,
         (
             property_bundle.clone(),
             "src/core/types.rs".into(),
@@ -554,7 +591,7 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
         .entry(property_bundle.clone())
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -619,12 +656,14 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
             }
         }
     });
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:expect",
         memento_cid("expect-panic-loci-only-bridge"),
         bridge.clone(),
     );
-    pool.insert_bridge_by_callsite(
+    insert_test_bridge_by_callsite(
+        &mut pool,
         (
             property_bundle.clone(),
             "src/kit_dispatch.rs".into(),
@@ -638,7 +677,7 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
         .entry(property_bundle.clone())
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -675,7 +714,8 @@ fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
     let locus_receiver = json!({"name": "value", "kind": "var"});
 
     let mut pool = MementoPool::default();
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:unwrap",
         memento_cid("unwrap-duplicate-bridge"),
         json!({
@@ -695,7 +735,7 @@ fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -740,7 +780,7 @@ fn panic_loci_without_bridge_still_surfaces_undecidable_callsite() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -778,7 +818,8 @@ fn effect_loci_only_contract_becomes_panic_callsite() {
     });
 
     let mut pool = MementoPool::default();
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:expect",
         memento_cid("expect-effect-loci-only-bridge"),
         json!({
@@ -798,7 +839,7 @@ fn effect_loci_only_contract_becomes_panic_callsite() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -844,7 +885,8 @@ fn effect_site_concept_routes_bridge_as_panic_site() {
         }),
     );
     let mut pool = pool;
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:expect",
         memento_cid("expect-effect-site-bridge"),
         json!({
@@ -875,7 +917,7 @@ fn effect_site_concept_routes_bridge_as_panic_site() {
 fn non_panic_effect_loci_are_ignored() {
     let property_cid = memento_cid("io-effect-contract");
     let mut pool = MementoPool::default();
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -919,7 +961,8 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
         .insert("effectKind".to_string(), json!(PANIC_EFFECT_KIND));
 
     let mut pool = MementoPool::default();
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:unwrap",
         memento_cid("unwrap-both-effect-fields-bridge"),
         json!({
@@ -942,7 +985,7 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -988,12 +1031,14 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
             }
         }
     });
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:unwrap",
         memento_cid("unwrap-disagreeing-effect-bridge"),
         bridge.clone(),
     );
-    pool.insert_bridge_by_callsite(
+    insert_test_bridge_by_callsite(
+        &mut pool,
         (
             property_bundle.clone(),
             "src/lib.rs".into(),
@@ -1007,7 +1052,7 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
@@ -1080,12 +1125,14 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
             }
         }
     });
-    pool.insert_bridge_by_symbol(
+    insert_test_bridge_by_symbol(
+        &mut pool,
         "method:unwrap",
         memento_cid("unwrap-effect-only-bridge"),
         bridge.clone(),
     );
-    pool.insert_bridge_by_callsite(
+    insert_test_bridge_by_callsite(
+        &mut pool,
         (
             property_bundle.clone(),
             "src/lib.rs".into(),
@@ -1099,7 +1146,7 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
         .entry(property_bundle)
         .or_default()
         .insert(property_cid.clone());
-    pool.mementos.insert(
+    pool.insert_unanchored_for_tests(
         property_cid,
         json!({
             "evidence": {
