@@ -265,8 +265,13 @@ def _expr(term: Json) -> ast.expr:
                 )
             else:
                 positional.append(_expr(arg))
+        callee = (
+            _dotted_expr(_const_string(args[0]))
+            if _is_string_const(args[0])
+            else _expr(args[0])
+        )
         return ast.Call(
-            func=_dotted_expr(_const_string(args[0])),
+            func=callee,
             args=positional,
             keywords=keywords,
         )
@@ -450,6 +455,12 @@ def _const_string(term: Json) -> str:
     if term.get("kind") != "const" or not isinstance(term.get("value"), str):
         raise ValueError(f"expected string const: {term!r}")
     return term["value"]
+
+
+def _is_string_const(term: Any) -> bool:
+    return isinstance(term, dict) and term.get("kind") == "const" and isinstance(
+        term.get("value"), str
+    )
 
 
 def _is_none_const(term: Any) -> bool:

@@ -231,6 +231,14 @@ def _call(name: str, *args: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _call_term(callee: dict[str, object], *args: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:call",
+        "args": [callee, *args],
+    }
+
+
 def _kwarg(name: str, value: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -3142,11 +3150,8 @@ def test_b1_decorated_functions_remain_deferred() -> None:
     ]
 
 
-def test_b1_starred_call_and_dynamic_callee_stay_out_of_scope() -> None:
+def test_b1_starred_call_arguments_remain_refused() -> None:
     starred = lift_source("def f(xs):\n    return make(*xs)\n", "b1_starred_call.py")
-    dynamic = lift_source(
-        "def f(factory):\n    return factory()(1)\n", "b1_dynamic_callee.py"
-    )
 
     assert starred.refusals == [
         {
@@ -3156,14 +3161,73 @@ def test_b1_starred_call_and_dynamic_callee_stay_out_of_scope() -> None:
             "reason": "starred call arguments are refused",
         }
     ]
+
+
+def test_simple_chained_call_lifts_with_unresolved_chained_effect() -> None:
+    result = lift_source("def f(factory, x):\n    return factory()(x)\n", "chain.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _return(
+        _call_term(_call("factory"), _var("x"))
+    )
+    assert {"kind": "unresolved_call", "name": "factory"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
+
+
+def test_method_chain_from_call_result_lifts_dynamic_attribute_callee() -> None:
+    result = lift_source(
+        "def f(factory, x):\n    return factory().method(x)\n",
+        "method_chain.py",
+    )
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _return(
+        _call_term(_attr(_call("factory"), "method"), _var("x"))
+    )
+    assert {"kind": "panics"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "factory"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
+
+
+def test_triple_chained_call_lifts_nested_dynamic_callees() -> None:
+    result = lift_source("def f(factory):\n    return factory()()()\n", "triple_chain.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _return(
+        _call_term(_call_term(_call("factory")))
+    )
+    assert {"kind": "unresolved_call", "name": "factory"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "(chained)"} in contract["effects"]
+
+
+def test_chained_call_floor_discriminates_subscript_callee() -> None:
+    dynamic = lift_source(
+        "def f(table):\n    return table[0](1)\n", "subscript_callee.py"
+    )
+
     assert dynamic.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "b1_dynamic_callee.f",
+            "function": "subscript_callee.f",
             "line": 2,
-            "reason": "unsupported callee kind: Call",
+            "reason": "unsupported callee kind: Subscript",
         }
     ]
+
+
+def test_chained_call_roundtrip_is_structurally_stable() -> None:
+    term = _call_term(_call_term(_call("factory"), _var("x")), _var("y"))
+
+    compiled = compile_body_term(_return(term), formals=["factory", "x", "y"])
+    relifted = lift_source(compiled, "roundtrip_chain.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
 
 
 def test_none_guarded_attribute_access_emits_one_runtime_failure_locus() -> None:
