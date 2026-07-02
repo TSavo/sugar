@@ -58,10 +58,20 @@ class ValuePin:
     confession: str | None
 
 
+@dataclass(frozen=True)
+class MutableGlobalPin:
+    name: str
+    kind: str
+    term: Json
+    line: int
+    col: int
+
+
 @dataclass
 class ValuePinScan:
     pins: dict[str, ValuePin] = field(default_factory=dict)
     refusals: list[Json] = field(default_factory=list)
+    mutable_global_pins: list[MutableGlobalPin] = field(default_factory=list)
     candidates: int = 0
 
     def totality_holds(self) -> bool:
@@ -87,6 +97,7 @@ class _Candidate:
     value: ast.expr
     line: int
     confession: str | None
+    col: int = 0
 
 
 def scan_module_value_pins(tree: ast.Module) -> ValuePinScan:
@@ -112,6 +123,17 @@ def scan_module_value_pins(tree: ast.Module) -> ValuePinScan:
             term = _render_value_term(candidate.value)
         except _NotAdmissible as exc:
             scan.refusals.append(_pin_refusal(candidate, exc.reason))
+            mutable_kind = _direct_mutable_kind(candidate.value)
+            if mutable_kind is not None:
+                scan.mutable_global_pins.append(
+                    MutableGlobalPin(
+                        name=candidate.name,
+                        kind=mutable_kind,
+                        term=mutable_global_pin_term(candidate.name, mutable_kind),
+                        line=candidate.line,
+                        col=candidate.col,
+                    )
+                )
             continue
         scan.pins[candidate.name] = ValuePin(
             name=candidate.name,
@@ -260,6 +282,23 @@ def _pin_refusal(candidate: _Candidate, reason: str) -> Json:
     }
 
 
+def mutable_global_pin_term(name: str, kind: str) -> Json:
+    return ctor("python:mutable_global_pin", str_const(name), str_const(kind))
+
+
+def mutable_global_pin_opacity_entry(
+    pin: MutableGlobalPin, *, source_path: str
+) -> Json:
+    return {
+        "file": source_path,
+        "line": pin.line,
+        "col": pin.col,
+        "name": pin.name,
+        "kind": pin.kind,
+        "term": pin.term,
+    }
+
+
 def _is_rebinding_reason(reason: str) -> bool:
     return (
         reason.startswith("rebound")
@@ -326,6 +365,7 @@ def _collect_candidates(tree: ast.Module) -> dict[str, _Candidate]:
             value=value,
             line=stmt.lineno,
             confession=confession,
+            col=name_node.col_offset,
         )
     # A duplicated candidate name surfaces through the binding-event scan
     # (two assignment events), so the first occurrence remains the candidate
@@ -358,6 +398,16 @@ def _is_literal_shaped(node: ast.expr) -> bool:
             for key, val in zip(node.keys, node.values)
         )
     return False
+
+
+def _direct_mutable_kind(node: ast.expr) -> str | None:
+    if isinstance(node, ast.List):
+        return "list"
+    if isinstance(node, ast.Dict):
+        return "dict"
+    if isinstance(node, ast.Set):
+        return "set"
+    return None
 
 
 def _render_value_term(node: ast.expr) -> Json:
