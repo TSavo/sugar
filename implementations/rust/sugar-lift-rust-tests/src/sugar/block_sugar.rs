@@ -38,6 +38,7 @@ use syn::{Expr, Item, Stmt};
 
 use crate::sugar::catalog::build_stmt_role;
 use crate::sugar::claim::{StmtSugarClaim, SugarRole};
+use crate::sugar::control_flow_guard_operation::{guard_block, guard_exit};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::guarded_return::{guarded_returns_to_formula, GuardedReturn};
 use crate::sugar::source_fragment::SourceFragment;
@@ -124,10 +125,18 @@ impl Sugar for BlockSugar {
                     }
                     // Single return: emit under the current accumulated pending guards.
                     Desugared::StmtReturn(term) => {
-                        emitted.push(GuardedReturn::new(pending.clone(), term));
+                        emitted.push(guard_exit(
+                            Desugared::StmtReturn(term),
+                            &pending,
+                            "BlockSugar",
+                        ));
                     }
                     Desugared::StmtGuarded(guarded_return) => {
-                        emitted.push(guarded_return.with_prefix(&pending));
+                        emitted.push(guard_exit(
+                            Desugared::StmtGuarded(guarded_return),
+                            &pending,
+                            "BlockSugar",
+                        ));
                     }
                     // Nested block/if: merge its guarded clauses (prefixed with pending),
                     // extend pending with any fall_through conditions.
@@ -135,9 +144,9 @@ impl Sugar for BlockSugar {
                         guarded,
                         fall_through,
                     } => {
-                        for guarded_return in guarded {
-                            emitted.push(guarded_return.with_prefix(&pending));
-                        }
+                        let (guarded, fall_through) =
+                            guard_block(guarded, fall_through, &pending, "BlockSugar");
+                        emitted.extend(guarded);
                         pending.extend(fall_through);
                     }
                     other => block_stmt_gap(&format!(
@@ -195,8 +204,53 @@ fn block_stmt_gap(reason: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
+    use sugar_ir_symbolic::{atomic_, num};
+
+    use crate::sugar::control_flow_guard_operation::{
+        ControlFlowGuardAccept, ControlFlowGuardOperation,
+    };
+    use crate::sugar::guarded_return::GuardedReturn;
     use crate::sugar::source_contract::emit_value_contract;
-    use crate::sugar::source_fragment::SourceFragment;
+    use crate::{Desugared, Outcome};
+
+    #[test]
+    fn control_flow_guard_operation_prefixes_block_guarded_returns() {
+        let outer = atomic_("outer", vec![]);
+        let inner = atomic_("inner", vec![]);
+        let fallthrough = atomic_("fallthrough", vec![]);
+
+        let outcome = Desugared::StmtBlock {
+            guarded: vec![GuardedReturn::new(vec![inner.clone()], num(7))],
+            fall_through: vec![fallthrough.clone()],
+        }
+        .accept_control_flow_guard(ControlFlowGuardOperation::new(vec![outer.clone()], "test"));
+
+        let Outcome::Complete(Desugared::StmtBlock {
+            guarded,
+            fall_through,
+        }) = outcome
+        else {
+            panic!("expected guarded block output");
+        };
+
+        assert_eq!(guarded.len(), 1);
+        assert_eq!(guarded[0].guards.len(), 2);
+        assert!(Rc::ptr_eq(&guarded[0].guards[0], &outer));
+        assert!(Rc::ptr_eq(&guarded[0].guards[1], &inner));
+        assert_eq!(fall_through.len(), 1);
+        assert!(Rc::ptr_eq(&fall_through[0], &fallthrough));
+    }
+
+    #[test]
+    #[should_panic(expected = "write more ControlFlowGuardOperation for `StmtSupport`")]
+    fn control_flow_guard_operation_rejects_non_exit_floor() {
+        let guard = atomic_("guard", vec![]);
+
+        let _ = Desugared::StmtSupport
+            .accept_control_flow_guard(ControlFlowGuardOperation::new(vec![guard], "test"));
+    }
 
     /// Guard-clause shape: `if cond { return v1; } v2`
     /// Must produce the SAME two-arm guarded formula as the old emit_guard_return_value.
