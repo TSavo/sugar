@@ -812,7 +812,7 @@ struct RustVendorContractBindingMember {
 
 struct RustVendorProofMember {
     cid: String,
-    kind: Option<String>,
+    kind: Option<sugar_proof_envelope::MemberKind>,
     body_cid: Option<String>,
     json: Value,
 }
@@ -841,7 +841,7 @@ impl RustVendorProofMember {
 fn rust_vendor_contract_binding_member(
     member: &RustVendorProofMember,
 ) -> Result<Option<RustVendorContractBindingMember>, String> {
-    if member.kind.as_deref() != Some("contract") {
+    if member.kind != Some(sugar_proof_envelope::MemberKind::Contract) {
         return Ok(None);
     }
     // Graph-backed Rust contracts prove the body map exists by carrying bodyCid.

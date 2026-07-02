@@ -36,7 +36,9 @@ use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolverSeat, SolversConfig,
 };
-use crate::types::{AnchoredMember, CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
+use crate::types::{
+    AnchoredMember, CallSite, MemberKind, MementoCid, MementoPool, ObligationVerdict, Report,
+};
 use crate::{
     body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -1310,7 +1312,7 @@ fn verify_contract_self_posts(
     let contracts: Vec<&MementoCid> = pool
         .mementos
         .keys()
-        .filter(|cid| pool.member_kind(cid) == Some("contract"))
+        .filter(|cid| pool.member_is_kind(cid, MemberKind::Contract))
         .collect();
 
     contracts

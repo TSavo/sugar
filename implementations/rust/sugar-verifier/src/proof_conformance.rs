@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value as Json;
 use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::{ed25519_verify_bytes, MemberView, ProofGraph};
+use sugar_proof_envelope::{ed25519_verify_bytes, MemberKind, MemberView, ProofGraph};
 
 use crate::cbor_decode::CborValue;
 use sugar_proof_envelope::decode_for_conformance;
@@ -278,7 +278,7 @@ fn authority_key_for_catalog_signer(signer: &str, graph: &ProofGraph) -> Result<
         .members_view()
         .find(|v| v.cid().as_str() == signer)
         .ok_or_else(|| format!("catalog signer authority `{signer}` is not in members"))?;
-    if view.kind().as_deref() != Some("authority") {
+    if view.kind() != Some(MemberKind::Authority) {
         return Err(format!(
             "catalog signer `{signer}` does not resolve to an authority memento"
         ));

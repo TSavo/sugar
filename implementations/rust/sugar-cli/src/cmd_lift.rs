@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 use sugar_proof_envelope::Member;
+use sugar_verifier::MemberKind;
 
 use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1586,7 +1587,7 @@ fn source_report_from_proof_pool(
     let mut contracts = Vec::new();
     let mut contract_names_by_cid = BTreeMap::new();
     for (cid, envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("contract") {
+        if !pool.member_is_kind(cid, MemberKind::Contract) {
             continue;
         }
         let mut contract = proof_contract_value(pool, cid, envelope);
@@ -1606,7 +1607,7 @@ fn source_report_from_proof_pool(
     // Bridge envelopes carry `sourceSymbol` in the header, not `name`; the
     // report convention is "dig:<sourceSymbol>" per the consumer IR naming.
     for (cid, _envelope) in &pool.mementos {
-        if pool.member_kind(cid) != Some("bridge") {
+        if !pool.member_is_kind(cid, MemberKind::Bridge) {
             continue;
         }
         let source_symbol = match pool
@@ -1704,12 +1705,12 @@ fn source_report_from_proof_pool(
     let implication_count = pool
         .mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid) == Some("implication"))
+        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::Implication))
         .count();
     let witness_count = pool
         .mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid) == Some("witness-memento"))
+        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::WitnessMemento))
         .count();
     if implication_count > 0 && call_edges.is_empty() {
         call_edges.push(serde_json::json!({
@@ -1787,7 +1788,7 @@ fn proof_implication_call_edges(
 ) -> Vec<Value> {
     pool.mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid) == Some("implication"))
+        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::Implication))
         .filter_map(|(cid, _)| proof_implication_call_edge(pool, cid, contract_names_by_cid))
         .collect()
 }
@@ -7771,7 +7772,10 @@ mod tests {
         cid: MementoCid,
         envelope: serde_json::Value,
     ) {
-        if sugar_proof_envelope::member_kind(&envelope) == Some("contract") {
+        if matches!(
+            sugar_proof_envelope::member_kind(&envelope),
+            Ok(MemberKind::Contract)
+        ) {
             if let Some(name) = sugar_proof_envelope::member_field(&envelope, "contractName")
                 .or_else(|| sugar_proof_envelope::member_field(&envelope, "name"))
                 .and_then(|v| v.as_str())

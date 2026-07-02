@@ -10,7 +10,7 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{AttributeSafetyObligation, CallSite, MementoCid, MementoPool};
+use crate::types::{AttributeSafetyObligation, CallSite, MemberKind, MementoCid, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -28,7 +28,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         // v1.1-flat carry them on `evidence.kind` / `evidence.body`. The
         // production harvest path (`mint_contract`) emits v1.2; reading
         // only `evidence.body` here meant harvested calls never enumerated.
-        if pool.member_kind(cid) != Some("contract") {
+        if !pool.member_is_kind(cid, MemberKind::Contract) {
             continue;
         }
         let body = match pool.resolve_contract_body(env) {

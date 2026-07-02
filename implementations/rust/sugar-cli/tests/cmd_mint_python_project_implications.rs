@@ -204,7 +204,7 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
         pool.load_errors
     );
     let saw_body_discharge_bridge = pool.mementos.keys().any(|cid| {
-        pool.member_kind(cid) == Some("bridge")
+        pool.member_is_kind(cid, sugar_verifier::MemberKind::Bridge)
             && pool
                 .member_field(cid, "sourceSymbol")
                 .and_then(|v| v.as_str())
@@ -218,7 +218,7 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
     );
 
     let saw_consumer_output = pool.mementos.keys().any(|cid| {
-        pool.member_kind(cid) == Some("plan-memento")
+        pool.member_is_kind(cid, sugar_verifier::MemberKind::PlanMemento)
             && pool
                 .member_field(cid, "toolOutputs")
                 .and_then(|v| v.as_array())

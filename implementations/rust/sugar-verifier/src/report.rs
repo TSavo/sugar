@@ -6,7 +6,7 @@
 use serde_json::Value as Json;
 
 use crate::types::{
-    CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
+    CallSite, LoadError, MemberKind, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
     ToolchainPlanReport,
 };
 
@@ -169,7 +169,7 @@ pub fn add_toolchain_plans(pool: &MementoPool, r: &mut Report) {
 pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
     let mut witness_outputs = Vec::new();
     for (cid, _) in &pool.mementos {
-        if pool.member_kind(cid) != Some("witness-memento") {
+        if !pool.member_is_kind(cid, MemberKind::WitnessMemento) {
             continue;
         }
         let actual = pool
@@ -199,7 +199,7 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
 
     let mut rows = Vec::new();
     for (cid, _) in &pool.mementos {
-        if pool.member_kind(cid) != Some("plan-memento") {
+        if !pool.member_is_kind(cid, MemberKind::PlanMemento) {
             continue;
         }
         let plan_cid = pool
