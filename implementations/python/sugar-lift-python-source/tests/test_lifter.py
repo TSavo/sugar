@@ -360,6 +360,14 @@ def _import_stmt(*names: str) -> dict[str, object]:
     }
 
 
+def _nested_funcdef(name: str) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:nested_funcdef",
+        "args": [_str_const(name)],
+    }
+
+
 def _fstring(*parts: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:fstring", "args": list(parts)}
 
@@ -3728,6 +3736,159 @@ def test_import_roundtrip_is_structurally_stable() -> None:
 
     compiled = compile_body_term(term)
     relifted = lift_source(compiled, "roundtrip_import.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
+
+
+def test_simple_nested_function_lifts_contract_and_local_callback_binding() -> None:
+    source = (
+        'x = "global"\n'
+        "def outer(x, runner):\n"
+        "    def inner(y):\n"
+        "        return x + y\n"
+        "    return runner(inner)\n"
+    )
+
+    result = lift_source(source, "nested_simple.py")
+
+    assert result.refusals == []
+    outer = _contract(result.ir, ".outer")
+    inner = _contract(result.ir, ".outer.<locals>.inner")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_funcdef("inner"),
+        _return(_call("runner", _var("inner"))),
+    )
+    assert inner["post"]["args"][1] == _return(
+        _binary("python:add", _var("x"), _var("y"))
+    )
+    assert inner["effects"] == []
+    assert {"kind": "unresolved_call", "name": "runner"} in outer["effects"]
+    assert {"kind": "unresolved_call", "name": "inner"} not in outer["effects"]
+
+
+def test_decorated_nested_function_uses_opaque_fork_and_local_binding() -> None:
+    source = (
+        "def deco(fn):\n"
+        "    return fn\n"
+        "\n"
+        "def outer():\n"
+        "    @deco\n"
+        "    def inner():\n"
+        "        return 1\n"
+        "    return inner\n"
+    )
+
+    result = lift_source(source, "nested_decorated.py")
+
+    assert result.refusals == []
+    outer = _contract(result.ir, ".outer")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_funcdef("inner"),
+        _return(_var("inner")),
+    )
+    assert {"kind": "unresolved_call", "name": "inner"} in outer["effects"]
+    assert not any(
+        str(item.get("fnName", "")).endswith(".outer.<locals>.inner")
+        for item in result.ir
+    )
+
+
+def test_nested_function_refused_control_uses_opaque_fork_without_outer_refusal() -> None:
+    source = (
+        "def outer():\n"
+        "    def inner():\n"
+        "        yield 1\n"
+        "    return inner\n"
+    )
+
+    result = lift_source(source, "nested_refused_control.py")
+
+    assert result.refusals == []
+    outer = _contract(result.ir, ".outer")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_funcdef("inner"),
+        _return(_var("inner")),
+    )
+    assert {"kind": "unresolved_call", "name": "inner"} in outer["effects"]
+    assert not any(
+        str(item.get("fnName", "")).endswith(".outer.<locals>.inner")
+        for item in result.ir
+    )
+
+
+def test_nested_function_body_refusal_is_reported_without_swallowing_outer() -> None:
+    source = (
+        "def outer():\n"
+        "    def inner(x):\n"
+        "        del x\n"
+        "    return inner\n"
+    )
+
+    result = lift_source(source, "nested_refusal.py")
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "nested_refusal.outer.<locals>.inner",
+            "line": 3,
+            "reason": "unhandled statement kind: Delete",
+        }
+    ]
+    outer = _contract(result.ir, ".outer")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_funcdef("inner"),
+        _return(_var("inner")),
+    )
+    assert {"kind": "unresolved_call", "name": "inner"} in outer["effects"]
+    assert not any(
+        str(item.get("fnName", "")).endswith(".outer.<locals>.inner")
+        for item in result.ir
+    )
+
+
+def test_nested_function_name_used_after_definition_is_local_binding() -> None:
+    source = (
+        'inner = "global"\n'
+        "def outer():\n"
+        "    def inner():\n"
+        "        return 1\n"
+        "    return inner\n"
+    )
+
+    result = lift_source(source, "nested_binding.py")
+
+    assert result.refusals == []
+    assert _function_body(result, ".outer") == _seq(
+        _nested_funcdef("inner"),
+        _return(_var("inner")),
+    )
+    assert _function_body(result, ".outer.<locals>.inner") == _return(_int_const(1))
+
+
+def test_nested_function_floor_discriminates_classdef_statement() -> None:
+    result = lift_source(
+        "def outer():\n    class C:\n        pass\n    return C\n",
+        "nested_class_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "nested_class_refusal.outer",
+            "line": 2,
+            "reason": "unhandled statement kind: ClassDef",
+        }
+    ]
+
+
+def test_nested_function_roundtrip_is_structurally_stable() -> None:
+    term = _seq(_nested_funcdef("inner"), _return(_var("inner")))
+
+    compiled = compile_body_term(term)
+    relifted = lift_source(compiled, "roundtrip_nested_funcdef.py")
 
     assert relifted.refusals == []
     body = _function_body(relifted)

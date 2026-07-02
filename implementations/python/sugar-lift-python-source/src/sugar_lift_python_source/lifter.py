@@ -178,6 +178,7 @@ def lift_source(source: str, source_path: str) -> LiftResult:
             result,
             receiver_context=receiver_contexts.get(info.qualname),
             value_pins=pin_scan.pins,
+            contract_sink=contracts,
         )
         if contract is None:
             continue
@@ -260,17 +261,9 @@ class _DefinitionCollector(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
         self._record_function(node)
-        self.scope.append(("function", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         self._record_function(node)
-        self.scope.append(("function", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
 
     def _record_function(self, node: ast.AST) -> None:
         assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -592,9 +585,11 @@ class _LocalCollector(ast.NodeVisitor):
         self.names: set[str] = set()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.names.add(node.name)
         return
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.names.add(node.name)
         return
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -651,6 +646,8 @@ class _Emitter:
         effects: _EffectSet,
         source_path: str,
         panic_loci: list[Json],
+        result: LiftResult | None = None,
+        contract_sink: list[Json] | None = None,
         attribute_receiver: _AttributeReceiverContext | None = None,
         value_pins: dict[str, ValuePin] | None = None,
     ) -> None:
@@ -660,6 +657,8 @@ class _Emitter:
         self.effects = effects
         self.source_path = source_path
         self.panic_loci = panic_loci
+        self.result = result if result is not None else LiftResult()
+        self.contract_sink = contract_sink if contract_sink is not None else []
         self.attribute_receiver = attribute_receiver
         self.value_pins = value_pins or {}
 
@@ -762,6 +761,8 @@ class _Emitter:
             self.effects.add_io()
             self.locals.update(names)
             return ctor("python:import", *[str_const(name) for name in names])
+        if isinstance(node, ast.FunctionDef):
+            return self.nested_function(node)
         if isinstance(node, ast.With):
             extra_locals: set[str] = set()
             for item in node.items:
@@ -861,6 +862,32 @@ class _Emitter:
             name,
             body,
         )
+
+    def nested_function(self, node: ast.FunctionDef) -> Json:
+        self.locals.add(node.name)
+        term = ctor("python:nested_funcdef", str_const(node.name))
+        if _has_non_authoring_decorators(node) or _contains_refused_control(node):
+            self.effects.add_unresolved_call(node.name)
+            return term
+
+        contract = _lift_function(
+            _FunctionInfo(
+                node=node,
+                qualname=f"{self.fn_name}.<locals>.{node.name}",
+                fn_name=f"{self.fn_name}.<locals>.{node.name}",
+            ),
+            self.source_path,
+            self.module_globals,
+            self.result,
+            value_pins=self.value_pins,
+            contract_sink=self.contract_sink,
+            closure_locals=set(self.locals),
+        )
+        if contract is None:
+            self.effects.add_unresolved_call(node.name)
+            return term
+        self.contract_sink.append(contract)
+        return term
 
     def runtime_failure_locus(
         self,
@@ -1503,23 +1530,15 @@ def _lift_function(
     *,
     receiver_context: _AttributeReceiverContext | None = None,
     value_pins: dict[str, ValuePin] | None = None,
+    contract_sink: list[Json] | None = None,
+    closure_locals: set[str] | None = None,
 ) -> Json | None:
     node = info.node
     assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     try:
         if isinstance(node, ast.AsyncFunctionDef):
             raise _UnsupportedSyntax(node, "async functions are refused")
-        # Verify-facing AUTHORING decorators (@sugar.boundary / @boundary /
-        # @sugar.sugar / @sugar) are declarative metadata, not behavioral
-        # wrappers, so they do NOT make a function "decorated" for lift
-        # purposes -- the body underneath is lifted (mirrors Go stripping the
-        # //sugar: pragma). Any OTHER decorator still refuses.
-        from .authoring import is_authoring_decorator
-
-        non_authoring = [
-            d for d in node.decorator_list if not is_authoring_decorator(d)
-        ]
-        if non_authoring:
+        if _has_non_authoring_decorators(node):
             raise _UnsupportedSyntax(node, "decorated functions are refused")
         formals, parameter_shape = _parameter_shape(node)
         refused = _contains_refused_control(node)
@@ -1527,6 +1546,8 @@ def _lift_function(
             raise refused
 
         locals_ = _function_locals(node, formals)
+        if closure_locals is not None:
+            locals_ |= closure_locals
         if receiver_context is not None and _receiver_name_reassigned(
             node,
             receiver_context.receiver_name,
@@ -1544,6 +1565,8 @@ def _lift_function(
             effects=effects,
             source_path=source_path,
             panic_loci=panic_loci,
+            result=result,
+            contract_sink=contract_sink if contract_sink is not None else [],
             attribute_receiver=receiver_context,
             value_pins=value_pins,
         )
@@ -2170,17 +2193,54 @@ def _refusal(
     }
 
 
+def _has_non_authoring_decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    # Verify-facing AUTHORING decorators (@sugar.boundary / @boundary /
+    # @sugar.sugar / @sugar) are declarative metadata, not behavioral wrappers.
+    from .authoring import is_authoring_decorator
+
+    return any(
+        not is_authoring_decorator(decorator)
+        for decorator in node.decorator_list
+    )
+
+
 def _contains_refused_control(fn: ast.FunctionDef) -> _UnsupportedSyntax | None:
-    for child in ast.walk(fn):
-        if child is fn:
-            continue
-        if isinstance(child, (ast.Global, ast.Nonlocal)):
-            return _UnsupportedSyntax(child, "global/nonlocal declarations are refused")
-        if isinstance(child, (ast.Yield, ast.YieldFrom)):
-            return _UnsupportedSyntax(child, "generators are refused")
-        if isinstance(child, ast.Await):
-            return _UnsupportedSyntax(child, "await expressions are refused")
-    return None
+    class _RefusedControlScanner(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.refused: _UnsupportedSyntax | None = None
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is fn:
+                self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+        def visit_Global(self, node: ast.Global) -> None:
+            self._refuse(node, "global/nonlocal declarations are refused")
+
+        def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+            self._refuse(node, "global/nonlocal declarations are refused")
+
+        def visit_Yield(self, node: ast.Yield) -> None:
+            self._refuse(node, "generators are refused")
+
+        def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
+            self._refuse(node, "generators are refused")
+
+        def visit_Await(self, node: ast.Await) -> None:
+            self._refuse(node, "await expressions are refused")
+
+        def _refuse(self, node: ast.AST, reason: str) -> None:
+            if self.refused is None:
+                self.refused = _UnsupportedSyntax(node, reason)
+
+    scanner = _RefusedControlScanner()
+    scanner.visit(fn)
+    return scanner.refused
 
 
 def _function_locals(fn: ast.FunctionDef, formals: list[str]) -> set[str]:

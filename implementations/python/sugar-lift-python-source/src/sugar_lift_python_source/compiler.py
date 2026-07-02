@@ -206,6 +206,23 @@ def _stmt(term: Json) -> ast.stmt:
                 for arg in args
             ]
         )
+    if name == "python:nested_funcdef":
+        return ast.FunctionDef(
+            name=_const_string(args[0]),
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[],
+                vararg=None,
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
+            ),
+            body=[ast.Pass()],
+            decorator_list=[],
+            returns=None,
+            type_comment=None,
+        )
     if name == "python:with":
         return ast.With(
             items=[
