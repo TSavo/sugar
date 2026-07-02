@@ -652,7 +652,11 @@ fn branch_guard_head(cond_head: &str, else_branch: bool) -> Option<&'static str>
         ("is_empty", false) => Some("is_empty"),
         // `!is_empty` (else of `if c.is_empty()`) establishes no partial pre.
         ("is_empty", true) => None,
-        _ => None,
+        (other_head, other_branch) => {
+            // sugar-audit: not-mine(unrecognized guard predicates deliberately carry no branch fact)
+            let _ = (other_head, other_branch);
+            None
+        }
     }
 }
 
@@ -734,7 +738,14 @@ fn find_next_partial_receiver(term: &IrTerm, collection_receiver_key: &str) -> O
         IrTerm::Ctor { args, .. } => args
             .iter()
             .find_map(|arg| find_next_partial_receiver(arg, collection_receiver_key)),
-        _ => None,
+        IrTerm::Let { bindings, body } => bindings
+            .iter()
+            .find_map(|binding| {
+                find_next_partial_receiver(&binding.bound_term, collection_receiver_key)
+            })
+            .or_else(|| find_next_partial_receiver(body, collection_receiver_key)),
+        IrTerm::Lambda { body, .. } => find_next_partial_receiver(body, collection_receiver_key),
+        IrTerm::Const { .. } | IrTerm::Var { .. } => None,
     }
 }
 
@@ -888,7 +899,9 @@ fn formula_operands_to_term(name: &str, operands: Vec<IrFormula>) -> Option<IrTe
 fn block_tail_expr(block: &syn::Block) -> Option<&Expr> {
     match block.stmts.last() {
         Some(Stmt::Expr(expr, None)) => Some(expr),
-        _ => None,
+        Some(Stmt::Expr(_, Some(_)) | Stmt::Local(_) | Stmt::Item(_) | Stmt::Macro(_)) | None => {
+            None
+        }
     }
 }
 
@@ -905,6 +918,9 @@ fn collect_pat_names(pat: &Pat, out: &mut HashSet<String>) {
     match pat {
         Pat::Ident(p) => {
             out.insert(p.ident.to_string());
+            if let Some((_, subpat)) = &p.subpat {
+                collect_pat_names(subpat, out);
+            }
         }
         Pat::Type(pt) => collect_pat_names(&pt.pat, out),
         Pat::Reference(r) => collect_pat_names(&r.pat, out),
@@ -929,7 +945,19 @@ fn collect_pat_names(pat: &Pat, out: &mut HashSet<String>) {
                 collect_pat_names(sub, out);
             }
         }
-        _ => {}
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Wild(_) => {}
+        Pat::Macro(_) | Pat::Verbatim(_) => {
+            panic!("sugar-walk pattern name collector refused opaque syn::Pat variant")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk pattern name collector refused unknown syn::Pat variant")
+        }
     }
 }
 
@@ -1122,7 +1150,11 @@ fn len_receiver_term(term: &IrTerm) -> Option<IrTerm> {
         IrTerm::Ctor { name, args } if name == "method:len" && args.len() == 1 => {
             Some(args[0].clone())
         }
-        _ => None,
+        IrTerm::Const { .. }
+        | IrTerm::Ctor { .. }
+        | IrTerm::Lambda { .. }
+        | IrTerm::Let { .. }
+        | IrTerm::Var { .. } => None,
     }
 }
 
@@ -1134,7 +1166,51 @@ fn len_receiver_root_expr(expr: &Expr) -> Option<String> {
             expr_root_ident(&method_call.receiver)
         }
         Expr::Paren(paren) => len_receiver_root_expr(&paren.expr),
-        _ => None,
+        Expr::Group(group) => len_receiver_root_expr(&group.expr),
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk len receiver classifier refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk len receiver classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -1149,8 +1225,49 @@ fn expr_root_ident(expr: &Expr) -> Option<String> {
         Expr::Paren(paren) => expr_root_ident(&paren.expr),
         Expr::Cast(cast) => expr_root_ident(&cast.expr),
         Expr::Field(field) => expr_root_ident(&field.base),
+        Expr::Group(group) => expr_root_ident(&group.expr),
         Expr::Index(index) => expr_root_ident(&index.expr),
-        _ => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!(
+                "sugar-walk root identifier classifier refused uninterpreted verbatim expression"
+            )
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk root identifier classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -1205,53 +1322,218 @@ fn collect_local_binding_value_fact(local: &Local, ctx: &mut LiftCtx) {
 }
 
 fn local_binding_ident(local: &Local) -> Option<(String, bool)> {
-    match &local.pat {
-        Pat::Ident(ident) => Some((ident.ident.to_string(), ident.mutability.is_some())),
-        Pat::Type(typed) => match &*typed.pat {
-            Pat::Ident(ident) => Some((ident.ident.to_string(), ident.mutability.is_some())),
-            _ => None,
-        },
-        _ => None,
+    local_binding_ident_for_pat(&local.pat)
+}
+
+fn local_binding_ident_for_pat(pat: &Pat) -> Option<(String, bool)> {
+    match pat {
+        Pat::Ident(ident) if ident.subpat.is_none() => {
+            Some((ident.ident.to_string(), ident.mutability.is_some()))
+        }
+        Pat::Ident(_) => None,
+        Pat::Paren(paren) => local_binding_ident_for_pat(&paren.pat),
+        Pat::Reference(reference) => local_binding_ident_for_pat(&reference.pat),
+        Pat::Type(typed) => local_binding_ident_for_pat(&typed.pat),
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Macro(_)
+        | Pat::Or(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Slice(_)
+        | Pat::Struct(_)
+        | Pat::Tuple(_)
+        | Pat::TupleStruct(_)
+        | Pat::Verbatim(_)
+        | Pat::Wild(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk local binding classifier refused unknown syn::Pat variant")
+        }
     }
 }
 
 fn invalidate_assignment_targets(expr: &Expr, ctx: &mut LiftCtx) {
-    match expr {
-        Expr::Assign(assign) => {
-            if let Some(root) = assignment_root_ident(&assign.left) {
-                ctx.invalidate_root(&root);
-            }
-            invalidate_assignment_targets(&assign.right, ctx);
-        }
-        Expr::Block(block) => {
-            for stmt in &block.block.stmts {
-                if let Stmt::Expr(expr, _) = stmt {
-                    invalidate_assignment_targets(expr, ctx);
-                }
-            }
-        }
-        Expr::If(if_expr) => {
-            invalidate_assignment_targets(&if_expr.cond, ctx);
-            for stmt in &if_expr.then_branch.stmts {
-                if let Stmt::Expr(expr, _) = stmt {
-                    invalidate_assignment_targets(expr, ctx);
-                }
-            }
-            if let Some((_, else_expr)) = &if_expr.else_branch {
-                invalidate_assignment_targets(else_expr, ctx);
-            }
-        }
-        _ => {}
+    let mut roots = BTreeSet::new();
+    collect_assignment_target_roots_in_expr(expr, &mut roots);
+    for root in roots {
+        ctx.invalidate_root(&root);
     }
 }
 
-fn assignment_root_ident(expr: &Expr) -> Option<String> {
+fn collect_assignment_target_roots_in_expr(expr: &Expr, roots: &mut BTreeSet<String>) {
     match expr {
-        Expr::Path(path) => path.path.segments.last().map(|seg| seg.ident.to_string()),
-        Expr::Index(index) => assignment_root_ident(&index.expr),
-        Expr::Field(field) => assignment_root_ident(&field.base),
-        Expr::Paren(paren) => assignment_root_ident(&paren.expr),
-        _ => None,
+        Expr::Assign(assign) => {
+            collect_assignment_roots_lift(&assign.left, roots);
+            collect_assignment_target_roots_in_expr(&assign.right, roots);
+        }
+        Expr::Binary(binary) => {
+            if binop_is_assignment_lift(&binary.op) {
+                collect_assignment_roots_lift(&binary.left, roots);
+            } else {
+                collect_assignment_target_roots_in_expr(&binary.left, roots);
+            }
+            collect_assignment_target_roots_in_expr(&binary.right, roots);
+        }
+        Expr::Array(array) => {
+            for elem in &array.elems {
+                collect_assignment_target_roots_in_expr(elem, roots);
+            }
+        }
+        Expr::Async(async_expr) => {
+            collect_assignment_target_roots_in_stmts(&async_expr.block.stmts, roots)
+        }
+        Expr::Await(await_expr) => collect_assignment_target_roots_in_expr(&await_expr.base, roots),
+        Expr::Block(block) => collect_assignment_target_roots_in_stmts(&block.block.stmts, roots),
+        Expr::Break(break_expr) => {
+            if let Some(expr) = &break_expr.expr {
+                collect_assignment_target_roots_in_expr(expr, roots);
+            }
+        }
+        Expr::Call(call) => {
+            collect_assignment_target_roots_in_expr(&call.func, roots);
+            for arg in &call.args {
+                collect_assignment_target_roots_in_expr(arg, roots);
+            }
+        }
+        Expr::Cast(cast) => collect_assignment_target_roots_in_expr(&cast.expr, roots),
+        Expr::Closure(_) => {}
+        Expr::Const(const_expr) => {
+            collect_assignment_target_roots_in_stmts(&const_expr.block.stmts, roots)
+        }
+        Expr::Field(field) => collect_assignment_target_roots_in_expr(&field.base, roots),
+        Expr::ForLoop(for_loop) => {
+            collect_assignment_target_roots_in_expr(&for_loop.expr, roots);
+            collect_assignment_target_roots_in_stmts(&for_loop.body.stmts, roots);
+        }
+        Expr::Group(group) => collect_assignment_target_roots_in_expr(&group.expr, roots),
+        Expr::If(if_expr) => {
+            collect_assignment_target_roots_in_expr(&if_expr.cond, roots);
+            collect_assignment_target_roots_in_stmts(&if_expr.then_branch.stmts, roots);
+            if let Some((_, else_expr)) = &if_expr.else_branch {
+                collect_assignment_target_roots_in_expr(else_expr, roots);
+            }
+        }
+        Expr::Index(index) => {
+            collect_assignment_target_roots_in_expr(&index.expr, roots);
+            collect_assignment_target_roots_in_expr(&index.index, roots);
+        }
+        Expr::Let(let_expr) => collect_assignment_target_roots_in_expr(&let_expr.expr, roots),
+        Expr::Loop(loop_expr) => {
+            collect_assignment_target_roots_in_stmts(&loop_expr.body.stmts, roots)
+        }
+        Expr::Match(match_expr) => {
+            collect_assignment_target_roots_in_expr(&match_expr.expr, roots);
+            for arm in &match_expr.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    collect_assignment_target_roots_in_expr(guard, roots);
+                }
+                collect_assignment_target_roots_in_expr(&arm.body, roots);
+            }
+        }
+        Expr::MethodCall(method) => {
+            collect_assignment_target_roots_in_expr(&method.receiver, roots);
+            for arg in &method.args {
+                collect_assignment_target_roots_in_expr(arg, roots);
+            }
+        }
+        Expr::Paren(paren) => collect_assignment_target_roots_in_expr(&paren.expr, roots),
+        Expr::Range(range) => {
+            if let Some(start) = &range.start {
+                collect_assignment_target_roots_in_expr(start, roots);
+            }
+            if let Some(end) = &range.end {
+                collect_assignment_target_roots_in_expr(end, roots);
+            }
+        }
+        Expr::RawAddr(raw_addr) => collect_assignment_target_roots_in_expr(&raw_addr.expr, roots),
+        Expr::Reference(reference) => {
+            if reference.mutability.is_some() {
+                collect_assignment_roots_lift(&reference.expr, roots);
+            }
+            collect_assignment_target_roots_in_expr(&reference.expr, roots);
+        }
+        Expr::Repeat(repeat) => {
+            collect_assignment_target_roots_in_expr(&repeat.expr, roots);
+            collect_assignment_target_roots_in_expr(&repeat.len, roots);
+        }
+        Expr::Return(return_expr) => {
+            if let Some(expr) = &return_expr.expr {
+                collect_assignment_target_roots_in_expr(expr, roots);
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for field in &struct_expr.fields {
+                collect_assignment_target_roots_in_expr(&field.expr, roots);
+            }
+            if let Some(rest) = &struct_expr.rest {
+                collect_assignment_target_roots_in_expr(rest, roots);
+            }
+        }
+        Expr::Try(try_expr) => collect_assignment_target_roots_in_expr(&try_expr.expr, roots),
+        Expr::TryBlock(try_block) => {
+            collect_assignment_target_roots_in_stmts(&try_block.block.stmts, roots)
+        }
+        Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_assignment_target_roots_in_expr(elem, roots);
+            }
+        }
+        Expr::Unary(unary) => collect_assignment_target_roots_in_expr(&unary.expr, roots),
+        Expr::Unsafe(unsafe_expr) => {
+            collect_assignment_target_roots_in_stmts(&unsafe_expr.block.stmts, roots)
+        }
+        Expr::While(while_expr) => {
+            collect_assignment_target_roots_in_expr(&while_expr.cond, roots);
+            collect_assignment_target_roots_in_stmts(&while_expr.body.stmts, roots);
+        }
+        Expr::Yield(yield_expr) => {
+            if let Some(expr) = &yield_expr.expr {
+                collect_assignment_target_roots_in_expr(expr, roots);
+            }
+        }
+        Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) | Expr::Path(_) => {}
+        Expr::Macro(expr_macro) if assignment_target_macro_has_no_roots(&expr_macro.mac) => {}
+        Expr::Macro(_) | Expr::Verbatim(_) => {
+            panic!("sugar-walk assignment target collector refused opaque syn::Expr variant")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk assignment target collector refused unknown syn::Expr variant")
+        }
+    }
+}
+
+fn collect_assignment_target_roots_in_stmts(stmts: &[Stmt], roots: &mut BTreeSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    collect_assignment_target_roots_in_expr(&init.expr, roots);
+                }
+            }
+            Stmt::Expr(expr, _) => collect_assignment_target_roots_in_expr(expr, roots),
+            Stmt::Item(_) => {}
+            Stmt::Macro(stmt_macro) if assignment_target_macro_has_no_roots(&stmt_macro.mac) => {}
+            Stmt::Macro(_) => {
+                panic!("sugar-walk assignment target collector refused opaque statement macro")
+            }
+        }
+    }
+}
+
+fn assignment_target_macro_has_no_roots(mac: &Macro) -> bool {
+    match macro_leaf_name(mac).as_deref() {
+        Some(
+            "assert" | "debug_assert" | "debug_assert_eq" | "debug_assert_ne" | "eprintln"
+            | "format" | "json" | "panic" | "println" | "vec",
+        ) => true,
+        Some(other) => {
+            let _ = other;
+            false
+        }
+        None => false,
     }
 }
 
@@ -1333,11 +1615,64 @@ fn expr_string_literal(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Lit(lit) => match &lit.lit {
             Lit::Str(s) => Some(s.value()),
-            _ => None,
+            Lit::Bool(_)
+            | Lit::Byte(_)
+            | Lit::ByteStr(_)
+            | Lit::CStr(_)
+            | Lit::Char(_)
+            | Lit::Float(_)
+            | Lit::Int(_)
+            | Lit::Verbatim(_) => None,
+            other => {
+                let _ = other;
+                panic!("sugar-walk string literal classifier refused unknown syn::Lit variant")
+            }
         },
         Expr::Paren(paren) => expr_string_literal(&paren.expr),
         Expr::Group(group) => expr_string_literal(&group.expr),
-        _ => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk string literal classifier refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk string literal classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -1427,7 +1762,18 @@ fn token_string_literal(token: &TokenTree) -> Option<String> {
     };
     match parsed {
         Lit::Str(s) => Some(s.value()),
-        _ => None,
+        Lit::Bool(_)
+        | Lit::Byte(_)
+        | Lit::ByteStr(_)
+        | Lit::CStr(_)
+        | Lit::Char(_)
+        | Lit::Float(_)
+        | Lit::Int(_)
+        | Lit::Verbatim(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk token string literal classifier refused unknown syn::Lit variant")
+        }
     }
 }
 
@@ -1481,7 +1827,10 @@ fn assertion_guard_for_partial(
                 return Some(fact.guard.clone())
             }
             ("unwrap_err", panic_freedom::IS_ERR) => return Some(fact.guard.clone()),
-            _ => {}
+            (other_method, other_guard) => {
+                // sugar-audit: not-mine(non-matching partial/guard pairs must not discharge)
+                let _ = (other_method, other_guard);
+            }
         }
     }
     if matches!(method.as_str(), "unwrap" | "expect")
@@ -1503,9 +1852,17 @@ fn next_into_iter_receiver_key(term: &IrTerm) -> Option<String> {
             IrTerm::Ctor { name, args } if name == "method:into_iter" && args.len() == 1 => {
                 term_key(&args[0])
             }
-            _ => None,
+            IrTerm::Const { .. }
+            | IrTerm::Ctor { .. }
+            | IrTerm::Lambda { .. }
+            | IrTerm::Let { .. }
+            | IrTerm::Var { .. } => None,
         },
-        _ => None,
+        IrTerm::Const { .. }
+        | IrTerm::Ctor { .. }
+        | IrTerm::Lambda { .. }
+        | IrTerm::Let { .. }
+        | IrTerm::Var { .. } => None,
     }
 }
 
@@ -1806,7 +2163,49 @@ fn collect_statement_pure_free_guard_facts(
         }
         Expr::Paren(paren) => collect_statement_pure_free_guard_facts(&paren.expr, ctx, facts),
         Expr::Group(group) => collect_statement_pure_free_guard_facts(&group.expr, ctx, facts),
-        _ => {}
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => {}
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk pure-free guard collector refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk pure-free guard collector refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -2118,7 +2517,50 @@ fn keyset_source_from_borrowed_map_expr(expr: &Expr, ctx: &mut LiftCtx) -> Optio
         }
         Expr::Paren(paren) => keyset_source_from_borrowed_map_expr(&paren.expr, ctx),
         Expr::Group(group) => keyset_source_from_borrowed_map_expr(&group.expr, ctx),
-        _ => None,
+        Expr::Reference(_) => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk keyset source classifier refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk keyset source classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -2142,21 +2584,55 @@ fn tuple_key_term_for_pat(pat: &Pat, ctx: &LiftCtx) -> Option<(String, IrTerm)> 
 
 fn local_pat_single_ident(pat: &Pat) -> Option<String> {
     match pat {
-        Pat::Ident(ident) => Some(ident.ident.to_string()),
+        Pat::Ident(ident) if ident.subpat.is_none() => Some(ident.ident.to_string()),
+        Pat::Ident(_) => None,
         Pat::Paren(paren) => local_pat_single_ident(&paren.pat),
         Pat::Reference(reference) => local_pat_single_ident(&reference.pat),
         Pat::Type(typed) => local_pat_single_ident(&typed.pat),
-        _ => None,
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Macro(_)
+        | Pat::Or(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Slice(_)
+        | Pat::Struct(_)
+        | Pat::Tuple(_)
+        | Pat::TupleStruct(_)
+        | Pat::Verbatim(_)
+        | Pat::Wild(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk local single-pattern classifier refused unknown syn::Pat variant")
+        }
     }
 }
 
 fn pat_single_ident(pat: &Pat) -> Option<String> {
     match pat {
-        Pat::Ident(ident) => Some(ident.ident.to_string()),
+        Pat::Ident(ident) if ident.subpat.is_none() => Some(ident.ident.to_string()),
+        Pat::Ident(_) => None,
         Pat::Paren(paren) => pat_single_ident(&paren.pat),
         Pat::Reference(reference) => pat_single_ident(&reference.pat),
         Pat::Type(typed) => pat_single_ident(&typed.pat),
-        _ => None,
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Macro(_)
+        | Pat::Or(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Slice(_)
+        | Pat::Struct(_)
+        | Pat::Tuple(_)
+        | Pat::TupleStruct(_)
+        | Pat::Verbatim(_)
+        | Pat::Wild(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk single-pattern classifier refused unknown syn::Pat variant")
+        }
     }
 }
 
@@ -2166,7 +2642,23 @@ fn tuple_first_pat_ident(pat: &Pat) -> Option<String> {
         Pat::Paren(paren) => tuple_first_pat_ident(&paren.pat),
         Pat::Reference(reference) => tuple_first_pat_ident(&reference.pat),
         Pat::Type(typed) => tuple_first_pat_ident(&typed.pat),
-        _ => None,
+        Pat::Const(_)
+        | Pat::Ident(_)
+        | Pat::Lit(_)
+        | Pat::Macro(_)
+        | Pat::Or(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Slice(_)
+        | Pat::Struct(_)
+        | Pat::TupleStruct(_)
+        | Pat::Verbatim(_)
+        | Pat::Wild(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk tuple-pattern classifier refused unknown syn::Pat variant")
+        }
     }
 }
 
@@ -2227,7 +2719,49 @@ fn expr_as_method_call_lift(expr: &Expr) -> Option<&syn::ExprMethodCall> {
         Expr::Reference(reference) if reference.mutability.is_none() => {
             expr_as_method_call_lift(&reference.expr)
         }
-        _ => None,
+        Expr::Reference(_) => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk method-call classifier refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk method-call classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -2280,7 +2814,49 @@ fn expr_as_call_lift(expr: &Expr) -> Option<&syn::ExprCall> {
         Expr::Call(call) => Some(call),
         Expr::Paren(paren) => expr_as_call_lift(&paren.expr),
         Expr::Group(group) => expr_as_call_lift(&group.expr),
-        _ => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk call classifier refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk call classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -2354,21 +2930,64 @@ fn collect_expr_roots_lift(expr: &Expr, roots: &mut BTreeSet<String>) {
                 roots.insert(segment.ident.to_string());
             }
         }
+        Expr::Path(_) => {}
+        Expr::Assign(assign) => {
+            collect_expr_roots_lift(&assign.left, roots);
+            collect_expr_roots_lift(&assign.right, roots);
+        }
         Expr::Array(array) => {
             for elem in &array.elems {
                 collect_expr_roots_lift(elem, roots);
             }
         }
+        Expr::Async(async_expr) => collect_stmt_roots_lift(&async_expr.block.stmts, roots),
+        Expr::Await(await_expr) => collect_expr_roots_lift(&await_expr.base, roots),
         Expr::Binary(binary) => {
             collect_expr_roots_lift(&binary.left, roots);
             collect_expr_roots_lift(&binary.right, roots);
         }
+        Expr::Block(block) => collect_stmt_roots_lift(&block.block.stmts, roots),
+        Expr::Break(break_expr) => {
+            if let Some(expr) = &break_expr.expr {
+                collect_expr_roots_lift(expr, roots);
+            }
+        }
+        Expr::Call(call) => {
+            collect_expr_roots_lift(&call.func, roots);
+            for arg in &call.args {
+                collect_expr_roots_lift(arg, roots);
+            }
+        }
         Expr::Cast(cast) => collect_expr_roots_lift(&cast.expr, roots),
+        Expr::Closure(closure) => collect_expr_roots_lift(&closure.body, roots),
+        Expr::Const(const_expr) => collect_stmt_roots_lift(&const_expr.block.stmts, roots),
         Expr::Field(field) => collect_expr_roots_lift(&field.base, roots),
+        Expr::ForLoop(for_loop) => {
+            collect_expr_roots_lift(&for_loop.expr, roots);
+            collect_stmt_roots_lift(&for_loop.body.stmts, roots);
+        }
         Expr::Group(group) => collect_expr_roots_lift(&group.expr, roots),
+        Expr::If(if_expr) => {
+            collect_expr_roots_lift(&if_expr.cond, roots);
+            collect_stmt_roots_lift(&if_expr.then_branch.stmts, roots);
+            if let Some((_, else_expr)) = &if_expr.else_branch {
+                collect_expr_roots_lift(else_expr, roots);
+            }
+        }
         Expr::Index(index) => {
             collect_expr_roots_lift(&index.expr, roots);
             collect_expr_roots_lift(&index.index, roots);
+        }
+        Expr::Let(let_expr) => collect_expr_roots_lift(&let_expr.expr, roots),
+        Expr::Loop(loop_expr) => collect_stmt_roots_lift(&loop_expr.body.stmts, roots),
+        Expr::Match(match_expr) => {
+            collect_expr_roots_lift(&match_expr.expr, roots);
+            for arm in &match_expr.arms {
+                if let Some((_, guard)) = &arm.guard {
+                    collect_expr_roots_lift(guard, roots);
+                }
+                collect_expr_roots_lift(&arm.body, roots);
+            }
         }
         Expr::MethodCall(method) => {
             collect_expr_roots_lift(&method.receiver, roots);
@@ -2377,14 +2996,76 @@ fn collect_expr_roots_lift(expr: &Expr, roots: &mut BTreeSet<String>) {
             }
         }
         Expr::Paren(paren) => collect_expr_roots_lift(&paren.expr, roots),
+        Expr::Range(range) => {
+            if let Some(start) = &range.start {
+                collect_expr_roots_lift(start, roots);
+            }
+            if let Some(end) = &range.end {
+                collect_expr_roots_lift(end, roots);
+            }
+        }
+        Expr::RawAddr(raw_addr) => collect_expr_roots_lift(&raw_addr.expr, roots),
         Expr::Reference(reference) => collect_expr_roots_lift(&reference.expr, roots),
+        Expr::Repeat(repeat) => {
+            collect_expr_roots_lift(&repeat.expr, roots);
+            collect_expr_roots_lift(&repeat.len, roots);
+        }
+        Expr::Return(return_expr) => {
+            if let Some(expr) = &return_expr.expr {
+                collect_expr_roots_lift(expr, roots);
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for field in &struct_expr.fields {
+                collect_expr_roots_lift(&field.expr, roots);
+            }
+            if let Some(rest) = &struct_expr.rest {
+                collect_expr_roots_lift(rest, roots);
+            }
+        }
+        Expr::Try(try_expr) => collect_expr_roots_lift(&try_expr.expr, roots),
+        Expr::TryBlock(try_block) => collect_stmt_roots_lift(&try_block.block.stmts, roots),
         Expr::Tuple(tuple) => {
             for elem in &tuple.elems {
                 collect_expr_roots_lift(elem, roots);
             }
         }
         Expr::Unary(unary) => collect_expr_roots_lift(&unary.expr, roots),
-        _ => {}
+        Expr::Unsafe(unsafe_expr) => collect_stmt_roots_lift(&unsafe_expr.block.stmts, roots),
+        Expr::While(while_expr) => {
+            collect_expr_roots_lift(&while_expr.cond, roots);
+            collect_stmt_roots_lift(&while_expr.body.stmts, roots);
+        }
+        Expr::Yield(yield_expr) => {
+            if let Some(expr) = &yield_expr.expr {
+                collect_expr_roots_lift(expr, roots);
+            }
+        }
+        Expr::Continue(_) | Expr::Infer(_) | Expr::Lit(_) => {}
+        Expr::Macro(_) | Expr::Verbatim(_) => {
+            panic!("sugar-walk expression root collector refused opaque syn::Expr variant")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk expression root collector refused unknown syn::Expr variant")
+        }
+    }
+}
+
+fn collect_stmt_roots_lift(stmts: &[Stmt], roots: &mut BTreeSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    collect_expr_roots_lift(&init.expr, roots);
+                }
+            }
+            Stmt::Expr(expr, _) => collect_expr_roots_lift(expr, roots),
+            Stmt::Item(_) => {}
+            Stmt::Macro(_) => {
+                panic!("sugar-walk expression root collector refused opaque statement macro")
+            }
+        }
     }
 }
 
@@ -2452,12 +3133,59 @@ fn collect_assignment_roots_lift(expr: &Expr, roots: &mut BTreeSet<String>) {
                 roots.insert(segment.ident.to_string());
             }
         }
+        Expr::Path(_) => {}
         Expr::Field(field) => collect_assignment_roots_lift(&field.base, roots),
         Expr::Group(group) => collect_assignment_roots_lift(&group.expr, roots),
         Expr::Index(index) => collect_assignment_roots_lift(&index.expr, roots),
         Expr::Paren(paren) => collect_assignment_roots_lift(&paren.expr, roots),
         Expr::Reference(reference) => collect_assignment_roots_lift(&reference.expr, roots),
-        _ => {}
+        Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_assignment_roots_lift(elem, roots);
+            }
+        }
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
+            collect_assignment_roots_lift(&unary.expr, roots)
+        }
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => {}
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk assignment root collector refused uninterpreted verbatim expression")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk assignment root collector refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -2487,6 +3215,9 @@ fn collect_pat_bound_idents_lift(pat: &Pat, roots: &mut BTreeSet<String>) {
     match pat {
         Pat::Ident(ident) => {
             roots.insert(ident.ident.to_string());
+            if let Some((_, subpat)) = &ident.subpat {
+                collect_pat_bound_idents_lift(subpat, roots);
+            }
         }
         Pat::Or(or) => {
             for case in &or.cases {
@@ -2516,7 +3247,19 @@ fn collect_pat_bound_idents_lift(pat: &Pat, roots: &mut BTreeSet<String>) {
             }
         }
         Pat::Type(typed) => collect_pat_bound_idents_lift(&typed.pat, roots),
-        _ => {}
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Wild(_) => {}
+        Pat::Macro(_) | Pat::Verbatim(_) => {
+            panic!("sugar-walk pattern binding collector refused opaque syn::Pat variant")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk pattern binding collector refused unknown syn::Pat variant")
+        }
     }
 }
 
@@ -2524,6 +3267,9 @@ fn bind_pat_idents_lift(pat: &Pat, ctx: &mut LiftCtx) {
     match pat {
         Pat::Ident(ident) => {
             ctx.bind(&ident.ident.to_string());
+            if let Some((_, subpat)) = &ident.subpat {
+                bind_pat_idents_lift(subpat, ctx);
+            }
         }
         Pat::Or(or) => {
             for case in &or.cases {
@@ -2553,7 +3299,19 @@ fn bind_pat_idents_lift(pat: &Pat, ctx: &mut LiftCtx) {
             }
         }
         Pat::Type(typed) => bind_pat_idents_lift(&typed.pat, ctx),
-        _ => {}
+        Pat::Const(_)
+        | Pat::Lit(_)
+        | Pat::Path(_)
+        | Pat::Range(_)
+        | Pat::Rest(_)
+        | Pat::Wild(_) => {}
+        Pat::Macro(_) | Pat::Verbatim(_) => {
+            panic!("sugar-walk pattern binder refused opaque syn::Pat variant")
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk pattern binder refused unknown syn::Pat variant")
+        }
     }
 }
 
@@ -2597,7 +3355,7 @@ fn lift_stmt_contribution(stmt: &Stmt, ctx: &mut LiftCtx) -> Option<IrFormula> {
         // `assert!(c);` at statement position parses to Stmt::Macro
         // (with optional trailing semicolon), not Stmt::Expr(Expr::Macro).
         Stmt::Macro(StmtMacro { mac, .. }) => lift_macro_contribution(mac, ctx),
-        _ => None,
+        Stmt::Item(_) | Stmt::Local(_) => None,
     }
 }
 
@@ -2614,7 +3372,12 @@ fn lift_macro_contribution(mac: &Macro, ctx: &mut LiftCtx) -> Option<IrFormula> 
         // debug_assert! is compiled out in release builds. Lifting its
         // predicate as a real contract would misrepresent what holds in
         // release mode. Skip it entirely.
-        _ => None,
+        "debug_assert" | "debug_assert_eq" | "debug_assert_ne" => None,
+        other => {
+            // sugar-audit: not-mine(only assert! contributes a checked precondition)
+            let _ = other;
+            None
+        }
     }
 }
 
@@ -2892,7 +3655,49 @@ fn receiver_producer_callsite_lift(receiver: &Expr) -> Option<(String, usize, us
         Expr::Paren(paren) => receiver_producer_callsite_lift(&paren.expr),
         Expr::Group(group) => receiver_producer_callsite_lift(&group.expr),
         Expr::Reference(reference) => receiver_producer_callsite_lift(&reference.expr),
-        _ => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Binary(_)
+        | Expr::Block(_)
+        | Expr::Break(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::Path(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unary(_)
+        | Expr::Unsafe(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!(
+                "sugar-walk receiver producer classifier refused uninterpreted verbatim expression"
+            )
+        }
+        other => {
+            let _ = other;
+            panic!("sugar-walk receiver producer classifier refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -3338,7 +4143,32 @@ fn bin_op_to_predicate_name(op: &BinOp) -> Option<&'static str> {
         BinOp::Le(_) => Some("≤"),
         BinOp::Gt(_) => Some(">"),
         BinOp::Ge(_) => Some("≥"),
-        _ => None,
+        BinOp::Add(_)
+        | BinOp::AddAssign(_)
+        | BinOp::And(_)
+        | BinOp::BitAnd(_)
+        | BinOp::BitAndAssign(_)
+        | BinOp::BitOr(_)
+        | BinOp::BitOrAssign(_)
+        | BinOp::BitXor(_)
+        | BinOp::BitXorAssign(_)
+        | BinOp::Div(_)
+        | BinOp::DivAssign(_)
+        | BinOp::Mul(_)
+        | BinOp::MulAssign(_)
+        | BinOp::Or(_)
+        | BinOp::Rem(_)
+        | BinOp::RemAssign(_)
+        | BinOp::Shl(_)
+        | BinOp::ShlAssign(_)
+        | BinOp::Shr(_)
+        | BinOp::ShrAssign(_)
+        | BinOp::Sub(_)
+        | BinOp::SubAssign(_) => None,
+        other => {
+            let _ = other;
+            panic!("sugar-walk predicate operator classifier refused unknown syn::BinOp variant")
+        }
     }
 }
 
@@ -3368,7 +4198,11 @@ fn negate(f: IrFormula) -> IrFormula {
             "≥" => Some("<"),
             "=" => Some("≠"),
             "≠" => Some("="),
-            _ => None,
+            other => {
+                // sugar-audit: not-mine(non-comparison predicates negate as explicit Not nodes)
+                let _ = other;
+                None
+            }
         };
         if let Some(new_name) = flipped {
             return IrFormula::Atomic {
@@ -3424,7 +4258,11 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) => Some(f),
-                _ => None,
+                other => {
+                    // sugar-audit: not-mine(test helper searches one top-level free function)
+                    let _ = other;
+                    None
+                }
             })
             .expect("function present")
     }
@@ -5155,6 +5993,33 @@ mod tests {
         assert!(
             !json.contains("cf_guarded"),
             "mutable JSON construction must stay honestly unguarded: {json}"
+        );
+    }
+
+    #[test]
+    fn match_assignment_invalidates_json_guard_fact() {
+        let item_fn = parse_fn(
+            r#"
+            fn f(flag: bool) -> String {
+                let mut payload = json!({
+                    "value": "ok"
+                });
+                match flag {
+                    true => {
+                        payload["value"] = json!(7);
+                    }
+                    false => {}
+                }
+                payload["value"].as_str().unwrap().to_string()
+            }
+        "#,
+        );
+        let eq =
+            result_equation_of(&item_fn).expect("match-mutated unwrap must remain in result term");
+        let json = serde_json::to_string(&eq).unwrap();
+        assert!(
+            !json.contains("cf_guarded"),
+            "match assignment must invalidate stale JSON field facts: {json}"
         );
     }
 
