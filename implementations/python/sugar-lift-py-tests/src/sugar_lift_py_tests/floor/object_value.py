@@ -12,10 +12,17 @@ class ObjectValue(FloorValue):
     class_name: str
     fields: tuple[ObjectField, ...]
     methods: tuple[ObjectMethodValue, ...] = ()
+    class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
 
     def attribute_with(self, operation, ctx):
         return operation.attribute_object(self, ctx)
+
+    def attribute_assign_with(self, operation, ctx):
+        return operation.assign_object(self, ctx)
+
+    def attribute_delete_with(self, operation, ctx):
+        return operation.delete_object(self, ctx)
 
     def call_method_with(self, operation, ctx):
         del ctx
@@ -25,6 +32,9 @@ class ObjectValue(FloorValue):
             owner=operation.owner,
             blame=operation.blame,
         )
+
+    def descriptor_with(self, operation, ctx):
+        return operation.descriptor_object(self, ctx)
 
     def contains_with(self, operation, ctx):
         del ctx
@@ -222,6 +232,15 @@ class ObjectValue(FloorValue):
                 "floor that owns this method"
             ),
         )
+
+    def has_method(self, name: str) -> bool:
+        return any(method.name == name for method in self.methods)
+
+    def class_field_value(self, name: str) -> FloorValue | None:
+        for field in reversed(self.class_fields):
+            if field.name == name:
+                return field.value
+        return None
 
     def _floor_gap(
         self,

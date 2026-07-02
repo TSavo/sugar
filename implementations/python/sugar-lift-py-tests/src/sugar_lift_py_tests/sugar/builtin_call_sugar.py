@@ -220,6 +220,7 @@ _BUILTIN_DUNDER_METHODS = {
     "repr": "__repr__",
     "bytes": "__bytes__",
     "reversed": "__reversed__",
+    "dir": "__dir__",
     "int": "__int__",
     "float": "__float__",
     "complex": "__complex__",

@@ -12,7 +12,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
     report = collect_dunder_frontier(ROOT)
 
     assert report.r.values == {
-        "attribute_descriptor_slots": 8,
+        "attribute_descriptor_slots": 0,
         "call_container_slots": 0,
         "comparison_slots": 0,
         "inplace_binary_slots": 0,
@@ -26,7 +26,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "display_conversion_slots": 0,
         "context_async_slots": 5,
     }
-    assert report.r.total == 16
+    assert report.r.total == 8
     assert not report.is_zero
 
 
@@ -67,6 +67,14 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__bytes__",
         "__format__",
         "__getattr__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__dir__",
+        "__get__",
+        "__set__",
+        "__delete__",
+        "__set_name__",
         "__enter__",
         "__exit__",
     ):
@@ -75,7 +83,6 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
 
     for name in (
         "__setitem__",
-        "__getattribute__",
         "__aenter__",
     ):
         assert by_name[name].status == "missing", name
@@ -92,7 +99,8 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
     assert "  inplace_binary_slots: 0" in stdout
-    assert "  total: 16" in stdout
+    assert "  attribute_descriptor_slots: 0" in stdout
+    assert "  total: 8" in stdout
     assert "missing dunder slots:" in stdout
     missing, owned = stdout.split("owned dunder slots:", 1)
     assert "  - call_container __next__" not in missing
@@ -118,6 +126,31 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     )
     assert "  - attribute_descriptor __getattr__" not in missing
     assert "  - attribute_descriptor __getattr__: AttributeLookupOperation" in owned
+    assert "  - attribute_descriptor __getattribute__" not in missing
+    assert (
+        "  - attribute_descriptor __getattribute__: "
+        "AttributeLookupOperation.__getattribute__"
+    ) in owned
+    assert "  - attribute_descriptor __setattr__" not in missing
+    assert "  - attribute_descriptor __setattr__: AttributeMutationOperation" in owned
+    assert "  - attribute_descriptor __delattr__" not in missing
+    assert "  - attribute_descriptor __delattr__: AttributeDeleteOperation" in owned
+    assert "  - attribute_descriptor __dir__" not in missing
+    assert (
+        "  - attribute_descriptor __dir__: BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+        in owned
+    )
+    assert "  - attribute_descriptor __get__" not in missing
+    assert "  - attribute_descriptor __get__: DescriptorOperation.__get__" in owned
+    assert "  - attribute_descriptor __set__" not in missing
+    assert "  - attribute_descriptor __set__: DescriptorOperation.__set__" in owned
+    assert "  - attribute_descriptor __delete__" not in missing
+    assert "  - attribute_descriptor __delete__: DescriptorOperation.__delete__" in owned
+    assert "  - attribute_descriptor __set_name__" not in missing
+    assert (
+        "  - attribute_descriptor __set_name__: "
+        "ConstructorStrategy.__set_name__ floor"
+    ) in owned
     assert "  - context_async __enter__" not in missing
     assert "  - context_async __enter__: ContextManagerOperation" in owned
     assert "  - context_async __exit__" not in missing

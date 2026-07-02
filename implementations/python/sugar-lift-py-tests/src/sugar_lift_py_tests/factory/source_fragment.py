@@ -321,6 +321,14 @@ class SourceFragment:
         self._require(ast.Assign)
         return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
+    def delete_targets(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each delete target."""
+        self._require(ast.Delete)
+        return [
+            SourceFragment.from_node(target, self.filename)
+            for target in self.node.targets  # type: ignore[attr-defined]
+        ]
+
     def if_test(self) -> "SourceFragment":
         """Return a SourceFragment for the If test expression."""
         self._require(ast.If)

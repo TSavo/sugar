@@ -76,7 +76,14 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 def _is_constructor_gap(gap: FactoryGap) -> bool:
     requested = gap.info.get("requested", "")
     fix = gap.info.get("fix", "")
-    return "constructor" in requested or "constructor" in fix
+    return (
+        "constructor" in requested
+        or "constructor" in fix
+        or "construction" in requested
+        or "construction" in fix
+        or "__set_name__" in requested
+        or "__set_name__" in fix
+    )
 
 
 def _projectable_receiver(site, ctx) -> SugarBody | None:
