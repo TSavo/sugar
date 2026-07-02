@@ -14,11 +14,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use serde_json::{json, Value as Json};
+use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json, Value as CValue};
 use sugar_claim_envelope::{mint_bridge, MintBridgeArgs, MintedEnvelope};
 use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody, ContractMemento,
+    build_proof_envelope, cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr,
+    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ContractBody, ContractMemento,
     ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::load_all_proofs;
@@ -65,6 +67,52 @@ fn push_bridge(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
     assert_eq!(memento.cid().as_str(), cid);
     graph.push_bridge(memento);
     cid
+}
+
+fn flat_member_cid(env: &Json) -> String {
+    let mut unsigned = env.clone();
+    if let Json::Object(map) = &mut unsigned {
+        map.shift_remove("cid");
+        map.shift_remove("producerSignature");
+    }
+    jcs_cid_of_json(&unsigned)
+}
+
+fn write_minimal_member_proof(dir: &Path, member_cid: &str, member_bytes: &[u8]) -> String {
+    let mut proof_bytes = Vec::new();
+    cbor_encode_map_head(&mut proof_bytes, 1);
+    cbor_encode_tstr(&mut proof_bytes, "members");
+    cbor_encode_map_head(&mut proof_bytes, 1);
+    cbor_encode_tstr(&mut proof_bytes, member_cid);
+    cbor_encode_bstr(&mut proof_bytes, member_bytes);
+
+    let proof_cid = blake3_512_of(&proof_bytes);
+    let hex = proof_cid.strip_prefix("blake3-512:").unwrap();
+    fs::write(dir.join(format!("{hex}.proof")), &proof_bytes).expect("write proof");
+    proof_cid
+}
+
+fn flat_source_member(signature: Option<String>) -> (String, Vec<u8>) {
+    let signer_seed: Ed25519Seed = [0x42u8; 32];
+    let signer = ed25519_pubkey_string(&signer_seed);
+    let mut env = json!({
+        "signer": signer,
+        "evidence": {
+            "kind": "source-memento",
+            "body": {
+                "path": "src/lib.rs",
+                "language": "rust"
+            }
+        }
+    });
+    if let Some(signature) = signature {
+        env.as_object_mut()
+            .expect("flat member object")
+            .insert("producerSignature".to_string(), Json::String(signature));
+    }
+    let member_cid = flat_member_cid(&env);
+    let member_bytes = serde_json::to_vec(&env).expect("member json");
+    (member_cid, member_bytes)
 }
 
 fn publish_parseint_proof(dir: &Path) -> String {
@@ -239,6 +287,52 @@ fn loads_published_proof_successfully() {
     assert_eq!(pool.mementos.len(), 2);
     // bridges_by_symbol indexes parseInt.
     assert!(pool.bridges_by_symbol.contains_key("parseInt"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn invalid_member_signature_is_a_load_error() {
+    let dir = make_unique_dir("invalid-member-signature");
+    let wrong_seed: Ed25519Seed = [0x99u8; 32];
+    let wrong_signature = ed25519_sign_string(&wrong_seed, b"not this member");
+    let (member_cid, member_bytes) = flat_source_member(Some(wrong_signature));
+    write_minimal_member_proof(&dir, &member_cid, &member_bytes);
+
+    let pool = load_all_proofs::run(&dir);
+
+    assert!(
+        pool.load_errors.iter().any(|err| {
+            err.reason.contains(&member_cid)
+                && err.reason.contains("producerSignature does not verify")
+        }),
+        "invalid member signature must be a load error: {:#?}",
+        pool.load_errors
+    );
+    assert!(
+        !pool.mementos.contains_key(&member_cid),
+        "member with invalid signature must not enter the pool"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsigned_member_still_loads() {
+    let dir = make_unique_dir("unsigned-member");
+    let (member_cid, member_bytes) = flat_source_member(None);
+    write_minimal_member_proof(&dir, &member_cid, &member_bytes);
+
+    let pool = load_all_proofs::run(&dir);
+
+    assert_eq!(
+        pool.load_errors.len(),
+        0,
+        "unsigned members remain acceptable for now: {:#?}",
+        pool.load_errors
+    );
+    assert!(
+        pool.mementos.contains_key(&member_cid),
+        "unsigned member must still enter the pool"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

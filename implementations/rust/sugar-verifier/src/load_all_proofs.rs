@@ -9,8 +9,8 @@
 // retained for hash-algorithm agility). The legacy `blake3-512:<hex>` and
 // bare `<hex>` stems are also accepted (parsed via
 // `sugar_proof_envelope::cid_from_proof_stem`). Member CIDs MUST start
-// with `"blake3-512:"`. Producer signatures MUST start with `"ed25519:"`.
-// Anything else is rejected loud.
+// with `"blake3-512:"`. Member signatures, when present, MUST verify
+// cryptographically. Unsigned members remain accepted for now.
 //
 // v1.2 layered shape (per protocol/specs/2026-05-03-substrate-layers-
 // envelope-header-body.md): mementos are `{envelope, header, metadata}`
@@ -31,7 +31,6 @@ use sugar_proof_envelope::ProofGraph;
 
 use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
 
-const SIG_TAG_PREFIX: &str = "ed25519:";
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
 const EFFECT_SITE_ANNOTATION_DUPLICATE_LOAD_ERROR_TAG: &str = "[effect-site-annotation-duplicate]";
@@ -233,7 +232,8 @@ fn load_catalog_bytes(
             .or_insert_with(|| body.bytes().to_vec());
     }
 
-    // Members -> pool: per-member validation (signature tag, CID recomputation,
+    // Members -> pool: per-member validation (CID recomputation, signature
+    // verification when present,
     // contract body-pointer resolution) then indexing. ProofGraph::read()
     // guarantees all member CIDs carry the `blake3-512:` prefix.
     for view in graph.members_view() {
@@ -248,21 +248,6 @@ fn load_catalog_bytes(
                 continue;
             }
         };
-        // Tag-dispatch on whichever signature field is present.
-        // v1.1 flat shape: `producerSignature` at top level.
-        // v1.2 layered shape: `envelope.signature`.
-        let sig_str_opt = sugar_proof_envelope::member_signature(&env).and_then(|v| v.as_str());
-        if let Some(sig) = sig_str_opt {
-            if !sig.starts_with(SIG_TAG_PREFIX) {
-                pool.load_errors.push(LoadError {
-                    proof_path: source_label.clone(),
-                    reason: format!(
-                        "member {cid}: unsupported signature tag; v1.1.0 requires `{SIG_TAG_PREFIX}`"
-                    ),
-                });
-                continue;
-            }
-        }
         // Rule 2: re-derive the member identity from the member content.
         let derived = sugar_proof_envelope::recompute_member_cid(&env);
         if derived != cid {
@@ -271,6 +256,15 @@ fn load_catalog_bytes(
                 reason: format!("rule 2: member {cid} derives to {derived}"),
             });
             continue;
+        }
+        if sugar_proof_envelope::member_signature(&env).is_some() {
+            if let Err(error) = crate::proof_conformance::verify_member_signature(&env) {
+                pool.load_errors.push(LoadError {
+                    proof_path: source_label.clone(),
+                    reason: format!("member {cid}: {error}"),
+                });
+                continue;
+            }
         }
         if sugar_proof_envelope::member_kind(&env) == Some("contract") {
             let Some(body_cid) = sugar_proof_envelope::member_field(&env, "bodyCid")
@@ -632,6 +626,14 @@ mod tests {
             .and_then(|v| v.as_object_mut())
             .expect("header object")
             .remove("callee");
+        // This fixture mutates the signed payload to exercise annotation
+        // validation; signature enforcement itself is covered by integration
+        // tests.
+        env.pointer_mut("/envelope")
+            .and_then(|v| v.as_object_mut())
+            .expect("envelope object")
+            .remove("signature");
+        annotation.cid = sugar_proof_envelope::recompute_member_cid(&env);
         annotation.canonical_bytes =
             serde_json::to_vec(&env).expect("serialize malformed annotation");
         let proof = proof_bytes(vec![annotation]);
