@@ -541,6 +541,7 @@ fn recognize_walk_items(
                     recognize_walk_items(nested, rel_path, bindings_by_cid, tags);
                 }
             }
+            // sugar-audit: not-mine(recognize tags are minted only from functions inside inline modules)
             _ => {}
         }
     }
@@ -2633,6 +2634,7 @@ fn collect_local_type_names_in_items(items: &[syn::Item], names: &mut BTreeSet<S
                     collect_local_type_names_in_items(nested, names);
                 }
             }
+            // sugar-audit: not-mine(local type name index only records type declarations and inline modules)
             _ => {}
         }
     }
@@ -2745,6 +2747,7 @@ fn collect_struct_field_type_map_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(struct field map only records struct declarations and inline modules)
             _ => {}
         }
     }
@@ -2852,6 +2855,7 @@ fn collect_enum_variant_type_map_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(enum variant map only records enum declarations and inline modules)
             _ => {}
         }
     }
@@ -2872,6 +2876,15 @@ fn bind_pattern_type_id(
                 local_types,
                 value_types,
             );
+            if let Some((_at, subpat)) = &ident.subpat {
+                bind_pattern_type_id(
+                    subpat,
+                    scrutinee_type,
+                    enum_variant_types,
+                    local_types,
+                    value_types,
+                );
+            }
         }
         syn::Pat::Reference(reference) => {
             bind_pattern_type_id(
@@ -2961,6 +2974,21 @@ fn bind_pattern_type_id(
                 );
             }
         }
+        syn::Pat::Paren(paren) => bind_pattern_type_id(
+            &paren.pat,
+            scrutinee_type,
+            enum_variant_types,
+            local_types,
+            value_types,
+        ),
+        syn::Pat::Type(typed) => bind_pattern_type_id(
+            &typed.pat,
+            scrutinee_type,
+            enum_variant_types,
+            local_types,
+            value_types,
+        ),
+        // sugar-audit: not-mine(non-binding or schema-needed pattern forms cannot receive a sound value type here)
         _ => {}
     }
 }
@@ -2986,11 +3014,18 @@ fn bind_option_pattern_type_id(
         syn::Pat::Reference(reference) => {
             bind_option_pattern_type_id(&reference.pat, inner_type, local_types, value_types);
         }
+        syn::Pat::Paren(paren) => {
+            bind_option_pattern_type_id(&paren.pat, inner_type, local_types, value_types);
+        }
         syn::Pat::Or(or_pat) => {
             for case in &or_pat.cases {
                 bind_option_pattern_type_id(case, inner_type, local_types, value_types);
             }
         }
+        syn::Pat::Type(typed) => {
+            bind_option_pattern_type_id(&typed.pat, inner_type, local_types, value_types);
+        }
+        // sugar-audit: not-mine(option inner typing is only sound for Some-like destructuring)
         _ => {}
     }
 }
@@ -3009,10 +3044,25 @@ fn bind_pattern_type_id_direct(
                 local_types,
                 value_types,
             );
+            if let Some((_at, subpat)) = &ident.subpat {
+                bind_pattern_type_id_direct(subpat, type_id, local_types, value_types);
+            }
         }
         syn::Pat::Reference(reference) => {
             bind_pattern_type_id_direct(&reference.pat, type_id, local_types, value_types);
         }
+        syn::Pat::Or(or_pat) => {
+            for case in &or_pat.cases {
+                bind_pattern_type_id_direct(case, type_id, local_types, value_types);
+            }
+        }
+        syn::Pat::Paren(paren) => {
+            bind_pattern_type_id_direct(&paren.pat, type_id, local_types, value_types);
+        }
+        syn::Pat::Type(typed) => {
+            bind_pattern_type_id_direct(&typed.pat, type_id, local_types, value_types);
+        }
+        // sugar-audit: not-mine(direct type binding cannot assign field element types without a schema)
         _ => {}
     }
 }
@@ -3088,6 +3138,7 @@ fn collect_function_return_crates_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(return-crate index only records functions, methods, and inline modules)
             _ => {}
         }
     }
@@ -3215,6 +3266,7 @@ fn collect_callsites_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(callsite collection only descends through callable bodies and inline modules)
             _ => {}
         }
     }
@@ -3428,6 +3480,7 @@ fn collect_callsites_in_block(
                 }
                 syn::Expr::Paren(paren) => self.collect_pure_free_guard_facts(&paren.expr, facts),
                 syn::Expr::Group(group) => self.collect_pure_free_guard_facts(&group.expr, facts),
+                // sugar-audit: not-mine(pure-free guard facts are only && chains of is_some method calls)
                 _ => {}
             }
         }
@@ -4254,6 +4307,7 @@ fn collect_expr_roots(expr: &syn::Expr, roots: &mut BTreeSet<String>) {
             }
         }
         syn::Expr::Unary(unary) => collect_expr_roots(&unary.expr, roots),
+        // sugar-audit: not-mine(root extraction tracks pure expression containers that can feed stable guard args)
         _ => {}
     }
 }
@@ -4276,6 +4330,7 @@ fn collect_assignment_roots(expr: &syn::Expr, roots: &mut BTreeSet<String>) {
         syn::Expr::Index(index) => collect_assignment_roots(&index.expr, roots),
         syn::Expr::Paren(paren) => collect_assignment_roots(&paren.expr, roots),
         syn::Expr::Reference(reference) => collect_assignment_roots(&reference.expr, roots),
+        // sugar-audit: not-mine(assignment roots only exist on assignable path-field-index projections)
         _ => {}
     }
 }
@@ -4335,6 +4390,7 @@ fn collect_pat_bound_idents(pat: &syn::Pat, roots: &mut BTreeSet<String>) {
             }
         }
         syn::Pat::Type(typed) => collect_pat_bound_idents(&typed.pat, roots),
+        // sugar-audit: not-mine(non-binding pattern forms do not introduce local roots)
         _ => {}
     }
 }
@@ -7762,6 +7818,7 @@ fn collect_local_free_function_names_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(local free-function index records only non-test free functions and inline modules)
             _ => {}
         }
     }
@@ -7822,6 +7879,7 @@ fn collect_function_contract_targets_in_items(
                     );
                 }
             }
+            // sugar-audit: not-mine(function contract targets are functions, liftable methods, and inline modules)
             _ => {}
         }
     }
@@ -7894,6 +7952,7 @@ fn collect_bind_lift_targets_in_items(
                     collect_bind_lift_targets_in_items(nested_items, source, targets);
                 }
             }
+            // sugar-audit: not-mine(bind lift targets are functions, liftable methods, and inline modules)
             _ => {}
         }
     }
@@ -7928,6 +7987,7 @@ fn collect_sugar_targets_in_items(items: &[syn::Item], targets: &mut Vec<SugarTa
                     collect_sugar_targets_in_items(nested_items, targets);
                 }
             }
+            // sugar-audit: not-mine(sugar targets are annotated functions inside inline modules)
             _ => {}
         }
     }
@@ -8722,6 +8782,7 @@ fn find_item_fn_by_name<'a>(items: &'a [syn::Item], fn_name: &str) -> Option<&'a
                     }
                 }
             }
+            // sugar-audit: not-mine(body source lookup only searches functions in inline modules)
             _ => {}
         }
     }
@@ -12672,6 +12733,7 @@ pub fn bitwise_not() -> i64 {
                     collect_comment_surfaces(child, surfaces);
                 }
             }
+            // sugar-audit: not-mine(test comment-surface walker only descends JSON object and array nodes)
             _ => {}
         }
     }
@@ -12708,6 +12770,7 @@ pub fn bitwise_not() -> i64 {
                     assert_no_forbidden_term_shape_fields(child);
                 }
             }
+            // sugar-audit: not-mine(test forbidden-field assertion only descends JSON object and array nodes)
             _ => {}
         }
     }
@@ -12727,6 +12790,7 @@ pub fn bitwise_not() -> i64 {
                     collect_op_cids(child, out);
                 }
             }
+            // sugar-audit: not-mine(test op_cid collector only descends JSON object and array nodes)
             _ => {}
         }
     }
@@ -12762,6 +12826,7 @@ pub fn bitwise_not() -> i64 {
                     assert_no_fn_name_outside_gap_records(child, path);
                 }
             }
+            // sugar-audit: not-mine(test fn_name assertion only descends JSON object and array nodes)
             _ => {}
         }
     }
