@@ -18,13 +18,19 @@ usage:
     --baseline-sugar <path> \
     --changed-sugar <path> \
     --out-dir <dir> \
-    [--label <name>]
+    [--label <name>] \
+    [--case-set default|phase2-effect-routers] \
+    [--case verify-json|prove-json|lift-json]...
 
   tools/irterm-boundary/byte-compat.sh --self-test
 
 Default cases:
   verify-json: sugar verify --project <fixture> --json
   prove-json:  sugar prove <fixture> --json
+
+Phase 2 effect-router case set:
+  verify-json + prove-json today; later router slices may add focused lift/emit
+  cases through --case without forking this harness.
 
 The script exits nonzero if any compared JSON output drifts.
 USAGE
@@ -62,6 +68,9 @@ run_case() {
     prove-json)
       "$sugar" prove "$project_root" --json > "$output"
       ;;
+    lift-json)
+      "$sugar" lift "$project_root" --json > "$output"
+      ;;
     *)
       die "unknown byte-compat case: $name"
       ;;
@@ -82,6 +91,11 @@ ROW
 
 run_harness() {
   local project_root=$1 baseline_sugar=$2 changed_sugar=$3 out_dir=$4 label=$5
+  shift 5
+  local cases=("$@")
+  if [ "${#cases[@]}" -eq 0 ]; then
+    cases=(verify-json prove-json)
+  fi
   [ -d "$project_root" ] || die "project root not found: $project_root"
   [ -x "$baseline_sugar" ] || die "baseline sugar is not executable: $baseline_sugar"
   [ -x "$changed_sugar" ] || die "changed sugar is not executable: $changed_sugar"
@@ -90,7 +104,7 @@ run_harness() {
   local report="$out_dir/${label}.byte-compat.txt"
   : > "$report"
   local drift=0
-  for case_name in verify-json prove-json; do
+  for case_name in "${cases[@]}"; do
     local before="$out_dir/${label}.${case_name}.baseline.json"
     local after="$out_dir/${label}.${case_name}.changed.json"
     run_case "$case_name" "$baseline_sugar" "$project_root" "$before"
@@ -124,6 +138,7 @@ set -euo pipefail
 case "$1" in
   verify) printf '{"case":"verify","ok":true}\n' ;;
   prove) printf '{"case":"prove","ok":true}\n' ;;
+  lift) printf '{"case":"lift","ok":true}\n' ;;
   *) exit 2 ;;
 esac
 SH
@@ -137,6 +152,7 @@ set -euo pipefail
 case "$1" in
   verify) printf '{"case":"verify","ok":false}\n' ;;
   prove) printf '{"case":"prove","ok":true}\n' ;;
+  lift) printf '{"case":"lift","ok":true}\n' ;;
   *) exit 2 ;;
 esac
 SH
@@ -152,6 +168,8 @@ baseline_sugar=""
 changed_sugar=""
 out_dir=""
 label="irterm-boundary"
+case_set="default"
+cases=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -184,6 +202,16 @@ while [ "$#" -gt 0 ]; do
       label=$2
       shift 2
       ;;
+    --case-set)
+      [ "$#" -ge 2 ] || die "--case-set requires a value"
+      case_set=$2
+      shift 2
+      ;;
+    --case)
+      [ "$#" -ge 2 ] || die "--case requires a value"
+      cases+=("$2")
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -199,4 +227,15 @@ done
 [ -n "$changed_sugar" ] || die "--changed-sugar is required"
 [ -n "$out_dir" ] || die "--out-dir is required"
 
-run_harness "$project_root" "$baseline_sugar" "$changed_sugar" "$out_dir" "$label"
+if [ "${#cases[@]}" -eq 0 ]; then
+  case "$case_set" in
+    default|phase2-effect-routers)
+      cases=(verify-json prove-json)
+      ;;
+    *)
+      die "unknown byte-compat case set: $case_set"
+      ;;
+  esac
+fi
+
+run_harness "$project_root" "$baseline_sugar" "$changed_sugar" "$out_dir" "$label" "${cases[@]}"
