@@ -37,7 +37,7 @@ class CorpusScan:
     total_files: int
     package_versions: dict[str, str]
     counts_by_kind: dict[str, int]
-    unhandled_reasons: dict[str, int]
+    unhandled_syntax: tuple[str, ...]
     opacity_misses: tuple[str, ...]
 
 
@@ -48,23 +48,27 @@ def test_numpy_pandas_honest_zero_corpus_matches_fixture() -> None:
     _assert_scan_matches_fixture(scan, fixture)
 
 
-def test_gate_logic_rejects_unhandled_syntax_increase() -> None:
+def test_gate_logic_rejects_unhandled_syntax_at_stable_zero() -> None:
     fixture = {
         "total_files": 1,
         "package_versions": {"numpy": "test", "pandas": "test"},
-        "counts_by_kind": {"unhandled-syntax": 1},
-        "expected_unhandled": {"total": 1, "reasons": {"old residue": 1}},
+        "counts_by_kind": {},
     }
     scan = CorpusScan(
         total_files=1,
         package_versions={"numpy": "test", "pandas": "test"},
-        counts_by_kind={"unhandled-syntax": 2},
-        unhandled_reasons={"old residue": 1, "new residue": 1},
+        counts_by_kind={"unhandled-syntax": 1},
+        unhandled_syntax=("numpy/example.py: new residue",),
         opacity_misses=(),
     )
 
-    with pytest.raises(AssertionError, match="unhandled-syntax residue changed"):
+    with pytest.raises(
+        AssertionError,
+        match="unhandled-syntax stable-zero regression",
+    ) as exc_info:
         _assert_scan_matches_fixture(scan, fixture)
+
+    assert "numpy/example.py: new residue" in str(exc_info.value)
 
 
 def test_gate_logic_rejects_kind_outside_closed_taxonomy() -> None:
@@ -72,13 +76,12 @@ def test_gate_logic_rejects_kind_outside_closed_taxonomy() -> None:
         "total_files": 1,
         "package_versions": {"numpy": "test", "pandas": "test"},
         "counts_by_kind": {"value-pin-refused": 1},
-        "expected_unhandled": {"total": 0, "reasons": {}},
     }
     scan = CorpusScan(
         total_files=1,
         package_versions={"numpy": "test", "pandas": "test"},
         counts_by_kind={"surprise-refusal": 1},
-        unhandled_reasons={},
+        unhandled_syntax=(),
         opacity_misses=(),
     )
 
@@ -91,13 +94,12 @@ def test_gate_logic_rejects_stale_pinned_count() -> None:
         "total_files": 1,
         "package_versions": {"numpy": "test", "pandas": "test"},
         "counts_by_kind": {"value-pin-refused": 2},
-        "expected_unhandled": {"total": 0, "reasons": {}},
     }
     scan = CorpusScan(
         total_files=1,
         package_versions={"numpy": "test", "pandas": "test"},
         counts_by_kind={"value-pin-refused": 1},
-        unhandled_reasons={},
+        unhandled_syntax=(),
         opacity_misses=(),
     )
 
@@ -109,7 +111,7 @@ def _scan_numpy_pandas() -> CorpusScan:
     roots = {package: _package_root(package) for package in PACKAGES}
     package_versions = {package: _package_version(package) for package in PACKAGES}
     counts_by_kind: Counter[str] = Counter()
-    unhandled_reasons: Counter[str] = Counter()
+    unhandled_syntax: list[str] = []
     opacity_misses: list[str] = []
     total_files = 0
     for package in PACKAGES:
@@ -129,14 +131,14 @@ def _scan_numpy_pandas() -> CorpusScan:
                 kind = str(refusal.get("kind"))
                 counts_by_kind[kind] += 1
                 if kind == "unhandled-syntax":
-                    unhandled_reasons[str(refusal.get("reason"))] += 1
+                    unhandled_syntax.append(f"{rel}: {refusal.get('reason')}")
             if _has_opaque_loop_effect(result.ir) and not result.opacity_report:
                 opacity_misses.append(rel)
     return CorpusScan(
         total_files=total_files,
         package_versions=package_versions,
         counts_by_kind=dict(sorted(counts_by_kind.items())),
-        unhandled_reasons=dict(sorted(unhandled_reasons.items())),
+        unhandled_syntax=tuple(sorted(unhandled_syntax)),
         opacity_misses=tuple(opacity_misses),
     )
 
@@ -152,28 +154,19 @@ def _assert_scan_matches_fixture(scan: CorpusScan, fixture: dict[str, Any]) -> N
             "corpus package versions changed:\n"
             + _format_diff(scan.package_versions, fixture["package_versions"])
         )
+    if scan.unhandled_syntax:
+        raise AssertionError(
+            "unhandled-syntax stable-zero regression:\n"
+            + "\n".join(scan.unhandled_syntax)
+        )
     unexpected_kinds = sorted(
         kind
         for kind in scan.counts_by_kind
-        if not _is_closed_refusal_kind(kind) and kind != "unhandled-syntax"
+        if not _is_closed_refusal_kind(kind)
     )
     if unexpected_kinds:
         raise AssertionError(
             "refusal kinds outside closed taxonomy: " + ", ".join(unexpected_kinds)
-        )
-    expected_unhandled = fixture["expected_unhandled"]
-    actual_unhandled_total = scan.counts_by_kind.get("unhandled-syntax", 0)
-    if actual_unhandled_total != expected_unhandled["total"]:
-        raise AssertionError(
-            "unhandled-syntax residue changed:\n"
-            f"expected={expected_unhandled['total']} "
-            f"actual={actual_unhandled_total}\n"
-            + _format_diff(scan.unhandled_reasons, expected_unhandled["reasons"])
-        )
-    if scan.unhandled_reasons != expected_unhandled["reasons"]:
-        raise AssertionError(
-            "unhandled-syntax residue reasons changed:\n"
-            + _format_diff(scan.unhandled_reasons, expected_unhandled["reasons"])
         )
     if scan.counts_by_kind != fixture["counts_by_kind"]:
         raise AssertionError(

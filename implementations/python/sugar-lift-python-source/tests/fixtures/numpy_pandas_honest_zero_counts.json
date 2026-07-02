@@ -27,9 +27,5 @@
     "multi-target-assign-refused": 71,
     "non-literal-default": 218,
     "value-pin-refused": 499
-  },
-  "expected_unhandled": {
-    "total": 0,
-    "reasons": {}
   }
 }
