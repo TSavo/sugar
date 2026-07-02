@@ -105,7 +105,7 @@ use libsugar::wp::{
 use sugar_ir_types::{IrFormula, IrTerm};
 use sugar_proof_envelope;
 
-use crate::types::{CallSite, MementoCid, MementoPool};
+use crate::types::{CallSite, MemberKind, MementoCid, MementoPool};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -144,7 +144,7 @@ pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(env) = pool.mementos.get(target_cid) else {
         return false;
     };
-    if pool.member_kind(target_cid) != Some("contract") {
+    if !pool.member_is_kind(target_cid, MemberKind::Contract) {
         return false;
     }
     let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
@@ -206,7 +206,7 @@ impl<'a> CatalogResolver<'a> {
         let bridge = self.pool.bridge_by_symbol(op_name)?;
         let target_cid = memento_cid_field(bridge, "targetContractCid")?;
         let env = self.pool.mementos.get(&target_cid)?;
-        if self.pool.member_kind(&target_cid) != Some("contract") {
+        if !self.pool.member_is_kind(&target_cid, MemberKind::Contract) {
             return None;
         }
         self.pool
@@ -855,7 +855,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         gdbg!("REJECT cond2: target contract {target_cid} not in pool.mementos");
         return None;
     };
-    if pool.member_kind(&target_cid) != Some("contract") {
+    if !pool.member_is_kind(&target_cid, MemberKind::Contract) {
         gdbg!(
             "REJECT cond2: target {target_cid} kind != contract ({:?})",
             pool.member_kind(&target_cid)

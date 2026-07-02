@@ -468,7 +468,10 @@ mod tests {
         let view = graph.members_view().next().expect("member view");
         let envelope: Json = serde_json::from_slice(view.bytes()).expect("member JSON");
 
-        assert_eq!(view.kind().as_deref(), Some("witness-memento"));
+        assert_eq!(
+            view.kind(),
+            Some(sugar_proof_envelope::MemberKind::WitnessMemento)
+        );
         assert_eq!(
             view.field("witnessCid").as_deref(),
             Some(minted.witness_cid.as_str())

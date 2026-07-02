@@ -363,9 +363,11 @@ fn mint_auto_writes_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    assert_eq!(
-        sugar_proof_envelope::member_kind(target_env),
-        Some("contract"),
+    assert!(
+        matches!(
+            sugar_proof_envelope::member_kind(target_env),
+            Ok(sugar_proof_envelope::MemberKind::Contract)
+        ),
         "bridge target must be a contract memento"
     );
     let formals = sugar_proof_envelope::member_field(target_env, "formals")
@@ -419,9 +421,11 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    assert_eq!(
-        sugar_proof_envelope::member_kind(target_env2),
-        Some("contract"),
+    assert!(
+        matches!(
+            sugar_proof_envelope::member_kind(target_env2),
+            Ok(sugar_proof_envelope::MemberKind::Contract)
+        ),
         "bridge target must be a contract memento"
     );
     let formals = sugar_proof_envelope::member_field(target_env2, "formals")

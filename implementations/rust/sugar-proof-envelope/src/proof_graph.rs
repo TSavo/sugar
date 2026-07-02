@@ -20,6 +20,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, CanonicalizerError, Value};
 
 use crate::sign::{ed25519_pubkey_string, ed25519_sign_string, ed25519_verify_string, Ed25519Seed};
+use crate::typed_member::{MemberError, MemberKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AtomCid(String);
@@ -755,13 +756,9 @@ impl<'a> MemberView<'a> {
     /// * v1.2 layered: `header.kind`
     /// * lean header/body: `header.kind`
     /// * v1.1 flat: `evidence.kind`
-    pub fn kind(&self) -> Option<String> {
+    pub fn kind(&self) -> Option<MemberKind> {
         let v: Json = serde_json::from_slice(self.bytes).ok()?;
-        v.pointer("/header/kind")
-            .or_else(|| v.pointer("/envelope/header/kind"))
-            .or_else(|| v.pointer("/evidence/kind"))
-            .and_then(Json::as_str)
-            .map(str::to_string)
+        raw_member_kind(&v).and_then(|kind| kind.parse().ok())
     }
 
     /// The body CID this member points at, if it carries one (contracts).
@@ -812,12 +809,20 @@ impl<'a> MemberView<'a> {
 /// that hold a raw member `Json` without a graph/CID context (e.g. the verifier
 /// reading pool members) -- so consumers read kind through the api instead of
 /// hand pointer-fishing `/header/kind`.
-pub fn member_kind(envelope: &Json) -> Option<&str> {
+fn raw_member_kind(envelope: &Json) -> Option<&str> {
     envelope
         .pointer("/header/kind")
         .or_else(|| envelope.pointer("/envelope/header/kind"))
         .or_else(|| envelope.pointer("/evidence/kind"))
         .and_then(Json::as_str)
+}
+
+/// Shape-agnostic typed kind of a member envelope. Unknown kinds are loud at
+/// the parse boundary so downstream code cannot silently string-match around
+/// an unsupported member shape.
+pub fn member_kind(envelope: &Json) -> Result<MemberKind, MemberError> {
+    let kind = raw_member_kind(envelope).ok_or(MemberError::MissingKind)?;
+    kind.parse()
 }
 
 /// Shape-agnostic body object of a member envelope (the container of
@@ -1002,12 +1007,32 @@ fn layered_signature_header(envelope: &Json, header: &Json) -> Result<Json, Stri
     // Proof-run and stage-receipt producers store the member identity in
     // `header.cid`; their signed preimage uses the derived header-content CID
     // to avoid a signature/CID fixed point.
-    if matches!(member_kind(envelope), Some("proof-run" | "stage-receipt")) {
-        let cid = layered_header_content_cid(header)?;
-        let Json::Object(map) = &mut signing_header else {
-            return Err("layered envelope header is not an object".to_string());
-        };
-        map.insert("cid".to_string(), Json::String(cid));
+    match member_kind(envelope) {
+        Ok(MemberKind::ProofRun | MemberKind::StageReceipt) => {
+            let cid = layered_header_content_cid(header)?;
+            let Json::Object(map) = &mut signing_header else {
+                return Err("layered envelope header is not an object".to_string());
+            };
+            map.insert("cid".to_string(), Json::String(cid));
+        }
+        Ok(MemberKind::AliasingMemento)
+        | Ok(MemberKind::AssertionSurfaceMemento)
+        | Ok(MemberKind::Authority)
+        | Ok(MemberKind::Bridge)
+        | Ok(MemberKind::ClosureBinding)
+        | Ok(MemberKind::Contract)
+        | Ok(MemberKind::EffectSiteAnnotation)
+        | Ok(MemberKind::FactoryWalkMemento)
+        | Ok(MemberKind::Implication)
+        | Ok(MemberKind::LibrarySugarBindingEntry)
+        | Ok(MemberKind::LoopInvariant)
+        | Ok(MemberKind::PinInvariant)
+        | Ok(MemberKind::PlanMemento)
+        | Ok(MemberKind::SourceMemento)
+        | Ok(MemberKind::TryBranch)
+        | Ok(MemberKind::Witness)
+        | Ok(MemberKind::WitnessMemento)
+        | Err(_) => {}
     }
     Ok(signing_header)
 }
@@ -1306,37 +1331,37 @@ impl ProofGraph {
     /// Typed iterator over bridge members only.
     pub fn bridges(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("bridge"))
+            .filter(|v| v.kind() == Some(MemberKind::Bridge))
     }
 
     /// Typed iterator over implication members only.
     pub fn implications(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("implication"))
+            .filter(|v| v.kind() == Some(MemberKind::Implication))
     }
 
     /// Typed iterator over source-memento members only.
     pub fn sources(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("source-memento"))
+            .filter(|v| v.kind() == Some(MemberKind::SourceMemento))
     }
 
     /// Typed iterator over witness-memento members only.
     pub fn witnesses(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("witness-memento"))
+            .filter(|v| v.kind() == Some(MemberKind::WitnessMemento))
     }
 
     /// Typed iterator over plan-memento members only.
     pub fn plans(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("plan-memento"))
+            .filter(|v| v.kind() == Some(MemberKind::PlanMemento))
     }
 
     /// Typed iterator over effect-site-annotation members only.
     pub fn effect_site_annotations(&self) -> impl Iterator<Item = MemberView<'_>> + '_ {
         self.members_view()
-            .filter(|v| v.kind().as_deref() == Some("effect-site-annotation"))
+            .filter(|v| v.kind() == Some(MemberKind::EffectSiteAnnotation))
     }
 
     /// Write this graph to a signed `.proof` envelope -- the inverse of `read`.
@@ -1877,7 +1902,7 @@ mod tests {
         // members are viewable typed -- kind + bodyCid -- with no caller parse.
         let views: Vec<_> = read.members_view().collect();
         assert_eq!(views.len(), 1);
-        assert_eq!(views[0].kind().as_deref(), Some("contract"));
+        assert_eq!(views[0].kind(), Some(MemberKind::Contract));
         assert_eq!(views[0].body_cid().as_deref(), Some(body.cid().as_str()));
         assert_eq!(views[0].cid().as_str(), contract.cid().as_str());
     }

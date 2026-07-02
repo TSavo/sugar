@@ -3612,7 +3612,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
                 )
             });
-            if pool.member_kind(&target_memento_cid) != Some("contract") {
+            if !pool.member_is_kind(&target_memento_cid, sugar_verifier::MemberKind::Contract) {
                 continue;
             }
             let Some(target_body) = member_body(target_env) else {
@@ -3905,7 +3905,7 @@ fn source_memento_member_for_contract(
         .map(str::to_string);
 
     for (cid, env) in &pool.mementos {
-        if pool.member_kind(cid) != Some("source-memento") {
+        if !pool.member_is_kind(cid, sugar_verifier::MemberKind::SourceMemento) {
             continue;
         }
         let Some(payload) = source_memento_payload(env) else {
