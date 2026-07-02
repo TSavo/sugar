@@ -24,3 +24,6 @@ class TupleLiteralValue(FloorValue):
 
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_tuple(self, ctx)
+
+    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.project_literal(self, ctx)
