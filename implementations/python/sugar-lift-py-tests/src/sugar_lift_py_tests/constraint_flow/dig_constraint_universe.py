@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..factory.dig_refusal import DigRefusal
 from ..factory.source_fragment import SourceFragment
 from .constraint_dig_request import ConstraintDigRequest
 from .constraint_universe import ConstraintUniverse
@@ -19,13 +20,22 @@ def walk_constraint_universe(
     predicates: list[dict[str, Any]] = []
     proofir: list[dict[str, Any]] = []
     sugar_chain: list[str] = []
+    dig_refusals: list[DigRefusal] = []
 
     for fragment in [tree, *tree.walk()]:
         if fragment.observed != "AnnAssign":
             continue
         try:
             target_id = fragment.annassign_target_id()
-        except TypeError:
+        except TypeError as exc:
+            dig_refusals.append(
+                DigRefusal(
+                    callee=dig.target_symbol,
+                    blame=fragment.blame,
+                    caught=type(exc).__name__,
+                    reason=f"constraint-universe candidate refused: {exc}",
+                )
+            )
             continue
         if target_id != field:
             continue
@@ -57,4 +67,5 @@ def walk_constraint_universe(
         source_memento=dict(source_memento),
         sugar_chain=sugar_chain,
         warranted_by=dig,
+        dig_refusals=dig_refusals,
     )

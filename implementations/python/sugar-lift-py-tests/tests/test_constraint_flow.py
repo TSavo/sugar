@@ -57,6 +57,7 @@ def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
         "python.body-universe.class",
     ]
     assert universe.predicates == [fact.fact]
+    assert universe.dig_refusals == []
     assert universe.warranted_by == dig
     assert universe.proofir == [
         {
@@ -68,6 +69,79 @@ def test_vendor_callsite_fact_triggers_dig_and_body_universe_walk() -> None:
         }
     ]
     assert universe.source_memento["file"] == "model.py"
+
+
+def test_non_name_annassign_target_records_dig_refusal() -> None:
+    tree = SourceFragment.from_node(
+        ast.parse("class User:\n" "    self.age: int = Field(..., ge=18)\n"),
+        "model.py",
+    )
+    dig = ConstraintDigRequest(
+        fact_subject="User.age",
+        target_symbol="User",
+        source_memento={"file": "test_model.py", "line": 2, "col": 4},
+        reason="vendor callsite fact warrants constraint-universe dig for User",
+    )
+
+    universe = walk_constraint_universe(
+        tree,
+        dig,
+        source_memento={"file": "model.py", "line": 1, "col": 0},
+        resolved_names={"Field": "pydantic.Field"},
+    )
+
+    refusal_rows = [refusal.to_json() for refusal in universe.dig_refusals]
+    assert universe.predicates == []
+    assert refusal_rows == [
+        {
+            "kind": "dig-refusal",
+            "callee": "User",
+            "blame": "model.py:2:4",
+            "caught": "TypeError",
+            "reason": (
+                "constraint-universe candidate refused: "
+                "annassign_target_id requires a Name target, got Attribute at model.py:2:4"
+            ),
+        }
+    ]
+    assert universe.to_json()["diagnostics"] == refusal_rows
+
+
+def test_multiple_non_name_annassign_targets_each_record_refusal() -> None:
+    tree = SourceFragment.from_node(
+        ast.parse(
+            "class User:\n"
+            "    self.age: int = Field(..., ge=18)\n"
+            "    other.age: int = Field(..., ge=21)\n"
+        ),
+        "model.py",
+    )
+    dig = ConstraintDigRequest(
+        fact_subject="User.age",
+        target_symbol="User",
+        source_memento={"file": "test_model.py", "line": 2, "col": 4},
+        reason="vendor callsite fact warrants constraint-universe dig for User",
+    )
+
+    universe = walk_constraint_universe(
+        tree,
+        dig,
+        source_memento={"file": "model.py", "line": 1, "col": 0},
+        resolved_names={"Field": "pydantic.Field"},
+    )
+
+    refusal_rows = [refusal.to_json() for refusal in universe.dig_refusals]
+    assert universe.predicates == []
+    assert [row["blame"] for row in refusal_rows] == [
+        "model.py:2:4",
+        "model.py:3:4",
+    ]
+    assert all(row["callee"] == "User" for row in refusal_rows)
+    assert all(row["caught"] == "TypeError" for row in refusal_rows)
+    assert all(
+        row["reason"].startswith("constraint-universe candidate refused")
+        for row in refusal_rows
+    )
 
 
 def test_model_class_without_constraint_shape_emits_no_universe_predicates() -> None:
@@ -91,4 +165,5 @@ def test_model_class_without_constraint_shape_emits_no_universe_predicates() -> 
     assert universe.predicates == []
     assert universe.proofir == []
     assert universe.effects == []
+    assert universe.dig_refusals == []
     assert universe.warranted_by == dig
