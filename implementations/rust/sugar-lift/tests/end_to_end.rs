@@ -9,6 +9,7 @@
 //    every member envelope passes the trust-root + CID-redrive checks.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use sugar_lift::{lift_and_mint, lift_path, mint_proof, LiftOptions};
 
@@ -178,4 +179,27 @@ fn cli_runs_against_fixtures() {
         "expected at least one .proof file in {out:?}"
     );
     let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn unknown_arg_exits_nonzero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sugar-lift"))
+        .arg("--definitely-not-a-flag")
+        .output()
+        .expect("spawn sugar-lift");
+
+    assert!(
+        !output.status.success(),
+        "unknown argument must not proceed with exit 0"
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("sugar-lift: unrecognized argument: --definitely-not-a-flag"),
+        "stderr should name the unknown argument, got {stderr:?}"
+    );
+    assert!(
+        stderr.contains("sugar-lift: try --help"),
+        "stderr should include usage hint, got {stderr:?}"
+    );
 }
