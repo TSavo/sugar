@@ -6,10 +6,7 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import (
     _lift_literal_via_factory,
     build_literal_call_report,
@@ -70,17 +67,21 @@ def test_bound_arg_replays_transitive_prior_assignment_dependencies():
     assert euf == ["f#euf#c:call:f(i:1)::assertion"]
 
 
-def test_numeric_expected_and_nested_array_arg_are_handled_panic_is_downstream():
+def test_numeric_expected_and_nested_array_arg_record_downstream_refusal():
     # For `np.rot90([[1,2],[3,4]]) == 5` the numeric expected AND the nested-array
-    # arg both compose through the factory now. Any remaining panic is DOWNSTREAM
-    # (the dig of numpy's imported source), never the expected or the args -- the
-    # worklist has moved past the callsite shape and into the body.
-    with pytest.raises(FactoryGap) as raised:
-        build_literal_call_report(
-            source="import numpy as np\ndef t():\n    assert np.rot90([[1,2],[3,4]]) == 5\n",
-            filename="t.py",
-            memento_file="t.py",
-        )
-    observed = raised.value.info.get("observed", "")
-    assert observed != "callsite-expected:Constant"
-    assert not observed.startswith("callsite-arg")
+    # arg both compose through the factory now. The remaining downstream gap is
+    # recorded as a DigRefusal so the assertion bridge stays present.
+    rep = build_literal_call_report(
+        source="import numpy as np\ndef t():\n    assert np.rot90([[1,2],[3,4]]) == 5\n",
+        filename="t.py",
+        memento_file="t.py",
+    )
+    euf = [c.name for c in rep.payload.ir if "euf" in c.name]
+    assert euf == [
+        "numpy.rot90#euf#c:call:numpy.rot90(c:array(c:array(i:1,i:2),c:array(i:3,i:4)))::assertion"
+    ]
+    refusals = [row for row in rep.payload.diagnostics if row.get("kind") == "dig-refusal"]
+    observed = " ".join(row.get("reason", "") for row in refusals)
+    assert "callsite-expected:Constant" not in observed
+    assert "callsite-arg" not in observed
+    assert any(row.get("callee") == "numpy.rot90" for row in refusals)

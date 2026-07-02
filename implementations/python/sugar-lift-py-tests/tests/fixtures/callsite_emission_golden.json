@@ -24,10 +24,28 @@
     ]
   },
   "resolved_literal_body": {
-    "panic": {
-      "fix": "add the numeric simple-body dig (out == <return expr over the formal>): BridgeStrategy simple body requires an output value",
-      "observed": "dig-body:simple-h"
-    }
+    "contracts": [
+      {
+        "bridge_source_symbol": "None",
+        "formals": "[]",
+        "inv": "{'args': [{'args': [], 'kind': 'ctor', 'name': 'call:h'}, {'kind': 'const', 'sort': {'kind': 'primitive', 'name': 'Int'}, 'value': 42}], 'kind': 'atomic', 'name': '='}",
+        "kind": "'contract'",
+        "name": "'h#euf#c:call:h()::assertion'",
+        "out_binding": "'out'",
+        "post": "None",
+        "pre": "None"
+      },
+      {
+        "bridge_source_symbol": "None",
+        "formals": "[]",
+        "inv": "{'args': [{'args': [], 'kind': 'ctor', 'name': 'call:h'}, {'kind': 'const', 'sort': {'kind': 'primitive', 'name': 'Int'}, 'value': 42}], 'kind': 'atomic', 'name': '='}",
+        "kind": "'contract'",
+        "name": "'h#euf#c:call:h()::assertion'",
+        "out_binding": "'out'",
+        "post": "None",
+        "pre": "None"
+      }
+    ]
   },
   "two_calls_same_callee": {
     "contracts": [

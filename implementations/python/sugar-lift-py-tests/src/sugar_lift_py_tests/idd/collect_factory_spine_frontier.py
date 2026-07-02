@@ -52,6 +52,8 @@ def _function_offenders(
     span = _function_lines(fragment, source_lines)
     offenders: list[FactorySpineOffender] = []
     offenders.extend(_block_of_callee_body_reduce_offenders(span))
+    if name == "_lift_assert":
+        offenders.extend(_assert_consumer_offenders(span))
     if name == "_ctx_with_prior_assignments":
         offenders.extend(_prior_assignment_replay_offenders(span))
     if name == "_construct_callsite":
@@ -156,6 +158,22 @@ def _concrete_return_value_offenders(
                     line_no,
                     "isinstance ladder over ReturnValue in _concrete_return_value",
                     "move concrete-return projection to project_callsite_with floor arms",
+                )
+            ]
+    return []
+
+
+def _assert_consumer_offenders(
+    span: list[tuple[int, str]]
+) -> list[FactorySpineOffender]:
+    for line_no, text in span:
+        if "_construct_callsite(" in text:
+            return [
+                _offender(
+                    "mini_interpreter_consumers_not_reading_terms",
+                    line_no,
+                    "_lift_assert calls _construct_callsite instead of reading the factory term",
+                    "build the callsite through the factory, demand force_floor, and project with project_callsite_with",
                 )
             ]
     return []

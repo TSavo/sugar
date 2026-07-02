@@ -23,6 +23,7 @@ EXPECTED_FACTORY_SPINE_R = {
     "callee_body_worklists": 1,
     "block_of_callee_body_reductions": 1,
     "callsite_values_with_null_multistatement_body": 0,
+    "mini_interpreter_consumers_not_reading_terms": 0,
     "transitive_worklist_drains": 1,
     "projection_ladders": 2,
     "prior_assignment_replays": 1,
@@ -64,6 +65,7 @@ def test_factory_spine_frontier_cli_exits_red_until_body_side_doors_are_gone(
     assert "  callee_body_worklists: 1" in stdout
     assert "  block_of_callee_body_reductions: 1" in stdout
     assert "  callsite_values_with_null_multistatement_body: 0" in stdout
+    assert "  mini_interpreter_consumers_not_reading_terms: 0" in stdout
     assert "  transitive_worklist_drains: 1" in stdout
     assert "  projection_ladders: 2" in stdout
     assert "  prior_assignment_replays: 1" in stdout
@@ -113,6 +115,28 @@ def test_factory_spine_frontier_bad_twin_flags_null_multistatement_body_drop(
     assert offender.line == 2
     assert "FunctionBodyUniverse" in offender.observed
     assert "carry the FunctionBodyUniverse" in offender.fix
+
+
+def test_factory_spine_frontier_bad_twin_flags_assert_consumer_side_door(
+    tmp_path,
+) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "factory"
+    kit_src.mkdir(parents=True)
+    (kit_src / "literal_call_report.py").write_text(
+        "def _lift_assert(stmt):\n"
+        "    return _construct_callsite(stmt, stmt, 'f', stmt, {})\n",
+        encoding="utf-8",
+    )
+
+    report = collect_factory_spine_frontier(tmp_path)
+
+    assert report.r.values["mini_interpreter_consumers_not_reading_terms"] == 1
+    assert report.r.total == 1
+    offender = report.offenders[0]
+    assert offender.path == "factory/literal_call_report.py"
+    assert offender.line == 2
+    assert "_construct_callsite" in offender.observed
+    assert "force_floor" in offender.fix
 
 
 def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> None:
