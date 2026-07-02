@@ -17,7 +17,7 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "comparison_slots": 0,
         "inplace_binary_slots": 0,
         "lifecycle_slots": 0,
-        "mutation_container_slots": 3,
+        "mutation_container_slots": 0,
         "numeric_binary_slots": 0,
         "numeric_conversion_slots": 0,
         "reflected_binary_slots": 0,
@@ -26,8 +26,8 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "display_conversion_slots": 0,
         "context_async_slots": 0,
     }
-    assert report.r.total == 3
-    assert not report.is_zero
+    assert report.r.total == 0
+    assert report.is_zero
 
 
 def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
@@ -40,7 +40,10 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__contains__",
         "__iter__",
         "__next__",
+        "__setitem__",
+        "__delitem__",
         "__reversed__",
+        "__missing__",
         "__bool__",
         "__len__",
         "__hash__",
@@ -82,12 +85,6 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         assert by_name[name].owner
 
     for name in (
-        "__setitem__",
-    ):
-        assert by_name[name].status == "missing", name
-        assert by_name[name].fix.startswith("write ")
-
-    for name in (
         "__aenter__",
         "__aexit__",
         "__await__",
@@ -103,15 +100,17 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
 ) -> None:
     status = cli.main(["--root", str(ROOT), "--dunder-frontier"])
 
-    assert status == 1
+    assert status == 0
     stdout = capsys.readouterr().out
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
     assert "  inplace_binary_slots: 0" in stdout
+    assert "  mutation_container_slots: 0" in stdout
     assert "  attribute_descriptor_slots: 0" in stdout
-    assert "  total: 3" in stdout
-    assert "missing dunder slots:" in stdout
-    missing, owned = stdout.split("owned dunder slots:", 1)
+    assert "  total: 0" in stdout
+    assert "missing dunder slots:" not in stdout
+    owned = stdout.split("owned dunder slots:", 1)[1]
+    missing = ""
     assert "  - call_container __next__" not in missing
     assert "  - call_container __next__: NextOperation" in owned
     assert "  - display_conversion __repr__" not in missing
@@ -133,6 +132,12 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
         "  - mutation_container __reversed__: BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
         in owned
     )
+    assert "  - mutation_container __setitem__" not in missing
+    assert "  - mutation_container __setitem__: SetItemOperation" in owned
+    assert "  - mutation_container __delitem__" not in missing
+    assert "  - mutation_container __delitem__: DelItemOperation" in owned
+    assert "  - mutation_container __missing__" not in missing
+    assert "  - mutation_container __missing__: DictMissingOperation" in owned
     assert "  - attribute_descriptor __getattr__" not in missing
     assert "  - attribute_descriptor __getattr__: AttributeLookupOperation" in owned
     assert "  - attribute_descriptor __getattribute__" not in missing
@@ -154,7 +159,9 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "  - attribute_descriptor __set__" not in missing
     assert "  - attribute_descriptor __set__: DescriptorOperation.__set__" in owned
     assert "  - attribute_descriptor __delete__" not in missing
-    assert "  - attribute_descriptor __delete__: DescriptorOperation.__delete__" in owned
+    assert (
+        "  - attribute_descriptor __delete__: DescriptorOperation.__delete__" in owned
+    )
     assert "  - attribute_descriptor __set_name__" not in missing
     assert (
         "  - attribute_descriptor __set_name__: "

@@ -72,6 +72,15 @@ class ObjectValue(FloorValue):
     def subscript_with(self, operation, ctx):
         return operation.subscript_object(self, ctx)
 
+    def setitem_with(self, operation, ctx):
+        return operation.setitem_object(self, ctx)
+
+    def delitem_with(self, operation, ctx):
+        return operation.delitem_object(self, ctx)
+
+    def missing_with(self, operation, ctx):
+        return operation.missing_object(self, ctx)
+
     def str_with(self, operation, ctx):
         return operation.str_object(self, ctx)
 
