@@ -293,6 +293,8 @@ def _expr(term: Json) -> ast.expr:
         return ast.BinOp(left=_expr(args[0]), op=ast.BitOr(), right=_expr(args[1]))
     if name == "python:annotation_tuple":
         return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
+    if name == "python:annotation_list":
+        return ast.List(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name in _BINOPS:
         return ast.BinOp(left=_expr(args[0]), op=_BINOPS[name](), right=_expr(args[1]))
     if name in _UNARYOPS:
@@ -422,6 +424,11 @@ def _slice_or_expr(term: Json) -> ast.expr | ast.slice:
             upper=None if _is_none_const(args[1]) else _expr(args[1]),
             step=None if _is_none_const(args[2]) else _expr(args[2]),
         )
+    if _name(term) == "python:tuple":
+        return ast.Tuple(
+            elts=[_slice_or_expr(arg) for arg in term.get("args", [])],
+            ctx=ast.Load(),
+        )
     return _expr(term)
 
 
@@ -438,6 +445,8 @@ def _target(term: Json) -> ast.expr:
         if not targets:
             raise ValueError("list target must contain at least one target")
         return ast.List(elts=targets, ctx=ast.Store())
+    if name == "python:starred":
+        return ast.Starred(value=_target(args[0]), ctx=ast.Store())
     expr = _expr(term)
     return _with_context(expr, ast.Store())
 
@@ -519,6 +528,10 @@ def _with_comprehension_target_context(expr: ast.expr) -> ast.expr:
         return expr
     if isinstance(expr, ast.List):
         expr.elts = [_with_comprehension_target_context(elt) for elt in expr.elts]
+        expr.ctx = ast.Store()
+        return expr
+    if isinstance(expr, ast.Starred):
+        expr.value = _with_comprehension_target_context(expr.value)
         expr.ctx = ast.Store()
         return expr
     raise ValueError(f"comprehension target is not assignable: {ast.dump(expr)}")
