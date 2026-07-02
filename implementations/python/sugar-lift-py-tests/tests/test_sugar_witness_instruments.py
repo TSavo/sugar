@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,12 +22,18 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.floor import ImportAliasValue, SupportValue
 from sugar_lift_py_tests.sugar.witnesses import PendingWitnesses
-from sugar_lift_py_tests.witness_harness import WitnessPipelineError, prove_verdict
+from sugar_lift_py_tests.witness_harness import (
+    WitnessPipelineError,
+    prove_verdict,
+    run_source_through_real_solver,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 46
 EXPECTED_SEED_CASES = 4
 EXPECTED_SEED_OWNER_COUNT = 3
+# Pinned by #3307: binary-dunder callsites currently emit only the stated
+# assertion; the derived body/floor contradiction is missing.
 EXPECTED_TRIPLE_FAILURES = 1
 EXPECTED_MIGRATED_SEED_NAMES = {
     "slice_callsite",
@@ -141,6 +148,65 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
         for failure in seed_report.triple_failures
     ] == [("binary_dunder_callsite", "lying", "verdict", "unsat", "sat")]
     assert seed_report.non_circularity_failures == ()
+
+
+def test_binary_dunder_lying_trace_documents_missing_derived_fact(
+    tmp_path: Path,
+) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "binary_dunder_callsite"
+    )
+
+    result = run_source_through_real_solver(tmp_path / "lying", seed.lying.source)
+
+    ir = result.lift_doc["ir"]
+    diagnostics = result.lift_doc["diagnostics"]
+    trace = {
+        "seed": seed.name,
+        "variant": "lying",
+        "expected": seed.lying.expected,
+        "observed": result.verdict,
+        "selectedSugars": result.selected_sugars,
+        "ir": ir,
+        "vendorConjoins": result.lift_doc.get("vendorConjoins"),
+        "callEdges": result.lift_doc.get("callEdges"),
+        "effects": result.lift_doc.get("effects"),
+        "implications": result.lift_doc.get("implications"),
+        "diagnostics": diagnostics,
+        "rows": result.prove_doc.get("rows"),
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert result.selected_sugars == ("CallSugar",)
+    assert result.verdict == "sat"
+    assert len(ir) == 1
+    assert ir[0]["proofirProvenance"] == {
+        "kind": "proofir-provenance",
+        "nodeClass": "EqualityFact",
+        "constructionSite": {"path": "test_witness.py", "line": 9, "column": 4},
+        "warrants": [
+            {
+                "kind": "Stated",
+                "locus": {"path": "test_witness.py", "line": 9, "column": 4},
+            }
+        ],
+    }
+    assert result.lift_doc.get("vendorConjoins") == []
+    assert result.lift_doc.get("callEdges") == []
+    assert result.lift_doc.get("effects") == []
+    assert result.lift_doc.get("implications") == []
+    assert any(
+        item.get("kind") == "dig-refusal"
+        and "function universe body walker refused this body" in item.get("reason", "")
+        for item in diagnostics
+    )
+    assert any(
+        item.get("kind") == "dig-refusal"
+        and "callsite floor projection refused this callee" in item.get("reason", "")
+        for item in diagnostics
+    )
 
 
 def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
