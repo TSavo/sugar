@@ -31,11 +31,11 @@ The verdict-witness shape is already minted on the ProofIR side: `idd/proofir_vo
 
 ### Python — the genuine opt-out set
 
-No `NotVerdictBearing`/opt-out marker exists yet. The genuine set that cannot reach a solver alone: `CommentSugar` (`sugar/comment_sugar.py:12`, desugars to `Complete(SupportValue())` `:37`), `AliasSugar` (`sugar/alias_sugar.py:12`, import-as plumbing), and the other Support/plumbing sugars reducing to `SupportValue` (`floor/support_value.py:9`, "contributes nothing to the first-order logic").
+No `NotVerdictBearing`/opt-out marker exists yet. The genuine set that cannot reach a solver alone reduces to a NON-FOL support/plumbing floor — but NOT all to the same floor: `CommentSugar` (`sugar/comment_sugar.py:12`) desugars to `Complete(SupportValue())` (`:37`, `floor/support_value.py:9`, "contributes nothing to the first-order logic"); `AliasSugar` (`sugar/alias_sugar.py:12`, import-as plumbing) returns `ImportAliasValue` (`floor/import_alias_value.py`), NOT `SupportValue`; and `SubscriptAssignSugar` / `SubscriptDeleteSugar` are support statements. This is why the opt-out must be a TYPED marker ON THE FLOORS (a `non_fol_support` predicate the plumbing floors declare), with the gate pinning the closed set of marked floors — never a hand list of sugar names keyed on one floor type.
 
 ### Rust — `desugar` has no default; the catalog is const claim slices
 
-`sugar-lift-rust-tests/src/lib.rs:8981` `trait Sugar { fn reduce(..) { self.desugar(..) } fn desugar(&self, ctx) -> Outcome; }` — `desugar` has NO default (the trait-level enrollment lever precedent). The catalog is hand-maintained `const` slices in `sugar/catalog.rs`: `EXPR_CLAIMS` (`:50`, ~205 entries), `ITEM_CLAIMS` (`:257`), `STMT_CLAIMS` (`:265`); **217 sugar source files**. Each claim is an `ExprSugarClaim` (`sugar/claim.rs:35`) = `{ name: &'static str (#[allow(dead_code)]), role, comes_before, fallback_well, recognize: fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>> }`. **The claim struct's fields are the enrollment lever: a new non-defaulted `witnesses` field forces every `const` claim literal to supply it or the crate does not compile.** Note `name` is `#[allow(dead_code)]` and the slices are crate-private — assertion (1) needs a `pub` name/recognized accessor (a campaign hook that does not exist today).
+`sugar-lift-rust-tests/src/lib.rs:8981` `trait Sugar { fn reduce(..) { self.desugar(..) } fn desugar(&self, ctx) -> Outcome; }` — `desugar` has NO default (the trait-level enrollment lever precedent). The catalog is hand-maintained `const` slices in `sugar/catalog.rs`: `EXPR_CLAIMS` (`:50`, **204 entries**), `ITEM_CLAIMS` (`:257`, **5 entries**), `STMT_CLAIMS` (`:265`, **5 entries**); 217 sugar source files. Each claim is an `ExprSugarClaim` (`sugar/claim.rs:35`) = `{ name: &'static str (#[allow(dead_code)]), role, comes_before, fallback_well, recognize: fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>> }`. **The claim struct's fields are the enrollment lever: a new non-defaulted `witnesses` field forces every `const` claim literal to supply it or the crate does not compile.** Note `name` is `#[allow(dead_code)]` and the slices are crate-private — assertion (1) needs a `pub` name/recognized accessor (a campaign hook that does not exist today).
 
 ### Rust — the triple already exists in prototype (driver + verdict), missing enrollment + assertion-1
 
@@ -50,13 +50,13 @@ The production lift entry is `lib.rs:492` `pub fn lift_file(&syn::File, source_p
 **The witness pair (per sugar):**
 - `truthful` — a minimal source statement (Python source for the py kit, Rust source for the rust kit) that this sugar recognizes and whose lifted ProofIR is SAT.
 - `lying` — a minimal source statement, same shape, whose lifted ProofIR is UNSAT (the vendor swore something false).
-- OR a typed opt-out `NotVerdictBearing(reason)` for a sugar that genuinely cannot reach a solver alone. This is a CLOSED, PINNED list in the gate (the current set: `CommentSugar`, `AliasSugar`, Support/plumbing sugars reducing to `SupportValue`). **An empty default is the side door and is forbidden** — a sugar declares a witness pair OR a `NotVerdictBearing`, never nothing.
+- OR a typed opt-out `NotVerdictBearing(reason)` for a sugar that genuinely cannot reach a solver alone. **This is TYPE/FLOOR-ANCHORED, not a hand list (T Savo).** The distinguishing fact is that the sugar reduces to a NON-FOL support/plumbing floor — so the FLOORS carry a typed `non_fol_support` marker (a method/trait on the floor: `SupportValue`, `ImportAliasValue`, and the other plumbing floors declare it), and a sugar is legitimately non-verdict-bearing iff its `desugar` result floor is so marked. The gate pins the CLOSED set DERIVED FROM the marker (not an authored list of names). T verbatim: *"'reduces to SupportValue' is too narrow and slightly misleading. AliasSugar returns `ImportAliasValue`, not `SupportValue` … make a typed `NotVerdictBearing`/non-FOL floor marker and pin the closed set through the gate."* Current members: `CommentSugar` (→ `SupportValue`), `AliasSugar` (→ `ImportAliasValue`, `floor/import_alias_value.py`), and likely `SubscriptAssignSugar` / `SubscriptDeleteSugar` (support statements). **An empty default is the side door and is forbidden** — a sugar declares a witness pair OR resolves to a marked non-FOL floor, never nothing; and the pinned closed set is the enumeration of marked floors the gate sees, so adding a member is a typed floor change, not a silent list edit.
 
 **Enrollment is existence — the per-kit mechanics:**
-- **Python:** add a required `witnesses()` classmethod (returning a `WitnessPair | NotVerdictBearing`) to `Sugar`, and ENFORCE it in `__init_subclass__` at the `role=` gate (`sugar_base.py:39`): a registrable leaf that does not override `witnesses()` raises `TypeError` at class-definition time — which fires when `default_catalog()` imports the module, so the WHOLE catalog reds at import on flip day. This is strictly stronger than "instantiation fails" (it fails catalog-wide at import, matching Rust's compile-time), and it reuses the exact seam that already gates registration. (We also mark `witnesses` `@abstractmethod` as the per-instance backstop.)
-- **Rust:** add a non-defaulted `witnesses: SugarWitnesses` field to `ExprSugarClaim`/`ItemSugarClaim`/`StmtSugarClaim` (`claim.rs:35`). Every `const` claim literal in `catalog.rs` must supply it or the crate does not compile — rustc enumerates every unenrolled claim as a missing-field error. Add a `pub fn name(&self)` / recognized-claim accessor for assertion (1).
+- **Python (RATIFIED, T Savo):** add a required `witnesses()` classmethod (returning a `WitnessPair | NotVerdictBearing`) to `Sugar`. THE enforcement is an EXPLICIT class-definition check on registrable leaves inside `__init_subclass__` at the `role=` gate (`sugar_base.py:39`): when a leaf passes `role=`, the hook asserts the class actually overrides `witnesses()` (`"witnesses" in cls.__dict__` / not the base stub) and raises `TypeError` at class-definition time otherwise. This fires when `default_catalog()` imports the module (`factory/build.py:218`), so ONE import sweep lights up every unenrolled registrable leaf — the WHOLE catalog reds at import on flip day, matching Rust's compile-time. T verbatim: *"`__init_subclass__` at the `role=` gate is better than instantiation failure … the real enforcement must be an explicit class-definition check on registrable leaves, not ABC instantiation behavior."* `@abstractmethod` is ONLY a backstop — it must NOT be the enforcement mechanism, because ABC instantiation behavior fires per-instance (via `build()`), not at catalog import, and a sugar that is never instantiated in a given run would slip. The explicit `role=`-gate check is the law; the abstractmethod is belt-and-suspenders.
+- **Rust (STAGED BY CLAIM STRUCT, T Savo):** add the non-defaulted `witnesses: SugarWitnesses` field ONE claim struct at a time, smallest first — `StmtSugarClaim` (5 entries) → `ItemSugarClaim` (5) → `ExprSugarClaim` (204, drained in batches). Adding the field to a struct makes every `const` literal of THAT struct in `catalog.rs` fail to compile (a missing-field error) — rustc enumerates that struct's unenrolled claims. This preserves the non-defaulted-field compile-red law at every step while avoiding a 214-entry mudslide in one PR. Add a `pub fn name(&self)` / recognized-claim accessor for assertion (1). T verbatim: *"Do not do one giant Rust drain … stage enrollment by claim struct/role: `StmtSugarClaim`, `ItemSugarClaim`, then `ExprSugarClaim` in batches."*
 
-**The flip lands RED with the full offender list** (Python: ~58 sugars at catalog import; Rust: ~205+ claim literals at compile), then drains in batches like every campaign — each batch enrolls a set of sugars with real truthful/lying pairs (reusing the decorative `good`/`bad` twins as the seed source), ratcheting `R(unenrolled-sugars)` to zero.
+**The flip lands RED with the offender list, per stage** (Python: ~58 sugars at catalog import in one flip; Rust: per claim struct — 5, then 5, then 204-in-batches at compile), then drains — each batch enrolls a set of sugars with real truthful/lying pairs (reusing the decorative `good`/`bad` twins as the seed source), ratcheting `R(unenrolled-sugars)` to zero.
 
 **The one dumb test** (`test_sugar_witness_triple.py` / `tests/sugar_witness_triple.rs`): `foreach` claim in the catalog, for each of `{truthful, lying}`: write the minimal source project, drive it through the ONE centralized `_run_lift_rpc` (Python) / `lift_file` (Rust), and assert the triple —
 1. **that sugar fired** — the lift report's factory-walk/recognized-claim attribution names THIS sugar (Python: the `factory_walk` row's sugar name; Rust: the claim's `recognize()` returns `Some` and catalog resolution selects THIS claim). Non-circularity.
@@ -89,7 +89,7 @@ Within the harness, assert the recognized-claim attribution names the owning sug
 | Signal | Starts as | Target |
 |---|---|---|
 | `R(unenrolled-sugars)` — Python | S2 flip lands RED (~58). | 0 after the Python drain. |
-| `R(unenrolled-sugars)` — Rust | S7 flip lands RED (~205+ claim literals). | 0 after the Rust drain. |
+| `R(unenrolled-sugars)` — Rust | staged flips land RED per struct: `StmtSugarClaim` 5 (S7), `ItemSugarClaim` 5 (S8), `ExprSugarClaim` 204 (S9, batched). | 0 after each stage's drain. |
 | `R(witness-triples-failing)` | S1 measures (harness over the seed set). | 0 at each phase close. |
 | `R(witnesses-not-dispatching-to-owner)` | S1 measures. | 0 (assertion-1 holds catalog-wide). |
 | `R(decorative-verdict-files)` (#3272) | ~17 files with `_formula_status`. | 0 (migrated onto the real-solver harness). |
@@ -104,7 +104,7 @@ Exit: merged as "Part 1 of the sugar-witness campaign (plan)".
 
 ### Slice 1 — Instruments + the triple harness (Python), RED/measuring
 Add Instrument A (enrollment auditor over `registered_claims()`), Instrument B (the parametrized triple harness), and Instrument C (non-circularity). Centralize `_run_lift_rpc` into ONE shared harness helper (it is copy-pasted across ~17 files today). Wire the harness's verdict to the REAL `sugar-ir-compiler-smt-lib` path (the same one PR #3269's witness harness uses), NOT `_formula_status`. Run against the current seed set (the sugars whose decorative twins already exist) and pin the vectors.
-- **Depends on #3269 merge** (the RPC-driven witness harness seed). If #3269 is not merged when this slice dispatches, this slice seeds the harness from #3269's branch mechanism and flags the dependency.
+- **#3269 (the RPC-driven witness harness seed) is MERGED (main `01264a8a9`) — dependency SATISFIED.** Seed the harness from the on-main mechanism.
 - Red-first: the harness over a sugar with a deliberately-wrong (lying source that is actually true) witness reds on the verdict; a witness pointing at another sugar's source reds on assertion-1.
 - Bad-twins: (a) truthful source → SAT + correct sugar attribution; (b) lying source → UNSAT; (c) mis-attributed witness → assertion-1 red.
 Exit: three instruments measuring; `_run_lift_rpc` centralized; the verdict is a real solve; baselines pinned.
@@ -135,17 +135,24 @@ Exit: `R(hand-coverage-registry)=0`; the Python triple is an armed catalog-wide 
 Add the Rust triple harness (`tests/sugar_witness_triple.rs`) reusing `lift_file` + `z3_verdict` + `inv_json`; add the `pub` claim-`name`/recognized accessor for assertion (1). Measure the seed set (the ~26 existing twin tests) and pin the vectors. Assertion-2 targets `sugar_ir_symbolic::ContractDecl` (upgrade to `sugar_ir_types::Declaration` at #3240).
 Exit: Rust harness measuring; assertion-1 reachable; baselines pinned.
 
-### Slice 7 — The enrollment flip (Rust), RED (compile)
-Add the non-defaulted `witnesses: SugarWitnesses` field to `ExprSugarClaim`/`ItemSugarClaim`/`StmtSugarClaim` (`claim.rs:35`). Land RED: rustc enumerates every `const` claim literal in `catalog.rs` (~205+ EXPR, plus ITEM/STMT) missing the field. Define the Rust CLOSED opt-out variant `SugarWitnesses::NotVerdictBearing(reason)`.
-- Red-first: the crate does not compile; the missing-field errors ARE the offender list.
-Exit: enrollment enforced at compile; `R(unenrolled-sugars)` Rust pinned at the full count.
+**Rust enrollment is STAGED BY CLAIM STRUCT (T Savo), smallest first, to keep the compile-red law without a 214-entry mudslide.** Define `SugarWitnesses::{Pair(truthful, lying), NotVerdictBearing(reason)}` (the CLOSED opt-out variant) in the first stage.
 
-### Slice 8 — Drain batches (Rust)
-Enroll the Rust catalog in batches, reusing the ~26 existing twin tests as seed witnesses and adding pairs for the rest; genuine non-verdict claims take the pinned `NotVerdictBearing`. Ratchet `R(unenrolled-sugars)` Rust → 0.
-Exit: every Rust claim testifies or is pinned non-verdict-bearing.
+### Slice 7 — Enrollment flip + drain: `StmtSugarClaim` (5 entries), RED then green
+Add the non-defaulted `witnesses: SugarWitnesses` field to `StmtSugarClaim` (`claim.rs`) FIRST, and define `SugarWitnesses`. Land RED: rustc enumerates the 5 `STMT_CLAIMS` literals (`catalog.rs:265`) missing the field. Then drain those 5 (real pairs, or `NotVerdictBearing` for support statements).
+- Red-first: the crate does not compile; the 5 missing-field errors ARE the offender list.
+Exit: `StmtSugarClaim` enrolled; the field/`SugarWitnesses` type exists; other structs untouched (still no field).
 
-### Slice 9 — Rust close: arm the gate; disambiguate; upgrade assertion-2
-Arm the Rust triple as a gate. Disambiguate the `sugar-lift-rust-cargo-test-witness` naming collision in docs/comments (source-witness vs cargo-test witness). Note the assertion-2 upgrade path: when #3240 lands the `sugar_ir_types::Declaration` typed surface, the harness's "ProofIR came back" assertion upgrades from `ContractDecl` to the typed node — a one-line target change, not a re-architecture.
+### Slice 8 — Enrollment flip + drain: `ItemSugarClaim` (5 entries)
+Add the field to `ItemSugarClaim`; rustc reds the 5 `ITEM_CLAIMS` literals (`catalog.rs:257`); drain them.
+Exit: `ItemSugarClaim` enrolled; `ExprSugarClaim` still fieldless.
+
+### Slice 9 — Enrollment flip + drain: `ExprSugarClaim` (204 entries, batched)
+Add the field to `ExprSugarClaim` (`catalog.rs:50`) — lands RED with 204 missing-field errors — then drain in BATCHES of ~40 (≈5-6 batch PRs under this slice), reusing the ~26 existing `assertion_lift.rs` twins as seed witnesses and adding pairs for the rest; genuine non-verdict claims take `NotVerdictBearing`. Each batch is its own PR; the compile-red law holds (the crate stays red until the last batch drains).
+- Red-first: 204 missing-field errors; batches ratchet the count down.
+Exit: `R(unenrolled-sugars)` Rust → 0 across all three structs.
+
+### Slice 10 — Rust close: arm the gate; disambiguate; upgrade assertion-2
+Arm the Rust triple as a catalog-wide gate. Disambiguate the `sugar-lift-rust-cargo-test-witness` naming collision in docs/comments (source-witness vs cargo-test witness). Note the assertion-2 upgrade path: when #3240 lands the `sugar_ir_types::Declaration` typed surface, the harness's "ProofIR came back" assertion upgrades from `ContractDecl` to the typed node — a one-line target change, not a re-architecture.
 Exit: both kits' triples are armed catalog-wide gates; the composition law is executable.
 
 ## Future phase (planned, NOT in these slices)
@@ -159,13 +166,13 @@ Exit: both kits' triples are armed catalog-wide gates; the composition law is ex
 | `tests/test_sugar_coverage_registry.py` (hand name→file table) | enrollment (a sugar owns its witness) | 5 |
 | decorative `*_sat_unsat` / `_formula_status` files (#3272) | the real-solver triple harness | 3 (Python), migrated |
 | vocab campaign Instrument C coverage counter (at maturity) | registration = enrollment (sugar-keyed) | 5 |
-| Rust `assertion_lift.rs` ad-hoc twin tests (decls[0]-keyed) | the catalog `foreach` triple w/ assertion-1 | 6-8 |
+| Rust `assertion_lift.rs` ad-hoc twin tests (decls[0]-keyed) | the catalog `foreach` triple w/ assertion-1 | 6-9 |
 
 ## Sequencing with sibling campaigns
 
-- **ProofIR-vocab campaign (#3232-#3240).** Python assertion-2 ("proofir came back") UPGRADES as the vocab graph gets attributed: today `doc["ir"]` rows; at #3269 (S2, in flight) the spine node classes; at S4+ the fully-attributed graph. Do NOT block on it — the harness asserts against whatever typed shape is current and tightens as the vocab lands. Rust assertion-2 upgrades at S9 (#3240). This campaign is the vocab campaign's capstone consumer: it is where "sugar owns the example, ProofIR owns the verdict" becomes one test.
-- **PR #3269 (vocab S2) — the harness seed.** Python Slice 1 depends on its RPC-driven witness mechanism. It is in flight and IS the seed; the campaign generalizes it from 3 node classes to all sugars.
-- **irterm-boundary #3198.** Gates the Rust assertion-2 upgrade only (via #3240), not the Rust enrollment/drain — Rust phase can proceed against `ContractDecl` before #3198.
+- **ProofIR-vocab campaign (#3232-#3240).** Python assertion-2 ("proofir came back") UPGRADES as the vocab graph gets attributed: today `doc["ir"]` rows; at #3269 (S2, MERGED — main `01264a8a9`) the spine node classes; at S4+ the fully-attributed graph. Do NOT block on it — the harness asserts against whatever typed shape is current and tightens as the vocab lands. Rust assertion-2 upgrades at #3240. This campaign is the vocab campaign's capstone consumer: it is where "sugar owns the example, ProofIR owns the verdict" becomes one test.
+- **PR #3269 (vocab S2) — the harness seed, NOW MERGED (main `01264a8a9`).** Python Slice 1's dependency is SATISFIED; the RPC-driven witness mechanism is on main and IS the seed the campaign generalizes from 3 node classes to all sugars.
+- **irterm-boundary #3198.** Gates the Rust assertion-2 upgrade only (via #3240), not the Rust enrollment/drain — the Rust phase can proceed against `ContractDecl` before #3198.
 
 ## Anti-goals
 
