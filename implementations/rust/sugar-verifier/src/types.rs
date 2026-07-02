@@ -425,6 +425,27 @@ impl MementoPool {
         self.insert_anchored_parts(memento_cid, member);
     }
 
+    /// Insert an anchored memento after a load-time indexer inspects its typed view.
+    ///
+    /// This keeps `AnchoredMember` as the production ingress witness while letting
+    /// load_all_proofs validate and index by `StoredMember` without normalizing the
+    /// same envelope twice. Returning `None` from the callback skips insertion.
+    pub(crate) fn try_insert_anchored_with<T, F>(
+        &mut self,
+        member: AnchoredMember,
+        before_insert: F,
+    ) -> Result<Option<T>, sugar_proof_envelope::MemberError>
+    where
+        F: FnOnce(&MementoCid, &StoredMember, &mut Self) -> Option<T>,
+    {
+        let (memento_cid, member) = member.into_stored_member()?;
+        let Some(value) = before_insert(&memento_cid, &member, self) else {
+            return Ok(None);
+        };
+        self.insert_anchored_parts(memento_cid, member);
+        Ok(Some(value))
+    }
+
     #[cfg(test)]
     pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
         let member = StoredMember::from_envelope(memento_cid.clone(), &envelope)

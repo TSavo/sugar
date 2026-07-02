@@ -28,7 +28,7 @@ use sugar_canonicalizer::blake3_512_of;
 use tracing::{debug, info, warn};
 
 use sugar_proof_envelope::{
-    AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, ProofGraph,
+    AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, ProofGraph, StoredMember,
 };
 
 use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
@@ -290,128 +290,136 @@ fn load_catalog_bytes(
                 continue;
             }
         };
-        let env = anchored.envelope();
-        let kind = match sugar_proof_envelope::member_kind(env) {
-            Ok(kind) => kind,
-            Err(error) => {
-                pool.load_errors.push(LoadError {
-                    proof_path: source_label.clone(),
-                    reason: format!("member {cid}: {error}"),
-                });
-                continue;
-            }
-        };
-        match kind {
-            MemberKind::Contract => {
-                let Some(body_cid) = sugar_proof_envelope::member_field(env, "bodyCid")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
-                else {
-                    pool.load_errors.push(LoadError {
-                        proof_path: source_label.clone(),
-                        reason: format!(
-                            "contract {cid}: missing bodyCid; legacy inline contract bodies are not a valid .proof graph"
-                        ),
-                    });
-                    continue;
+        let bridge_index =
+            match pool.try_insert_anchored_with(anchored, |stored_cid, member, pool| {
+                let kind = member.kind();
+                match kind {
+                    MemberKind::Contract => {
+                        let Some(body_cid) = member
+                            .field("bodyCid")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
+                        else {
+                            pool.load_errors.push(LoadError {
+                                proof_path: source_label.clone(),
+                                reason: format!(
+                                    "contract {stored_cid}: missing bodyCid; legacy inline contract bodies are not a valid .proof graph"
+                                ),
+                            });
+                            return None;
+                        };
+                        if !pool.body.contains_key(&body_cid) {
+                            pool.load_errors.push(LoadError {
+                                proof_path: source_label.clone(),
+                                reason: format!(
+                                    "contract {stored_cid}: bodyCid {body_cid} is not present in catalog `body` map"
+                                ),
+                            });
+                            return None;
+                        }
+                    }
+                    MemberKind::AliasingMemento
+                    | MemberKind::AssertionSurfaceMemento
+                    | MemberKind::Authority
+                    | MemberKind::Bridge
+                    | MemberKind::ClosureBinding
+                    | MemberKind::EffectSiteAnnotation
+                    | MemberKind::FactoryWalkMemento
+                    | MemberKind::Implication
+                    | MemberKind::LibrarySugarBindingEntry
+                    | MemberKind::LoopInvariant
+                    | MemberKind::PinInvariant
+                    | MemberKind::PlanMemento
+                    | MemberKind::ProofRun
+                    | MemberKind::SourceMemento
+                    | MemberKind::StageReceipt
+                    | MemberKind::TryBranch
+                    | MemberKind::Witness
+                    | MemberKind::WitnessMemento => {}
+                }
+                // Bridge indexing metadata. StoredMember normalizes v1.1
+                // (evidence.body.sourceSymbol), lean (body/header.sourceSymbol),
+                // and v1.2 (header.sourceSymbol) before indexing. The indexes
+                // themselves store only the bridge memento CID; the verified
+                // member lives once in `pool.mementos`.
+                let bridge_index = match kind {
+                    MemberKind::Bridge => member
+                        .field("sourceSymbol")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|sym| {
+                            let callsite_key = member.body().and_then(|body| {
+                                let cs = body.get("callsite");
+                                let file = cs
+                                    .and_then(|v| v.get("file"))
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty());
+                                let line = cs
+                                    .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize);
+                                match (file, line) {
+                                    (Some(file), Some(line)) => Some((
+                                        derived_full.clone(),
+                                        file.to_string(),
+                                        line,
+                                        sym.to_string(),
+                                    )),
+                                    _ => None,
+                                }
+                            });
+                            (sym.to_string(), callsite_key)
+                        }),
+                    MemberKind::AliasingMemento
+                    | MemberKind::AssertionSurfaceMemento
+                    | MemberKind::Authority
+                    | MemberKind::ClosureBinding
+                    | MemberKind::Contract
+                    | MemberKind::EffectSiteAnnotation
+                    | MemberKind::FactoryWalkMemento
+                    | MemberKind::Implication
+                    | MemberKind::LibrarySugarBindingEntry
+                    | MemberKind::LoopInvariant
+                    | MemberKind::PinInvariant
+                    | MemberKind::PlanMemento
+                    | MemberKind::ProofRun
+                    | MemberKind::SourceMemento
+                    | MemberKind::StageReceipt
+                    | MemberKind::TryBranch
+                    | MemberKind::Witness
+                    | MemberKind::WitnessMemento => None,
                 };
-                if !pool.body.contains_key(&body_cid) {
+
+                // Track bundle membership so resolve_target can enforce
+                // BridgeDeclaration.ConsequentBundlePinned. The bundle's CID is
+                // the .proof file's content hash (derived_full above). A given
+                // member CID may legitimately appear in more than one bundle;
+                // the per-bundle set is what matters at resolve time.
+                pool.bundle_members
+                    .entry(derived_full.clone())
+                    .or_default()
+                    .insert(stored_cid.clone());
+                index_effect_site_annotation(
+                    &source_label,
+                    &derived_full,
+                    stored_cid,
+                    member,
+                    pool,
+                );
+
+                Some(bridge_index)
+            }) {
+                Ok(Some(bridge_index)) => bridge_index,
+                Ok(None) => continue,
+                Err(error) => {
                     pool.load_errors.push(LoadError {
                         proof_path: source_label.clone(),
-                        reason: format!(
-                            "contract {cid}: bodyCid {body_cid} is not present in catalog `body` map"
-                        ),
+                        reason: format!("member {cid}: {error}"),
                     });
                     continue;
                 }
-            }
-            MemberKind::AliasingMemento
-            | MemberKind::AssertionSurfaceMemento
-            | MemberKind::Authority
-            | MemberKind::Bridge
-            | MemberKind::ClosureBinding
-            | MemberKind::EffectSiteAnnotation
-            | MemberKind::FactoryWalkMemento
-            | MemberKind::Implication
-            | MemberKind::LibrarySugarBindingEntry
-            | MemberKind::LoopInvariant
-            | MemberKind::PinInvariant
-            | MemberKind::PlanMemento
-            | MemberKind::ProofRun
-            | MemberKind::SourceMemento
-            | MemberKind::StageReceipt
-            | MemberKind::TryBranch
-            | MemberKind::Witness
-            | MemberKind::WitnessMemento => {}
-        }
-        // Bridge indexing metadata. Shape-aware helpers (member_kind /
-        // member_field) cover both v1.1 (evidence.kind /
-        // evidence.body.sourceSymbol) and v1.2 (header.kind /
-        // header.sourceSymbol) without branching at the call site. The indexes
-        // themselves store only the bridge memento CID; the verified envelope
-        // lives once in `pool.mementos`.
-        let bridge_index = match kind {
-            MemberKind::Bridge => sugar_proof_envelope::member_field(env, "sourceSymbol")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|sym| {
-                    let callsite_key = sugar_proof_envelope::member_body(env).and_then(|body| {
-                        let cs = body.get("callsite");
-                        let file = cs
-                            .and_then(|v| v.get("file"))
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty());
-                        let line = cs
-                            .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
-                            .and_then(|v| v.as_u64())
-                            .map(|n| n as usize);
-                        match (file, line) {
-                            (Some(file), Some(line)) => Some((
-                                derived_full.clone(),
-                                file.to_string(),
-                                line,
-                                sym.to_string(),
-                            )),
-                            _ => None,
-                        }
-                    });
-                    (sym.to_string(), callsite_key)
-                }),
-            MemberKind::AliasingMemento
-            | MemberKind::AssertionSurfaceMemento
-            | MemberKind::Authority
-            | MemberKind::ClosureBinding
-            | MemberKind::Contract
-            | MemberKind::EffectSiteAnnotation
-            | MemberKind::FactoryWalkMemento
-            | MemberKind::Implication
-            | MemberKind::LibrarySugarBindingEntry
-            | MemberKind::LoopInvariant
-            | MemberKind::PinInvariant
-            | MemberKind::PlanMemento
-            | MemberKind::ProofRun
-            | MemberKind::SourceMemento
-            | MemberKind::StageReceipt
-            | MemberKind::TryBranch
-            | MemberKind::Witness
-            | MemberKind::WitnessMemento => None,
-        };
-
-        // Track bundle membership so resolve_target can enforce
-        // BridgeDeclaration.ConsequentBundlePinned. The bundle's CID is
-        // the .proof file's content hash (derived_full above). A given
-        // member CID may legitimately appear in more than one bundle;
-        // the per-bundle set is what matters at resolve time.
-        pool.bundle_members
-            .entry(derived_full.clone())
-            .or_default()
-            .insert(cid.clone());
-        index_effect_site_annotation(&source_label, &derived_full, &cid, env, pool);
-
-        // Index for handshake. The memento IS the verification;
-        // inserting it into the pool IS caching the verification result.
-        pool.insert(anchored);
+            };
 
         if let Some((sym, callsite_key)) = bridge_index {
             pool.bridges_by_symbol.insert(sym.clone(), cid.clone());
@@ -456,16 +464,13 @@ fn index_effect_site_annotation(
     source_label: &str,
     bundle_cid: &MementoCid,
     memento_cid: &MementoCid,
-    env: &Json,
+    member: &StoredMember,
     pool: &mut MementoPool,
 ) {
-    if !matches!(
-        sugar_proof_envelope::member_kind(env),
-        Ok(MemberKind::EffectSiteAnnotation)
-    ) {
+    if member.kind() != MemberKind::EffectSiteAnnotation {
         return;
     }
-    let Some(body) = sugar_proof_envelope::member_body(env) else {
+    let Some(body) = member.body() else {
         pool.load_errors.push(LoadError {
             proof_path: source_label.to_string(),
             reason: format!(
