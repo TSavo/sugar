@@ -718,6 +718,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // unclassified only because the block was not classified; not a fake-zero -- the
         // block is held + named.)
         || reason.contains("effectful control-flow block")
+        || reason.contains("result error raise effect")
+        || reason.contains("early return raise effect")
         // TERMINAL: std `future::join!` constructs a future whose output is produced only
         // when a runtime driver polls/awaits it. There is no source-visible macro body to
         // expand and no single timeless output value at construction.
@@ -9042,6 +9044,45 @@ enum Outcome {
     Incomplete(Effect),
 }
 
+/// Routeable raise-like control-flow effects.
+///
+/// Python's reference represents all routeable raises as `RaiseEffect`. Rust keeps the legacy
+/// `PanicMacro`/`LiteralPanic`/`ControlFlow` `Effect` siblings byte-stable for existing report
+/// strings, and uses this family for newly-typed Result-Err / early-return cases.
+#[derive(Debug, Clone)]
+enum RaiseEffect {
+    Panic { boundary: String },
+    ResultErr { boundary: String },
+    EarlyReturn { boundary: String },
+}
+
+impl RaiseEffect {
+    fn boundary(&self) -> &str {
+        match self {
+            RaiseEffect::Panic { boundary }
+            | RaiseEffect::ResultErr { boundary }
+            | RaiseEffect::EarlyReturn { boundary } => boundary,
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            RaiseEffect::Panic { boundary } => format!(
+                "panic! macro divergence `{boundary}`: builtin panic! diverges by unwinding or \
+                 aborting at runtime; no single timeless source value is available here; refused"
+            ),
+            RaiseEffect::ResultErr { boundary } => format!(
+                "result error raise effect `{boundary}` exits the current block and may be \
+                 routed by a matching handler; refused"
+            ),
+            RaiseEffect::EarlyReturn { boundary } => format!(
+                "early return raise effect `{boundary}` exits the current block and may be \
+                 routed by a matching handler; refused"
+            ),
+        }
+    }
+}
+
 /// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
 /// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
 /// mutable read, ...), plus named unsupported terms. `reason()` returns the terminal refusal string
@@ -9055,6 +9096,10 @@ enum Outcome {
 /// the CID is conserved.
 #[derive(Debug, Clone)]
 enum Effect {
+    /// RAISE-FAMILY: routeable control-flow exits carried as typed data for Phase 2 routers.
+    /// Existing panic/control-flow variants remain as siblings for byte-compatible legacy
+    /// refusal strings; `is_raise_like_effect` recognizes both shapes.
+    Raise(RaiseEffect),
     /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
     /// `.push`, an assignment). The asserted value varies per iteration independently of
     /// the bound var, so a single universal over it would be a false claim. A source
@@ -9355,6 +9400,7 @@ impl Effect {
     /// BYTE-IDENTICAL to the proto string the collector emitted before this enum existed.
     fn reason(&self) -> String {
         match self {
+            Effect::Raise(effect) => effect.reason(),
             // The proto string the collector already emits for a side-effecting / iterator-
             // advancing closure body (kept verbatim so the CID is conserved). `Mutation` and
             // `IterAdvance` carry the SAME terminal class; typed apart records the cause.
@@ -9549,6 +9595,7 @@ impl Effect {
     /// rope (mirror of the complete-side `Warrant`).
     fn boundary(&self) -> SourceMemento {
         let boundary = match self {
+            Effect::Raise(effect) => effect.boundary().to_string(),
             Effect::Mutation { boundary }
             | Effect::IterAdvance { boundary }
             | Effect::ConsumedIteratorState { boundary }

@@ -54,38 +54,88 @@ use syn::{BinOp, Expr, Lit, Pat, Stmt};
 
 // ── Public entrypoint ────────────────────────────────────────────────────────
 
-/// Try to recognize a functional string-encoder function body and emit a
-/// `str.eq-bv-blocks` atom.
+/// The explicit three-exit fold for generic value bodies.
 ///
-/// Returns `Some(atomic_("str.eq-bv-blocks", [out, param, payload]))` when the
-/// body matches the encoder shape, `None` otherwise.
-///
-/// Called from `source_contract::broad_functional_warrant` before the generic
-/// EUF fallback, so encoder bodies get strong symbolic teeth instead of the
-/// opaque `out = call:NAME(...)` warrant.
-pub(crate) fn recognize_and_emit_encoder_contract(
-    _name: &str,
+/// Strong encoder bodies produce a `str.eq-bv-blocks` atom. Non-encoder bodies
+/// record the EUF handoff that used to be the silent `None` arm and is consumed
+/// by `source_contract::broad_functional_warrant` as `out = call:NAME(params)`.
+pub(crate) enum GenericBodyFold {
+    EncoderContract(Rc<Formula>),
+    EufHandoff(GenericBodyEufHandoff),
+}
+
+#[derive(Clone)]
+pub(crate) struct GenericBodyEufHandoff {
+    function: String,
+    term: Rc<Term>,
+    reason: String,
+}
+
+impl GenericBodyEufHandoff {
+    fn new(name: &str, sig: &syn::Signature) -> Self {
+        Self {
+            function: name.to_string(),
+            term: Rc::new(Term::Ctor {
+                name: format!("call:{name}"),
+                args: sig_param_vars(sig),
+            }),
+            reason: format!(
+                "GenericBodySugar declined strong encoder shape for `{name}`; recorded EUF handoff"
+            ),
+        }
+    }
+
+    pub(crate) fn function(&self) -> &str {
+        &self.function
+    }
+
+    pub(crate) fn term(&self) -> &Rc<Term> {
+        &self.term
+    }
+
+    pub(crate) fn into_term(self) -> Rc<Term> {
+        self.term
+    }
+
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+/// Fold a generic function body into either strong encoder teeth or an explicit
+/// EUF handoff record. No silent `None` exit remains at this boundary.
+pub(crate) fn fold_generic_body_contract(
+    name: &str,
     sig: &syn::Signature,
     block: &syn::Block,
-) -> Option<Rc<Formula>> {
-    let param_name = first_param_name(sig)?;
+) -> GenericBodyFold {
+    let Some(param_name) = first_param_name(sig) else {
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
+    };
     let stmts = &block.stmts;
     // Minimum viable body: const TABLE, at least one byte assign, return expr.
     if stmts.len() < 3 {
-        return None;
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
     }
-    let (table_name, table_bytes) = recognize_table_binding(&stmts[0])?;
-    let (byte_names, ret_expr) = recognize_ord_assigns_and_return(&stmts[1..], &param_name)?;
+    let Some((table_name, table_bytes)) = recognize_table_binding(&stmts[0]) else {
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
+    };
+    let Some((byte_names, ret_expr)) = recognize_ord_assigns_and_return(&stmts[1..], &param_name)
+    else {
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
+    };
     if byte_names.is_empty() {
-        return None;
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
     }
     let byte_vars: BTreeMap<String, Rc<Term>> = byte_names
         .iter()
         .map(|n| (n.clone(), make_var(n.as_str())))
         .collect();
-    let floor = reduce_encoded_string(ret_expr, &table_name, &table_bytes, &byte_vars)?;
+    let Some(floor) = reduce_encoded_string(ret_expr, &table_name, &table_bytes, &byte_vars) else {
+        return GenericBodyFold::EufHandoff(GenericBodyEufHandoff::new(name, sig));
+    };
     let payload = build_payload(&byte_names, &floor);
-    Some(atomic_(
+    GenericBodyFold::EncoderContract(atomic_(
         "str.eq-bv-blocks",
         vec![
             make_var("out"),
@@ -403,6 +453,19 @@ fn first_param_name(sig: &syn::Signature) -> Option<String> {
     })
 }
 
+fn sig_param_vars(sig: &syn::Signature) -> Vec<Rc<Term>> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Receiver(_) => Some(make_var("self")),
+            syn::FnArg::Typed(pt) => match &*pt.pat {
+                Pat::Ident(id) => Some(make_var(id.ident.to_string())),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
 /// Strip `Paren` and `Group` wrappers recursively, returning the innermost
 /// non-paren non-group expression.
 fn strip_parens(expr: &Expr) -> &Expr {
@@ -435,7 +498,10 @@ mod unit_tests {
     use syn::parse_quote;
 
     fn call_recognizer(src: syn::ItemFn) -> Option<Rc<Formula>> {
-        recognize_and_emit_encoder_contract(&src.sig.ident.to_string(), &src.sig, &src.block)
+        match fold_generic_body_contract(&src.sig.ident.to_string(), &src.sig, &src.block) {
+            GenericBodyFold::EncoderContract(atom) => Some(atom),
+            GenericBodyFold::EufHandoff(_) => None,
+        }
     }
 
     #[test]
@@ -507,5 +573,29 @@ mod unit_tests {
             call_recognizer(f).is_none(),
             "body without byte-assign stmts must not match"
         );
+    }
+
+    #[test]
+    fn generic_body_records_euf_handoff_when_encoder_sugar_declines() {
+        let f: syn::ItemFn = parse_quote! {
+            fn plain(value: i32) -> i32 {
+                value + 1
+            }
+        };
+
+        let fold = fold_generic_body_contract(&f.sig.ident.to_string(), &f.sig, &f.block);
+        let GenericBodyFold::EufHandoff(handoff) = fold else {
+            panic!("plain non-encoder body must record an EUF handoff");
+        };
+        assert_eq!(handoff.function(), "plain");
+        assert!(
+            handoff.reason().contains("GenericBodySugar"),
+            "handoff reason should name the declined strong recognizer"
+        );
+        let Term::Ctor { name, args } = handoff.term().as_ref() else {
+            panic!("EUF handoff must carry a call ctor");
+        };
+        assert_eq!(name, "call:plain");
+        assert_eq!(args.len(), 1);
     }
 }

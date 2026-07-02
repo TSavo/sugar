@@ -38,8 +38,40 @@ pub use term_dispatch::{
     SymbolicValueFloorAccept, SymbolicValueFloorVisitor, TermFloorAccept, TermFloorVisitor,
 };
 
+/// Routeable raise-like control-flow effects.
+///
+/// Python's reference has a single `RaiseEffect` type. Rust keeps the existing
+/// `PanicMacro`/`LiteralPanic`/`ControlFlow` siblings below for byte-compatible
+/// legacy reasons, and uses this family for newly-typed raise cases such as
+/// `Result::Err` and early-return routing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RaiseEffect {
+    Panic { boundary: String },
+    ResultErr { boundary: String },
+    EarlyReturn { boundary: String },
+}
+
+impl RaiseEffect {
+    pub fn boundary(&self) -> &str {
+        match self {
+            Self::Panic { boundary }
+            | Self::ResultErr { boundary }
+            | Self::EarlyReturn { boundary } => boundary,
+        }
+    }
+
+    pub fn family(&self) -> &'static str {
+        match self {
+            Self::Panic { .. } => "panic",
+            Self::ResultErr { .. } => "result-err",
+            Self::EarlyReturn { .. } => "early-return",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
+    Raise(RaiseEffect),
     PanicMacro { boundary: String },
     LiteralPanic { boundary: String },
     ControlFlow { boundary: String },
