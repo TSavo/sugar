@@ -65,6 +65,8 @@ def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
     rhs = ConstTerm(6, sort=IntSort())
     fact = EqualityFact(call_term=call, rhs_term=rhs, provenance=_provenance())
 
+    assert EqualityFact.__module__.endswith(".proofir.nodes.equality_fact")
+
     expected_inv = json.loads(encode_jcs(formula_to_value(ir_eq(call.ir_term, rhs.ir_term))))
     expected_name = canonical_euf_callsite_name(call)
     expected_declaration = BodyUniverseDto(

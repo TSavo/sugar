@@ -205,7 +205,8 @@ def _formula_fragments_from_construction_law(
         if crossing.axis not in {
             "_formula_to_rpc-outside-serializer",
             "raw-BodyUniverseDto-formula-slot",
-            "formula-slot-type",
+            "Formula-typed-node-constructor-field",
+            "dict-str-any-formula-slot",
         }:
             continue
         probes.append(
@@ -298,13 +299,13 @@ class _ConstructionLawScanner:
         class_name = fragment.class_name()
         if (
             self.split_has_begun
-            and self.relpath == "proofir/nodes.py"
+            and self._is_monolithic_node_module()
             and _is_proofir_semantic_class(class_name)
         ):
             self._add(
                 axis="monolithic-proofir-semantic-class",
                 line=fragment.line,
-                detail=f"{class_name} remains in proofir/nodes.py after the tiny-file split began",
+                detail=f"{class_name} remains in {self.relpath} after the tiny-file split began",
                 replacement=f"move {class_name} to its proofir/nodes/* role module",
             )
         for statement in fragment.class_body():
@@ -314,7 +315,7 @@ class _ConstructionLawScanner:
                 self._scan_function_args(statement, owner=class_name)
 
     def _scan_function_args(self, fragment: SourceFragment, *, owner: str) -> None:
-        if self.relpath != "proofir/nodes.py" or not _is_boundary_owner(owner):
+        if not self._is_proofir_node_module() or not _is_boundary_owner(owner):
             return
         for arg_name, annotation, line in fragment.function_arg_annotations():
             if annotation is not None:
@@ -326,12 +327,12 @@ class _ConstructionLawScanner:
                 )
 
     def _scan_annotated_slot(self, fragment: SourceFragment, *, owner: str) -> None:
-        if self.relpath not in {
-            "proofir/nodes.py",
-            "kit_rpc/body_universe_dto.py",
-        }:
+        if (
+            not self._is_proofir_node_module()
+            and self.relpath != "kit_rpc/body_universe_dto.py"
+        ):
             return
-        if self.relpath == "proofir/nodes.py" and not _is_boundary_owner(owner):
+        if self._is_proofir_node_module() and not _is_boundary_owner(owner):
             return
         if _field_init_false(fragment.annassign_value()):
             return
@@ -357,10 +358,11 @@ class _ConstructionLawScanner:
         if not _is_formula_boundary_slot(field_name):
             return
         annotation_text = _annotation_text(annotation)
-        if not _annotation_crosses_formula_boundary(annotation_text):
+        axis = _formula_boundary_axis(annotation_text, relpath=self.relpath)
+        if axis is None:
             return
         self._add(
-            axis="formula-slot-type",
+            axis=axis,
             line=line,
             detail=f"{owner}.{field_name}: {annotation_text}",
             replacement="use the tiny typed proofir role wrapper for this formula boundary",
@@ -368,6 +370,14 @@ class _ConstructionLawScanner:
 
     def _is_proofir_serializer(self) -> bool:
         return self.relpath.startswith("proofir/")
+
+    def _is_proofir_node_module(self) -> bool:
+        return self.relpath == "proofir/nodes.py" or self.relpath.startswith(
+            "proofir/nodes/"
+        )
+
+    def _is_monolithic_node_module(self) -> bool:
+        return self.relpath in {"proofir/nodes.py", "proofir/nodes/__init__.py"}
 
     def _add(
         self,
@@ -456,15 +466,14 @@ def _is_formula_boundary_slot(field_name: str) -> bool:
     }
 
 
-def _annotation_crosses_formula_boundary(annotation_text: str) -> bool:
+def _formula_boundary_axis(annotation_text: str, *, relpath: str) -> str | None:
     compact = annotation_text.replace(" ", "")
-    return (
-        "Formula" in annotation_text
-        or "dict[str,Any]" in compact
-        or "Dict[str,Any]" in compact
-        or annotation_text in {"Any", "str", "object"}
-        or "Any" in annotation_text
-    )
+    if "dict[str,Any]" in compact or "Dict[str,Any]" in compact:
+        return "dict-str-any-formula-slot"
+    if relpath.startswith("proofir/nodes/") or relpath == "proofir/nodes.py":
+        if "Formula" in annotation_text:
+            return "Formula-typed-node-constructor-field"
+    return None
 
 
 def render_text(report: ProofIrVocabularyFrontierReport) -> str:
