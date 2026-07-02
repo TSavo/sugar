@@ -17,16 +17,54 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use sugar_canonicalizer::Value;
 use sugar_claim_envelope::{
-    mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
+    mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
 };
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{begin_collecting, finish, forall, gt, must, num, reset_collector, Int};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento,
-    ContractMementoRef, Ed25519Seed, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, AtomMemento, BridgeMemento, ClaimContractMemento,
+    ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
+
+fn register_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    pre: Option<&Arc<Value>>,
+    post: Option<&Arc<Value>>,
+    inv: Option<&Arc<Value>>,
+) -> Result<ContractBody, String> {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(formula) = pre {
+        slots.push((
+            "pre",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = post {
+        slots.push((
+            "post",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = inv {
+        slots.push((
+            "inv",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if slots.is_empty() {
+        return Err("contract body graph requires at least one formula slot".to_string());
+    }
+
+    let slot_refs = slots
+        .iter()
+        .map(|(slot, atom)| (*slot, atom))
+        .collect::<Vec<_>>();
+    Ok(proof_graph.register_body(ContractBody::from_slots(slot_refs)))
+}
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().collect();
@@ -50,7 +88,7 @@ fn main() -> ExitCode {
 
     let contract_decls = finish();
 
-    // ----- 2. Mint each contract as a signed ClaimEnvelope -----
+    // ----- 2. Mint each contract as a signed graph-backed ClaimEnvelope -----
     let signer_seed: Ed25519Seed = [0x42; 32]; // deterministic for the demo
     let declared_at = "2026-04-30T12:00:00.000Z";
     let produced_by = "rust-kit@1.0";
@@ -84,10 +122,23 @@ fn main() -> ExitCode {
             },
             signer_seed,
         };
-        let minted = match mint_contract(&args) {
+        let contract_body = match register_contract_body_graph(
+            &mut graph,
+            args.pre.as_ref(),
+            args.post.as_ref(),
+            args.inv.as_ref(),
+        ) {
+            Ok(body) => body,
+            Err(e) => {
+                eprintln!("ERROR: contract body graph({}): {e}", d.name);
+                return ExitCode::from(1);
+            }
+        };
+        let body_cid = contract_body.cid().as_str().to_string();
+        let minted = match mint_contract_with_body_cid(&args, Some(&body_cid)) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("ERROR: mint_contract({}): {e}", d.name);
+                eprintln!("ERROR: mint_contract_with_body_cid({}): {e}", d.name);
                 return ExitCode::from(1);
             }
         };
