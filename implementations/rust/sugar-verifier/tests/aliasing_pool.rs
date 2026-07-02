@@ -5,16 +5,7 @@
 // has_aliasing_memento queries with canonical pair ordering.
 
 use libsugar::compose::OpacityMementoLookup;
-use sugar_verifier::types::{MementoCid, MementoPool};
-
-fn blake3_cid(data: &str) -> MementoCid {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
-        format!("{data}-{}", COUNTER.fetch_add(1, Ordering::Relaxed)).as_bytes(),
-    ))
-    .expect("test CID must parse")
-}
+use sugar_verifier::types::{AnchoredMember, MementoCid, MementoPool};
 
 fn make_aliasing_memento(formal_a: &str, formal_b: &str, status: &str) -> serde_json::Value {
     use serde_json::json;
@@ -32,12 +23,18 @@ fn make_aliasing_memento(formal_a: &str, formal_b: &str, status: &str) -> serde_
     })
 }
 
+fn insert_aliasing_memento(pool: &mut MementoPool, memento: serde_json::Value) {
+    let cid = MementoCid::try_parse(sugar_proof_envelope::recompute_member_cid(&memento))
+        .expect("computed test CID must parse");
+    let member = AnchoredMember::new(cid, memento).expect("test member must anchor");
+    pool.insert(member);
+}
+
 #[test]
 fn aliasing_memento_pool_insert_and_query() {
     let mut pool = MementoPool::default();
     let memento = make_aliasing_memento("x", "y", "Disjoint");
-    let cid = blake3_cid("test");
-    pool.insert(cid.clone(), memento);
+    insert_aliasing_memento(&mut pool, memento);
     assert!(
         pool.has_aliasing_memento("x", "y"),
         "pool must find aliasing memento for (x, y) "
@@ -56,8 +53,7 @@ fn aliasing_memento_pool_insert_and_query() {
 fn aliasing_memento_pool_swapped_order_still_queryable() {
     let mut pool = MementoPool::default();
     let memento = make_aliasing_memento("alpha", "beta", "Disjoint");
-    let cid = blake3_cid("test");
-    pool.insert(cid.clone(), memento);
+    insert_aliasing_memento(&mut pool, memento);
     assert!(
         pool.has_aliasing_memento("alpha", "beta"),
         "pool must find memento for canonical order (alpha, beta) "
@@ -72,8 +68,7 @@ fn aliasing_memento_pool_swapped_order_still_queryable() {
 fn aliasing_memento_pool_rejects_missing_pair() {
     let mut pool = MementoPool::default();
     let memento = make_aliasing_memento("p", "q", "MaybeAlias");
-    let cid = blake3_cid("test");
-    pool.insert(cid.clone(), memento);
+    insert_aliasing_memento(&mut pool, memento);
     assert!(
         !pool.has_aliasing_memento("p", "r"),
         "pool must not find aliasing memento for unregistered pair (p, r) "
@@ -89,10 +84,10 @@ fn aliasing_memento_pool_multiple_pairs() {
     let mut pool = MementoPool::default();
 
     let m1 = make_aliasing_memento("a", "b", "Disjoint");
-    pool.insert(blake3_cid("m1"), m1);
+    insert_aliasing_memento(&mut pool, m1);
 
     let m2 = make_aliasing_memento("b", "c", "MaybeAlias");
-    pool.insert(blake3_cid("m2"), m2);
+    insert_aliasing_memento(&mut pool, m2);
 
     assert!(pool.has_aliasing_memento("a", "b"), "must find (a, b) ");
     assert!(
@@ -114,8 +109,7 @@ fn aliasing_memento_pool_multiple_pairs() {
 fn aliasing_memento_pool_lexicographic_canonical_order() {
     let mut pool = MementoPool::default();
     let memento = make_aliasing_memento("zebra", "apple", "Disjoint");
-    let cid = blake3_cid("test");
-    pool.insert(cid.clone(), memento);
+    insert_aliasing_memento(&mut pool, memento);
     assert!(
         pool.has_aliasing_memento("zebra", "apple"),
         "pool must store and find pair regardless of input lex order "

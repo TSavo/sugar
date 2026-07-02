@@ -7766,6 +7766,33 @@ mod tests {
             .expect("test CID must parse")
     }
 
+    fn insert_unanchored_test_member(
+        pool: &mut sugar_verifier::types::MementoPool,
+        cid: MementoCid,
+        envelope: serde_json::Value,
+    ) {
+        if sugar_proof_envelope::member_kind(&envelope) == Some("contract") {
+            if let Some(name) = sugar_proof_envelope::member_field(&envelope, "contractName")
+                .or_else(|| sugar_proof_envelope::member_field(&envelope, "name"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                pool.cid_to_name.insert(cid.clone(), name.clone());
+                pool.name_to_cid.insert(name.clone(), cid.clone());
+                if let Some(body_cid) = sugar_proof_envelope::member_field(&envelope, "bodyCid")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .and_then(|raw| {
+                        sugar_verifier::ContractBodyCid::try_parse(raw.to_string()).ok()
+                    })
+                {
+                    pool.name_to_body_cid.insert(name, body_cid);
+                }
+            }
+        }
+        pool.mementos.insert(cid, envelope);
+    }
+
     fn minimal_source_report() -> LiftSourceReport {
         LiftSourceReport {
             ledger: serde_json::json!({
@@ -9184,7 +9211,8 @@ mod tests {
         let antecedent_cid = test_memento_cid("antecedent");
         let consequent_cid = test_memento_cid("consequent");
         let implication_cid = test_memento_cid("implication");
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             antecedent_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9195,7 +9223,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             consequent_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9206,7 +9235,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             implication_cid,
             serde_json::json!({
                 "header": {
@@ -9239,7 +9269,8 @@ mod tests {
         let encoded_len_cid = test_memento_cid("encoded_len_contract");
         let observed_fact_cid = test_memento_cid("observed_fact");
         let bridge_cid = test_memento_cid("bridge");
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             encoded_len_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9259,7 +9290,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             observed_fact_cid,
             serde_json::json!({
                 "header": {
@@ -9282,7 +9314,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             bridge_cid,
             serde_json::json!({
                 "header": {
@@ -9319,7 +9352,8 @@ mod tests {
         let bridge_cid = test_memento_cid("unwrap_bridge");
         let caller_fact_cid = test_memento_cid("caller_fact");
 
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             callee_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9339,7 +9373,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             caller_fact_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9363,7 +9398,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             unwrap_cid.clone(),
             serde_json::json!({
                 "header": {
@@ -9392,7 +9428,7 @@ mod tests {
             },
             "schemaVersion": "1"
         });
-        pool.insert(bridge_cid.clone(), bridge.clone());
+        insert_unanchored_test_member(&mut pool, bridge_cid.clone(), bridge.clone());
         pool.bridges_by_symbol
             .insert("method:unwrap".to_string(), bridge_cid.clone());
         pool.bridge_self_bundle_by_symbol
@@ -9419,7 +9455,8 @@ mod tests {
         let callee_cid = test_memento_cid("callee_contract");
         let caller_fact_cid = test_memento_cid("caller_fact");
         let bridge_cid = test_memento_cid("unresolved_method_unwrap_bridge");
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             callee_cid,
             serde_json::json!({
                 "header": {
@@ -9439,7 +9476,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             caller_fact_cid,
             serde_json::json!({
                 "header": {
@@ -9767,8 +9805,13 @@ mod tests {
             },
             "schemaVersion": "1"
         });
-        pool.insert(test_memento_cid("factory-walk-contract"), contract);
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
+            test_memento_cid("factory-walk-contract"),
+            contract,
+        );
+        insert_unanchored_test_member(
+            &mut pool,
             test_memento_cid("factory-walk-source"),
             serde_json::json!({
                 "header": {"kind": "source-memento"},
@@ -9795,7 +9838,8 @@ mod tests {
                 "schemaVersion": "1"
             }),
         );
-        pool.insert(
+        insert_unanchored_test_member(
+            &mut pool,
             test_memento_cid("factory-walk-row"),
             serde_json::json!({
                 "header": {"kind": "factory-walk-memento"},

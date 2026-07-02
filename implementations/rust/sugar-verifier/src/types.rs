@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
 use serde::Serialize;
 use serde_json::Value as Json;
-pub use sugar_proof_envelope::{AtomCid, ContractBodyCid, MementoCid};
+pub use sugar_proof_envelope::{AnchoredMember, AtomCid, ContractBodyCid, MementoCid};
 
 fn contract_body_pointer(envelope: &Json) -> Option<ContractBodyCid> {
     sugar_proof_envelope::member_field(envelope, "bodyCid")
@@ -409,10 +409,23 @@ impl MementoPool {
         ImplicationResult::Unknown
     }
 
-    /// Insert a memento into the pool and index it by formula hash.
-    /// The .proof protocol IS the cache: storing a memento IS caching
-    /// the verification result.
-    pub fn insert(&mut self, memento_cid: MementoCid, envelope: Json) {
+    /// Insert an anchored memento into the pool and index it by formula hash.
+    ///
+    /// The .proof protocol IS the cache: storing a memento IS caching the
+    /// verification result. Anchoring is an ingress obligation; `insert` is an
+    /// indexing primitive and only accepts a member whose catalog key was
+    /// re-derived from its contents and whose member signature has been checked.
+    pub fn insert(&mut self, member: AnchoredMember) {
+        let (memento_cid, envelope) = member.into_parts();
+        self.insert_anchored_parts(memento_cid, envelope);
+    }
+
+    #[cfg(test)]
+    pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
+        self.insert_anchored_parts(memento_cid, envelope);
+    }
+
+    fn insert_anchored_parts(&mut self, memento_cid: MementoCid, envelope: Json) {
         // Index ONLY the formula hashes that name an ESTABLISHED FACT into
         // `formula_to_memento` -- the map Tier 0 (`verify`) trusts as "this
         // formula is proven true". A precondition (`preHash`) and an
@@ -1237,8 +1250,8 @@ mod tests {
         let java_cid = cid("java");
         let rust_cid = cid("rust");
 
-        pool.insert(java_cid.clone(), make_inv_only_contract(name, 3));
-        pool.insert(rust_cid.clone(), make_inv_only_contract(name, 4));
+        pool.insert_unanchored_for_tests(java_cid.clone(), make_inv_only_contract(name, 3));
+        pool.insert_unanchored_for_tests(rust_cid.clone(), make_inv_only_contract(name, 4));
 
         assert!(
             pool.load_errors.is_empty(),
@@ -1255,8 +1268,8 @@ mod tests {
         let name = "src/lib.rs::tests::same_name";
         let mut pool = MementoPool::default();
 
-        pool.insert(cid("duplicate-a"), make_inv_only_contract(name, 1));
-        pool.insert(cid("duplicate-b"), make_inv_only_contract(name, 2));
+        pool.insert_unanchored_for_tests(cid("duplicate-a"), make_inv_only_contract(name, 1));
+        pool.insert_unanchored_for_tests(cid("duplicate-b"), make_inv_only_contract(name, 2));
 
         assert!(
             pool.load_errors
@@ -1276,8 +1289,8 @@ mod tests {
         let q = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let r = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
-        pool.insert(cid("m1"), make_implication_memento(p, q));
-        pool.insert(cid("m2"), make_implication_memento(q, r));
+        pool.insert_unanchored_for_tests(cid("m1"), make_implication_memento(p, q));
+        pool.insert_unanchored_for_tests(cid("m2"), make_implication_memento(q, r));
 
         // Check P → R via transitivity
         let result = pool.can_implies(p, r);
@@ -1295,7 +1308,7 @@ mod tests {
         let p = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let q = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-        pool.insert(cid("m1"), make_implication_memento(p, q));
+        pool.insert_unanchored_for_tests(cid("m1"), make_implication_memento(p, q));
 
         let result = pool.can_implies(p, q);
         assert!(
@@ -1436,7 +1449,7 @@ mod tests {
         let mut pool = MementoPool::default();
         let fc = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let m_cid = cid_string("pin-invariant");
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("pin-invariant"),
             make_pin_invariant_memento(&m_cid, fc, "pin", "0 <= state"),
         );
@@ -1454,7 +1467,7 @@ mod tests {
         let fc_a = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let fc_b = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let m_cid = cid_string("pin-invariant-cross");
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("pin-invariant-cross"),
             make_pin_invariant_memento(&m_cid, fc_a, "pin", "0 <= state"),
         );
@@ -1482,7 +1495,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(cid("pin-invariant-v11"), flat_memento);
+        pool.insert_unanchored_for_tests(cid("pin-invariant-v11"), flat_memento);
         let view = pool.lookup_pin_invariant(fc, "pin");
         assert!(view.is_some(), "v1.1 flat memento must be found via lookup");
         let v = view.unwrap();
@@ -1528,7 +1541,7 @@ mod tests {
             "args": [{"kind":"var","name":"result"}, {"kind":"var","name":"value"}]
         });
         let m_cid = cid_string("content-address");
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("content-address"),
             make_contract_memento(&m_cid, "content_address", &pre, &post),
         );

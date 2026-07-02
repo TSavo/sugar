@@ -13,10 +13,8 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::Value as Json;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_proof_envelope::{
-    ed25519_verify_bytes, ed25519_verify_string, member_signer, MemberView, ProofGraph,
-};
+use sugar_canonicalizer::blake3_512_of;
+use sugar_proof_envelope::{ed25519_verify_bytes, MemberView, ProofGraph};
 
 use crate::cbor_decode::CborValue;
 use sugar_proof_envelope::decode_for_conformance;
@@ -392,82 +390,7 @@ fn validate_member_view(
 }
 
 pub(crate) fn verify_member_signature(env: &Json) -> Result<(), String> {
-    if let Some(envelope) = env.get("envelope") {
-        let signer = envelope
-            .get("signer")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "layered envelope signer missing".to_string())?;
-        let signature = envelope
-            .get("signature")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "layered envelope signature missing".to_string())?;
-        let header = env
-            .get("header")
-            .ok_or_else(|| "layered envelope header missing".to_string())?;
-        let metadata = env
-            .get("metadata")
-            .ok_or_else(|| "layered envelope metadata missing".to_string())?;
-        let signing_header = layered_signature_header(env, header)?;
-        let signing_value = Json::Object(
-            [
-                ("header".to_string(), signing_header),
-                ("metadata".to_string(), metadata.clone()),
-            ]
-            .into_iter()
-            .collect(),
-        );
-        let signing_canonical = encode_jcs(&json_to_value(&signing_value));
-        if ed25519_verify_string(signer, signature, signing_canonical.as_bytes()) {
-            return Ok(());
-        }
-        return Err("layered envelope signature does not verify".to_string());
-    }
-
-    let Some(sig) = env.get("producerSignature").and_then(|v| v.as_str()) else {
-        return Err("legacy envelope producerSignature missing".to_string());
-    };
-    let Some(pubkey) = member_signer(env).and_then(|v| v.as_str()) else {
-        return Err("legacy envelope signer missing".to_string());
-    };
-    let mut unsigned = env.clone();
-    if let Json::Object(map) = &mut unsigned {
-        map.shift_remove("cid");
-        map.shift_remove("producerSignature");
-    }
-    let signing_canonical = encode_jcs(&json_to_value(&unsigned));
-    if ed25519_verify_string(pubkey, sig, signing_canonical.as_bytes()) {
-        Ok(())
-    } else {
-        Err("legacy envelope producerSignature does not verify".to_string())
-    }
-}
-
-fn layered_signature_header(env: &Json, header: &Json) -> Result<Json, String> {
-    let mut signing_header = header.clone();
-    // Proof-run and stage-receipt producers store the member identity in
-    // `header.cid`; their signed preimage uses the derived header-content CID
-    // to avoid a signature/CID fixed point.
-    if matches!(
-        sugar_proof_envelope::member_kind(env),
-        Some("proof-run" | "stage-receipt")
-    ) {
-        let cid = layered_header_content_cid(header)?;
-        let Json::Object(map) = &mut signing_header else {
-            return Err("layered envelope header is not an object".to_string());
-        };
-        map.insert("cid".to_string(), Json::String(cid));
-    }
-    Ok(signing_header)
-}
-
-fn layered_header_content_cid(header: &Json) -> Result<String, String> {
-    let mut preimage = header.clone();
-    let Json::Object(map) = &mut preimage else {
-        return Err("layered envelope header is not an object".to_string());
-    };
-    map.shift_remove("cid");
-    let canonical = encode_jcs(&json_to_value(&preimage));
-    Ok(blake3_512_of(canonical.as_bytes()))
+    sugar_proof_envelope::verify_member_signature(env)
 }
 
 fn json_contains_string(value: &Json, needle: &str) -> bool {
@@ -553,36 +476,6 @@ fn encode_uint(major: u8, n: u64, out: &mut Vec<u8>) {
         _ => {
             out.push(head | 27);
             out.extend_from_slice(&n.to_be_bytes());
-        }
-    }
-}
-
-fn json_to_value(j: &Json) -> std::sync::Arc<Value> {
-    match j {
-        Json::Null => Value::null(),
-        Json::Bool(b) => Value::boolean(*b),
-        Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                Value::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                Value::integer(f as i128)
-            } else {
-                Value::integer(0)
-            }
-        }
-        Json::String(s) => Value::string(s.clone()),
-        Json::Array(items) => {
-            let v: Vec<_> = items.iter().map(json_to_value).collect();
-            Value::array(v)
-        }
-        Json::Object(map) => {
-            let entries: Vec<(String, std::sync::Arc<Value>)> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), json_to_value(v)))
-                .collect();
-            Value::object(entries)
         }
     }
 }

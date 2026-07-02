@@ -2123,7 +2123,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(cid, env);
+        pool.insert_unanchored_for_tests(cid, env);
         pool
     }
 
@@ -2163,7 +2163,7 @@ mod tests {
         let env = json!({
             "envelope": { "header": { "kind": "contract", "contractName": name, "inv": inv } }
         });
-        pool.insert(test_cid(cid), env);
+        pool.insert_unanchored_for_tests(test_cid(cid), env);
     }
 
     fn unique_temp_dir(label: &str) -> std::path::PathBuf {
@@ -3345,7 +3345,7 @@ mod tests {
             "evidence":{"proofType":"custom","certificate":
                 {"tool":"pytest","version":"x","formulaHash":"x","proofData":"{}"}}}}});
         let mut pool = MementoPool::default();
-        pool.insert(test_cid("witnessloop"), witness_member);
+        pool.insert_unanchored_for_tests(test_cid("witnessloop"), witness_member);
         insert_contract(
             &mut pool,
             "blake3-512:wpoint",
@@ -3384,7 +3384,7 @@ mod tests {
             "kind":"contract","contractName":name,"inv": eqf(var("r"), int(5)),
             "evidence":{"proofType":"custom","certificate":
                 {"tool":"pytest","version":"x","formulaHash":"x","proofData":"{}"}}}}});
-        pool.insert(test_cid("witnessmember"), witness);
+        pool.insert_unanchored_for_tests(test_cid("witnessmember"), witness);
         insert_contract(&mut pool, "blake3-512:c5", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:c6", name, eqf(var("r"), int(6)));
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
@@ -3571,7 +3571,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(test_cid("bridge"), env);
+        pool.insert_unanchored_for_tests(test_cid("bridge"), env);
         let (plan, registry) = z3_plan_and_registry();
         let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert!(
@@ -3597,7 +3597,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(test_cid("inv-post"), env);
+        pool.insert_unanchored_for_tests(test_cid("inv-post"), env);
         let (plan, registry) = z3_plan_and_registry();
         let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
 

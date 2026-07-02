@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn toolchain_plan_without_witness_is_declared() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn toolchain_plan_matching_witness_pointer_is_confirmed() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -442,7 +442,7 @@ mod tests {
                 }
             }),
         );
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("witness-member"),
             json!({
                 "schemaVersion": "1",
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn toolchain_plan_mismatched_witness_pointer_is_refuted() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -490,7 +490,7 @@ mod tests {
                 }
             }),
         );
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("witness-member"),
             json!({
                 "schemaVersion": "1",
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn toolchain_plan_unscoped_matching_witness_is_declared_not_confirmed() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -535,7 +535,7 @@ mod tests {
                 }
             }),
         );
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("witness-member"),
             json!({
                 "schemaVersion": "1",
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn toolchain_plan_unscoped_mismatched_witness_is_declared_not_refuted() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -589,7 +589,7 @@ mod tests {
                 }
             }),
         );
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("witness-member"),
             json!({
                 "schemaVersion": "1",
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn toolchain_plan_ignores_witness_scoped_to_other_plan() {
         let mut pool = MementoPool::default();
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("plan-member"),
             json!({
                 "schemaVersion": "1",
@@ -643,7 +643,7 @@ mod tests {
                 }
             }),
         );
-        pool.insert(
+        pool.insert_unanchored_for_tests(
             cid("witness-member"),
             json!({
                 "schemaVersion": "1",
