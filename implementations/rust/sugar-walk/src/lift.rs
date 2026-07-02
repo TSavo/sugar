@@ -26,10 +26,12 @@
 //   - postcondition lifting from `return` expressions.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::rc::Rc;
 
 use libsugar::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
-use sugar_floor_algebra::{guard_exit, Desugared, GuardedReturn};
+use sugar_floor_algebra::{guard_exit, Desugared, GuardedReturn, SymbolicValue};
+use sugar_ir_symbolic::Term as AlgebraTerm;
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
@@ -599,38 +601,28 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // path condition without recognizing a single Rust predicate name.
     let then_term = guarded_return_for_branch(&cond_term, false, then_term);
     let else_term = guarded_return_for_branch(&cond_term, true, else_term);
-    Some(symbolic_cf_ite(cond_term, then_term, else_term).into_term())
+    Some(cf_ite_via_symbolic_value_boundary(
+        cond_term, then_term, else_term,
+    ))
 }
 
-/// Rust-side SymbolicValue floor for sort-neutral control-flow values. The
-/// Python reference (`floor/symbolic_value.py`) commits no carrier sort and
-/// leaves the backend to choose one from surrounding operations. `sugar-walk`
-/// uses `IrTerm` rather than the floor algebra's `Term`, so this adapter keeps
-/// the v1 wire shape byte-identical while naming that sort-neutral boundary.
-struct SymbolicValueTerm {
-    term: IrTerm,
-}
-
-impl SymbolicValueTerm {
-    fn into_term(self) -> IrTerm {
-        self.term
-    }
-}
-
-fn symbolic_cf_ite(cond: IrTerm, then_term: IrTerm, else_term: IrTerm) -> SymbolicValueTerm {
-    SymbolicValueTerm {
-        term: IrTerm::Ctor {
-            // `cf_ite`, not the SMT builtin `ite`: a synthesized control-flow
-            // value over uninterpreted Int-sorted operands. Using the builtin
-            // `ite` makes z3 demand a Bool guard and Bool/typed branches,
-            // which an uninterpreted guard term (`match_guard(..)` : Int) does
-            // not satisfy -- a sort-mismatch error that fails the reflexive
-            // discharge. As a fresh uninterpreted symbol, congruence closes
-            // `cf_ite(g,a,b) == cf_ite(g,a,b)` regardless of operand sorts.
-            name: panic_freedom::CF_ITE.to_string(),
-            args: vec![cond, then_term, else_term],
-        },
-    }
+fn cf_ite_via_symbolic_value_boundary(
+    cond: IrTerm,
+    then_term: IrTerm,
+    else_term: IrTerm,
+) -> IrTerm {
+    // `cf_ite`, not the SMT builtin `ite`: a synthesized control-flow value
+    // over uninterpreted Int-sorted operands. Using the builtin `ite` makes z3
+    // demand a Bool guard and Bool/typed branches, which an uninterpreted guard
+    // term (`match_guard(..)` : Int) does not satisfy -- a sort-mismatch error
+    // that fails the reflexive discharge. As a fresh uninterpreted symbol,
+    // congruence closes `cf_ite(g,a,b) == cf_ite(g,a,b)` regardless of operand
+    // sorts.
+    let symbolic = SymbolicValue::new(Rc::new(AlgebraTerm::Ctor {
+        name: panic_freedom::CF_ITE.to_string(),
+        args: vec![lower_ir(&cond), lower_ir(&then_term), lower_ir(&else_term)],
+    }));
+    raise_ir(&symbolic.into_term())
 }
 
 /// The closed set of boolean-predicate guards whose POSITIVE form is a
@@ -837,8 +829,11 @@ fn lift_match_to_ite_term(match_expr: &syn::ExprMatch, ctx: &mut LiftCtx) -> Opt
                     },
                 ],
             };
-            symbolic_cf_ite(guard, value, acc.expect("non-final arm has an accumulator"))
-                .into_term()
+            cf_ite_via_symbolic_value_boundary(
+                guard,
+                value,
+                acc.expect("non-final arm has an accumulator"),
+            )
         });
     }
     acc
@@ -5307,6 +5302,84 @@ mod tests {
             message.contains("not supported in symbolic Sort wrapper"),
             "Function-sort refusal should name the term boundary seam: {message}"
         );
+    }
+
+    #[test]
+    fn cf_ite_via_symbolic_value_preserves_sort_neutral_wire_shape() {
+        let cond = IrTerm::Ctor {
+            name: "match_guard".into(),
+            args: vec![var("scrutinee"), var("#pat:abcd")],
+        };
+        let then_term = var("then_value");
+        let else_term = IrTerm::Ctor {
+            name: "opaque_else".into(),
+            args: vec![var("else_value")],
+        };
+
+        let term =
+            cf_ite_via_symbolic_value_boundary(cond.clone(), then_term.clone(), else_term.clone());
+
+        assert_eq!(
+            term,
+            IrTerm::Ctor {
+                name: panic_freedom::CF_ITE.to_string(),
+                args: vec![cond, then_term, else_term],
+            },
+            "SymbolicValue boundary route must preserve the old cf_ite congruence carrier"
+        );
+    }
+
+    #[test]
+    fn cf_ite_via_symbolic_value_refuses_unlowerable_operand() {
+        let unlowerable = IrTerm::Const {
+            value: serde_json::json!(0),
+            sort: sugar_ir_types::Sort::Function {
+                args: vec![sugar_ir_types::Sort::Primitive { name: "Int".into() }],
+                ret: Box::new(sugar_ir_types::Sort::Primitive {
+                    name: "Bool".into(),
+                }),
+            },
+        };
+
+        let refusal = std::panic::catch_unwind(|| {
+            cf_ite_via_symbolic_value_boundary(var("guard"), unlowerable, var("fallback"))
+        });
+        let Err(payload) = refusal else {
+            panic!("Function-sort cf_ite operand silently crossed the term boundary");
+        };
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|msg| (*msg).to_string()))
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        assert!(
+            message.contains("not supported in symbolic Sort wrapper"),
+            "Function-sort refusal should name the term boundary seam: {message}"
+        );
+    }
+
+    #[test]
+    fn tail_if_without_else_keeps_unit_else_through_symbolic_value() {
+        let item_fn = parse_fn(
+            r#"
+            fn f(x: bool) -> i64 {
+                if x {
+                    1
+                }
+            }
+        "#,
+        );
+
+        let eq = result_equation_of(&item_fn).expect("if-tail must synthesize a result equation");
+        let IrTerm::Ctor { name, args } = eq else {
+            panic!("if-tail did not synthesize cf_ite");
+        };
+        assert_eq!(name, panic_freedom::CF_ITE);
+        let Some(IrTerm::Ctor { name, args }) = args.get(2) else {
+            panic!("implicit else branch should be the unit ctor");
+        };
+        assert_eq!(name, "unit");
+        assert!(args.is_empty(), "unit must stay nullary");
     }
 
     #[test]

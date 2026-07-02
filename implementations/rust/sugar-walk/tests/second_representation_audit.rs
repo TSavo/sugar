@@ -26,34 +26,6 @@ struct ExpectedStructuralSite {
 const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[
     ExpectedStructuralSite {
         file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "lift_tail_expr_to_result_term",
-        kind: "tail_expr_entry",
-        owner_slice: "S4: SymbolicValue/tail-expr",
-        replacement: "lower result terms through the boundary and compose with SymbolicValue",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "lift_tail_if_to_ite_term",
-        kind: "tail_if_cf_ite",
-        owner_slice: "S3/S4: branch guards then SymbolicValue",
-        replacement: "route branch guard composition through ControlFlowGuardOperation, then cf_ite through SymbolicValue",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "SymbolicValueTerm",
-        kind: "second_representation_adapter",
-        owner_slice: "S4: SymbolicValue/tail-expr",
-        replacement: "delete adapter after sugar-walk raises/lower through the algebra SymbolicValue floor",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "symbolic_cf_ite",
-        kind: "irterm_cf_ite_constructor",
-        owner_slice: "S4: SymbolicValue/tail-expr",
-        replacement: "construct cf_ite through the algebra SymbolicValue floor",
-    },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
         symbol: "guarded_return_for_branch",
         kind: "irterm_guard_reasoning",
         owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
