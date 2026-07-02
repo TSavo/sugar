@@ -168,6 +168,20 @@ def test_factory_spine_frontier_bad_twin_flags_xsugar_build_bypass(
     assert "factory catalog" in offender.fix
 
 
+def test_factory_spine_frontier_does_not_flag_non_sugar_builders(tmp_path) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "proofir"
+    kit_src.mkdir(parents=True)
+    (kit_src / "nodes.py").write_text(
+        "def planted(cls):\n"
+        "    return cls.builder().post(1).build()\n",
+        encoding="utf-8",
+    )
+
+    report = collect_factory_spine_frontier(tmp_path)
+
+    assert report.r.total == 0
+
+
 def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> None:
     report = build_literal_call_report(
         source=(

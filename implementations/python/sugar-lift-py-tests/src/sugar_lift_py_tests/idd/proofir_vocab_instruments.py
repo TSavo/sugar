@@ -476,7 +476,9 @@ def collect_proofir_vocabulary_frontier(
             if site.formula_fragment
         ]
     )
-    verdict_witnesses = proofir_classes_without_verdict_witnesses(())
+    verdict_witnesses = proofir_classes_without_verdict_witnesses(
+        _registered_proofir_vocabulary_witnesses()
+    )
     return ProofIrVocabularyFrontierReport(
         untyped_emission_sites=sites,
         provenance=provenance,
@@ -507,6 +509,19 @@ def proofir_classes_without_verdict_witnesses(
     }
     missing = [node_class for node_class in node_classes if node_class not in witnessed]
     return VerdictWitnessCoverageReport(missing_classes=missing)
+
+
+def _registered_proofir_vocabulary_witnesses() -> tuple[ProofIrVocabularyWitness, ...]:
+    from sugar_lift_py_tests.proofir import registered_verdict_witnesses
+
+    return tuple(
+        ProofIrVocabularyWitness(
+            node_class=node_class,
+            truthful_sat=truthful_sat,
+            lying_unsat=lying_unsat,
+        )
+        for node_class, truthful_sat, lying_unsat in registered_verdict_witnesses()
+    )
 
 
 def render_text(report: ProofIrVocabularyFrontierReport) -> str:

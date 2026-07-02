@@ -60,7 +60,7 @@ EXPECTED_ROWS = [
     ("python", "factory/floor_contract_agreement.py", 29, "VendorConjoin"),
     ("rust-annex", "implementations/rust/sugar-walk/src/contract.rs", 142, "RefusalRecord"),
     ("rust-annex", "implementations/rust/sugar-walk/src/envelope.rs", 318, "RefusalRecord"),
-    ("rust-annex", "implementations/rust/sugar-walk/src/lift.rs", 3685, "RefusalRecord"),
+    ("rust-annex", "implementations/rust/sugar-walk/src/lift.rs", 3678, "RefusalRecord"),
 ]
 
 
@@ -74,7 +74,7 @@ def test_proofir_vocab_census_pins_current_untyped_emission_sites() -> None:
         for site in report.untyped_emission_sites
     ] == sorted(EXPECTED_ROWS)
     assert report.formula_fragments_without_provenance == 15
-    assert report.proofir_classes_without_verdict_witnesses == 7
+    assert report.proofir_classes_without_verdict_witnesses == 4
 
 
 def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
@@ -87,7 +87,7 @@ def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
     assert "python FunctionContract: 10" in stdout
     assert "rust-annex RefusalRecord: 3" in stdout
     assert "R(formula-fragments-without-provenance): 15" in stdout
-    assert "R(proofir-classes-without-verdict-witnesses): 7" in stdout
+    assert "R(proofir-classes-without-verdict-witnesses): 4" in stdout
     assert "factory/literal_call_report.py:776" in stdout
     assert "replacement: EqualityFact" in stdout
 

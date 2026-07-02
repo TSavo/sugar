@@ -214,6 +214,8 @@ def _xsugar_build_bypass_offenders(kit_src: Path) -> list[FactorySpineOffender]:
             if target not in {"build", "desugar"}:
                 continue
             source_text = fragment.source_text(source) or f"{target}(...)"
+            if target == "build" and not _is_xsugar_build_call(fragment, source_text):
+                continue
             offenders.append(
                 _offender(
                     "xsugar_build_bypasses",
@@ -232,6 +234,20 @@ def _xsugar_bypass_path_is_exempt(rel: str) -> bool:
     if rel.startswith("sugar/"):
         return True
     return False
+
+
+def _is_xsugar_build_call(fragment: SourceFragment, source_text: str) -> bool:
+    qualified = fragment.call_qualified_target_name()
+    if qualified is not None:
+        receiver = qualified.rsplit(".", 1)[0]
+        if receiver.endswith("Sugar"):
+            return True
+    receiver_source = source_text.split(".build", 1)[0].strip()
+    return (
+        receiver_source.endswith("Sugar")
+        or receiver_source.endswith("_sugar")
+        or receiver_source.endswith(".sugar")
+    )
 
 
 def _xsugar_bypass_fix(method: str) -> str:
