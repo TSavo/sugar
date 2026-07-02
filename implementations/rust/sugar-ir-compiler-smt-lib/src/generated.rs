@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
-use sugar_ir_compiler::{CompiledFormula, FreeVar, OpacityEntry, OpacityManifest};
+use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, OpacityEntry, OpacityManifest};
 use sugar_ir_types::*;
 
 use crate::{COMPILER_NAME, COMPILER_VERSION, DIALECT};
@@ -324,53 +324,55 @@ fn collect_opaque_quantifier_sorts_formula(formula: &Formula, out: &mut BTreeMap
     }
 }
 
-pub fn emit_formula(formula: &Formula) -> String {
+fn strong_tier_refusal(name: &str, reason: impl std::fmt::Display) -> CompileError {
+    CompileError::MalformedIr(format!("{name}: {reason}; refusing rather than weakening"))
+}
+
+pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { name, args } => {
             if name == "identity" && args.len() == 2 {
-                return format!(
+                return Ok(format!(
                     "(= {} {})",
                     emit_identity_term(&args[0]),
                     emit_identity_term(&args[1])
-                );
+                ));
             }
-            if let Some(rendered) = emit_string_theory_atomic(name, args) {
-                return rendered;
+            if let Some(rendered) = emit_string_theory_atomic(name, args)? {
+                return Ok(rendered);
             }
-            if let Some(rendered) = emit_bv32_theory_atomic(name, args) {
-                return rendered;
+            if let Some(rendered) = emit_bv32_theory_atomic(name, args)? {
+                return Ok(rendered);
             }
             let smt_name = smt_atomic_name(name);
             if args.is_empty() {
-                return smt_name.to_string();
+                return Ok(smt_name.to_string());
             };
             let expected = expected_atomic_arg_sort(name, args);
             let args_str = args.iter();
             let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));
             let args_str: Vec<String> = args_str.collect();
-            format!("({} {})", smt_name, args_str.join(" "))
+            Ok(format!("({} {})", smt_name, args_str.join(" ")))
         }
         Formula::And { operands } => {
-            let ops_str = operands.iter();
-            let ops_str = ops_str.map(emit_formula);
-            let ops_str: Vec<String> = ops_str.collect();
-            format!("({} {})", "and", ops_str.join(" "))
+            let ops_str: Result<Vec<String>, CompileError> =
+                operands.iter().map(emit_formula).collect();
+            Ok(format!("({} {})", "and", ops_str?.join(" ")))
         }
         Formula::Or { operands } => {
-            let ops_str = operands.iter();
-            let ops_str = ops_str.map(emit_formula);
-            let ops_str: Vec<String> = ops_str.collect();
-            format!("({} {})", "or", ops_str.join(" "))
+            let ops_str: Result<Vec<String>, CompileError> =
+                operands.iter().map(emit_formula).collect();
+            Ok(format!("({} {})", "or", ops_str?.join(" ")))
         }
-        Formula::Not { operands } => format!("(not {})", emit_formula(&operands[0])),
-        Formula::Implies { operands } => format!(
+        Formula::Not { operands } => Ok(format!("(not {})", emit_formula(&operands[0])?)),
+        Formula::Implies { operands } => Ok(format!(
             "(=> {} {})",
-            emit_formula(&operands[0]),
-            emit_formula(&operands[1])
-        ),
+            emit_formula(&operands[0])?,
+            emit_formula(&operands[1])?
+        )),
         Formula::Forall { name, sort, body } => {
             let (sort_str, reason) = emit_sort_with_reason(sort);
-            let body_str = emit_formula(body);
+            let body_str = emit_formula(body)?;
             // Opaque sort: use the CID-derived uninterpreted sort name declared
             // in the preamble. Collapsing to `true` is unsound: `forall x:S.
             // false` would then appear as `true` and pass falsely.
@@ -379,17 +381,23 @@ pub fn emit_formula(formula: &Formula) -> String {
             } else {
                 sort_str
             };
-            format!("(forall (({} {})) {})", name, effective_sort, body_str)
+            Ok(format!(
+                "(forall (({} {})) {})",
+                name, effective_sort, body_str
+            ))
         }
         Formula::Exists { name, sort, body } => {
             let (sort_str, reason) = emit_sort_with_reason(sort);
-            let body_str = emit_formula(body);
+            let body_str = emit_formula(body)?;
             let effective_sort = if reason.is_some() {
                 opaque_sort_smt_name(sort)
             } else {
                 sort_str
             };
-            format!("(exists (({} {})) {})", name, effective_sort, body_str)
+            Ok(format!(
+                "(exists (({} {})) {})",
+                name, effective_sort, body_str
+            ))
         }
         Formula::Choice {
             var_name,
@@ -397,7 +405,7 @@ pub fn emit_formula(formula: &Formula) -> String {
             body,
         } => {
             let (sort_str, reason) = emit_sort_with_reason(sort);
-            let body_str = emit_formula(body);
+            let body_str = emit_formula(body)?;
             let effective_sort = if reason.is_some() {
                 opaque_sort_smt_name(sort)
             } else {
@@ -409,7 +417,10 @@ pub fn emit_formula(formula: &Formula) -> String {
                 "(and {} (forall (({} {})) (=> {} (= {} {}))))",
                 body_str, var_y, effective_sort, body_y, var_y, var_name
             );
-            format!("(exists (({} {})) {})", var_name, effective_sort, unique)
+            Ok(format!(
+                "(exists (({} {})) {})",
+                var_name, effective_sort, unique
+            ))
         }
         // wp-rule schema nodes (spec 2026-05-13-wp-as-formula.md §2.3):
         // `substitute` / `apply` appear only inside an unreduced `wp_rule`
@@ -431,7 +442,7 @@ pub fn emit_formula(formula: &Formula) -> String {
     }
 }
 
-fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
+fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
     // STRING-ROUTED EQUALITY (G1 conjoin shape): `=` over a string const and a
     // callresult ctor lives in string theory so it stays sort-compatible with
     // a `str.chars-in-set` universe row over the SAME subject. The gate
@@ -439,76 +450,76 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
     // `literal_encoding` module; see its doc for the deliberate exclusions
     // that keep the legacy Python opaque-Int regime byte-identical.
     if name == "=" && crate::literal_encoding::routes_to_string_theory(name, args) {
-        return Some(format!(
+        return Ok(Some(format!(
             "(= {} {})",
             emit_string_term(&args[0]),
             emit_string_term(&args[1])
-        ));
+        )));
     }
     match name {
-        "contains" if args.len() == 2 => Some(format!(
+        "contains" if args.len() == 2 => Ok(Some(format!(
             "(str.contains {} {})",
             emit_string_term(&args[0]),
             emit_string_term(&args[1])
-        )),
-        "prefix-of" if args.len() == 2 => Some(format!(
+        ))),
+        "prefix-of" if args.len() == 2 => Ok(Some(format!(
             "(str.prefixof {} {})",
             emit_string_term(&args[0]),
             emit_string_term(&args[1])
-        )),
-        "suffix-of" if args.len() == 2 => Some(format!(
+        ))),
+        "suffix-of" if args.len() == 2 => Ok(Some(format!(
             "(str.suffixof {} {})",
             emit_string_term(&args[0]),
             emit_string_term(&args[1])
-        )),
-        "str.is_ascii" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.* (re.range \"\\u{{0}}\" \"\\u{{7f}}\")))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_alphabetic" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_alphabetic" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\")))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_alphanumeric" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_alphanumeric" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.range \"0\" \"9\") (re.union (re.range \"A\" \"Z\") (re.range \"a\" \"z\"))))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_digit" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_digit" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.range \"0\" \"9\"))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_octdigit" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_octdigit" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.range \"0\" \"7\"))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_lowercase" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_lowercase" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.range \"a\" \"z\"))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_uppercase" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_uppercase" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.range \"A\" \"Z\"))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_hexdigit" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_hexdigit" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.range \"0\" \"9\") (re.union (re.range \"A\" \"F\") (re.range \"a\" \"f\"))))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_punctuation" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_punctuation" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.range \"!\" \"/\") (re.union (re.range \":\" \"@\") (re.union (re.range \"[\" \"`\") (re.range \"{{\" \"~\")))))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_graphic" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_graphic" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.range \"!\" \"~\"))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_whitespace" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_whitespace" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.union (re.union (re.union (re.range \" \" \" \") (re.range \"\\u{{9}}\" \"\\u{{9}}\")) (re.range \"\\u{{a}}\" \"\\u{{a}}\")) (re.range \"\\u{{c}}\" \"\\u{{c}}\")) (re.range \"\\u{{d}}\" \"\\u{{d}}\")))",
             emit_string_term(&args[0])
-        )),
-        "str.is_ascii_control" if args.len() == 1 => Some(format!(
+        ))),
+        "str.is_ascii_control" if args.len() == 1 => Ok(Some(format!(
             "(str.in_re {} (re.union (re.range \"\\u{{0}}\" \"\\u{{1f}}\") (re.range \"\\u{{7f}}\" \"\\u{{7f}}\")))",
             emit_string_term(&args[0])
-        )),
+        ))),
         // str.chars-in-set: arg[0] = subject (String-sorted term), arg[1] = charset constant.
         // The charset is a String const whose value is the set of allowed characters.
         // Renders as: (str.in_re <subject> (re.* (re.union (str.to_re "c1") (str.to_re "c2") ...)))
@@ -524,13 +535,24 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                         chars.dedup();
                         chars
                     } else {
-                        return None;
+                        return Err(strong_tier_refusal(
+                            name,
+                            "charset payload is not a String value",
+                        ));
                     }
                 }
-                _ => return None,
+                _ => {
+                    return Err(strong_tier_refusal(
+                        name,
+                        "expected arg[1] to be a String const charset",
+                    ));
+                }
             };
             if charset.is_empty() {
-                return None;
+                return Err(strong_tier_refusal(
+                    name,
+                    "empty charset has no SMT-LIB membership encoding",
+                ));
             }
             // Build the RE union over individual chars using str.to_re.
             // SMT-LIB string literals: see smt_string_char (printable ASCII
@@ -550,11 +572,11 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                 }
                 acc
             };
-            Some(format!(
+            Ok(Some(format!(
                 "(str.in_re {} (re.* {}))",
                 emit_string_term(&args[0]),
                 inner
-            ))
+            )))
         }
         // str.chars-not-in-set: arg[0] = subject (String-sorted term), arg[1] =
         // forbidden-charset constant. The complement universe row: derived from
@@ -573,13 +595,24 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                         chars.dedup();
                         chars
                     } else {
-                        return None;
+                        return Err(strong_tier_refusal(
+                            name,
+                            "forbidden-charset payload is not a String value",
+                        ));
                     }
                 }
-                _ => return None,
+                _ => {
+                    return Err(strong_tier_refusal(
+                        name,
+                        "expected arg[1] to be a String const forbidden charset",
+                    ));
+                }
             };
             if charset.is_empty() {
-                return None;
+                return Err(strong_tier_refusal(
+                    name,
+                    "empty forbidden charset has no SMT-LIB complement encoding",
+                ));
             }
             let subject = emit_string_term(&args[0]);
             let not_contains = |ch: char| -> String {
@@ -587,10 +620,10 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                 format!("(not (str.contains {} \"{}\"))", subject, esc)
             };
             if charset.len() == 1 {
-                Some(not_contains(charset[0]))
+                Ok(Some(not_contains(charset[0])))
             } else {
                 let parts: Vec<String> = charset.iter().map(|ch| not_contains(*ch)).collect();
-                Some(format!("(and {})", parts.join(" ")))
+                Ok(Some(format!("(and {})", parts.join(" "))))
             }
         }
         // ── Base64 STRONG TIER (paper 26 — "THE seam between tiers") ──────────
@@ -620,12 +653,14 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
         // GOOD claim → sat (z3 computes "YmFy"); alphabet-valid-but-WRONG claim
         // ("ZmFy") → unsat. The weak str.chars-in-set row cannot refute "ZmFy";
         // only these equations can. That refutation is the entire point.
-        "str.eq-bv-blocks" if args.len() == 2 => {
-            emit_b64_strong_blocks(&args[0], None, &args[1])
-        }
-        "str.eq-bv-blocks" if args.len() == 3 => {
-            emit_b64_strong_blocks(&args[0], Some(&args[1]), &args[2])
-        }
+        "str.eq-bv-blocks" if args.len() == 2 => Ok(Some(emit_b64_strong_blocks(
+            &args[0], None, &args[1],
+        )?)),
+        "str.eq-bv-blocks" if args.len() == 3 => Ok(Some(emit_b64_strong_blocks(
+            &args[0],
+            Some(&args[1]),
+            &args[2],
+        )?)),
         // ── @Pattern REGEX UNIVERSE (Door 3 — regular-language membership) ─────
         // str.in-regex: arg[0] = subject (the callresult String term — the value
         //               the consumer claims is valid), arg[1] = a String const
@@ -642,7 +677,8 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
         //
         // REFUSE BY NAME (not a regular language → never approximated): backreferences,
         // lookahead/behind, possessive/atomic groups. The parser returns Err with the
-        // offending feature named; we return None here (atom dropped — floor stands).
+        // offending feature named; we propagate that as a compile refusal so the
+        // atom never falls through to an unconstrained predicate.
         // The Java walker performs the SAME non-regular scan at walk time and refuses
         // to register, so a non-regular pattern never reaches this arm in practice;
         // this None is the defense-in-depth backstop.
@@ -658,38 +694,62 @@ fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                     value: serde_json::Value::String(s),
                     sort: Sort::Primitive { name },
                 } if name == "String" => s,
-                _ => return None,
+                _ => {
+                    return Err(strong_tier_refusal(
+                        name,
+                        "expected arg[1] to be a String const regex literal",
+                    ));
+                }
             };
             // Lower the regex literal to a z3 RegLan term. A non-regular feature
-            // (or a malformed literal) yields Err → None → the atom is dropped.
-            let regln = crate::regex_regln::regex_to_regln(regex).ok()?;
-            Some(format!(
+            // (or a malformed literal) is a typed refusal.
+            let regln = crate::regex_regln::regex_to_regln(regex)
+                .map_err(|e| strong_tier_refusal(name, e))?;
+            Ok(Some(format!(
                 "(str.in_re {} {})",
                 emit_string_term(&args[0]),
                 regln
-            ))
+            )))
         }
-        _ => None,
+        _ if is_string_theory_atomic_predicate(name) => Err(strong_tier_refusal(
+            name,
+            format!("unsupported argument shape with {} args", args.len()),
+        )),
+        _ => Ok(None),
     }
 }
 
 /// Render the Base64 strong-tier `str.eq-bv-blocks` atom.
 ///
 /// See the call-site comment in `emit_string_theory_atomic` for the payload
-/// shape. Returns `None` (the atom is dropped, never approximated) if the
-/// payload is malformed — but the Java walker only ever emits well-formed
-/// payloads, and a malformed one is a kit bug, not a soundness hole.
-fn emit_b64_strong_blocks(subject: &Term, input: Option<&Term>, payload: &Term) -> Option<String> {
+/// shape. Refuses loudly if the payload is malformed or cannot be encoded;
+/// falling through to the generic predicate path would silently weaken the
+/// strong-tier row.
+fn emit_b64_strong_blocks(
+    subject: &Term,
+    input: Option<&Term>,
+    payload: &Term,
+) -> Result<String, CompileError> {
     // Payload is a String const carrying the JSON.
     let json_str = match payload {
         Term::Const {
             value: serde_json::Value::String(s),
             sort: Sort::Primitive { name },
         } if name == "String" => s,
-        _ => return None,
+        _ => {
+            return Err(strong_tier_refusal(
+                "str.eq-bv-blocks",
+                "expected payload to be a String const carrying JSON",
+            ));
+        }
     };
-    let body = render_b64_blocks_body_with_input(json_str, input)?;
-    Some(format!("(= {} {})", emit_string_term(subject), body))
+    let body = render_b64_blocks_body_with_input(json_str, input).ok_or_else(|| {
+        strong_tier_refusal(
+            "str.eq-bv-blocks",
+            "malformed or non-encodable strong-tier block payload JSON",
+        )
+    })?;
+    Ok(format!("(= {} {})", emit_string_term(subject), body))
 }
 
 /// Render the RHS string expression of a Base64 strong-tier block payload — the
@@ -729,7 +789,7 @@ fn render_b64_blocks_body_with_input(payload_json: &str, input: Option<&Term>) -
         for (idx, vname_v) in vars.iter().enumerate() {
             let vname = vname_v.as_str()?;
             let byte = format!(
-                "((_ int_to_bv 32) (str.to_code (str.at {} {})))",
+                "((_ int2bv 32) (str.to_code (str.at {} {})))",
                 input_smt, idx
             );
             subst.insert(vname.to_string(), byte.clone());
@@ -825,7 +885,7 @@ fn render_bv_index_json(
                 "bv32.shl" => bin("bvshl"),
                 "bv32.lshr" => bin("bvlshr"),
                 "bv32.add" => bin("bvadd"),
-                _ => None, // any other op = unwalkable here; drop rather than approximate
+                _ => None, // any other op = unwalkable here; atomic callers refuse
             }
         }
         _ => None,
@@ -917,9 +977,9 @@ fn render_crc_bv_json_bool(
 ///
 /// `var` nodes render to the bare SMT symbol (the bind name). The per-bind trees
 /// use the SAME bv32 vocabulary as the CRC pin (`render_crc_bv_json`), so adding
-/// this path touches no existing rendering. A malformed payload → `None` (the
-/// atom is dropped, never approximated); the Java walker only emits well-formed
-/// payloads and self-checks the fold, so a malformed one is a kit bug.
+/// this path touches no existing rendering. Malformed payload rendering still
+/// returns `None` at this low-level helper boundary; atomic emitters convert that
+/// to a loud `CompileError` instead of falling through to a generic predicate.
 fn render_mt_let_chain(payload: &serde_json::Value) -> Option<String> {
     let binds = payload.get("binds")?.as_array()?;
     let result = payload.get("result")?;
@@ -1179,9 +1239,9 @@ fn render_bv32_subject(subject: &Term) -> Option<String> {
 ///
 /// `int32.eq-const(subject_ctor, IntConst)` (synthetic, from bv32 contagion):
 ///   the sworn sibling equality promoted to bv32; renders `(= subject_bv hex)`.
-fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
+fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
     if !crate::literal_encoding::routes_to_bv32_theory(name) {
-        return None;
+        return Ok(None);
     }
     // ── CRC value-pin (paper 26 — connect the folded table to the value) ──
     // `crc32.eq-walked(asserted_int_const, walked_bv_tree)`:
@@ -1196,8 +1256,16 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
     // COMPUTATION (a single equation, not a within-test contradiction).
     if name == "crc32.eq-walked" && args.len() == 2 {
         let asserted = match &args[0] {
-            Term::Const { value, .. } => value.as_i64().map(i32_to_bv32_hex)?,
-            _ => return None,
+            Term::Const { value, .. } => value
+                .as_i64()
+                .map(i32_to_bv32_hex)
+                .ok_or_else(|| strong_tier_refusal(name, "expected arg[0] to be an Int const"))?,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[0] to be an Int const",
+                ));
+            }
         };
         // args[1] is a String const carrying the walked crc-FOL JSON (its bv32
         // nodes have no `sort` field, so they are rendered from RAW JSON, not via
@@ -1207,12 +1275,20 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                 value: serde_json::Value::String(s),
                 sort: Sort::Primitive { name },
             } if name == "String" => s,
-            _ => return None,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[1] to be a String const carrying walked CRC JSON",
+                ));
+            }
         };
-        let node: serde_json::Value = serde_json::from_str(json_str).ok()?;
+        let node: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| strong_tier_refusal(name, format!("malformed walked CRC JSON: {e}")))?;
         let empty: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let walked = render_crc_bv_json(&node, &empty)?;
-        return Some(format!("(= {} {})", asserted, walked));
+        let walked = render_crc_bv_json(&node, &empty).ok_or_else(|| {
+            strong_tier_refusal(name, "walked CRC JSON contains a non-encodable bv32 node")
+        })?;
+        return Ok(Some(format!("(= {} {})", asserted, walked)));
     }
     // ── MT seeding value-pin (paper 26 — inter-procedural seed-state walk) ──
     // `mt32.eq-seeded(asserted_int_const, ssa_let_chain_payload)`:
@@ -1233,19 +1309,35 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
     // unsatisfied BY THE WALKED RECURRENCE (a single equation, not a contradiction).
     if name == "mt32.eq-seeded" && args.len() == 2 {
         let asserted = match &args[0] {
-            Term::Const { value, .. } => value.as_i64().map(i32_to_bv32_hex)?,
-            _ => return None,
+            Term::Const { value, .. } => value
+                .as_i64()
+                .map(i32_to_bv32_hex)
+                .ok_or_else(|| strong_tier_refusal(name, "expected arg[0] to be an Int const"))?,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[0] to be an Int const",
+                ));
+            }
         };
         let json_str = match &args[1] {
             Term::Const {
                 value: serde_json::Value::String(s),
                 sort: Sort::Primitive { name },
             } if name == "String" => s,
-            _ => return None,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[1] to be a String const carrying MT SSA JSON",
+                ));
+            }
         };
-        let payload: serde_json::Value = serde_json::from_str(json_str).ok()?;
-        let walked = render_mt_let_chain(&payload)?;
-        return Some(format!("(= {} {})", asserted, walked));
+        let payload: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| strong_tier_refusal(name, format!("malformed MT SSA JSON: {e}")))?;
+        let walked = render_mt_let_chain(&payload).ok_or_else(|| {
+            strong_tier_refusal(name, "MT SSA JSON contains a non-encodable bv32 node")
+        })?;
+        return Ok(Some(format!("(= {} {})", asserted, walked)));
     }
     if name == "int32.eq-bv-expr" && args.len() == 2 {
         let subject = &args[0];
@@ -1253,7 +1345,12 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
         // subject must be a ctor
         let subj_args = match subject {
             Term::Ctor { args, .. } => args.as_slice(),
-            _ => return None,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[0] to be a subject ctor",
+                ));
+            }
         };
         // Collect var names from the BV tree in DFS order — these are the
         // method parameter names, in the same order as the subject's args.
@@ -1270,27 +1367,50 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
                     if let Some(v) = value.as_i64() {
                         i32_to_bv32_hex(v)
                     } else {
-                        return None;
+                        return Err(strong_tier_refusal(
+                            name,
+                            "subject ctor arguments must be Int consts",
+                        ));
                     }
                 }
-                _ => return None,
+                _ => {
+                    return Err(strong_tier_refusal(
+                        name,
+                        "subject ctor arguments must be Int consts",
+                    ));
+                }
             };
             subst.insert(vname.clone(), bv_lit);
         }
-        let subj_rendered = render_bv32_subject(subject)?;
+        let subj_rendered = render_bv32_subject(subject)
+            .ok_or_else(|| strong_tier_refusal(name, "subject ctor cannot be rendered as bv32"))?;
         // Render the BV expression tree
-        let bv_rendered = emit_bv32_term(bv_tree, &subst)?;
-        return Some(format!("(= {} {})", subj_rendered, bv_rendered));
+        let bv_rendered = emit_bv32_term(bv_tree, &subst).ok_or_else(|| {
+            strong_tier_refusal(
+                name,
+                "bv expression tree contains a non-encodable bv32 node",
+            )
+        })?;
+        return Ok(Some(format!("(= {} {})", subj_rendered, bv_rendered)));
     }
     // Synthetic sibling equality promoted by bv32 contagion.
     if name == "int32.eq-const" && args.len() == 2 {
         let subject = &args[0];
         let lit = match &args[1] {
-            Term::Const { value, .. } => value.as_i64().map(i32_to_bv32_hex)?,
-            _ => return None,
+            Term::Const { value, .. } => value
+                .as_i64()
+                .map(i32_to_bv32_hex)
+                .ok_or_else(|| strong_tier_refusal(name, "expected arg[1] to be an Int const"))?,
+            _ => {
+                return Err(strong_tier_refusal(
+                    name,
+                    "expected arg[1] to be an Int const",
+                ));
+            }
         };
-        let subj_rendered = render_bv32_subject(subject)?;
-        return Some(format!("(= {} {})", subj_rendered, lit));
+        let subj_rendered = render_bv32_subject(subject)
+            .ok_or_else(|| strong_tier_refusal(name, "subject ctor cannot be rendered as bv32"))?;
+        return Ok(Some(format!("(= {} {})", subj_rendered, lit)));
     }
     // G2b: synthetic comparison-bound atoms over bv32 subjects.
     // int32.{lt,lte,gt,gte}-const(subject, IntConst) → (bvs{lt,le,gt,ge} subject_bv hex)
@@ -1305,14 +1425,28 @@ fn emit_bv32_theory_atomic(name: &str, args: &[Term]) -> Option<String> {
         if args.len() == 2 {
             let subject = &args[0];
             let lit = match &args[1] {
-                Term::Const { value, .. } => value.as_i64().map(i32_to_bv32_hex)?,
-                _ => return None,
+                Term::Const { value, .. } => {
+                    value.as_i64().map(i32_to_bv32_hex).ok_or_else(|| {
+                        strong_tier_refusal(name, "expected arg[1] to be an Int const")
+                    })?
+                }
+                _ => {
+                    return Err(strong_tier_refusal(
+                        name,
+                        "expected arg[1] to be an Int const",
+                    ));
+                }
             };
-            let subj_rendered = render_bv32_subject(subject)?;
-            return Some(format!("({} {} {})", bv_op, subj_rendered, lit));
+            let subj_rendered = render_bv32_subject(subject).ok_or_else(|| {
+                strong_tier_refusal(name, "subject ctor cannot be rendered as bv32")
+            })?;
+            return Ok(Some(format!("({} {} {})", bv_op, subj_rendered, lit)));
         }
     }
-    None
+    Err(strong_tier_refusal(
+        name,
+        format!("unsupported argument shape with {} args", args.len()),
+    ))
 }
 
 fn emit_string_term(term: &Term) -> String {
@@ -1715,7 +1849,10 @@ fn to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
 
 /// Walk a formula collecting opacity entries for sorts the SMT-LIB
 /// compiler cannot handle. Returns (formula_string, opacities).
-fn emit_formula_with_opacities(formula: &Formula, opacities: &mut Vec<OpacityEntry>) -> String {
+fn emit_formula_with_opacities(
+    formula: &Formula,
+    opacities: &mut Vec<OpacityEntry>,
+) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { args, .. } => {
             for a in args {
@@ -1724,32 +1861,28 @@ fn emit_formula_with_opacities(formula: &Formula, opacities: &mut Vec<OpacityEnt
             emit_formula(formula)
         }
         Formula::And { operands } => {
-            let ops: Vec<String> = operands
+            let ops: Result<Vec<String>, CompileError> = operands
                 .iter()
                 .map(|o| emit_formula_with_opacities(o, opacities))
                 .collect();
-            format!("({} {})", "and", ops.join(" "))
+            Ok(format!("({} {})", "and", ops?.join(" ")))
         }
         Formula::Or { operands } => {
-            let ops: Vec<String> = operands
+            let ops: Result<Vec<String>, CompileError> = operands
                 .iter()
                 .map(|o| emit_formula_with_opacities(o, opacities))
                 .collect();
-            format!("({} {})", "or", ops.join(" "))
+            Ok(format!("({} {})", "or", ops?.join(" ")))
         }
-        Formula::Not { operands } => {
-            format!(
-                "(not {})",
-                emit_formula_with_opacities(&operands[0], opacities)
-            )
-        }
-        Formula::Implies { operands } => {
-            format!(
-                "(=> {} {})",
-                emit_formula_with_opacities(&operands[0], opacities),
-                emit_formula_with_opacities(&operands[1], opacities)
-            )
-        }
+        Formula::Not { operands } => Ok(format!(
+            "(not {})",
+            emit_formula_with_opacities(&operands[0], opacities)?
+        )),
+        Formula::Implies { operands } => Ok(format!(
+            "(=> {} {})",
+            emit_formula_with_opacities(&operands[0], opacities)?,
+            emit_formula_with_opacities(&operands[1], opacities)?
+        )),
         Formula::Forall { name, sort, body } => {
             let (_, reason) = emit_sort_with_reason(sort);
             let effective_sort = if let Some(reason_code) = reason {
@@ -1766,8 +1899,11 @@ fn emit_formula_with_opacities(formula: &Formula, opacities: &mut Vec<OpacityEnt
             } else {
                 emit_sort(sort)
             };
-            let body_str = emit_formula_with_opacities(body, opacities);
-            format!("(forall (({} {})) {})", name, effective_sort, body_str)
+            let body_str = emit_formula_with_opacities(body, opacities)?;
+            Ok(format!(
+                "(forall (({} {})) {})",
+                name, effective_sort, body_str
+            ))
         }
         Formula::Exists { name, sort, body } => {
             let (_, reason) = emit_sort_with_reason(sort);
@@ -1782,8 +1918,11 @@ fn emit_formula_with_opacities(formula: &Formula, opacities: &mut Vec<OpacityEnt
             } else {
                 emit_sort(sort)
             };
-            let body_str = emit_formula_with_opacities(body, opacities);
-            format!("(exists (({} {})) {})", name, effective_sort, body_str)
+            let body_str = emit_formula_with_opacities(body, opacities)?;
+            Ok(format!(
+                "(exists (({} {})) {})",
+                name, effective_sort, body_str
+            ))
         }
         Formula::Choice {
             var_name,
@@ -1802,14 +1941,17 @@ fn emit_formula_with_opacities(formula: &Formula, opacities: &mut Vec<OpacityEnt
             } else {
                 emit_sort(sort)
             };
-            let body_str = emit_formula_with_opacities(body, opacities);
+            let body_str = emit_formula_with_opacities(body, opacities)?;
             let var_y = format!("{}_y", var_name);
             let body_y = body_str.replace(var_name, &var_y);
             let unique = format!(
                 "(and {} (forall (({} {})) (=> {} (= {} {}))))",
                 body_str, var_y, effective_sort, body_y, var_y, var_name
             );
-            format!("(exists (({} {})) {})", var_name, effective_sort, unique)
+            Ok(format!(
+                "(exists (({} {})) {})",
+                var_name, effective_sort, unique
+            ))
         }
         // wp-rule schema nodes (spec 2026-05-13-wp-as-formula.md §2.3):
         // see the note in `emit_formula`.
@@ -2976,7 +3118,7 @@ fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
     }
 }
 
-pub fn compile_formula(formula: &Formula) -> CompiledFormula {
+pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
@@ -2992,7 +3134,7 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     collect_predicate_decls_formula(formula, &mut predicate_decls);
 
     let mut opacities: Vec<OpacityEntry> = Vec::new();
-    let body_formula = emit_formula_with_opacities(formula, &mut opacities);
+    let body_formula = emit_formula_with_opacities(formula, &mut opacities)?;
 
     // Sort opacities by positionCid ascending, then reasonCode ascending.
     opacities.sort_by(|a, b| {
@@ -3123,16 +3265,16 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
         .into_iter()
         .map(|(name, sort)| FreeVar { name, sort });
     let free_vars_vec = free_vars_vec.collect();
-    CompiledFormula {
+    Ok(CompiledFormula {
         preamble,
         body,
         free_vars: free_vars_vec,
         opacity_manifest,
         metadata: serde_json::Value::Null,
-    }
+    })
 }
 
-pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
+pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
@@ -3144,7 +3286,7 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
     collect_free_vars_formula(formula, &mut free_vars, &bound);
 
     let mut opacities: Vec<OpacityEntry> = Vec::new();
-    let body_formula = emit_formula_with_opacities(formula, &mut opacities);
+    let body_formula = emit_formula_with_opacities(formula, &mut opacities)?;
 
     opacities.sort_by(|a, b| {
         a.position_cid
@@ -3240,13 +3382,13 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
         .into_iter()
         .map(|(name, sort)| FreeVar { name, sort })
         .collect();
-    CompiledFormula {
+    Ok(CompiledFormula {
         preamble,
         body,
         free_vars: free_vars_vec,
         opacity_manifest,
         metadata: serde_json::Value::Null,
-    }
+    })
 }
 
 /// Recursively check whether a formula tree references the `Outlives`
@@ -3498,6 +3640,7 @@ mod b64_strong_tests {
     #[test]
     fn emits_self_contained_string_equality() {
         let rendered = emit_string_theory_atomic("str.eq-bv-blocks", &[subject(), bar_payload()])
+            .expect("str.eq-bv-blocks must not refuse")
             .expect("str.eq-bv-blocks must render");
         // Subject equality, let-bound bytes, four chars via str.from_code, the
         // walked ops, and the 6-bit mask all present.
@@ -3553,6 +3696,7 @@ mod b64_strong_tests {
                 bar_general_payload(),
             ],
         )
+        .expect("general str.eq-bv-blocks must not refuse")
         .expect("general str.eq-bv-blocks must render");
         assert!(
             rendered.contains("(str.to_code (str.at input 0))"),
@@ -3573,12 +3717,17 @@ mod b64_strong_tests {
     }
 
     #[test]
-    fn malformed_payload_drops_atom() {
+    fn malformed_payload_refuses() {
         let bad = Term::Const {
             value: serde_json::Value::String("not json".into()),
             sort: s("String"),
         };
-        assert!(emit_b64_strong_blocks(&subject(), None, &bad).is_none());
+        let err = emit_b64_strong_blocks(&subject(), None, &bad)
+            .expect_err("malformed payload must refuse");
+        assert!(
+            err.to_string().contains("str.eq-bv-blocks"),
+            "error must name the atom: {err}"
+        );
     }
 
     // z3 integration: GOOD claim sat, alphabet-valid-but-WRONG claim unsat.
@@ -3592,7 +3741,9 @@ mod b64_strong_tests {
         let subj = Term::Var {
             name: "subj".into(),
         };
-        let atom = emit_string_theory_atomic("str.eq-bv-blocks", &[subj, bar_payload()]).unwrap();
+        let atom = emit_string_theory_atomic("str.eq-bv-blocks", &[subj, bar_payload()])
+            .unwrap()
+            .unwrap();
         let claim_lit = format!("\"{}\"", claim);
         // Assert the strong-tier definition AND the sworn equality over the same
         // subject. Conjoined: GOOD claim sat, alphabet-valid-but-wrong unsat.
@@ -3661,7 +3812,7 @@ mod b64_strong_tests {
                 },
             ],
         };
-        let parts = compile_asserted_formula(&formula);
+        let parts = compile_asserted_formula(&formula).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let mut child = Command::new("z3")
             .args(["-smt2", "-in"])
@@ -3716,7 +3867,7 @@ mod b64_strong_tests {
                 },
             ],
         };
-        let parts = compile_asserted_formula(&formula);
+        let parts = compile_asserted_formula(&formula).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let mut child = Command::new("z3")
             .args(["-smt2", "-in"])
@@ -3856,6 +4007,7 @@ mod b64_strong_tests {
                 tail2_payload(),
             ],
         )
+        .unwrap()
         .unwrap();
         // 3 sextet + 1 pad = 4 chars; pad rendered as (str.from_code 61).
         assert_eq!(
@@ -3876,6 +4028,7 @@ mod b64_strong_tests {
                 tail1_payload(),
             ],
         )
+        .unwrap()
         .unwrap();
         // 2 sextet + 2 pad = 4 chars.
         assert_eq!(
@@ -3902,6 +4055,7 @@ mod b64_strong_tests {
                 payload,
             ],
         )
+        .unwrap()
         .unwrap();
         let script = format!(
             "(set-logic ALL)\n(declare-const subj String)\n\
