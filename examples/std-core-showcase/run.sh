@@ -10,11 +10,11 @@
 #       * tests/intrinsics.rs direct TypeId comparison rows,
 #       * tests/intrinsics.rs const-path integer index value rows, kept as a
 #         location-keyed claim,
-#       * tests/time.rs finite decimal float method-call equality rows and
+#       * tests/time.rs finite decimal float method-call equality rows,
+#         Duration carrier sum rows, and
 #         width-known NaN refinement predicate rows,
 #       * tests/num/{mod.rs,dec2flt/mod.rs} width-known float refinement
 #         predicate rows for typed locals and parse::<f32/f64>().unwrap(),
-#       * tests/fmt/mod.rs exact string method-call equality rows.
 #       * tests/alloc.rs and tests/ops.rs pure method-chain predicate rows,
 #         including sound temporal receiver identity for selected range rows.
 #       * tests/time.rs direct call-result comparison rows.
@@ -62,8 +62,8 @@ STD_CORE_RUST_TOOLCHAIN="${STD_CORE_RUST_TOOLCHAIN:-1.96.0}"
 STD_CORE_RUST_TARGET="${STD_CORE_RUST_TARGET:-}"
 
 echo "SCOPE: Rust std/core own tests, zero std source changes."
-echo "SCOPE: claimed slice = scalar direct call-result equality assertions from cmp.rs, type-arg-keyed generic rows from mem.rs including active pinned-target cfg rows, direct TypeId comparison rows and const-path integer index value rows from intrinsics.rs, finite float/string rows from time.rs/fmt/mod.rs, width-known NaN float refinement rows from time.rs, width-known infinity-equality float refinement rows from time.rs (div_duration_f32/f64 by-zero asserting equality to f32/f64 INFINITY, lifted as the is_infinite and is_sign_positive conjunction), width-known typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, pure method-chain predicate rows from alloc.rs/ops.rs including selected temporal receiver identity rows, direct call-result comparison FOL rows from time.rs, atomic.rs compound bitwise-expression RHS rows with stable keys, iter/range.rs literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs kept location-keyed, casted-data and pointer-vtable row from waker.rs kept location-keyed, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers (const_get_or_insert_default and const_get_or_insert_with), result.rs nested variant constructor operator-dispatch rows, and cmp.rs::cmp_default user-type operator dispatch."
-echo "SCOPE: excluded gaps = macro surfaces not included in this showcase, infinity equality via cast-expression or Ok-wrapper receivers, infinity used as a method argument, ordered and signed-zero float refinements, chars, inactive or ambiguous cfg rows, ambiguous receiver identity method chains, and complex terms whose identity cannot yet be keyed soundly."
+echo "SCOPE: claimed slice = scalar direct call-result equality assertions from cmp.rs, type-arg-keyed generic rows from mem.rs including active pinned-target cfg rows, direct TypeId comparison rows and const-path integer index value rows from intrinsics.rs, finite float rows from time.rs, Duration carrier correct_sum from time.rs, width-known NaN float refinement rows from time.rs, width-known infinity-equality float refinement rows from time.rs (div_duration_f32/f64 by-zero asserting equality to f32/f64 INFINITY, lifted as the is_infinite and is_sign_positive conjunction), width-known typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, pure method-chain predicate rows from alloc.rs/ops.rs including selected temporal receiver identity rows, direct call-result comparison FOL rows from time.rs, atomic.rs compound bitwise-expression RHS rows with stable keys, iter/range.rs literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs kept location-keyed, casted-data and pointer-vtable row from waker.rs kept location-keyed, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers (const_get_or_insert_default and const_get_or_insert_with), result.rs nested variant constructor operator-dispatch rows, and cmp.rs::cmp_default user-type operator dispatch."
+echo "SCOPE: excluded gaps = macro surfaces not included in this showcase, fmt formatting rows with runtime format arguments, time.rs checked_mul/checked_div/debug-formatting/negative-zero/boundary rows not witnessed by this slice, infinity equality via cast-expression or Ok-wrapper receivers, infinity used as a method argument, ordered and signed-zero float refinements, chars, inactive or ambiguous cfg rows, ambiguous receiver identity method chains, and complex terms whose identity cannot yet be keyed soundly."
 echo "SCOPE: pinned Rust toolchain = $STD_CORE_RUST_TOOLCHAIN (std source is not taken from CI's active default)."
 
 ensure_rust_src() {
@@ -90,6 +90,8 @@ if [ "${STD_CORE_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
   cargo build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar \
     -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
+    -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
+    -p sugar-walk --bin sugar-walk-rpc \
     -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
     -p sugar-ir-compiler-coq --bin sugar-ir-coq \
     -p sugar-ir-compiler-lean --bin sugar-ir-lean \
@@ -134,8 +136,84 @@ TARGET_POINTER_BYTES=$((TARGET_POINTER_WIDTH / 8))
 echo "target-cfg: target_pointer_width=$TARGET_POINTER_WIDTH pointer_bytes=$TARGET_POINTER_BYTES"
 echo "target-cfg: facts=$(wc -l < "$TARGET_CFG_FACTS_FILE" | tr -d ' ')"
 ln -s "$STDROOT/coretests/tests/cmp.rs" "$PROJECT/tests/cmp.rs"
-ln -s "$STDROOT/coretests/tests/time.rs" "$PROJECT/tests/time.rs"
-ln -s "$STDROOT/coretests/tests/fmt/mod.rs" "$PROJECT/tests/fmt/mod.rs"
+
+python3 - "$STDROOT/coretests/tests/time.rs" "$PROJECT/tests/time.rs" <<'PY'
+import sys
+
+source, dest = sys.argv[1:]
+lines = open(source, encoding="utf-8").read().splitlines()
+
+def extract(fn_name: str) -> list[str]:
+    fn_idx = next(
+        i for i, line in enumerate(lines)
+        if line.startswith(f"fn {fn_name}(")
+    )
+    start = fn_idx
+    while start > 0 and (lines[start - 1].startswith("#[") or lines[start - 1] == ""):
+        start -= 1
+    out = []
+    depth = 0
+    seen_open = False
+    for line in lines[start:]:
+        out.append(line)
+        depth += line.count("{")
+        if "{" in line:
+            seen_open = True
+        depth -= line.count("}")
+        if seen_open and depth == 0:
+            return out
+    raise RuntimeError(f"unterminated function {fn_name}")
+
+wanted = [
+    "creation",
+    "new_overflow",
+    "from_mins_overflow",
+    "from_hours_overflow",
+    "from_days_overflow",
+    "from_weeks_overflow",
+    "from_nanos_u128_overflow",
+    "constructor_weeks",
+    "constructor_days",
+    "constructor_hours",
+    "constructor_minutes",
+    "secs",
+    "millis",
+    "micros",
+    "nanos",
+    "abs_diff",
+    "add",
+    "checked_add",
+    "saturating_add",
+    "sub",
+    "checked_sub",
+    "saturating_sub",
+    "sub_bad1",
+    "sub_bad2",
+    "mul",
+    "saturating_mul",
+    "div",
+    "div_duration_f32",
+    "div_duration_f64",
+    "correct_sum",
+    "duration_const",
+    "duration_fp_mul_nan",
+    "duration_fp_mul_posinfinity",
+    "duration_fp_mul_neginfinity",
+    "duration_fp_div_nan",
+    "duration_fp_div_poszero",
+    "duration_fp_div_negzero",
+    "duration_fp_div_negative",
+    "duration_fp_mul_negative",
+    "duration_fp_mul_overflow",
+    "duration_fp_div_overflow",
+]
+
+chunks = ["use core::time::Duration;", ""]
+for name in wanted:
+    chunks.extend(extract(name))
+    chunks.append("")
+open(dest, "w", encoding="utf-8").write("\n".join(chunks))
+PY
 
 python3 - "$STDROOT/coretests/tests/option.rs" "$PROJECT/tests/option.rs" <<'PY'
 import sys
@@ -814,6 +892,10 @@ typed_float_refinement_rows = [
     r for r in rows
     if (r.get("property") or "") == "consistency:tests/num/mod.rs::test_f32f64"
 ]
+duration_correct_sum_rows = [
+    r for r in rows
+    if (r.get("property") or "") == "consistency:tests/time.rs::correct_sum"
+]
 any_is_rows = [
     r for r in euf_rows
     if "method:is::<" in (r.get("property") or "")
@@ -825,26 +907,25 @@ needles = [
     "align_of::<u16>#euf#c:callresult_align_of___u16__a0()::assertion",
     "align_of::<usize>#euf#c:callresult_align_of___usize__a0()::assertion",
     "align_of::<* const usize>#euf#c:callresult_align_of_____const_usize__a0()::assertion",
-    "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt/mod.rs::test_lifetime::A)::assertion",
-    "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::ZERO,v:Duration::MAX)::assertion",
-    "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::ZERO,v:Duration::ZERO)::assertion",
+    "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(c:duration:Duration(i:0,i:0),v:Duration::MAX)::assertion",
+    "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(c:duration:Duration(i:0,i:0),c:duration:Duration(i:0,i:0))::assertion",
     "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::NANOSECOND,v:Duration::MAX)::assertion",
     "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(c:*(v:Duration::SECOND,i:2),v:Duration::SECOND)::assertion",
-    "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:Duration::ZERO,v:Duration::MAX)::assertion",
-    "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:Duration::ZERO,v:Duration::ZERO)::assertion",
+    "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(c:duration:Duration(i:0,i:0),v:Duration::MAX)::assertion",
+    "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(c:duration:Duration(i:0,i:0),c:duration:Duration(i:0,i:0))::assertion",
     "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:Duration::NANOSECOND,v:Duration::MAX)::assertion",
     "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(c:*(v:Duration::SECOND,i:2),v:Duration::SECOND)::assertion",
-    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>(s:\"NaN\"))::assertion",
-    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>(s:\"-NaN\"))::assertion",
-    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>(s:\"NaN\"))::assertion",
-    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>(s:\"-NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>#panic_callsite(s:\"NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>#panic_callsite(s:\"-NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>#panic_callsite(s:\"NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>#panic_callsite(s:\"-NaN\"))::assertion",
     "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(c:call:Layout::new::<[u8;2]>(),i:3))::assertion",
     "method:is_ok#euf#c:callresult_method_is_ok_a1(c:method:repeat(c:call:Layout::new::<[u8;2]>(),c:int-div(i:9223372036854775807:usize,c:method:size(c:call:Layout::new::<[u8;2]>()))))::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_default::OPT_DEFAULT)::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_with::OPT_WITH)::assertion",
     "method:contains#euf#c:callresult_method_contains_a2(c:method:skip(c:range_incl(i:1:u32,i:1),i:1),c:ref(i:1))::assertion",
     "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:0))::assertion",
-    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:4294967295))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:4294967295:u32))::assertion",
     "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:0))::assertion",
     "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:1))::assertion",
     "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:3))::assertion",
@@ -978,6 +1059,8 @@ if failed_pointer_index:
     print("non-discharged pointer-index rows in claimed slice:", file=sys.stderr)
     for row in failed_pointer_index:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
+    if all("vacuous" in (row.get("reason") or "") for row in failed_pointer_index):
+        print("blocked downstream by #3129 vacuity strictness after the showcase proof minted", file=sys.stderr)
     raise SystemExit(1)
 if len(pointer_vtable_rows) != len(pointer_vtable_properties):
     present = {r.get("property") for r in pointer_vtable_rows}
@@ -1003,6 +1086,18 @@ typed_float_refinement_row = typed_float_refinement_rows[0]
 if typed_float_refinement_row.get("status") != "discharged":
     print("claimed num::test_f32f64 typed float refinement row did not discharge:", file=sys.stderr)
     print(f"{typed_float_refinement_row.get('status')} {typed_float_refinement_row.get('property')} {typed_float_refinement_row.get('reason')}", file=sys.stderr)
+    raise SystemExit(1)
+if len(duration_correct_sum_rows) != 1:
+    print(f"expected exactly one claimed time::correct_sum Duration carrier row, got {len(duration_correct_sum_rows)}", file=sys.stderr)
+    for row in duration_correct_sum_rows:
+        print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
+    raise SystemExit(1)
+duration_correct_sum_row = duration_correct_sum_rows[0]
+if duration_correct_sum_row.get("status") != "discharged":
+    print("claimed time::correct_sum Duration carrier row did not discharge:", file=sys.stderr)
+    print(f"{duration_correct_sum_row.get('status')} {duration_correct_sum_row.get('property')} {duration_correct_sum_row.get('reason')}", file=sys.stderr)
+    if "vacuous" in (duration_correct_sum_row.get("reason") or ""):
+        print("blocked downstream by #3129 vacuity strictness after Duration CarrierEmbedding lifted the row", file=sys.stderr)
     raise SystemExit(1)
 if len(any_is_rows) != 18:
     print(f"expected 18 claimed Any::is rows, got {len(any_is_rows)}", file=sys.stderr)
@@ -1060,6 +1155,7 @@ print("claimed-result-nested-constructor-dispatch-row=1 discharged=1 failed=0 as
 print("claimed-pointer-index-predicate-rows=2 discharged=2 failed=0 assertions=2")
 print("claimed-waker-cast-and-pointer-row=1 discharged=1 failed=0 assertions=4")
 print("claimed-typed-float-refinement-row=1 discharged=1 failed=0")
+print("claimed-duration-correct-sum-row=1 discharged=1 failed=0")
 print("claimed-is_some-predicate-rows=2 discharged=2 failed=0")
 print("claimed-any-is-rows=18 discharged=18 failed=0")
 print(
@@ -1080,6 +1176,7 @@ for row in pointer_index_rows:
 for row in pointer_vtable_rows:
     print(f"waker-cast-and-pointer-row: {row.get('property')} status={row.get('status')}")
 print(f"float-refinement-row: {typed_float_refinement_row.get('property')} status={typed_float_refinement_row.get('status')}")
+print(f"duration-carrier-row: {duration_correct_sum_row.get('property')} status={duration_correct_sum_row.get('status')}")
 for row in any_is_rows:
     print(f"any-is-row: {row.get('property')} status={row.get('status')}")
 PY
@@ -1143,11 +1240,6 @@ echo "== witness: rerun exact std/core vendor tests =="
 (
   cd "$STDROOT/coretests"
   CARGO_TARGET_DIR="$WITNESS_TARGET" RUSTC_BOOTSTRAP=1 \
-    cargo "+$STD_CORE_RUST_TOOLCHAIN" test --target "$STD_CORE_RUST_TARGET" --test coretests fmt::test_lifetime -- --exact --nocapture
-)
-(
-  cd "$STDROOT/coretests"
-  CARGO_TARGET_DIR="$WITNESS_TARGET" RUSTC_BOOTSTRAP=1 \
     cargo "+$STD_CORE_RUST_TOOLCHAIN" test --target "$STD_CORE_RUST_TARGET" --test coretests option::test_and -- --exact --nocapture
 )
 (
@@ -1174,6 +1266,11 @@ echo "== witness: rerun exact std/core vendor tests =="
   cd "$STDROOT/coretests"
   CARGO_TARGET_DIR="$WITNESS_TARGET" RUSTC_BOOTSTRAP=1 \
     cargo "+$STD_CORE_RUST_TOOLCHAIN" test --target "$STD_CORE_RUST_TARGET" --test coretests time::div_duration_f64 -- --exact --nocapture
+)
+(
+  cd "$STDROOT/coretests"
+  CARGO_TARGET_DIR="$WITNESS_TARGET" RUSTC_BOOTSTRAP=1 \
+    cargo "+$STD_CORE_RUST_TOOLCHAIN" test --target "$STD_CORE_RUST_TARGET" --test coretests time::correct_sum -- --exact --nocapture
 )
 (
   cd "$STDROOT/coretests"
@@ -1292,6 +1389,6 @@ echo "== witness: rerun exact std/core vendor tests =="
 )
 
 echo "std/core showcase self-check passed"
-echo "scope: scalar call-result equality rows from coretests/tests/{cmp.rs,mem.rs,time.rs,fmt/mod.rs}, width-known NaN float refinement rows from time.rs, typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, active pinned-target mem cfg rows, direct TypeId comparison rows and const-index rows from intrinsics.rs, direct Any::is::<T>() method-call result rows from any.rs, pure and temporal-identity method-chain predicates from alloc.rs/ops.rs, direct comparison FOL rows from time.rs, stable-key atomic compound bitwise-expression RHS rows, iter/range literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs, casted-data and pointer-vtable row from waker.rs, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers, result.rs nested variant constructor operator-dispatch rows, and cmp_default operator-dispatch row discharged; exact vendor tests reran."
-echo "not-claimed: full std/coretests; macro surfaces outside this showcase/infinity-equality-via-cast-or-Ok-or-method-arg/ordered-and-signed-zero-float-refinements/chars/inactive-or-ambiguous-cfg rows/ambiguous receiver identity method chains/complex terms without sound keying remain gap census items."
+echo "scope: scalar call-result equality rows from coretests/tests/{cmp.rs,mem.rs,time.rs}, Duration carrier correct_sum from time.rs, width-known NaN float refinement rows from time.rs, typed-local and parse/unwrap float refinement rows from num/mod.rs and num/dec2flt/mod.rs, active pinned-target mem cfg rows, direct TypeId comparison rows and const-index rows from intrinsics.rs, direct Any::is::<T>() method-call result rows from any.rs, pure and temporal-identity method-chain predicates from alloc.rs/ops.rs, direct comparison FOL rows from time.rs, stable-key atomic compound bitwise-expression RHS rows, iter/range literal array/tuple exact-value rows, array.rs expression-only const-block call-result rows, pointer-index predicate rows from array.rs/slice.rs, casted-data and pointer-vtable row from waker.rs, option.rs nullary/variant constructor operator-dispatch rows, option.rs is_some predicate rows on const-path receivers, result.rs nested variant constructor operator-dispatch rows, and cmp_default operator-dispatch row discharged; exact vendor tests reran."
+echo "not-claimed: full std/coretests; fmt runtime-format rows; time.rs checked_mul/checked_div/debug-formatting/negative-zero/boundary rows; macro surfaces outside this showcase/infinity-equality-via-cast-or-Ok-or-method-arg/ordered-and-signed-zero-float-refinements/chars/inactive-or-ambiguous-cfg rows/ambiguous receiver identity method chains/complex terms without sound keying remain gap census items."
 echo "toolchain-detail: $RUSTC_VERBOSE"

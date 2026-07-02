@@ -87,6 +87,7 @@ pub mod sugar {
     pub mod cycle;
     pub mod dormant_mut_ref;
     pub mod duration_accessor;
+    pub mod duration_value;
     pub mod dyn_any;
     pub mod enumerate;
     pub mod extract_if;
@@ -665,6 +666,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // still warrant through the complete path; only the version-sensitive frontier earns
         // this refusal.
         || reason.contains("Unicode string case mapping is not modeled")
+        // TERMINAL: Duration CarrierEmbedding is deliberately a canonical Int refinement.
+        // A non-canonical constructor spelling (`nanos >= 1e9`) may be equal in Rust after
+        // normalization, but this floor only projects canonical values; non-canonical
+        // spellings are refused rather than trusted as peer-sort identities.
+        || reason.contains("Duration CarrierEmbedding")
         // TERMINAL: a SIDE-EFFECTING closure body (HALF 2 of the fold-closure bucket) --
         // a `.for_each`/`.map`/`.fold` closure that mutates captured state or advances an
         // iterator (`iter.next()`, `nth += 1`). Its assert observes a per-iteration
@@ -9063,6 +9069,11 @@ enum Effect {
     /// and inactive cfg arms complete; only genuinely ambiguous target configuration reaches
     /// this boundary.
     Configuration { boundary: String, reason: String },
+    /// DURATION-CARRIER-EMBEDDING: a source Duration value reached the carrier floor but
+    /// did not satisfy the canonical projection refinement required by #3125
+    /// (`0 <= nanos < 1e9`). Duration remains a refinement of Int; non-canonical
+    /// constructor spellings are refused rather than silently treated as peer-sort values.
+    DurationCarrierEmbedding { boundary: String, reason: String },
 }
 
 impl Effect {
@@ -9257,6 +9268,9 @@ impl Effect {
                     .to_string()
             }
             Effect::Configuration { reason, .. } => reason.clone(),
+            Effect::DurationCarrierEmbedding { reason, .. } => {
+                format!("unsupported term: {reason}; refused")
+            }
         }
     }
 
@@ -9313,7 +9327,8 @@ impl Effect {
             | Effect::FormatArgument { boundary, .. }
             | Effect::RuntimeCallableElement { boundary, .. }
             | Effect::UnicodeStringCase { boundary }
-            | Effect::Configuration { boundary, .. } => boundary.clone(),
+            | Effect::Configuration { boundary, .. }
+            | Effect::DurationCarrierEmbedding { boundary, .. } => boundary.clone(),
         };
         SourceMemento { boundary }
     }
@@ -19134,6 +19149,15 @@ pub(crate) fn assertion_entry_from_relation(
         };
     }
     if let Some(atom) = const_char_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
+    if let Some(atom) = sugar::duration_value::duration_relation_atom(&lhs, &rhs, op) {
         return AssertionEntry {
             name: None,
             atom,

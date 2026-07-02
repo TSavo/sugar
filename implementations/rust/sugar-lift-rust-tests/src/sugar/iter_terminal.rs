@@ -62,6 +62,9 @@ use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
 use syn::{Expr, Stmt};
 use tracing::debug;
 
+use crate::sugar::duration_value::{
+    duration_term_from_total_nanos, duration_total_nanos_from_expr, duration_total_nanos_from_term,
+};
 use crate::sugar::factory::{
     build_composite, desugar_build_ctx, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
     TermFloor,
@@ -771,6 +774,7 @@ impl MonoidFoldTerminal {
 /// floors and floor-gap telemetry, but no named MonoidFold/CarrierEmbedding
 /// sibling to mirror. Rust names this seam from #3125 while preserving the
 /// existing Int carrier lowering byte-for-byte.
+#[derive(Clone, Copy)]
 struct MonoidFold<'a> {
     terminal: MonoidFoldTerminal,
     element_type_hint: Option<&'a str>,
@@ -786,6 +790,9 @@ impl<'a> MonoidFold<'a> {
 
     fn lower_term_sequence(self, terms: Vec<Rc<Term>>) -> Result<Rc<Term>, MonoidFoldGap> {
         if let Some(hint) = self.element_type_hint {
+            if element_type_hint_has_duration_carrier(hint) {
+                return self.lower_duration_term_sequence(terms);
+            }
             if !element_type_hint_has_int_carrier(hint) {
                 return Err(self.gap(None));
             }
@@ -803,6 +810,12 @@ impl<'a> MonoidFold<'a> {
     }
 
     fn lower_literal_sequence(self, seq: &[DesugaredElem]) -> Result<Rc<Term>, MonoidFoldGap> {
+        if self
+            .element_type_hint
+            .is_some_and(element_type_hint_has_duration_carrier)
+        {
+            return self.lower_duration_literal_sequence(seq);
+        }
         let mut ints = Vec::with_capacity(seq.len());
         for elem in seq {
             let Some(value) = elem.value.as_ref() else {
@@ -841,6 +854,41 @@ impl<'a> MonoidFold<'a> {
                 monadic::some_term(num(n))
             }
         })
+    }
+
+    fn lower_duration_term_sequence(self, terms: Vec<Rc<Term>>) -> Result<Rc<Term>, MonoidFoldGap> {
+        if !matches!(self.terminal, MonoidFoldTerminal::Sum) {
+            return Err(self.gap(Some("Duration".to_string())));
+        }
+        let mut embedded = Vec::with_capacity(terms.len());
+        for term in terms {
+            let total = duration_total_nanos_from_term(&term)
+                .ok_or_else(|| self.gap(Some("Duration".to_string())))?;
+            embedded.push(num(total));
+        }
+        let total = fold_int_terms("+", 0, embedded);
+        let total =
+            const_fold_int_term(&total).ok_or_else(|| self.gap(Some("Duration".to_string())))?;
+        duration_term_from_total_nanos(total).ok_or_else(|| self.gap(Some("Duration".to_string())))
+    }
+
+    fn lower_duration_literal_sequence(
+        self,
+        seq: &[DesugaredElem],
+    ) -> Result<Rc<Term>, MonoidFoldGap> {
+        if !matches!(self.terminal, MonoidFoldTerminal::Sum) {
+            return Err(self.gap(Some("Duration".to_string())));
+        }
+        let mut embedded = Vec::with_capacity(seq.len());
+        for elem in seq {
+            let total = duration_total_nanos_from_expr(&elem.expr)
+                .ok_or_else(|| self.gap(element_type_from_expr(&elem.expr)))?;
+            embedded.push(num(total));
+        }
+        let total = fold_int_terms("+", 0, embedded);
+        let total =
+            const_fold_int_term(&total).ok_or_else(|| self.gap(Some("Duration".to_string())))?;
+        duration_term_from_total_nanos(total).ok_or_else(|| self.gap(Some("Duration".to_string())))
     }
 
     fn gap(self, observed_type: Option<String>) -> MonoidFoldGap {
@@ -915,6 +963,10 @@ fn element_type_hint_has_int_carrier(hint: &str) -> bool {
             | "u128"
             | "usize"
     )
+}
+
+fn element_type_hint_has_duration_carrier(hint: &str) -> bool {
+    hint.rsplit("::").next().unwrap_or(hint) == "Duration"
 }
 
 fn element_type_from_const(value: &ConstVal) -> Option<String> {
@@ -1065,7 +1117,24 @@ impl IterTerminalSugar {
                         )
                         .is_some())
             }
-            Terminal::Sum | Terminal::Product => false,
+            Terminal::Sum => {
+                self.element_type_hint
+                    .as_deref()
+                    .is_some_and(element_type_hint_has_duration_carrier)
+                    && (method_family::literal_sequence_static_len_in_scope(
+                        &self.receiver.source_expr,
+                        let_inits,
+                        scope,
+                    )
+                    .is_some()
+                        || method_family::literal_range_sequence_static_len_in_scope(
+                            &self.receiver.source_expr,
+                            let_inits,
+                            scope,
+                        )
+                        .is_some())
+            }
+            Terminal::Product => false,
         }
     }
 
@@ -1440,8 +1509,8 @@ impl IterTerminalSugar {
                 return Some(Desugared::Term(num(seq.len() as i128)));
             }
             // EXTREMUM terminals (`.min()`/`.max()`) and numeric reductions
-            // (`.sum()`/`.product()`) route through the MonoidFold dispatch seam. Slice 1
-            // only implements the existing Int carrier; no CarrierEmbedding is available yet.
+            // (`.sum()`/`.product()`) route through the MonoidFold dispatch seam. Int stays
+            // the degenerate carrier; Duration Sum embeds/projects through CarrierEmbedding.
             if let Some(terminal) = MonoidFoldTerminal::from_terminal(&self.terminal) {
                 let fold = MonoidFold::new(terminal, self.element_type_hint.as_deref());
                 return match fold.lower_literal_sequence(&seq) {
