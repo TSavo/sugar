@@ -1147,6 +1147,11 @@ class _Emitter:
             for value in values[2:]:
                 result = ctor(op, result, value)
             return result
+        if isinstance(node, ast.IfExp):
+            condition = self.expr(node.test)
+            then_ = self.expr(node.body)
+            else_ = self.expr(node.orelse)
+            return ctor("python:ifexp", condition, then_, else_)
         if isinstance(node, ast.Compare):
             return self.compare(node)
         if isinstance(node, ast.Call):

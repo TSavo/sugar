@@ -408,6 +408,18 @@ def _lambda_param(
     }
 
 
+def _ifexp(
+    condition: dict[str, object],
+    then_: dict[str, object],
+    else_: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:ifexp",
+        "args": [condition, then_, else_],
+    }
+
+
 def _compare(
     op: str, left: dict[str, object], right: dict[str, object]
 ) -> dict[str, object]:
@@ -4028,6 +4040,44 @@ def test_lambda_roundtrip_is_structurally_stable() -> None:
 
     compiled = compile_body_term(_return(term))
     relifted = lift_source(compiled, "roundtrip_lambda.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_ifexp_lifts_explicit_ternary_condition_and_branches() -> None:
+    result = lift_source(
+        "def f(cond, x, y):\n    return x if cond else y\n",
+        "ifexp_basic.py",
+    )
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_ifexp(_var("cond"), _var("x"), _var("y")))
+
+
+def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> None:
+    result = lift_source(
+        "def f(cond, x, ys):\n    return x if cond else (y for y in ys)\n",
+        "ifexp_else_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "ifexp_else_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: GeneratorExp",
+        }
+    ]
+
+
+def test_ifexp_roundtrip_is_structurally_stable() -> None:
+    term = _ifexp(_var("cond"), _int_const(1), _int_const(0))
+
+    compiled = compile_body_term(_return(term), formals=["cond"])
+    relifted = lift_source(compiled, "roundtrip_ifexp.py")
 
     assert relifted.refusals == []
     body = _function_body(relifted)

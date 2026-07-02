@@ -292,6 +292,8 @@ def _expr(term: Json) -> ast.expr:
             ops=[_cmpop(_const_string(args[0]))],
             comparators=[_expr(args[2])],
         )
+    if name == "python:ifexp":
+        return ast.IfExp(test=_expr(args[0]), body=_expr(args[1]), orelse=_expr(args[2]))
     if name == "python:call":
         positional: list[ast.expr] = []
         keywords: list[ast.keyword] = []
