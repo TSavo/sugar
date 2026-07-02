@@ -15,7 +15,7 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
-    ProofEnvelopeInput, ProofGraph, WitnessMemento,
+    MementoCid, ProofEnvelopeInput, ProofGraph, WitnessMemento,
 };
 
 #[derive(Debug, Clone)]
@@ -122,6 +122,12 @@ pub(crate) fn mint_json_witness_with_options(
     if !actual_output_cids.is_empty() && plan_cid.is_none() {
         return Err("toolchain output witness carries actualOutputCids but no planCid".to_string());
     }
+    if let Some(plan_cid) = &plan_cid {
+        parse_memento_cid("planCid", plan_cid)?;
+    }
+    for cid in &actual_output_cids {
+        parse_memento_cid("actualOutputCids", cid)?;
+    }
 
     let claim_body_cid = jcs_cid(&claim_body);
     let evidence_root_cid = jcs_cid(evidence);
@@ -140,12 +146,10 @@ pub(crate) fn mint_json_witness_with_options(
     });
     add_toolchain_scope(&mut witness_body, plan_cid.as_deref(), &actual_output_cids);
     let witness_cid = jcs_cid(&witness_body);
-    let mut input_cids = collect_cid_strings(&witness_body);
-    input_cids.extend(
-        extra_input_cids
-            .into_iter()
-            .filter(|cid| cid.starts_with("blake3-512:")),
-    );
+    let mut input_cids = collect_cid_strings(&witness_body)?;
+    for cid in extra_input_cids {
+        input_cids.insert(parse_memento_cid("extraInputCids", &cid)?.to_string());
+    }
     input_cids.insert(claim_body_cid.clone());
     input_cids.insert(evidence_root_cid.clone());
     let input_cids: Vec<String> = input_cids.into_iter().collect();
@@ -258,29 +262,40 @@ fn add_toolchain_scope(body: &mut Json, plan_cid: Option<&str>, actual_output_ci
     }
 }
 
-fn collect_cid_strings(value: &Json) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    collect_cid_strings_inner(value, &mut out);
-    out
+fn parse_memento_cid(context: &str, value: &str) -> Result<MementoCid, String> {
+    MementoCid::try_parse(value.to_string()).map_err(|raw| {
+        format!("{context} must be a blake3-512 CID with 128 hex characters, got `{raw}`")
+    })
 }
 
-fn collect_cid_strings_inner(value: &Json, out: &mut BTreeSet<String>) {
+fn collect_cid_strings(value: &Json) -> Result<BTreeSet<String>, String> {
+    let mut out = BTreeSet::new();
+    collect_cid_strings_inner("$", value, &mut out)?;
+    Ok(out)
+}
+
+fn collect_cid_strings_inner(
+    path: &str,
+    value: &Json,
+    out: &mut BTreeSet<String>,
+) -> Result<(), String> {
     match value {
-        Json::String(s) if s.starts_with("blake3-512:") => {
-            out.insert(s.clone());
+        Json::String(s) if s.strip_prefix("blake3-512:").is_some() => {
+            out.insert(parse_memento_cid(path, s)?.to_string());
         }
         Json::Array(items) => {
-            for item in items {
-                collect_cid_strings_inner(item, out);
+            for (idx, item) in items.iter().enumerate() {
+                collect_cid_strings_inner(&format!("{path}[{idx}]"), item, out)?;
             }
         }
         Json::Object(obj) => {
-            for value in obj.values() {
-                collect_cid_strings_inner(value, out);
+            for (key, value) in obj {
+                collect_cid_strings_inner(&format!("{path}.{key}"), value, out)?;
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn jcs_cid(value: &Json) -> String {
@@ -337,6 +352,10 @@ fn json_to_cvalue(j: &Json) -> Arc<CValue> {
 mod tests {
     use super::*;
 
+    fn valid_cid(fill: char) -> String {
+        format!("blake3-512:{}", fill.to_string().repeat(128))
+    }
+
     #[test]
     fn prove_report_mints_witness_proof_bundle() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -375,6 +394,48 @@ mod tests {
         assert!(minted.evidence_cid.starts_with("blake3-512:"));
         assert!(minted.proof_file.exists());
         assert!(minted.evidence_file.exists());
+    }
+
+    #[test]
+    fn json_witness_refuses_bad_prefix_extra_input_cid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let err = mint_json_witness_with_options(
+            "toolchain",
+            "toolchain-run",
+            &json!({"kind": "toolchain-run"}),
+            &json!({"kind": "toolchain-evidence"}),
+            temp.path(),
+            JsonWitnessOptions {
+                extra_input_cids: vec!["sha512:not-a-sugar-cid".to_string()],
+                ..JsonWitnessOptions::default()
+            },
+        )
+        .expect_err("bad extra input CID prefix must refuse");
+
+        assert!(
+            err.contains("extraInputCids") && err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn json_witness_refuses_bad_hex_nested_cid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bad = format!("blake3-512:{}g", "a".repeat(127));
+        let err = mint_json_witness_with_options(
+            "toolchain",
+            "toolchain-run",
+            &json!({"kind": "toolchain-run", "subjectCid": bad}),
+            &json!({"kind": "toolchain-evidence"}),
+            temp.path(),
+            JsonWitnessOptions::default(),
+        )
+        .expect_err("bad nested Sugar CID hex must refuse");
+
+        assert!(
+            err.contains("subjectCid") && err.contains("blake3-512:"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -435,7 +496,7 @@ mod tests {
             &json!({"kind": "toolchain-evidence"}),
             temp.path(),
             JsonWitnessOptions {
-                actual_output_cids: vec!["blake3-512:out".to_string()],
+                actual_output_cids: vec![valid_cid('a')],
                 ..JsonWitnessOptions::default()
             },
         )
@@ -447,8 +508,8 @@ mod tests {
     #[test]
     fn toolchain_output_witness_carries_plan_scope_in_pointer_and_body() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let plan_cid = "blake3-512:plan-letter".to_string();
-        let output_cid = "blake3-512:out".to_string();
+        let plan_cid = valid_cid('c');
+        let output_cid = valid_cid('d');
         let minted = mint_json_witness_with_options(
             "toolchain",
             "toolchain-run",

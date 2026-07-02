@@ -35,6 +35,8 @@ use sugar_canonicalizer::jcs_cid_of_json;
 use sugar_ir_compiler_coq::DIALECT as COQ_DIALECT;
 use sugar_ir_compiler_lean::DIALECT as LEAN_DIALECT;
 use sugar_ir_compiler_maude::DIALECT as MAUDE_DIALECT;
+#[cfg(test)]
+use sugar_proof_envelope::MementoCid;
 
 use crate::solvers::{
     CetaGateConfig, CoqSubprocessSolver, LeanSubprocessSolver, MaudeSubprocessSolver, SolverConfig,
@@ -284,14 +286,15 @@ binary = "stub:unsat"
         let r = build_default_z3("/usr/bin/z3");
         assert!(r.contains_key("z3"));
         assert_eq!(r.get("z3").unwrap().name(), "z3");
-        assert!(r
+        let invocation_cid = r
             .get("z3")
             .unwrap()
             .identity()
             .invocation_cid
             .as_deref()
             .unwrap_or_default()
-            .starts_with("blake3-512:"));
+            .to_string();
+        assert!(MementoCid::try_parse(invocation_cid).is_ok());
     }
 
     #[test]
@@ -312,16 +315,18 @@ vendor_pin = "sha512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
             identity.artifact_cid.as_deref(),
             Some("blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
-        assert!(identity
+        let invocation_cid = identity
             .invocation_cid
             .as_deref()
             .unwrap_or_default()
-            .starts_with("blake3-512:"));
-        assert!(identity
+            .to_string();
+        assert!(MementoCid::try_parse(invocation_cid).is_ok());
+        let vendor_memento_cid = identity
             .vendor_memento_cid
             .as_deref()
             .unwrap_or_default()
-            .starts_with("blake3-512:"));
+            .to_string();
+        assert!(MementoCid::try_parse(vendor_memento_cid).is_ok());
         let memento = identity.vendor_memento.expect("vendor memento");
         assert_eq!(memento["subjectCid"], identity.artifact_cid.unwrap());
         assert_eq!(

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
+use sugar_proof_envelope::MementoCid;
 
 use crate::kit_dispatch::{dispatch_emit, dispatch_emit_check, dispatch_emit_witness};
 use crate::report_witness::{mint_json_witness_with_options, JsonWitnessOptions};
@@ -419,11 +420,23 @@ fn mint_witness_proof(
         .to_string();
 
     let mut input_cids = Vec::new();
-    collect_cid_array(emit_result.get("inputCids"), &mut input_cids);
-    collect_cid_array(output.get("observedArtifactCids"), &mut input_cids);
-    collect_cid_strings(claim_body.get("subjectCids"), &mut input_cids);
+    collect_cid_array("inputCids", emit_result.get("inputCids"), &mut input_cids)?;
+    collect_cid_array(
+        "output.observedArtifactCids",
+        output.get("observedArtifactCids"),
+        &mut input_cids,
+    )?;
+    collect_cid_strings(
+        "subjectCids",
+        claim_body.get("subjectCids"),
+        &mut input_cids,
+    )?;
     input_cids.sort();
     input_cids.dedup();
+    let input_cids = input_cids
+        .into_iter()
+        .map(|cid| cid.to_string())
+        .collect::<Vec<_>>();
 
     let mut metadata = BTreeMap::new();
     metadata.insert("sugar.emit.mode".into(), "witness".into());
@@ -461,39 +474,58 @@ fn required_str<'a>(value: &'a Json, field: &str, context: &str) -> Result<&'a s
     optional_str(value, field).ok_or_else(|| format!("{context} missing `{field}`"))
 }
 
-fn collect_cid_array(value: Option<&Json>, out: &mut Vec<String>) {
-    let Some(values) = value.and_then(Json::as_array) else {
-        return;
-    };
-    out.extend(
-        values
-            .iter()
-            .filter_map(Json::as_str)
-            .filter(|value| value.starts_with("blake3-512:"))
-            .map(str::to_string),
-    );
+fn parse_memento_cid(context: &str, value: &str) -> Result<MementoCid, String> {
+    MementoCid::try_parse(value.to_string()).map_err(|raw| {
+        format!("{context} entry must be a blake3-512 CID with 128 hex characters, got `{raw}`")
+    })
 }
 
-fn collect_cid_strings(value: Option<&Json>, out: &mut Vec<String>) {
+fn collect_cid_array(
+    context: &str,
+    value: Option<&Json>,
+    out: &mut Vec<MementoCid>,
+) -> Result<(), String> {
+    let Some(values) = value.and_then(Json::as_array) else {
+        return Ok(());
+    };
+    for item in values {
+        let raw = item
+            .as_str()
+            .ok_or_else(|| format!("{context} entries must be strings"))?;
+        out.push(parse_memento_cid(context, raw)?);
+    }
+    Ok(())
+}
+
+fn collect_cid_strings(
+    context: &str,
+    value: Option<&Json>,
+    out: &mut Vec<MementoCid>,
+) -> Result<(), String> {
     match value {
-        Some(Json::String(s)) if s.starts_with("blake3-512:") => out.push(s.clone()),
+        Some(Json::String(s)) => out.push(parse_memento_cid(context, s)?),
         Some(Json::Array(items)) => {
             for item in items {
-                collect_cid_strings(Some(item), out);
+                collect_cid_strings(context, Some(item), out)?;
             }
         }
         Some(Json::Object(map)) => {
             for item in map.values() {
-                collect_cid_strings(Some(item), out);
+                collect_cid_strings(context, Some(item), out)?;
             }
         }
-        _ => {}
+        Some(_) | None => {}
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_cid(fill: char) -> String {
+        format!("blake3-512:{}", fill.to_string().repeat(128))
+    }
 
     #[test]
     fn build_witness_emit_plan_maps_requirement_to_attest_plan() {
@@ -575,6 +607,67 @@ mod tests {
                 && envelope.pointer("/body/evidence").is_none()
                 && envelope.pointer("/body/claimBody").is_none(),
             "emit witness proof must carry only the structured pointer, not the witness body: {envelope:#}"
+        );
+    }
+
+    #[test]
+    fn emit_witness_refuses_bad_prefix_input_cid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan = json!({"kind": "RealizerPlan", "policyCid": "builtin:test-policy"});
+        let emit_result = json!({
+            "claimKind": "orp-witness",
+            "inputCids": ["sha512:not-a-sugar-cid"],
+            "claimBody": {
+                "claimKind": "orp-witness",
+                "subjectCids": [valid_cid('b')]
+            },
+            "evidence": {"kind": "test-evidence"},
+            "output": {"status": "witnessed"}
+        });
+
+        let err = mint_witness_proof(
+            Path::new("/tmp/project"),
+            "test-surface",
+            &plan,
+            &emit_result,
+            temp.path(),
+        )
+        .expect_err("bad input CID prefix must refuse");
+
+        assert!(
+            err.contains("inputCids") && err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn emit_witness_refuses_bad_hex_subject_cid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan = json!({"kind": "RealizerPlan", "policyCid": "builtin:test-policy"});
+        let bad = format!("blake3-512:{}g", "a".repeat(127));
+        let emit_result = json!({
+            "claimKind": "orp-witness",
+            "inputCids": [valid_cid('a')],
+            "claimBody": {
+                "claimKind": "orp-witness",
+                "subjectCids": [bad]
+            },
+            "evidence": {"kind": "test-evidence"},
+            "output": {"status": "witnessed"}
+        });
+
+        let err = mint_witness_proof(
+            Path::new("/tmp/project"),
+            "test-surface",
+            &plan,
+            &emit_result,
+            temp.path(),
+        )
+        .expect_err("bad subject CID hex must refuse");
+
+        assert!(
+            err.contains("subjectCids") && err.contains("blake3-512:"),
+            "unexpected error: {err}"
         );
     }
 }

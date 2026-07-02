@@ -133,8 +133,8 @@ pub struct MementoCid(String);
 impl MementoCid {
     fn new(cid: String) -> Self {
         assert!(
-            cid.starts_with("blake3-512:"),
-            "memento CID must be a blake3-512 CID, got `{cid}`"
+            is_blake3_512_cid(&cid),
+            "memento CID must be a blake3-512 CID with 128 hex characters, got `{cid}`"
         );
         Self(cid)
     }
@@ -1064,21 +1064,15 @@ impl ProofGraph {
         //    through kit-driven oracles.
         if let Some(members) = map.get("members").and_then(CborValue::as_map) {
             for (cid, val) in members {
-                // Gracefully reject unsupported hash-tag prefixes rather than
-                // panicking inside `MementoCid::new`. This ensures callers can
-                // surface a typed error instead of an unwind.
-                if !cid.starts_with("blake3-512:") {
-                    return Err(Other(format!(
-                        "member {cid}: unsupported hash tag; requires `blake3-512:` prefix"
-                    )));
-                }
+                let memento_cid = MementoCid::try_parse(cid.clone()).map_err(|raw| {
+                    Other(format!(
+                        "member {raw}: invalid memento CID; requires `blake3-512:` plus 128 hex characters"
+                    ))
+                })?;
                 let raw = val
                     .as_bstr()
                     .ok_or_else(|| Other(format!("member {cid} is not a byte string")))?;
-                graph.insert_member(MemberRecord::new(
-                    MementoCid::new(cid.clone()),
-                    raw.to_vec(),
-                ));
+                graph.insert_member(MemberRecord::new(memento_cid, raw.to_vec()));
             }
         }
 
@@ -1404,6 +1398,17 @@ impl Default for ProofGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cbor::{cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr};
+
+    fn catalog_with_member_key(cid: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, "members");
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, cid);
+        cbor_encode_bstr(&mut out, br#"{"header":{"kind":"witness-memento"}}"#);
+        out
+    }
 
     fn canonical_bytes(value: Json) -> Vec<u8> {
         encode_jcs(&json_to_canonical_value(&value)).into_bytes()
@@ -1548,6 +1553,31 @@ mod tests {
         assert!(
             malformed.is_err(),
             "typed memento refs must reject untagged raw strings at construction"
+        );
+    }
+
+    #[test]
+    fn read_refuses_member_key_with_bad_prefix() {
+        let err = ProofGraph::read(&catalog_with_member_key("sha512:aaaaaaaa"))
+            .expect_err("member key with wrong prefix must refuse");
+
+        assert!(
+            err.to_string().contains("sha512:aaaaaaaa"),
+            "error should name the bad member CID: {err}"
+        );
+    }
+
+    #[test]
+    fn read_refuses_member_key_with_bad_hex() {
+        let err = ProofGraph::read(&catalog_with_member_key(&format!(
+            "blake3-512:{}g",
+            "a".repeat(127)
+        )))
+        .expect_err("member key with non-hex digest must refuse");
+
+        assert!(
+            err.to_string().contains("blake3-512:"),
+            "error should name the bad member CID: {err}"
         );
     }
 

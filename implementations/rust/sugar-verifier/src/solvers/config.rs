@@ -36,6 +36,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use sugar_proof_envelope::MementoCid;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SolverConfig {
@@ -198,6 +199,13 @@ impl SolversConfig {
 
 fn validate_vendor_pins(cfg: &SolversConfig) -> Result<(), String> {
     for (name, solver) in &cfg.solvers {
+        if let Some(cid) = solver.binary_cid.as_deref() {
+            MementoCid::try_parse(cid.to_string()).map_err(|raw| {
+                format!(
+                    "solver `{name}` binary_cid must be a blake3-512 CID with 128 hex characters, got `{raw}`"
+                )
+            })?;
+        }
         let Some(pin) = solver.vendor_pin.as_deref() else {
             continue;
         };
@@ -299,6 +307,43 @@ vendor_pin = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         assert_eq!(
             z3.vendor_pin.as_deref(),
             Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+    }
+
+    #[test]
+    fn rejects_solver_artifact_cid_with_bad_prefix() {
+        let s = r#"
+[solvers]
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+binary_cid = "sha512:not-a-sugar-cid"
+"#;
+        let err = SolversConfig::from_toml(s).expect_err("bad solver artifact CID prefix rejected");
+        assert!(
+            err.contains("binary_cid") && err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_solver_artifact_cid_with_bad_hex() {
+        let s = format!(
+            r#"
+[solvers]
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+binary_cid = "blake3-512:{}g"
+"#,
+            "a".repeat(127)
+        );
+        let err = SolversConfig::from_toml(&s).expect_err("bad solver artifact CID hex rejected");
+        assert!(
+            err.contains("binary_cid") && err.contains("blake3-512:"),
+            "unexpected error: {err}"
         );
     }
 
