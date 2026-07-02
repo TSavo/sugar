@@ -388,6 +388,26 @@ def _fstring_value(
     }
 
 
+def _lambda_expr(*args: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:lambda", "args": list(args)}
+
+
+def _lambda_param(
+    name: str,
+    kind: str,
+    default: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:lambda_param",
+        "args": [
+            _str_const(name),
+            _str_const(kind),
+            _no_value() if default is None else default,
+        ],
+    }
+
+
 def _compare(
     op: str, left: dict[str, object], right: dict[str, object]
 ) -> dict[str, object]:
@@ -3894,6 +3914,125 @@ def test_nested_function_roundtrip_is_structurally_stable() -> None:
     body = _function_body(relifted)
     assert body == term
     assert cid_of_json(body) == cid_of_json(term)
+
+
+def test_simple_key_lambda_lifts_formal_scope_and_body_term() -> None:
+    source = "def f(xs):\n    return sorted(xs, key=lambda x: x[0])\n"
+
+    result = lift_source(source, "lambda_key.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _call(
+            "sorted",
+            _var("xs"),
+            _kwarg(
+                "key",
+                _lambda_expr(
+                    _str_const("x"),
+                    _subscript(_var("x"), _int_const(0)),
+                ),
+            ),
+        )
+    )
+
+
+def test_lambda_captures_enclosing_locals_symbolically_without_global_read() -> None:
+    source = (
+        'x = "global"\n'
+        "def f(scale):\n"
+        "    return lambda x: x + scale\n"
+    )
+
+    result = lift_source(source, "lambda_capture.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _lambda_expr(
+            _str_const("x"),
+            _binary("python:add", _var("x"), _var("scale")),
+        )
+    )
+    assert {"kind": "reads", "target": "x"} not in contract["effects"]
+
+
+def test_lambda_default_and_keyword_only_parameters_are_carried() -> None:
+    source = "def f():\n    return lambda x=1, *, y=2: x + y\n"
+
+    result = lift_source(source, "lambda_defaults.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _lambda_expr(
+            _lambda_param("x", "positional-or-keyword", _int_const(1)),
+            _lambda_param("y", "keyword-only", _int_const(2)),
+            _binary("python:add", _var("x"), _var("y")),
+        )
+    )
+
+
+def test_lambda_nonliteral_default_refuses_on_parameter_default() -> None:
+    result = lift_source(
+        "def f(make):\n    return lambda x=make(): x\n",
+        "lambda_nonliteral_default.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "lambda_nonliteral_default.f",
+            "line": 2,
+            "reason": "non-literal default parameter values are refused",
+        }
+    ]
+
+
+def test_lambda_variadic_parameters_are_carried_and_bound() -> None:
+    source = "def f():\n    return lambda *items, **kwargs: (items, kwargs)\n"
+
+    result = lift_source(source, "lambda_variadic.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _lambda_expr(
+            _lambda_param("items", "vararg"),
+            _lambda_param("kwargs", "kwarg"),
+            _tuple(_var("items"), _var("kwargs")),
+        )
+    )
+
+
+def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
+    result = lift_source(
+        "def f(xs):\n    return lambda x: (y for y in x)\n",
+        "lambda_body_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "lambda_body_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: GeneratorExp",
+        }
+    ]
+
+
+def test_lambda_roundtrip_is_structurally_stable() -> None:
+    term = _lambda_expr(
+        _lambda_param("x", "positional-or-keyword", _int_const(1)),
+        _lambda_param("y", "keyword-only", _int_const(2)),
+        _binary("python:add", _var("x"), _var("y")),
+    )
+
+    compiled = compile_body_term(_return(term))
+    relifted = lift_source(compiled, "roundtrip_lambda.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
 
 
 def test_none_guarded_attribute_access_emits_one_runtime_failure_locus() -> None:
