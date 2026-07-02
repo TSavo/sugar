@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // GENERATED Coq compiler
 
-#![allow(unreachable_patterns)]
+#![deny(unreachable_patterns)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use sugar_ir_compiler::FreeVar;
@@ -47,37 +47,6 @@ pub fn emit_term(term: &Term) -> String {
             format!("fun ({} : {}) => {}", param_name, sort_str, body_str)
         }
         Term::Let { bindings, body, .. } => {
-            let mut parts = Vec::new();
-            for b in bindings {
-                parts.push(format!("let {} := {} in", b.name, emit_term(&b.bound_term)));
-            }
-            let body_str = emit_term(body);
-            format!("{} {}", parts.join(" "), body_str)
-        }
-        Term::Ctor { name, args } => {
-            if args.is_empty() {
-                return coq_ident(name);
-            };
-            let args_str = args.iter();
-            let args_str = args_str.map(emit_term);
-            let args_str: Vec<String> = args_str.collect();
-            if let Some(op) = coq_binop(name) {
-                if args_str.len() == 2 {
-                    return format!("({} {} {})", args_str[0], op, args_str[1]);
-                }
-            }
-            format!("({} {})", coq_ident(name), args_str.join(" "))
-        }
-        Term::Lambda {
-            param_name,
-            param_sort,
-            body,
-        } => {
-            let sort_str = emit_sort(param_sort);
-            let body_str = emit_term(body);
-            format!("fun ({} : {}) => {}", param_name, sort_str, body_str)
-        }
-        Term::Let { bindings, body } => {
             let mut parts = Vec::new();
             for b in bindings {
                 parts.push(format!("let {} := {} in", b.name, emit_term(&b.bound_term)));
@@ -162,6 +131,50 @@ pub fn emit_formula(formula: &Formula) -> String {
                  stage 4 must lower it before backend compilation"
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int_sort() -> Sort {
+        Sort::Primitive { name: "Int".into() }
+    }
+
+    fn int_const(value: i64) -> Term {
+        Term::Const {
+            value: serde_json::json!(value),
+            sort: int_sort(),
+        }
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Var { name: name.into() }
+    }
+
+    #[test]
+    fn lambda_emits_expected_coq() {
+        let term = Term::Lambda {
+            param_name: "x".into(),
+            param_sort: int_sort(),
+            body: Box::new(var("x")),
+        };
+
+        assert_eq!(emit_term(&term), "fun (x : Z) => x");
+    }
+
+    #[test]
+    fn let_emits_expected_coq() {
+        let term = Term::Let {
+            bindings: vec![LetBinding {
+                name: "x".into(),
+                bound_term: int_const(1),
+            }],
+            body: Box::new(var("x")),
+        };
+
+        assert_eq!(emit_term(&term), "let x := 1 in x");
     }
 }
 fn emit_sort(sort: &Sort) -> String {
