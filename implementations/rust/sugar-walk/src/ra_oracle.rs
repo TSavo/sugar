@@ -1128,6 +1128,7 @@ fn hover_markdown(result: &Value) -> Option<String> {
                             parts.push(v.to_string());
                         }
                     }
+                    // sugar-audit: not-mine(non-string-hover-array-member-has-no-markdown-text)
                     _ => {}
                 }
             }
@@ -1137,6 +1138,7 @@ fn hover_markdown(result: &Value) -> Option<String> {
                 Some(parts.join("\n"))
             }
         }
+        // sugar-audit: not-mine(non-text-hover-contents-carry-no-markdown-body)
         _ => None,
     }
 }
@@ -1335,6 +1337,7 @@ fn first_balanced_parens(s: &str) -> Option<&str> {
                     return Some(&s[start + 1..start + i]);
                 }
             }
+            // sugar-audit: not-mine(non-paren-character-does-not-affect-balance)
             _ => {}
         }
     }

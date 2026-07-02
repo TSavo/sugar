@@ -303,6 +303,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-function-items)
                 _ => None,
             })
             .unwrap();

@@ -158,6 +158,7 @@ pub fn atomic_kind_for_method(method: &str) -> Option<crate::contract::AtomicKin
         "store" => Some(AtomicKind::Store),
         "compare_exchange" | "compare_exchange_weak" | "compare_and_swap" => Some(AtomicKind::Cas),
         m if m.starts_with("fetch_") || m == "swap" => Some(AtomicKind::Rmw),
+        // sugar-audit: not-mine(non-atomic-method-names-are-not-atomic-obligations)
         _ => None,
     }
 }

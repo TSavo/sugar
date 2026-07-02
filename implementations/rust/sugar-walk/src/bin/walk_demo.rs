@@ -89,6 +89,7 @@ fn main() -> ExitCode {
 fn find_fn(file: &syn::File, name: &str) -> Option<syn::ItemFn> {
     file.items.iter().find_map(|item| match item {
         syn::Item::Fn(f) if f.sig.ident == name => Some(f.clone()),
+        // sugar-audit: not-mine(demo-helper-search-ignores-non-target-items)
         _ => None,
     })
 }

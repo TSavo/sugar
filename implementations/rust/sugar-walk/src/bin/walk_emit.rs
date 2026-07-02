@@ -258,6 +258,7 @@ fn find_fn_in_items(items: &[syn::Item], name: &str) -> Option<syn::ItemFn> {
                     }
                 }
             }
+            // sugar-audit: not-mine(cli-helper-search-ignores-non-function-items)
             _ => {}
         }
     }

@@ -650,7 +650,19 @@ pub fn lift_file_type_decls(file: &File, file_path: Option<&str>) -> TypeDeclSet
                 out.impls.push(impl_memento);
                 out.impl_methods.extend(methods);
             }
-            _ => {}
+            Item::Const(_)
+            | Item::ExternCrate(_)
+            | Item::Fn(_)
+            | Item::ForeignMod(_)
+            | Item::Macro(_)
+            | Item::Mod(_)
+            | Item::Static(_)
+            | Item::TraitAlias(_)
+            | Item::Type(_)
+            | Item::Union(_)
+            | Item::Use(_)
+            | Item::Verbatim(_) => {}
+            _ => panic!("sugar-walk type_decl refused unknown syn::Item variant"),
         }
     }
     out

@@ -117,6 +117,7 @@ fn caller(x: Option<i32>) {
             .iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == name => Some(f.clone()),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .expect("caller fn")

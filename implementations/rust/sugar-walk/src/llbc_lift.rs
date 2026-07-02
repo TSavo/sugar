@@ -1019,6 +1019,7 @@ fn mir_arith_op_to_ir_ctor(op: &str) -> Option<&'static str> {
         "BitXor" => Some("^"),
         "Shl" | "ShlUnchecked" => Some("<<"),
         "Shr" | "ShrUnchecked" => Some(">>"),
+        // sugar-audit: not-mine(non-arithmetic-mir-binop-tags-flow-to-predicate-or-refusal-paths)
         _ => None,
     }
 }
@@ -1869,7 +1870,12 @@ fn operand_place_to_ir_term(
                             args: vec![inner],
                         }));
                     }
-                    _ => {}
+                    other => {
+                        return Err(llbc_schema(
+                            "place.kind.Projection[1]",
+                            format!("unsupported projection element {other:?}"),
+                        ));
+                    }
                 }
             }
         }
@@ -2047,6 +2053,7 @@ fn mir_binop_to_ir_predicate(op: &str) -> Option<&'static str> {
         "Ge" => Some("≥"),
         "Eq" => Some("="),
         "Ne" => Some("≠"),
+        // sugar-audit: not-mine(non-comparison-mir-binop-tags-are-not-predicate-ops)
         _ => None,
     }
 }
@@ -2065,6 +2072,7 @@ fn negate_predicate(f: IrFormula) -> IrFormula {
             "≥" => Some("<"),
             "=" => Some("≠"),
             "≠" => Some("="),
+            // sugar-audit: not-mine(non-ordering-predicate-negation-stays-generic-not)
             _ => None,
         };
         if let Some(new_name) = flipped {
@@ -2412,6 +2420,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == "h" => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();
@@ -2449,6 +2458,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == "f" => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();
@@ -2527,6 +2537,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == "p" => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();
@@ -2591,6 +2602,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item {
                 syn::Item::Fn(f) if f.sig.ident == "t" => Some(f),
+                // sugar-audit: not-mine(test-helper-search-ignores-non-target-items)
                 _ => None,
             })
             .unwrap();

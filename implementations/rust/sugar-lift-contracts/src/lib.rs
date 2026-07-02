@@ -149,7 +149,20 @@ fn walk_items_for_sig(
                     }
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-lift-contracts sig walker refused unknown syn::Item variant"),
         }
     }
 }
@@ -486,9 +499,16 @@ fn classify_type(
             let inner_arg: Option<String> = match &last.arguments {
                 syn::PathArguments::AngleBracketed(ab) => ab.args.iter().find_map(|a| match a {
                     syn::GenericArgument::Type(t) => Some(type_to_string(t)),
-                    _ => None,
+                    syn::GenericArgument::Lifetime(_)
+                    | syn::GenericArgument::Const(_)
+                    | syn::GenericArgument::AssocType(_)
+                    | syn::GenericArgument::AssocConst(_)
+                    | syn::GenericArgument::Constraint(_) => None,
+                    _ => panic!(
+                        "sugar-lift-contracts classify_type refused unknown syn::GenericArgument variant"
+                    ),
                 }),
-                _ => None,
+                syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => None,
             };
             // Two-arg generic for Result.
             let (ok_type, err_type): (Option<String>, Option<String>) = match &last.arguments {
@@ -498,7 +518,14 @@ fn classify_type(
                         .iter()
                         .filter_map(|a| match a {
                             syn::GenericArgument::Type(t) => Some(type_to_string(t)),
-                            _ => None,
+                            syn::GenericArgument::Lifetime(_)
+                            | syn::GenericArgument::Const(_)
+                            | syn::GenericArgument::AssocType(_)
+                            | syn::GenericArgument::AssocConst(_)
+                            | syn::GenericArgument::Constraint(_) => None,
+                            _ => panic!(
+                                "sugar-lift-contracts classify_type refused unknown syn::GenericArgument variant"
+                            ),
                         })
                         .collect();
                     (types.get(0).cloned(), types.get(1).cloned())
@@ -582,7 +609,20 @@ fn classify_type(
                 }
             }
         }
-        _ => None,
+        syn::Type::Array(_)
+        | syn::Type::BareFn(_)
+        | syn::Type::Group(_)
+        | syn::Type::ImplTrait(_)
+        | syn::Type::Infer(_)
+        | syn::Type::Macro(_)
+        | syn::Type::Never(_)
+        | syn::Type::Paren(_)
+        | syn::Type::Ptr(_)
+        | syn::Type::Slice(_)
+        | syn::Type::TraitObject(_)
+        | syn::Type::Tuple(_)
+        | syn::Type::Verbatim(_) => None,
+        _ => panic!("sugar-lift-contracts classify_type refused unknown syn::Type variant"),
     }
 }
 
@@ -743,7 +783,20 @@ fn walk_items_for_doc(
                     }
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-lift-contracts doc walker refused unknown syn::Item variant"),
         }
     }
 }
@@ -1239,7 +1292,20 @@ fn walk_items(
                     }
                 }
             }
-            _ => {}
+            syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::ExternCrate(_)
+            | syn::Item::ForeignMod(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_) => {}
+            _ => panic!("sugar-lift-contracts contract walker refused unknown syn::Item variant"),
         }
     }
 }
@@ -1296,6 +1362,7 @@ fn classify_attr(a: &syn::Attribute) -> Option<Slot> {
         "requires" | "contracts::requires" => Some(Slot::Pre),
         "ensures" | "contracts::ensures" => Some(Slot::Post),
         "invariant" | "contracts::invariant" => Some(Slot::Inv),
+        // sugar-audit: not-mine(non-contract-attributes-are-ignored-by-contract-classifier)
         _ => None,
     }
 }
@@ -2277,6 +2344,7 @@ mod tests {
                     .iter()
                     .filter_map(|o| match o {
                         sugar_ir_types::IrFormula::Atomic { name, .. } => Some(name.as_str()),
+                        // sugar-audit: not-mine(test-helper-only-selects-atomic-predicate-names)
                         _ => None,
                     })
                     .collect();
@@ -2318,6 +2386,7 @@ mod tests {
                     .iter()
                     .filter_map(|o| match o {
                         sugar_ir_types::IrFormula::Atomic { name, .. } => Some(name.as_str()),
+                        // sugar-audit: not-mine(test-helper-only-selects-atomic-predicate-names)
                         _ => None,
                     })
                     .collect();

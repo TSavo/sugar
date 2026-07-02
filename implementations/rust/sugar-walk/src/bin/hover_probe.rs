@@ -145,6 +145,7 @@ fn main() {
     println!("\n===== VERDICT =====");
     let final_stem = match &resolved {
         Ok(Some(res)) => res.type_stem.clone(),
+        // sugar-audit: not-mine(debug-cli-verdict-keeps-unresolved-or-not-ready-as-no-final-stem)
         _ => None,
     };
     let stem_source = if hover_stem.is_some() {
