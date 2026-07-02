@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, RaiseValue
@@ -12,6 +13,7 @@ from .perform_operation import perform_operation
 
 @dataclass(frozen=True)
 class RouteRaisesOperation:
+    method_name: ClassVar[str] = "route_raises_with"
     handlers: tuple
     owner: str = "TrySugar"
     blame: str = "<unknown>"
@@ -35,7 +37,6 @@ class RouteRaisesOperation:
                     owner=self.owner,
                     blame=self.blame,
                     receiver=handled_block,
-                    method_name="guard_with",
                     operation=ControlFlowGuardOperation(
                         guards,
                         owner=self.owner,

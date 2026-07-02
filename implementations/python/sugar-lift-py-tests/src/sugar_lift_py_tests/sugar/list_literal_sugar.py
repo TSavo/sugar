@@ -57,7 +57,6 @@ class ListLiteralSugar(Sugar, role=SugarRole.TERM):
             owner="ListLiteralSugar",
             blame=self.blame,
             receiver=SequenceConstructor("list"),
-            method_name="construct_sequence_with",
             operation=SequenceConstructionOperation(
                 elements=tuple(items),
                 owner="ListLiteralSugar",

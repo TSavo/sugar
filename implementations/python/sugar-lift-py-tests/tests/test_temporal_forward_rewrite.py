@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from typing import ClassVar
 
 import pytest
 
@@ -44,6 +45,10 @@ n += 1
 out = Builder([1, 2, 3]).map(lambda x: x + 2).add(n).to_list()
 assert out == [14, 15, 16]
 """
+
+
+class _UnknownFluentOperation:
+    method_name: ClassVar[str] = "unknown_with"
 
 
 def _temporal_catalog() -> SugarCatalog:
@@ -226,12 +231,12 @@ def test_unknown_fluent_receiver_mutation_is_a_named_floor_gap():
             owner="UnknownFluentSugar",
             blame="builder.py:1:0",
             receiver=receiver,
-            method_name="unknown_with",
-            operation=object(),
+            operation=_UnknownFluentOperation(),
             ctx=ctx,
         )
 
     message = str(gap.value)
-    assert message.startswith("write more Floor for this construction")
+    assert message.startswith("write more Operation for this method_name")
     assert "owner=UnknownFluentSugar" in message
+    assert "observed=_UnknownFluentOperation" in message
     assert "requested=unknown_with" in message

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -9,6 +9,7 @@ from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 
 @dataclass(frozen=True)
 class MapOperation:
+    method_name: ClassVar[str] = "map_with"
     mapper: Any
     owner: str = "MapSugar"
     blame: str = "<unknown>"

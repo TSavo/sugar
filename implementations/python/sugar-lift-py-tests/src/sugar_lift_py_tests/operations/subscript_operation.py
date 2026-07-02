@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -25,6 +25,7 @@ from .object_method_call import call_object_method_value
 
 @dataclass(frozen=True)
 class SubscriptOperation:
+    method_name: ClassVar[str] = "subscript_with"
     index: FloorValue
     owner: str = "StringSubscriptSugar"
     blame: str = "<unknown>"
@@ -72,7 +73,8 @@ class SubscriptOperation:
 
     def subscript_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx
-        return call_object_method_value(receiver,
+        return call_object_method_value(
+            receiver,
             "__getitem__",
             (self.index,),
             owner=self.owner,

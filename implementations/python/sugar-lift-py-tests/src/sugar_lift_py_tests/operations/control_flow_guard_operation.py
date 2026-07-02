@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -14,6 +15,7 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 @dataclass(frozen=True)
 class ControlFlowGuardOperation:
+    method_name: ClassVar[str] = "guard_with"
     guards: tuple
     owner: str = "ControlFlow"
     blame: str = "<unknown>"

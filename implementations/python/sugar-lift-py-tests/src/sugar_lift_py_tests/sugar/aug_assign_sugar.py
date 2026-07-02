@@ -87,7 +87,6 @@ class _AugAssignValue:
             owner="AugAssignSugar",
             blame=self.blame,
             receiver=left,
-            method_name="inplace_binary_operator_with",
             operation=InplaceBinaryOperatorOperation(
                 operator=self.operator,
                 right=right,

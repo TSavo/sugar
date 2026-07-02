@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue
 
 
 @dataclass(frozen=True)
 class AddAssignRewriteOperation:
+    method_name: ClassVar[str] = "rewrite_with"
     name: str
     value: FloorValue
     owner: str
@@ -22,7 +24,6 @@ class AddAssignRewriteOperation:
                 owner=self.owner,
                 blame=self.blame,
                 receiver=current,
-                method_name="add_with",
                 operation=AddOperation(
                     operand=self.value,
                     owner=self.owner,

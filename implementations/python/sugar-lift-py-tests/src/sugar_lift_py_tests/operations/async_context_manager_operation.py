@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor
@@ -14,6 +15,7 @@ from .object_method_call import call_object_method_value
 
 @dataclass(frozen=True)
 class AsyncContextManagerOperation:
+    method_name: ClassVar[str] = "async_context_manager_with"
     body: SugarBody
     optional_name: str | None = None
     owner: str = "AsyncWithSugar"
@@ -21,9 +23,7 @@ class AsyncContextManagerOperation:
 
     def __post_init__(self) -> None:
         if not isinstance(self.body, SugarBody):
-            raise TypeError(
-                "AsyncContextManagerOperation body must be factory-built"
-            )
+            raise TypeError("AsyncContextManagerOperation body must be factory-built")
 
     def async_context_object(self, receiver: ObjectValue, ctx) -> Outcome:
         entered = _force_dunder(
@@ -71,7 +71,8 @@ def _force_dunder(
     blame: str,
 ):
     value = complete_value(
-        call_object_method_value(receiver,
+        call_object_method_value(
+            receiver,
             name,
             arguments,
             owner=owner,

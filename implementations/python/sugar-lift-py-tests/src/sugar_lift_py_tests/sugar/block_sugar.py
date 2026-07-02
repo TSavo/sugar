@@ -119,7 +119,6 @@ def _guard_exit(statement: object, guards: tuple, ctx, blame: str):
             owner="BlockSugar",
             blame=blame,
             receiver=BlockValue((statement,)),
-            method_name="guard_with",
             operation=ControlFlowGuardOperation(
                 guards,
                 owner="BlockSugar",

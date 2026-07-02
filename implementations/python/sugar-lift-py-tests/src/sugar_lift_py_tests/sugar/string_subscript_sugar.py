@@ -68,7 +68,6 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
             owner="StringSubscriptSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="subscript_with",
             operation=operation,
             ctx=ctx,
         )

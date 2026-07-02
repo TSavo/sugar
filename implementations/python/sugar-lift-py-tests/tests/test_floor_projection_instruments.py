@@ -54,7 +54,7 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
         "factory/literal_call_report.py:463",
         "floor/call_site_value.py:156",
         "sugar/builtin_call_sugar.py:45",
-        "sugar/builtin_call_sugar.py:122",
+        "sugar/builtin_call_sugar.py:121",
         "sugar/builtin_call_sugar.py:177",
         "sugar/list_sugar.py:49",
         "sugar/map_builtin_sugar.py:33",

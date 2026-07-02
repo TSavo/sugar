@@ -54,7 +54,6 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             owner="AddSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="add_with",
             operation=AddOperation(operand=operand, owner="AddSugar", blame=self.blame),
             ctx=ctx,
         )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, ObjectValue, TermValue
@@ -12,6 +12,7 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 @dataclass(frozen=True)
 class SequenceConstructionOperation:
+    method_name: ClassVar[str] = "construct_sequence_with"
     elements: tuple[FloorValue, ...]
     owner: str
     blame: str

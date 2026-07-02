@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Outcome
@@ -12,6 +13,7 @@ from .perform_operation import perform_operation
 
 @dataclass(frozen=True)
 class AttributeDeleteOperation:
+    method_name: ClassVar[str] = "attribute_delete_with"
     name: str
     owner: str = "AttributeDeleteSugar"
     blame: str = "<unknown>"
@@ -23,7 +25,6 @@ class AttributeDeleteOperation:
                 owner=self.owner,
                 blame=self.blame,
                 receiver=descriptor,
-                method_name="descriptor_with",
                 operation=DescriptorOperation(
                     attribute=self.name,
                     slot="__delete__",
@@ -35,7 +36,8 @@ class AttributeDeleteOperation:
                 ctx=ctx,
             )
         if receiver.has_method("__delattr__"):
-            return call_object_method_value(receiver,
+            return call_object_method_value(
+                receiver,
                 "__delattr__",
                 (StringValue(self.name),),
                 owner=self.owner,

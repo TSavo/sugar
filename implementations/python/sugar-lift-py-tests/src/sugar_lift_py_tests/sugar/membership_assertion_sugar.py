@@ -66,7 +66,6 @@ class MembershipAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             owner="MembershipAssertionSugar",
             blame=self.blame,
             receiver=container,
-            method_name="contains_with",
             operation=operation,
             ctx=ctx,
         )

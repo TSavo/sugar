@@ -55,7 +55,6 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
             receiver=complete_value(
                 receiver_outcome, owner="SubscriptDeleteSugar receiver"
             ),
-            method_name="delitem_with",
             operation=DelItemOperation(
                 index=complete_value(index_outcome, owner="SubscriptDeleteSugar index"),
                 owner="SubscriptDeleteSugar",

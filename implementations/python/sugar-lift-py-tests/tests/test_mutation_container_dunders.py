@@ -157,7 +157,6 @@ class Box:
             owner="SubscriptAssignSugar",
             blame="t.py:6:4",
             receiver=receiver,
-            method_name="setitem_with",
             operation=SetItemOperation(
                 index=TermValue(0),
                 value=TermValue(1),
@@ -263,7 +262,6 @@ class Defaults:
             owner="DictMissingOperation",
             blame="t.py:6:4",
             receiver=receiver,
-            method_name="missing_with",
             operation=DictMissingOperation(
                 key=TermValue(99),
                 owner="DictMissingOperation",
@@ -299,7 +297,6 @@ def test_missing_operation_on_unsupported_receiver_is_a_loud_floor_gap() -> None
             owner="DictMissingOperation",
             blame="t.py:1:0",
             receiver=TermValue(0),
-            method_name="missing_with",
             operation=DictMissingOperation(
                 key=TermValue(99),
                 owner="DictMissingOperation",

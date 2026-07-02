@@ -40,7 +40,6 @@ def _force_dunder(
         owner=owner,
         blame=blame,
         receiver=value,
-        method_name="call_method_with",
         operation=MethodCallOperation(
             name=name,
             arguments=(),

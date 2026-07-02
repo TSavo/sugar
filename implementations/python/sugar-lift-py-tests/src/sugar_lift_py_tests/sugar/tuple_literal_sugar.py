@@ -44,7 +44,6 @@ class TupleLiteralSugar(Sugar, role=SugarRole.TERM):
             owner="TupleLiteralSugar",
             blame=self.blame,
             receiver=SequenceConstructor("tuple"),
-            method_name="construct_sequence_with",
             operation=SequenceConstructionOperation(
                 elements=elements,
                 owner="TupleLiteralSugar",

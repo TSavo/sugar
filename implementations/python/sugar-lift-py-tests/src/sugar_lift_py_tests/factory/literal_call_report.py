@@ -955,6 +955,7 @@ def _merge_many(lifts: list[LiftResult]) -> LiftResult:
         merged = _merge_lifts(merged, extra)
     return merged
 
+
 def _merge_contract_rows(rows: list[Any]) -> list[Any]:
     merged: list[Any] = []
     for row in rows:
@@ -1230,7 +1231,6 @@ def _construct_callsite_from_factory_term(
                     owner="literal_call_report.callsite_floor",
                     blame=call_value.target_name,
                     receiver=floor,
-                    method_name="project_callsite_with",
                     operation=CallsiteProjectionOperation(
                         callee_name=call_value.target_name,
                         arg_terms=tuple(arg_terms),
@@ -1390,7 +1390,6 @@ def _immediate_callsite_term(
                 owner=owner,
                 blame=call_value.target_name,
                 receiver=value,
-                method_name="project_callsite_with",
                 operation=CallsiteProjectionOperation(
                     callee_name=call_value.target_name,
                     arg_terms=tuple(arg_terms),

@@ -69,7 +69,6 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
             owner="BinOpSugar",
             blame=self.blame,
             receiver=left,
-            method_name="binary_operator_with",
             operation=BinaryOperatorOperation(
                 operator=self.operator,
                 right=right,

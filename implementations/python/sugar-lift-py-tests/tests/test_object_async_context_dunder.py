@@ -92,7 +92,11 @@ async def t():
     value, operation_log = _returned_value(source, "t")
 
     assert value == TermValue(20)
-    assert ("AsyncWithSugar", "async_context_manager_with", "AsyncContextManagerOperation") in operation_log
+    assert (
+        "AsyncWithSugar",
+        "async_context_manager_with",
+        "AsyncContextManagerOperation",
+    ) in operation_log
     assert ("AsyncWithSugar", "bind_with", "BindValueOperation") in operation_log
     assert operation_log[-1] == (
         "CallSiteValue.force_floor",
@@ -121,9 +125,13 @@ async def t():
 
     assert exc.value.info["observed"] == "AsyncFor.__anext__"
     assert exc.value.info["requested"] == "async iteration stop floor"
-    assert ("AsyncForSugar", "async_iter_with", "AsyncIteratorOperation") in reduce_ctx.operation_log
+    assert (
+        "AsyncForSugar",
+        "async_iter_with",
+        "AsyncIteratorOperation",
+    ) in reduce_ctx.operation_log
     assert (
         "AsyncForSugar.__aiter__",
         "async_next_with",
-        "AsyncIteratorOperation",
+        "AsyncNextOperation",
     ) in reduce_ctx.operation_log

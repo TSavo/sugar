@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -11,6 +12,7 @@ from .perform_operation import perform_operation
 
 @dataclass(frozen=True)
 class FinallyFallthroughOperation:
+    method_name: ClassVar[str] = "merge_finally_with"
     incoming_block: BlockValue
     owner: str = "TrySugar.finally"
     blame: str = "<unknown>"
@@ -23,7 +25,6 @@ class FinallyFallthroughOperation:
                     owner=self.owner,
                     blame=self.blame,
                     receiver=self.incoming_block,
-                    method_name="guard_with",
                     operation=ControlFlowGuardOperation(
                         receiver.fall_through,
                         owner=self.owner,

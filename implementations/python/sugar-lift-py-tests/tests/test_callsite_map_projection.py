@@ -92,7 +92,6 @@ def test_map_operation_non_array_receiver_still_refuses() -> None:
             owner="MapProjectionTest",
             blame="t.py:1:0",
             receiver=TermValue(1),
-            method_name="map_with",
             operation=MapOperation(mapper=object()),
             ctx=ReduceContext.root(owner="projection-test"),
         )

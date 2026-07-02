@@ -87,7 +87,6 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
                 owner="IfSugar",
                 blame=self.blame,
                 receiver=block,
-                method_name="guard_with",
                 operation=ControlFlowGuardOperation(
                     guards,
                     owner="IfSugar",

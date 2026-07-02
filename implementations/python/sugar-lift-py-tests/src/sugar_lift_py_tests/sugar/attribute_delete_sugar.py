@@ -35,12 +35,13 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         receiver_outcome = self.receiver.reduce(ctx)
         if isinstance(receiver_outcome, Incomplete):
             return receiver_outcome
-        receiver = complete_value(receiver_outcome, owner="AttributeDeleteSugar receiver")
+        receiver = complete_value(
+            receiver_outcome, owner="AttributeDeleteSugar receiver"
+        )
         return perform_operation(
             owner="AttributeDeleteSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="attribute_delete_with",
             operation=AttributeDeleteOperation(
                 name=self.name,
                 owner="AttributeDeleteSugar",

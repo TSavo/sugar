@@ -55,7 +55,6 @@ class MapSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             owner="MapSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="map_with",
             operation=operation,
             ctx=ctx,
         )

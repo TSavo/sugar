@@ -59,7 +59,6 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 owner="BuiltinCallSugar",
                 blame=self.blame,
                 receiver=argument,
-                method_name="str_with",
                 operation=StrCoercionOperation(
                     owner="BuiltinCallSugar",
                     blame=self.blame,
@@ -71,7 +70,6 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 owner="BuiltinCallSugar",
                 blame=self.blame,
                 receiver=argument,
-                method_name="next_with",
                 operation=NextOperation(
                     owner="BuiltinCallSugar",
                     blame=self.blame,
@@ -84,7 +82,6 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 owner="BuiltinCallSugar",
                 blame=self.blame,
                 receiver=argument,
-                method_name="call_method_with",
                 operation=MethodCallOperation(
                     name=method_name,
                     arguments=(),
@@ -115,7 +112,9 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
     @classmethod
     def build(cls, site, ctx) -> Sugar:
         if not cls.owns(site):
-            raise TypeError("DivmodBuiltinSugar claim built an unsupported builtin call")
+            raise TypeError(
+                "DivmodBuiltinSugar claim built an unsupported builtin call"
+            )
         if _call_is_context_bound(site, ctx):
             from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 
@@ -140,7 +139,6 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             owner="DivmodBuiltinSugar",
             blame=self.blame,
             receiver=left,
-            method_name="binary_operator_with",
             operation=BinaryOperatorOperation(
                 operator="divmod",
                 right=right,
@@ -170,7 +168,9 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
     @classmethod
     def build(cls, site, ctx) -> Sugar:
         if not cls.owns(site):
-            raise TypeError("FormatBuiltinSugar claim built an unsupported builtin call")
+            raise TypeError(
+                "FormatBuiltinSugar claim built an unsupported builtin call"
+            )
         if _call_is_context_bound(site, ctx):
             from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 
@@ -198,7 +198,6 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             owner="FormatBuiltinSugar",
             blame=self.blame,
             receiver=argument,
-            method_name="call_method_with",
             operation=MethodCallOperation(
                 name="__format__",
                 arguments=(spec,),

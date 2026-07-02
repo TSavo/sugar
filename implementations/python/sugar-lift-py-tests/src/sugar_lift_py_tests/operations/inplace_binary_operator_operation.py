@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Outcome
@@ -10,6 +11,7 @@ _BITWISE_OPERATORS = frozenset({"&", "|", "^", "<<", ">>"})
 
 @dataclass(frozen=True)
 class InplaceBinaryOperatorOperation:
+    method_name: ClassVar[str] = "inplace_binary_operator_with"
     operator: str
     right: FloorValue
     owner: str = "AugAssignSugar"
@@ -27,7 +29,6 @@ class InplaceBinaryOperatorOperation:
                 owner=self.owner,
                 blame=self.blame,
                 receiver=receiver,
-                method_name="bitwise_with",
                 operation=BitwiseOperation(
                     operator=self.operator,
                     operand=self.right,
@@ -40,7 +41,6 @@ class InplaceBinaryOperatorOperation:
             owner=self.owner,
             blame=self.blame,
             receiver=receiver,
-            method_name="binary_operator_with",
             operation=BinaryOperatorOperation(
                 operator=self.operator,
                 right=self.right,

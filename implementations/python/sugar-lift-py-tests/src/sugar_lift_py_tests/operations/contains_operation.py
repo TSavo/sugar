@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -20,6 +20,7 @@ from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
 @dataclass(frozen=True)
 class ContainsOperation:
+    method_name: ClassVar[str] = "contains_with"
     item: FloorValue
     owner: str = "MembershipAssertionSugar"
     blame: str = "<unknown>"
