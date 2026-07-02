@@ -102,10 +102,12 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
   red_gate_is_not_a_gate ×10). T's call: write top 8 or strip. 2026-07-02: T explicitly PAUSED
   this — leave as-is until he has focus; do not draft or strip autonomously.
 
-## LIVE FLEET MAP (2026-07-02 ~07:40 PDT — the state git/gh does NOT hold; re-list_workers to confirm)
-- 85870 → worktree ~/provekit-wt/typed-pool-3, branch codex/typed-pool-3 → #3041 Slice 3 (load-time indexes). Lane order after: S4→S5→S6→S7, strictly serial (each slice's audit ratchet is next baseline). #3160 BridgePin slots after S4.
-- 85868 → worktree ~/provekit-wt/boundvar-floor, branch codex/boundvar-floor → #3017 item 4 (BoundVar floor). Lane: reds-first then items 5→10 in order; #3142 floor-gap rows drain AS items land (no separate dispatch). item 4 = Phase-3 prereq; item 5 (RaiseValue/RouteRaises) = Phase-2 prereq.
-- 85873 → worktree ~/provekit-wt/pykit-lambda, branch codex/pykit-lambda → #3103 Lambda. Lane: recognizer tail (#3104→#3106→batch #3107-3120) INTERLEAVED with floor-projection slices #3181→#3187 (blocked-by chained, strict order); file-disjoint so can alternate.
+## LIVE FLEET MAP (2026-07-02 ~08:40 PDT — the state git/gh does NOT hold; re-list_workers to confirm)
+- 85870 → worktree ~/provekit-wt/typed-pool-3, branch codex/typed-pool-5 → #3041 Slice 5 (consistency/runner/solver). Baseline R(raw-pool)=76 (S5=26, S6=50). Lane after: S6→S7 serial; #3160 BridgePin slots after. NOTE #3041 was auto-closed by a PR and REOPENED by coordinator — S5-S7 remain.
+- 85868 → worktree ~/provekit-wt/boundvar-floor, branch codex/raise-routing → #3017 item 5 (RaiseValue/GuardedRaise/RouteRaisesOperation — Phase-2 prereq). Items 1-4 done. Lane: items 6→10 in order, then irterm-boundary #3191-3198 (S1 instruments first, strict serial). assertion_lift frontier pinned R=36.
+- 85873 → worktree ~/provekit-wt/pykit-lambda, branch codex/floor-projection-s2 → #3182 (CallsiteProjectionOperation + project_callsite_with arms). S1 merged, R(factory-spine)=6 pinned. Lane: #3183→#3187 strict serial, INTERLEAVED with recognizer tail (#3108 tuple-unpack next, then #3109+); file-disjoint so alternate.
+- 85284 is T's PERSONAL window (not a worker) — never dispatch to it.
+- Rate-limit note: coordinator REST core burned to 0 once (15:10-15:35 UTC). Monitors now 120s/180s cadence; workers are on separate auth (GraphQL bucket) and kept producing. On 403: gh api rate_limit is free; queue merges until reset, keep dispatching file-disjoint work.
 - Agent `seam-plan` DONE (collected): plan committed @ 92bf00ede; 8 serial slices #3191-3198 (S1 instruments/totality+byte-compat+anti-2nd-representation auditor → S2 boundary module → S3 ControlFlowGuard first consumer → S4 tail-expr/cf_ite → S5 PredicateValue → S6 RouteRaises → S7 pattern → S8 retire+arm-gate+close). This IS #3017 Phase-4; dispatch into 85868 lane AFTER its current #3017 items, S1-first strict serial. (Prior agent `tower-dig-plan` DONE: floor-projection plan + #3181-3187 + #3150 comment.)
 
 ## COORDINATOR REFLEXES (muscle memory — lost on compaction, re-learn the hard way otherwise)
