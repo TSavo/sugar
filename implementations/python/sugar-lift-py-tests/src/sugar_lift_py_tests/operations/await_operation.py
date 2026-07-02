@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import ObjectValue
-from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+
+from .dunder_force import force_dunder_floor_or_runtime_effect
 
 
 @dataclass(frozen=True)
@@ -23,19 +23,12 @@ class AwaitOperation:
             ),
             owner=f"{self.owner}.__await__",
         )
-        try:
-            return Complete(
-                force_floor(
-                    value,
-                    ctx,
-                    owner=f"{self.owner}.__await__",
-                    project_callsite=False,
-                )
-            )
-        except TypeError as exc:
-            return Incomplete(
-                RuntimeEffect(
-                    f"{self.owner}.__await__ reduced to a runtime effect or "
-                    f"opaque callsite: {exc}"
-                )
-            )
+        forced = force_dunder_floor_or_runtime_effect(
+            value,
+            ctx,
+            owner=f"{self.owner}.__await__",
+            project_callsite=False,
+        )
+        if isinstance(forced, Incomplete):
+            return forced
+        return Complete(forced)

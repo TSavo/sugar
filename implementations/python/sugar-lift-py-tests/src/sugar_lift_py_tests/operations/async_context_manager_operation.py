@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue
-from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
+
+from .dunder_force import force_dunder_floor_or_runtime_effect
 
 
 @dataclass(frozen=True)
@@ -78,14 +78,12 @@ def _force_dunder(
         ),
         owner=owner,
     )
-    try:
-        return force_floor(value, ctx, owner=owner, project_callsite=False)
-    except TypeError as exc:
-        return Incomplete(
-            RuntimeEffect(
-                f"{owner} reduced to a runtime effect or opaque callsite: {exc}"
-            )
-        )
+    return force_dunder_floor_or_runtime_effect(
+        value,
+        ctx,
+        owner=owner,
+        project_callsite=False,
+    )
 
 
 def _none_value() -> SymbolicValue:
