@@ -61,13 +61,14 @@ def t():
     value, operation_log = _returned_value(source, "t")
 
     assert value == TermValue(20)
-    assert operation_log[-4:] == [
+    assert operation_log[-5:] == [
         ("WithSugar", "context_manager_with", "ContextManagerOperation"),
         (
             "CallSiteValue.force_floor",
             "curry_with",
             "CurryArgumentsOperation",
         ),
+        ("WithSugar", "bind_with", "BindValueOperation"),
         ("StringSubscriptSugar", "subscript_with", "SubscriptOperation"),
         (
             "CallSiteValue.force_floor",

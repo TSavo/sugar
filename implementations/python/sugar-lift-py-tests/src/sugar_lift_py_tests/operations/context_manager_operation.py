@@ -8,6 +8,7 @@ from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.temporal import bind_temporal
 
 
 @dataclass(frozen=True)
@@ -34,12 +35,12 @@ class ContextManagerOperation:
             return entered
         body_ctx = ctx
         if self.optional_name is not None:
-            body_ctx = ctx.with_temporal(
-                ctx.temporal.bind_value(
-                    self.optional_name,
-                    entered,
-                    blame=self.blame,
-                )
+            body_ctx = bind_temporal(
+                ctx,
+                self.optional_name,
+                entered,
+                owner=self.owner,
+                blame=self.blame,
             )
         body_outcome = self.body.reduce(body_ctx)
         if isinstance(body_outcome, Incomplete):
