@@ -15,6 +15,7 @@ use sugar_ir_symbolic::{Formula, Term};
 pub mod control_flow_guard_operation;
 pub mod guarded_raise;
 pub mod guarded_return;
+pub mod pattern_projection;
 pub mod predicate_value;
 pub mod raise_value;
 pub mod symbolic_value;
@@ -26,6 +27,9 @@ pub use control_flow_guard_operation::{
 };
 pub use guarded_raise::GuardedRaise;
 pub use guarded_return::{guarded_returns_to_formula, GuardedReturn};
+pub use pattern_projection::{
+    field_projection, index_projection, tuple_projection, tuple_struct_projection,
+};
 pub use predicate_value::PredicateValue;
 pub use raise_value::{is_raise_like_effect, RaiseValue};
 pub use symbolic_value::SymbolicValue;

@@ -28,3 +28,31 @@ pub fn lower_ir_formula(formula: &IrFormula) -> Rc<Formula> {
 pub fn raise_ir_formula(formula: &Rc<Formula>) -> IrFormula {
     formula_to_ir(formula)
 }
+
+pub fn pattern_tuple_projection(receiver: &IrTerm, index: usize) -> IrTerm {
+    raise_ir(&sugar_floor_algebra::tuple_projection(
+        lower_ir(receiver),
+        index,
+    ))
+}
+
+pub fn pattern_tuple_struct_projection(receiver: &IrTerm, index: usize) -> IrTerm {
+    raise_ir(&sugar_floor_algebra::tuple_struct_projection(
+        lower_ir(receiver),
+        index,
+    ))
+}
+
+pub fn pattern_field_projection(receiver: &IrTerm, field_name: &str) -> IrTerm {
+    raise_ir(&sugar_floor_algebra::field_projection(
+        lower_ir(receiver),
+        field_name,
+    ))
+}
+
+pub fn pattern_index_projection(receiver: &IrTerm, index: usize) -> IrTerm {
+    raise_ir(&sugar_floor_algebra::index_projection(
+        lower_ir(receiver),
+        index,
+    ))
+}
