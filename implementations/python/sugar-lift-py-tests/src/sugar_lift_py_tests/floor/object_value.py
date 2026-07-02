@@ -50,6 +50,9 @@ class ObjectValue(FloorValue):
     def subscript_with(self, operation, ctx):
         return operation.subscript_object(self, ctx)
 
+    def str_with(self, operation, ctx):
+        return operation.str_object(self, ctx)
+
     def bitwise_with(self, operation, ctx):
         del ctx
         method_name = _BITWISE_DUNDER_METHODS.get(operation.operator)

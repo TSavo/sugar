@@ -154,6 +154,8 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__getattr__": "AttributeLookupOperation",
         "__enter__": "ContextManagerOperation",
         "__exit__": "ContextManagerOperation",
+        "__str__": "StrCoercionOperation",
+        "__format__": "FormatBuiltinSugar",
     }
     for name in object_value._BINARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._BINARY_DUNDER_METHODS"

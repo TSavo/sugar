@@ -23,10 +23,10 @@ def test_dunder_frontier_vector_names_current_missing_families() -> None:
         "reflected_binary_slots": 0,
         "truth_hash_slots": 0,
         "unary_numeric_slots": 0,
-        "display_conversion_slots": 3,
+        "display_conversion_slots": 0,
         "context_async_slots": 5,
     }
-    assert report.r.total == 19
+    assert report.r.total == 16
     assert not report.is_zero
 
 
@@ -63,6 +63,9 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
         "__float__",
         "__complex__",
         "__index__",
+        "__str__",
+        "__bytes__",
+        "__format__",
         "__getattr__",
         "__enter__",
         "__exit__",
@@ -72,7 +75,6 @@ def test_dunder_frontier_distinguishes_owned_and_missing_slots() -> None:
 
     for name in (
         "__setitem__",
-        "__str__",
         "__getattribute__",
         "__aenter__",
     ):
@@ -90,7 +92,7 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
     assert "python dunder frontier audit" in stdout
     assert "R:" in stdout
     assert "  inplace_binary_slots: 0" in stdout
-    assert "  total: 19" in stdout
+    assert "  total: 16" in stdout
     assert "missing dunder slots:" in stdout
     missing, owned = stdout.split("owned dunder slots:", 1)
     assert "  - call_container __next__" not in missing
@@ -100,6 +102,15 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
         "  - display_conversion __repr__: BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
         in owned
     )
+    assert "  - display_conversion __str__" not in missing
+    assert "  - display_conversion __str__: StrCoercionOperation" in owned
+    assert "  - display_conversion __bytes__" not in missing
+    assert (
+        "  - display_conversion __bytes__: BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+        in owned
+    )
+    assert "  - display_conversion __format__" not in missing
+    assert "  - display_conversion __format__: FormatBuiltinSugar" in owned
     assert "  - mutation_container __reversed__" not in missing
     assert (
         "  - mutation_container __reversed__: BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
@@ -116,4 +127,3 @@ def test_dunder_frontier_cli_exits_red_until_tracked_slots_are_owned(
         "  - inplace_binary __iadd__: ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
         in owned
     )
-    assert "  - display_conversion __str__" in stdout
