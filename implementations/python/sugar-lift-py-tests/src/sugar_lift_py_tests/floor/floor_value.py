@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.ir import Term
+
 
 class FloorValue:
     def inplace_binary_operator_with(self, operation, ctx):
@@ -8,7 +13,7 @@ class FloorValue:
     def project_callsite_with(self, operation, ctx):
         return operation.project_unknown(self, ctx)
 
-    def to_term(self, *, owner: str):
+    def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
             FactoryGap,

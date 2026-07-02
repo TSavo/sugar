@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
@@ -65,7 +65,7 @@ class CallSiteValue(FloorValue):
                     "floor; leave the bridge as axiomatic and record a DigRefusal"
                 ),
             )
-        if self.body is None:
+        if (body := self.body) is None:
             _force_floor_gap(
                 owner=owner,
                 target_name=self.target_name,
@@ -88,7 +88,7 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
-        outcome = _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
+        outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         if isinstance(outcome, Incomplete):
             _force_floor_gap(
                 owner=owner,
@@ -200,7 +200,7 @@ def _force_floor_gap(
     target_name: str,
     observed: str,
     fix: str,
-) -> None:
+) -> NoReturn:
     from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 
     info = FactoryGapInfo(

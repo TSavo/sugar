@@ -20,7 +20,7 @@ class TermValue(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import num
 
-        return num(self.value)
+        return num(int(self.value))
 
     def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_literal(self, ctx)
