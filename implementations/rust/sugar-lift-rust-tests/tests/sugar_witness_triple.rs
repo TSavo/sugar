@@ -8,12 +8,56 @@ use sugar_lift_rust_tests::{
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
 const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
+const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 5;
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
     claim: &'static str,
     truthful: &'static str,
     lying: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct PendingRouterWitnessSlot {
+    router: &'static str,
+    owner_slice: &'static str,
+    truthful_slot: &'static str,
+    lying_slot: &'static str,
+}
+
+fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
+    vec![
+        PendingRouterWitnessSlot {
+            router: "try_sugar_equivalent",
+            owner_slice: "Phase2-S3",
+            truthful_slot: "caught raise routes to SAT through RouteRaisesOperation",
+            lying_slot: "uncaught raise propagates and the bad twin reaches UNSAT",
+        },
+        PendingRouterWitnessSlot {
+            router: "question_mark",
+            owner_slice: "Phase2-S4",
+            truthful_slot: "x? Ok path discharges through the router",
+            lying_slot: "x? Err path propagates to an uncaught UNSAT twin",
+        },
+        PendingRouterWitnessSlot {
+            router: "panic",
+            owner_slice: "Phase2-S5",
+            truthful_slot: "handled panic route preserves the panic-freedom fact",
+            lying_slot: "uncaught panic remains a residual raise/refusal, never a fabricated fact",
+        },
+        PendingRouterWitnessSlot {
+            router: "early_return",
+            owner_slice: "Phase2-S5",
+            truthful_slot: "early return in a branch routes to the handler's value",
+            lying_slot: "wrong early-return value refutes through the real solver",
+        },
+        PendingRouterWitnessSlot {
+            router: "drop",
+            owner_slice: "Phase2-S6",
+            truthful_slot: "no-op Drop does not perturb emitted bytes or verdict",
+            lying_slot: "effectful Drop enters the effect algebra and refuses/routes explicitly",
+        },
+    ]
 }
 
 fn seed_witnesses() -> Vec<WitnessPair> {
@@ -357,6 +401,36 @@ fn witness_catalog_seed_frontier_is_pinned() {
     );
     assert_eq!(seeded.len(), EXPECTED_SEED_CLAIMS);
     assert_eq!(frontier.len(), EXPECTED_ENROLLMENT_FRONTIER);
+}
+
+#[test]
+fn phase2_router_witness_bad_twin_slots_are_pinned() {
+    let slots = pending_router_witness_slots();
+    let names = slots
+        .iter()
+        .map(|slot| slot.router)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        names.len(),
+        slots.len(),
+        "router witness slots must be uniquely named"
+    );
+    for slot in &slots {
+        assert!(
+            !slot.truthful_slot.trim().is_empty() && !slot.lying_slot.trim().is_empty(),
+            "router {} must reserve both truthful and lying bad-twin slots",
+            slot.router
+        );
+    }
+    println!(
+        "R(routers-without-witness-bad-twin)={} pending={:?}",
+        slots.len(),
+        slots
+            .iter()
+            .map(|slot| format!("{}:{}", slot.owner_slice, slot.router))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(slots.len(), EXPECTED_PENDING_ROUTER_WITNESS_SLOTS);
 }
 
 #[test]
