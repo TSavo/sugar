@@ -597,17 +597,38 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // path condition without recognizing a single Rust predicate name.
     let then_term = guarded_return_for_branch(&cond_term, false, then_term).into_value();
     let else_term = guarded_return_for_branch(&cond_term, true, else_term).into_value();
-    Some(IrTerm::Ctor {
-        // `cf_ite`, not the SMT builtin `ite`: a synthesized control-flow
-        // value over uninterpreted Int-sorted operands. Using the builtin
-        // `ite` makes z3 demand a Bool guard and Bool/typed branches, which
-        // an uninterpreted guard term (`match_guard(..)` : Int) does not
-        // satisfy -- a sort-mismatch error that fails the reflexive
-        // discharge. As a fresh uninterpreted symbol, congruence closes
-        // `cf_ite(g,a,b) == cf_ite(g,a,b)` regardless of operand sorts.
-        name: panic_freedom::CF_ITE.to_string(),
-        args: vec![cond_term, then_term, else_term],
-    })
+    Some(symbolic_cf_ite(cond_term, then_term, else_term).into_term())
+}
+
+/// Rust-side SymbolicValue floor for sort-neutral control-flow values. The
+/// Python reference (`floor/symbolic_value.py`) commits no carrier sort and
+/// leaves the backend to choose one from surrounding operations. `sugar-walk`
+/// uses `IrTerm` rather than the floor algebra's `Term`, so this adapter keeps
+/// the v1 wire shape byte-identical while naming that sort-neutral boundary.
+struct SymbolicValueTerm {
+    term: IrTerm,
+}
+
+impl SymbolicValueTerm {
+    fn into_term(self) -> IrTerm {
+        self.term
+    }
+}
+
+fn symbolic_cf_ite(cond: IrTerm, then_term: IrTerm, else_term: IrTerm) -> SymbolicValueTerm {
+    SymbolicValueTerm {
+        term: IrTerm::Ctor {
+            // `cf_ite`, not the SMT builtin `ite`: a synthesized control-flow
+            // value over uninterpreted Int-sorted operands. Using the builtin
+            // `ite` makes z3 demand a Bool guard and Bool/typed branches,
+            // which an uninterpreted guard term (`match_guard(..)` : Int) does
+            // not satisfy -- a sort-mismatch error that fails the reflexive
+            // discharge. As a fresh uninterpreted symbol, congruence closes
+            // `cf_ite(g,a,b) == cf_ite(g,a,b)` regardless of operand sorts.
+            name: panic_freedom::CF_ITE.to_string(),
+            args: vec![cond, then_term, else_term],
+        },
+    }
 }
 
 /// Rust-side GuardedReturn floor for result-position branches. The Python
@@ -823,12 +844,8 @@ fn lift_match_to_ite_term(match_expr: &syn::ExprMatch, ctx: &mut LiftCtx) -> Opt
                     },
                 ],
             };
-            IrTerm::Ctor {
-                // `cf_ite` (uninterpreted), not the builtin `ite`: see the
-                // note in `lift_tail_if_to_ite_term`.
-                name: panic_freedom::CF_ITE.to_string(),
-                args: vec![guard, value, acc.expect("non-final arm has an accumulator")],
-            }
+            symbolic_cf_ite(guard, value, acc.expect("non-final arm has an accumulator"))
+                .into_term()
         });
     }
     acc

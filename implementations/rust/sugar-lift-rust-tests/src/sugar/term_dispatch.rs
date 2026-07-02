@@ -13,6 +13,7 @@ use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::sugar::primitive_int::{
     is_deferred_primitive_method_name, try_eval_deferred_primitive_method,
 };
+use crate::sugar::symbolic_value::SymbolicValue;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
     scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, Effect,
@@ -144,6 +145,26 @@ pub(crate) trait TermFloorAccept {
 impl TermFloorAccept for Rc<Term> {
     fn accept_term_floor<V: TermFloorVisitor>(&self, visitor: V) -> V::Output {
         visitor.visit_term(self)
+    }
+}
+
+pub(crate) trait SymbolicValueFloorVisitor {
+    type Output;
+
+    fn visit_symbolic_value(self, value: SymbolicValue) -> Self::Output;
+    fn visit_non_symbolic(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait SymbolicValueFloorAccept {
+    fn accept_symbolic_value_floor<V: SymbolicValueFloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl SymbolicValueFloorAccept for Rc<Term> {
+    fn accept_symbolic_value_floor<V: SymbolicValueFloorVisitor>(&self, visitor: V) -> V::Output {
+        match SymbolicValue::from_term(Rc::clone(self)) {
+            Some(value) => visitor.visit_symbolic_value(value),
+            None => visitor.visit_non_symbolic(self),
+        }
     }
 }
 
@@ -672,6 +693,36 @@ mod tests {
 
     fn var(name: &str) -> Rc<Term> {
         make_var(name)
+    }
+
+    struct SymbolicProbe;
+
+    impl SymbolicValueFloorVisitor for SymbolicProbe {
+        type Output = Option<String>;
+
+        fn visit_symbolic_value(self, value: SymbolicValue) -> Self::Output {
+            match value.term().as_ref() {
+                Term::Var { name } => Some(name.clone()),
+                other => panic!("SymbolicValue committed a non-var carrier: {other:?}"),
+            }
+        }
+
+        fn visit_non_symbolic(self, _term: &Rc<Term>) -> Self::Output {
+            None
+        }
+    }
+
+    #[test]
+    fn symbolic_value_floor_dispatches_var_without_sort_commitment() {
+        assert_eq!(
+            var("runtime_value").accept_symbolic_value_floor(SymbolicProbe),
+            Some("runtime_value".to_string())
+        );
+    }
+
+    #[test]
+    fn symbolic_value_floor_does_not_claim_carrier_committed_const() {
+        assert_eq!(num(1).accept_symbolic_value_floor(SymbolicProbe), None);
     }
 
     #[test]
