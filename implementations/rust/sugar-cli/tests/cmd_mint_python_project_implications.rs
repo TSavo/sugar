@@ -203,13 +203,9 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
         "conjoined Python proof must load cleanly: {:?}",
         pool.load_errors
     );
-    let saw_body_discharge_bridge = pool.mementos.keys().any(|cid| {
-        pool.member_is_kind(cid, sugar_verifier::MemberKind::Bridge)
-            && pool
-                .member_field(cid, "sourceSymbol")
-                .and_then(|v| v.as_str())
-                == Some("callee")
-            && pool.member_field(cid, "notes").and_then(|v| v.as_str())
+    let saw_body_discharge_bridge = pool.bridge_members().any(|(_, member)| {
+        member.field("sourceSymbol").and_then(|v| v.as_str()) == Some("callee")
+            && member.field("notes").and_then(|v| v.as_str())
                 == Some("auto-minted body-discharge bridge (PR-23)")
     });
     assert!(
@@ -217,18 +213,16 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
         "Python mint must carry the current body-discharge bridge for callee"
     );
 
-    let saw_consumer_output = pool.mementos.keys().any(|cid| {
-        pool.member_is_kind(cid, sugar_verifier::MemberKind::PlanMemento)
-            && pool
-                .member_field(cid, "toolOutputs")
-                .and_then(|v| v.as_array())
-                .map(|outputs| {
-                    outputs.iter().any(|output| {
-                        output.get("surface").and_then(|v| v.as_str())
-                            == Some("python-implications")
-                    })
+    let saw_consumer_output = pool.plan_memento_members().any(|(_, member)| {
+        member
+            .field("toolOutputs")
+            .and_then(|v| v.as_array())
+            .map(|outputs| {
+                outputs.iter().any(|output| {
+                    output.get("surface").and_then(|v| v.as_str()) == Some("python-implications")
                 })
-                .unwrap_or(false)
+            })
+            .unwrap_or(false)
     });
     assert!(
         saw_consumer_output,

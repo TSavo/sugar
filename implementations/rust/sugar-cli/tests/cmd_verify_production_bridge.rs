@@ -340,7 +340,7 @@ fn mint_auto_writes_body_discharge_bridge() {
 
     // mint auto-indexed the bridge by sourceSymbol (the same index
     // `enumerate_callsites` consults). The TOOL wrote this, not the test.
-    let bridge = pool.bridge_by_symbol("double").unwrap_or_else(|| {
+    let bridge = pool.bridge_member_for_symbol("double").unwrap_or_else(|| {
         panic!(
             "mint must auto-write + index a bridge with sourceSymbol=double; indexed symbols: {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
@@ -361,7 +361,9 @@ fn mint_auto_writes_body_discharge_bridge() {
     // That target CID must resolve (by member-CID key, exactly as
     // CatalogResolver does) to a contract carrying the body-derived
     // formals + post.
-    let target_env = pool.mementos.get(target_cid.as_str()).unwrap_or_else(|| {
+    let target_cid =
+        sugar_verifier::MementoCid::try_parse(target_cid).expect("bridge target CID must parse");
+    let target_env = pool.stored_member(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
@@ -385,7 +387,7 @@ fn mint_auto_writes_body_discharge_bridge() {
         "op-contract must carry a post hash"
     );
     let target_body = pool
-        .resolve_contract_body(target_env)
+        .contract_body_for_member(target_env)
         .expect("op-contract body graph must resolve");
     assert!(
         target_body.get("post").is_some(),
@@ -404,7 +406,7 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
     let (project, _proof) = mint_project_from_ir("zeroarg-bridge", zero_arg_ir_document(42));
     let pool = pool_of_project(&project);
 
-    let bridge = pool.bridge_by_symbol("answer").unwrap_or_else(|| {
+    let bridge = pool.bridge_member_for_symbol("answer").unwrap_or_else(|| {
         panic!(
             "mint must auto-write + index a bridge with sourceSymbol=answer; indexed symbols: {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
@@ -421,7 +423,9 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         .and_then(|v| v.as_str())
         .expect("bridge must carry targetContractCid")
         .to_string();
-    let target_env2 = pool.mementos.get(target_cid.as_str()).unwrap_or_else(|| {
+    let target_cid =
+        sugar_verifier::MementoCid::try_parse(target_cid).expect("bridge target CID must parse");
+    let target_env2 = pool.stored_member(&target_cid).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
@@ -444,7 +448,7 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         "zero-arg op-contract must carry a post hash"
     );
     let target_body = pool
-        .resolve_contract_body(target_env2)
+        .contract_body_for_member(target_env2)
         .expect("zero-arg op-contract body graph must resolve");
     assert!(
         target_body.get("post").is_some(),

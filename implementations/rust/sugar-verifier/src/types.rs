@@ -191,33 +191,6 @@ impl MementoPool {
         self.verify_by_hash(&cid)
     }
 
-    /// Return the kind discriminator of a stored member by CID. Covers all
-    /// envelope shapes (v1.2 layered, lean header/body, v1.1 flat). Typed
-    /// accessor so callers write `pool.member_kind(cid)` instead of
-    /// `sugar_proof_envelope::member_kind(pool.mementos.get(cid))`.
-    pub fn member_kind(
-        &self,
-        cid: &MementoCid,
-    ) -> Result<MemberKind, sugar_proof_envelope::MemberError> {
-        let member = self
-            .mementos
-            .get(cid)
-            .ok_or_else(|| sugar_proof_envelope::MemberError::UnknownCid(cid.to_string()))?;
-        Ok(member.kind())
-    }
-
-    pub fn member_is_kind(&self, cid: &MementoCid, kind: MemberKind) -> bool {
-        matches!(self.member_kind(cid), Ok(found) if found == kind)
-    }
-
-    /// Return the JSON value of a kind-specific field from a stored member,
-    /// regardless of envelope shape. Typed accessor so callers write
-    /// `pool.member_field(cid, "postHash")` instead of
-    /// `sugar_proof_envelope::member_field(pool.mementos.get(cid), "postHash")`.
-    pub fn member_field<'a>(&'a self, cid: &MementoCid, name: &str) -> Option<&'a Json> {
-        self.mementos.get(cid).and_then(|member| member.field(name))
-    }
-
     /// Return a verified stored member by CID without exposing the pool map at
     /// consumer call sites.
     pub fn stored_member<'a>(&'a self, cid: &MementoCid) -> Option<&'a StoredMember> {
@@ -273,7 +246,7 @@ impl MementoPool {
     /// Resolve a contract member's semantic body without exposing the legacy
     /// compatibility accessor name to migrated consumers.
     pub fn contract_body_for_member(&self, member: &StoredMember) -> Option<Json> {
-        self.resolve_contract_body(member)
+        self.resolved_contract_body(member)
     }
 
     /// Return every verified contract member with its resolved semantic body,
@@ -285,7 +258,7 @@ impl MementoPool {
                 return None;
             }
             let body = self
-                .resolve_contract_body(member)
+                .resolved_contract_body(member)
                 .filter(|v| v.is_object())?;
             Some((cid, body))
         })
@@ -298,7 +271,8 @@ impl MementoPool {
         if member.kind() != MemberKind::Contract {
             return None;
         }
-        self.resolve_contract_body(member).filter(|v| v.is_object())
+        self.resolved_contract_body(member)
+            .filter(|v| v.is_object())
     }
 
     /// Return the target contract's formal list through the same body-resolution
@@ -308,23 +282,6 @@ impl MementoPool {
             .get("formals")?
             .as_array()
             .map(|items| items.to_vec())
-    }
-
-    /// Return the verified bridge member indexed for a source symbol.
-    pub fn bridge_by_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a StoredMember> {
-        self.bridges_by_symbol
-            .get(source_symbol)
-            .and_then(|memento_cid| self.mementos.get(memento_cid))
-    }
-
-    /// Return the verified bridge member indexed for a callsite-scoped key.
-    pub fn bridge_by_callsite_key<'a>(
-        &'a self,
-        key: &(MementoCid, String, usize, String),
-    ) -> Option<&'a StoredMember> {
-        self.bridges_by_callsite
-            .get(key)
-            .and_then(|memento_cid| self.mementos.get(memento_cid))
     }
 
     /// Return the verified bridge member indexed for a source symbol.
@@ -420,7 +377,7 @@ impl MementoPool {
     /// carries only binding/header metadata plus `bodyCid`. Callers that need
     /// semantic slots (`pre`, `post`, `inv`) must resolve through the pool so
     /// the graph, not legacy inline fields, is the source of truth.
-    pub fn resolve_contract_body(&self, member: &StoredMember) -> Option<Json> {
+    fn resolved_contract_body(&self, member: &StoredMember) -> Option<Json> {
         let mut body = member.body()?.as_object()?.clone();
         if let Some(body_cid) = contract_body_pointer(member) {
             for (slot, formula) in self.resolve_body_formula_slots(&body_cid)? {
@@ -639,7 +596,10 @@ impl MementoPool {
         // kinds (implication, etc.) sometimes have a header.name field
         // but it's not a contract identity, so indexing them would
         // mis-resolve call edges.
-        let is_contract = self.member_is_kind(&memento_cid, MemberKind::Contract);
+        let is_contract = self
+            .mementos
+            .get(&memento_cid)
+            .is_some_and(|member| member.kind() == MemberKind::Contract);
         if is_contract {
             let member_for_name = self.mementos.get(&memento_cid);
             let name = member_for_name
@@ -666,10 +626,14 @@ impl MementoPool {
                 // only for genuinely ambiguous same-tier collisions.
                 if let Some(existing) = self.name_to_cid.get(&n).cloned() {
                     if existing != memento_cid {
-                        let new_has_pre = self.member_field(&memento_cid, "preHash").is_some();
-                        let existing_has_pre = self.member_field(&existing, "preHash").is_some();
                         let new_member = self.mementos.get(&memento_cid);
                         let existing_member = self.mementos.get(&existing);
+                        let new_has_pre = new_member
+                            .and_then(|member| member.field("preHash"))
+                            .is_some();
+                        let existing_has_pre = existing_member
+                            .and_then(|member| member.field("preHash"))
+                            .is_some();
                         if new_has_pre && !existing_has_pre {
                             // Upgrade: pre-bearing newcomer beats post-only incumbent.
                             self.cid_to_name.remove(&existing);
@@ -707,6 +671,10 @@ impl MementoPool {
             }
         }
 
+        // Raw class-shape payload boundary: `classShapes` is IR/report data
+        // carried inside a typed contract member, not a member envelope. No
+        // typed class-shape model owns it yet, so the pool indexes the payload
+        // as JSON while keeping member-envelope access typed.
         let class_shapes_to_index: Vec<Json> = if let Some(member) = self.mementos.get(&memento_cid)
         {
             if member.kind() == MemberKind::Contract {
@@ -735,17 +703,19 @@ impl MementoPool {
         // OpacityMementoLookup queries are O(log n) BTreeMap lookups rather
         // than a full pool scan.
         //
-        // member_kind / member_field cover both v1.1 flat (evidence.body.*)
-        // and v1.2 layered (header.*) shapes without call-site branching.
+        // StoredMember::kind/field cover both v1.1 flat (evidence.body.*)
+        // and v1.2 layered (header.*) shapes at this pool-owned boundary.
         // The `.map(str::to_string)` at each field lookup converts the
         // borrowed &str to an owned String before the mutable index entry,
         // avoiding a simultaneous shared+mutable borrow on self.
-        let kind = self.member_kind(&memento_cid).ok();
+        let kind = self.mementos.get(&memento_cid).map(|member| member.kind());
         match kind {
             Some(MemberKind::LoopInvariant) => {
                 // header.loopCid (v1.2) or evidence.body.loopCid (v1.1)
                 if let Some(loop_cid) = self
-                    .member_field(&memento_cid, "loopCid")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("loopCid"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
                 {
@@ -757,7 +727,9 @@ impl MementoPool {
             Some(MemberKind::TryBranch) => {
                 // header.tryCid (v1.2) or evidence.body.tryCid (v1.1)
                 if let Some(try_cid) = self
-                    .member_field(&memento_cid, "tryCid")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("tryCid"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
                 {
@@ -769,7 +741,9 @@ impl MementoPool {
             Some(MemberKind::ClosureBinding) => {
                 // header.bodyFnCid (v1.2) or evidence.body.bodyFnCid (v1.1)
                 if let Some(body_fn_cid) = self
-                    .member_field(&memento_cid, "bodyFnCid")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("bodyFnCid"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
                 {
@@ -783,11 +757,15 @@ impl MementoPool {
                 // Index by the sorted (formal_a, formal_b) pair. Convert to owned
                 // Strings before the mutable entry borrow.
                 let formal_a = self
-                    .member_field(&memento_cid, "formal_a")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("formal_a"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
                 let formal_b = self
-                    .member_field(&memento_cid, "formal_b")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("formal_b"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
                 if let (Some(formal_a), Some(formal_b)) = (formal_a, formal_b) {
@@ -804,11 +782,15 @@ impl MementoPool {
             Some(MemberKind::PinInvariant) => {
                 // header.functionCid + header.pinnedTarget -> composite key
                 let function_cid = self
-                    .member_field(&memento_cid, "functionCid")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("functionCid"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
                 let target = self
-                    .member_field(&memento_cid, "pinnedTarget")
+                    .mementos
+                    .get(&memento_cid)
+                    .and_then(|member| member.field("pinnedTarget"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
                 if let (Some(fc), Some(t)) = (function_cid, target) {

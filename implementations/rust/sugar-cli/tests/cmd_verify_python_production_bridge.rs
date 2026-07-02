@@ -532,8 +532,7 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         });
 
     let bridge_env = pool
-        .mementos
-        .get(&bridge_cid)
+        .stored_member(&bridge_cid)
         .expect("bridge CID must exist in pool");
     assert_eq!(
         bridge_env.kind(),
@@ -545,14 +544,15 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         .and_then(|v| v.as_str())
         .expect("bridge must carry targetContractCid")
         .to_string();
+    let target_cid =
+        sugar_verifier::MementoCid::try_parse(target_cid).expect("bridge target CID must parse");
 
     assert!(
-        pool.mementos.contains_key(target_cid.as_str()),
+        pool.stored_member(&target_cid).is_some(),
         "bridge.targetContractCid {target_cid} must resolve to a member"
     );
     let target_env = pool
-        .mementos
-        .get(target_cid.as_str())
+        .stored_member(&target_cid)
         .expect("bridge target must exist in pool");
     assert!(
         target_env.kind() == sugar_proof_envelope::MemberKind::Contract,
@@ -572,7 +572,7 @@ fn python_mint_auto_writes_body_discharge_bridge() {
         "op-contract must carry a post hash"
     );
     let target_body = pool
-        .resolve_contract_body(target_env)
+        .contract_body_for_member(target_env)
         .expect("op-contract body graph must resolve");
     assert!(
         target_body.get("post").is_some(),
