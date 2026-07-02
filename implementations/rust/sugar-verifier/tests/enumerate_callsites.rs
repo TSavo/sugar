@@ -169,6 +169,55 @@ fn finds_ctor_in_atomic_args_in_pre() {
 }
 
 #[test]
+fn malformed_bridge_target_cid_keeps_callsite_visible() {
+    let mut pool = MementoPool::default();
+    insert_test_bridge_by_symbol(
+        &mut pool,
+        "parseInt",
+        memento_cid("bad-target-bridge"),
+        json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": "parseInt",
+                    "sourceLayer": "ts",
+                    "targetContractCid": "not-a-memento-cid",
+                    "targetLayer": "rust-kit"
+                }
+            }
+        }),
+    );
+    pool.insert_unanchored_for_tests(
+        memento_cid("bad-target-caller"),
+        json!({
+            "evidence": {
+                "kind": "contract",
+                "body": {
+                    "contractName": "useParseInt",
+                    "pre": {
+                        "kind": "atomic", "name": ">",
+                        "args": [
+                            {"kind": "ctor", "name": "parseInt", "args": [{"kind": "var", "name": "s"}]},
+                            {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+                        ]
+                    }
+                }
+            }
+        }),
+    );
+    let cs = enumerate_callsites::run(&pool);
+    assert_eq!(
+        cs.len(),
+        1,
+        "malformed bridge target must not drop the callsite"
+    );
+    assert_eq!(
+        cs[0].bridge_target_cid, None,
+        "resolve_target must receive a visible NoBridgeTarget shape"
+    );
+}
+
+#[test]
 fn callsite_carries_formal_actuals_from_bridge_callsite() {
     let target_cid = memento_cid_string("target");
     let mut pool = MementoPool::default();
