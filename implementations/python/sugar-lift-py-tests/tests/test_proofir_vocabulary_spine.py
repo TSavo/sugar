@@ -1,31 +1,26 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.literal_call_report import euf_call_term, euf_callsite_name
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.ir import (
     Bool,
     Formula,
     Int,
-    PrimitiveSort,
-    Sort,
-    Term,
-    _Atomic,
-    _Connective,
-    _ConstBool,
-    _ConstInt,
-    _ConstStr,
-    _Ctor,
-    _Quantifier,
-    _Var,
+    and_,
     bool_const,
     eq,
+    formula_to_value,
     make_var,
+    not_,
     num,
 )
 from sugar_lift_py_tests.outcome import Incomplete
@@ -48,12 +43,13 @@ from sugar_lift_py_tests.proofir import (
 
 
 ROOT = Path(__file__).resolve().parents[4]
+RUST_WORKSPACE = ROOT / "implementations" / "rust"
+SMT_LIB_DIALECT = "smt-lib-v2.6"
 
 
 @dataclass(frozen=True)
 class _SolverCase:
     formulas: tuple[Formula, ...]
-    declarations: dict[str, Sort]
 
 
 def _construction_site() -> ConstructionSite:
@@ -88,12 +84,15 @@ def _two_warrant_provenance(node_class: str) -> Provenance:
 
 
 def _z3_status(case: _SolverCase) -> str:
-    declarations = "\n".join(
-        f"(declare-const {_smt_name(name)} {_smt_sort(sort)})"
-        for name, sort in sorted(case.declarations.items())
-    )
-    assertions = "\n".join(f"(assert {_smt_formula(formula)})" for formula in case.formulas)
-    smt = f"{declarations}\n{assertions}\n(check-sat)\n"
+    if not case.formulas:
+        return "sat"
+    # The compiler's production contract is proof-oriented: it emits
+    # `(assert (not F))` so `unsat` means an obligation is discharged. The
+    # witness harness asks a model-existence question over all formulas, so
+    # feed it `not(and(formulas))`; the production compiler's negation then
+    # yields exactly the asserted conjunction we want z3 to check.
+    compiled = _compile_formula_with_smt_lib(not_(and_(list(case.formulas))))
+    smt = f"{compiled['preamble']}{compiled['body']}"
     completed = subprocess.run(
         ["z3", "-in"],
         input=smt,
@@ -105,51 +104,66 @@ def _z3_status(case: _SolverCase) -> str:
     return completed.stdout.splitlines()[0]
 
 
-def _smt_sort(sort: Sort) -> str:
-    if isinstance(sort, PrimitiveSort):
-        if sort.name in {"Int", "Bool", "String", "Real"}:
-            return sort.name
-    raise AssertionError(f"test solver harness does not support sort {sort!r}")
-
-
-def _smt_formula(formula: Formula) -> str:
-    if isinstance(formula, _Atomic):
-        if formula.name == "=" and len(formula.args) == 2:
-            return f"(= {_smt_term(formula.args[0])} {_smt_term(formula.args[1])})"
-        raise AssertionError(f"unsupported atomic formula in witness: {formula!r}")
-    if isinstance(formula, _Connective):
-        rendered = [_smt_formula(operand) for operand in formula.operands]
-        if formula.kind == "and":
-            return "(and true)" if not rendered else f"(and {' '.join(rendered)})"
-        if formula.kind == "implies" and len(rendered) == 2:
-            return f"(=> {rendered[0]} {rendered[1]})"
-        if formula.kind == "not" and len(rendered) == 1:
-            return f"(not {rendered[0]})"
-        raise AssertionError(f"unsupported connective in witness: {formula!r}")
-    if isinstance(formula, _Quantifier):
-        return (
-            f"({formula.kind} (({_smt_name(formula.name)} {_smt_sort(formula.sort)})) "
-            f"{_smt_formula(formula.body)})"
+def _compile_formula_with_smt_lib(formula: Formula) -> dict[str, Any]:
+    ir_json = json.loads(encode_jcs(formula_to_value(formula)))
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sugar.ir.handshake",
+            "params": {
+                "sugar_version": "proofir-vocabulary-test",
+                "protocol_version": "sugar-ir-compiler/1",
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "sugar.ir.compile",
+            "params": {
+                "ir_json": ir_json,
+                "target_dialect": SMT_LIB_DIALECT,
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "sugar.ir.shutdown",
+            "params": {},
+        },
+    ]
+    completed = subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--locked",
+            "-p",
+            "sugar-ir-compiler-smt-lib",
+            "--bin",
+            "sugar-ir-smt-lib",
+            "--quiet",
+            "--",
+        ],
+        cwd=RUST_WORKSPACE,
+        input="\n".join(json.dumps(request) for request in requests) + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    responses = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+    ]
+    assert len(responses) == 3, completed.stdout
+    compile_response = responses[1]
+    if "error" in compile_response:
+        raise AssertionError(
+            f"sugar-ir-smt-lib refused witness formula: {compile_response['error']}"
         )
-    raise AssertionError(f"unsupported formula in witness: {formula!r}")
-
-
-def _smt_term(term: Term) -> str:
-    if isinstance(term, _ConstInt):
-        return str(term.value)
-    if isinstance(term, _ConstBool):
-        return "true" if term.value else "false"
-    if isinstance(term, _ConstStr):
-        return '"' + term.value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    if isinstance(term, _Var):
-        return _smt_name(term.name)
-    if isinstance(term, _Ctor):
-        return _smt_name(term.name if not term.args else repr(term))
-    raise AssertionError(f"unsupported term in witness: {term!r}")
-
-
-def _smt_name(name: str) -> str:
-    return "|proofir:" + name.replace("|", "_") + "|"
+    result = compile_response.get("result")
+    assert isinstance(result, dict), compile_response
+    return result
 
 
 def _run_witness_case(case) -> str:
@@ -162,7 +176,14 @@ def _run_witness_case(case) -> str:
         constructed = case.construct()
         if isinstance(constructed, RefusalRecord):
             assert constructed.denotation() is None
-    return _z3_status(_SolverCase(case.formulas, dict(case.declarations)))
+    return _z3_status(_SolverCase(case.formulas))
+
+
+def test_witness_harness_uses_real_smt_lib_compiler() -> None:
+    compiled = _compile_formula_with_smt_lib(eq(make_var("x"), num(1)))
+
+    assert "(declare-const x Int)" in compiled["preamble"]
+    assert "(check-sat)" in compiled["body"]
 
 
 @pytest.mark.parametrize("node_class", REGISTERED_PROOFIR_NODE_CLASSES)
@@ -238,10 +259,7 @@ def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
     with pytest.raises(FactoryGap, match="semantic_cid"):
         merge_equality_facts(stated_lie, derived_truth)
     assert _z3_status(
-        _SolverCase(
-            (stated_lie.denotation(), derived_truth.denotation()),
-            {"call:h": Int()},
-        )
+        _SolverCase((stated_lie.denotation(), derived_truth.denotation()))
     ) == "unsat"
 
 

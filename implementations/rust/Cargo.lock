@@ -1547,6 +1547,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sugar-floor-algebra"
+version = "0.1.0"
+dependencies = [
+ "sugar-ir-symbolic",
+]
+
+[[package]]
 name = "sugar-ir-compiler"
 version = "0.1.0"
 dependencies = [
@@ -1681,6 +1688,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "sugar-canonicalizer",
+ "sugar-floor-algebra",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-symbolic",
  "sugar-proof-envelope",
@@ -1816,6 +1824,8 @@ dependencies = [
  "serde_json",
  "sugar-canonicalizer",
  "sugar-claim-envelope",
+ "sugar-floor-algebra",
+ "sugar-ir-symbolic",
  "sugar-ir-types",
  "sugar-lift-contracts",
  "sugar-proof-envelope",
