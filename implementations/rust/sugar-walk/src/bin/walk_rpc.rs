@@ -561,8 +561,10 @@ fn recognize_match_item_fn(
         .filter_map(|arg| match arg {
             syn::FnArg::Typed(pat_ty) => match &*pat_ty.pat {
                 syn::Pat::Ident(pid) => Some(pid.ident.to_string()),
+                // sugar-audit: not-mine(recognize templates only bind single-name parameters)
                 _ => None,
             },
+            // sugar-audit: not-mine(recognize targets are free functions; receivers have no template parameter name)
             syn::FnArg::Receiver(_) => None,
         })
         .collect();
@@ -1553,7 +1555,22 @@ fn pat_single_ident(pat: &syn::Pat) -> Option<String> {
     match pat {
         syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
         syn::Pat::Type(typed) => pat_single_ident(&typed.pat),
-        _ => None,
+        syn::Pat::Paren(paren) => pat_single_ident(&paren.pat),
+        syn::Pat::Reference(reference) => pat_single_ident(&reference.pat),
+        syn::Pat::Const(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Or(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Slice(_)
+        | syn::Pat::Struct(_)
+        | syn::Pat::Tuple(_)
+        | syn::Pat::TupleStruct(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => None,
+        _ => panic!("sugar-walk RPC pat_single_ident refused unknown syn::Pat variant"),
     }
 }
 
@@ -1616,7 +1633,45 @@ fn channel_send_payload_zero_arg_producer(expr: &syn::Expr) -> Option<String> {
                 .last()
                 .map(|segment| segment.ident.to_string())
         }
-        _ => None,
+        syn::Expr::Call(_)
+        | syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!(
+            "sugar-walk RPC channel_send_payload_zero_arg_producer refused unknown syn::Expr variant"
+        ),
     }
 }
 
@@ -1624,12 +1679,53 @@ fn mutex_guard_access_lock_site(expr: &syn::Expr, mutex: &str) -> Option<(usize,
     match expr {
         syn::Expr::Unary(unary) => match unary.op {
             syn::UnOp::Deref(_) => mutex_lock_site(&unary.expr, mutex),
-            _ => None,
+            syn::UnOp::Not(_) | syn::UnOp::Neg(_) => None,
+            _ => panic!(
+                "sugar-walk RPC mutex_guard_access_lock_site refused unknown syn::UnOp variant"
+            ),
         },
         syn::Expr::Paren(paren) => mutex_guard_access_lock_site(&paren.expr, mutex),
         syn::Expr::Group(group) => mutex_guard_access_lock_site(&group.expr, mutex),
         syn::Expr::Reference(reference) => mutex_guard_access_lock_site(&reference.expr, mutex),
-        _ => None,
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => {
+            panic!("sugar-walk RPC mutex_guard_access_lock_site refused unknown syn::Expr variant")
+        }
     }
 }
 
@@ -1647,7 +1743,43 @@ fn mutex_lock_site(expr: &syn::Expr, mutex: &str) -> Option<(usize, usize)> {
                 None
             }
         }
-        _ => None,
+        syn::Expr::MethodCall(_)
+        | syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC mutex_lock_site refused unknown syn::Expr variant"),
     }
 }
 
@@ -2391,7 +2523,46 @@ impl FunctionPostconditionsManifest {
                     param_names,
                 );
             }
-            _ => None,
+            syn::Expr::Array(_)
+            | syn::Expr::Assign(_)
+            | syn::Expr::Async(_)
+            | syn::Expr::Await(_)
+            | syn::Expr::Binary(_)
+            | syn::Expr::Block(_)
+            | syn::Expr::Break(_)
+            | syn::Expr::Cast(_)
+            | syn::Expr::Closure(_)
+            | syn::Expr::Const(_)
+            | syn::Expr::Continue(_)
+            | syn::Expr::Field(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::If(_)
+            | syn::Expr::Index(_)
+            | syn::Expr::Infer(_)
+            | syn::Expr::Let(_)
+            | syn::Expr::Lit(_)
+            | syn::Expr::Loop(_)
+            | syn::Expr::Macro(_)
+            | syn::Expr::Match(_)
+            | syn::Expr::Path(_)
+            | syn::Expr::Range(_)
+            | syn::Expr::RawAddr(_)
+            | syn::Expr::Repeat(_)
+            | syn::Expr::Return(_)
+            | syn::Expr::Struct(_)
+            | syn::Expr::Try(_)
+            | syn::Expr::TryBlock(_)
+            | syn::Expr::Tuple(_)
+            | syn::Expr::Unary(_)
+            | syn::Expr::Unsafe(_)
+            | syn::Expr::Verbatim(_)
+            | syn::Expr::While(_)
+            | syn::Expr::Yield(_) => None,
+            _ => {
+                panic!(
+                    "sugar-walk RPC panic_partial_for_receiver refused unknown syn::Expr variant"
+                )
+            }
         }?;
         let stem = panic_stem_for_post_predicate(&rule.post_predicate)?;
         disambiguated_partial_leaf(stem, panic_leaf).map(|leaf| ("std".to_string(), leaf))
@@ -2416,6 +2587,7 @@ fn panic_stem_for_post_predicate(predicate: &str) -> Option<&'static str> {
     match predicate {
         panic_freedom::IS_OK => Some("result"),
         panic_freedom::IS_SOME => Some("option"),
+        // sugar-audit: not-mine(only is_ok/is_some map to built-in std panic partial stems)
         _ => None,
     }
 }
@@ -3368,7 +3540,42 @@ fn collect_callsites_in_block(
                 syn::Expr::Reference(reference) => self.expr_type_identity(&reference.expr),
                 syn::Expr::Paren(paren) => self.expr_type_identity(&paren.expr),
                 syn::Expr::Group(group) => self.expr_type_identity(&group.expr),
-                _ => None,
+                syn::Expr::Array(_)
+                | syn::Expr::Assign(_)
+                | syn::Expr::Async(_)
+                | syn::Expr::Await(_)
+                | syn::Expr::Binary(_)
+                | syn::Expr::Block(_)
+                | syn::Expr::Break(_)
+                | syn::Expr::Call(_)
+                | syn::Expr::Cast(_)
+                | syn::Expr::Closure(_)
+                | syn::Expr::Const(_)
+                | syn::Expr::Continue(_)
+                | syn::Expr::ForLoop(_)
+                | syn::Expr::If(_)
+                | syn::Expr::Index(_)
+                | syn::Expr::Infer(_)
+                | syn::Expr::Let(_)
+                | syn::Expr::Lit(_)
+                | syn::Expr::Loop(_)
+                | syn::Expr::Macro(_)
+                | syn::Expr::Match(_)
+                | syn::Expr::MethodCall(_)
+                | syn::Expr::Range(_)
+                | syn::Expr::RawAddr(_)
+                | syn::Expr::Repeat(_)
+                | syn::Expr::Return(_)
+                | syn::Expr::Struct(_)
+                | syn::Expr::Try(_)
+                | syn::Expr::TryBlock(_)
+                | syn::Expr::Tuple(_)
+                | syn::Expr::Unary(_)
+                | syn::Expr::Unsafe(_)
+                | syn::Expr::Verbatim(_)
+                | syn::Expr::While(_)
+                | syn::Expr::Yield(_) => None,
+                _ => panic!("sugar-walk RPC expr_type_identity refused unknown syn::Expr variant"),
             }
         }
 
@@ -3390,7 +3597,45 @@ fn collect_callsites_in_block(
                 }
                 syn::Expr::Paren(paren) => self.expr_option_inner_type_identity(&paren.expr),
                 syn::Expr::Group(group) => self.expr_option_inner_type_identity(&group.expr),
-                _ => None,
+                syn::Expr::Array(_)
+                | syn::Expr::Assign(_)
+                | syn::Expr::Async(_)
+                | syn::Expr::Await(_)
+                | syn::Expr::Binary(_)
+                | syn::Expr::Block(_)
+                | syn::Expr::Break(_)
+                | syn::Expr::Call(_)
+                | syn::Expr::Cast(_)
+                | syn::Expr::Closure(_)
+                | syn::Expr::Const(_)
+                | syn::Expr::Continue(_)
+                | syn::Expr::ForLoop(_)
+                | syn::Expr::If(_)
+                | syn::Expr::Index(_)
+                | syn::Expr::Infer(_)
+                | syn::Expr::Let(_)
+                | syn::Expr::Lit(_)
+                | syn::Expr::Loop(_)
+                | syn::Expr::Macro(_)
+                | syn::Expr::Match(_)
+                | syn::Expr::MethodCall(_)
+                | syn::Expr::Path(_)
+                | syn::Expr::Range(_)
+                | syn::Expr::RawAddr(_)
+                | syn::Expr::Repeat(_)
+                | syn::Expr::Return(_)
+                | syn::Expr::Struct(_)
+                | syn::Expr::Try(_)
+                | syn::Expr::TryBlock(_)
+                | syn::Expr::Tuple(_)
+                | syn::Expr::Unary(_)
+                | syn::Expr::Unsafe(_)
+                | syn::Expr::Verbatim(_)
+                | syn::Expr::While(_)
+                | syn::Expr::Yield(_) => None,
+                _ => panic!(
+                    "sugar-walk RPC expr_option_inner_type_identity refused unknown syn::Expr variant"
+                ),
             }
         }
 
@@ -3422,7 +3667,45 @@ fn collect_callsites_in_block(
                 syn::Expr::Reference(reference) => {
                     self.serde_json_panic_partial_for_receiver(&reference.expr, panic_leaf)
                 }
-                _ => None,
+                syn::Expr::Array(_)
+                | syn::Expr::Assign(_)
+                | syn::Expr::Async(_)
+                | syn::Expr::Await(_)
+                | syn::Expr::Binary(_)
+                | syn::Expr::Block(_)
+                | syn::Expr::Break(_)
+                | syn::Expr::Cast(_)
+                | syn::Expr::Closure(_)
+                | syn::Expr::Const(_)
+                | syn::Expr::Continue(_)
+                | syn::Expr::Field(_)
+                | syn::Expr::ForLoop(_)
+                | syn::Expr::If(_)
+                | syn::Expr::Index(_)
+                | syn::Expr::Infer(_)
+                | syn::Expr::Let(_)
+                | syn::Expr::Lit(_)
+                | syn::Expr::Loop(_)
+                | syn::Expr::Macro(_)
+                | syn::Expr::Match(_)
+                | syn::Expr::MethodCall(_)
+                | syn::Expr::Path(_)
+                | syn::Expr::Range(_)
+                | syn::Expr::RawAddr(_)
+                | syn::Expr::Repeat(_)
+                | syn::Expr::Return(_)
+                | syn::Expr::Struct(_)
+                | syn::Expr::Try(_)
+                | syn::Expr::TryBlock(_)
+                | syn::Expr::Tuple(_)
+                | syn::Expr::Unary(_)
+                | syn::Expr::Unsafe(_)
+                | syn::Expr::Verbatim(_)
+                | syn::Expr::While(_)
+                | syn::Expr::Yield(_) => None,
+                _ => panic!(
+                    "sugar-walk RPC serde_json_panic_partial_for_receiver refused unknown syn::Expr variant"
+                ),
             }
         }
 
@@ -4054,7 +4337,22 @@ fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
     match pat {
         syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
         syn::Pat::Type(pat_type) => pat_ident_name(&pat_type.pat),
-        _ => None,
+        syn::Pat::Paren(paren) => pat_ident_name(&paren.pat),
+        syn::Pat::Reference(reference) => pat_ident_name(&reference.pat),
+        syn::Pat::Const(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Or(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Slice(_)
+        | syn::Pat::Struct(_)
+        | syn::Pat::Tuple(_)
+        | syn::Pat::TupleStruct(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => None,
+        _ => panic!("sugar-walk RPC pat_ident_name refused unknown syn::Pat variant"),
     }
 }
 
@@ -4063,8 +4361,24 @@ fn pat_immutable_ident_name(pat: &syn::Pat) -> Option<String> {
         syn::Pat::Ident(ident) if ident.mutability.is_none() && ident.subpat.is_none() => {
             Some(ident.ident.to_string())
         }
+        syn::Pat::Ident(_) => None,
         syn::Pat::Type(pat_type) => pat_immutable_ident_name(&pat_type.pat),
-        _ => None,
+        syn::Pat::Paren(paren) => pat_immutable_ident_name(&paren.pat),
+        syn::Pat::Reference(reference) => pat_immutable_ident_name(&reference.pat),
+        syn::Pat::Const(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Or(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Slice(_)
+        | syn::Pat::Struct(_)
+        | syn::Pat::Tuple(_)
+        | syn::Pat::TupleStruct(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => None,
+        _ => panic!("sugar-walk RPC pat_immutable_ident_name refused unknown syn::Pat variant"),
     }
 }
 
@@ -4081,7 +4395,27 @@ fn pat_type_identity(
             local_type_names,
             current_crate,
         ),
-        _ => None,
+        syn::Pat::Paren(paren) => {
+            pat_type_identity(&paren.pat, use_map, local_type_names, current_crate)
+        }
+        syn::Pat::Reference(reference) => {
+            pat_type_identity(&reference.pat, use_map, local_type_names, current_crate)
+        }
+        syn::Pat::Const(_)
+        | syn::Pat::Ident(_)
+        | syn::Pat::Lit(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Or(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Slice(_)
+        | syn::Pat::Struct(_)
+        | syn::Pat::Tuple(_)
+        | syn::Pat::TupleStruct(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => None,
+        _ => panic!("sugar-walk RPC pat_type_identity refused unknown syn::Pat variant"),
     }
 }
 
@@ -4141,7 +4475,57 @@ fn expr_return_crate(
             local_type_names,
             current_crate,
         ),
-        _ => None,
+        syn::Expr::Group(group) => expr_return_crate(
+            &group.expr,
+            use_map,
+            fn_return_crates,
+            local_type_names,
+            current_crate,
+        ),
+        syn::Expr::Reference(reference) => expr_return_crate(
+            &reference.expr,
+            use_map,
+            fn_return_crates,
+            local_type_names,
+            current_crate,
+        ),
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC expr_return_crate refused unknown syn::Expr variant"),
     }
 }
 
@@ -4212,7 +4596,45 @@ fn call_expr_callee(
             Some((leaf, krate, contract_leaf))
         }
         syn::Expr::Paren(p) => call_expr_callee(&p.expr, use_map, current_crate),
-        _ => None,
+        syn::Expr::Group(group) => call_expr_callee(&group.expr, use_map, current_crate),
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Reference(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC call_expr_callee refused unknown syn::Expr variant"),
     }
 }
 
@@ -4248,7 +4670,44 @@ fn expr_as_call(expr: &syn::Expr) -> Option<&syn::ExprCall> {
         syn::Expr::Call(call) => Some(call),
         syn::Expr::Paren(paren) => expr_as_call(&paren.expr),
         syn::Expr::Group(group) => expr_as_call(&group.expr),
-        _ => None,
+        syn::Expr::Reference(reference) => expr_as_call(&reference.expr),
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC expr_as_call refused unknown syn::Expr variant"),
     }
 }
 
@@ -4408,7 +4867,43 @@ fn expr_path_text(expr: &syn::Expr) -> Option<String> {
         syn::Expr::Reference(reference) => expr_path_text(&reference.expr),
         syn::Expr::Paren(paren) => expr_path_text(&paren.expr),
         syn::Expr::Group(group) => expr_path_text(&group.expr),
-        _ => None,
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC expr_path_text refused unknown syn::Expr variant"),
     }
 }
 
@@ -4647,7 +5142,46 @@ fn expr_bare_ident_name(expr: &syn::Expr) -> Option<String> {
             Some(p.path.segments[0].ident.to_string())
         }
         syn::Expr::Reference(r) => expr_bare_ident_name(&r.expr),
-        _ => None,
+        syn::Expr::Paren(paren) => expr_bare_ident_name(&paren.expr),
+        syn::Expr::Group(group) => expr_bare_ident_name(&group.expr),
+        syn::Expr::Path(_)
+        | syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC expr_bare_ident_name refused unknown syn::Expr variant"),
     }
 }
 
@@ -4906,7 +5440,46 @@ fn expr_constructed_type_identity(
         syn::Expr::Group(group) => {
             expr_constructed_type_identity(&group.expr, use_map, local_type_names, current_crate)
         }
-        _ => None,
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Lit(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Path(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Reference(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!(
+            "sugar-walk RPC expr_constructed_type_identity refused unknown syn::Expr variant"
+        ),
     }
 }
 
@@ -5997,6 +6570,7 @@ fn lift_post(params: &Value) -> Result<Value, String> {
         .into_iter()
         .find_map(|item| match item {
             syn::Item::Fn(f) if f.sig.ident == fn_name => Some(f),
+            // sugar-audit: not-mine(lift_post RPC targets top-level free functions by exact name)
             _ => None,
         })
         .ok_or_else(|| format!("function `{}` not found", fn_name))?;
@@ -6021,6 +6595,7 @@ fn contract(params: &Value) -> Result<Value, String> {
         .into_iter()
         .find_map(|item| match item {
             syn::Item::Fn(f) if f.sig.ident == fn_name => Some(f),
+            // sugar-audit: not-mine(contract RPC targets top-level free functions by exact name)
             _ => None,
         })
         .ok_or_else(|| format!("function `{}` not found", fn_name))?;
@@ -6106,6 +6681,7 @@ fn parse_fn(src: &str, name: &str) -> Result<syn::ItemFn, String> {
         .into_iter()
         .find_map(|item| match item {
             syn::Item::Fn(f) if f.sig.ident == name => Some(f),
+            // sugar-audit: not-mine(parse_fn helper targets top-level free functions by exact name)
             _ => None,
         })
         .ok_or_else(|| format!("function `{}` not found", name))
@@ -7356,12 +7932,19 @@ fn statement_bound_name(stmt: &syn::Stmt) -> Option<String> {
 }
 
 fn local_binding_ident_name(local: &syn::Local) -> Option<String> {
-    match &local.pat {
+    local_binding_ident_name_pat(&local.pat)
+}
+
+fn local_binding_ident_name_pat(pat: &syn::Pat) -> Option<String> {
+    match pat {
         syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
         syn::Pat::Type(typed) => match &*typed.pat {
             syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+            // sugar-audit: not-mine(typed local binding name requires a single identifier pattern)
             _ => None,
         },
+        syn::Pat::Paren(paren) => local_binding_ident_name_pat(&paren.pat),
+        // sugar-audit: not-mine(local binding names only exist for single-name local patterns)
         _ => None,
     }
 }
@@ -8129,6 +8712,7 @@ fn parse_attr_named_args(tokens: &proc_macro2::TokenStream) -> ParsedAttrArgs {
                         proc_macro2::TokenTree::Literal(lit) => {
                             unquote_string_literal(&lit.to_string())
                         }
+                        // sugar-audit: not-mine(named attr string arrays only collect literal entries)
                         _ => None,
                     })
                     .collect();
@@ -8355,6 +8939,7 @@ fn evidence_role(evidence: &EvidenceMemento) -> Option<String> {
                 "requires" | "arguments_must_be" => Some("pre".to_string()),
                 "returns_if" => Some("post".to_string()),
                 "panics_if" => Some("panic".to_string()),
+                // sugar-audit: not-mine(unrecognized docstring pattern kinds carry no verifier role)
                 _ => None,
             }),
         SourceKind::TypeSignature => evidence
@@ -8368,6 +8953,7 @@ fn evidence_role(evidence: &EvidenceMemento) -> Option<String> {
                     "pre".to_string()
                 }
             }),
+        // sugar-audit: not-mine(only docstrings and type signatures infer evidence roles)
         _ => None,
     }
 }
@@ -8624,6 +9210,7 @@ fn sugar_param_types(item_fn: &syn::ItemFn) -> Vec<String> {
                     Some(raw)
                 }
             }
+            // sugar-audit: not-mine(sugar param_types describe typed value parameters, not receivers)
             _ => None,
         })
         .collect()
@@ -8647,6 +9234,7 @@ fn sugar_original_param_types(item_fn: &syn::ItemFn) -> Vec<String> {
         .iter()
         .filter_map(|arg| match arg {
             syn::FnArg::Typed(pat_type) => Some(sugar_type_surface(&pat_type.ty)),
+            // sugar-audit: not-mine(original param_types describe typed value parameters, not receivers)
             _ => None,
         })
         .collect()
@@ -9219,7 +9807,45 @@ fn operand_symbol(expr: &syn::Expr) -> Option<String> {
     match expr {
         syn::Expr::Path(path) => path.path.get_ident().map(|ident| ident.to_string()),
         syn::Expr::Lit(lit) => literal_symbol(&lit.lit),
-        _ => None,
+        syn::Expr::Paren(paren) => operand_symbol(&paren.expr),
+        syn::Expr::Group(group) => operand_symbol(&group.expr),
+        syn::Expr::Reference(reference) => operand_symbol(&reference.expr),
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Binary(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unary(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC operand_symbol refused unknown syn::Expr variant"),
     }
 }
 
@@ -9228,6 +9854,7 @@ fn literal_symbol(lit: &syn::Lit) -> Option<String> {
         syn::Lit::Bool(value) => Some(value.value().to_string()),
         syn::Lit::Int(value) => Some(value.to_string()),
         syn::Lit::Str(value) => Some(format!("{:?}", value.value())),
+        // sugar-audit: not-mine(#3017 item 2 leaves non-scalar literals outside operand symbols)
         _ => None,
     }
 }
@@ -9319,7 +9946,11 @@ fn update_context_from_stmt(stmt: &syn::Stmt, ctx: &mut ShapeContext) {
 }
 
 fn local_binding_symbol(local: &syn::Local) -> Option<String> {
-    match &local.pat {
+    local_binding_symbol_pat(&local.pat)
+}
+
+fn local_binding_symbol_pat(pat: &syn::Pat) -> Option<String> {
+    match pat {
         syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
         syn::Pat::Type(pat_type) => {
             let syn::Pat::Ident(ident) = &*pat_type.pat else {
@@ -9327,6 +9958,8 @@ fn local_binding_symbol(local: &syn::Local) -> Option<String> {
             };
             Some(ident.ident.to_string())
         }
+        syn::Pat::Paren(paren) => local_binding_symbol_pat(&paren.pat),
+        // sugar-audit: not-mine(local binding symbols only exist for single-name local patterns)
         _ => None,
     }
 }
@@ -9352,17 +9985,21 @@ fn local_binding_sort(
         .init
         .as_ref()
         .and_then(|init| expr_sort(&init.expr, ctx));
-    match &local.pat {
+    local_binding_sort_pat(&local.pat, inferred)
+}
+
+fn local_binding_sort_pat(
+    pat: &syn::Pat,
+    inferred: Option<ShapeSort>,
+) -> Option<(String, Option<ShapeSort>)> {
+    match pat {
         syn::Pat::Ident(ident) => Some((ident.ident.to_string(), inferred)),
         syn::Pat::Type(pat_type) => {
-            let syn::Pat::Ident(ident) = &*pat_type.pat else {
-                return None;
-            };
-            Some((
-                ident.ident.to_string(),
-                sort_from_type(&pat_type.ty).or(inferred),
-            ))
+            let name = local_binding_ident_name_pat(&pat_type.pat)?;
+            Some((name, sort_from_type(&pat_type.ty).or(inferred)))
         }
+        syn::Pat::Paren(paren) => local_binding_sort_pat(&paren.pat, inferred),
+        // sugar-audit: not-mine(local binding sorts only exist for single-name local patterns)
         _ => None,
     }
 }
@@ -10000,7 +10637,10 @@ fn expr_sort(expr: &syn::Expr, ctx: &ShapeContext) -> Option<ShapeSort> {
 fn block_tail_expr(block: &syn::Block) -> Option<&syn::Expr> {
     match block.stmts.last()? {
         syn::Stmt::Expr(expr, None) => Some(expr),
-        _ => None,
+        syn::Stmt::Expr(_, Some(_))
+        | syn::Stmt::Local(_)
+        | syn::Stmt::Item(_)
+        | syn::Stmt::Macro(_) => None,
     }
 }
 
@@ -10088,6 +10728,7 @@ fn sort_from_type_name(name: &str) -> Option<ShapeSort> {
         "bool" => Some(ShapeSort::Bool),
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
         | "usize" => Some(ShapeSort::Int),
+        // sugar-audit: not-mine(#3017 item 2 leaves non-primitive type names outside scalar shape sorts)
         _ => None,
     }
 }
@@ -10124,7 +10765,7 @@ fn binary_operator_name(op: &syn::BinOp) -> Option<&'static str> {
         syn::BinOp::Ge(_) => Some("concept:ge"),
         syn::BinOp::And(_) => Some("concept:and"),
         syn::BinOp::Or(_) => Some("concept:or"),
-        _ => None,
+        _ => panic!("sugar-walk RPC binary_operator_name refused unknown syn::BinOp variant"),
     }
 }
 
@@ -10136,7 +10777,7 @@ fn unary_operator_name(op: &syn::UnOp, operand_sort: Option<ShapeSort>) -> Optio
             _ => Some("concept:not"),
         },
         syn::UnOp::Neg(_) => Some("concept:neg"),
-        _ => None,
+        _ => panic!("sugar-walk RPC unary_operator_name refused unknown syn::UnOp variant"),
     }
 }
 
@@ -10402,6 +11043,7 @@ mod tests {
             .iter()
             .find_map(|it| match it {
                 syn::Item::Fn(f) if f.sig.ident == fn_name => Some(f),
+                // sugar-audit: not-mine(test fixture memento minting searches top-level free functions only)
                 _ => None,
             })
             .unwrap();
@@ -10588,6 +11230,7 @@ mod tests {
             .iter()
             .find_map(|it| match it {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test body-source fixture reads its top-level free function)
                 _ => None,
             })
             .unwrap();
@@ -10623,6 +11266,7 @@ mod tests {
             .iter()
             .find_map(|item| match item {
                 syn::Item::Fn(item_fn) => Some(item_fn),
+                // sugar-audit: not-mine(test panic-locus helper reads the first top-level free function fixture)
                 _ => None,
             })
             .expect("fixture has a function");
@@ -11170,6 +11814,7 @@ pub fn json_parse(s: &str) -> i64 {
             .iter()
             .find_map(|it| match it {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test body-source fixture reads its top-level free function)
                 _ => None,
             })
             .unwrap();
@@ -11211,6 +11856,7 @@ pub fn execute(conn: &i64, sql: &str, args: &i64) -> i64 {
             .iter()
             .find_map(|it| match it {
                 syn::Item::Fn(f) => Some(f),
+                // sugar-audit: not-mine(test body-template fixture reads its top-level free function)
                 _ => None,
             })
             .unwrap();
