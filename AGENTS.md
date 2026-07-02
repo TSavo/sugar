@@ -109,6 +109,64 @@ And now those three commandments read differently. "Don't check in broken code" 
 
 In practice: we do not gate. We instrument, fire, measure impact, and fire again. The merge is not a prize awarded after a slow compile, test, and sweep — it is the measurement boundary for the next shot. Do not spend scarce orientation waiting on abundant generation.
 
+## The enforcement ladder: every instrument wants to become the compiler
+
+Instruments are not all equal. They form a ladder, and each rung up, the red
+arrives earlier and costs less to keep:
+
+**prose < review < auditor < test < panic < type checker.**
+
+Prose decays. Review is a gate. An auditor fires at check-in. A test fires at
+run-time. A panic fires on contact. But the type checker fires *before the
+program exists* — an illegal state you cannot construct never needs detection,
+never needs a frontier, never needs a drain. It is the only instrument with
+zero latency and zero maintenance, and the one place a gate is fine, because
+the compiler is a gate that takes milliseconds and serializes nothing.
+
+This is not a new idea, and it is not ours. It is what the Gang of Four saw,
+built from objects because their type systems were too weak to say it
+directly. Every pattern in that book is a machine for deleting a bug *class*
+by making its precondition inexpressible:
+
+- **Composite**: the client cannot write the one-vs-many bug, because the
+  distinction does not exist at the interface. There is no code path where you
+  forgot to handle the collection case. Correct by design.
+- **Visitor / double dispatch**: the "what is the receiver" bug is unwritable,
+  because dispatch *is* the design — and with abstract methods, adding a
+  variant makes every visitor that does not handle it refuse to compile. The
+  new case cannot be silently dropped; the compiler hands you the todo list.
+- **Factory**: invalid construction is unwritable because construction has one
+  door. You do not audit for objects built wrong; wrongness has no
+  constructor.
+- **State**: the "illegal transition" bug is unwritable when each state object
+  only offers the transitions that exist. You do not check the state machine;
+  you *are* the state machine.
+
+The patterns survived thirty years because they are compile-time instruments
+wearing runtime clothes. When we say "route it through the floor," "one door
+for construction," "make the missing arm a compile error" — that is Composite,
+Factory, Visitor, applied to proofs instead of widgets. Same law, older book.
+
+So the prime directive one level above "instrument first": **every instrument
+should be trying to climb the ladder and retire itself.** An auditor is a
+confession that the type system cannot yet say the thing. Some confessions are
+permanent (a non-exhaustive upstream enum forbids the compiler from enforcing
+totality — so a frontier auditor holds that line forever). But most are not:
+an `Option` that a required field outgrew becomes a plain field, and the
+fail-open path stops parsing. A pub decoder becomes pub(crate), and the bypass
+becomes a visibility error. A "callers must not reuse this" comment becomes a
+move, and the reuse becomes a borrow error. A stringly status becomes an enum,
+and the unhandled case becomes a missing match arm. In each case a whole R
+axis does not go to zero — it goes to *unrepresentable*, the auditor that
+watched it is deleted, and the only red left is the residue the type system
+structurally cannot reach.
+
+When you design a new instrument, ask in order: can the type system forbid
+this outright? Can construction be given one door that refuses? Can the
+failure be wired to a panic at contact? Only then, if the answer is no three
+times, write the auditor — and leave a note in it naming what language or
+design change would let it retire.
+
 Name the first-then inversions out loud, because they often arrive disguised as
 responsibility:
 
