@@ -1814,6 +1814,13 @@ impl<'a> SourceFragment<'a> {
         crate::sugar::int_literal::exact_int_value(expr, fcx)
     }
 
+    /// Const-fold this fragment through the exact closed evaluator and return a
+    /// `u128` value. All raw syn access lives HERE, not in recognizer bodies.
+    pub(crate) fn const_eval_u128_empty_env(&self) -> Option<u128> {
+        let expr = self.as_expr()?;
+        crate::const_eval(expr, &std::collections::BTreeMap::new())?.as_u128()
+    }
+
     // -- macro token-stream accessor ------------------------------------------
 
     /// Returns the raw `proc_macro2::TokenStream` of the macro body for an

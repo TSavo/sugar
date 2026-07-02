@@ -4,17 +4,13 @@
 // values that are source-closed and canonical. Duration is not a peer SMT sort
 // here; it is a refinement of the canonical Int total-nanoseconds carrier.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, gt, gte, lt, lte, ne, num, Formula, Term};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{
-    const_eval, const_fold_int_term, token_key, Desugared, Effect, Outcome, RelationOp, Sugar,
-    SugarCtx,
-};
+use crate::{const_fold_int_term, Desugared, Effect, Outcome, RelationOp, Sugar, SugarCtx};
 
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 pub(crate) const DURATION_TERM_CTOR: &str = "duration:Duration";
@@ -68,7 +64,7 @@ fn duration_decision_from_frag(frag: &SourceFragment) -> Option<DurationDecision
     if ty_name != "Duration" {
         return None;
     }
-    let boundary = token_key(frag.as_expr()?);
+    let boundary = frag.token_str();
     let args = frag
         .call_args()
         .iter()
@@ -128,8 +124,7 @@ fn duration_path_parts(path: &str) -> Option<(String, String)> {
 }
 
 fn arg_u128_const(frag: &SourceFragment) -> Option<u128> {
-    let expr = frag.strip_refs_groups().as_expr()?;
-    const_eval(expr, &BTreeMap::new())?.as_u128()
+    frag.strip_refs_groups().const_eval_u128_empty_env()
 }
 
 pub(crate) fn duration_total_nanos_from_expr(expr: &syn::Expr) -> Option<i128> {
