@@ -10,9 +10,7 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{
-    AttributeSafetyObligation, CallSite, MemberKind, MementoCid, MementoPool, StoredMember,
-};
+use crate::types::{AttributeSafetyObligation, CallSite, MementoCid, MementoPool, StoredMember};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -24,19 +22,12 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         "enumerate_callsites: scanning contracts for callsites"
     );
     let mut out = Vec::with_capacity(pool.bridges_by_symbol.len());
-    for (cid, env) in &pool.mementos {
+    for (cid, body) in pool.contract_members_with_bodies() {
         // Shape-agnostic (matches resolve_target): v1.2-layered contracts
         // carry their kind on `header.kind` and pre/post/inv on `header`;
         // v1.1-flat carry them on `evidence.kind` / `evidence.body`. The
         // production harvest path (`mint_contract`) emits v1.2; reading
         // only `evidence.body` here meant harvested calls never enumerated.
-        if !pool.member_is_kind(cid, MemberKind::Contract) {
-            continue;
-        }
-        let body = match pool.resolve_contract_body(env) {
-            Some(v) if v.is_object() => v,
-            _ => continue,
-        };
         let mut property_name = body
             .get("contractName")
             .and_then(|v| v.as_str())
@@ -209,7 +200,7 @@ fn callsite_from_panic_locus(
         .map(str::to_string);
 
     let scoped_bridge = match (callsite_bundle_cid, file.as_deref(), line) {
-        (Some(bundle), Some(file), Some(line)) => pool.bridge_by_callsite_key(&(
+        (Some(bundle), Some(file), Some(line)) => pool.bridge_member_for_callsite_key(&(
             bundle.clone(),
             file.to_string(),
             line,
@@ -758,25 +749,24 @@ fn callsite_scoped_bridge_for_locus<'a>(
         .get("line")
         .or_else(|| locus.get("start_line"))
         .and_then(|v| v.as_u64())? as usize;
-    pool.bridge_by_callsite_key(&(bundle.clone(), file.to_string(), line, callee.to_string()))
+    pool.bridge_member_for_callsite_key(&(
+        bundle.clone(),
+        file.to_string(),
+        line,
+        callee.to_string(),
+    ))
 }
 
 fn callsite_scoped_bridge_for_arg_terms<'a>(
     pool: &'a MementoPool,
-    callsite_bundle_cid: Option<&MementoCid>,
-    callee: &str,
+    callsite_bundle_cid: Option<&'a MementoCid>,
+    callee: &'a str,
     arg_terms: &[Json],
 ) -> Option<&'a StoredMember> {
     let bundle = callsite_bundle_cid?;
     let callee = callee;
     let mut matched = None;
-    for ((bridge_bundle, _file, _line, bridge_callee), bridge_cid) in &pool.bridges_by_callsite {
-        if bridge_bundle != bundle || bridge_callee != callee {
-            continue;
-        }
-        let Some(bridge) = pool.mementos.get(bridge_cid) else {
-            continue;
-        };
+    for bridge in pool.bridge_members_for_callsite_bundle_and_callee(bundle, callee) {
         if !bridge_formal_actuals_match_arg_terms(pool, bridge, arg_terms) {
             continue;
         }
@@ -799,10 +789,7 @@ fn bridge_formal_actuals_match_arg_terms(
     let Some(target_cid) = memento_cid_field(bridge_body, "targetContractCid") else {
         return false;
     };
-    let Some(formals) = pool
-        .member_field(&target_cid, "formals")
-        .and_then(|v| v.as_array())
-    else {
+    let Some(formals) = pool.contract_formals_by_cid(&target_cid) else {
         return false;
     };
     if formals.len() != arg_terms.len() {
@@ -898,7 +885,7 @@ fn walk_term(
     let bridge_env = if scoped_panic_locus.is_some() {
         scoped_bridge
     } else {
-        scoped_arg_bridge.or_else(|| pool.bridge_by_symbol(&bridge_name))
+        scoped_arg_bridge.or_else(|| pool.bridge_member_for_symbol(&bridge_name))
     };
     if let Some(benv) = bridge_env {
         // Shape-agnostic: v1.2-layered bridges carry the fields on

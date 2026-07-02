@@ -206,6 +206,21 @@ fn errors_when_target_cid_not_in_pool() {
 }
 
 #[test]
+fn errors_when_callsite_has_no_target_contract_cid() {
+    let pool = MementoPool::default();
+    let cs = CallSite {
+        bridge_ir_name: "parseInt".into(),
+        bridge_target_cid: None,
+        ..Default::default()
+    };
+    let r = resolve_target::run(&cs, &pool);
+    assert!(r.is_err(), "missing bridge target must fail closed");
+    let err = format!("{:?}", r.err().unwrap());
+    assert!(err.contains("NoBridgeTarget"), "got: {err}");
+    assert!(err.contains("parseInt"), "got: {err}");
+}
+
+#[test]
 fn errors_when_target_kind_is_bridge_not_contract() {
     let target_cid = "blake3-512:bridge1";
     let env = json!({

@@ -218,6 +218,52 @@ impl MementoPool {
         self.mementos.get(cid).and_then(|member| member.field(name))
     }
 
+    /// Return a verified stored member by CID without exposing the pool map at
+    /// consumer call sites.
+    pub fn stored_member<'a>(&'a self, cid: &MementoCid) -> Option<&'a StoredMember> {
+        self.mementos.get(cid)
+    }
+
+    /// Resolve a contract member's semantic body without exposing the legacy
+    /// compatibility accessor name to migrated consumers.
+    pub fn contract_body_for_member(&self, member: &StoredMember) -> Option<Json> {
+        self.resolve_contract_body(member)
+    }
+
+    /// Return every verified contract member with its resolved semantic body,
+    /// preserving the pool's CID ordering. Enumeration uses this instead of
+    /// iterating raw storage and re-checking member kind at each call site.
+    pub fn contract_members_with_bodies(&self) -> impl Iterator<Item = (&MementoCid, Json)> + '_ {
+        self.mementos.iter().filter_map(|(cid, member)| {
+            if member.kind() != MemberKind::Contract {
+                return None;
+            }
+            let body = self
+                .resolve_contract_body(member)
+                .filter(|v| v.is_object())?;
+            Some((cid, body))
+        })
+    }
+
+    /// Return a verified contract body by CID. `None` means the CID is absent,
+    /// present with a non-contract kind, or carries no object body.
+    pub fn contract_body_by_cid(&self, cid: &MementoCid) -> Option<Json> {
+        let member = self.mementos.get(cid)?;
+        if member.kind() != MemberKind::Contract {
+            return None;
+        }
+        self.resolve_contract_body(member).filter(|v| v.is_object())
+    }
+
+    /// Return the target contract's formal list through the same body-resolution
+    /// path used by verifier callsite resolution.
+    pub fn contract_formals_by_cid(&self, cid: &MementoCid) -> Option<Vec<Json>> {
+        self.contract_body_by_cid(cid)?
+            .get("formals")?
+            .as_array()
+            .map(|items| items.to_vec())
+    }
+
     /// Return the verified bridge member indexed for a source symbol.
     pub fn bridge_by_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a StoredMember> {
         self.bridges_by_symbol
@@ -233,6 +279,43 @@ impl MementoPool {
         self.bridges_by_callsite
             .get(key)
             .and_then(|memento_cid| self.mementos.get(memento_cid))
+    }
+
+    /// Return the verified bridge member indexed for a source symbol.
+    ///
+    /// Slice-4 callsite enumeration uses this typed accessor name so the audit
+    /// can distinguish migrated bridge consumers from the older generic bridge
+    /// JSON accessors that later slices still own.
+    pub fn bridge_member_for_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a StoredMember> {
+        self.bridges_by_symbol
+            .get(source_symbol)
+            .and_then(|memento_cid| self.mementos.get(memento_cid))
+    }
+
+    /// Return the verified bridge member indexed for a callsite-scoped key.
+    pub fn bridge_member_for_callsite_key<'a>(
+        &'a self,
+        key: &(MementoCid, String, usize, String),
+    ) -> Option<&'a StoredMember> {
+        self.bridges_by_callsite
+            .get(key)
+            .and_then(|memento_cid| self.mementos.get(memento_cid))
+    }
+
+    /// Iterate verified bridge members for one bundle/callee pair.
+    pub fn bridge_members_for_callsite_bundle_and_callee<'a>(
+        &'a self,
+        bundle: &'a MementoCid,
+        callee: &'a str,
+    ) -> impl Iterator<Item = &'a StoredMember> + 'a {
+        self.bridges_by_callsite.iter().filter_map(
+            move |((bridge_bundle, _file, _line, bridge_callee), bridge_cid)| {
+                if bridge_bundle != bundle || bridge_callee != callee {
+                    return None;
+                }
+                self.mementos.get(bridge_cid)
+            },
+        )
     }
 
     /// Index an already-stored bridge member by source symbol.

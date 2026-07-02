@@ -31,7 +31,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
             cs.bridge_ir_name
         ));
     };
-    let env = pool.mementos.get(target_cid).ok_or_else(|| {
+    let env = pool.stored_member(target_cid).ok_or_else(|| {
         warn!(
             bridge = %cs.bridge_ir_name,
             target_cid = %target_cid,
@@ -39,7 +39,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
         );
         format!("bridge target CID {} not in pool", target_cid)
     })?;
-    if !pool.member_is_kind(target_cid, MemberKind::Contract) {
+    if env.kind() != MemberKind::Contract {
         warn!(
             bridge = %cs.bridge_ir_name,
             target_cid = %target_cid,
@@ -49,7 +49,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     }
     // Shape-agnostic body: v1.2 layered -> `header`, v1.1 flat -> `evidence.body`.
     let body = pool
-        .resolve_contract_body(env)
+        .contract_body_for_member(env)
         .filter(|v| v.is_object())
         .ok_or("contract memento has no body/header object")?;
 
