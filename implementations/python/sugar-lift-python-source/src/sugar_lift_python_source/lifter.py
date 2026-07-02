@@ -600,6 +600,14 @@ class _LocalCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         return
 
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.names.add(_import_bound_name(node, alias))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            self.names.add(_import_bound_name(node, alias))
+
     def visit_Lambda(self, node: ast.Lambda) -> None:
         return
 
@@ -749,6 +757,11 @@ class _Emitter:
                 self.statements(node.orelse) if node.orelse else pass_stmt(),
                 self.statements(node.finalbody) if node.finalbody else pass_stmt(),
             )
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [_import_bound_name(node, alias) for alias in node.names]
+            self.effects.add_io()
+            self.locals.update(names)
+            return ctor("python:import", *[str_const(name) for name in names])
         if isinstance(node, ast.With):
             extra_locals: set[str] = set()
             for item in node.items:
@@ -2175,6 +2188,16 @@ def _function_locals(fn: ast.FunctionDef, formals: list[str]) -> set[str]:
     for statement in fn.body:
         collector.visit(statement)
     return set(formals) | collector.names
+
+
+def _import_bound_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> str:
+    if alias.name == "*":
+        raise _UnsupportedSyntax(node, "star imports are refused")
+    if alias.asname:
+        return alias.asname
+    if isinstance(node, ast.Import):
+        return alias.name.split(".", 1)[0]
+    return alias.name
 
 
 def _lift_function_precondition(
