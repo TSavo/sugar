@@ -13,8 +13,11 @@ use crate::sugar::method_family;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{
+    ConstraintFloor, FloorRead, PredicateValueFloor, SugarBody, SugarBuildCtx, TermFloor,
+};
 use crate::sugar::float_floor;
+use crate::sugar::predicate_value::PredicateValue;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
@@ -432,15 +435,26 @@ enum BoolExprKind {
     Not(SugarBody<ConstraintFloor>),
     Literal(bool),
     PredicateTerm {
-        term: SugarBody<TermFloor>,
+        predicate: SugarBody<PredicateValueFloor>,
         expr: Expr,
-        asserted: bool,
     },
     Wrapper(SugarBody<ConstraintFloor>),
 }
 
 struct BoolExprSugar {
     kind: BoolExprKind,
+}
+
+struct PredicateValueSugar {
+    term: SugarBody<TermFloor>,
+    asserted: bool,
+}
+
+pub(crate) fn build_predicate_value_body(
+    term: SugarBody<TermFloor>,
+    asserted: bool,
+) -> Box<dyn Sugar> {
+    Box::new(PredicateValueSugar { term, asserted })
 }
 
 fn recognize_bool_expr(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -478,9 +492,8 @@ fn recognize_bool_expr(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box
         })),
         expr if is_predicate_term_expr(expr) => Some(Box::new(BoolExprSugar {
             kind: BoolExprKind::PredicateTerm {
-                term: SugarBody::term(expr, fcx),
+                predicate: SugarBody::predicate_value_term(SugarBody::term(expr, fcx)),
                 expr: expr.clone(),
-                asserted: true,
             },
         })),
         Expr::Paren(paren) => Some(Box::new(BoolExprSugar {
@@ -588,38 +601,51 @@ impl Sugar for BoolExprSugar {
                 );
                 constraint_from_entry(entry)
             }
-            BoolExprKind::PredicateTerm {
-                term,
-                expr,
-                asserted,
-            } => {
+            BoolExprKind::PredicateTerm { predicate, expr } => {
                 if let Some(effect) = crate::panic_freedom_expr_callsite_effect(expr, ctx.scope) {
                     return Outcome::Incomplete(effect);
                 }
-                let term = match term_payload(term, ctx) {
-                    Ok(term) => term,
-                    Err(outcome) => return outcome,
+                let predicate = match predicate.reduce_predicate_value(ctx, "constraint predicate")
+                {
+                    FloorRead::Complete(predicate) => predicate,
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
-                let entry = assertion_entry_from_relation(
-                    term.clone(),
-                    bool_const(*asserted),
-                    RelationOp::Eq,
-                    ctx.scope,
-                );
-                let kind = if predicate_term_is_claim_bearing(term.as_ref(), expr) {
+                let asserted_term = asserted_predicate_term(predicate.formula().as_ref());
+                let kind = if asserted_term
+                    .map(|term| predicate_term_is_claim_bearing(term.as_ref(), expr))
+                    .unwrap_or(true)
+                {
                     AssertionFactKind::Warranted
                 } else {
                     AssertionFactKind::Support
                 };
+                let name = asserted_term
+                    .and_then(|term| callsite_assertion_name(term, ctx.scope.local_scope()));
                 Outcome::Complete(Desugared::Constraints {
-                    atom: entry.atom,
+                    warrant: Warrant { name },
+                    atom: predicate.into_formula(),
                     n: 1,
                     kind,
-                    warrant: Warrant { name: entry.name },
                 })
             }
             BoolExprKind::Wrapper(inner) => inner.reduce(ctx),
         }
+    }
+}
+
+impl Sugar for PredicateValueSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let term = match term_payload(&self.term, ctx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
+        };
+        let entry = assertion_entry_from_relation(
+            term,
+            bool_const(self.asserted),
+            RelationOp::Eq,
+            ctx.scope,
+        );
+        Outcome::Complete(Desugared::PredicateValue(PredicateValue::new(entry.atom)))
     }
 }
 
@@ -628,6 +654,22 @@ fn predicate_term_is_claim_bearing(term: &Term, expr: &Expr) -> bool {
         return true;
     }
     !predicate_term_is_unreduced_iterator_quantifier(expr)
+}
+
+fn asserted_predicate_term(formula: &Formula) -> Option<&Rc<Term>> {
+    let Formula::Atomic { name, args } = formula else {
+        return None;
+    };
+    if name != "=" || args.len() != 2 {
+        return None;
+    }
+    if is_bool_const(args[1].as_ref(), true) {
+        return Some(&args[0]);
+    }
+    if is_bool_const(args[0].as_ref(), true) {
+        return Some(&args[1]);
+    }
+    None
 }
 
 fn predicate_term_is_unreduced_iterator_quantifier(expr: &Expr) -> bool {
@@ -1493,6 +1535,35 @@ mod tests {
         assert_eq!(not_kind, "not");
         assert_eq!(not_operands.len(), 1);
         assert_var_int_relation(not_operands[0].as_ref(), "<", "z", 3);
+    }
+
+    #[test]
+    fn predicate_position_bool_uses_predicate_floor_while_data_bool_stays_term_floor() {
+        let expr: Expr = syn::parse_str("true").expect("parse bool literal");
+        let scope = TemporalScope::new("predicate-value-floor-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let reducer = ReductionCtx::from_items_with_imports(&[], scope.macro_registry());
+        let mut float_widths = FloatWidthScope::new();
+        let ctx =
+            sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
+
+        let predicate =
+            SugarBody::<PredicateValueFloor>::predicate_value_term(SugarBody::term(&expr, &fcx));
+        let Outcome::Complete(Desugared::PredicateValue(predicate)) = predicate.reduce(&ctx) else {
+            panic!("predicate-position bool did not reduce to PredicateValue");
+        };
+        assert!(matches!(
+            predicate.formula().as_ref(),
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2
+        ));
+
+        let data_bool = SugarBody::<crate::sugar::factory::BoolFloor>::bool_expr(&expr, &fcx);
+        let Outcome::Complete(Desugared::Term(term)) = data_bool.reduce(&ctx) else {
+            panic!("data-position bool did not reduce to Term");
+        };
+        assert_eq!(term_bool(term.as_ref()), Some(true));
     }
 
     #[test]

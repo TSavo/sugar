@@ -169,6 +169,7 @@ pub mod sugar {
     pub mod partition_point;
     pub mod path;
     pub mod peekable;
+    pub mod predicate_value;
     pub mod primitive_int;
     pub mod ptr_metadata;
     pub mod raise_value;
@@ -8784,6 +8785,9 @@ pub(crate) enum Desugared {
     /// A constructed object floor whose receiver owns attribute and method
     /// dispatch via ObjectValue operations. Mirrors Python `ObjectValue`.
     ObjectValue(sugar::object_value::ObjectValue),
+    /// A predicate-position formula floor. This is distinct from a bool-sorted
+    /// data term (`Term(bool)`), mirroring Python `PredicateValue` vs `BoolValue`.
+    PredicateValue(sugar::predicate_value::PredicateValue),
 
     // ── Statement-composition floor (phase-3 decode) ─────────────────────────
     // These variants carry the result of reducing a single statement through the
@@ -8839,6 +8843,7 @@ impl Desugared {
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
             Desugared::ObjectValue(_) => None,
+            Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into seq contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8867,6 +8872,7 @@ impl Desugared {
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
             Desugared::ObjectValue(_) => None,
+            Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into term contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8889,6 +8895,7 @@ impl Desugared {
             | Desugared::LiteralCStr(_)
             | Desugared::FormatValue(_)
             | Desugared::ObjectValue(_) => None,
+            Desugared::PredicateValue(_) => None,
             // Statement-composition floor variants never flow into tuple contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8929,6 +8936,7 @@ impl Desugared {
             Desugared::Constraints { .. } => return None,
             Desugared::TupleComponents(_) => return None,
             Desugared::ObjectValue(_) => return None,
+            Desugared::PredicateValue(_) => return None,
             // Statement-composition floor variants never carry a string literal.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -10811,6 +10819,7 @@ fn emit_desugared(
         Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
         Desugared::ObjectValue(_) => false,
+        Desugared::PredicateValue(_) => false,
         // Statement-composition floor variants are not emitted here; BlockSugar
         // consumes them internally and emits a Constraints when it closes.
         Desugared::StmtSupport

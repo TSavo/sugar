@@ -3468,37 +3468,62 @@ pub fn lift_predicate(expr: &Expr) -> Option<IrFormula> {
 }
 
 fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
+    lift_predicate_value_inner(expr, ctx).map(PredicateValue::into_formula)
+}
+
+/// Predicate-position value. A bool-sorted `IrTerm` is data; a
+/// `PredicateValue` is an assertion-position formula. The Python reference has
+/// `floor/predicate_value.py` for this distinction. The legacy sugar-walk API
+/// still returns `IrFormula`, so this wrapper is intentionally local to the
+/// inner seam.
+struct PredicateValue {
+    formula: IrFormula,
+}
+
+impl PredicateValue {
+    fn new(formula: IrFormula) -> Self {
+        Self { formula }
+    }
+
+    fn into_formula(self) -> IrFormula {
+        self.formula
+    }
+}
+
+fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<PredicateValue> {
     match expr {
         Expr::Lit(syn::ExprLit {
             lit: Lit::Bool(value),
             ..
-        }) => Some(bool_term_predicate(bool_const_term(value.value))),
+        }) => Some(PredicateValue::new(bool_term_predicate(bool_const_term(
+            value.value,
+        )))),
         Expr::Binary(ExprBinary {
             left, op, right, ..
         }) => match op {
             BinOp::And(_) => {
-                let l = lift_predicate_inner(left, ctx)?;
-                let r = lift_predicate_inner(right, ctx)?;
-                Some(IrFormula::And {
+                let l = lift_predicate_value_inner(left, ctx)?.into_formula();
+                let r = lift_predicate_value_inner(right, ctx)?.into_formula();
+                Some(PredicateValue::new(IrFormula::And {
                     operands: vec![l, r],
-                })
+                }))
             }
             BinOp::Or(_) => {
-                let l = lift_predicate_inner(left, ctx)?;
-                let r = lift_predicate_inner(right, ctx)?;
-                Some(IrFormula::Or {
+                let l = lift_predicate_value_inner(left, ctx)?.into_formula();
+                let r = lift_predicate_value_inner(right, ctx)?.into_formula();
+                Some(PredicateValue::new(IrFormula::Or {
                     operands: vec![l, r],
-                })
+                }))
             }
             _ => {
                 // Comparison: lift both sides as terms, pick the IR predicate name.
                 let name = bin_op_to_predicate_name(op)?;
                 let l_term = lift_expr_to_term_inner(left, ctx)?;
                 let r_term = lift_expr_to_term_inner(right, ctx)?;
-                Some(IrFormula::Atomic {
+                Some(PredicateValue::new(IrFormula::Atomic {
                     name: name.to_string(),
                     args: vec![l_term, r_term],
-                })
+                }))
             }
         },
         Expr::Unary(ExprUnary {
@@ -3506,13 +3531,13 @@ fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
             expr,
             ..
         }) => {
-            let inner = lift_predicate_inner(expr, ctx)?;
+            let inner = lift_predicate_value_inner(expr, ctx)?.into_formula();
             // Apply De Morgan / double-negation via the negate helper,
             // so `!(x >= 10)` lifts to `x < 10`, not `¬(x ≥ 10)`.
-            Some(negate(inner))
+            Some(PredicateValue::new(negate(inner)))
         }
-        Expr::Paren(p) => lift_predicate_inner(&p.expr, ctx),
-        Expr::Group(g) => lift_predicate_inner(&g.expr, ctx),
+        Expr::Paren(p) => lift_predicate_value_inner(&p.expr, ctx),
+        Expr::Group(g) => lift_predicate_value_inner(&g.expr, ctx),
         // Zero-argument method calls that return bool: `.is_some()`, `.is_none()`,
         // `.is_empty()`, `.is_err()`, `.is_ok()`. These are common predicate shapes
         // in Rust and appear naturally in the dropper's emitted guard code.
@@ -3534,10 +3559,10 @@ fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
             );
             if is_bool_predicate {
                 let recv_term = lift_expr_to_term_inner(receiver, ctx)?;
-                Some(IrFormula::Atomic {
+                Some(PredicateValue::new(IrFormula::Atomic {
                     name: method_name,
                     args: vec![recv_term],
-                })
+                }))
             } else {
                 None
             }
@@ -3555,7 +3580,7 @@ fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
         | Expr::Reference(_)
         | Expr::Cast(_)
         | Expr::Unsafe(_)
-        | Expr::Const(_) => lift_bool_term_predicate(expr, ctx),
+        | Expr::Const(_) => lift_bool_term_predicate_value(expr, ctx),
         Expr::Array(_)
         | Expr::Assign(_)
         | Expr::Async(_)
@@ -3601,6 +3626,10 @@ fn bool_term_predicate(term: IrTerm) -> IrFormula {
 
 fn lift_bool_term_predicate(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
     lift_expr_to_term_inner(expr, ctx).map(bool_term_predicate)
+}
+
+fn lift_bool_term_predicate_value(expr: &Expr, ctx: &mut LiftCtx) -> Option<PredicateValue> {
+    lift_bool_term_predicate(expr, ctx).map(PredicateValue::new)
 }
 
 /// Lift a Rust expression to a canonical `IrTerm`. Supported shapes:
