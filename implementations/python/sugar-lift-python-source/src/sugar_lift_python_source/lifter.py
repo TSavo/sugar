@@ -713,6 +713,10 @@ class _Emitter:
             self._record_write_if_nonlocal(target_node)
             return ctor("python:assign", target, self.expr(node.value))
         if isinstance(node, ast.AugAssign):
+            if isinstance(node.op, ast.MatMult):
+                raise _UnsupportedSyntax(
+                    node, f"unsupported binary operator: {type(node.op).__name__}"
+                )
             op = _BINOPS.get(type(node.op))
             if op is None:
                 raise _UnsupportedSyntax(
@@ -755,6 +759,15 @@ class _Emitter:
                 condition,
                 then_branch,
                 else_branch,
+            )
+        if isinstance(node, ast.Match):
+            pattern_kinds = sorted(
+                {type(case.pattern).__name__ for case in node.cases}
+            )
+            raise _UnsupportedSyntax(
+                node,
+                f"match statement refused (pattern kinds: {pattern_kinds})",
+                kind="match-refused",
             )
         if isinstance(node, ast.Try):
             handlers = [self.except_handler(handler) for handler in node.handlers]
@@ -1124,6 +1137,21 @@ class _Emitter:
                 "python:attribute",
                 self.annotation_expr(node.value),
                 str_const(node.attr),
+            )
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.BitOr):
+                return ctor(
+                    "python:annotation_union",
+                    self.annotation_expr(node.left),
+                    self.annotation_expr(node.right),
+                )
+            raise _UnsupportedSyntax(
+                node, f"unsupported annotation expression: {type(node).__name__}"
+            )
+        if isinstance(node, ast.Tuple):
+            return ctor(
+                "python:annotation_tuple",
+                *[self.annotation_expr(element) for element in node.elts],
             )
         if isinstance(node, ast.Subscript):
             if isinstance(node.slice, ast.Slice):
@@ -2869,6 +2897,7 @@ _BINOPS: dict[type[ast.operator], str] = {
     ast.BitAnd: "python:bitand",
     ast.BitOr: "python:bitor",
     ast.BitXor: "python:bitxor",
+    ast.MatMult: "python:matmul",
 }
 
 _UNARYOPS: dict[type[ast.unaryop], str] = {

@@ -289,6 +289,10 @@ def _expr(term: Json) -> ast.expr:
 
     name = _name(term)
     args = term.get("args", [])
+    if name == "python:annotation_union":
+        return ast.BinOp(left=_expr(args[0]), op=ast.BitOr(), right=_expr(args[1]))
+    if name == "python:annotation_tuple":
+        return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name in _BINOPS:
         return ast.BinOp(left=_expr(args[0]), op=_BINOPS[name](), right=_expr(args[1]))
     if name in _UNARYOPS:
@@ -693,6 +697,7 @@ _BINOPS: dict[str, type[ast.operator]] = {
     "python:bitand": ast.BitAnd,
     "python:bitor": ast.BitOr,
     "python:bitxor": ast.BitXor,
+    "python:matmul": ast.MatMult,
 }
 
 _UNARYOPS: dict[str, type[ast.unaryop]] = {
