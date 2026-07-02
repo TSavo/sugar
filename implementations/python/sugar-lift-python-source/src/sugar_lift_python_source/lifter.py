@@ -1225,6 +1225,8 @@ class _Emitter:
             return self.lambda_expr(node)
         if isinstance(node, ast.ListComp):
             return self.listcomp(node)
+        if isinstance(node, ast.GeneratorExp):
+            return self.generatorexp(node)
         if isinstance(node, ast.Dict):
             keys = [
                 none_const() if key is None else self.expr(key) for key in node.keys
@@ -1286,6 +1288,34 @@ class _Emitter:
         finally:
             self.locals = previous_locals
         term = ctor("python:listcomp", elt, *generators)
+        self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
+        return term
+
+    def generatorexp(self, node: ast.GeneratorExp) -> Json:
+        previous_locals = self.locals
+        active_locals: set[str] = set()
+        generators: list[Json] = []
+        try:
+            for generator in node.generators:
+                if generator.is_async:
+                    raise _UnsupportedSyntax(
+                        generator,
+                        "async comprehensions are refused",
+                    )
+                self.locals = previous_locals | active_locals
+                iterator = self.expr(generator.iter)
+                target, target_names = self.comprehension_target(generator.target)
+                active_locals.update(target_names)
+                self.locals = previous_locals | active_locals
+                filters = [self.expr(condition) for condition in generator.ifs]
+                generators.append(
+                    ctor("python:comprehension", target, iterator, *filters)
+                )
+            self.locals = previous_locals | active_locals
+            elt = self.expr(node.elt)
+        finally:
+            self.locals = previous_locals
+        term = ctor("python:generatorexp", elt, *generators)
         self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
         return term
 
