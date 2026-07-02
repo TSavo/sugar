@@ -3,13 +3,16 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
+from sugar_lift_py_tests import floor as floor_pkg
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.witness_harness import (
-    Verdict,
-    run_source_through_real_solver,
+from sugar_lift_py_tests.sugar.witnesses import (
+    PendingWitnesses,
+    SugarWitnessPair,
+    WitnessSource,
 )
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 @dataclass(frozen=True)
@@ -22,19 +25,46 @@ class UnenrolledSugar:
         return {"name": self.name, "module": self.module, "role": self.role}
 
 
-@dataclass(frozen=True)
-class WitnessSource:
-    source: str
-    expected: Verdict
+SugarWitnessSeed = SugarWitnessPair
 
 
 @dataclass(frozen=True)
-class SugarWitnessSeed:
-    name: str
-    owner_sugar: str
-    family: str
-    truthful: WitnessSource
-    lying: WitnessSource
+class NonFolOptOut:
+    sugar_name: str
+    floor_name: str
+    reason: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "sugarName": self.sugar_name,
+            "floorName": self.floor_name,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class NonFolOptOutAudit:
+    pinned_but_unmarked: tuple[NonFolOptOut, ...]
+    marked_but_unpinned: tuple[str, ...]
+
+    @property
+    def is_zero(self) -> bool:
+        return not self.pinned_but_unmarked and not self.marked_but_unpinned
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "kind": "sugar-witness-non-fol-opt-out-audit",
+            "r": {
+                "pinned_but_unmarked": len(self.pinned_but_unmarked),
+                "marked_but_unpinned": len(self.marked_but_unpinned),
+                "total": len(self.pinned_but_unmarked)
+                + len(self.marked_but_unpinned),
+            },
+            "pinnedButUnmarked": [
+                row.to_json() for row in self.pinned_but_unmarked
+            ],
+            "markedButUnpinned": list(self.marked_but_unpinned),
+        }
 
 
 @dataclass(frozen=True)
@@ -121,12 +151,18 @@ class SugarWitnessSeedReport:
 class SugarWitnessFrontierReport:
     unenrolled_sugars: tuple[UnenrolledSugar, ...]
     seed_report: SugarWitnessSeedReport
+    opt_out_audit: NonFolOptOutAudit
 
     @property
     def is_zero(self) -> bool:
-        return not self.unenrolled_sugars and self.seed_report.is_zero
+        return (
+            not self.unenrolled_sugars
+            and self.seed_report.is_zero
+            and self.opt_out_audit.is_zero
+        )
 
     def to_json(self) -> dict[str, Any]:
+        opt_out_r = self.opt_out_audit.to_json()["r"]
         return {
             "kind": "sugar-witness-frontier",
             "r": {
@@ -137,43 +173,44 @@ class SugarWitnessFrontierReport:
                 "witnesses_not_dispatching_to_owner": (
                     self.seed_report.witnesses_not_dispatching_to_owner
                 ),
+                "non_fol_opt_out_drift": opt_out_r["total"],
                 "total": len(self.unenrolled_sugars)
                 + self.seed_report.witness_triples_failing
-                + self.seed_report.witnesses_not_dispatching_to_owner,
+                + self.seed_report.witnesses_not_dispatching_to_owner
+                + opt_out_r["total"],
             },
             "unenrolledSugars": [
                 offender.to_json() for offender in self.unenrolled_sugars
             ],
             "seedHarness": self.seed_report.to_json(),
+            "nonFolOptOutAudit": self.opt_out_audit.to_json(),
         }
 
 
-DEFAULT_SUGAR_WITNESS_SEEDS: tuple[SugarWitnessSeed, ...] = (
-    SugarWitnessSeed(
-        name="slice_callsite",
-        owner_sugar="CallSugar",
-        family="slice/subscript",
-        truthful=WitnessSource(
-            source=(
-                "def A():\n"
-                "    return 'abcdef'[1:3]\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A() == 'bc'\n"
-            ),
-            expected="sat",
-        ),
-        lying=WitnessSource(
-            source=(
-                "def A():\n"
-                "    return 'abcdef'[1:3]\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A() == 'zz'\n"
-            ),
-            expected="unsat",
-        ),
+EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
+    NonFolOptOut(
+        sugar_name="AliasSugar",
+        floor_name="ImportAliasValue",
+        reason="import aliases record name-binding support, not a FOL claim",
     ),
+    NonFolOptOut(
+        sugar_name="CommentSugar",
+        floor_name="SupportValue",
+        reason="comments are inert source support",
+    ),
+    NonFolOptOut(
+        sugar_name="SubscriptAssignSugar",
+        floor_name="SupportValue",
+        reason="subscript assignment mutation produces no FOL assertion",
+    ),
+    NonFolOptOut(
+        sugar_name="SubscriptDeleteSugar",
+        floor_name="SupportValue",
+        reason="subscript delete mutation produces no FOL assertion",
+    ),
+)
+
+PINNED_SUGAR_WITNESS_SEEDS: tuple[SugarWitnessSeed, ...] = (
     SugarWitnessSeed(
         name="binary_dunder_callsite",
         owner_sugar="CallSugar",
@@ -207,63 +244,20 @@ DEFAULT_SUGAR_WITNESS_SEEDS: tuple[SugarWitnessSeed, ...] = (
             expected="unsat",
         ),
     ),
-    SugarWitnessSeed(
-        name="literal_call_return",
-        owner_sugar="ReturnSugar",
-        family="literal-call",
-        truthful=WitnessSource(
-            source=(
-                "def A(x):\n"
-                "    return x + 1\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A(5) == 6\n"
-            ),
-            expected="sat",
-        ),
-        lying=WitnessSource(
-            source=(
-                "def A(x):\n"
-                "    return x + 1\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A(5) == 7\n"
-            ),
-            expected="unsat",
-        ),
-    ),
-    SugarWitnessSeed(
-        name="try_body",
-        owner_sugar="TrySugar",
-        family="try",
-        truthful=WitnessSource(
-            source=(
-                "def wrapped(x):\n"
-                "    try:\n"
-                "        return x + 1\n"
-                "    except Exception:\n"
-                "        return 99\n"
-                "\n"
-                "def test_wrapped():\n"
-                "    assert wrapped(5) == 6\n"
-            ),
-            expected="sat",
-        ),
-        lying=WitnessSource(
-            source=(
-                "def wrapped(x):\n"
-                "    try:\n"
-                "        return x + 1\n"
-                "    except Exception:\n"
-                "        return 99\n"
-                "\n"
-                "def test_wrapped():\n"
-                "    assert wrapped(5) == 7\n"
-            ),
-            expected="unsat",
-        ),
-    ),
 )
+
+
+def seeds_from_catalog_witnesses() -> tuple[SugarWitnessSeed, ...]:
+    seeds: list[SugarWitnessSeed] = []
+    for claim in _catalog_claims():
+        witness = _claim_witnesses(claim)
+        if isinstance(witness, SugarWitnessPair):
+            seeds.append(witness)
+    return tuple(sorted(seeds, key=lambda seed: seed.name))
+
+
+def default_sugar_witness_seeds() -> tuple[SugarWitnessSeed, ...]:
+    return seeds_from_catalog_witnesses() + PINNED_SUGAR_WITNESS_SEEDS
 
 
 def collect_sugar_witness_frontier(
@@ -283,6 +277,7 @@ def collect_sugar_witness_frontier(
     return SugarWitnessFrontierReport(
         unenrolled_sugars=tuple(unenrolled_sugars()),
         seed_report=seed_report,
+        opt_out_audit=non_fol_opt_out_audit(),
     )
 
 
@@ -296,6 +291,10 @@ def unenrolled_sugars() -> tuple[UnenrolledSugar, ...]:
         for claim in _catalog_claims()
         if not _claim_has_witness_or_opt_out(claim)
     )
+
+
+def claim_has_witness_or_opt_out(claim) -> bool:
+    return _claim_has_witness_or_opt_out(claim)
 
 
 def evaluate_seed_witnesses(
@@ -379,6 +378,10 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
         f"{r['witnesses_not_dispatching_to_owner']}\n"
     )
     lines.append(
+        "R(non-fol-opt-out-drift): "
+        f"{r['non_fol_opt_out_drift']}\n"
+    )
+    lines.append(
         "seed coverage: "
         f"{report.seed_report.seed_count} seed cases, "
         f"{report.seed_report.unique_owner_count}/"
@@ -402,6 +405,15 @@ def render_text(report: SugarWitnessFrontierReport) -> str:
                 f"  - {failure.seed}: expected {failure.expected_sugar}, "
                 f"selected {', '.join(failure.selected_sugars) or '<none>'}\n"
             )
+    if not report.opt_out_audit.is_zero:
+        lines.append("non-FOL opt-out drift:\n")
+        for row in report.opt_out_audit.pinned_but_unmarked:
+            lines.append(
+                f"  - pinned {row.sugar_name} -> {row.floor_name} "
+                "but floor is unmarked\n"
+            )
+        for floor_name in report.opt_out_audit.marked_but_unpinned:
+            lines.append(f"  - marked {floor_name} has no pinned sugar row\n")
     return "".join(lines)
 
 
@@ -409,13 +421,63 @@ def _catalog_claims():
     return tuple(sorted(default_catalog().claims, key=lambda claim: claim.name))
 
 
+def current_non_fol_support_floor_names() -> set[str]:
+    names: set[str] = set()
+    for value in vars(floor_pkg).values():
+        if isinstance(value, type) and getattr(value, "non_fol_support", False):
+            names.add(value.__name__)
+    return names
+
+
+def non_fol_opt_out_audit(
+    *,
+    pinned: Sequence[NonFolOptOut] = EXPECTED_NON_FOL_OPT_OUTS,
+    marked_floor_names: set[str] | None = None,
+) -> NonFolOptOutAudit:
+    marked = (
+        current_non_fol_support_floor_names()
+        if marked_floor_names is None
+        else marked_floor_names
+    )
+    pinned_floor_names = {row.floor_name for row in pinned}
+    return NonFolOptOutAudit(
+        pinned_but_unmarked=tuple(
+            row for row in pinned if row.floor_name not in marked
+        ),
+        marked_but_unpinned=tuple(sorted(marked - pinned_floor_names)),
+    )
+
+
 def _claim_module(claim) -> str:
     return getattr(claim.build, "__module__", "<unknown>")
 
 
+def _claim_witnesses(claim) -> object:
+    if claim.witnesses is None:
+        return PendingWitnesses(
+            sugar_name=claim.name,
+            module=_claim_module(claim),
+            reason="claim registered before witness surface existed",
+        )
+    return claim.witnesses()
+
+
 def _claim_has_witness_or_opt_out(claim) -> bool:
-    owner = getattr(claim.build, "__self__", None)
-    if owner is None:
-        return False
-    owner_dict = getattr(owner, "__dict__", {})
-    return "witnesses" in owner_dict or "not_verdict_bearing" in owner_dict
+    witness = _claim_witnesses(claim)
+    if isinstance(witness, SugarWitnessPair):
+        return True
+    if _non_fol_opt_out_for(claim.name) is not None:
+        return True
+    return False
+
+
+def _non_fol_opt_out_for(sugar_name: str) -> NonFolOptOut | None:
+    for row in EXPECTED_NON_FOL_OPT_OUTS:
+        if row.sugar_name == sugar_name:
+            return row
+    return None
+
+
+DEFAULT_SUGAR_WITNESS_SEEDS: tuple[SugarWitnessSeed, ...] = (
+    default_sugar_witness_seeds()
+)

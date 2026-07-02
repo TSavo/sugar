@@ -13,6 +13,7 @@ from sugar_lift_py_tests.ir import Formula, Term, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 # A resolved callee's body is either a single TERM expression (`return <expr>`, a
@@ -310,6 +311,34 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, fragment) -> bool:
         return fragment.observed == "Call"
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return SugarWitnessPair(
+            name="slice_callsite",
+            owner_sugar=cls.__name__,
+            family="slice/subscript",
+            truthful=WitnessSource(
+                source=(
+                    "def A():\n"
+                    "    return 'abcdef'[1:3]\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 'bc'\n"
+                ),
+                expected="sat",
+            ),
+            lying=WitnessSource(
+                source=(
+                    "def A():\n"
+                    "    return 'abcdef'[1:3]\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 'zz'\n"
+                ),
+                expected="unsat",
+            ),
+        )
 
     @classmethod
     def build(cls, fragment, ctx) -> "CallSugar":

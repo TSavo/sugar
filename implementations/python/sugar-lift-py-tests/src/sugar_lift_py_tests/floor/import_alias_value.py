@@ -14,5 +14,7 @@ class ImportAliasValue(FloorValue):
     symbol before emitting a bridge or digging source.
     """
 
+    non_fol_support = True
+
     name: str
     bound_name: str

@@ -12,3 +12,5 @@ class SupportValue(FloorValue):
     It carries no term, no binding, no scope -- it is the materialization of the
     Support category: present, accounted for, and contributing nothing to the
     first-order logic. Desugaring to it always completes."""
+
+    non_fol_support = True

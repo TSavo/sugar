@@ -13,3 +13,4 @@ class SugarClaim:
     owns: Callable[[object], bool]
     build: Callable[[object, object], object]
     comes_before: tuple[str, ...] = ()
+    witnesses: Callable[[], object] | None = None
