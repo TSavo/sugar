@@ -48,7 +48,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions};
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::project_config::read_project_config;
 use crate::report_fmt;
 use crate::witness_verify;
@@ -409,8 +409,11 @@ pub fn run(args: VerifyArgs) -> u8 {
     // The kit author's declared `[solvers]` plan wins; otherwise the
     // default verify dispatch table over a single-Z3 registry.
     let (plan, solver_registry, plan_is_default) = build_plan_and_registry(&project_root, &args.z3);
-    let component_plan =
-        component_plan::plan_workspace_with_options(&project_root, component_plan_options);
+    let component_plan = component_plan::plan_workspace_with_options(
+        &project_root,
+        PlanIntent::Verify,
+        component_plan_options,
+    );
     if let Err(error) = check_component_plan_errors(&component_plan) {
         eprintln!("{}: {error}", "error".red().bold());
         return EXIT_USER_ERROR;
@@ -560,8 +563,11 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     let component_plan_options = ComponentPlanOptions {
         allow_failed_components: args.allow_failed_components,
     };
-    let component_plan =
-        component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    let component_plan = component_plan::plan_workspace_with_options(
+        project_root,
+        PlanIntent::Verify,
+        component_plan_options,
+    );
     if let Err(error) = check_component_plan_errors(&component_plan) {
         eprintln!("{}: {error}", "error".red().bold());
         return EXIT_USER_ERROR;

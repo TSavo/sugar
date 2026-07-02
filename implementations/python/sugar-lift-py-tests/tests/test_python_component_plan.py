@@ -183,6 +183,64 @@ def test_python_component_plan_claims_py_evidence_with_lift_manifest(tmp_path) -
     assert plan["diagnostics"] == []
 
 
+def test_python_component_plan_accepts_lift_prove_and_verify_intents(tmp_path) -> None:
+    for intent in ("lift", "prove", "verify"):
+        project = tmp_path / intent
+        project.mkdir()
+        (project / "encoder.py").write_text(
+            "def encode_len(data):\n    return len(data)\n",
+            encoding="utf-8",
+        )
+        responses = _run_component(
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocol_version": "sugar-component/1"},
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": COMPONENT_PLAN_METHOD,
+                    "params": {
+                        "workspace_root": str(project),
+                        "project_forensics": {
+                            "items": [
+                                {
+                                    "id": "file:encoder.py",
+                                    "kind": "source",
+                                    "path": "encoder.py",
+                                    "language_hint": "python",
+                                    "reason": "extension .py",
+                                }
+                            ]
+                        },
+                        "workspace_evidence": {
+                            "languages": [
+                                {
+                                    "language": "python",
+                                    "path": "encoder.py",
+                                    "reason": "extension .py",
+                                }
+                            ],
+                            "items": [],
+                        },
+                        "intent": intent,
+                    },
+                },
+                {"jsonrpc": "2.0", "id": 3, "method": "shutdown"},
+            ]
+        )
+
+        plan = next(response for response in responses if response.get("id") == 2)[
+            "result"
+        ]
+        assert plan["decision"] == "claim"
+        assert plan["plugins"][0]["surface"] == "python"
+        assert plan["lift_manifests"][0]["surface"] == "python"
+
+
 def test_python_component_plan_declines_when_forensics_have_no_python(tmp_path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         "[package]\nname = 'demo'\nversion = '0.1.0'\n",

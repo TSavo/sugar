@@ -264,8 +264,11 @@ fn find_resolvers(
             }
         }
     }
-    let component_plan =
-        crate::component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    let component_plan = crate::component_plan::plan_workspace_with_options(
+        project_root,
+        crate::component_plan::PlanIntent::Verify,
+        component_plan_options,
+    );
     if let Some(diagnostic) = crate::component_plan::first_error_diagnostic(&component_plan) {
         return Err(diagnostic.message.clone());
     }
