@@ -43,7 +43,7 @@ pub fn decode_for_conformance(bytes: &[u8]) -> Result<CborValue, CborDecodeError
 pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
-    member_body, member_field, member_kind, member_signature, member_signer,
+    member_body, member_field, member_kind, member_signature, member_signer, recompute_member_cid,
     AssertionSurfaceMemento, AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef,
     BridgeMemento, ClaimContractMemento, ContractBody, ContractBodyCid, ContractEntry,
     ContractMemento, ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,

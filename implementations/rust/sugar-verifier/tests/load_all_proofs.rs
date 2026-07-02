@@ -117,6 +117,24 @@ fn publish_parseint_proof(dir: &Path) -> String {
     built.cid
 }
 
+fn only_proof_path(dir: &Path) -> PathBuf {
+    let entries: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("proof"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+    entries[0].path()
+}
+
+fn rename_to_wrong_content_cid(dir: &Path) -> PathBuf {
+    let original = only_proof_path(dir);
+    let bogus_hex = "0".repeat(128);
+    let renamed = dir.join(format!("{bogus_hex}.proof"));
+    fs::rename(&original, &renamed).unwrap();
+    renamed
+}
+
 // ---------------------------------------------------------------------------
 // Trivial cases
 // ---------------------------------------------------------------------------
@@ -289,21 +307,12 @@ fn member_cids_in_pool_match_envelope_identities() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn filename_cid_mismatch_is_rejected_with_rule_1_error() {
+fn filesystem_load_rejects_content_cid_mismatch() {
     let dir = make_unique_dir("rule-1");
     publish_parseint_proof(&dir);
 
     // Find the .proof and rename it to a wrong-hash filename.
-    let entries: Vec<_> = fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("proof"))
-        .collect();
-    assert_eq!(entries.len(), 1);
-    let original = entries[0].path();
-    let bogus_hex = "0".repeat(128);
-    let renamed = dir.join(format!("{bogus_hex}.proof"));
-    fs::rename(&original, &renamed).unwrap();
+    rename_to_wrong_content_cid(&dir);
 
     let pool = load_all_proofs::run(&dir);
     assert!(
@@ -314,6 +323,76 @@ fn filename_cid_mismatch_is_rejected_with_rule_1_error() {
     // No mementos indexed when the trust-root check fails.
     assert_eq!(pool.mementos.len(), 0);
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn explicit_proof_file_ingress_rejects_content_cid_mismatch() {
+    let dir = make_unique_dir("explicit-file-rule-1");
+    publish_parseint_proof(&dir);
+    let forged_path = rename_to_wrong_content_cid(&dir);
+    let mut pool = sugar_verifier::MementoPool::default();
+
+    load_all_proofs::load_files_into_pool(&[forged_path], &mut pool);
+
+    assert!(
+        pool.load_errors.iter().any(|e| e.reason.contains("rule 1")),
+        "expected explicit-file rule 1 error; got {:?}",
+        pool.load_errors
+    );
+    assert_eq!(pool.mementos.len(), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn proof_bytes_ingress_rejects_content_cid_mismatch() {
+    let dir = make_unique_dir("proof-bytes-rule-1");
+    publish_parseint_proof(&dir);
+    let proof_path = only_proof_path(&dir);
+    let bytes = fs::read(&proof_path).expect("read proof bytes");
+    let wrong_cid = format!("blake3-512:{}", "0".repeat(128));
+    let mut pool = sugar_verifier::MementoPool::default();
+
+    load_all_proofs::load_proof_bytes_into_pool(
+        &[load_all_proofs::ProofBytes {
+            label: "forged proof bytes".to_string(),
+            expected_cid: wrong_cid.clone(),
+            bytes,
+        }],
+        &mut pool,
+    );
+
+    assert!(
+        pool.load_errors.iter().any(|e| {
+            e.reason.contains("expected proof CID")
+                && e.reason.contains(&wrong_cid)
+                && e.reason.contains("content hash")
+        }),
+        "expected proof-bytes trust-root error; got {:?}",
+        pool.load_errors
+    );
+    assert_eq!(pool.mementos.len(), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn extra_project_merge_rejects_content_cid_mismatch() {
+    let project = make_unique_dir("extra-project-base");
+    let extra = make_unique_dir("extra-project-forged");
+    publish_parseint_proof(&extra);
+    rename_to_wrong_content_cid(&extra);
+
+    let mut pool = load_all_proofs::run(&project);
+    let extra_pool = load_all_proofs::run(&extra);
+    pool.merge(extra_pool);
+
+    assert!(
+        pool.load_errors.iter().any(|e| e.reason.contains("rule 1")),
+        "expected merged extra-project load error; got {:?}",
+        pool.load_errors
+    );
+    assert_eq!(pool.mementos.len(), 0);
+    let _ = fs::remove_dir_all(&project);
+    let _ = fs::remove_dir_all(&extra);
 }
 
 #[test]

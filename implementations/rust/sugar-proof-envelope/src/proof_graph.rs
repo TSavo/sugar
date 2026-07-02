@@ -728,6 +728,29 @@ pub fn member_signature(envelope: &Json) -> Option<&Json> {
         .or_else(|| envelope.get("signature"))
 }
 
+/// Recompute a member envelope's content identity from the bytes-decoded JSON.
+///
+/// This is the verifier-side identity rule for every member shape:
+///
+/// * v1.2 layered members are identified by `blake3_512(JCS(envelope))`.
+/// * v1.1 flat members strip the self-declared `cid` and `producerSignature`
+///   labels before canonicalization, so those attacker-chosen fields cannot
+///   define the member key.
+pub fn recompute_member_cid(envelope: &Json) -> String {
+    if let Some(envelope_value) = envelope.get("envelope") {
+        let canonical = encode_jcs(&json_to_canonical_value(envelope_value));
+        return blake3_512_of(canonical.as_bytes());
+    }
+
+    let mut stripped = envelope.clone();
+    if let Json::Object(map) = &mut stripped {
+        map.shift_remove("cid");
+        map.shift_remove("producerSignature");
+    }
+    let canonical = encode_jcs(&json_to_canonical_value(&stripped));
+    blake3_512_of(canonical.as_bytes())
+}
+
 /// A `.proof` catalog read through the api: the envelope identity + metadata
 /// that are NOT graph content, plus the reconstructed `ProofGraph`. Consumers
 /// that need catalog-level fields (signer, declaredAt, metadata) read them here

@@ -253,6 +253,10 @@ fn scan_proof_for_implication(
     for view in graph.implications() {
         let cid = view.cid().as_str().to_string();
         let env: Json = serde_json::from_slice(view.bytes()).ok()?;
+        let derived = sugar_proof_envelope::recompute_member_cid(&env);
+        if derived != cid {
+            continue;
+        }
 
         let prop = env.get("propertyHash").and_then(|v| v.as_str())?;
         if prop != want_property_hash {
@@ -305,6 +309,55 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use sugar_proof_envelope::{
+        cbor_encode_bstr, cbor_encode_map_head, cbor_encode_tstr, ed25519_pubkey_string,
+        ed25519_sign_string,
+    };
+
+    fn unique_cache_dir(suffix: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("sugar-tier2-{stamp}-{suffix}"));
+        fs::create_dir_all(&path).expect("create cache dir");
+        path
+    }
+
+    fn encode_single_member_catalog(member_cid: &str, member_bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, "members");
+        cbor_encode_map_head(&mut out, 1);
+        cbor_encode_tstr(&mut out, member_cid);
+        cbor_encode_bstr(&mut out, member_bytes);
+        out
+    }
+
+    fn signed_flat_implication_bytes(property_hash: &str) -> (Vec<u8>, String) {
+        let seed = [0x77; 32];
+        let pubkey = ed25519_pubkey_string(&seed);
+        let mut env = json!({
+            "cid": "blake3-512:self-declared-not-trusted",
+            "propertyHash": property_hash,
+            "evidence": {
+                "kind": "implication",
+                "body": {
+                    "producerPubkey": pubkey
+                }
+            }
+        });
+        let unsigned = strip_cid_and_sig(&env);
+        let unsigned_bytes = encode_jcs(&serde_to_canonical(&unsigned));
+        let sig = ed25519_sign_string(&seed, unsigned_bytes.as_bytes());
+        env.as_object_mut()
+            .expect("flat implication object")
+            .insert("producerSignature".to_string(), json!(sig));
+        (encode_jcs(&serde_to_canonical(&env)).into_bytes(), pubkey)
+    }
 
     fn contract_with_post(post_value: i64) -> Json {
         json!({
@@ -380,6 +433,32 @@ mod tests {
             locate_producer_post(&arg_term, &pool_mementos, &bridges_by_symbol).is_none(),
             "await over a non-call term must not invent a producer post"
         );
+    }
+
+    #[test]
+    fn tier2_cache_rejects_content_cid_mismatch() {
+        let cache_dir = unique_cache_dir("forged-member-cid");
+        let producer_post_hash = formula_hash(&json!({"kind": "atomic", "name": "producer"}));
+        let consumer_pre_hash = formula_hash(&json!({"kind": "atomic", "name": "consumer"}));
+        let property_hash = implication_property_hash(&producer_post_hash, &consumer_pre_hash);
+        let (member_bytes, pubkey) = signed_flat_implication_bytes(&property_hash);
+        let forged_member_cid = format!("blake3-512:{}", "f".repeat(128));
+        let catalog = encode_single_member_catalog(&forged_member_cid, &member_bytes);
+        fs::write(cache_dir.join("forged-tier2-cache.proof"), catalog).expect("write forged proof");
+
+        let hit = try_tier2(
+            &cache_dir,
+            &producer_post_hash,
+            &consumer_pre_hash,
+            &[pubkey],
+        );
+
+        assert!(
+            hit.is_none(),
+            "tier2 cache must reject implication members whose catalog CID does not match content, got {hit:?}"
+        );
+
+        let _ = fs::remove_dir_all(&cache_dir);
     }
 
     #[test]
