@@ -2206,7 +2206,12 @@ def _method_kind(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         return "classmethod"
     if "staticmethod" in names or "builtins.staticmethod" in names:
         return "staticmethod"
-    if "property" in names or "builtins.property" in names:
+    if (
+        "property" in names
+        or "builtins.property" in names
+        or "cached_property" in names
+        or "functools.cached_property" in names
+    ):
         return "property"
     if any(
         name and (name.endswith(".setter") or name.endswith(".deleter"))
@@ -2591,6 +2596,8 @@ def _decorator_kind(decorator: ast.expr) -> str | None:
     name = _decorator_name(decorator)
     if name in {"property", "builtins.property"}:
         return "property"
+    if name in {"cached_property", "functools.cached_property"}:
+        return "cached_property"
     if name and (name.endswith(".setter") or name.endswith(".deleter")):
         return "property"
     if name in {"classmethod", "builtins.classmethod"}:
