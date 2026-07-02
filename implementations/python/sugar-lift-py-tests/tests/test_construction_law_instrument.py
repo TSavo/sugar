@@ -17,7 +17,9 @@ def test_construction_law_scanner_reads_the_live_repo() -> None:
     axes = {crossing.axis for crossing in report.crossings}
     assert "_formula_to_rpc-outside-serializer" in axes
     assert "raw-BodyUniverseDto-formula-slot" in axes
-    assert "formula-slot-type" in axes
+    assert "Formula-typed-node-constructor-field" in axes
+    assert "dict-str-any-formula-slot" in axes
+    assert "monolithic-proofir-semantic-class" in axes
 
     assert any(
         crossing.path.endswith("factory/literal_call_report.py")
@@ -26,7 +28,23 @@ def test_construction_law_scanner_reads_the_live_repo() -> None:
     )
     assert any(
         crossing.path.endswith("kit_rpc/body_universe_dto.py")
+        and crossing.axis == "dict-str-any-formula-slot"
         and "pre" in crossing.detail
+        for crossing in report.crossings
+    )
+    assert any(
+        crossing.axis == "Formula-typed-node-constructor-field"
+        and "FunctionContract.post" in crossing.detail
+        for crossing in report.crossings
+    )
+    assert any(
+        crossing.axis == "monolithic-proofir-semantic-class"
+        and "FunctionContract" in crossing.detail
+        for crossing in report.crossings
+    )
+    assert not any(
+        crossing.axis == "monolithic-proofir-semantic-class"
+        and "EqualityFact" in crossing.detail
         for crossing in report.crossings
     )
     assert not any(
