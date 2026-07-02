@@ -63,6 +63,24 @@ def find_sugar_cli() -> Optional[str]:
     return shutil.which("sugar")
 
 
+def _malformed_cli_json_report(action: str, stdout: str) -> HandshakeReport:
+    context = stdout.strip() or "<empty stdout>"
+    if len(context) > 500:
+        context = context[:500] + "...<truncated>"
+    summary = (
+        f"{action} failed: malformed verifier JSON from sugar CLI "
+        f"(verifier protocol drift); stdout={context!r}"
+    )
+    return HandshakeReport(
+        success=False,
+        tier1_discharge_fraction=0.0,
+        tier2_discharge_fraction=0.0,
+        tier3_remaining=0,
+        violations=[summary],
+        summary=summary,
+    )
+
+
 def verify_project(
     project_root: str, extra_args: Optional[List[str]] = None
 ) -> HandshakeReport:
@@ -96,14 +114,7 @@ def verify_project(
             data = json.loads(result.stdout)
             return HandshakeReport.from_json(data)
         except json.JSONDecodeError:
-            return HandshakeReport(
-                success=True,
-                tier1_discharge_fraction=1.0,
-                tier2_discharge_fraction=1.0,
-                tier3_remaining=0,
-                violations=[],
-                summary=result.stdout.strip() or "verification passed",
-            )
+            return _malformed_cli_json_report("verification", result.stdout)
 
     # Failure: try to parse error output.
     return HandshakeReport(
@@ -138,14 +149,7 @@ def prove_contract(
             data = json.loads(result.stdout)
             return HandshakeReport.from_json(data)
         except json.JSONDecodeError:
-            return HandshakeReport(
-                success=True,
-                tier1_discharge_fraction=1.0,
-                tier2_discharge_fraction=1.0,
-                tier3_remaining=0,
-                violations=[],
-                summary=result.stdout.strip() or "proof accepted",
-            )
+            return _malformed_cli_json_report("proof", result.stdout)
 
     return HandshakeReport(
         success=False,
