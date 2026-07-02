@@ -54,7 +54,6 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
             owner="UnaryOpSugar",
             blame=self.blame,
             receiver=operand,
-            method_name="unary_operator_with",
             operation=UnaryOperatorOperation(
                 operator=self.operator,
                 owner="UnaryOpSugar",

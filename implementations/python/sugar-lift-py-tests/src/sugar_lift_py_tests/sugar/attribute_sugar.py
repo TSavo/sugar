@@ -67,7 +67,6 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             owner="AttributeSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="attribute_with",
             operation=operation,
             ctx=ctx,
         )

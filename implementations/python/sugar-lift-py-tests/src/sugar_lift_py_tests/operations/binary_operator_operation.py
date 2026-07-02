@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, NoReturn
+from typing import Callable, ClassVar, NoReturn
 
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
@@ -33,6 +33,7 @@ _DIVIDES = {"/", "//", "%"}
 
 @dataclass(frozen=True)
 class BinaryOperatorOperation:
+    method_name: ClassVar[str] = "binary_operator_with"
     operator: str
     right: FloorValue
     owner: str = "BinOpSugar"
@@ -116,7 +117,6 @@ class BinaryOperatorOperation:
             owner=self.owner,
             blame=self.blame,
             receiver=right,
-            method_name="reflected_binary_operator_with",
             operation=ReflectedBinaryOperatorOperation(
                 operator=self.operator,
                 left=left,

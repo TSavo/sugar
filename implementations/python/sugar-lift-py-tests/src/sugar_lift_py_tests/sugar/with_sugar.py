@@ -57,7 +57,6 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             owner="WithSugar",
             blame=self.blame,
             receiver=manager,
-            method_name="context_manager_with",
             operation=ContextManagerOperation(
                 body=self.body,
                 optional_name=self.optional_name,

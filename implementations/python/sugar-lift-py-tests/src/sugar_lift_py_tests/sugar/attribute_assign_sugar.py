@@ -40,13 +40,14 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
         value_outcome = self.value.reduce(ctx)
         if isinstance(value_outcome, Incomplete):
             return value_outcome
-        receiver = complete_value(receiver_outcome, owner="AttributeAssignSugar receiver")
+        receiver = complete_value(
+            receiver_outcome, owner="AttributeAssignSugar receiver"
+        )
         value = complete_value(value_outcome, owner="AttributeAssignSugar value")
         return perform_operation(
             owner="AttributeAssignSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="attribute_assign_with",
             operation=AttributeMutationOperation(
                 name=self.name,
                 value=value,

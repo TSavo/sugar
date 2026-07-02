@@ -64,7 +64,6 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
             receiver=complete_value(
                 receiver_outcome, owner="SubscriptAssignSugar receiver"
             ),
-            method_name="setitem_with",
             operation=SetItemOperation(
                 index=complete_value(index_outcome, owner="SubscriptAssignSugar index"),
                 value=complete_value(value_outcome, owner="SubscriptAssignSugar value"),

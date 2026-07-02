@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
@@ -15,6 +17,10 @@ from sugar_lift_py_tests.temporal import (
     perform_temporal_operation,
     rewrite_temporal,
 )
+
+
+class _UnknownTemporalOperation:
+    method_name: ClassVar[str] = "unknown_with"
 
 
 def test_bind_temporal_dispatches_through_temporal_floor() -> None:
@@ -90,23 +96,22 @@ def test_temporal_dispatch_gap_names_missing_operation() -> None:
             owner="test gap",
             blame="t.py:1:0",
             receiver=ctx.temporal,
-            method_name="unknown_with",
-            operation=object(),
+            operation=_UnknownTemporalOperation(),
             ctx=ctx,
         )
 
     assert gap.value.info == {
         "owner": "test gap",
         "blame": "t.py:1:0",
-        "observed": "TemporalContext",
+        "observed": "_UnknownTemporalOperation",
         "requested": "unknown_with",
-            "fix": (
-                "add unknown_with to TemporalContext or route this curry/rewrite "
-                "through the temporal floor"
-            ),
-            "gap_kind": "Floor",
-            "gap_locus": "construction",
-        }
+        "fix": (
+            "check _UnknownTemporalOperation.method_name or add "
+            "TemporalContext.unknown_with"
+        ),
+        "gap_kind": "Operation",
+        "gap_locus": "method_name",
+    }
 
 
 def test_rewrite_temporal_add_assign_bad_operand_names_floor_gap() -> None:

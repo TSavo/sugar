@@ -63,7 +63,6 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
             owner="AsyncForSugar",
             blame=self.blame,
             receiver=iterable,
-            method_name="async_iter_with",
             operation=AsyncIteratorOperation(
                 body=self.body,
                 target_name=self.target_name,
@@ -74,9 +73,7 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
 
-def _raise_async_for_gap(
-    site, *, observed: str, requested: str, fix: str
-) -> NoReturn:
+def _raise_async_for_gap(site, *, observed: str, requested: str, fix: str) -> NoReturn:
     info = FactoryGapInfo(
         owner="python.factory",
         blame=site.blame,

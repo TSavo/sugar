@@ -41,7 +41,6 @@ def test_block_frontier_guards_return_and_raise_paths_by_dispatch() -> None:
         owner="IfSugar",
         blame="f.py:2:4",
         receiver=block,
-        method_name="guard_with",
         operation=ControlFlowGuardOperation(
             (guard,), owner="IfSugar", blame="f.py:2:4"
         ),
@@ -73,7 +72,6 @@ def test_block_frontier_routes_guarded_raise_through_matching_handler_scope() ->
         owner="TrySugar",
         blame="f.py:2:4",
         receiver=block,
-        method_name="route_raises_with",
         operation=RouteRaisesOperation((handler,), owner="TrySugar", blame="f.py:2:4"),
         ctx=outer_ctx,
     )
@@ -101,7 +99,6 @@ def test_block_frontier_merges_finally_fallthrough_by_dispatch() -> None:
         owner="TrySugar.finally",
         blame="f.py:4:4",
         receiver=final_block,
-        method_name="merge_finally_with",
         operation=FinallyFallthroughOperation(
             incoming_block=incoming_block,
             owner="TrySugar.finally",

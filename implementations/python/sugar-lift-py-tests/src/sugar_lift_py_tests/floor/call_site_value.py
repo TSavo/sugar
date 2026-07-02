@@ -183,7 +183,6 @@ def _project_callsite_floor(
         owner=owner,
         blame=target_name,
         receiver=floor,
-        method_name="project_callsite_with",
         operation=CallsiteProjectionOperation(
             callee_name=target_name,
             arg_terms=arg_terms,

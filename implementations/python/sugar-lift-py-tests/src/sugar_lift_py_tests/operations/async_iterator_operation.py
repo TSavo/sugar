@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ObjectValue
@@ -15,6 +15,7 @@ from .object_method_call import call_object_method_value
 
 @dataclass(frozen=True)
 class AsyncIteratorOperation:
+    method_name: ClassVar[str] = "async_iter_with"
     body: SugarBody
     target_name: str
     owner: str = "AsyncForSugar"
@@ -41,10 +42,27 @@ class AsyncIteratorOperation:
             owner=f"{self.owner}.__aiter__",
             blame=self.blame,
             receiver=iterator,
-            method_name="async_next_with",
-            operation=self,
+            operation=AsyncNextOperation(
+                body=self.body,
+                target_name=self.target_name,
+                owner=self.owner,
+                blame=self.blame,
+            ),
             ctx=ctx,
         )
+
+
+@dataclass(frozen=True)
+class AsyncNextOperation:
+    method_name: ClassVar[str] = "async_next_with"
+    body: SugarBody
+    target_name: str
+    owner: str = "AsyncForSugar"
+    blame: str = "<unknown>"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.body, SugarBody):
+            raise TypeError("AsyncNextOperation body must be factory-built")
 
     def async_next_object(self, receiver: ObjectValue, ctx) -> Outcome:
         item = _force_dunder(
@@ -80,7 +98,8 @@ def _force_dunder(
     blame: str,
 ):
     value = complete_value(
-        call_object_method_value(receiver,
+        call_object_method_value(
+            receiver,
             name,
             arguments,
             owner=owner,

@@ -8,7 +8,7 @@ from sugar_lift_py_tests.audit_only import collect_construction_gaps
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.factory import FactoryGap, build_node
 from sugar_lift_py_tests.floor import ObjectValue, TermValue
-from sugar_lift_py_tests.operations import perform_operation
+from sugar_lift_py_tests.operations import MapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.array_literal_sugar import ArrayLiteralSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -33,8 +33,7 @@ def test_audit_only_collects_multiple_construction_gaps() -> None:
             owner="python-test",
             blame="fixture.py:3:4",
             receiver=TermValue(1),
-            method_name="map_with",
-            operation=object(),
+            operation=MapOperation(mapper=object()),
             ctx=None,
         )
 

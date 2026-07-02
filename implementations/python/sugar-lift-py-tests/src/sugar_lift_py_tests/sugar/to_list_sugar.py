@@ -45,7 +45,6 @@ class ToListSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             owner="ToListSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="materialize_with",
             operation=MaterializeOperation(owner="ToListSugar", blame=self.blame),
             ctx=ctx,
         )

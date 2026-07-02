@@ -31,7 +31,6 @@ class TupleUnpackProjection:
             owner="TupleUnpackProjection",
             blame=self.blame,
             receiver=receiver,
-            method_name="project_sequence_with",
             operation=SequenceProjectionOperation(
                 index=self.index,
                 owner="TupleUnpackProjection",

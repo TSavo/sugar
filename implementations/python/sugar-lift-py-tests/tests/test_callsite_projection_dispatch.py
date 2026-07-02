@@ -41,7 +41,6 @@ def _project(receiver, ctx: ReduceContext | None = None):
         owner="CallsiteProjectionTest",
         blame="t.py:1",
         receiver=receiver,
-        method_name="project_callsite_with",
         operation=_operation(),
         ctx=ctx,
     )

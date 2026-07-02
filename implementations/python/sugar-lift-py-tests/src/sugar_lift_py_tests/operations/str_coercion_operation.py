@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import (
     Bv32Value,
@@ -17,6 +18,7 @@ from .object_method_call import call_object_method_value
 
 @dataclass(frozen=True)
 class StrCoercionOperation:
+    method_name: ClassVar[str] = "str_with"
     owner: str = "BuiltinCallSugar"
     blame: str = "<unknown>"
 
@@ -38,7 +40,8 @@ class StrCoercionOperation:
 
     def str_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx
-        return call_object_method_value(receiver,
+        return call_object_method_value(
+            receiver,
             "__str__",
             (),
             owner=self.owner,

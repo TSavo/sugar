@@ -25,7 +25,6 @@ def bind_temporal(
             owner=owner,
             blame=blame,
             receiver=getattr(ctx, "temporal", TemporalContext.empty()),
-            method_name="bind_with",
             operation=BindValueOperation(
                 name=name,
                 value=value,
@@ -51,7 +50,6 @@ def curry_temporal(
             owner=owner,
             blame=blame,
             receiver=getattr(ctx, "temporal", TemporalContext.empty()),
-            method_name="curry_with",
             operation=CurryArgumentsOperation(
                 parameters=parameters,
                 arg_values=arg_values,
@@ -70,7 +68,6 @@ def rewrite_temporal(ctx: Any, operation: object, *, owner: str, blame: str) -> 
             owner=owner,
             blame=blame,
             receiver=getattr(ctx, "temporal", TemporalContext.empty()),
-            method_name="rewrite_with",
             operation=operation,
             ctx=ctx,
         ),

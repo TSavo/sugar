@@ -77,7 +77,6 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             owner="TrySugar",
             blame=self.blame,
             receiver=block,
-            method_name="route_raises_with",
             operation=RouteRaisesOperation(
                 self.handlers,
                 owner="TrySugar",
@@ -141,7 +140,6 @@ def _apply_finally(
         owner="TrySugar.finally",
         blame=blame,
         receiver=final_block,
-        method_name="merge_finally_with",
         operation=FinallyFallthroughOperation(
             incoming_block=incoming_block,
             owner="TrySugar.finally",

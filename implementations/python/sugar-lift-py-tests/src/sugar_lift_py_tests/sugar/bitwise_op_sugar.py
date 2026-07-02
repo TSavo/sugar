@@ -68,7 +68,6 @@ class BitwiseOpSugar(Sugar, role=SugarRole.TERM):
             owner="BitwiseOpSugar",
             blame=self.blame,
             receiver=left,
-            method_name="bitwise_with",
             operation=BitwiseOperation(
                 operator=self.operator,
                 operand=right,

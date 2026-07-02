@@ -104,7 +104,6 @@ def test_membership_contains_operation_dispatches_object_contains_method() -> No
         owner="MembershipAssertionSugar",
         blame="test_contains.py:7:4",
         receiver=bag,
-        method_name="contains_with",
         operation=ContainsOperation(
             item=item,
             owner="MembershipAssertionSugar",

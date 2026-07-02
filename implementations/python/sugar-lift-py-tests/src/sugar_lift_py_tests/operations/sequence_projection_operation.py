@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -21,6 +21,7 @@ from .object_method_call import call_object_method_value
 
 @dataclass(frozen=True)
 class SequenceProjectionOperation:
+    method_name: ClassVar[str] = "project_sequence_with"
     index: int
     owner: str = "TupleUnpackProjection"
     blame: str = "<unknown>"
@@ -36,7 +37,8 @@ class SequenceProjectionOperation:
     def project_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         iter_value = force_floor(
             complete_value(
-                call_object_method_value(receiver,
+                call_object_method_value(
+                    receiver,
                     "__iter__",
                     (),
                     owner=f"{self.owner}.__iter__",
@@ -54,7 +56,6 @@ class SequenceProjectionOperation:
             owner=f"{self.owner}.__iter__",
             blame=self.blame,
             receiver=iter_value,
-            method_name="project_sequence_with",
             operation=self,
             ctx=ctx,
         )

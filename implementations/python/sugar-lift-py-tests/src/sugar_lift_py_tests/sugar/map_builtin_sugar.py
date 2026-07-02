@@ -42,7 +42,6 @@ class MapBuiltinSugar:
             owner="MapBuiltinSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="map_with",
             operation=CallableMapOperation(callable_value),
             ctx=None,
         )

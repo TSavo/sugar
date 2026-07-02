@@ -45,7 +45,6 @@ class AwaitSugar(Sugar, role=SugarRole.TERM):
             owner="AwaitSugar",
             blame=self.blame,
             receiver=awaitable,
-            method_name="await_with",
             operation=AwaitOperation(
                 owner="AwaitSugar",
                 blame=self.blame,

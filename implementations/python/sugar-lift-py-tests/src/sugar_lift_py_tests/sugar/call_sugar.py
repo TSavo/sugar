@@ -97,7 +97,10 @@ class BridgeStrategy:
                 sink.append((self.target_name, arg_values[0]))
         term = euf_call_term(
             self.target_name,
-            [floor_to_term(arg, owner="bridge strategy argument") for arg in arg_values],
+            [
+                floor_to_term(arg, owner="bridge strategy argument")
+                for arg in arg_values
+            ],
         )
         return Complete(
             CallSiteValue(
@@ -247,7 +250,6 @@ class MethodCallStrategy:
             owner="CallSugar",
             blame=self.blame,
             receiver=receiver,
-            method_name="call_method_with",
             operation=operation,
             ctx=ctx,
         )
@@ -290,7 +292,6 @@ class ObjectCallStrategy:
             owner="CallSugar",
             blame=self.blame,
             receiver=callee,
-            method_name="call_method_with",
             operation=operation,
             ctx=ctx,
         )
@@ -438,8 +439,8 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             for arg in fragment.call_args()
                         ),
                         blame=fragment.blame,
+                    )
                 )
-            )
         if target is None and not fragment.call_has_keywords():
             return cls(
                 strategy=ObjectCallStrategy(

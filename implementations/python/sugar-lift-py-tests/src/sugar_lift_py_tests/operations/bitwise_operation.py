@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, ClassVar
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -25,6 +25,7 @@ _BITWISE_TERMS: dict[str, Callable[[Term, Term], Term]] = {
 
 @dataclass(frozen=True)
 class BitwiseOperation:
+    method_name: ClassVar[str] = "bitwise_with"
     operator: str
     operand: FloorValue
     owner: str = "BitwiseOpSugar"
@@ -55,7 +56,6 @@ class BitwiseOperation:
             owner=self.owner,
             blame=self.blame,
             receiver=self.operand,
-            method_name="reflected_binary_operator_with",
             operation=ReflectedBinaryOperatorOperation(
                 operator=self.operator,
                 left=left,

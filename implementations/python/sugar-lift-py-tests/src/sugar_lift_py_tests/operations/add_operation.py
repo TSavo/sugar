@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import ClassVar, NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, FloorValue, TermValue
@@ -10,6 +10,7 @@ from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 
 @dataclass(frozen=True)
 class AddOperation:
+    method_name: ClassVar[str] = "add_with"
     operand: FloorValue
     owner: str = "AddSugar"
     blame: str = "<unknown>"

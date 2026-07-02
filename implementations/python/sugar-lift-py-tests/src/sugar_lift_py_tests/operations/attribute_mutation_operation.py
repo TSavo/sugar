@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue, ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Outcome
@@ -12,6 +13,7 @@ from .perform_operation import perform_operation
 
 @dataclass(frozen=True)
 class AttributeMutationOperation:
+    method_name: ClassVar[str] = "attribute_assign_with"
     name: str
     value: FloorValue
     owner: str = "AttributeAssignSugar"
@@ -24,7 +26,6 @@ class AttributeMutationOperation:
                 owner=self.owner,
                 blame=self.blame,
                 receiver=descriptor,
-                method_name="descriptor_with",
                 operation=DescriptorOperation(
                     attribute=self.name,
                     slot="__set__",
@@ -37,7 +38,8 @@ class AttributeMutationOperation:
                 ctx=ctx,
             )
         if receiver.has_method("__setattr__"):
-            return call_object_method_value(receiver,
+            return call_object_method_value(
+                receiver,
                 "__setattr__",
                 (StringValue(self.name), self.value),
                 owner=self.owner,

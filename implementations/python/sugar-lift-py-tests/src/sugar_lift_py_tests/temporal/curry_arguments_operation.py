@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from sugar_lift_py_tests.floor import FloorValue
 
 
 @dataclass(frozen=True)
 class CurryArgumentsOperation:
+    method_name: ClassVar[str] = "curry_with"
     parameters: tuple[str, ...]
     arg_values: tuple[FloorValue, ...]
     owner: str

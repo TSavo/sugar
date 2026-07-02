@@ -24,7 +24,9 @@ class ObjectEqualityTermSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def build(cls, site, ctx) -> "ObjectEqualityTermSugar":
         if not cls.owns(site):
-            raise TypeError("ObjectEqualityTermSugar claim built a non-equality compare")
+            raise TypeError(
+                "ObjectEqualityTermSugar claim built a non-equality compare"
+            )
         return cls(
             left=ctx.build_body(site.compare_left(), SugarRole.TERM),
             right=ctx.build_body(site.compare_comparators()[0], SugarRole.TERM),
@@ -44,7 +46,6 @@ class ObjectEqualityTermSugar(Sugar, role=SugarRole.TERM):
             owner="ObjectEqualityTermSugar",
             blame=self.blame,
             receiver=left,
-            method_name="binary_operator_with",
             operation=BinaryOperatorOperation(
                 operator="==",
                 right=right,

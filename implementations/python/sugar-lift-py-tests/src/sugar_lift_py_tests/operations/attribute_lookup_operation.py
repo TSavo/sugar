@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NoReturn, TypeGuard
+from typing import ClassVar, NoReturn, TypeGuard
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
@@ -14,13 +14,15 @@ from .perform_operation import perform_operation
 
 @dataclass(frozen=True)
 class AttributeLookupOperation:
+    method_name: ClassVar[str] = "attribute_with"
     name: str
     owner: str = "AttributeSugar"
     blame: str = "<unknown>"
 
     def attribute_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         if receiver.has_method("__getattribute__"):
-            return call_object_method_value(receiver,
+            return call_object_method_value(
+                receiver,
                 "__getattribute__",
                 (StringValue(self.name),),
                 owner=self.owner,
@@ -52,7 +54,8 @@ class AttributeLookupOperation:
                     ),
                 )
         if receiver.has_method("__getattr__"):
-            return call_object_method_value(receiver,
+            return call_object_method_value(
+                receiver,
                 "__getattr__",
                 (StringValue(self.name),),
                 owner=self.owner,
@@ -75,7 +78,6 @@ class AttributeLookupOperation:
             owner=self.owner,
             blame=self.blame,
             receiver=descriptor,
-            method_name="descriptor_with",
             operation=DescriptorOperation(
                 attribute=self.name,
                 slot="__get__",
@@ -111,6 +113,8 @@ class AttributeLookupOperation:
                 message=info.message,
             ),
         )
+
+
 def _is_data_descriptor(value: object) -> TypeGuard[ObjectValue]:
     return (
         isinstance(value, ObjectValue)

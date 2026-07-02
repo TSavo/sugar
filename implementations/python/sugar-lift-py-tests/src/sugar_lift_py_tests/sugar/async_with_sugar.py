@@ -58,7 +58,6 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
             owner="AsyncWithSugar",
             blame=self.blame,
             receiver=manager,
-            method_name="async_context_manager_with",
             operation=AsyncContextManagerOperation(
                 body=self.body,
                 optional_name=self.optional_name,

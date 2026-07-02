@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NoReturn, cast
+from typing import Any, ClassVar, NoReturn, cast
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import FloorValue
@@ -10,6 +10,7 @@ from sugar_lift_py_tests.ir import Formula, Term, eq
 
 @dataclass(frozen=True)
 class CallsiteProjectionOperation:
+    method_name: ClassVar[str] = "project_callsite_with"
     callee_name: str
     arg_terms: tuple[Term, ...]
     owner: str = "CallsiteProjectionOperation"
@@ -44,7 +45,6 @@ class CallsiteProjectionOperation:
             owner=self.owner,
             blame=self.blame,
             receiver=value,
-            method_name="project_callsite_with",
             operation=self,
             ctx=ctx,
         )
