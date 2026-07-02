@@ -3537,12 +3537,13 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             let Some(source_symbol) = callsite.get("name").and_then(Value::as_str) else {
                 continue;
             };
-            let Some(bridge_env) = pool.bridges_by_symbol.get(source_symbol) else {
+            let Some(bridge_env) = pool.bridge_by_symbol(source_symbol) else {
                 continue;
             };
-            // bridges_by_symbol is populated only when Member::from_value succeeds as Bridge;
-            // the _ arm is unreachable in practice but preserves old stringly control flow
-            // (sourceSymbol → source_symbol fallback, targetContractCid absent → panic).
+            // The bridge index points at verified pool storage; the _ arm is
+            // unreachable in practice but preserves old stringly control flow
+            // (sourceSymbol -> source_symbol fallback, targetContractCid
+            // absent -> panic).
             let bridge_m = match sugar_proof_envelope::Member::from_value(bridge_env) {
                 Ok(sugar_proof_envelope::Member::Bridge(b)) => b,
                 _ => continue,

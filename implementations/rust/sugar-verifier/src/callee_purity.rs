@@ -179,7 +179,7 @@ const HIDDEN_STATE_PREFIXES: &[&str] = &["__state::", "__hidden::"];
 fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bool {
     // Walk the same path CatalogResolver::target_contract_body walks:
     //   bridge(callee_name) -> targetContractCid -> memento -> body -> pre
-    let bridge = match pool.bridges_by_symbol.get(callee_name) {
+    let bridge = match pool.bridge_by_symbol(callee_name) {
         Some(b) => b,
         None => return false, // no bridge → no body contract → wp will refuse
     };
@@ -415,7 +415,7 @@ mod tests {
         let mut pool = MementoPool::default();
         pool.mementos
             .insert("blake3-512:double-pure".into(), contract_env);
-        pool.bridges_by_symbol.insert("double".into(), bridge_env);
+        pool.insert_bridge_by_symbol("double", "blake3-512:double-bridge", bridge_env);
         pool
     }
 
@@ -458,7 +458,7 @@ mod tests {
         let mut pool = MementoPool::default();
         pool.mementos
             .insert("blake3-512:cell-get-impure".into(), contract_env);
-        pool.bridges_by_symbol.insert("cell_get".into(), bridge_env);
+        pool.insert_bridge_by_symbol("cell_get", "blake3-512:cell-get-bridge", bridge_env);
         pool
     }
 
@@ -500,7 +500,7 @@ mod tests {
         let mut pool = MementoPool::default();
         pool.mementos
             .insert("blake3-512:mystery-unknown".into(), contract_env);
-        pool.bridges_by_symbol.insert("mystery".into(), bridge_env);
+        pool.insert_bridge_by_symbol("mystery", "blake3-512:mystery-bridge", bridge_env);
         pool
     }
 
@@ -723,7 +723,7 @@ mod tests {
         let mut pool = MementoPool::default();
         pool.mementos
             .insert("blake3-512:unwrap-pre-bearing".into(), contract_env);
-        pool.bridges_by_symbol.insert("unwrap".into(), bridge_env);
+        pool.insert_bridge_by_symbol("unwrap", "blake3-512:unwrap-bridge", bridge_env);
 
         let c = call("unwrap", vec![var_term("opt")]);
         // wp produces And { is_some(opt), =(Option::unwrap_value(opt), sentinel) }.

@@ -10,7 +10,7 @@ use crate::types::{
 };
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
-    add_callsite_with_discharge(cs, verdict, reason, None, None, r);
+    add_callsite_with_discharge(cs.clone(), verdict, reason, None, None, r);
 }
 
 pub fn add_callsite_with_method(
@@ -20,11 +20,11 @@ pub fn add_callsite_with_method(
     discharge_method: Option<String>,
     r: &mut Report,
 ) {
-    add_callsite_with_discharge(cs, verdict, reason, discharge_method, None, r);
+    add_callsite_with_discharge(cs.clone(), verdict, reason, discharge_method, None, r);
 }
 
 pub fn add_callsite_with_discharge(
-    cs: &CallSite,
+    cs: CallSite,
     verdict: ObligationVerdict,
     reason: &str,
     discharge_method: Option<String>,
@@ -33,7 +33,7 @@ pub fn add_callsite_with_discharge(
 ) {
     r.total_callsites += 1;
     r.rows.push(ReportRow {
-        callsite: cs.clone(),
+        callsite: cs,
         status: verdict.as_str().to_string(),
         reason: reason.to_string(),
         discharge_method,

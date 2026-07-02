@@ -1677,7 +1677,10 @@ struct LinkedPostInstance {
 
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let mut posts = Vec::new();
-    for (indexed_symbol, bridge_env) in &pool.bridges_by_symbol {
+    for (indexed_symbol, bridge_cid) in &pool.bridges_by_symbol {
+        let Some(bridge_env) = pool.mementos.get(bridge_cid) else {
+            continue;
+        };
         let source_symbol = sugar_proof_envelope::member_field(bridge_env, "sourceSymbol")
             .and_then(|v| v.as_str())
             .unwrap_or(indexed_symbol)
@@ -2600,8 +2603,7 @@ mod tests {
                 }
             }
         });
-        pool.bridges_by_symbol
-            .insert(bridge_source_symbol.to_string(), bridge);
+        pool.insert_bridge_by_symbol(bridge_source_symbol, "blake3-512:vendor-bridge", bridge);
 
         insert_contract(
             &mut pool,

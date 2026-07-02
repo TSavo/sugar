@@ -74,8 +74,11 @@ fn pool_with_bridge_and_contract(
             }
         }
     });
-    pool.bridges_by_symbol
-        .insert(bridge_symbol.into(), bridge_env);
+    pool.insert_bridge_by_symbol(
+        bridge_symbol,
+        format!("blake3-512:bridge-{bridge_symbol}"),
+        bridge_env,
+    );
 
     let contract_env = json!({
         "evidence": {
@@ -122,8 +125,9 @@ fn finds_ctor_in_atomic_args_in_pre() {
 fn callsite_carries_formal_actuals_from_bridge_callsite() {
     let target_cid = "blake3-512:target";
     let mut pool = MementoPool::default();
-    pool.bridges_by_symbol.insert(
-        "method:to_digit".into(),
+    pool.insert_bridge_by_symbol(
+        "method:to_digit",
+        "blake3-512:method-to-digit-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -336,8 +340,9 @@ fn skips_non_contract_envelopes() {
             }
         }),
     );
-    pool.bridges_by_symbol.insert(
-        "parseInt".into(),
+    pool.insert_bridge_by_symbol(
+        "parseInt",
+        "blake3-512:parse-int-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -514,15 +519,19 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
             }
         }
     });
-    pool.bridges_by_symbol
-        .insert("method:expect".into(), bridge.clone());
-    pool.bridges_by_callsite.insert(
+    pool.insert_bridge_by_symbol(
+        "method:expect",
+        "blake3-512:expect-imported-bridge",
+        bridge.clone(),
+    );
+    pool.insert_bridge_by_callsite(
         (
             property_bundle.into(),
             "src/core/types.rs".into(),
             2137,
             "method:expect".into(),
         ),
+        "blake3-512:expect-imported-bridge",
         bridge,
     );
     pool.bridge_self_bundle_by_symbol
@@ -596,15 +605,19 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
             }
         }
     });
-    pool.bridges_by_symbol
-        .insert("method:expect".into(), bridge.clone());
-    pool.bridges_by_callsite.insert(
+    pool.insert_bridge_by_symbol(
+        "method:expect",
+        "blake3-512:expect-panic-loci-only-bridge",
+        bridge.clone(),
+    );
+    pool.insert_bridge_by_callsite(
         (
             property_bundle.into(),
             "src/kit_dispatch.rs".into(),
             2130,
             "method:expect".into(),
         ),
+        "blake3-512:expect-panic-loci-only-bridge",
         bridge,
     );
     pool.bundle_members
@@ -648,8 +661,9 @@ fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
     let locus_receiver = json!({"name": "value", "kind": "var"});
 
     let mut pool = MementoPool::default();
-    pool.bridges_by_symbol.insert(
-        "method:unwrap".into(),
+    pool.insert_bridge_by_symbol(
+        "method:unwrap",
+        "blake3-512:unwrap-duplicate-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -750,8 +764,9 @@ fn effect_loci_only_contract_becomes_panic_callsite() {
     });
 
     let mut pool = MementoPool::default();
-    pool.bridges_by_symbol.insert(
-        "method:expect".into(),
+    pool.insert_bridge_by_symbol(
+        "method:expect",
+        "blake3-512:expect-effect-loci-only-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -815,8 +830,9 @@ fn effect_site_concept_routes_bridge_as_panic_site() {
         }),
     );
     let mut pool = pool;
-    pool.bridges_by_symbol.insert(
-        "method:expect".into(),
+    pool.insert_bridge_by_symbol(
+        "method:expect",
+        "blake3-512:expect-effect-site-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -889,8 +905,9 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
         .insert("effectKind".to_string(), json!(PANIC_EFFECT_KIND));
 
     let mut pool = MementoPool::default();
-    pool.bridges_by_symbol.insert(
-        "method:unwrap".into(),
+    pool.insert_bridge_by_symbol(
+        "method:unwrap",
+        "blake3-512:unwrap-both-effect-fields-bridge",
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -957,15 +974,19 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
             }
         }
     });
-    pool.bridges_by_symbol
-        .insert("method:unwrap".into(), bridge.clone());
-    pool.bridges_by_callsite.insert(
+    pool.insert_bridge_by_symbol(
+        "method:unwrap",
+        "blake3-512:unwrap-disagreeing-effect-bridge",
+        bridge.clone(),
+    );
+    pool.insert_bridge_by_callsite(
         (
             property_bundle.into(),
             "src/lib.rs".into(),
             25,
             "method:unwrap".into(),
         ),
+        "blake3-512:unwrap-disagreeing-effect-bridge",
         bridge,
     );
     pool.bundle_members
@@ -1045,15 +1066,19 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
             }
         }
     });
-    pool.bridges_by_symbol
-        .insert("method:unwrap".into(), bridge.clone());
-    pool.bridges_by_callsite.insert(
+    pool.insert_bridge_by_symbol(
+        "method:unwrap",
+        "blake3-512:unwrap-effect-only-bridge",
+        bridge.clone(),
+    );
+    pool.insert_bridge_by_callsite(
         (
             property_bundle.into(),
             "src/lib.rs".into(),
             25,
             "method:unwrap".into(),
         ),
+        "blake3-512:unwrap-effect-only-bridge",
         bridge,
     );
     pool.bundle_members

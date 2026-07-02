@@ -9379,7 +9379,7 @@ mod tests {
         });
         pool.insert(bridge_cid.to_string(), bridge.clone());
         pool.bridges_by_symbol
-            .insert("method:unwrap".to_string(), bridge);
+            .insert("method:unwrap".to_string(), bridge_cid.to_string());
         pool.bridge_self_bundle_by_symbol
             .insert("method:unwrap".to_string(), bundle_cid.to_string());
         pool.bundle_members
@@ -9458,8 +9458,11 @@ mod tests {
             },
             "schemaVersion": "1"
         });
-        pool.bridges_by_symbol
-            .insert("method:unwrap".to_string(), bridge);
+        pool.insert_bridge_by_symbol(
+            "method:unwrap",
+            "blake3-512:unresolved-method-unwrap-bridge",
+            bridge,
+        );
 
         let report = source_report_from_proof_pool(&pool, Some("callee"));
         let human = render_source_report_human(&report);

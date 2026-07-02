@@ -2243,14 +2243,21 @@ mod tests {
         );
         pool.mementos
             .insert(DLIB_GENERIC_CONTRACT_CID.into(), generic_contract);
-        pool.bridges_by_symbol
-            .insert("serde_json_to_string_value".into(), totality_bridge);
-        pool.bridges_by_symbol.insert(
-            "grammar_op_registry_cid_known".into(),
+        pool.insert_bridge_by_symbol(
+            "serde_json_to_string_value",
+            "blake3-512:dlib-totality-bridge",
+            totality_bridge,
+        );
+        pool.insert_bridge_by_symbol(
+            "grammar_op_registry_cid_known",
+            "blake3-512:dlib-option-totality-bridge",
             option_totality_bridge,
         );
-        pool.bridges_by_symbol
-            .insert("to_string_generic".into(), generic_bridge);
+        pool.insert_bridge_by_symbol(
+            "to_string_generic",
+            "blake3-512:dlib-generic-bridge",
+            generic_bridge,
+        );
         pool.bundle_members
             .entry(DLIB_BUNDLE.into())
             .or_default()
