@@ -107,6 +107,58 @@ fn guarded_callsite_carries_if_condition_as_premise() {
 }
 
 #[test]
+fn bool_path_callsite_guard_is_not_silently_dropped() {
+    let src = r#"
+        fn f(x: u32) -> u32 {
+            if x == 0 { panic!(); }
+            x
+        }
+
+        fn bool_guarded_caller(input: u32, ready: bool) -> u32 {
+            if ready {
+                f(input)
+            } else {
+                0
+            }
+        }
+    "#;
+    let f_fn = parse_named(src, "f");
+    let caller = parse_named(src, "bool_guarded_caller");
+    let pre_f = lift_function_precondition(&f_fn);
+
+    let s = build_shadow_source(
+        &caller,
+        &[CalleeContract {
+            callee_name: "f".to_string(),
+            formal_params: vec!["x".to_string()],
+            precondition: pre_f,
+        }],
+    );
+
+    let guarded_arrivals: Vec<_> = s
+        .all_arrivals()
+        .filter_map(|(_slot, arrival)| {
+            let json = serde_json::to_string(arrival.pre_wp.as_formula()).ok()?;
+            if json.contains("\"implies\"") && json.contains("\"ready\"") {
+                Some(json)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert!(
+        !guarded_arrivals.is_empty(),
+        "boolean path guard must become an explicit premise, not disappear as None"
+    );
+    assert!(
+        guarded_arrivals[0].contains("\"Bool\"") && guarded_arrivals[0].contains("true"),
+        "premise should compare the bool term against true: {}",
+        guarded_arrivals[0]
+    );
+}
+
+#[test]
 fn unguarded_callsite_has_no_premise_and_retains_free_variable() {
     let f_fn = parse_named(UNGUARDED_DEMO_SRC, "f");
     let caller = parse_named(UNGUARDED_DEMO_SRC, "unguarded_caller");

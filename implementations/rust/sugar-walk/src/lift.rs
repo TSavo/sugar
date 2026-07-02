@@ -2620,6 +2620,10 @@ pub fn lift_predicate(expr: &Expr) -> Option<IrFormula> {
 
 fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
     match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: Lit::Bool(value),
+            ..
+        }) => Some(bool_term_predicate(bool_const_term(value.value))),
         Expr::Binary(ExprBinary {
             left, op, right, ..
         }) => match op {
@@ -2659,6 +2663,7 @@ fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
             Some(negate(inner))
         }
         Expr::Paren(p) => lift_predicate_inner(&p.expr, ctx),
+        Expr::Group(g) => lift_predicate_inner(&g.expr, ctx),
         // Zero-argument method calls that return bool: `.is_some()`, `.is_none()`,
         // `.is_empty()`, `.is_err()`, `.is_ok()`. These are common predicate shapes
         // in Rust and appear naturally in the dropper's emitted guard code.
@@ -2688,9 +2693,65 @@ fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
                 None
             }
         }
-        // Anything else is unrecognized in the MVP.
-        _ => None,
+        Expr::Path(_)
+        | Expr::Field(_)
+        | Expr::Index(_)
+        | Expr::Call(_)
+        | Expr::MethodCall(_)
+        | Expr::Block(_)
+        | Expr::If(_)
+        | Expr::Match(_)
+        | Expr::Try(_)
+        | Expr::Macro(_)
+        | Expr::Reference(_)
+        | Expr::Cast(_)
+        | Expr::Unsafe(_)
+        | Expr::Const(_) => lift_bool_term_predicate(expr, ctx),
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Break(_)
+        | Expr::Closure(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Lit(_)
+        | Expr::Loop(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Unary(_) => None,
+        _ => panic!("sugar-walk predicate classifier refused unknown syn::Expr variant"),
     }
+}
+
+fn bool_const_term(value: bool) -> IrTerm {
+    IrTerm::Const {
+        value: serde_json::Value::Bool(value),
+        sort: sugar_ir_types::Sort::Primitive {
+            name: "Bool".to_string(),
+        },
+    }
+}
+
+fn bool_term_predicate(term: IrTerm) -> IrFormula {
+    IrFormula::Atomic {
+        name: "=".to_string(),
+        args: vec![term, bool_const_term(true)],
+    }
+}
+
+fn lift_bool_term_predicate(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
+    lift_expr_to_term_inner(expr, ctx).map(bool_term_predicate)
 }
 
 /// Lift a Rust expression to a canonical `IrTerm`. Supported shapes:
@@ -2841,7 +2902,12 @@ fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
                     name: "String".to_string(),
                 },
             }),
-            _ => None,
+            Lit::Float(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_) => {
+                // #3017 item 2 owns the broader sort-neutral scalar floor; this
+                // term lifter does not invent a carrier for unmodeled literals.
+                None
+            }
+            _ => panic!("sugar-walk term classifier refused unknown syn::Lit variant"),
         },
         Expr::Path(syn::ExprPath { path, .. }) => {
             let seg = path.segments.last()?;
@@ -3069,7 +3135,7 @@ fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
             let tail = block_expr.block.stmts.last()?;
             match tail {
                 Stmt::Expr(e, None) => lift_expr_to_term_inner(e, ctx),
-                _ => None,
+                Stmt::Expr(_, Some(_)) | Stmt::Local(_) | Stmt::Item(_) | Stmt::Macro(_) => None,
             }
         }
         Expr::Try(t) => {
@@ -3158,7 +3224,8 @@ fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
                 BinOp::Le(_) => "cf_le",
                 BinOp::Gt(_) => "cf_gt",
                 BinOp::Ge(_) => "cf_ge",
-                _ => return None,
+                op if binop_is_assignment_lift(op) => return None,
+                _ => panic!("sugar-walk term classifier refused unknown syn::BinOp variant"),
             };
             let l = lift_expr_to_term_inner(left, ctx)?;
             let r = lift_expr_to_term_inner(right, ctx)?;
@@ -3183,14 +3250,36 @@ fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
                 }
                 UnOp::Not(_) => "bit-not",
                 UnOp::Deref(_) => return Some(inner), // *x is x for substitution
-                _ => return None,
+                _ => panic!("sugar-walk term classifier refused unknown syn::UnOp variant"),
             };
             Some(IrTerm::Ctor {
                 name: name.to_string(),
                 args: vec![inner],
             })
         }
-        _ => None,
+        Expr::Group(group) => lift_expr_to_term_inner(&group.expr, ctx),
+        Expr::Unsafe(unsafe_expr) => {
+            block_tail_expr(&unsafe_expr.block).and_then(|tail| lift_expr_to_term_inner(tail, ctx))
+        }
+        Expr::Const(const_expr) => {
+            block_tail_expr(&const_expr.block).and_then(|tail| lift_expr_to_term_inner(tail, ctx))
+        }
+        Expr::Assign(_)
+        | Expr::Break(_)
+        | Expr::Continue(_)
+        | Expr::ForLoop(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Loop(_)
+        | Expr::RawAddr(_)
+        | Expr::Return(_)
+        | Expr::TryBlock(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk term classifier refused uninterpreted verbatim expression")
+        }
+        _ => panic!("sugar-walk term classifier refused unknown syn::Expr variant"),
     }
 }
 

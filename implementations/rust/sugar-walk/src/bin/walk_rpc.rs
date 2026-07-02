@@ -9602,7 +9602,17 @@ fn expr_sort(expr: &syn::Expr, ctx: &ShapeContext) -> Option<ShapeSort> {
         syn::Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Bool(_) => Some(ShapeSort::Bool),
             syn::Lit::Int(_) => Some(ShapeSort::Int),
-            _ => None,
+            syn::Lit::Byte(_) | syn::Lit::Char(_) => Some(ShapeSort::Int),
+            syn::Lit::Float(_)
+            | syn::Lit::Str(_)
+            | syn::Lit::ByteStr(_)
+            | syn::Lit::CStr(_)
+            | syn::Lit::Verbatim(_) => {
+                // #3017 item 2 owns richer scalar floors; ShapeSort only proves
+                // the current Unit/Bool/Int subset.
+                None
+            }
+            _ => panic!("sugar-walk RPC expr_sort refused unknown syn::Lit variant"),
         },
         syn::Expr::Path(path) => path
             .path
@@ -9620,12 +9630,50 @@ fn expr_sort(expr: &syn::Expr, ctx: &ShapeContext) -> Option<ShapeSort> {
             syn::UnOp::Not(_) => match expr_sort(&unary.expr, ctx) {
                 Some(ShapeSort::Bool) => Some(ShapeSort::Bool),
                 Some(ShapeSort::Int) => Some(ShapeSort::Int),
-                _ => None,
+                Some(ShapeSort::Unit) | None => {
+                    // #3017 item 8 owns the predicate-vs-raw-term split that
+                    // would let unknown `!x` classify without guessing.
+                    None
+                }
             },
-            _ => None,
+            syn::UnOp::Deref(_) => expr_sort(&unary.expr, ctx),
+            _ => panic!("sugar-walk RPC expr_sort refused unknown syn::UnOp variant"),
         },
         syn::Expr::Binary(binary) => binary_result_sort(binary, ctx),
-        _ => None,
+        syn::Expr::Array(_)
+        | syn::Expr::Assign(_)
+        | syn::Expr::Async(_)
+        | syn::Expr::Await(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Call(_)
+        | syn::Expr::Cast(_)
+        | syn::Expr::Closure(_)
+        | syn::Expr::Const(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Field(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::If(_)
+        | syn::Expr::Index(_)
+        | syn::Expr::Infer(_)
+        | syn::Expr::Let(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Macro(_)
+        | syn::Expr::Match(_)
+        | syn::Expr::MethodCall(_)
+        | syn::Expr::Range(_)
+        | syn::Expr::RawAddr(_)
+        | syn::Expr::Reference(_)
+        | syn::Expr::Repeat(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Struct(_)
+        | syn::Expr::Try(_)
+        | syn::Expr::TryBlock(_)
+        | syn::Expr::Tuple(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Verbatim(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Yield(_) => None,
+        _ => panic!("sugar-walk RPC expr_sort refused unknown syn::Expr variant"),
     }
 }
 
@@ -9662,7 +9710,17 @@ fn binary_result_sort(binary: &syn::ExprBinary, ctx: &ShapeContext) -> Option<Sh
             operands_have_sort(&binary.left, &binary.right, ctx, ShapeSort::Bool)
                 .then_some(ShapeSort::Bool)
         }
-        _ => None,
+        syn::BinOp::AddAssign(_)
+        | syn::BinOp::SubAssign(_)
+        | syn::BinOp::MulAssign(_)
+        | syn::BinOp::DivAssign(_)
+        | syn::BinOp::RemAssign(_)
+        | syn::BinOp::BitXorAssign(_)
+        | syn::BinOp::BitAndAssign(_)
+        | syn::BinOp::BitOrAssign(_)
+        | syn::BinOp::ShlAssign(_)
+        | syn::BinOp::ShrAssign(_) => Some(ShapeSort::Unit),
+        _ => panic!("sugar-walk RPC binary_result_sort refused unknown syn::BinOp variant"),
     }
 }
 
@@ -9684,7 +9742,24 @@ fn sort_from_type(ty: &syn::Type) -> Option<ShapeSort> {
         syn::Type::Paren(paren) => sort_from_type(&paren.elem),
         syn::Type::Group(group) => sort_from_type(&group.elem),
         syn::Type::Tuple(tuple) if tuple.elems.is_empty() => Some(ShapeSort::Unit),
-        _ => None,
+        syn::Type::Path(_)
+        | syn::Type::Array(_)
+        | syn::Type::BareFn(_)
+        | syn::Type::ImplTrait(_)
+        | syn::Type::Infer(_)
+        | syn::Type::Macro(_)
+        | syn::Type::Never(_)
+        | syn::Type::Ptr(_)
+        | syn::Type::Reference(_)
+        | syn::Type::Slice(_)
+        | syn::Type::TraitObject(_)
+        | syn::Type::Tuple(_)
+        | syn::Type::Verbatim(_) => {
+            // #3017 item 2 keeps non-primitive and sort-neutral values out of
+            // this scalar classifier; shape_of_expr carries concept structure.
+            None
+        }
+        _ => panic!("sugar-walk RPC sort_from_type refused unknown syn::Type variant"),
     }
 }
 
