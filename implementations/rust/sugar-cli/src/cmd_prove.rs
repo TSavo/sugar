@@ -14,9 +14,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use owo_colors::OwoColorize;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
+use sugar_proof_envelope::cid_from_proof_stem;
 use walkdir::WalkDir;
 
-use sugar_verifier::{Runner, RunnerConfig};
+use sugar_verifier::{MementoCid, Runner, RunnerConfig};
 
 use crate::component_plan::{
     self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
@@ -586,15 +587,29 @@ fn proof_input_pins(project_root: &Path, out_dir: &Path) -> Result<Vec<Value>, S
             continue;
         }
         let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        let declared_cid = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|s| s.starts_with("blake3-512:"));
+        let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+            format!(
+                "proof input file `{}` missing CID filename stem",
+                path.display()
+            )
+        })?;
+        let declared_cid = cid_from_proof_stem(stem).ok_or_else(|| {
+            format!(
+                "proof input file `{}` has invalid proof CID stem `{stem}`; expected blake3-512 filename form with 128 hex characters",
+                path.display()
+            )
+        })?;
+        let declared_cid = MementoCid::try_parse(declared_cid).map_err(|raw| {
+                format!(
+                    "proof input file `{}` has invalid proof CID stem `{raw}`; expected blake3-512 plus 128 hex characters",
+                    path.display()
+                )
+            })?;
         let memento = json!({
             "kind": "proof-file-memento",
             "schemaVersion": "1",
             "path": path_for_report(&project_abs, path),
-            "declaredProofCid": declared_cid,
+            "declaredProofCid": declared_cid.to_string(),
             "fileByteCid": blake3_512_of(&bytes),
             "byteLength": bytes.len(),
         });
@@ -927,4 +942,40 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proof_input_pins_refuse_bad_prefix_proof_filename() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let out_dir = temp.path().join("out");
+        std::fs::create_dir(&out_dir).expect("out dir");
+        std::fs::write(temp.path().join("sha512:not-a-sugar-cid.proof"), b"proof")
+            .expect("write proof");
+
+        let err = proof_input_pins(temp.path(), &out_dir)
+            .expect_err("bad proof filename prefix must refuse");
+
+        assert!(
+            err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn proof_input_pins_refuse_bad_hex_proof_filename() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let out_dir = temp.path().join("out");
+        std::fs::create_dir(&out_dir).expect("out dir");
+        let bad = format!("blake3-512:{}g.proof", "a".repeat(127));
+        std::fs::write(temp.path().join(&bad), b"proof").expect("write proof");
+
+        let err = proof_input_pins(temp.path(), &out_dir)
+            .expect_err("bad proof filename hex must refuse");
+
+        assert!(err.contains("blake3-512:"), "unexpected error: {err}");
+    }
 }

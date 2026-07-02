@@ -56,11 +56,11 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
-    AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
-    ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
-    ImplicationMemento, LibrarySugarBindingMemento, PlanMemento, ProofEnvelopeInput, ProofGraph,
-    SourceMemento, WitnessMemento,
+    build_proof_envelope, cid_from_proof_stem, ed25519_pubkey_string, proof_filename,
+    AssertionSurfaceMemento, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
+    ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento,
+    FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento,
+    ProofEnvelopeInput, ProofGraph, SourceMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1205,25 +1205,39 @@ fn contract_bindings_from_producer_responses(
 /// The dependency .proof CIDs this project conjoins against: the CID-named
 /// bundles under `.sugar/imports/`. Returned sorted+deduped so the vendor
 /// tie (recorded in the bundle's metadata) is a deterministic, order-
-/// independent commitment to the dependency set. The CID IS the filename
-/// (the loader requires CID-named imports), so the basename minus `.proof`
-/// is the dependency bundle's identity verbatim -- no decode needed.
-fn read_conjoined_import_cids(project_root: &Path) -> Vec<String> {
+/// independent commitment to the dependency set. The filename stem is parsed
+/// through the proof-envelope filename API, accepting canonical on-disk
+/// `blake3-512_<hex>`, legacy `blake3-512:<hex>`, and bare-hex stems.
+fn read_conjoined_import_cids(project_root: &Path) -> Result<Vec<MementoCid>, String> {
     let imports_dir = project_root.join(".sugar").join("imports");
     let mut cids = std::collections::BTreeSet::new();
     if let Ok(entries) = std::fs::read_dir(&imports_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("proof") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem.starts_with("blake3-512:") {
-                        cids.insert(stem.to_string());
-                    }
-                }
+                let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                    format!(
+                        "dependency proof `{}` missing CID filename stem",
+                        path.display()
+                    )
+                })?;
+                let cid = cid_from_proof_stem(stem).ok_or_else(|| {
+                    format!(
+                        "dependency proof `{}` has invalid proof CID stem `{stem}`; expected blake3-512 filename form with 128 hex characters",
+                        path.display()
+                    )
+                })?;
+                let cid = MementoCid::try_parse(cid).map_err(|raw| {
+                    format!(
+                        "dependency proof `{}` has invalid proof CID `{raw}`; expected blake3-512 plus 128 hex characters",
+                        path.display()
+                    )
+                })?;
+                cids.insert(cid);
             }
         }
     }
-    cids.into_iter().collect()
+    Ok(cids.into_iter().collect())
 }
 
 fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
@@ -3523,14 +3537,18 @@ fn mint_ir_document_with_source_and_plan_mementos(
     // CID but non-normative (verifiers don't use it for logic) -- exactly right,
     // since the verdict already came from the conjoined pool; this only ties the
     // identity to the dependency set.
-    let conjoined_imports = read_conjoined_import_cids(project_root);
+    let conjoined_imports = read_conjoined_import_cids(project_root)?;
     let metadata = if conjoined_imports.is_empty() {
         None
     } else {
         let mut m = std::collections::BTreeMap::new();
         m.insert(
             "sugar.conjoinedImports".to_string(),
-            conjoined_imports.join(","),
+            conjoined_imports
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
         );
         Some(m)
     };
@@ -3719,11 +3737,11 @@ fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>, Vec<FlatAtom>), S
         let cid = cid.as_str().ok_or_else(|| {
             "`plan-memento.expectedOutputCids` entries must be strings".to_string()
         })?;
-        if !cid.starts_with("blake3-512:") {
-            return Err(format!(
-                "`plan-memento.expectedOutputCids` entry must be a prefixed CID, got `{cid}`"
-            ));
-        }
+        MementoCid::try_parse(cid.to_string()).map_err(|raw| {
+            format!(
+                "`plan-memento.expectedOutputCids` entry must be a blake3-512 CID with 128 hex characters, got `{raw}`"
+            )
+        })?;
     }
 
     let plan_canonical = encode_jcs(&json_to_cvalue(&body));
@@ -4403,6 +4421,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("{name}_{nanos}"));
         std::fs::create_dir_all(&root).expect("create temp workspace");
         root
+    }
+
+    fn valid_cid(fill: char) -> String {
+        format!("blake3-512:{}", fill.to_string().repeat(128))
     }
 
     // -----------------------------------------------------------------
@@ -5395,8 +5417,8 @@ mod tests {
         fs::create_dir_all(&imports).expect("imports");
         // Two dependency bundles, CID-named (the filename CID IS the identity
         // the loader uses; content is irrelevant to the tie).
-        let dep_a = "blake3-512:aaaa";
-        let dep_b = "blake3-512:bbbb";
+        let dep_a = valid_cid('a');
+        let dep_b = valid_cid('b');
         fs::write(imports.join(format!("{dep_a}.proof")), b"x").unwrap();
         fs::write(imports.join(format!("{dep_b}.proof")), b"y").unwrap();
 
@@ -5421,7 +5443,7 @@ mod tests {
         // MUST move. This is the a->b->c identity's enforcement: a bundle
         // commits to the exact deps it was conjoined against.
         fs::remove_file(imports.join(format!("{dep_b}.proof"))).unwrap();
-        fs::write(imports.join("blake3-512:cccc.proof"), b"z").unwrap();
+        fs::write(imports.join(format!("{}.proof", valid_cid('c'))), b"z").unwrap();
         let minted2 =
             mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint2");
         assert_ne!(
@@ -5496,6 +5518,61 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("libsugar")
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_conjoined_import_cids_refuses_bad_prefix_filename() {
+        use std::fs;
+        let root = temp_workspace("mint_import_bad_prefix");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).expect("out");
+        let imports = root.join(".sugar").join("imports");
+        fs::create_dir_all(&imports).expect("imports");
+        fs::write(imports.join("sha512:not-a-sugar-cid.proof"), b"x").expect("proof");
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "c",
+            "outBinding": "out",
+            "post": {"kind": "atomic", "name": "p", "args": []}
+        })];
+
+        let err = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect_err("bad import proof CID prefix must refuse");
+
+        assert!(
+            err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_conjoined_import_cids_refuses_bad_hex_filename() {
+        use std::fs;
+        let root = temp_workspace("mint_import_bad_hex");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&out_dir).expect("out");
+        let imports = root.join(".sugar").join("imports");
+        fs::create_dir_all(&imports).expect("imports");
+        fs::write(
+            imports.join(format!("blake3-512:{}g.proof", "a".repeat(127))),
+            b"x",
+        )
+        .expect("proof");
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "c",
+            "outBinding": "out",
+            "post": {"kind": "atomic", "name": "p", "args": []}
+        })];
+
+        let err = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect_err("bad import proof CID hex must refuse");
+
+        assert!(err.contains("blake3-512:"), "unexpected error: {err}");
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -5656,6 +5733,40 @@ mod tests {
             member_cid,
             blake3_512_of(envelope_canonical.as_bytes()),
             "the catalog member CID addresses the envelope bytes"
+        );
+    }
+
+    #[test]
+    fn mint_plan_memento_refuses_bad_prefix_expected_output_cid() {
+        let plan = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "expectedOutputCids": ["sha512:not-a-sugar-cid"]
+        });
+
+        let err = mint_plan_memento(&plan).expect_err("bad expected output CID prefix must refuse");
+
+        assert!(
+            err.contains("expectedOutputCids") && err.contains("sha512:not-a-sugar-cid"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn mint_plan_memento_refuses_bad_hex_expected_output_cid() {
+        let plan = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "expectedOutputCids": [format!("blake3-512:{}g", "a".repeat(127))]
+        });
+
+        let err = mint_plan_memento(&plan).expect_err("bad expected output CID hex must refuse");
+
+        assert!(
+            err.contains("expectedOutputCids") && err.contains("blake3-512:"),
+            "unexpected error: {err}"
         );
     }
 

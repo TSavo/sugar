@@ -894,22 +894,26 @@ mod tests {
 
     use super::*;
 
+    fn cid(fill: char) -> String {
+        format!("blake3-512:{}", fill.to_string().repeat(128))
+    }
+
     // Shared authority payload used for the 3-shape test.
     fn authority_fields() -> serde_json::Value {
         serde_json::json!({
             "kind": "authority",
-            "cid": "blake3-512:aabbccdd",
+            "cid": cid('a'),
             "principal": "test-principal",
             "key": "test-key",
             "scopeKind": "library",
             "scope": "my-lib",
             "verdict": "discharged",
-            "inputCids": ["blake3-512:input1", "blake3-512:input2"]
+            "inputCids": [cid('1'), cid('2')]
         })
     }
 
     fn assert_authority_fields(m: &AuthorityMember) {
-        assert_eq!(m.cid.as_str(), "blake3-512:aabbccdd");
+        assert_eq!(m.cid.as_str(), cid('a'));
         assert_eq!(m.principal, "test-principal");
         assert_eq!(m.key, "test-key");
         assert_eq!(m.scope_kind, "library");
@@ -920,8 +924,8 @@ mod tests {
             .as_ref()
             .expect("inputCids present in full wire");
         assert_eq!(cids.len(), 2);
-        assert_eq!(cids[0].as_str(), "blake3-512:input1");
-        assert_eq!(cids[1].as_str(), "blake3-512:input2");
+        assert_eq!(cids[0].as_str(), cid('1'));
+        assert_eq!(cids[1].as_str(), cid('2'));
         assert!(m.parent_authority_cid.is_none());
         assert!(m.authority_claim.is_none());
     }
@@ -970,13 +974,13 @@ mod tests {
             "evidence": {
                 "kind": "authority",
                 "body": {
-                    "cid": "blake3-512:aabbccdd",
+                    "cid": cid('a'),
                     "principal": "test-principal",
                     "key": "test-key",
                     "scopeKind": "library",
                     "scope": "my-lib",
                     "verdict": "discharged",
-                    "inputCids": ["blake3-512:input1", "blake3-512:input2"]
+                    "inputCids": [cid('1'), cid('2')]
                 }
             },
             "signer": "ed25519:test",
@@ -1004,7 +1008,7 @@ mod tests {
             },
             "header": {
                 "kind": "bridge",
-                "cid": "blake3-512:bridgecid",
+                "cid": cid('b'),
                 "sourceSymbol": "my_fn",
                 "sourceLayer": "rust"
                 // targetContractCid and many others absent
@@ -1031,7 +1035,7 @@ mod tests {
         let wire = serde_json::json!({
             "header": {
                 "kind": "contract",
-                "cid": "blake3-512:c1",
+                "cid": cid('c'),
                 "name": "my::fn"
                 // contractName and bodyCid are required structural minimum and are missing
             }
@@ -1046,7 +1050,7 @@ mod tests {
         let wire = serde_json::json!({
             "header": {
                 "kind": "implication",
-                "cid": "blake3-512:c1",
+                "cid": cid('c'),
                 "verdict": "discharged"
                 // missing many required fields
             }
@@ -1067,7 +1071,7 @@ mod tests {
                 "scopeKind": "library",
                 "scope": "s",
                 "verdict": "discharged",
-                "inputCids": ["blake3-512:ok"]
+                "inputCids": [cid('0')]
             }
         });
         let result = Member::parse(&wire.to_string().into_bytes());
@@ -1093,17 +1097,17 @@ mod tests {
             },
             "header": {
                 "kind": "bridge",
-                "cid": "blake3-512:bridgecid",
+                "cid": cid('b'),
                 "sourceSymbol": "my_fn",
                 "sourceLayer": "rust",
-                "targetContractCid": "blake3-512:contractcid",
+                "targetContractCid": cid('c'),
                 "targetLayer": "rust",
                 "irArgSorts": ["Int"],
                 "irReturnSort": "Bool",
                 "verdict": "discharged",
                 "bindingHash": "bh",
                 "propertyHash": "ph",
-                "inputCids": ["blake3-512:in1"]
+                "inputCids": [cid('1')]
             },
             "metadata": {}
         });
@@ -1115,9 +1119,9 @@ mod tests {
                 let _: &MementoCid = &b.cid;
                 let _: &MementoCid = &b.target_contract_cid;
                 let _: &Option<Vec<MementoCid>> = &b.input_cids;
-                assert_eq!(b.cid.as_str(), "blake3-512:bridgecid");
-                assert_eq!(b.target_contract_cid.as_str(), "blake3-512:contractcid");
-                assert_eq!(b.input_cids.as_ref().unwrap()[0].as_str(), "blake3-512:in1");
+                assert_eq!(b.cid.as_str(), cid('b'));
+                assert_eq!(b.target_contract_cid.as_str(), cid('c'));
+                assert_eq!(b.input_cids.as_ref().unwrap()[0].as_str(), cid('1'));
             }
             other => panic!("expected Bridge, got {:?}", other.kind()),
         }
@@ -1129,14 +1133,14 @@ mod tests {
         let wire = serde_json::json!({
             "header": {
                 "kind": "witness",
-                "cid": "blake3-512:wcid",
+                "cid": cid('d'),
                 "claimKind": "assertion",
                 "claimBodyCid": "atom:claim",
                 "verdict": "discharged",
                 "verifierCid": "atom:verifier",
                 "policyCid": "atom:policy",
                 "evidenceRootCid": "atom:evidence",
-                "inputCids": ["blake3-512:in1"]
+                "inputCids": [cid('1')]
             }
         });
         let bytes = wire.to_string().into_bytes();
@@ -1292,8 +1296,7 @@ mod tests {
     fn typed_member_returns_none_for_unknown_cid() {
         use crate::proof_graph::ProofGraph;
         let graph = ProofGraph::new();
-        let ghost = MementoCid::try_parse("blake3-512:does-not-exist".to_string())
-            .expect("valid blake3-512 cid");
+        let ghost = MementoCid::try_parse(cid('9')).expect("valid blake3-512 cid");
         assert!(graph.typed_member(&ghost).is_none());
     }
 
@@ -1348,9 +1351,9 @@ mod tests {
             },
             "header": {
                 "kind": "bridge",
-                "cid": "blake3-512:bridgecid",
+                "cid": cid('b'),
                 "sourceSymbol": "my_fn",
-                "targetContractCid": "blake3-512:contractcid"
+                "targetContractCid": cid('c')
             },
             "metadata": {}
         });
@@ -1361,7 +1364,7 @@ mod tests {
         match &m {
             Member::Bridge(b) => {
                 assert_eq!(b.source_symbol, "my_fn");
-                assert_eq!(b.target_contract_cid.as_str(), "blake3-512:contractcid");
+                assert_eq!(b.target_contract_cid.as_str(), cid('c'));
                 assert!(
                     b.source_layer.is_none(),
                     "sourceLayer absent on minimal bridge"
@@ -1387,9 +1390,9 @@ mod tests {
             },
             "header": {
                 "kind": "implication",
-                "cid": "blake3-512:impcid",
-                "antecedentCid": "blake3-512:antcid",
-                "consequentCid": "blake3-512:concid"
+                "cid": cid('e'),
+                "antecedentCid": cid('a'),
+                "consequentCid": cid('b')
             },
             "metadata": {}
         });
@@ -1399,8 +1402,8 @@ mod tests {
             .expect("minimal ImplicationMemento (no verdict/prover/inputCids) must parse");
         match &m {
             Member::Implication(imp) => {
-                assert_eq!(imp.antecedent_cid.as_str(), "blake3-512:antcid");
-                assert_eq!(imp.consequent_cid.as_str(), "blake3-512:concid");
+                assert_eq!(imp.antecedent_cid.as_str(), cid('a'));
+                assert_eq!(imp.consequent_cid.as_str(), cid('b'));
                 assert!(
                     imp.verdict.is_none(),
                     "verdict absent on minimal implication"
@@ -1427,7 +1430,7 @@ mod tests {
             },
             "header": {
                 "kind": "authority",
-                "cid": "blake3-512:authcid",
+                "cid": cid('f'),
                 "principal": "my-principal",
                 "key": "my-key",
                 "scopeKind": "library",
@@ -1467,7 +1470,7 @@ mod tests {
             },
             "header": {
                 "kind": "witness",
-                "cid": "blake3-512:wcid",
+                "cid": cid('d'),
                 "claimKind": "assertion",
                 "claimBodyCid": "atom:claim"
             },
@@ -1552,13 +1555,13 @@ mod tests {
         let wire = serde_json::json!({
             "header": {
                 "kind": "authority",
-                "cid": "blake3-512:aabbccdd",
+                "cid": cid('a'),
                 "principal": "test-principal",
                 "key": "test-key",
                 "scopeKind": "library",
                 "scope": "my-lib",
                 "verdict": "discharged",
-                "inputCids": ["blake3-512:input1", "blake3-512:input2"]
+                "inputCids": [cid('1'), cid('2')]
             },
             "schemaVersion": "1"
         });
