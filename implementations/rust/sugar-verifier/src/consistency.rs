@@ -70,7 +70,7 @@ use tracing::{debug, info, warn};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
-use crate::types::{MemberKind, MementoCid, MementoPool, ObligationVerdict};
+use crate::types::{MementoCid, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
@@ -1679,10 +1679,7 @@ struct LinkedPostInstance {
 
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let mut posts = Vec::new();
-    for (indexed_symbol, bridge_cid) in &pool.bridges_by_symbol {
-        let Some(bridge_env) = pool.mementos.get(bridge_cid) else {
-            continue;
-        };
+    for (indexed_symbol, bridge_env) in pool.bridge_members_by_indexed_symbol() {
         let source_symbol = bridge_env
             .field("sourceSymbol")
             .and_then(|v| v.as_str())
@@ -1698,16 +1695,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         else {
             continue;
         };
-        let Some(contract_env) = pool.mementos.get(&target_cid) else {
-            continue;
-        };
-        if !pool.member_is_kind(&target_cid, MemberKind::Contract) {
-            continue;
-        }
-        let Some(body) = pool
-            .resolve_contract_body(contract_env)
-            .filter(|value| value.is_object())
-        else {
+        let Some(body) = pool.contract_body_by_cid(&target_cid) else {
             continue;
         };
         let Some(post) = body
@@ -1893,13 +1881,8 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
 ) -> Vec<ConsistencyResult> {
     let candidates: Vec<(String, Json)> = pool
-        .mementos
-        .iter()
-        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::Contract))
-        .filter_map(|(cid, env)| {
-            pool.resolve_contract_body(env)
-                .map(|body| (cid.to_string(), body))
-        })
+        .contract_members_with_bodies()
+        .map(|(cid, body)| (cid.to_string(), body))
         .filter(|(_, body)| is_consistency_candidate(body))
         .collect();
 

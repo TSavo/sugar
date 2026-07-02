@@ -29,16 +29,12 @@ use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use tracing::{debug, info, warn};
 
 use crate::body_discharge::callee_post_guard_fact;
-use crate::handshake::{
-    formula_hash, implication_property_hash, locate_producer_post, try_tier1, try_tier2,
-};
+use crate::handshake::{formula_hash, implication_property_hash, try_tier1, try_tier2};
 use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolverSeat, SolversConfig,
 };
-use crate::types::{
-    AnchoredMember, CallSite, MemberKind, MementoCid, MementoPool, ObligationVerdict, Report,
-};
+use crate::types::{AnchoredMember, CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
 use crate::{
     body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -1253,11 +1249,7 @@ fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bo
     let Some(property_cid) = cs.property_cid.as_ref() else {
         return false;
     };
-    let Some(body) = pool
-        .mementos
-        .get(property_cid)
-        .and_then(|env| pool.resolve_contract_body(env))
-    else {
+    let Some(body) = pool.contract_body_by_cid(property_cid) else {
         return false;
     };
     // A consistency candidate with linked body posts is a pool-level EUF
@@ -1273,11 +1265,7 @@ fn callsite_row_is_owned_by_self_post(cs: &CallSite, pool: &MementoPool) -> bool
     let Some(property_cid) = cs.property_cid.as_ref() else {
         return false;
     };
-    let Some(body) = pool
-        .mementos
-        .get(property_cid)
-        .and_then(|env| pool.resolve_contract_body(env))
-    else {
+    let Some(body) = pool.contract_body_by_cid(property_cid) else {
         return false;
     };
     let body_derived_post = body.get("post").is_some_and(|v| v.is_object())
@@ -1309,17 +1297,14 @@ fn verify_contract_self_posts(
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
-    let contracts: Vec<&MementoCid> = pool
-        .mementos
-        .keys()
-        .filter(|cid| pool.member_is_kind(cid, MemberKind::Contract))
+    let contracts: Vec<(MementoCid, Json)> = pool
+        .contract_members_with_bodies()
+        .map(|(cid, body)| (cid.clone(), body))
         .collect();
 
     contracts
         .par_iter()
-        .filter_map(|cid| {
-            let env = pool.mementos.get(*cid)?;
-            let body = pool.resolve_contract_body(env)?;
+        .filter_map(|(cid, body)| {
             // Body-derived contracts carry `formals` + `post`. A contract
             // without `post` (or without a result equation) has no
             // self-post to verify here.
@@ -1572,7 +1557,7 @@ fn work_one(
     let producer_post = if cs.panic_site {
         None
     } else {
-        locate_producer_post(&cs.arg_term, &pool.mementos, &pool.bridges_by_symbol)
+        pool.producer_post_for_arg_term(&cs.arg_term)
     };
 
     // Tier 0: Memento IS verification. Look up the formula CID in the pool.
@@ -2335,9 +2320,9 @@ mod consistency_owned_callsite_tests {
             ..CallSite::default()
         };
 
-        let (_, post_hash) =
-            locate_producer_post(&cs.arg_term, &pool.mementos, &pool.bridges_by_symbol)
-                .expect("producer post resolves");
+        let (_, post_hash) = pool
+            .producer_post_for_arg_term(&cs.arg_term)
+            .expect("producer post resolves");
         let pre_hash = resolve_target::run(&cs, &pool)
             .expect("consumer target resolves")
             .ir_formula
