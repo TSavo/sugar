@@ -900,7 +900,7 @@ class _Emitter:
     def nested_function(self, node: ast.FunctionDef) -> Json:
         self.locals.add(node.name)
         term = ctor("python:nested_funcdef", str_const(node.name))
-        if _has_non_authoring_decorators(node) or _contains_refused_control(node):
+        if _refused_decorator(node) is not None or _contains_refused_control(node):
             self.effects.add_unresolved_call(node.name)
             return term
 
@@ -1822,8 +1822,12 @@ def _lift_function(
     try:
         if isinstance(node, ast.AsyncFunctionDef):
             raise _UnsupportedSyntax(node, "async functions are refused")
-        if _has_non_authoring_decorators(node):
-            raise _UnsupportedSyntax(node, "decorated functions are refused")
+        refused_decorator = _refused_decorator(node)
+        if refused_decorator is not None:
+            raise refused_decorator
+        if _is_overload_stub(node):
+            return None
+        decorator_kinds = _function_decorator_kinds(node)
         default_emitter = _Emitter(
             fn_name=info.fn_name,
             locals_=set(closure_locals or set()),
@@ -1867,7 +1871,7 @@ def _lift_function(
         )
         body = emitter.statements(node.body)
         result.opacity_report.extend(effects.opacity_report())
-        return function_contract(
+        contract = function_contract(
             fn_name=info.fn_name,
             formals=formals,
             body_term=body,
@@ -1882,6 +1886,9 @@ def _lift_function(
                 else None
             ),
         )
+        if decorator_kinds:
+            contract["decoratorKinds"] = decorator_kinds
+        return contract
     except _UnsupportedSyntax as exc:
         result.refusals.append(
             _refusal(
@@ -2171,19 +2178,10 @@ def _method_kind(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
 
 
 def _method_has_unknown_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    known = {
-        "classmethod",
-        "builtins.classmethod",
-        "staticmethod",
-        "builtins.staticmethod",
-        "property",
-        "builtins.property",
-    }
     for decorator in node.decorator_list:
-        name = _decorator_name(decorator)
-        if name in known:
+        if _is_transparent_decorator(decorator):
             continue
-        if name and (name.endswith(".setter") or name.endswith(".deleter")):
+        if _decorator_kind(decorator) is not None:
             continue
         return True
     return False
@@ -2510,14 +2508,99 @@ def _refusal(
     }
 
 
-def _has_non_authoring_decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _refused_decorator(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> _UnsupportedSyntax | None:
+    for decorator in node.decorator_list:
+        if _is_transparent_decorator(decorator):
+            continue
+        if _decorator_kind(decorator) is not None:
+            continue
+        name = _refused_decorator_name(decorator)
+        return _UnsupportedSyntax(
+            node,
+            f"decorator {name!r} is not transparent",
+            kind="decorator-refused",
+        )
+    return None
+
+
+def _is_transparent_decorator(decorator: ast.expr) -> bool:
     # Verify-facing AUTHORING decorators (@sugar.boundary / @boundary /
     # @sugar.sugar / @sugar) are declarative metadata, not behavioral wrappers.
     from .authoring import is_authoring_decorator
 
-    return any(
-        not is_authoring_decorator(decorator)
+    if is_authoring_decorator(decorator):
+        return True
+    name = _decorator_name(decorator)
+    return name in {
+        "abstractmethod",
+        "abc.abstractmethod",
+        "wraps",
+        "functools.wraps",
+        "overload",
+        "typing.overload",
+        "final",
+        "typing.final",
+        "deprecated",
+        "typing.deprecated",
+        "warnings.deprecated",
+    }
+
+
+def _decorator_kind(decorator: ast.expr) -> str | None:
+    name = _decorator_name(decorator)
+    if name in {"property", "builtins.property"}:
+        return "property"
+    if name and (name.endswith(".setter") or name.endswith(".deleter")):
+        return "property"
+    if name in {"classmethod", "builtins.classmethod"}:
+        return "classmethod"
+    if name in {"staticmethod", "builtins.staticmethod"}:
+        return "staticmethod"
+    return None
+
+
+def _function_decorator_kinds(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    kinds: list[str] = []
+    for decorator in node.decorator_list:
+        kind = _decorator_kind(decorator)
+        if kind is not None and kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
+def _refused_decorator_name(decorator: ast.expr) -> str:
+    name = _decorator_name(decorator)
+    if name in {"lru_cache", "functools.lru_cache"}:
+        return "lru_cache"
+    if name in {"dataclass", "dataclasses.dataclass"}:
+        return "dataclass"
+    if name is not None:
+        return name
+    try:
+        return ast.unparse(decorator)
+    except Exception:
+        return type(decorator).__name__
+
+
+def _is_overload_stub(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if not any(
+        _decorator_name(decorator) in {"overload", "typing.overload"}
         for decorator in node.decorator_list
+    ):
+        return False
+    body = [stmt for stmt in node.body if not _is_docstring_stmt(stmt)]
+    if not body:
+        return True
+    return all(
+        isinstance(stmt, ast.Pass)
+        or (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is Ellipsis
+        )
+        for stmt in body
     )
 
 

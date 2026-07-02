@@ -4024,24 +4024,190 @@ def test_delete_roundtrip_is_structurally_stable() -> None:
     assert {"kind": "panics"} in contract["effects"]
 
 
-def test_b1_decorated_functions_remain_deferred() -> None:
+def test_transparent_abstractmethod_decorator_lifts_body_without_marker() -> None:
     source = (
-        "def dispatcher(a):\n"
-        "    return (a,)\n"
+        "from abc import abstractmethod\n"
         "\n"
-        "@array_function_dispatch(dispatcher)\n"
+        "@abstractmethod\n"
+        "def f():\n"
+        "    return 1\n"
+    )
+
+    result = lift_source(source, "abstractmethod_decorator.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(_int_const(1))
+    assert "decoratorKinds" not in contract
+
+
+def test_transparent_wraps_final_and_deprecated_decorators_lift_body() -> None:
+    source = (
+        "import functools\n"
+        "import typing\n"
+        "\n"
+        "def original():\n"
+        "    return 0\n"
+        "\n"
+        "@functools.wraps(original)\n"
+        "@typing.final\n"
+        "@deprecated\n"
+        "def f():\n"
+        "    return 2\n"
+    )
+
+    result = lift_source(source, "transparent_decorators.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _return(_int_const(2))
+    assert "decoratorKinds" not in contract
+
+
+def test_overload_stub_body_mints_no_contract_or_body_fact() -> None:
+    source = (
+        "import typing\n"
+        "\n"
+        "@typing.overload\n"
+        "def f(x: int) -> int:\n"
+        "    ...\n"
+    )
+
+    result = lift_source(source, "overload_stub.py")
+
+    assert result.refusals == []
+    assert not any(str(item.get("fnName", "")).endswith(".f") for item in result.ir)
+    source_body = _source_unit_contract(result.ir)["post"]["args"][1]["args"][1]
+    assert source_body["name"] == "python:pass"
+
+
+@pytest.mark.parametrize(
+    ("decorator", "kind", "expected_body"),
+    [
+        ("property", "property", _return(_attr(_var("self"), "_x"))),
+        ("staticmethod", "staticmethod", _return(_var("x"))),
+        ("classmethod", "classmethod", _return(_var("cls"))),
+    ],
+)
+def test_calling_convention_decorators_lift_with_contract_marker(
+    decorator: str, kind: str, expected_body: dict[str, object]
+) -> None:
+    source = (
+        "class Box:\n"
+        f"    @{decorator}\n"
+        "    def f(x):\n"
+        "        return x\n"
+    )
+    if decorator == "property":
+        source = (
+            "class Box:\n"
+            "    @property\n"
+            "    def f(self):\n"
+            "        return self._x\n"
+        )
+    elif decorator == "classmethod":
+        source = (
+            "class Box:\n"
+            "    @classmethod\n"
+            "    def f(cls):\n"
+            "        return cls\n"
+        )
+
+    result = lift_source(source, f"{kind}_decorator.py")
+
+    contract = _contract(result.ir, ".Box.f")
+    assert result.refusals == []
+    assert _function_body(result, ".Box.f") == expected_body
+    assert contract["decoratorKinds"] == [kind]
+
+
+@pytest.mark.parametrize(
+    ("decorator", "reason_name", "path"),
+    [
+        ("@functools.lru_cache(maxsize=None)", "lru_cache", "lru_cache_refusal.py"),
+        ("@dataclasses.dataclass", "dataclass", "dataclass_refusal.py"),
+        ("@unknown_lib.thing", "unknown_lib.thing", "unknown_refusal.py"),
+    ],
+)
+def test_semantics_changing_or_unknown_decorators_refuse_typed(
+    decorator: str, reason_name: str, path: str
+) -> None:
+    source = (
+        "import dataclasses\n"
+        "import functools\n"
+        "import unknown_lib\n"
+        "\n"
+        f"{decorator}\n"
         "def f(a):\n"
         "    return a.name\n"
     )
 
-    result = lift_source(source, "b1_decorator_refusal.py")
+    result = lift_source(source, path)
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
-            "function": "b1_decorator_refusal.f",
-            "line": 5,
-            "reason": "decorated functions are refused",
+            "kind": "decorator-refused",
+            "function": f"{path.removesuffix('.py')}.f",
+            "line": 6,
+            "reason": f"decorator {reason_name!r} is not transparent",
+        }
+    ]
+    assert "decorated functions are refused" not in _canon(result.refusals)
+
+
+def test_decorator_name_matching_is_a_known_approximation_for_rebound_names() -> None:
+    source = (
+        "def abstractmethod(f):\n"
+        "    return other\n"
+        "\n"
+        "@abstractmethod\n"
+        "def f():\n"
+        "    return 3\n"
+    )
+
+    result = lift_source(source, "rebound_transparent_name.py")
+
+    # The Python kit classifies decorators by source name, not runtime binding.
+    # This is the same name-based approximation used by class-shape method
+    # classification; keep it visible rather than silently claiming resolution.
+    assert result.refusals == []
+    assert _function_body(result) == _return(_int_const(3))
+
+
+def test_stacked_decorators_record_tier2_and_refuse_strictest_tier() -> None:
+    transparent_and_tier2 = lift_source(
+        "from abc import abstractmethod\n"
+        "\n"
+        "class Box:\n"
+        "    @staticmethod\n"
+        "    @abstractmethod\n"
+        "    def f(x):\n"
+        "        return x\n",
+        "stacked_transparent_staticmethod.py",
+    )
+
+    contract = _contract(transparent_and_tier2.ir, ".Box.f")
+    assert transparent_and_tier2.refusals == []
+    assert _function_body(transparent_and_tier2, ".Box.f") == _return(_var("x"))
+    assert contract["decoratorKinds"] == ["staticmethod"]
+
+    refused = lift_source(
+        "import functools\n"
+        "\n"
+        "class Box:\n"
+        "    @staticmethod\n"
+        "    @functools.lru_cache(maxsize=None)\n"
+        "    def f(x):\n"
+        "        return x\n",
+        "stacked_refused_decorator.py",
+    )
+
+    assert refused.refusals == [
+        {
+            "kind": "decorator-refused",
+            "function": "stacked_refused_decorator.Box.f",
+            "line": 6,
+            "reason": "decorator 'lru_cache' is not transparent",
         }
     ]
 
