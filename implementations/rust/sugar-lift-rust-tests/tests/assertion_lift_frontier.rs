@@ -56,10 +56,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:temporal-closure-adaptor",
     ),
     (
-        "emit_value_contract_guard_return_non_value_tail_refused",
-        "factory-structural-gap:missing-term-or-composite",
-    ),
-    (
         "emit_value_contract_let_prefix_refuses_mut_and_letelse",
         "floor-gap:emit-value-contract",
     ),
@@ -98,14 +94,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "iterator_clone_binding_uses_runtime_iterator_source_floor",
         "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "kmerge_size_hint_decomposes_after_delayed_tuple_producer_desugar",
-        "factory-structural-gap:missing-term-or-composite",
-    ),
-    (
-        "kmerge_size_hint_wrong_component_is_unsat",
-        "factory-structural-gap:missing-term-or-composite",
     ),
     (
         "let_initializer_assertion_macro_lifts_and_binds_success_payload",
@@ -156,32 +144,8 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:iterator-temporal-state",
     ),
     (
-        "rpc_source_peekable_mut_if_let_guard_refuses_stale_read_as_mutable_view",
-        "other:rpc-plugin-closed-stdout",
-    ),
-    (
-        "rpc_source_peekable_runtime_cycle_iter_nth_refuses_named_composite_floor",
-        "other:rpc-plugin-closed-stdout",
-    ),
-    (
-        "rpc_source_refuses_runtime_searcher_state_machine_with_literal_twin",
-        "other:rpc-plugin-closed-stdout",
-    ),
-    (
-        "rpc_source_refuses_type_inferred_parse_result_with_literal_twin",
-        "other:euf-string-or-parser-shape",
-    ),
-    (
-        "rpc_source_replays_full_cycle_fixture_without_shadowing_cycle_domain",
-        "other:rpc-plugin-closed-stdout",
-    ),
-    (
         "runtime_if_guard_stays_refused_not_fake_complete",
         "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "search_asserts_style_macro_with_runtime_searcher_bails",
-        "factory-structural-gap:missing-term-or-composite",
     ),
     (
         "slice_accessor_runtime_source_or_index_refuses_named_boundary",
@@ -198,10 +162,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "slice_mut_index_methods_refuse_runtime_mutable_slice_sources",
         "floor-gap:mutable-alias-state",
-    ),
-    (
-        "starts_with_over_opaque_receiver_lifts",
-        "other:euf-string-or-parser-shape",
     ),
     (
         "temporal_closure_adaptor_runtime_boundaries_decline",

@@ -268,22 +268,14 @@ impl<'a> SourceFragment<'a> {
     }
 
     /// The tail expression of a `Stmt::Expr(e, None)` where `e` is NOT
-    /// `If`, `Block`, `Unsafe`, or `Return` -- the "simple tail value"
+    /// `If`, `Block`, `Unsafe`, `Return`, or non-value control flow -- the "simple tail value"
     /// shapes that `ReturnSugar` claims at the statement role. Returns `None`
     /// for explicit return stmts, semicolon-terminated stmts, if/block/unsafe
     /// tail expressions, and all non-Stmt fragments. All raw syn field access
     /// lives HERE; recognizer bodies see only `Option<SourceFragment>`.
     pub(crate) fn stmt_tail_expr_noncf(&self) -> Option<SourceFragment<'a>> {
         match &self.node {
-            FragNode::Stmt(syn::Stmt::Expr(e, None))
-                if !matches!(
-                    e,
-                    syn::Expr::If(_)
-                        | syn::Expr::Block(_)
-                        | syn::Expr::Unsafe(_)
-                        | syn::Expr::Return(_)
-                ) =>
-            {
+            FragNode::Stmt(syn::Stmt::Expr(e, None)) if !is_non_value_tail_control_expr(e) => {
                 Some(Self::expr(e, self.file))
             }
             _ => None,
@@ -2133,6 +2125,32 @@ impl<'a> SourceFragment<'a> {
     }
 }
 
+fn is_non_value_tail_control_expr(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::If(_)
+        | syn::Expr::Block(_)
+        | syn::Expr::Unsafe(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::While(_)
+        | syn::Expr::Let(_) => true,
+        syn::Expr::Loop(loop_expr) => !loop_tail_has_single_unlabeled_break_payload(loop_expr),
+        syn::Expr::Paren(paren) => is_non_value_tail_control_expr(&paren.expr),
+        syn::Expr::Group(group) => is_non_value_tail_control_expr(&group.expr),
+        _ => false,
+    }
+}
+
+fn loop_tail_has_single_unlabeled_break_payload(loop_expr: &syn::ExprLoop) -> bool {
+    matches!(
+        loop_expr.body.stmts.as_slice(),
+        [syn::Stmt::Expr(syn::Expr::Break(break_expr), _)]
+            if break_expr.label.is_none() && break_expr.expr.is_some()
+    )
+}
+
 // ---------------------------------------------------------------------------
 // literal_owned_string helper (used by SourceFragment::literal_owned_string_frag)
 // ---------------------------------------------------------------------------
@@ -2893,6 +2911,25 @@ mod tests {
         } else {
             panic!("expected a let");
         }
+    }
+
+    #[test]
+    fn stmt_tail_noncf_excludes_non_value_loop_tail() {
+        let file = parse_file("fn f() -> i32 { loop {} }\n");
+        let item = root_fn_item(&file);
+        let frag = fn_frag(item, "loop_tail.rs");
+        let body = frag.function_body().expect("fn body");
+        let stmts = body.statements();
+        assert_eq!(stmts.len(), 1);
+        assert!(
+            stmts[0].observed().contains("Loop") || stmts[0].observed() == "Expr",
+            "loop tail observed as expr bucket: {}",
+            stmts[0].observed()
+        );
+        assert!(
+            stmts[0].stmt_tail_expr_noncf().is_none(),
+            "a loop without a break payload is control flow, not a return value"
+        );
     }
 
     // -----------------------------------------------------------------------

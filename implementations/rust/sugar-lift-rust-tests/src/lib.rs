@@ -4089,17 +4089,15 @@ fn try_macro_expansion_entries(
         assertion_surfaces = assertion_surfaces,
         "source macro expansion parsed; recursing through factory collector"
     );
-    if assertion_surfaces > 0 {
-        if let Some(reason) = macro_expansion_runtime_temporal_array_reason(&name, &block) {
-            tracing::debug!(
-                target: "sugar_lift_rust_tests::macro_expansion",
-                macro_name = %name,
-                macro_depth = macro_depth,
-                reason = %reason,
-                "held macro expansion hit terminal runtime state before assertion surface"
-            );
-            return Some(Err(reason));
-        }
+    if let Some(reason) = macro_expansion_runtime_temporal_array_reason(&name, &block) {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::macro_expansion",
+            macro_name = %name,
+            macro_depth = macro_depth,
+            reason = %reason,
+            "held macro expansion hit terminal runtime state before assertion surface"
+        );
+        return Some(Err(reason));
     }
     let mut temp_entries = Vec::new();
     let mut temp_skipped = Vec::new();
@@ -4227,6 +4225,41 @@ fn try_macro_expansion_entries(
     } else {
         Some(Ok(temp_entries))
     }
+}
+
+fn source_macro_runtime_temporal_array_reason(
+    path: &syn::Path,
+    tokens: &proc_macro2::TokenStream,
+    reducer: &ReductionCtx<'_>,
+    macro_registry: Option<&MacroRegistry>,
+    invocation_scope: Option<&TemporalScope>,
+    macro_depth: usize,
+) -> Option<String> {
+    let name = path.segments.last()?.ident.to_string();
+    let rules = macro_registry
+        .and_then(|registry| registry.lookup(&name))
+        .or_else(|| invocation_scope.and_then(|scope| scope.macro_registry().lookup(&name)))
+        .or_else(|| reducer.macro_rules(&name))?;
+    if macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
+        return None;
+    }
+    let invocation_tokens = invocation_scope
+        .and_then(|scope| {
+            let bindings = stable_macro_arg_bindings(scope);
+            (!bindings.is_empty())
+                .then(|| substitute_macro_arg_tokens(tokens.clone(), &bindings))
+                .flatten()
+        })
+        .unwrap_or_else(|| tokens.clone());
+    let expanded = macro_expand::expand(&rules, invocation_tokens).ok()?;
+    let block: syn::Block = syn::parse2(quote::quote! { { #expanded } }).ok()?;
+    let block =
+        if let Some(rewritten) = sugar::utf8_chunks::rewrite_literal_utf8_chunks_block(&block) {
+            rewritten
+        } else {
+            block
+        };
+    macro_expansion_runtime_temporal_array_reason(&name, &block)
 }
 
 fn value_panic_locus_entry_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<AssertionEntry> {
@@ -4480,15 +4513,34 @@ fn assert_macro_references_any(
     if names.is_empty() || !macro_is_assertion_surface(mac) {
         return None;
     }
-    let Ok(args) = parse_macro_args(mac.tokens.clone()) else {
-        return None;
-    };
-    args.exprs
-        .iter()
-        .filter_map(|expr| runtime_macro_state_referenced_in_expr(expr, names))
-        .fold(None, |acc, kind| {
-            stronger_runtime_macro_state(acc, Some(kind))
-        })
+    let parsed = parse_macro_args(mac.tokens.clone()).ok().and_then(|args| {
+        args.exprs
+            .iter()
+            .filter_map(|expr| runtime_macro_state_referenced_in_expr(expr, names))
+            .fold(None, |acc, kind| {
+                stronger_runtime_macro_state(acc, Some(kind))
+            })
+    });
+    stronger_runtime_macro_state(
+        parsed,
+        macro_tokens_reference_any(mac.tokens.clone(), names),
+    )
+}
+
+fn macro_tokens_reference_any(
+    tokens: proc_macro2::TokenStream,
+    names: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    tokens.into_iter().fold(None, |acc, token| match token {
+        proc_macro2::TokenTree::Ident(ident) => {
+            let kind = names.get(&ident.to_string()).copied();
+            stronger_runtime_macro_state(acc, kind)
+        }
+        proc_macro2::TokenTree::Group(group) => {
+            stronger_runtime_macro_state(acc, macro_tokens_reference_any(group.stream(), names))
+        }
+        proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => acc,
+    })
 }
 
 fn runtime_macro_state_referenced_in_expr(
@@ -12160,6 +12212,17 @@ fn collect_statement_macro_entries<'a>(
     );
 
     if has_direct_surface {
+        if let Some(reason) = source_macro_runtime_temporal_array_reason(
+            &mac.path,
+            &mac.tokens,
+            reducer,
+            Some(temporal_scope.macro_registry()),
+            Some(temporal_scope),
+            macro_depth,
+        ) {
+            skipped.push(reason);
+            return;
+        }
         let before_entries = entries.len();
         let before_skipped = skipped.len();
         let before_lifted = *macros_lifted;
@@ -12231,7 +12294,9 @@ fn collect_statement_macro_entries<'a>(
                 reason = %expansion_reason,
                 "held statement macro expansion did not emit facts"
             );
-            if expansion_reason.contains("binds a runtime iterator/searcher local") {
+            if expansion_reason.contains("binds a runtime iterator")
+                || expansion_reason.contains("binds a runtime searcher")
+            {
                 skipped.push(expansion_reason);
                 return;
             }
