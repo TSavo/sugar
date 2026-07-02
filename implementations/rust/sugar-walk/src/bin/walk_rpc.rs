@@ -3041,7 +3041,10 @@ fn collect_callsites_in_items(
 
 fn lift_call_actual_term(expr: &syn::Expr) -> Option<Value> {
     let term = sugar_walk::lift::lift_expr_to_term(expr)?;
-    serde_json::to_value(term).ok()
+    match serde_json::to_value(term) {
+        Ok(value) => Some(value),
+        Err(err) => panic!("sugar-walk refused unserializable lifted call actual term: {err}"),
+    }
 }
 
 fn stable_local_actual_term(term: &Value) -> bool {
@@ -4250,6 +4253,7 @@ fn normalize_crate_root(root: &str) -> String {
 fn crate_name_for(dir: &Path) -> Option<String> {
     // Line-scan the manifest rather than pull in a TOML parser: we only need
     // `[package].name`. Robust to the standard `name = "..."` form.
+    // sugar-audit: default-ok(crate root probing treats an unreadable Cargo.toml as absence, not proof evidence)
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
     let mut in_package = false;
     for line in manifest.lines() {
@@ -4286,6 +4290,7 @@ fn crate_name_for(dir: &Path) -> Option<String> {
 /// from the boundary attr, not from this entry, so the separator is the verb's
 /// concern, not ours.)
 fn crate_name_raw_for(dir: &Path) -> Option<String> {
+    // sugar-audit: default-ok(raw crate tag probing treats an unreadable Cargo.toml as absence, not proof evidence)
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
     let mut in_package = false;
     for line in manifest.lines() {
@@ -5935,10 +5940,15 @@ fn component_plan_result(params: &Value) -> Value {
             "reason": "no base64 0.22.1 vendor source candidate",
         });
     };
-    let command = std::env::current_exe()
-        .ok()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "sugar-walk-rpc".to_string());
+    let command = match std::env::current_exe() {
+        Ok(path) => path.display().to_string(),
+        Err(err) => {
+            return json!({
+                "decision": "decline",
+                "reason": format!("could not determine sugar-walk-rpc executable: {err}"),
+            });
+        }
+    };
     let vendor_manifest_item = forensic_items(params)
         .into_iter()
         .find(|item| {
@@ -8001,7 +8011,10 @@ fn evidence_function_symbol(evidence: &EvidenceMemento) -> Option<&str> {
 fn bind_contract_witness_from_evidence(evidence: &EvidenceMemento) -> Option<Value> {
     let role = evidence_role(evidence)?;
     let source_kind: String = evidence.source_kind.clone().into();
-    let predicate = serde_json::to_value(&evidence.predicate).ok()?;
+    let predicate = match serde_json::to_value(&evidence.predicate) {
+        Ok(predicate) => predicate,
+        Err(err) => panic!("sugar-walk refused unserializable evidence predicate: {err}"),
+    };
     let predicate_text = evidence
         .extension_fields
         .get("raw_text")
@@ -8446,7 +8459,12 @@ fn comment_shape(surface: &str) -> Option<Arc<CValue>> {
 }
 
 fn function_body_source(src: &str, fn_name: &str) -> Option<String> {
-    let file = syn::parse_file(src).ok()?;
+    let file = match syn::parse_file(src) {
+        Ok(file) => file,
+        Err(err) => {
+            panic!("sugar-walk refused unparsable Rust source while extracting body for `{fn_name}`: {err}")
+        }
+    };
     let item_fn = find_item_fn_by_name(&file.items, fn_name)?;
     block_inner_source(src, &item_fn.block).map(str::to_string)
 }
@@ -9907,8 +9925,11 @@ fn literal_shape(lit: &syn::Lit) -> Arc<CValue> {
             // — no source_text side channel. integer_width covers width
             // refinements (u8/i32/usize/etc.) so the spelling is fully
             // derivable from (value + width).
-            let Some(decoded) = value.base10_parse::<i64>().ok() else {
-                return non_operation_shape();
+            let decoded = match value.base10_parse::<i128>() {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    panic!("sugar-walk refused integer literal outside canonical i128 floor: {err}")
+                }
             };
             let Some(op_cid) = local_op_cid("literal") else {
                 return non_operation_shape();
@@ -9936,7 +9957,7 @@ fn literal_shape(lit: &syn::Lit) -> Arc<CValue> {
                 ("args", CValue::array(Vec::new())),
                 ("op_cid", CValue::string(op_cid)),
                 ("sort", CValue::string(SORT_INT_CID)),
-                ("value", CValue::integer(i128::from(decoded))),
+                ("value", CValue::integer(decoded)),
                 ("integer_width", CValue::string(integer_width)),
                 ("radix", CValue::string(radix)),
             ])
@@ -10012,11 +10033,19 @@ fn byte_array_value(bytes: Vec<u8>) -> Arc<CValue> {
 
 fn local_op_cid(operator: &str) -> Option<&'static str> {
     let cache = CONCEPT_OP_CIDS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
-    let mut cids = cache.lock().ok()?;
+    let mut cids = match cache.lock() {
+        Ok(cids) => cids,
+        Err(err) => panic!("sugar-walk concept op CID cache lock poisoned: {err}"),
+    };
     if let Some(cid) = cids.get(operator) {
         return Some(*cid);
     }
-    let cid = canonical_local_op_cid(operator).ok()?;
+    let cid = match canonical_local_op_cid(operator) {
+        Ok(cid) => cid,
+        Err(err) => {
+            panic!("sugar-walk refused local op CID canonicalization for `{operator}`: {err}")
+        }
+    };
     let cid = Box::leak(cid.into_boxed_str()) as &'static str;
     cids.insert(operator.to_string(), cid);
     Some(cid)
@@ -10099,6 +10128,7 @@ mod tests {
         assert_eq!(resolved.body_text(), "s.chars().rev().collect()");
         assert_eq!(resolved.source_cid, memento.source_cid);
         assert_eq!(resolved.template_cid, memento.template_cid);
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -10116,6 +10146,7 @@ mod tests {
 
         assert_eq!(resolved["file"], "src/lib.rs");
         assert_eq!(resolved["source"], "let rem = bytes_len % 3;\n    rem + 1");
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -10133,6 +10164,7 @@ mod tests {
             "expected source_cid refusal, got: {}",
             err.reason
         );
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -10171,7 +10203,9 @@ mod tests {
             "got: {}",
             err.reason
         );
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir2).ok();
     }
 
@@ -10194,6 +10228,7 @@ mod tests {
             "replacement must still name the byte/source axis, got: {}",
             err.reason
         );
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -10206,6 +10241,7 @@ mod tests {
         fs::write(dir.join("src/lib.rs"), "pub struct Other;\n").unwrap();
         let err = resolve_source_memento(&dir, &memento).expect_err("absent fn must refuse");
         assert!(err.reason.contains("not found"), "got: {}", err.reason);
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -12543,6 +12579,7 @@ pub fn bitwise_not() -> i64 {
             Some("sugar.plugin.lift_implications")
         );
         assert_eq!(implications["phase"].as_str(), Some("consumer"));
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&root).ok();
     }
 
