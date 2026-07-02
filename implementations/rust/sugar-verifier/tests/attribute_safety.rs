@@ -47,6 +47,15 @@ fn class_shape(
     })
 }
 
+fn class_shape_without_open_reasons(class_name: &str, attributes: Vec<Json>) -> Json {
+    let mut shape = class_shape(class_name, attributes, vec![], vec![], vec![]);
+    shape
+        .as_object_mut()
+        .expect("class shape is object")
+        .remove("openReasons");
+    shape
+}
+
 fn guaranteed_attr(name: &str) -> Json {
     json!({
         "name": name,
@@ -114,6 +123,46 @@ fn verdict(pool: &MementoPool, cs: &CallSite) -> ObligationVerdict {
     attribute_safety::try_discharge(cs, pool)
         .expect("attribute-safety callsite should be handled")
         .verdict
+}
+
+#[test]
+fn absent_open_reasons_does_not_discharge() {
+    let pool = pool_with_shape(class_shape_without_open_reasons(
+        "shape.Box",
+        vec![guaranteed_attr("value")],
+    ));
+    let cs = callsite(Some("shape.Box"), "value", vec![]);
+
+    let result = attribute_safety::try_discharge(&cs, &pool).expect("handled");
+
+    assert_ne!(
+        result.verdict,
+        ObligationVerdict::Discharged,
+        "missing openReasons must not be treated as closed evidence"
+    );
+    assert!(
+        result.reason.contains("not a guaranteed-present"),
+        "missing openReasons should fall through as open evidence, got {}",
+        result.reason
+    );
+}
+
+#[test]
+fn empty_open_reasons_discharges() {
+    let pool = pool_with_shape(class_shape(
+        "shape.Box",
+        vec![guaranteed_attr("value")],
+        vec![],
+        vec![],
+        vec![],
+    ));
+    let cs = callsite(Some("shape.Box"), "value", vec![]);
+
+    assert_eq!(
+        verdict(&pool, &cs),
+        ObligationVerdict::Discharged,
+        "explicit empty openReasons remains closed evidence"
+    );
 }
 
 #[test]

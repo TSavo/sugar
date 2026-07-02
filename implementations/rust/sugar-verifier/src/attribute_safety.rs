@@ -1,4 +1,5 @@
 use serde_json::{json, Value as Json};
+use tracing::debug;
 
 use crate::types::{CallSite, MementoPool, ObligationVerdict};
 
@@ -44,7 +45,7 @@ pub fn try_discharge(cs: &CallSite, pool: &MementoPool) -> Option<AttributeSafet
             "attribute-safety: no classShapes entry for receiver type {class_name}"
         )));
     };
-    if class_shape_guarantees_attribute(shape, attr_name) {
+    if class_shape_guarantees_attribute(shape, class_name, attr_name) {
         return Some(discharged(format!(
             "attribute-safety: classShapes guaranteed-present attribute discharges {class_name}.{attr_name}"
         )));
@@ -108,13 +109,15 @@ fn attribute_present_guard(receiver_term: Json, attr_name: &str) -> Json {
     })
 }
 
-fn class_shape_guarantees_attribute(shape: &Json, attr_name: &str) -> bool {
+fn class_shape_guarantees_attribute(shape: &Json, class_name: &str, attr_name: &str) -> bool {
     let status_closed = shape.get("status").and_then(|v| v.as_str()) == Some("closed");
-    let open_reasons_empty = shape
-        .get("openReasons")
-        .and_then(|v| v.as_array())
-        .map(|items| items.is_empty())
-        .unwrap_or(true);
+    let Some(open_reasons) = shape.get("openReasons") else {
+        debug!("classShapes entry for {class_name} lacks openReasons; treating as open");
+        return false;
+    };
+    let open_reasons_empty = open_reasons
+        .as_array()
+        .is_some_and(|items| items.is_empty());
     if !status_closed || !open_reasons_empty {
         return false;
     }
