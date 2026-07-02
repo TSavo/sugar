@@ -1302,24 +1302,23 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             Option<String>,
         ),
     > = std::collections::BTreeMap::new();
-    for (cid, env) in &pool.mementos {
-        if !pool.member_is_kind(cid, sugar_verifier::MemberKind::Contract) {
-            continue;
-        }
-        let name = match pool
-            .member_field(cid, "contractName")
-            .or_else(|| pool.member_field(cid, "name"))
+    for (cid, member) in pool.contract_members() {
+        let name = match member
+            .field("contractName")
+            .or_else(|| member.field("name"))
             .and_then(|v| v.as_str())
         {
             Some(n) => n.to_string(),
             None => continue,
         };
         let body_policy = body_discharge_policy_from_fields(
-            pool.member_field(cid, "bodyDischargeEligible")
-                .or_else(|| pool.member_field(cid, "body_discharge_eligible")),
-            pool.member_field(cid, "bodyDischargeRefusalReason")
-                .or_else(|| pool.member_field(cid, "body_discharge_refusal_reason")),
-            pool.member_field(cid, "dischargePolicy"),
+            member
+                .field("bodyDischargeEligible")
+                .or_else(|| member.field("body_discharge_eligible")),
+            member
+                .field("bodyDischargeRefusalReason")
+                .or_else(|| member.field("body_discharge_refusal_reason")),
+            member.field("dischargePolicy"),
         );
         log_body_discharge_policy_warnings(
             "mint-dependency-contract-binding",
@@ -1330,17 +1329,17 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let body_discharge_refusal_reason = body_policy.body_discharge_refusal_reason;
         // The dependency crate this contract belongs to (the lifter stamped it
         // at mint, the CLI forwards it opaquely).
-        let library = pool
-            .member_field(cid, "library")
+        let library = member
+            .field("library")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let resolved_body = pool.resolve_contract_body(env);
+        let resolved_body = pool.contract_body_for_member(member);
         let has_pre = resolved_body
             .as_ref()
             .and_then(|body| body.get("pre"))
             .is_some_and(has_nontrivial_pre_json);
-        let has_post = pool.member_field(cid, "postHash").is_some();
+        let has_post = member.field("postHash").is_some();
         let body_bearing = (has_pre || has_post) && body_discharge_eligible;
         let bundle = member_to_bundle.get(cid.as_str()).map(|b| b.to_string());
         let key = (library, name);

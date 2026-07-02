@@ -62,8 +62,8 @@ use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
-    run_plan_with_compilers, DispatchConfig, FormulaTheory, MemberKind, MementoPool,
-    ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
+    run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict, Runner,
+    RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
 };
 use tracing::{debug, info};
 
@@ -814,34 +814,23 @@ fn build_plan_and_registry(
 
 fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim> {
     let mut out = Vec::new();
-    for (cid, _) in &pool.mementos {
-        if !pool.member_is_kind(cid, MemberKind::Contract) {
+    for (cid, member) in pool.contract_members() {
+        if member.field("invVerification").and_then(|v| v.as_str()) != Some("obligation") {
             continue;
         }
-        if pool
-            .member_field(cid, "invVerification")
-            .and_then(|v| v.as_str())
-            != Some("obligation")
-        {
-            continue;
-        }
-        let formula = pool
-            .member_field(cid, "inv")
+        let formula = member
+            .field("inv")
             .filter(|v| v.is_object())
             .cloned()
             .or_else(|| {
-                let envelope = pool.mementos.get(cid)?;
-                let body = pool.resolve_contract_body(envelope)?;
+                let body = pool.contract_body_for_member(member)?;
                 body.get("inv").filter(|v| v.is_object()).cloned()
             });
         let Some(formula) = formula else { continue };
-        let property_name = pool
-            .member_field(cid, "name")
+        let property_name = member
+            .field("name")
             .and_then(|v| v.as_str())
-            .or_else(|| {
-                pool.member_field(cid, "contractName")
-                    .and_then(|v| v.as_str())
-            })
+            .or_else(|| member.field("contractName").and_then(|v| v.as_str()))
             .unwrap_or("<unnamed>")
             .to_string();
         out.push(DirectFormulaClaim {
