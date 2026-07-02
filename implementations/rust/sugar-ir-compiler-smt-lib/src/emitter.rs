@@ -2,7 +2,8 @@
 // HAND-MAINTAINED. Enum totality is compiler-enforced; atom/op-table totality
 // is enforced by the vocabulary audit test (tests/vocabulary_totality.rs).
 
-#![allow(unused_imports, unused_mut, unreachable_patterns)]
+#![allow(unused_imports, unused_mut)]
+#![deny(unreachable_patterns)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -142,54 +143,6 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
         }
         Term::Let { bindings, body, .. } => {
             let mut binding_strs = bindings.iter();
-            let binding_strs = binding_strs
-                .map(|b| format!("({} {})", smt_quote(&b.name), emit_term(&b.bound_term)));
-            let binding_strs: Vec<String> = binding_strs.collect();
-            let body_str = emit_term_with_expected(body, expected_ret);
-            format!("(let ({}) {})", binding_strs.join(" "), body_str)
-        }
-        Term::Ctor { name, args } => {
-            if name == "str.len" && args.len() == 1 {
-                return format!("(str.len {})", emit_string_term(&args[0]));
-            }
-            if args.is_empty() {
-                if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
-                    return smt_quote(OPT_NONE_OPTION);
-                }
-                return smt_ctor_head(name, args.len());
-            };
-            let arg_sorts = ctor_arg_sorts(name, args);
-            let head = monadic_ctor_head_for_signature(name, expected_ret, &arg_sorts)
-                .map(smt_quote)
-                .unwrap_or_else(|| smt_ctor_head_for_signature(name, args.len(), &arg_sorts));
-            let args_str: Vec<String> = args
-                .iter()
-                .zip(arg_sorts.iter())
-                .map(|(arg, sort)| emit_term_with_expected(arg, Some(sort)))
-                .collect();
-            format!("({} {})", head, args_str.join(" "))
-        }
-        Term::Lambda {
-            param_name,
-            param_sort,
-            body,
-        } => {
-            let sort_str = emit_sort(param_sort);
-            let body_str = emit_term_with_expected(body, None);
-            // Quote the binder name so a unique-renamed param like `e#0`
-            // (the `#N` suffix the lifter's LiftCtx appends) is a legal
-            // SMT symbol `|e#0|` -- and matches the quoted Var reference to
-            // it in the body. Unquoted, z3 reads `#0` as a malformed
-            // bit-vector literal.
-            format!(
-                "(lambda (({} {})) {})",
-                smt_quote(param_name),
-                sort_str,
-                body_str
-            )
-        }
-        Term::Let { bindings, body } => {
-            let binding_strs = bindings.iter();
             let binding_strs = binding_strs
                 .map(|b| format!("({} {})", smt_quote(&b.name), emit_term(&b.bound_term)));
             let binding_strs: Vec<String> = binding_strs.collect();
@@ -3416,6 +3369,61 @@ fn has_identity_predicate(formula: &Formula) -> bool {
         Formula::DivergenceBetween { source, target } => {
             has_identity_predicate(source) || has_identity_predicate(target)
         }
+    }
+}
+
+#[cfg(test)]
+mod emit_term_direct_tests {
+    use super::*;
+    use sugar_ir_types::IrTerm as Term;
+
+    fn int_sort() -> Sort {
+        Sort::Primitive { name: "Int".into() }
+    }
+
+    fn int_const(value: i64) -> Term {
+        Term::Const {
+            value: serde_json::json!(value),
+            sort: int_sort(),
+        }
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Var { name: name.into() }
+    }
+
+    #[test]
+    fn lambda_emits_expected_smt_lib() {
+        let term = Term::Lambda {
+            param_name: "x".into(),
+            param_sort: int_sort(),
+            body: Box::new(var("x")),
+        };
+
+        assert_eq!(emit_term(&term), "(lambda ((x Int)) x)");
+    }
+
+    #[test]
+    fn let_emits_expected_smt_lib() {
+        let term = Term::Let {
+            bindings: vec![LetBinding {
+                name: "x".into(),
+                bound_term: int_const(1),
+            }],
+            body: Box::new(var("x")),
+        };
+
+        assert_eq!(emit_term(&term), "(let ((x 1)) x)");
+    }
+
+    #[test]
+    fn ctor_emits_expected_smt_lib() {
+        let term = Term::Ctor {
+            name: "call:f".into(),
+            args: vec![var("x"), int_const(1)],
+        };
+
+        assert_eq!(emit_term(&term), "(|call:f| x 1)");
     }
 }
 
