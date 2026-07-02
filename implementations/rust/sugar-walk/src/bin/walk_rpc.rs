@@ -641,38 +641,23 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     }
 
     // Second pass: collect contract members that have a matching bridge.
-    // Member::from_value Err (unknown kind, missing required field) → skip, same as old.
+    //
+    // Rust-minted graph-backed contracts carry `name` plus `bodyCid`; older
+    // importer code promised a `name`/`contractName` fallback but accidentally
+    // asked the typed member parser to require both. Keep the importer strict
+    // about kind/body-backed shape, but accept the Rust minter's canonical
+    // `name` spelling so dependency proofs can be indexed.
     let mut bindings = Vec::new();
     for (member_cid, member) in parsed_members {
-        let contract = match sugar_proof_envelope::Member::from_value(&member) {
-            Ok(sugar_proof_envelope::Member::Contract(c)) => c,
-            _ => continue,
-        };
-        // Preserve old fallback: try `name` first, then `contractName`; skip if both empty.
-        // In the typed model both are required String fields, so both are present when
-        // from_value succeeds; we still mirror the priority and empty filter.
-        let name = {
-            let primary = contract.name.trim();
-            if !primary.is_empty() {
-                primary.to_string()
-            } else {
-                let fallback = contract.contract_name.trim();
-                if fallback.is_empty() {
-                    continue;
-                }
-                fallback.to_string()
-            }
+        let Some(contract) = rust_vendor_contract_binding_member(&member) else {
+            continue;
         };
         let Some(bridge_source_symbol) = bridge_source_by_target.get(&member_cid).cloned() else {
             continue;
         };
-        // formals is Option<Vec<String>> on ContractMember; None → skip (same as old).
-        let Some(formals_vec) = contract.formals else {
-            continue;
-        };
-        let formals_value = Value::Array(formals_vec.into_iter().map(Value::String).collect());
-        let has_pre = contract.pre.as_ref().is_some_and(has_nontrivial_pre_json);
-        let has_post = contract.post.is_some() || contract.post_hash.is_some();
+        let formals_value = Value::Array(contract.formals.into_iter().map(Value::String).collect());
+        let has_pre = contract.has_pre;
+        let has_post = contract.has_post;
         if !has_pre && !has_post {
             continue;
         }
@@ -688,13 +673,13 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
         let body_policy = body_discharge_policy_from_object(&body_policy_input);
         log_body_discharge_policy_warnings(
             "walk-rust-vendor-proof-contract-binding",
-            &name,
+            &contract.name,
             &body_policy.warnings,
         );
         let body_bearing = (has_pre || has_post) && body_policy.body_discharge_eligible;
 
         let mut binding = json!({
-            "name": name,
+            "name": contract.name,
             "contract_cid": member_cid,
             "body_bearing": body_bearing,
             "has_pre": has_pre,
@@ -704,7 +689,7 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
             "bridgeSourceSymbol": bridge_source_symbol,
             "target_proof_cid": proof_cid,
             "formals": formals_value,
-            "library": contract.library.clone().map(Value::String).unwrap_or(Value::Null),
+            "library": contract.library.map(Value::String).unwrap_or(Value::Null),
         });
         if let Some(formal_sorts) = contract.formal_sorts {
             binding["formalSorts"] = Value::Array(formal_sorts);
@@ -713,6 +698,79 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     }
 
     Ok(bindings)
+}
+
+struct RustVendorContractBindingMember {
+    name: String,
+    formals: Vec<String>,
+    formal_sorts: Option<Vec<Value>>,
+    has_pre: bool,
+    has_post: bool,
+    library: Option<String>,
+    body_discharge_eligible: Option<bool>,
+    body_discharge_refusal_reason: Option<String>,
+    discharge_policy: Option<Value>,
+}
+
+fn rust_vendor_contract_binding_member(member: &Value) -> Option<RustVendorContractBindingMember> {
+    if rust_vendor_member_field(member, "kind").and_then(Value::as_str) != Some("contract") {
+        return None;
+    }
+    // Graph-backed Rust contracts prove the body map exists by carrying bodyCid.
+    rust_vendor_member_field(member, "bodyCid").and_then(Value::as_str)?;
+    let name = rust_vendor_member_field(member, "name")
+        .or_else(|| rust_vendor_member_field(member, "contractName"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())?
+        .to_string();
+    let formals = rust_vendor_member_field(member, "formals")
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())?;
+    let formal_sorts = rust_vendor_member_field(member, "formalSorts")
+        .and_then(|value| serde_json::from_value::<Vec<Value>>(value.clone()).ok());
+    let has_pre = rust_vendor_member_field(member, "pre").is_some_and(has_nontrivial_pre_json)
+        || rust_vendor_member_field(member, "preHash")
+            .and_then(Value::as_str)
+            .is_some_and(|hash| !hash.trim().is_empty());
+    let has_post = rust_vendor_member_field(member, "post").is_some()
+        || rust_vendor_member_field(member, "postHash")
+            .and_then(Value::as_str)
+            .is_some_and(|hash| !hash.trim().is_empty());
+    Some(RustVendorContractBindingMember {
+        name,
+        formals,
+        formal_sorts,
+        has_pre,
+        has_post,
+        library: rust_vendor_member_field(member, "library")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        body_discharge_eligible: rust_vendor_member_field(member, "bodyDischargeEligible")
+            .and_then(Value::as_bool),
+        body_discharge_refusal_reason: rust_vendor_member_field(
+            member,
+            "bodyDischargeRefusalReason",
+        )
+        .and_then(Value::as_str)
+        .map(str::to_string),
+        discharge_policy: rust_vendor_member_field(member, "dischargePolicy").cloned(),
+    })
+}
+
+fn rust_vendor_member_field<'a>(member: &'a Value, field: &str) -> Option<&'a Value> {
+    [
+        member.get("header"),
+        member.get("metadata"),
+        member.pointer("/envelope/header"),
+        member.pointer("/envelope/metadata"),
+        member.get("body"),
+        member.pointer("/evidence/body"),
+        Some(member),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_object)
+    .find_map(|layer| layer.get(field))
 }
 
 fn binding_template_from_sugar_entry(
@@ -7385,6 +7443,7 @@ fn pure_free_guard_rules_for_function_post_lift(
                 callee: rule.callee.clone(),
                 post_predicate: rule.post_predicate.clone(),
                 source_line: rule.source_line,
+                allow_line_less_match: true,
             })
         })
         .collect()
@@ -10073,13 +10132,13 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_claim_envelope::{
-        mint_bridge, mint_contract, Authoring, MintBridgeArgs, MintContractArgs,
+        mint_bridge, mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
     };
     use sugar_ir_types::Sort;
     use sugar_proof_envelope::{
-        build_proof_envelope, ed25519_pubkey_string, proof_filename, BridgeMemento,
-        ClaimContractMemento, ContractMementoRef, Ed25519Seed, LibrarySugarBindingMemento,
-        ProofEnvelopeInput, ProofGraph,
+        build_proof_envelope, ed25519_pubkey_string, proof_filename, AtomMemento, BridgeMemento,
+        ClaimContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom,
+        LibrarySugarBindingMemento, ProofEnvelopeInput, ProofGraph,
     };
 
     // ---- Source Oracle + materialize (#1359) --------------------------------
@@ -12698,6 +12757,42 @@ reason = "scope discipline probe"
         proof.cid
     }
 
+    fn register_test_contract_body_graph(
+        proof_graph: &mut ProofGraph,
+        pre: Option<&Arc<CValue>>,
+        post: Option<&Arc<CValue>>,
+        inv: Option<&Arc<CValue>>,
+    ) -> ContractBody {
+        let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+        if let Some(formula) = pre {
+            slots.push((
+                "pre",
+                proof_graph.register_atom(FlatAtom::new(formula.clone())),
+            ));
+        }
+        if let Some(formula) = post {
+            slots.push((
+                "post",
+                proof_graph.register_atom(FlatAtom::new(formula.clone())),
+            ));
+        }
+        if let Some(formula) = inv {
+            slots.push((
+                "inv",
+                proof_graph.register_atom(FlatAtom::new(formula.clone())),
+            ));
+        }
+        assert!(
+            !slots.is_empty(),
+            "contract body graph requires at least one formula slot"
+        );
+        let slot_refs = slots
+            .iter()
+            .map(|(slot, atom)| (*slot, atom))
+            .collect::<Vec<_>>();
+        proof_graph.register_body(ContractBody::from_slots(slot_refs))
+    }
+
     fn write_rust_vendor_function_contract_proof(
         proof_dir: &Path,
         contract_name: &str,
@@ -12715,7 +12810,7 @@ reason = "scope discipline probe"
                     .collect()
             })
             .unwrap_or_default();
-        let contract = mint_contract(&MintContractArgs {
+        let args = MintContractArgs {
             evidence_term: None,
             contract_name: contract_name.to_string(),
             pre: None,
@@ -12759,8 +12854,16 @@ reason = "scope discipline probe"
             panic_loci: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
-        })
-        .expect("mint vendor function contract");
+        };
+        let mut graph = ProofGraph::new();
+        let body = register_test_contract_body_graph(
+            &mut graph,
+            args.pre.as_ref(),
+            args.post.as_ref(),
+            args.inv.as_ref(),
+        );
+        let contract = mint_contract_with_body_cid(&args, Some(body.cid().as_str()))
+            .expect("mint vendor function contract");
         let contract_cid = contract.cid.clone();
         let contract_memento = ClaimContractMemento::new(contract.canonical_bytes);
         assert_eq!(contract_memento.cid().as_str(), contract_cid);
@@ -12783,7 +12886,6 @@ reason = "scope discipline probe"
         let bridge_memento = BridgeMemento::new(bridge.canonical_bytes);
         assert_eq!(bridge_memento.cid().as_str(), bridge_cid);
 
-        let mut graph = ProofGraph::new();
         graph.push_claim_contract(contract_memento);
         graph.push_bridge(bridge_memento);
         let proof = build_proof_envelope(&ProofEnvelopeInput {
@@ -13264,6 +13366,13 @@ edition = "2021"
             "match_crate",
             "method:pattern",
             json!(["self"]),
+        );
+        let imported = rust_vendor_contract_bindings_from_proofs(&root)
+            .expect("import generated Rust vendor proof");
+        assert_eq!(
+            imported.len(),
+            1,
+            "generated Rust vendor proof should import one binding: {imported:#?}"
         );
 
         let consumer = lift_implications(&json!({
