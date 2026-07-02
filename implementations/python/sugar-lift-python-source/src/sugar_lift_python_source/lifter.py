@@ -1110,6 +1110,16 @@ class _Emitter:
             return ctor("python:tuple", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.List):
             return ctor("python:list", *[self.expr(element) for element in node.elts])
+        if isinstance(node, ast.Dict):
+            keys = [
+                none_const() if key is None else self.expr(key) for key in node.keys
+            ]
+            values = [self.expr(value) for value in node.values]
+            entries = [
+                ctor("python:dict_entry", key, value)
+                for key, value in zip(keys, values)
+            ]
+            return ctor("python:dict", *entries)
         if isinstance(node, ast.NamedExpr):
             if not isinstance(node.target, ast.Name):
                 raise _UnsupportedSyntax(
@@ -1969,6 +1979,17 @@ def _literal_default(node: ast.expr) -> Json:
         return ctor(
             "python:list", *[_literal_default(element) for element in node.elts]
         )
+    if isinstance(node, ast.Dict):
+        keys = [
+            none_const() if key is None else _literal_default(key)
+            for key in node.keys
+        ]
+        values = [_literal_default(value) for value in node.values]
+        entries = [
+            ctor("python:dict_entry", key, value)
+            for key, value in zip(keys, values)
+        ]
+        return ctor("python:dict", *entries)
     raise _UnsupportedSyntax(node, "non-literal default parameter values are refused")
 
 
