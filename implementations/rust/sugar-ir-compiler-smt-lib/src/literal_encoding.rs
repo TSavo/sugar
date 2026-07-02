@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// HAND-MAINTAINED (NOT generated). This module is deliberately kept OUT of
-// `generated.rs` so a future regeneration of the (vestigially "GENERATED")
-// emitter file cannot silently revert the string/bool literal encoding and
-// the cross-type distinctness axiom. `generated.rs` calls into here.
+// HAND-MAINTAINED. This module is deliberately kept separate from `emitter.rs`
+// so broad emitter edits cannot silently revert the string/bool literal
+// encoding and the cross-type distinctness axiom. `emitter.rs` calls into here.
 //
 // ── What this module encodes, and why ────────────────────────────────────
 //
@@ -442,7 +441,7 @@ fn is_bv32_atomic_predicate(name: &str) -> bool {
     // `int32.eq-const` is the synthetic atom produced by the bv32-contagion
     // pre-pass: a sibling sworn equality `=(call:abs, IntConst)` promoted to
     // the bv32 sort because its subject also appears in an `int32.eq-bv-expr`
-    // universe atom. See `apply_bv32_contagion` in generated.rs.
+    // universe atom. See `apply_bv32_contagion` in emitter.rs.
     //
     // `int32.{lt,lte,gt,gte}-const` are the G2b comparison-bound synthetic atoms:
     // a sibling `<`/`<=`/`>`/`>=` atom promoted to bv32 by the same contagion pass.

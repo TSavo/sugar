@@ -32,11 +32,15 @@ use sugar_ir_compiler::{
     Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler, PROTOCOL_VERSION,
 };
 
-mod generated;
+mod emitter;
 
 pub const DIALECT: &str = "coq";
 pub const COMPILER_NAME: &str = "coq-reference";
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn uninterpreted_allowlist_entries() -> Vec<(&'static str, &'static str)> {
+    emitter::coq_uninterpreted_allowlist_entries()
+}
 
 pub struct CoqCompiler;
 
@@ -54,7 +58,7 @@ impl CoqCompiler {
         if is_term_kind(kind) {
             let term: sugar_ir_types::Term = serde_json::from_value(ir.clone())
                 .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            let term_str = generated::emit_term(&term)?;
+            let term_str = emitter::emit_term(&term)?;
             let preamble =
                 "Require Import ZArith String List.\nOpen Scope Z.\nOpen Scope string.\n\n"
                     .to_string();
@@ -63,7 +67,7 @@ impl CoqCompiler {
         } else {
             let formula: sugar_ir_types::Formula = serde_json::from_value(ir.clone())
                 .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            generated::compile_formula(&formula)
+            emitter::compile_formula(&formula)
         }
     }
 }

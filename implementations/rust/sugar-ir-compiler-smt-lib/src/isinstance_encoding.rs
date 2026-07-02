@@ -7,7 +7,7 @@
 // The Python pytest lifter lifts ``assert isinstance(x, T)`` to:
 //   ``atomic("isinstance", [x_term, ctor("pytype_T", [])])``
 //
-// The predicate-decl pass in generated.rs declares ``isinstance`` as an
+// The predicate-decl pass in emitter.rs declares ``isinstance`` as an
 // uninterpreted Bool function. Without additional axioms, z3 would treat
 // ``isinstance(x, pytype_int) ∧ isinstance(x, pytype_str)`` as SATISFIABLE
 // (it assigns them both true) — a falsePass: in Python a value cannot be
@@ -140,7 +140,7 @@ impl IsinstanceClauses {
 }
 
 /// Emit the subject term as a raw SMT string for use as a map key.
-/// Must match what `emit_term` in generated.rs would produce so that
+/// Must match what `emit_term` in emitter.rs would produce so that
 /// same-subject atoms cluster correctly.
 fn render_subject(term: &Term) -> Option<String> {
     match term {
@@ -148,7 +148,7 @@ fn render_subject(term: &Term) -> Option<String> {
             // Mirror smt_quote: only alpha/special chars need quoting.
             // For variable names from the pytest lifter (plain identifiers),
             // this is just the name. We replicate the simple-symbol test
-            // from generated.rs::smt_quote.
+            // from emitter.rs::smt_quote.
             Some(smt_quote_subject(name))
         }
         // Non-var subjects (ctor, const, ...) are not common in isinstance;

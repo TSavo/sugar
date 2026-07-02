@@ -14,7 +14,7 @@ use sugar_ir_compiler::{
 };
 
 pub mod derive_query;
-mod generated;
+mod emitter;
 mod isinstance_encoding;
 mod literal_encoding;
 pub mod regex_regln;
@@ -252,7 +252,7 @@ pub fn emit(ir_formula: &Json) -> Result<String, String> {
         let term: sugar_ir_types::Term =
             serde_json::from_value(ir_formula.clone()).map_err(|e| format!("{e}"))?;
         validate_term(&term)?;
-        Ok(generated::emit_term(&term))
+        Ok(emitter::emit_term(&term))
     } else {
         compile_to_parts(ir_formula)
             .map(|c| {
@@ -270,7 +270,7 @@ pub fn compile_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileErr
         .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
     validate_formula(&formula).map_err(CompileError::MalformedIr)?;
     check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    generated::compile_formula(&formula)
+    emitter::compile_formula(&formula)
 }
 
 pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
@@ -278,7 +278,7 @@ pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, C
         .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
     validate_formula(&formula).map_err(CompileError::MalformedIr)?;
     check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    generated::compile_asserted_formula(&formula)
+    emitter::compile_asserted_formula(&formula)
 }
 
 pub fn emit_asserted(ir_formula: &Json) -> Result<String, String> {

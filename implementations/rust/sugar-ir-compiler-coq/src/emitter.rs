@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// GENERATED Coq compiler
+// HAND-MAINTAINED. Enum totality is compiler-enforced; atom/op-table totality
+// is enforced by the vocabulary audit test (tests/vocabulary_totality.rs).
 
 #![deny(unreachable_patterns)]
 
@@ -190,6 +191,19 @@ fn coq_uninterpreted_allowed(name: &str, position: CoqUninterpretedPosition) -> 
     COQ_UNINTERPRETED_ALLOWLIST
         .iter()
         .any(|entry| entry.name == name && entry.position == position)
+}
+
+pub fn coq_uninterpreted_allowlist_entries() -> Vec<(&'static str, &'static str)> {
+    COQ_UNINTERPRETED_ALLOWLIST
+        .iter()
+        .map(|entry| {
+            let position = match entry.position {
+                CoqUninterpretedPosition::Atom => "atom",
+                CoqUninterpretedPosition::Ctor => "ctor",
+            };
+            (entry.name, position)
+        })
+        .collect()
 }
 
 fn coq_uninterpreted_application(name: &str, args_str: &[String]) -> String {
