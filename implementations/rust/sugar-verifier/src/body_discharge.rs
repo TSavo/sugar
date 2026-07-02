@@ -104,7 +104,7 @@ use libsugar::wp::{
 };
 use sugar_ir_types::{IrFormula, IrTerm};
 
-use crate::types::{CallSite, MemberKind, MementoCid, MementoPool, StoredMember};
+use crate::types::{CallSite, MementoCid, MementoPool, StoredMember};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -140,13 +140,7 @@ pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(target_cid) = cs.bridge_target_cid.as_ref() else {
         return false;
     };
-    let Some(member) = pool.mementos.get(target_cid) else {
-        return false;
-    };
-    if !pool.member_is_kind(target_cid, MemberKind::Contract) {
-        return false;
-    }
-    let Some(body) = pool.resolve_contract_body(member).filter(|v| v.is_object()) else {
+    let Some(body) = pool.contract_body_by_cid(target_cid) else {
         return false;
     };
     match body.get("pre") {
@@ -203,15 +197,9 @@ impl<'a> CatalogResolver<'a> {
     /// is no bridge for that symbol, the target CID is not in the pool, or
     /// the target memento is not a contract.
     fn target_contract_body(&self, op_name: &str) -> Option<Json> {
-        let bridge = self.pool.bridge_by_symbol(op_name)?;
+        let bridge = self.pool.bridge_member_for_symbol(op_name)?;
         let target_cid = memento_cid_field(bridge, "targetContractCid")?;
-        let member = self.pool.mementos.get(&target_cid)?;
-        if !self.pool.member_is_kind(&target_cid, MemberKind::Contract) {
-            return None;
-        }
-        self.pool
-            .resolve_contract_body(member)
-            .filter(|v| v.is_object())
+        self.pool.contract_body_by_cid(&target_cid)
     }
 }
 
@@ -812,7 +800,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
                     line,
                     producer_symbol.to_string(),
                 );
-                match pool.bridge_by_callsite_key(&key) {
+                match pool.bridge_member_for_callsite_key(&key) {
                     Some(b) => {
                         gdbg!(
                             "cond2 callsite-scoped: producer bridge for {ctor_name} \
@@ -839,7 +827,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
             }
         }
     } else {
-        let Some(b) = pool.bridge_by_symbol(ctor_name) else {
+        let Some(b) = pool.bridge_member_for_symbol(ctor_name) else {
             gdbg!("REJECT cond2: no bridge in bridges_by_symbol for ctor_name={ctor_name} (have keys: {:?})",
                 pool.bridges_by_symbol.keys().collect::<Vec<_>>());
             return None;
@@ -851,18 +839,21 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         return None;
     };
 
-    let Some(member) = pool.mementos.get(&target_cid) else {
+    let Some(member) = pool.stored_member(&target_cid) else {
         gdbg!("REJECT cond2: target contract {target_cid} not in pool.mementos");
         return None;
     };
-    if !pool.member_is_kind(&target_cid, MemberKind::Contract) {
+    if member.kind() != crate::types::MemberKind::Contract {
         gdbg!(
             "REJECT cond2: target {target_cid} kind != contract ({:?})",
-            pool.member_kind(&target_cid)
+            member.kind()
         );
         return None;
     }
-    let Some(body) = pool.resolve_contract_body(member).filter(|v| v.is_object()) else {
+    let Some(body) = pool
+        .contract_body_for_member(member)
+        .filter(|v| v.is_object())
+    else {
         gdbg!("REJECT cond2: target {target_cid} has no object body");
         return None;
     };

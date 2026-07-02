@@ -120,7 +120,7 @@ use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
 
 use crate::body_discharge::CatalogResolver;
-use crate::types::{MemberKind, MementoCid, MementoPool};
+use crate::types::{MementoCid, MementoPool};
 use libsugar::core::types::Term;
 
 // ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ const HIDDEN_STATE_PREFIXES: &[&str] = &["__state::", "__hidden::"];
 fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bool {
     // Walk the same path CatalogResolver::target_contract_body walks:
     //   bridge(callee_name) -> targetContractCid -> memento -> body -> pre
-    let bridge = match pool.bridge_by_symbol(callee_name) {
+    let bridge = match pool.bridge_member_for_symbol(callee_name) {
         Some(b) => b,
         None => return false, // no bridge → no body contract → wp will refuse
     };
@@ -190,11 +190,10 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
         },
         None => return false,
     };
-    // Only contract mementos have a body with pre/post.
-    if !pool.member_is_kind(&target_cid, MemberKind::Contract) {
+    let Some(body) = pool.contract_body_by_cid(&target_cid) else {
         return false;
-    }
-    match pool.member_field(&target_cid, "pre") {
+    };
+    match body.get("pre") {
         None => false,
         Some(pre) if pre.is_null() => false,
         Some(pre) => {

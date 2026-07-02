@@ -292,6 +292,20 @@ impl MementoPool {
             .and_then(|memento_cid| self.mementos.get(memento_cid))
     }
 
+    /// Iterate verified bridge members in the same order as the source-symbol
+    /// bridge index, preserving the indexed symbol for fallback metadata.
+    pub fn bridge_members_by_indexed_symbol(
+        &self,
+    ) -> impl Iterator<Item = (&str, &StoredMember)> + '_ {
+        self.bridges_by_symbol
+            .iter()
+            .filter_map(|(source_symbol, memento_cid)| {
+                self.mementos
+                    .get(memento_cid)
+                    .map(|member| (source_symbol.as_str(), member))
+            })
+    }
+
     /// Return the verified bridge member indexed for a callsite-scoped key.
     pub fn bridge_member_for_callsite_key<'a>(
         &'a self,
@@ -316,6 +330,12 @@ impl MementoPool {
                 self.mementos.get(bridge_cid)
             },
         )
+    }
+
+    /// Locate the producer post for a callsite argument term without exposing
+    /// the pool's member/index maps to runner call sites.
+    pub fn producer_post_for_arg_term(&self, arg_term: &Option<Json>) -> Option<(Json, String)> {
+        crate::handshake::locate_producer_post(arg_term, &self.mementos, &self.bridges_by_symbol)
     }
 
     /// Index an already-stored bridge member by source symbol.
