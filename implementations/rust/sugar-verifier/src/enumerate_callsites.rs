@@ -10,7 +10,7 @@ use libsugar::panic_freedom;
 use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
-use crate::types::{AttributeSafetyObligation, CallSite, MementoPool};
+use crate::types::{AttributeSafetyObligation, CallSite, MementoCid, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -42,7 +42,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
             .to_string();
         if property_name.is_empty() {
             // Stable fallback: short prefix of CID.
-            property_name = format!("{}...", cid.chars().take(12).collect::<String>());
+            property_name = format!("{}...", cid.as_str().chars().take(12).collect::<String>());
         }
         let callsite_bundle_cid = bundle_containing_member(pool, cid);
         // PANIC-LOCUS PRESERVATION (#1745): the per-occurrence source loci the
@@ -64,7 +64,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
                         &property_name,
                         cid,
                         pool,
-                        callsite_bundle_cid.as_deref(),
+                        callsite_bundle_cid.as_ref(),
                         &panic_loci,
                         &mut out,
                     );
@@ -77,12 +77,12 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
                 &property_name,
                 cid,
                 pool,
-                callsite_bundle_cid.as_deref(),
+                callsite_bundle_cid.as_ref(),
             ) {
                 if !has_same_panic_callsite(&out, &cs) {
                     warn_if_panic_callsite_alias_disagrees_for_locus(
                         pool,
-                        callsite_bundle_cid.as_deref(),
+                        callsite_bundle_cid.as_ref(),
                         locus,
                     );
                     out.push(cs);
@@ -98,7 +98,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
             debug!(
                 bridge = %cs.bridge_ir_name,
                 property = %cs.property_name,
-                target_cid = %cs.bridge_target_cid,
+                target_cid = ?cs.bridge_target_cid,
                 "enumerate_callsites: callsite"
             );
         }
@@ -139,6 +139,13 @@ fn json_array_field(body: &Json, key: &str) -> Vec<Json> {
         .unwrap_or_default()
 }
 
+fn memento_cid_field(body: &Json, key: &str) -> Option<MementoCid> {
+    body.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| MementoCid::try_parse(s.to_string()).ok())
+}
+
 fn normalized_loci(loci: &[Json]) -> Vec<String> {
     let mut normalized = loci
         .iter()
@@ -160,9 +167,9 @@ fn locus_without_effect_kind(locus: &Json) -> Json {
 fn callsite_from_panic_locus(
     locus: &Json,
     property_name: &str,
-    property_cid: &str,
+    property_cid: &MementoCid,
     pool: &MementoPool,
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
 ) -> Option<CallSite> {
     if !locus.is_object() {
         return None;
@@ -201,7 +208,7 @@ fn callsite_from_panic_locus(
 
     let scoped_bridge = match (callsite_bundle_cid, file.as_deref(), line) {
         (Some(bundle), Some(file), Some(line)) => pool.bridge_by_callsite_key(&(
-            bundle.to_string(),
+            bundle.clone(),
             file.to_string(),
             line,
             callee.to_string(),
@@ -224,16 +231,12 @@ fn callsite_from_panic_locus(
 
     let bridge_self_bundle_cid = scoped_bridge
         .is_some()
-        .then(|| callsite_bundle_cid.map(str::to_string))
+        .then(|| callsite_bundle_cid.cloned())
         .flatten();
 
     Some(CallSite {
         bridge_ir_name: callee.to_string(),
-        bridge_target_cid: bridge_body
-            .get("targetContractCid")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
+        bridge_target_cid: memento_cid_field(&bridge_body, "targetContractCid"),
         bridge_source_layer: bridge_body
             .get("sourceLayer")
             .and_then(|v| v.as_str())
@@ -244,15 +247,11 @@ fn callsite_from_panic_locus(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        bridge_target_proof_cid: bridge_body
-            .get("targetProofCid")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string),
+        bridge_target_proof_cid: memento_cid_field(&bridge_body, "targetProofCid"),
         bridge_self_bundle_cid,
         property_name: property_name.to_string(),
-        property_cid: property_cid.to_string(),
-        callsite_bundle_cid: callsite_bundle_cid.map(str::to_string),
+        property_cid: Some(property_cid.clone()),
+        callsite_bundle_cid: callsite_bundle_cid.cloned(),
         arg_terms: arg_term.iter().cloned().collect(),
         arg_term,
         formal_actuals: bridge_body
@@ -302,8 +301,8 @@ fn attribute_safety_from_locus(locus: &Json) -> Option<AttributeSafetyObligation
 fn attribute_safety_callsite_from_locus(
     locus: &Json,
     property_name: &str,
-    property_cid: &str,
-    callsite_bundle_cid: Option<&str>,
+    property_cid: &MementoCid,
+    callsite_bundle_cid: Option<&MementoCid>,
     path_cond: &[Json],
 ) -> Option<CallSite> {
     let safety = attribute_safety_from_locus(locus)?;
@@ -319,14 +318,14 @@ fn attribute_safety_callsite_from_locus(
         .map(|n| n as usize);
     Some(CallSite {
         bridge_ir_name: panic_freedom::RUNTIME_FAILURE_SITE.to_string(),
-        bridge_target_cid: String::new(),
+        bridge_target_cid: None,
         bridge_source_layer: String::new(),
         bridge_target_layer: String::new(),
         bridge_target_proof_cid: None,
         bridge_self_bundle_cid: None,
         property_name: property_name.to_string(),
-        property_cid: property_cid.to_string(),
-        callsite_bundle_cid: callsite_bundle_cid.map(str::to_string),
+        property_cid: Some(property_cid.clone()),
+        callsite_bundle_cid: callsite_bundle_cid.cloned(),
         arg_term: locus.get("argTerm").cloned(),
         arg_terms: locus.get("argTerm").cloned().into_iter().collect(),
         formal_actuals: None,
@@ -345,7 +344,7 @@ fn attribute_safety_callsite_from_locus(
 
 fn warn_if_panic_callsite_alias_disagrees_for_locus(
     pool: &MementoPool,
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
     locus: &Json,
 ) {
     let Some(callee) = locus
@@ -422,12 +421,10 @@ fn has_same_panic_callsite(existing: &[CallSite], candidate: &CallSite) -> bool 
     })
 }
 
-fn bundle_containing_member(pool: &MementoPool, member_cid: &str) -> Option<String> {
+fn bundle_containing_member(pool: &MementoPool, member_cid: &MementoCid) -> Option<MementoCid> {
     pool.bundle_members
         .iter()
-        .find_map(|(bundle_cid, members)| {
-            members.contains(member_cid).then(|| bundle_cid.to_string())
-        })
+        .find_map(|(bundle_cid, members)| members.contains(member_cid).then(|| bundle_cid.clone()))
 }
 
 #[cfg(test)]
@@ -622,9 +619,9 @@ mod effect_alias_reader_tests {
 fn walk_formula(
     f: &Json,
     property_name: &str,
-    property_cid: &str,
+    property_cid: &MementoCid,
     pool: &MementoPool,
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
     // PANIC-LOCUS PRESERVATION (#1745): the loci stamped on the contract being
     // walked, threaded down so a panic-site occurrence can resolve its OWN line.
     panic_loci: &[Json],
@@ -748,7 +745,7 @@ fn panic_locus_for<'a>(
 
 fn callsite_scoped_bridge_for_locus<'a>(
     pool: &'a MementoPool,
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
     callee: &str,
     locus: &Json,
 ) -> Option<&'a Json> {
@@ -759,17 +756,12 @@ fn callsite_scoped_bridge_for_locus<'a>(
         .get("line")
         .or_else(|| locus.get("start_line"))
         .and_then(|v| v.as_u64())? as usize;
-    pool.bridge_by_callsite_key(&(
-        bundle.to_string(),
-        file.to_string(),
-        line,
-        callee.to_string(),
-    ))
+    pool.bridge_by_callsite_key(&(bundle.clone(), file.to_string(), line, callee.to_string()))
 }
 
 fn callsite_scoped_bridge_for_arg_terms<'a>(
     pool: &'a MementoPool,
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
     callee: &str,
     arg_terms: &[Json],
 ) -> Option<&'a Json> {
@@ -802,15 +794,11 @@ fn bridge_formal_actuals_match_arg_terms(
     let Some(bridge_body) = sugar_proof_envelope::member_body(bridge) else {
         return false;
     };
-    let Some(target_cid) = bridge_body
-        .get("targetContractCid")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    else {
+    let Some(target_cid) = memento_cid_field(bridge_body, "targetContractCid") else {
         return false;
     };
     let Some(formals) = pool
-        .member_field(target_cid, "formals")
+        .member_field(&target_cid, "formals")
         .and_then(|v| v.as_array())
     else {
         return false;
@@ -842,7 +830,7 @@ fn attribute_safety_locus_for<'a>(term: &Json, panic_loci: &'a [Json]) -> Option
 fn walk_term(
     t: &Json,
     property_name: &str,
-    property_cid: &str,
+    property_cid: &MementoCid,
     pool: &MementoPool,
     containing_atomic: Option<&Json>,
     // PANIC-FREEDOM guard context: the atomic-predicate facts that dominate
@@ -851,7 +839,7 @@ fn walk_term(
     path_cond: &[Json],
     // The bundle containing the contract being walked. For panic sites, this is
     // the caller bundle that also contains co-located producer bridges.
-    callsite_bundle_cid: Option<&str>,
+    callsite_bundle_cid: Option<&MementoCid>,
     // PANIC-LOCUS PRESERVATION (#1745): the panic loci of the contract being
     // walked. A panic site reads its own line from here, keyed by arg_term.
     panic_loci: &[Json],
@@ -922,11 +910,7 @@ fn walk_term(
         // bridges without this field are tolerated at load time but
         // can't have ConsequentBundlePinned enforced; resolve_target
         // emits a soft warning in that case.
-        let bridge_target_proof_cid = bbody
-            .get("targetProofCid")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        let bridge_target_proof_cid = memento_cid_field(&bbody, "targetProofCid");
         let bridge_callsite = bbody.get("callsite");
         let callsite_callee = bbody
             .get("sourceSymbol")
@@ -1005,11 +989,7 @@ fn walk_term(
         }
         let cs = CallSite {
             bridge_ir_name: bridge_name.clone(),
-            bridge_target_cid: bbody
-                .get("targetContractCid")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
+            bridge_target_cid: memento_cid_field(&bbody, "targetContractCid"),
             bridge_source_layer: bbody
                 .get("sourceLayer")
                 .and_then(|v| v.as_str())
@@ -1022,13 +1002,13 @@ fn walk_term(
                 .to_string(),
             bridge_target_proof_cid,
             bridge_self_bundle_cid: if scoped_bridge.is_some() {
-                callsite_bundle_cid.map(str::to_string)
+                callsite_bundle_cid.cloned()
             } else {
                 pool.bridge_self_bundle_by_symbol.get(&bridge_name).cloned()
             },
             property_name: property_name.to_string(),
-            property_cid: property_cid.to_string(),
-            callsite_bundle_cid: callsite_bundle_cid.map(str::to_string),
+            property_cid: Some(property_cid.clone()),
+            callsite_bundle_cid: callsite_bundle_cid.cloned(),
             arg_term: arg_term.clone(),
             arg_terms: arg_terms.clone(),
             formal_actuals: bridge_callsite
@@ -1223,6 +1203,17 @@ mod guard_propagation_tests {
     use libsugar::panic_freedom;
     use serde_json::json;
 
+    fn test_cid(label: &str) -> MementoCid {
+        MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
+            MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
+                .expect("test CID must parse")
+        })
+    }
+
+    fn test_cid_string(label: &str) -> String {
+        test_cid(label).to_string()
+    }
+
     // The receiver term the obligation is about (`x` in `x.panic_call()`).
     fn recv() -> Json {
         json!({ "kind": "var", "name": "x" })
@@ -1294,17 +1285,18 @@ mod guard_propagation_tests {
     // post is `result == <body>` (the self-post the call term lives in).
     fn pool_with_post(body_term: Json) -> MementoPool {
         let mut pool = MementoPool::default();
+        let target_cid = test_cid_string("target");
         let bridge = json!({
             "envelope": true,
             "header": {
                 "kind": "bridge",
                 "sourceSymbol": "panic_call",
-                "targetContractCid": "blake3-512:target",
+                "targetContractCid": target_cid,
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
             }
         });
-        pool.insert_bridge_by_symbol("panic_call", "blake3-512:panic-call-bridge", bridge);
+        pool.insert_bridge_by_symbol("panic_call", test_cid("panic-call-bridge"), bridge);
         let contract = json!({
             "envelope": true,
             "header": {
@@ -1317,8 +1309,7 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos
-            .insert("blake3-512:caller".to_string(), contract);
+        pool.mementos.insert(test_cid("caller"), contract);
         pool
     }
 
@@ -1358,13 +1349,13 @@ mod guard_propagation_tests {
 
     fn pool_with_scoped_panic_bridge(body_term: Json) -> MementoPool {
         let mut pool = MementoPool::default();
-        let bundle = "blake3-512:caller-bundle".to_string();
-        let caller = "blake3-512:caller".to_string();
+        let bundle = test_cid("caller-bundle");
+        let caller = test_cid("caller");
         pool.insert_bridge_by_symbol(
             "panic_call".to_string(),
-            "blake3-512:wrong-symbol-bridge",
+            test_cid("wrong-symbol-bridge"),
             bridge(
-                "blake3-512:wrong-symbol-target",
+                &test_cid_string("wrong-symbol-target"),
                 Some("src/lib.rs"),
                 Some(99),
             ),
@@ -1376,9 +1367,9 @@ mod guard_propagation_tests {
                 10,
                 "panic_call".to_string(),
             ),
-            "blake3-512:right-callsite-bridge",
+            test_cid("right-callsite-bridge"),
             bridge(
-                "blake3-512:right-callsite-target",
+                &test_cid_string("right-callsite-target"),
                 Some("src/lib.rs"),
                 Some(10),
             ),
@@ -1413,9 +1404,9 @@ mod guard_propagation_tests {
     #[test]
     fn formula_walk_selects_callsite_bridge_by_formal_actuals() {
         let mut pool = MementoPool::default();
-        let bundle = "blake3-512:caller-bundle".to_string();
-        let caller = "blake3-512:caller".to_string();
-        let target = "blake3-512:to-digit-contract".to_string();
+        let bundle = test_cid("caller-bundle");
+        let caller = test_cid("caller");
+        let target = test_cid_string("to-digit-contract");
         let int_sort = json!({"kind": "primitive", "name": "Int"});
         let int_const = |value: i64| json!({"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": value});
         let to_digit_call = json!({
@@ -1444,7 +1435,7 @@ mod guard_propagation_tests {
             "header": {
                 "kind": "bridge",
                 "sourceSymbol": "method:to_digit",
-                "targetContractCid": target,
+                "targetContractCid": target.clone(),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {
@@ -1463,7 +1454,7 @@ mod guard_propagation_tests {
             "header": {
                 "kind": "bridge",
                 "sourceSymbol": "method:to_digit",
-                "targetContractCid": target,
+                "targetContractCid": target.clone(),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {
@@ -1477,10 +1468,10 @@ mod guard_propagation_tests {
                 }
             }
         });
-        pool.mementos.insert(target.clone(), target_contract);
+        pool.mementos.insert(test_cid(&target), target_contract);
         pool.insert_bridge_by_symbol(
             "method:to_digit",
-            "blake3-512:internal-to-digit-bridge",
+            test_cid("internal-to-digit-bridge"),
             internal_bridge.clone(),
         );
         pool.insert_bridge_by_callsite(
@@ -1490,7 +1481,7 @@ mod guard_propagation_tests {
                 344,
                 "method:to_digit".to_string(),
             ),
-            "blake3-512:internal-to-digit-bridge",
+            test_cid("internal-to-digit-bridge"),
             internal_bridge,
         );
         pool.insert_bridge_by_callsite(
@@ -1500,7 +1491,7 @@ mod guard_propagation_tests {
                 3,
                 "method:to_digit".to_string(),
             ),
-            "blake3-512:caller-to-digit-bridge",
+            test_cid("caller-to-digit-bridge"),
             caller_bridge,
         );
         pool.bundle_members
@@ -1546,14 +1537,14 @@ mod guard_propagation_tests {
         locus_callee: &str,
     ) -> MementoPool {
         let mut pool = MementoPool::default();
-        let bundle = "blake3-512:caller-bundle".to_string();
-        let caller = "blake3-512:caller".to_string();
+        let bundle = test_cid("caller-bundle");
+        let caller = test_cid("caller");
         pool.insert_bridge_by_symbol(
             bridge_method.to_string(),
-            "blake3-512:leaf-wrong-symbol-bridge",
+            test_cid("leaf-wrong-symbol-bridge"),
             bridge_for_symbol(
                 bridge_method,
-                "blake3-512:wrong-symbol-target",
+                &test_cid_string("wrong-symbol-target"),
                 Some("src/lib.rs"),
                 Some(99),
             ),
@@ -1565,10 +1556,10 @@ mod guard_propagation_tests {
                 10,
                 bridge_method.to_string(),
             ),
-            "blake3-512:leaf-right-callsite-bridge",
+            test_cid("leaf-right-callsite-bridge"),
             bridge_for_symbol(
                 bridge_method,
-                "blake3-512:right-callsite-target",
+                &test_cid_string("right-callsite-target"),
                 Some("src/lib.rs"),
                 Some(10),
             ),
@@ -1779,7 +1770,8 @@ mod guard_propagation_tests {
         let sites = run(&pool_with_scoped_panic_bridge(body));
         let cs = enumerated_call(&sites);
         assert_eq!(
-            cs.bridge_target_cid, "blake3-512:right-callsite-target",
+            cs.bridge_target_cid,
+            Some(test_cid("right-callsite-target")),
             "panic formula-walk must select the exact callsite bridge, not the global symbol winner"
         );
         assert_eq!(

@@ -888,7 +888,7 @@ where
     let mut count = 0usize;
     for proof in proofs {
         let derived_cid = blake3_512_of(&proof.bytes);
-        if proof.expected_cid != derived_cid {
+        if proof.expected_cid.as_ref() != derived_cid.as_str() {
             return Err(format!(
                 "RPC dependency proof {} CID mismatch: expected {}, derived {}",
                 proof.label, proof.expected_cid, derived_cid
@@ -2046,11 +2046,14 @@ mod tests {
         let source_path_label = dir.path().join("package-internal").join("vendor.proof");
 
         let count = stage_rpc_dependency_proofs_to_imports(&target, &imports, |_| {
-            Ok(vec![sugar_verifier::load_all_proofs::ProofBytes {
-                label: source_path_label.display().to_string(),
-                expected_cid: cid.clone(),
-                bytes: bytes.clone(),
-            }])
+            Ok(vec![
+                sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
+                    source_path_label.display().to_string(),
+                    cid.clone(),
+                    bytes.clone(),
+                )
+                .expect("test proof CID must parse"),
+            ])
         })
         .expect("stage rpc dependency proofs");
 

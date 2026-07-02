@@ -3550,6 +3550,11 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             };
             let bridge_source_symbol: &str = bridge_m.source_symbol.as_str();
             let target_cid: &str = bridge_m.target_contract_cid.as_str();
+            let Ok(target_memento_cid) =
+                sugar_verifier::MementoCid::try_parse(target_cid.to_string())
+            else {
+                continue;
+            };
             let proof_cid = bridge_m
                 .target_proof_cid
                 .as_ref()
@@ -3557,7 +3562,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                 .or_else(|| {
                     pool.bridge_self_bundle_by_symbol
                         .get(bridge_source_symbol)
-                        .cloned()
+                        .map(|cid| cid.to_string())
                 });
             let target_env = pool.mementos.get(target_cid).unwrap_or_else(|| {
                 let proof = proof_cid.as_deref().unwrap_or("<unknown proof>");
@@ -3565,7 +3570,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
                 )
             });
-            if pool.member_kind(target_cid) != Some("contract") {
+            if pool.member_kind(&target_memento_cid) != Some("contract") {
                 continue;
             }
             let Some(target_body) = member_body(target_env) else {
@@ -7080,7 +7085,10 @@ fn summary_good() {
     fn vendor_source_memento_resolves_from_proof_member_by_contract_name() {
         let mut pool = sugar_verifier::types::MementoPool::default();
         pool.mementos.insert(
-            "blake3-512:source".to_string(),
+            sugar_verifier::MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
+                b"source-memento",
+            ))
+            .expect("test CID must parse"),
             json!({
                 "schemaVersion": "1",
                 "header": {

@@ -51,7 +51,11 @@ fn main() -> ExitCode {
             Err(e) => {
                 eprintln!(
                     "RESOLVE FAILED for callsite {}@{}: {e}",
-                    cs.bridge_ir_name, cs.property_cid
+                    cs.bridge_ir_name,
+                    cs.property_cid
+                        .as_ref()
+                        .map(|cid| cid.as_ref())
+                        .unwrap_or("<none>")
                 );
             }
         }

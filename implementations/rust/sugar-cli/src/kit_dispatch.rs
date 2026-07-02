@@ -502,11 +502,16 @@ fn decode_dependency_proof_entry(
     };
     let label = label_field.unwrap_or_else(|| expected_cid.clone());
 
-    Ok(Some(ProofBytes {
-        label,
-        expected_cid,
-        bytes,
-    }))
+    match ProofBytes::try_from_parts(label, expected_cid, bytes) {
+        Ok(proof) => Ok(Some(proof)),
+        Err(error) => {
+            record_dependency_proof_diagnostic(format!(
+                "dependency proof resolver {:?} returned invalid expected_cid: {error}",
+                cmd_spec.argv
+            ));
+            Ok(None)
+        }
+    }
 }
 
 fn record_dependency_proof_diagnostic(message: String) {

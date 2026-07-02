@@ -1770,6 +1770,7 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "hex",
+ "serde",
  "serde_json",
  "sugar-canonicalizer",
  "thiserror",

@@ -27,7 +27,7 @@ use serde_json::Value as Json;
 use sugar_canonicalizer::blake3_512_of;
 use tracing::{debug, info, warn};
 
-use sugar_proof_envelope::ProofGraph;
+use sugar_proof_envelope::{AtomCid, ContractBodyCid, MementoCid, ProofGraph};
 
 use crate::types::{EffectSiteAnnotation, LoadError, MementoPool};
 
@@ -38,8 +38,26 @@ const EFFECT_SITE_ANNOTATION_DUPLICATE_LOAD_ERROR_TAG: &str = "[effect-site-anno
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofBytes {
     pub label: String,
-    pub expected_cid: String,
+    pub expected_cid: MementoCid,
     pub bytes: Vec<u8>,
+}
+
+impl ProofBytes {
+    pub fn try_from_parts(
+        label: impl Into<String>,
+        expected_cid: impl Into<String>,
+        bytes: Vec<u8>,
+    ) -> Result<Self, String> {
+        let raw = expected_cid.into();
+        let expected_cid = MementoCid::try_parse(raw.clone()).map_err(|_| {
+            format!("invalid expected proof CID `{raw}`; expected blake3-512:<128 lowercase hex>")
+        })?;
+        Ok(Self {
+            label: label.into(),
+            expected_cid,
+            bytes,
+        })
+    }
 }
 
 pub fn run(project_root: &Path) -> MementoPool {
@@ -145,6 +163,8 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
     let derived_full = blake3_512_of(&bytes);
     match sugar_proof_envelope::cid_from_proof_stem(stem) {
         Some(filename_cid) => {
+            let filename_cid = computed_memento_cid(filename_cid);
+            let derived_full = computed_memento_cid(derived_full);
             if filename_cid != derived_full {
                 pool.load_errors.push(LoadError {
                     proof_path: source_label,
@@ -154,6 +174,7 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
                 });
                 return Ok(());
             }
+            return load_catalog_bytes(path.display().to_string(), &derived_full, &bytes, pool);
         }
         None => {
             // Stem isn't a recognizable CID (e.g. the negative fixture
@@ -168,13 +189,11 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
             return Ok(());
         }
     }
-
-    load_catalog_bytes(path.display().to_string(), &derived_full, &bytes, pool)
 }
 
 fn load_bytes_into_pool(
     source_label: &str,
-    expected_cid: &str,
+    expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
 ) {
@@ -188,13 +207,13 @@ fn load_bytes_into_pool(
 
 fn load_catalog_bytes(
     source_label: String,
-    expected_cid: &str,
+    expected_cid: &MementoCid,
     bytes: &[u8],
     pool: &mut MementoPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Rule 1: content hash matches the expected CID.
-    let derived_full = blake3_512_of(bytes);
-    if expected_cid != derived_full {
+    let derived_full = computed_memento_cid(blake3_512_of(bytes));
+    if expected_cid != &derived_full {
         pool.load_errors.push(LoadError {
             proof_path: source_label,
             reason: format!(
@@ -220,15 +239,17 @@ fn load_catalog_bytes(
 
     // Atoms -> pool: CIDs already verified by ProofGraph::read().
     for atom in graph.atoms() {
+        let atom_cid = computed_atom_cid(atom.cid().as_str().to_string());
         pool.atoms
-            .entry(atom.cid().as_str().to_string())
+            .entry(atom_cid)
             .or_insert_with(|| atom.bytes().to_vec());
     }
 
     // Bodies -> pool: CIDs already verified by ProofGraph::read().
     for body in graph.bodies() {
+        let body_cid = computed_body_cid(body.cid().as_str().to_string());
         pool.body
-            .entry(body.cid().as_str().to_string())
+            .entry(body_cid)
             .or_insert_with(|| body.bytes().to_vec());
     }
 
@@ -237,7 +258,16 @@ fn load_catalog_bytes(
     // contract body-pointer resolution) then indexing. ProofGraph::read()
     // guarantees all member CIDs carry the `blake3-512:` prefix.
     for view in graph.members_view() {
-        let cid = view.cid().as_str().to_string();
+        let cid = match MementoCid::try_parse(view.cid().as_str().to_string()) {
+            Ok(cid) => cid,
+            Err(raw) => {
+                pool.load_errors.push(LoadError {
+                    proof_path: source_label.clone(),
+                    reason: format!("member {raw}: invalid member CID format"),
+                });
+                continue;
+            }
+        };
         let env: Json = match serde_json::from_slice(view.bytes()) {
             Ok(v) => v,
             Err(e) => {
@@ -249,7 +279,7 @@ fn load_catalog_bytes(
             }
         };
         // Rule 2: re-derive the member identity from the member content.
-        let derived = sugar_proof_envelope::recompute_member_cid(&env);
+        let derived = computed_memento_cid(sugar_proof_envelope::recompute_member_cid(&env));
         if derived != cid {
             pool.load_errors.push(LoadError {
                 proof_path: source_label.clone(),
@@ -270,6 +300,7 @@ fn load_catalog_bytes(
             let Some(body_cid) = sugar_proof_envelope::member_field(&env, "bodyCid")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
+                .and_then(|raw| ContractBodyCid::try_parse(raw.to_string()).ok())
             else {
                 pool.load_errors.push(LoadError {
                     proof_path: source_label.clone(),
@@ -279,7 +310,7 @@ fn load_catalog_bytes(
                 });
                 continue;
             };
-            if !pool.body.contains_key(body_cid) {
+            if !pool.body.contains_key(&body_cid) {
                 pool.load_errors.push(LoadError {
                     proof_path: source_label.clone(),
                     reason: format!(
@@ -368,10 +399,22 @@ fn load_catalog_bytes(
     Ok(())
 }
 
+fn computed_memento_cid(cid: String) -> MementoCid {
+    MementoCid::try_parse(cid).expect("computed BLAKE3-512 CID must parse")
+}
+
+fn computed_atom_cid(cid: String) -> AtomCid {
+    AtomCid::try_parse(cid).expect("computed atom CID must parse")
+}
+
+fn computed_body_cid(cid: String) -> ContractBodyCid {
+    ContractBodyCid::try_parse(cid).expect("computed contract body CID must parse")
+}
+
 fn index_effect_site_annotation(
     source_label: &str,
-    bundle_cid: &str,
-    memento_cid: &str,
+    bundle_cid: &MementoCid,
+    memento_cid: &MementoCid,
     env: &Json,
     pool: &mut MementoPool,
 ) {
@@ -435,7 +478,7 @@ fn index_effect_site_annotation(
         return;
     };
 
-    let key = (bundle_cid.to_string(), file.clone(), line, callee.clone());
+    let key = (bundle_cid.clone(), file.clone(), line, callee.clone());
     let annotation = EffectSiteAnnotation {
         effect_kind,
         file,
@@ -453,9 +496,9 @@ fn index_effect_site_annotation(
             proof_path: source_label.to_string(),
             reason: format!(
                 "{EFFECT_SITE_ANNOTATION_DUPLICATE_LOAD_ERROR_TAG} for ({}, {}, {}, {}): kept `{}`, dropped `{}`",
-                key.0, key.1, key.2, key.3, existing.memento_cid, memento_cid
-            ),
-        });
+                            key.0, key.1, key.2, key.3, existing.memento_cid, memento_cid
+                        ),
+                    });
         return;
     }
     pool.panic_effect_site_annotations.insert(key, annotation);
@@ -463,7 +506,7 @@ fn index_effect_site_annotation(
 
 fn required_annotation_string(
     source_label: &str,
-    memento_cid: &str,
+    memento_cid: &MementoCid,
     body: &Json,
     field: &str,
     pool: &mut MementoPool,
@@ -488,7 +531,7 @@ fn required_annotation_string(
 
 fn required_annotation_line(
     source_label: &str,
-    memento_cid: &str,
+    memento_cid: &MementoCid,
     body: &Json,
     pool: &mut MementoPool,
 ) -> Option<usize> {
@@ -559,11 +602,39 @@ mod tests {
             signer_seed: [0x24; 32],
             declared_at: "2026-06-01T00:00:00Z".to_string(),
         });
-        ProofBytes {
-            label: "annotation-test.proof".to_string(),
-            expected_cid: proof.cid,
-            bytes: proof.bytes,
-        }
+        ProofBytes::try_from_parts("annotation-test.proof".to_string(), proof.cid, proof.bytes)
+            .expect("built proof CID must parse")
+    }
+
+    #[test]
+    fn proof_bytes_expected_cid_rejects_bad_prefix_before_loading() {
+        let err = ProofBytes::try_from_parts(
+            "bad-rpc-proof.proof",
+            "sha256:not-a-blake3-proof-cid",
+            b"not a proof catalog".to_vec(),
+        )
+        .expect_err("bad expected proof CID must fail before loader lookup");
+
+        assert!(
+            err.contains("invalid expected proof CID")
+                && err.contains("sha256:not-a-blake3-proof-cid"),
+            "unexpected parse error: {err}"
+        );
+    }
+
+    #[test]
+    fn proof_bytes_expected_cid_rejects_bad_hex_before_loading() {
+        let err = ProofBytes::try_from_parts(
+            "bad-rpc-proof.proof",
+            "blake3-512:not-hex",
+            b"not a proof catalog".to_vec(),
+        )
+        .expect_err("bad expected proof CID hex must fail before loader lookup");
+
+        assert!(
+            err.contains("invalid expected proof CID") && err.contains("blake3-512:not-hex"),
+            "unexpected parse error: {err}"
+        );
     }
 
     #[test]

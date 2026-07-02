@@ -545,12 +545,12 @@ fn python_mint_auto_writes_body_discharge_bridge() {
     let target_cid = bridge_m.target_contract_cid.as_str().to_string();
 
     assert!(
-        pool.mementos.contains_key(&target_cid),
+        pool.mementos.contains_key(target_cid.as_str()),
         "bridge.targetContractCid {target_cid} must resolve to a member"
     );
     let target_env = pool
         .mementos
-        .get(&target_cid)
+        .get(target_cid.as_str())
         .expect("bridge target must exist in pool");
     assert_eq!(
         sugar_proof_envelope::member_kind(target_env),

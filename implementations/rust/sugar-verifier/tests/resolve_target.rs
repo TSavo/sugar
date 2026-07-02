@@ -17,30 +17,41 @@
 
 use serde_json::{json, Value as Json};
 
-use sugar_verifier::{resolve_target, CallSite, MementoPool};
+use sugar_verifier::{resolve_target, CallSite, MementoCid, MementoPool};
 
 /// Bundle the basic happy-path tests treat as the bridge's own. Registered
 /// in `pool_with` and pinned by `callsite_targeting` so a no-`targetProofCid`
 /// (self-pinned) callsite resolves against a co-member target.
-const SELF_BUNDLE: &str = "blake3-512:self-bundle-under-test";
+const SELF_BUNDLE: &str = "self-bundle-under-test";
+
+fn memento_cid(label: &str) -> MementoCid {
+    MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
+            .expect("test CID must parse")
+    })
+}
+
+fn cid_string(label: &str) -> String {
+    memento_cid(label).to_string()
+}
 
 fn pool_with(cid: &str, env: Json) -> MementoPool {
     let mut pool = MementoPool::default();
-    pool.mementos.insert(cid.into(), env);
+    pool.mementos.insert(memento_cid(cid), env);
     // Co-member of the self bundle: lets self-pinned callsites resolve.
     // Some-pin tests add their own bundle_members and pins on top.
     pool.bundle_members
-        .entry(SELF_BUNDLE.into())
+        .entry(memento_cid(SELF_BUNDLE))
         .or_default()
-        .insert(cid.into());
+        .insert(memento_cid(cid));
     pool
 }
 
 fn callsite_targeting(target_cid: &str) -> CallSite {
     CallSite {
         bridge_ir_name: "parseInt".into(),
-        bridge_target_cid: target_cid.into(),
-        bridge_self_bundle_cid: Some(SELF_BUNDLE.into()),
+        bridge_target_cid: Some(memento_cid(target_cid)),
+        bridge_self_bundle_cid: Some(memento_cid(SELF_BUNDLE)),
         ..Default::default()
     }
 }
@@ -85,7 +96,7 @@ fn resolves_pre_for_contract_memento() {
     let pool = pool_with(target_cid, env);
     let cs = callsite_targeting(target_cid);
     let r = resolve_target::run(&cs, &pool).expect("resolve");
-    assert_eq!(r.cid, target_cid);
+    assert_eq!(r.cid, cid_string(target_cid));
     assert_eq!(r.ir_formula, Some(pre));
 }
 
@@ -255,14 +266,14 @@ fn rejects_when_target_proof_cid_does_not_match_bundle() {
     // Member was loaded as part of the poisoned bundle. The honest
     // bundle is what the bridge pinned but isn't present.
     pool.bundle_members
-        .entry(poisoned_bundle.into())
+        .entry(memento_cid(poisoned_bundle))
         .or_default()
-        .insert(target_cid.into());
+        .insert(memento_cid(target_cid));
 
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
-        bridge_target_cid: target_cid.into(),
-        bridge_target_proof_cid: Some(honest_bundle.into()),
+        bridge_target_cid: Some(memento_cid(target_cid)),
+        bridge_target_proof_cid: Some(memento_cid(honest_bundle)),
         ..Default::default()
     };
 
@@ -283,19 +294,19 @@ fn accepts_when_target_proof_cid_matches_bundle() {
 
     let mut pool = pool_with(target_cid, contract_env(trivial_pre()));
     pool.bundle_members
-        .entry(honest_bundle.into())
+        .entry(memento_cid(honest_bundle))
         .or_default()
-        .insert(target_cid.into());
+        .insert(memento_cid(target_cid));
 
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
-        bridge_target_cid: target_cid.into(),
-        bridge_target_proof_cid: Some(honest_bundle.into()),
+        bridge_target_cid: Some(memento_cid(target_cid)),
+        bridge_target_proof_cid: Some(memento_cid(honest_bundle)),
         ..Default::default()
     };
 
     let r = resolve_target::run(&cs, &pool).expect("must accept matching pin");
-    assert_eq!(r.cid, target_cid);
+    assert_eq!(r.cid, cid_string(target_cid));
 }
 
 /// Pinned bundle isn't loaded at all: still a mismatch, fail-closed.
@@ -306,8 +317,8 @@ fn rejects_when_pinned_bundle_is_not_loaded() {
 
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
-        bridge_target_cid: target_cid.into(),
-        bridge_target_proof_cid: Some("blake3-512:never-loaded".into()),
+        bridge_target_cid: Some(memento_cid(target_cid)),
+        bridge_target_proof_cid: Some(memento_cid("never-loaded")),
         ..Default::default()
     };
 
@@ -329,22 +340,22 @@ fn accepts_self_pinned_when_target_is_co_member() {
 
     let mut pool = MementoPool::default();
     pool.mementos
-        .insert(target_cid.into(), contract_env(trivial_pre()));
+        .insert(memento_cid(target_cid), contract_env(trivial_pre()));
     pool.bundle_members
-        .entry(self_bundle.into())
+        .entry(memento_cid(self_bundle))
         .or_default()
-        .insert(target_cid.into());
+        .insert(memento_cid(target_cid));
 
     let cs = CallSite {
         bridge_ir_name: "selfPinned".into(),
-        bridge_target_cid: target_cid.into(),
+        bridge_target_cid: Some(memento_cid(target_cid)),
         bridge_target_proof_cid: None,
-        bridge_self_bundle_cid: Some(self_bundle.into()),
+        bridge_self_bundle_cid: Some(memento_cid(self_bundle)),
         ..Default::default()
     };
 
     let r = resolve_target::run(&cs, &pool).expect("self-pinned co-member must resolve");
-    assert_eq!(r.cid, target_cid);
+    assert_eq!(r.cid, cid_string(target_cid));
 }
 
 /// Self-pinned bridge whose target is NOT a co-member of its own bundle
@@ -358,20 +369,22 @@ fn rejects_self_pinned_when_target_not_co_member() {
 
     let mut pool = MementoPool::default();
     pool.mementos
-        .insert(target_cid.into(), contract_env(trivial_pre()));
+        .insert(memento_cid(target_cid), contract_env(trivial_pre()));
     // The target lives only in a DIFFERENT bundle, not the bridge's own.
     pool.bundle_members
-        .entry(other_bundle.into())
+        .entry(memento_cid(other_bundle))
         .or_default()
-        .insert(target_cid.into());
+        .insert(memento_cid(target_cid));
     // The self bundle exists but does NOT contain the target.
-    pool.bundle_members.entry(self_bundle.into()).or_default();
+    pool.bundle_members
+        .entry(memento_cid(self_bundle))
+        .or_default();
 
     let cs = CallSite {
         bridge_ir_name: "selfPinnedForeign".into(),
-        bridge_target_cid: target_cid.into(),
+        bridge_target_cid: Some(memento_cid(target_cid)),
         bridge_target_proof_cid: None,
-        bridge_self_bundle_cid: Some(self_bundle.into()),
+        bridge_self_bundle_cid: Some(memento_cid(self_bundle)),
         ..Default::default()
     };
 
@@ -394,13 +407,13 @@ fn rejects_self_pinned_when_self_bundle_unknown() {
     let pool = {
         let mut p = MementoPool::default();
         p.mementos
-            .insert(target_cid.into(), contract_env(trivial_pre()));
+            .insert(memento_cid(target_cid), contract_env(trivial_pre()));
         p
     };
 
     let cs = CallSite {
         bridge_ir_name: "noBundle".into(),
-        bridge_target_cid: target_cid.into(),
+        bridge_target_cid: Some(memento_cid(target_cid)),
         bridge_target_proof_cid: None,
         bridge_self_bundle_cid: None,
         ..Default::default()

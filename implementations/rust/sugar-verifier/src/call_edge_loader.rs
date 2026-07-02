@@ -78,7 +78,7 @@ pub fn process_call_edges(
         let target_cid = pool.name_to_cid.get(target_contract_name).cloned();
 
         if let Some(tcid) = target_cid {
-            obligations.push((source_cid.to_string(), tcid, locus));
+            obligations.push((source_cid.to_string(), tcid.to_string(), locus));
         }
     }
 

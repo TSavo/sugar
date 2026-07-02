@@ -68,7 +68,7 @@ use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
 use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
-use crate::types::{MementoPool, ObligationVerdict};
+use crate::types::{MementoCid, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
@@ -1690,13 +1690,14 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         }
         let Some(target_cid) = sugar_proof_envelope::member_field(bridge_env, "targetContractCid")
             .and_then(|v| v.as_str())
+            .and_then(|raw| MementoCid::try_parse(raw.to_string()).ok())
         else {
             continue;
         };
-        let Some(contract_env) = pool.mementos.get(target_cid) else {
+        let Some(contract_env) = pool.mementos.get(&target_cid) else {
             continue;
         };
-        if pool.member_kind(target_cid) != Some("contract") {
+        if pool.member_kind(&target_cid) != Some("contract") {
             continue;
         }
         let Some(body) = pool
@@ -1738,6 +1739,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 pool.bridge_self_bundle_by_symbol
                     .get(&source_symbol)
                     .cloned()
+                    .map(|cid| cid.to_string())
             });
         posts.push(AmbientPost {
             source_symbol,
@@ -1891,7 +1893,7 @@ pub fn verify_consistency(
         .filter(|(cid, _)| pool.member_kind(cid) == Some("contract"))
         .filter_map(|(cid, env)| {
             pool.resolve_contract_body(env)
-                .map(|body| (cid.clone(), body))
+                .map(|body| (cid.to_string(), body))
         })
         .filter(|(_, body)| is_consistency_candidate(body))
         .collect();
@@ -2097,9 +2099,20 @@ mod tests {
             .unwrap()
     }
 
+    fn test_cid(label: &str) -> MementoCid {
+        MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
+            MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
+                .expect("test CID must parse")
+        })
+    }
+
+    fn test_cid_string(label: &str) -> String {
+        test_cid(label).to_string()
+    }
+
     fn pool_with_contract(name: &str, inv: Json) -> MementoPool {
         let mut pool = MementoPool::default();
-        let cid = format!("blake3-512:{name}");
+        let cid = test_cid(&format!("contract:{name}"));
         // v1.2 layered shape: accessors branch on presence of `envelope`.
         let env = json!({
             "envelope": {
@@ -2110,7 +2123,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(cid.clone(), env);
+        pool.insert(cid, env);
         pool
     }
 
@@ -2150,7 +2163,7 @@ mod tests {
         let env = json!({
             "envelope": { "header": { "kind": "contract", "contractName": name, "inv": inv } }
         });
-        pool.insert(cid.to_string(), env);
+        pool.insert(test_cid(cid), env);
     }
 
     fn unique_temp_dir(label: &str) -> std::path::PathBuf {
@@ -2566,7 +2579,7 @@ mod tests {
     #[test]
     fn vendor_function_post_is_linked_into_fresh_consumer_assertions() {
         let (plan, reg) = z3_plan_and_registry();
-        let vendor_cid = "blake3-512:vendor-enc-contract";
+        let vendor_cid = test_cid_string("vendor-enc-contract");
         // Production bridges store the BARE symbol name (no "call:" prefix).
         // The callsite ctor uses the prefixed form "call:enc".
         // This test exercises the production shape so the linker's strip logic is exercised.
@@ -2580,7 +2593,7 @@ mod tests {
 
         let mut pool = MementoPool::default();
         pool.mementos.insert(
-            vendor_cid.to_string(),
+            test_cid(&vendor_cid),
             json!({
                 "evidence": {
                     "kind": "contract",
@@ -2598,12 +2611,12 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": bridge_source_symbol,
-                    "targetContractCid": vendor_cid,
+                    "targetContractCid": vendor_cid.clone(),
                     "targetProofCid": "blake3-512:vendor-proof"
                 }
             }
         });
-        pool.insert_bridge_by_symbol(bridge_source_symbol, "blake3-512:vendor-bridge", bridge);
+        pool.insert_bridge_by_symbol(bridge_source_symbol, test_cid("vendor-bridge"), bridge);
 
         insert_contract(
             &mut pool,
@@ -2622,7 +2635,7 @@ mod tests {
         assert_eq!(res.len(), 2, "two fresh consumer assertions: {res:?}");
         let good = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:good-consumer-assertion")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:good-consumer-assertion"))
             .expect("good consumer assertion row present");
         assert_eq!(
             good.verdict,
@@ -2654,7 +2667,7 @@ mod tests {
         assert_eq!(good_verification["finalVerdict"], "discharged");
         let bad = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:bad-consumer-assertion")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:bad-consumer-assertion"))
             .expect("bad consumer assertion row present");
         assert_eq!(
             bad.verdict,
@@ -2808,7 +2821,7 @@ mod tests {
         // over both rows would stay green if a regression flipped the wrong row.
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
@@ -2817,7 +2830,7 @@ mod tests {
         );
         let loop_row = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:loop")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:loop"))
             .expect("loop row present");
         assert_eq!(
             loop_row.verdict,
@@ -2858,7 +2871,7 @@ mod tests {
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:point-ground")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:point-ground"))
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
@@ -2867,7 +2880,7 @@ mod tests {
         );
         let loop_row = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:loop-ground")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:loop-ground"))
             .expect("loop row present");
         assert_eq!(
             loop_row.verdict,
@@ -2905,7 +2918,7 @@ mod tests {
         assert_eq!(res.len(), 3, "three separate obligations: {res:?}");
         let consumer_a = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:consumer-a-point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:consumer-a-point"))
             .expect("consumer A point row present");
         assert_eq!(
             consumer_a.verdict,
@@ -2914,7 +2927,7 @@ mod tests {
         );
         let consumer_b = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:consumer-b-point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:consumer-b-point"))
             .expect("consumer B point row present");
         assert_eq!(
             consumer_b.verdict,
@@ -3110,7 +3123,7 @@ mod tests {
         let res = verify_consistency(&pool, &plan, &registry, &test_compilers());
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
             .expect("point row present");
 
         assert_eq!(
@@ -3203,7 +3216,7 @@ mod tests {
         );
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
             .expect("point-claim row present");
         assert_eq!(point.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
     }
@@ -3247,7 +3260,7 @@ mod tests {
         );
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:point")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:point"))
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
@@ -3296,7 +3309,7 @@ mod tests {
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:openpoint")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:openpoint"))
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
@@ -3332,7 +3345,7 @@ mod tests {
             "evidence":{"proofType":"custom","certificate":
                 {"tool":"pytest","version":"x","formulaHash":"x","proofData":"{}"}}}}});
         let mut pool = MementoPool::default();
-        pool.insert("blake3-512:witnessloop".to_string(), witness_member);
+        pool.insert(test_cid("witnessloop"), witness_member);
         insert_contract(
             &mut pool,
             "blake3-512:wpoint",
@@ -3342,7 +3355,7 @@ mod tests {
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         let point = res
             .iter()
-            .find(|r| r.contract_cid == "blake3-512:wpoint")
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:wpoint"))
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
@@ -3371,7 +3384,7 @@ mod tests {
             "kind":"contract","contractName":name,"inv": eqf(var("r"), int(5)),
             "evidence":{"proofType":"custom","certificate":
                 {"tool":"pytest","version":"x","formulaHash":"x","proofData":"{}"}}}}});
-        pool.insert("blake3-512:witnessmember".to_string(), witness);
+        pool.insert(test_cid("witnessmember"), witness);
         insert_contract(&mut pool, "blake3-512:c5", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:c6", name, eqf(var("r"), int(6)));
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
@@ -3558,7 +3571,7 @@ mod tests {
                 }
             }
         });
-        pool.insert("blake3-512:bridge".into(), env);
+        pool.insert(test_cid("bridge"), env);
         let (plan, registry) = z3_plan_and_registry();
         let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert!(
@@ -3584,7 +3597,7 @@ mod tests {
                 }
             }
         });
-        pool.insert("blake3-512:inv-post".into(), env);
+        pool.insert(test_cid("inv-post"), env);
         let (plan, registry) = z3_plan_and_registry();
         let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
 

@@ -121,7 +121,7 @@ use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
 
 use crate::body_discharge::CatalogResolver;
-use crate::types::MementoPool;
+use crate::types::{MementoCid, MementoPool};
 use libsugar::core::types::Term;
 
 // ---------------------------------------------------------------------------
@@ -186,14 +186,17 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
     let target_cid =
         sugar_proof_envelope::member_field(bridge, "targetContractCid").and_then(|v| v.as_str());
     let target_cid = match target_cid {
-        Some(c) => c,
+        Some(c) => match MementoCid::try_parse(c.to_string()) {
+            Ok(cid) => cid,
+            Err(_) => return false,
+        },
         None => return false,
     };
     // Only contract mementos have a body with pre/post.
-    if pool.member_kind(target_cid) != Some("contract") {
+    if pool.member_kind(&target_cid) != Some("contract") {
         return false;
     }
-    match pool.member_field(target_cid, "pre") {
+    match pool.member_field(&target_cid, "pre") {
         None => false,
         Some(pre) if pre.is_null() => false,
         Some(pre) => {
@@ -380,9 +383,19 @@ mod tests {
         json!({"kind": "var", "name": name})
     }
 
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
+
     /// Build a pool with a single body-derived contract for `fn double(x) = x*2`.
     /// This is a PURE function: body_expr = `*(x, 2)`, free_vars = {"x"} = arg_vars.
     fn double_pool() -> MementoPool {
+        let target_cid = cid_string("double-pure");
         let contract_env = json!({
             "evidence": {
                 "kind": "contract",
@@ -408,14 +421,13 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "double",
-                    "targetContractCid": "blake3-512:double-pure"
+                    "targetContractCid": target_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert("blake3-512:double-pure".into(), contract_env);
-        pool.insert_bridge_by_symbol("double", "blake3-512:double-bridge", bridge_env);
+        pool.mementos.insert(cid("double-pure"), contract_env);
+        pool.insert_bridge_by_symbol("double", cid("double-bridge"), bridge_env);
         pool
     }
 
@@ -430,6 +442,7 @@ mod tests {
     /// extra_free = {"__state::cell_value"} — all carry `__state::` prefix.
     /// → Impure.
     fn cell_get_pool() -> MementoPool {
+        let target_cid = cid_string("cell-get-impure");
         let contract_env = json!({
             "evidence": {
                 "kind": "contract",
@@ -451,14 +464,13 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "cell_get",
-                    "targetContractCid": "blake3-512:cell-get-impure"
+                    "targetContractCid": target_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert("blake3-512:cell-get-impure".into(), contract_env);
-        pool.insert_bridge_by_symbol("cell_get", "blake3-512:cell-get-bridge", bridge_env);
+        pool.mementos.insert(cid("cell-get-impure"), contract_env);
+        pool.insert_bridge_by_symbol("cell_get", cid("cell-get-bridge"), bridge_env);
         pool
     }
 
@@ -469,6 +481,7 @@ mod tests {
     /// `fn mystery(x) = x + global_constant` where `global_constant` is not
     /// an arg and not prefixed with a known hidden-state marker.
     fn mystery_pool() -> MementoPool {
+        let target_cid = cid_string("mystery-unknown");
         let contract_env = json!({
             "evidence": {
                 "kind": "contract",
@@ -493,14 +506,13 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "mystery",
-                    "targetContractCid": "blake3-512:mystery-unknown"
+                    "targetContractCid": target_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos
-            .insert("blake3-512:mystery-unknown".into(), contract_env);
-        pool.insert_bridge_by_symbol("mystery", "blake3-512:mystery-bridge", bridge_env);
+        pool.mementos.insert(cid("mystery-unknown"), contract_env);
+        pool.insert_bridge_by_symbol("mystery", cid("mystery-bridge"), bridge_env);
         pool
     }
 
@@ -689,6 +701,7 @@ mod tests {
     #[test]
     fn boundary_pre_bearing_contract_is_unknown() {
         // Build a pool with a contract that carries a `pre`.
+        let target_cid = cid_string("unwrap-pre-bearing");
         let contract_env = json!({
             "evidence": {
                 "kind": "contract",
@@ -716,14 +729,14 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "unwrap",
-                    "targetContractCid": "blake3-512:unwrap-pre-bearing"
+                    "targetContractCid": target_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
         pool.mementos
-            .insert("blake3-512:unwrap-pre-bearing".into(), contract_env);
-        pool.insert_bridge_by_symbol("unwrap", "blake3-512:unwrap-bridge", bridge_env);
+            .insert(cid("unwrap-pre-bearing"), contract_env);
+        pool.insert_bridge_by_symbol("unwrap", cid("unwrap-bridge"), bridge_env);
 
         let c = call("unwrap", vec![var_term("opt")]);
         // wp produces And { is_some(opt), =(Option::unwrap_value(opt), sentinel) }.

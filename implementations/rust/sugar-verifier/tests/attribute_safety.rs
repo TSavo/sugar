@@ -1,6 +1,8 @@
 use serde_json::{json, Value as Json};
 use sugar_verifier::attribute_safety;
-use sugar_verifier::{AttributeSafetyObligation, CallSite, MementoPool, ObligationVerdict};
+use sugar_verifier::{
+    AttributeSafetyObligation, CallSite, MementoCid, MementoPool, ObligationVerdict,
+};
 
 fn var(name: &str) -> Json {
     json!({"kind": "var", "name": name})
@@ -93,11 +95,16 @@ fn pool_with_shape(shape: Json) -> MementoPool {
     pool
 }
 
+fn memento_cid(seed: &str) -> MementoCid {
+    MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+        .expect("test CID must parse")
+}
+
 fn callsite(class_name: Option<&str>, attr: &str, guard_facts: Vec<Json>) -> CallSite {
     CallSite {
         bridge_ir_name: "concept:panic-freedom.leaf.runtime-failure-site".into(),
         property_name: "shape.Box.read".into(),
-        property_cid: "blake3-512:property".into(),
+        property_cid: Some(memento_cid("attribute-safety-property")),
         arg_term: Some(attr_term(var("self"), attr)),
         guard_facts,
         file: Some("shape.py".into()),

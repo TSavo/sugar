@@ -357,7 +357,7 @@ fn mint_auto_writes_body_discharge_bridge() {
     // That target CID must resolve (by member-CID key, exactly as
     // CatalogResolver does) to a contract carrying the body-derived
     // formals + post.
-    let target_env = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let target_env = pool.mementos.get(target_cid.as_str()).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()
@@ -413,7 +413,7 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
         panic!("bridge must parse as typed BridgeMember");
     };
     let target_cid = bridge_m2.target_contract_cid.as_str().to_string();
-    let target_env2 = pool.mementos.get(&target_cid).unwrap_or_else(|| {
+    let target_env2 = pool.mementos.get(target_cid.as_str()).unwrap_or_else(|| {
         panic!(
             "bridge.targetContractCid {target_cid} must resolve to a member; member CIDs: {:?}",
             pool.mementos.keys().collect::<Vec<_>>()

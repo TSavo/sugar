@@ -189,11 +189,12 @@ fn build_lone_opaque_proof_bundle(literal: &str) -> ProofBytes {
         declared_at: declared_at.into(),
     });
 
-    ProofBytes {
-        label: format!("lone-opaque-{literal}.proof"),
-        expected_cid: built.cid,
-        bytes: built.bytes,
-    }
+    ProofBytes::try_from_parts(
+        format!("lone-opaque-{literal}.proof"),
+        built.cid,
+        built.bytes,
+    )
+    .expect("built proof CID must parse")
 }
 
 // ─── Runner helper ───────────────────────────────────────────────────────────

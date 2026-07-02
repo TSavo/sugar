@@ -92,6 +92,11 @@ fn write_minimal_member_proof(dir: &Path, member_cid: &str, member_bytes: &[u8])
     proof_cid
 }
 
+fn proof_bytes(label: &str, expected_cid: String, bytes: Vec<u8>) -> load_all_proofs::ProofBytes {
+    load_all_proofs::ProofBytes::try_from_parts(label.to_string(), expected_cid, bytes)
+        .expect("test proof CID must parse")
+}
+
 fn flat_source_member(signature: Option<String>) -> (String, Vec<u8>) {
     let signer_seed: Ed25519Seed = [0x42u8; 32];
     let signer = ed25519_pubkey_string(&signer_seed);
@@ -245,12 +250,12 @@ fn catalog_graph_sections_load_flat_atoms_and_pointer_bodies_by_cid() {
     let pool = load_all_proofs::run(&dir);
     assert_eq!(pool.load_errors.len(), 0, "{:?}", pool.load_errors);
     assert_eq!(
-        pool.atoms.get(&atom_cid),
+        pool.atoms.get(atom_cid.as_str()),
         Some(&atom_bytes),
         "flat atom bytes must live in the catalog `atoms` map under their CID"
     );
     assert_eq!(
-        pool.body.get(&body_cid),
+        pool.body.get(body_cid.as_str()),
         Some(&body_bytes),
         "contract bodies must be pointer-only graph entries under their body CID"
     );
@@ -309,7 +314,7 @@ fn invalid_member_signature_is_a_load_error() {
         pool.load_errors
     );
     assert!(
-        !pool.mementos.contains_key(&member_cid),
+        !pool.mementos.contains_key(member_cid.as_str()),
         "member with invalid signature must not enter the pool"
     );
     let _ = fs::remove_dir_all(&dir);
@@ -330,7 +335,7 @@ fn unsigned_member_still_loads() {
         pool.load_errors
     );
     assert!(
-        pool.mementos.contains_key(&member_cid),
+        pool.mementos.contains_key(member_cid.as_str()),
         "unsigned member must still enter the pool"
     );
     let _ = fs::remove_dir_all(&dir);
@@ -447,11 +452,7 @@ fn proof_bytes_ingress_rejects_content_cid_mismatch() {
     let mut pool = sugar_verifier::MementoPool::default();
 
     load_all_proofs::load_proof_bytes_into_pool(
-        &[load_all_proofs::ProofBytes {
-            label: "forged proof bytes".to_string(),
-            expected_cid: wrong_cid.clone(),
-            bytes,
-        }],
+        &[proof_bytes("forged proof bytes", wrong_cid.clone(), bytes)],
         &mut pool,
     );
 
