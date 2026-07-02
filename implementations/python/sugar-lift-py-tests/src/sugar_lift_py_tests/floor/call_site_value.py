@@ -28,6 +28,9 @@ class CallSiteValue(FloorValue):
         del owner
         return self.term
 
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_callsite(self, ctx)
+
     def force_floor(self, ctx: Any, *, owner: str, seen: frozenset[str] = frozenset()):
         key = repr(self.term)
         if key in seen:

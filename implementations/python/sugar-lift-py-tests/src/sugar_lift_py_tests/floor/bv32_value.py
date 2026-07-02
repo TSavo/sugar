@@ -15,6 +15,9 @@ class Bv32Value(FloorValue):
         del owner
         return self.term
 
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_literal(self, ctx)
+
     def str_with(self, operation, ctx):
         return operation.str_bv32(self, ctx)
 

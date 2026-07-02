@@ -14,3 +14,6 @@ class BoolValue(FloorValue):
         from sugar_lift_py_tests.ir import bool_const
 
         return bool_const(self.value)
+
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_literal(self, ctx)

@@ -10,6 +10,7 @@ from .attribute_mutation_operation import AttributeMutationOperation
 from .binary_operator_operation import BinaryOperatorOperation
 from .bitwise_operation import BitwiseOperation
 from .callable_map_operation import CallableMapOperation
+from .callsite_projection_operation import CallsiteProjectionOperation
 from .contains_operation import ContainsOperation
 from .context_manager_operation import ContextManagerOperation
 from .control_flow_guard_operation import ControlFlowGuardOperation
@@ -41,6 +42,7 @@ __all__ = [
     "BinaryOperatorOperation",
     "BitwiseOperation",
     "CallableMapOperation",
+    "CallsiteProjectionOperation",
     "ContainsOperation",
     "ContextManagerOperation",
     "ControlFlowGuardOperation",

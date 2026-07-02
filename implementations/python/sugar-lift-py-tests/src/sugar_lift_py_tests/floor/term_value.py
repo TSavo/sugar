@@ -22,6 +22,9 @@ class TermValue(FloorValue):
 
         return num(self.value)
 
+    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.project_literal(self, ctx)
+
     def str_with(self, operation: Any, ctx: Any) -> Any:
         return operation.str_term(self, ctx)
 

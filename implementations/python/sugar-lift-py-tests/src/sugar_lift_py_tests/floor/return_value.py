@@ -12,3 +12,6 @@ class ReturnValue(FloorValue):
     becomes `out == value`."""
 
     value: object
+
+    def project_callsite_with(self, operation, ctx):
+        return operation.project_return(self, ctx)
