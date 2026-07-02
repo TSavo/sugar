@@ -31,6 +31,11 @@ const COMPONENT_PLAN_TIMEOUT_ENV: &str = "SUGAR_COMPONENT_PLAN_TIMEOUT_SECS";
 // Component planning is metadata-only; the verifier's 120s timeout is for solver work.
 const COMPONENT_PLAN_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ComponentPlanOptions {
+    pub allow_failed_components: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceCensus {
     pub languages: Vec<LanguageEvidence>,
@@ -120,7 +125,41 @@ struct ComponentManifest {
     working_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+enum ComponentPlanOutcome {
+    Claimed {
+        result: ComponentPlanResult,
+        languages: BTreeSet<String>,
+    },
+    Declined {
+        languages: BTreeSet<String>,
+        reason: Option<String>,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum ComponentPlanDecision {
+    Claim(ComponentPlanResult),
+    Decline(ComponentDecline),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ComponentDecline {
+    languages: BTreeSet<String>,
+    reason: Option<String>,
+}
+
 pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
+    plan_workspace_with_options(project_root, ComponentPlanOptions::default())
+}
+
+pub fn plan_workspace_with_options(
+    project_root: &Path,
+    options: ComponentPlanOptions,
+) -> ComponentPlan {
     let project_root = absolute_path(project_root);
     let census = census_workspace(&project_root);
     let mut plan = ComponentPlan {
@@ -128,6 +167,9 @@ pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
         ..Default::default()
     };
     let components = discover_components(&project_root);
+    let census_languages = census_languages(&plan.census);
+    let mut claimed_languages = BTreeSet::new();
+    let mut declined_languages = BTreeSet::new();
     info!(
         project = %project_root.display(),
         components = components.len(),
@@ -136,7 +178,7 @@ pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
     );
     for component in components {
         match request_component_plan(&component, &project_root, &plan.census) {
-            Ok(Some(result)) => {
+            ComponentPlanOutcome::Claimed { result, languages } => {
                 info!(
                     component = component.name,
                     plugins = result.plugins.len(),
@@ -144,33 +186,36 @@ pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
                     ir_compilers = result.ir_compilers.len(),
                     "component claimed workspace"
                 );
+                claimed_languages.extend(languages);
                 plan.plugins.extend(result.plugins);
                 plan.lift_manifests.extend(result.lift_manifests);
                 plan.ir_compilers.extend(result.ir_compilers);
                 plan.diagnostics.extend(result.diagnostics);
             }
-            Ok(None) => {
+            ComponentPlanOutcome::Declined { languages, reason } => {
                 debug!(
                     component = component.name,
                     source = %component.source.display(),
+                    reason = reason.as_deref().unwrap_or("component declined workspace"),
                     "component declined workspace"
                 );
+                declined_languages.extend(languages);
             }
-            Err(error) => {
+            ComponentPlanOutcome::Failed { error } => {
                 warn!(
                     component = component.name,
                     source = %component.source.display(),
                     error,
                     "component plan failed"
                 );
+                let level = if options.allow_failed_components {
+                    DiagnosticLevel::Warning
+                } else {
+                    DiagnosticLevel::Error
+                };
                 plan.diagnostics.push(ComponentDiagnostic {
-                    // TODO(#2987): escalate to Error when crashed-vs-declined lands.
-                    level: DiagnosticLevel::Warning,
-                    message: format!(
-                        "component `{}` could not be queried from {}: {error}",
-                        component.name,
-                        component.source.display()
-                    ),
+                    level,
+                    message: failed_component_message(&component, &error),
                 });
             }
         }
@@ -180,12 +225,14 @@ pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
     dedupe_manifests(&mut plan.lift_manifests);
     dedupe_ir_compilers(&mut plan.ir_compilers);
     order_component_plugins(&mut plan.plugins);
-    if plan.plugins.is_empty() {
-        if let Some(message) = missing_kit_message_from_census(&plan.census) {
-            plan.diagnostics.push(ComponentDiagnostic {
-                level: DiagnosticLevel::Error,
-                message,
-            });
+    for language in census_languages {
+        if !claimed_languages.contains(&language) && !declined_languages.contains(&language) {
+            if let Some(message) = missing_kit_message_for_language(&plan.census, &language) {
+                plan.diagnostics.push(ComponentDiagnostic {
+                    level: DiagnosticLevel::Error,
+                    message,
+                });
+            }
         }
     }
     plan
@@ -194,6 +241,22 @@ pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
 #[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove.
 pub(crate) fn planned_lift_plugins(project_root: &Path) -> Vec<PluginEntry> {
     plan_workspace(project_root).plugins
+}
+
+#[allow(dead_code)] // Used by CLI modules; the library test target does not compile those consumers.
+pub(crate) fn first_error_diagnostic(plan: &ComponentPlan) -> Option<&ComponentDiagnostic> {
+    plan.diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Error))
+}
+
+#[allow(dead_code)] // Used by CLI modules; the library test target does not compile those consumers.
+pub(crate) fn warning_diagnostics(
+    plan: &ComponentPlan,
+) -> impl Iterator<Item = &ComponentDiagnostic> {
+    plan.diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Warning))
 }
 
 pub(crate) fn planned_lift_manifest(
@@ -224,6 +287,16 @@ pub(crate) fn compiler_registry(project_root: &Path) -> CompilerRegistry {
         project_root,
         planned_ir_compilers(project_root),
     );
+    registry
+}
+
+#[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
+pub(crate) fn compiler_registry_from_plan(
+    project_root: &Path,
+    plan: &ComponentPlan,
+) -> CompilerRegistry {
+    let mut registry = sugar_verifier::compiler_registry::build(project_root);
+    register_planned_ir_compilers(&mut registry, project_root, plan.ir_compilers.clone());
     registry
 }
 
@@ -299,6 +372,22 @@ fn census_workspace(project_root: &Path) -> WorkspaceCensus {
     }
     collect_forensic_items(project_root, project_root, &mut items);
     dedupe_forensic_items(&mut items);
+    let mut seen_languages = languages
+        .iter()
+        .map(|evidence| evidence.language.clone())
+        .collect::<BTreeSet<_>>();
+    for item in &items {
+        let Some(language) = item.language_hint.as_deref() else {
+            continue;
+        };
+        if seen_languages.insert(language.to_string()) {
+            languages.push(LanguageEvidence {
+                language: language.to_string(),
+                path: item.path.clone(),
+                reason: item.reason.clone(),
+            });
+        }
+    }
     WorkspaceCensus { languages, items }
 }
 
@@ -393,14 +482,36 @@ fn forensic_item_to_json(item: &ForensicItem) -> Value {
     })
 }
 
+#[allow(dead_code)] // Exercised by unit tests; integration builds do not compile the test module.
 fn missing_kit_message_from_census(census: &WorkspaceCensus) -> Option<String> {
     let evidence = census.languages.first()?;
+    Some(missing_kit_message(evidence))
+}
+
+fn missing_kit_message_for_language(census: &WorkspaceCensus, language: &str) -> Option<String> {
+    census
+        .languages
+        .iter()
+        .find(|evidence| evidence.language == language)
+        .map(missing_kit_message)
+}
+
+fn missing_kit_message(evidence: &LanguageEvidence) -> String {
     let display_language = title_case_ascii(&evidence.language);
-    Some(format!(
+    format!(
         "{display_language} workspace detected at {}, but no Sugar {display_language} kit component claimed it. Try: apt install sugar-kit-{}, then try again.",
         evidence.path,
         evidence.language
-    ))
+    )
+}
+
+fn failed_component_message(component: &ComponentRegistration, error: &str) -> String {
+    format!(
+        "component `{}` failed while querying plan; manifest path: {}; command: {:?}; skipped component contribution: {error}",
+        component.name,
+        component.source.display(),
+        component.command
+    )
 }
 
 fn title_case_ascii(value: &str) -> String {
@@ -530,7 +641,26 @@ fn request_component_plan(
     component: &ComponentRegistration,
     project_root: &Path,
     census: &WorkspaceCensus,
-) -> Result<Option<ComponentPlanResult>, String> {
+) -> ComponentPlanOutcome {
+    match request_component_plan_inner(component, project_root, census) {
+        Ok(ComponentPlanDecision::Claim(result)) => {
+            let languages =
+                languages_covered_by_plan(component, &result, &census_languages(census));
+            ComponentPlanOutcome::Claimed { result, languages }
+        }
+        Ok(ComponentPlanDecision::Decline(decline)) => ComponentPlanOutcome::Declined {
+            languages: decline.languages,
+            reason: decline.reason,
+        },
+        Err(error) => ComponentPlanOutcome::Failed { error },
+    }
+}
+
+fn request_component_plan_inner(
+    component: &ComponentRegistration,
+    project_root: &Path,
+    census: &WorkspaceCensus,
+) -> Result<ComponentPlanDecision, String> {
     let mut child = spawn_component(component)?;
     let outcome = (|| {
         let timeout = component_plan_timeout()?;
@@ -597,7 +727,7 @@ fn request_component_plan(
 
         if let Some(error) = response.get("error") {
             if rpc_error_is_method_not_supported(error) {
-                return Ok(None);
+                return Ok(ComponentPlanDecision::Decline(ComponentDecline::default()));
             }
             return Err(format!("component plan RPC error: {error}"));
         }
@@ -763,20 +893,24 @@ struct ComponentPlanResult {
 fn parse_component_plan_result(
     component: &ComponentRegistration,
     value: Value,
-) -> Result<Option<ComponentPlanResult>, String> {
+) -> Result<ComponentPlanDecision, String> {
     let decision = value
         .get("decision")
         .and_then(Value::as_str)
         .unwrap_or("claim");
     match decision {
-        "decline" => return Ok(None),
+        "decline" => {
+            return Ok(ComponentPlanDecision::Decline(
+                component_decline_from_value(&value),
+            ))
+        }
         "claim" => {}
         "refuse" => {
-            let reason = value
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("component refused workspace");
-            return Err(reason.to_string());
+            let mut decline = component_decline_from_value(&value);
+            if decline.reason.is_none() {
+                decline.reason = Some("component refused workspace".to_string());
+            }
+            return Ok(ComponentPlanDecision::Decline(decline));
         }
         other => return Err(format!("invalid component decision `{other}`")),
     }
@@ -818,12 +952,19 @@ fn parse_component_plan_result(
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(diagnostic_from_value).collect())
         .unwrap_or_default();
-    Ok(Some(ComponentPlanResult {
+    Ok(ComponentPlanDecision::Claim(ComponentPlanResult {
         plugins,
         lift_manifests,
         ir_compilers,
         diagnostics,
     }))
+}
+
+fn component_decline_from_value(value: &Value) -> ComponentDecline {
+    ComponentDecline {
+        languages: explicit_languages_from_value(value),
+        reason: string_field(value, "reason"),
+    }
 }
 
 fn plugin_entry_from_value(value: &Value) -> Option<PluginEntry> {
@@ -962,6 +1103,111 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn census_languages(census: &WorkspaceCensus) -> BTreeSet<String> {
+    census
+        .languages
+        .iter()
+        .map(|evidence| normalize_language(&evidence.language))
+        .filter(|language| !language.is_empty())
+        .collect()
+}
+
+fn normalize_language(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn explicit_languages_from_value(value: &Value) -> BTreeSet<String> {
+    let mut languages = BTreeSet::new();
+    for key in ["language", "surface"] {
+        if let Some(value) = string_field(value, key) {
+            insert_language_tokens(&mut languages, &value);
+        }
+    }
+    for key in ["languages", "surfaces"] {
+        for value in string_array_field(value, key) {
+            insert_language_tokens(&mut languages, &value);
+        }
+    }
+    languages
+}
+
+fn languages_covered_by_plan(
+    component: &ComponentRegistration,
+    result: &ComponentPlanResult,
+    known_languages: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut texts = Vec::new();
+    texts.push(component.name.clone());
+    texts.push(component.source.display().to_string());
+    texts.extend(component.command.iter().cloned());
+    for plugin in &result.plugins {
+        push_optional_text(&mut texts, &plugin.name);
+        push_optional_text(&mut texts, &plugin.kind);
+        texts.push(plugin.surface.clone());
+        push_optional_text(&mut texts, &plugin.workspace_override);
+        push_optional_text(&mut texts, &plugin.emit);
+        push_optional_text(&mut texts, &plugin.layer);
+    }
+    for manifest in &result.lift_manifests {
+        texts.push(manifest.surface.clone());
+        texts.push(manifest.name.clone());
+        texts.extend(manifest.command.iter().cloned());
+        push_optional_text(&mut texts, &manifest.method);
+        push_optional_text(&mut texts, &manifest.phase);
+    }
+    for compiler in &result.ir_compilers {
+        texts.push(compiler.name.clone());
+        texts.extend(compiler.command.iter().cloned());
+        texts.extend(compiler.dialects.iter().cloned());
+    }
+    languages_covered_by_texts(known_languages, &texts)
+}
+
+fn push_optional_text(texts: &mut Vec<String>, value: &Option<String>) {
+    if let Some(value) = value {
+        texts.push(value.clone());
+    }
+}
+
+fn languages_covered_by_texts(
+    known_languages: &BTreeSet<String>,
+    texts: &[String],
+) -> BTreeSet<String> {
+    known_languages
+        .iter()
+        .filter(|language| {
+            texts
+                .iter()
+                .any(|text| text_covers_language(text, language))
+        })
+        .cloned()
+        .collect()
+}
+
+fn text_covers_language(text: &str, language: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .any(|token| language_token_matches(&token.to_ascii_lowercase(), language))
+}
+
+fn insert_language_tokens(languages: &mut BTreeSet<String>, value: &str) {
+    for token in value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+    {
+        languages.insert(token.to_ascii_lowercase());
+    }
+}
+
+fn language_token_matches(token: &str, language: &str) -> bool {
+    if token == language {
+        return true;
+    }
+    token
+        .strip_prefix(language)
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn dedupe_plugins(plugins: &mut Vec<PluginEntry>) {
@@ -1167,9 +1413,10 @@ mod tests {
                 "working_dir": "."
             }]
         });
-        let result = parse_component_plan_result(&component, value)
-            .unwrap()
-            .unwrap();
+        let result = match parse_component_plan_result(&component, value).unwrap() {
+            ComponentPlanDecision::Claim(result) => result,
+            other => panic!("expected claim, got {other:?}"),
+        };
         assert_eq!(result.plugins.len(), 1);
         assert_eq!(result.plugins[0].surface, "rust-test-assertions");
         assert_eq!(result.plugins[0].emit.as_deref(), Some("ir-document"));
@@ -1207,9 +1454,10 @@ mod tests {
             }]
         });
 
-        let result = parse_component_plan_result(&component, value)
-            .unwrap()
-            .unwrap();
+        let result = match parse_component_plan_result(&component, value).unwrap() {
+            ComponentPlanDecision::Claim(result) => result,
+            other => panic!("expected claim, got {other:?}"),
+        };
 
         assert_eq!(result.plugins[0].surface, "rust-fn-contracts");
         assert_eq!(
@@ -1244,9 +1492,10 @@ mod tests {
             }]
         });
 
-        let result = parse_component_plan_result(&component, value)
-            .unwrap()
-            .unwrap();
+        let result = match parse_component_plan_result(&component, value).unwrap() {
+            ComponentPlanDecision::Claim(result) => result,
+            other => panic!("expected claim, got {other:?}"),
+        };
 
         assert!(result.plugins.is_empty());
         assert_eq!(result.ir_compilers.len(), 1);

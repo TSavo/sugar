@@ -16,6 +16,7 @@ use serde_json::{Map, Value};
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 use sugar_proof_envelope::Member;
 
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions};
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
 use crate::report_fmt;
@@ -35,8 +36,22 @@ pub fn run(args: LiftArgs) -> u8 {
 
     let project_cfg = read_project_config(&project_root);
     let user_cfg = read_user_config();
+    let component_plan_options = ComponentPlanOptions {
+        allow_failed_components: args.allow_failed_components,
+    };
     if args.report {
-        let graph_plugins = lift_report_graph_plugins(&project_root, &project_cfg, &user_cfg);
+        let graph_plugins = match lift_report_graph_plugins(
+            &project_root,
+            &project_cfg,
+            &user_cfg,
+            component_plan_options,
+        ) {
+            Ok(graph_plugins) => graph_plugins,
+            Err(error) => {
+                eprintln!("{}: {error}", "error".red().bold());
+                return EXIT_USER_ERROR;
+            }
+        };
         if graph_plugins.len() > 1 {
             return run_configured_lift_report_graph(&args, &project_root, &graph_plugins);
         }
@@ -46,6 +61,7 @@ pub fn run(args: LiftArgs) -> u8 {
         &project_cfg,
         &user_cfg,
         args.report,
+        component_plan_options,
     ) {
         Ok(surface) => surface,
         Err(error) => {
@@ -161,6 +177,7 @@ pub fn run(args: LiftArgs) -> u8 {
                         &resolved_surface,
                         args.library_bindings,
                         &args.with,
+                        component_plan_options,
                     ) {
                         Ok(with) => with,
                         Err(error) => {
@@ -182,7 +199,12 @@ pub fn run(args: LiftArgs) -> u8 {
                 }
                 let prove_report = if args.prove {
                     trace_lift_report_checkpoint("before_build_prove_report");
-                    match cmd_prove::build_prove_report(&project_root, &args.z3, &prove_with) {
+                    match cmd_prove::build_prove_report_with_options(
+                        &project_root,
+                        &args.z3,
+                        &prove_with,
+                        component_plan_options,
+                    ) {
                         Ok(prove_report) => {
                             trace_lift_report_checkpoint("after_build_prove_report");
                             Some(prove_report)
@@ -279,7 +301,8 @@ fn lift_report_graph_plugins(
     project_root: &Path,
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
-) -> Vec<PluginEntry> {
+    options: ComponentPlanOptions,
+) -> Result<Vec<PluginEntry>, String> {
     let configured = project_cfg
         .plugins
         .iter()
@@ -291,16 +314,21 @@ fn lift_report_graph_plugins(
         .cloned()
         .collect::<Vec<_>>();
     if !configured.is_empty() {
-        return configured;
+        return Ok(configured);
     }
     if project_cfg
         .surface_for("lift")
         .or_else(|| user_cfg.surface_for("lift"))
         .is_some()
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    crate::component_plan::plan_workspace(project_root)
+    let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+    check_component_plan_errors(&component_plan)?;
+    if options.allow_failed_components {
+        emit_component_plan_warnings(&component_plan);
+    }
+    Ok(component_plan
         .plugins
         .into_iter()
         .filter(|plugin| plugin.is_lift_plugin())
@@ -308,7 +336,20 @@ fn lift_report_graph_plugins(
             plugin.emit.as_deref() == Some("ir-document")
                 || lift_plugin::surface_phase(project_root, &plugin.surface) == "consumer"
         })
-        .collect()
+        .collect())
+}
+
+fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
+    if let Some(diagnostic) = component_plan::first_error_diagnostic(component_plan) {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+fn emit_component_plan_warnings(component_plan: &ComponentPlan) {
+    for diagnostic in component_plan::warning_diagnostics(component_plan) {
+        eprintln!("{}: {}", "warning".yellow().bold(), diagnostic.message);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +363,7 @@ fn configured_or_planned_lift_surface(
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
     prefer_report: bool,
+    options: ComponentPlanOptions,
 ) -> Result<ResolvedLiftSurface, String> {
     if let Some(surface) = project_cfg.surface_for("lift") {
         return Ok(ResolvedLiftSurface {
@@ -362,7 +404,11 @@ fn configured_or_planned_lift_surface(
         });
     }
 
-    let component_plan = crate::component_plan::plan_workspace(project_root);
+    let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+    check_component_plan_errors(&component_plan)?;
+    if options.allow_failed_components {
+        emit_component_plan_warnings(&component_plan);
+    }
     let candidates = component_plan
         .plugins
         .iter()
@@ -407,14 +453,6 @@ fn configured_or_planned_lift_surface(
                 .join(", ")
         ));
     }
-    if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
-        matches!(
-            diagnostic.level,
-            crate::component_plan::DiagnosticLevel::Error
-        )
-    }) {
-        return Err(diagnostic.message.clone());
-    }
     Err(
         "no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, or install a Sugar kit component for this workspace."
             .to_string(),
@@ -428,6 +466,7 @@ fn prepare_lift_report_prove_inputs(
     resolved_surface: &ResolvedLiftSurface,
     library_bindings: bool,
     configured_with: &[String],
+    component_plan_options: ComponentPlanOptions,
 ) -> Result<Vec<String>, String> {
     let mut with = configured_with.to_vec();
     if !needs_lift_report_auto_mint(project_root, true) {
@@ -438,7 +477,13 @@ fn prepare_lift_report_prove_inputs(
         return Ok(with);
     }
 
-    let plugins = lift_report_mint_plugins(project_root, project_cfg, user_cfg, resolved_surface)?;
+    let plugins = lift_report_mint_plugins(
+        project_root,
+        project_cfg,
+        user_cfg,
+        resolved_surface,
+        component_plan_options,
+    )?;
     if plugins.is_empty() {
         return Err(
             "no lift plugin available to mint a proof for `lift --report --prove`".to_string(),
@@ -522,7 +567,14 @@ fn run_configured_lift_report_graph(
         };
         let prove_report = if args.prove {
             trace_lift_report_checkpoint("before_build_prove_report");
-            match cmd_prove::build_prove_report(project_root, &args.z3, &prove_with) {
+            match cmd_prove::build_prove_report_with_options(
+                project_root,
+                &args.z3,
+                &prove_with,
+                ComponentPlanOptions {
+                    allow_failed_components: args.allow_failed_components,
+                },
+            ) {
                 Ok(prove_report) => {
                     trace_lift_report_checkpoint("after_build_prove_report");
                     Some(prove_report)
@@ -648,7 +700,14 @@ fn run_configured_lift_report_graph(
     };
     let prove_report = if args.prove {
         trace_lift_report_checkpoint("before_build_prove_report");
-        match cmd_prove::build_prove_report(project_root, &args.z3, &prove_with) {
+        match cmd_prove::build_prove_report_with_options(
+            project_root,
+            &args.z3,
+            &prove_with,
+            ComponentPlanOptions {
+                allow_failed_components: args.allow_failed_components,
+            },
+        ) {
             Ok(prove_report) => {
                 trace_lift_report_checkpoint("after_build_prove_report");
                 Some(prove_report)
@@ -732,6 +791,7 @@ fn lift_report_mint_plugins(
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
     resolved_surface: &ResolvedLiftSurface,
+    options: ComponentPlanOptions,
 ) -> Result<Vec<PluginEntry>, String> {
     let project_plugins = project_cfg
         .plugins
@@ -748,7 +808,11 @@ fn lift_report_mint_plugins(
         .or_else(|| user_cfg.surface_for("lift"))
         .is_none()
     {
-        let component_plan = crate::component_plan::plan_workspace(project_root);
+        let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+        check_component_plan_errors(&component_plan)?;
+        if options.allow_failed_components {
+            emit_component_plan_warnings(&component_plan);
+        }
         let component_plugins = component_plan
             .plugins
             .iter()
@@ -757,14 +821,6 @@ fn lift_report_mint_plugins(
             .collect::<Vec<_>>();
         if !component_plugins.is_empty() {
             return Ok(component_plugins);
-        }
-        if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
-            matches!(
-                diagnostic.level,
-                crate::component_plan::DiagnosticLevel::Error
-            )
-        }) {
-            return Err(diagnostic.message.clone());
         }
     }
 
@@ -8032,6 +8088,7 @@ mod tests {
             z3: "z3".to_string(),
             with: vec![],
             contract: None,
+            allow_failed_components: false,
             out: OutputFlags::default(),
         };
         assert_eq!(run(args), crate::EXIT_USER_ERROR);
@@ -8073,6 +8130,7 @@ mod tests {
             &project_cfg,
             &ProjectConfig::default(),
             false,
+            ComponentPlanOptions::default(),
         )
         .expect("surface");
         assert_eq!(resolved.surface, "java-test-assertions");

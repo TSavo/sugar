@@ -204,6 +204,9 @@ pub struct ProveArgs {
     /// (e.g., an OpenAPI spec project for cross-kit verification).
     #[arg(long = "with", num_args = 0..)]
     pub with: Vec<String>,
+    /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
+    #[arg(long = "allow-failed-components")]
+    pub allow_failed_components: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -280,6 +283,9 @@ pub struct LiftArgs {
     /// Restrict --report to source audits whose contract name contains this string.
     #[arg(long = "contract", requires = "report")]
     pub contract: Option<String>,
+    /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
+    #[arg(long = "allow-failed-components")]
+    pub allow_failed_components: bool,
     #[command(flatten)]
     pub out: OutputFlags,
 }

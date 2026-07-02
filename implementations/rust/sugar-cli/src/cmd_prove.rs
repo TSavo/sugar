@@ -18,6 +18,7 @@ use walkdir::WalkDir;
 
 use sugar_verifier::{Runner, RunnerConfig};
 
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlannedLiftManifest};
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::ProveArgs;
@@ -111,7 +112,16 @@ fn parse_manifest(path: &std::path::Path) -> Result<PluginManifest, String> {
     Ok(m)
 }
 
+#[allow(dead_code)] // Kept as the default wrapper for callers without a classified plan.
 fn find_manifest(project_root: &std::path::Path, surface: &str) -> Result<PluginManifest, String> {
+    find_manifest_with_plan(project_root, surface, None)
+}
+
+fn find_manifest_with_plan(
+    project_root: &std::path::Path,
+    surface: &str,
+    plan: Option<&ComponentPlan>,
+) -> Result<PluginManifest, String> {
     let project_local = project_root
         .join(".sugar")
         .join("lift")
@@ -131,20 +141,32 @@ fn find_manifest(project_root: &std::path::Path, surface: &str) -> Result<Plugin
             return parse_manifest(&user_global);
         }
     }
-    if let Some(planned) = crate::component_plan::planned_lift_manifest(project_root, surface) {
-        return Ok(PluginManifest {
-            name: planned.name,
-            command: planned.command,
-            working_dir: planned.working_dir,
-            discharge_command: planned.discharge_command,
-            witness_tool: planned.witness_tool,
-            resolve_witness_command: planned.resolve_witness_command,
-            resolve_witness_method: planned.resolve_witness_method,
-        });
+    if let Some(plan) = plan {
+        if let Some(planned) = plan
+            .lift_manifests
+            .iter()
+            .find(|manifest| manifest.surface == surface)
+        {
+            return Ok(plugin_manifest_from_planned(planned.clone()));
+        }
+    } else if let Some(planned) = component_plan::planned_lift_manifest(project_root, surface) {
+        return Ok(plugin_manifest_from_planned(planned));
     }
     Err(format!(
         "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
     ))
+}
+
+fn plugin_manifest_from_planned(planned: PlannedLiftManifest) -> PluginManifest {
+    PluginManifest {
+        name: planned.name,
+        command: planned.command,
+        working_dir: planned.working_dir,
+        discharge_command: planned.discharge_command,
+        witness_tool: planned.witness_tool,
+        resolve_witness_command: planned.resolve_witness_command,
+        resolve_witness_method: planned.resolve_witness_method,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +189,15 @@ pub fn run(args: ProveArgs) -> u8 {
         return crate::EXIT_USER_ERROR;
     }
 
-    let report = match build_prove_report(&project_root, &args.z3, &args.with) {
+    let component_plan_options = ComponentPlanOptions {
+        allow_failed_components: args.allow_failed_components,
+    };
+    let report = match build_prove_report_with_options(
+        &project_root,
+        &args.z3,
+        &args.with,
+        component_plan_options,
+    ) {
         Ok(report) => report,
         Err(error) => {
             eprintln!("{}: {error}", "error".red().bold());
@@ -214,14 +244,30 @@ pub fn run(args: ProveArgs) -> u8 {
     report_fmt::report_exit_code(&report)
 }
 
+#[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
 pub(crate) fn build_prove_report(
     project_root: &Path,
     z3: &str,
     with: &[String],
 ) -> Result<sugar_verifier::Report, String> {
-    let cfg_doc = read_project_config(project_root);
+    build_prove_report_with_options(project_root, z3, with, ComponentPlanOptions::default())
+}
 
-    configure_witness_discharge_env(project_root, &cfg_doc);
+pub(crate) fn build_prove_report_with_options(
+    project_root: &Path,
+    z3: &str,
+    with: &[String],
+    component_plan_options: ComponentPlanOptions,
+) -> Result<sugar_verifier::Report, String> {
+    let cfg_doc = read_project_config(project_root);
+    let component_plan =
+        component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    check_component_plan_errors(&component_plan)?;
+    if component_plan_options.allow_failed_components {
+        emit_component_plan_warnings(&component_plan);
+    }
+
+    configure_witness_discharge_env_with_plan(project_root, &cfg_doc, Some(&component_plan));
 
     // Resolve `--with` paths relative to project_root unless absolute,
     // matching how `[verify].callees` is resolved (project-root-anchored).
@@ -264,11 +310,24 @@ pub(crate) fn build_prove_report(
         extra_proofs: dependency_proofs,
         ..Default::default()
     };
-    let compilers = crate::component_plan::compiler_registry(project_root);
+    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
     Runner::new_with_compilers(cfg, compilers)
         .run_with_proof_run()
         .map(|artifact| artifact.report)
         .map_err(|error| error.to_string())
+}
+
+fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
+    if let Some(diagnostic) = component_plan::first_error_diagnostic(component_plan) {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+fn emit_component_plan_warnings(component_plan: &ComponentPlan) {
+    for diagnostic in component_plan::warning_diagnostics(component_plan) {
+        eprintln!("{}: {}", "warning".yellow().bold(), diagnostic.message);
+    }
 }
 
 fn emit_configured_witnesses(
@@ -635,9 +694,18 @@ fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Valu
 // WITHOUT the caller exporting env vars. The discharge command is declared in
 // the KIT'S MANIFEST (alongside its lift `command`) and resolved here through
 // the SAME `find_manifest` dispatch lift uses -- no bespoke config.
+#[allow(dead_code)] // Kept as the default wrapper for callers without a classified plan.
 pub(crate) fn configure_witness_discharge_env(
     project_root: &Path,
     cfg_doc: &crate::project_config::ProjectConfig,
+) {
+    configure_witness_discharge_env_with_plan(project_root, cfg_doc, None);
+}
+
+pub(crate) fn configure_witness_discharge_env_with_plan(
+    project_root: &Path,
+    cfg_doc: &crate::project_config::ProjectConfig,
+    component_plan: Option<&ComponentPlan>,
 ) {
     if std::env::var_os("SUGAR_WITNESS_PROJECT_DIR").is_none() {
         let p = project_root
@@ -654,7 +722,9 @@ pub(crate) fn configure_witness_discharge_env(
                 .filter(|p| p.is_lift_plugin())
                 .collect()
         } else {
-            planned_plugins = crate::component_plan::planned_lift_plugins(project_root);
+            planned_plugins = component_plan
+                .map(|plan| plan.plugins.clone())
+                .unwrap_or_else(|| component_plan::planned_lift_plugins(project_root));
             planned_plugins
                 .iter()
                 .filter(|p| p.is_lift_plugin())
@@ -662,7 +732,8 @@ pub(crate) fn configure_witness_discharge_env(
         };
     let mut witness_resolvers: Vec<Value> = Vec::new();
     for plugin in plugins {
-        let manifest = match find_manifest(project_root, &plugin.surface) {
+        let manifest = match find_manifest_with_plan(project_root, &plugin.surface, component_plan)
+        {
             Ok(m) => m,
             Err(_) => continue,
         };
