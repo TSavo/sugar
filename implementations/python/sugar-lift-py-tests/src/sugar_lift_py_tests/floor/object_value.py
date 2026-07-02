@@ -12,10 +12,17 @@ class ObjectValue(FloorValue):
     class_name: str
     fields: tuple[ObjectField, ...]
     methods: tuple[ObjectMethodValue, ...] = ()
+    class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
 
     def attribute_with(self, operation, ctx):
         return operation.attribute_object(self, ctx)
+
+    def attribute_assign_with(self, operation, ctx):
+        return operation.assign_object(self, ctx)
+
+    def attribute_delete_with(self, operation, ctx):
+        return operation.delete_object(self, ctx)
 
     def call_method_with(self, operation, ctx):
         del ctx
@@ -25,6 +32,9 @@ class ObjectValue(FloorValue):
             owner=operation.owner,
             blame=operation.blame,
         )
+
+    def descriptor_with(self, operation, ctx):
+        return operation.descriptor_object(self, ctx)
 
     def contains_with(self, operation, ctx):
         del ctx
@@ -38,6 +48,18 @@ class ObjectValue(FloorValue):
     def context_manager_with(self, operation, ctx):
         return operation.context_object(self, ctx)
 
+    def async_context_manager_with(self, operation, ctx):
+        return operation.async_context_object(self, ctx)
+
+    def await_with(self, operation, ctx):
+        return operation.await_object(self, ctx)
+
+    def async_iter_with(self, operation, ctx):
+        return operation.async_iter_object(self, ctx)
+
+    def async_next_with(self, operation, ctx):
+        return operation.async_next_object(self, ctx)
+
     def next_with(self, operation, ctx):
         del ctx
         return self.call_method_value(
@@ -49,6 +71,18 @@ class ObjectValue(FloorValue):
 
     def subscript_with(self, operation, ctx):
         return operation.subscript_object(self, ctx)
+
+    def setitem_with(self, operation, ctx):
+        return operation.setitem_object(self, ctx)
+
+    def delitem_with(self, operation, ctx):
+        return operation.delitem_object(self, ctx)
+
+    def missing_with(self, operation, ctx):
+        return operation.missing_object(self, ctx)
+
+    def str_with(self, operation, ctx):
+        return operation.str_object(self, ctx)
 
     def bitwise_with(self, operation, ctx):
         del ctx
@@ -219,6 +253,15 @@ class ObjectValue(FloorValue):
                 "floor that owns this method"
             ),
         )
+
+    def has_method(self, name: str) -> bool:
+        return any(method.name == name for method in self.methods)
+
+    def class_field_value(self, name: str) -> FloorValue | None:
+        for field in reversed(self.class_fields):
+            if field.name == name:
+                return field.value
+        return None
 
     def _floor_gap(
         self,

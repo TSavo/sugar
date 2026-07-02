@@ -494,6 +494,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
             class_name=target,
             fields=(),
             methods=methods,
+            class_fields=_build_class_fields(class_site, ctx),
             identity=fragment.blame,
         )
     params = init.function_params()
@@ -555,8 +556,43 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
             ctx.build_body(arg, SugarRole.TERM) for arg in fragment.call_args()
         ),
         methods=methods,
+        class_fields=_build_class_fields(class_site, ctx),
         identity=fragment.blame,
     )
+
+
+def _build_class_fields(class_site, ctx):
+    fields = []
+    for stmt in class_site.class_body():
+        if stmt.observed != "Assign":
+            continue
+        name = stmt.assign_target_name()
+        if name is None:
+            continue
+        value = stmt.assign_value()
+        if not _is_resolved_local_class_call(value, ctx):
+            continue
+        fields.append((name, ctx.build_body(value, SugarRole.TERM)))
+    return tuple(fields)
+
+
+def _is_resolved_local_class_call(fragment, ctx) -> bool:
+    if fragment.observed != "Call":
+        return False
+    target = (
+        fragment.call_import_target_name(
+            getattr(ctx, "import_aliases", {}) or {},
+            getattr(ctx, "from_imports", {}) or {},
+        )
+        or fragment.call_target_name()
+    )
+    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolved_node = resolver.get(target)
+    if resolved_node is None:
+        return False
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    return SourceFragment.from_node(resolved_node, ctx.filename).observed == "ClassDef"
 
 
 def _build_object_methods(class_site, ctx):

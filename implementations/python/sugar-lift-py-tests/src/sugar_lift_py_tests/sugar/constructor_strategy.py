@@ -16,12 +16,16 @@ class ConstructorStrategy:
     parameters: tuple[str, ...] = ()
     arguments: tuple[SugarBody, ...] = ()
     methods: tuple[ObjectMethodValue, ...] = ()
+    class_fields: tuple[tuple[str, SugarBody], ...] = ()
     identity: str = ""
 
     def __post_init__(self) -> None:
         for _name, body in self.fields:
             if not isinstance(body, SugarBody):
                 raise TypeError("ConstructorStrategy fields must be factory-built")
+        for _name, body in self.class_fields:
+            if not isinstance(body, SugarBody):
+                raise TypeError("ConstructorStrategy class fields must be factory-built")
         for argument in self.arguments:
             if not isinstance(argument, SugarBody):
                 raise TypeError("ConstructorStrategy arguments must be factory-built")
@@ -46,6 +50,10 @@ class ConstructorStrategy:
                     self._field(name, body, field_ctx) for name, body in self.fields
                 ),
                 methods=self.methods,
+                class_fields=tuple(
+                    self._class_field(name, body, ctx)
+                    for name, body in self.class_fields
+                ),
                 identity=self.identity,
             )
         )
@@ -78,4 +86,37 @@ class ConstructorStrategy:
                     message=info.message,
                 ),
             ) from exc
+        return ObjectField(name=name, value=value)
+
+    def _class_field(self, name: str, body: SugarBody, ctx) -> ObjectField:
+        value = complete_value(
+            body.reduce(ctx),
+            owner=f"{self.class_name}.{name}",
+        )
+        if isinstance(value, ObjectValue) and value.has_method("__set_name__"):
+            info = FactoryGapInfo(
+                owner="python.factory",
+                blame=f"{self.class_name}.{name}",
+                observed=f"{self.class_name}.{name}",
+                requested="class descriptor __set_name__ effect",
+                fix=(
+                    f"add class-construction descriptor wiring for "
+                    f"`{self.class_name}.{name}` or emit an explicit "
+                    "__set_name__ effect"
+                ),
+                gap_kind="Floor",
+                gap_locus="construction",
+            )
+            raise FactoryGap(
+                info,
+                FactoryAuditRow(
+                    role="class descriptor __set_name__ effect",
+                    status="floor-gap",
+                    observed=info.observed,
+                    blame=info.blame,
+                    selected=None,
+                    candidates=[],
+                    message=info.message,
+                ),
+            )
         return ObjectField(name=name, value=value)

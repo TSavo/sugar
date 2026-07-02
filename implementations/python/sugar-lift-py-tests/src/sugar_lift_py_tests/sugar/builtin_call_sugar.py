@@ -11,6 +11,7 @@ from sugar_lift_py_tests.operations import (
     perform_operation,
 )
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
+from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -150,6 +151,64 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
         )
 
 
+@dataclass(frozen=True)
+class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
+    argument: SugarBody
+    spec: SugarBody | None
+    blame: str = "<unknown>"
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return (
+            site.observed == "Call"
+            and not site.call_is_method_call()
+            and not site.call_has_keywords()
+            and site.call_target_name() == "format"
+            and site.call_arg_count() in (1, 2)
+        )
+
+    @classmethod
+    def build(cls, site, ctx) -> Sugar:
+        if not cls.owns(site):
+            raise TypeError("FormatBuiltinSugar claim built an unsupported builtin call")
+        if _call_is_context_bound(site, ctx):
+            from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+
+            return CallSugar.build(site, ctx)
+        args = site.call_args()
+        return cls(
+            argument=ctx.build_body(args[0], SugarRole.TERM),
+            spec=ctx.build_body(args[1], SugarRole.TERM) if len(args) == 2 else None,
+            blame=site.blame,
+        )
+
+    def desugar(self, ctx) -> Outcome:
+        argument_outcome = self.argument.reduce(ctx)
+        if isinstance(argument_outcome, Incomplete):
+            return argument_outcome
+        argument = complete_value(argument_outcome, owner="FormatBuiltinSugar argument")
+        if self.spec is None:
+            spec = StringValue("")
+        else:
+            spec_outcome = self.spec.reduce(ctx)
+            if isinstance(spec_outcome, Incomplete):
+                return spec_outcome
+            spec = complete_value(spec_outcome, owner="FormatBuiltinSugar spec")
+        return perform_operation(
+            owner="FormatBuiltinSugar",
+            blame=self.blame,
+            receiver=argument,
+            method_name="call_method_with",
+            operation=MethodCallOperation(
+                name="__format__",
+                arguments=(spec,),
+                owner="FormatBuiltinSugar",
+                blame=self.blame,
+            ),
+            ctx=ctx,
+        )
+
+
 _BUILTIN_DUNDER_METHODS = {
     "abs": "__abs__",
     "round": "__round__",
@@ -159,7 +218,9 @@ _BUILTIN_DUNDER_METHODS = {
     "len": "__len__",
     "hash": "__hash__",
     "repr": "__repr__",
+    "bytes": "__bytes__",
     "reversed": "__reversed__",
+    "dir": "__dir__",
     "int": "__int__",
     "float": "__float__",
     "complex": "__complex__",

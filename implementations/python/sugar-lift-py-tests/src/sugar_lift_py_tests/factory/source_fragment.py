@@ -321,6 +321,14 @@ class SourceFragment:
         self._require(ast.Assign)
         return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
 
+    def delete_targets(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each delete target."""
+        self._require(ast.Delete)
+        return [
+            SourceFragment.from_node(target, self.filename)
+            for target in self.node.targets  # type: ignore[attr-defined]
+        ]
+
     def if_test(self) -> "SourceFragment":
         """Return a SourceFragment for the If test expression."""
         self._require(ast.If)
@@ -687,19 +695,19 @@ class SourceFragment:
     # --- context managers -------------------------------------------------
 
     def with_item_count(self) -> int:
-        """Return the number of context-manager items in a With node."""
-        self._require(ast.With)
+        """Return the number of context-manager items in a With/AsyncWith node."""
+        self._require(ast.With, ast.AsyncWith)
         return len(self.node.items)  # type: ignore[attr-defined]
 
     def with_context_expr(self, index: int = 0) -> "SourceFragment":
-        """Return the context expression for a With item."""
-        self._require(ast.With)
+        """Return the context expression for a With/AsyncWith item."""
+        self._require(ast.With, ast.AsyncWith)
         item = self.node.items[index]  # type: ignore[attr-defined]
         return SourceFragment.from_node(item.context_expr, self.filename)
 
     def with_optional_vars_name(self, index: int = 0) -> "str | None":
-        """Return the simple `as name` binding for a With item, if any."""
-        self._require(ast.With)
+        """Return the simple `as name` binding for a With/AsyncWith item, if any."""
+        self._require(ast.With, ast.AsyncWith)
         target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
         if target is None:
             return None
@@ -708,26 +716,63 @@ class SourceFragment:
         return None
 
     def with_optional_vars_observed(self, index: int = 0) -> "str | None":
-        """Return the optional-vars AST kind for With, if present."""
-        self._require(ast.With)
+        """Return the optional-vars AST kind for With/AsyncWith, if present."""
+        self._require(ast.With, ast.AsyncWith)
         target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
         if target is None:
             return None
         return type(target).__name__
 
     def with_body(self) -> "SourceFragment":
-        """Return a Block SourceFragment for a With body suite."""
+        """Return a Block SourceFragment for a With/AsyncWith body suite."""
         from .block import Block
 
-        self._require(ast.With)
+        self._require(ast.With, ast.AsyncWith)
         return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
 
+    # --- await ------------------------------------------------------------
+
+    def await_value(self) -> "SourceFragment":
+        """Return the awaited expression for an Await node."""
+        self._require(ast.Await)
+        return SourceFragment.from_node(self.node.value, self.filename)  # type: ignore[attr-defined]
+
     # --- for loops --------------------------------------------------------
+
+    def for_iter(self) -> "SourceFragment":
+        """Return the iterable expression for a For/AsyncFor node."""
+        self._require(ast.For, ast.AsyncFor)
+        return SourceFragment.from_node(self.node.iter, self.filename)  # type: ignore[attr-defined]
+
+    def for_target_name(self) -> "str | None":
+        """Return the simple target name for a For/AsyncFor node, if any."""
+        self._require(ast.For, ast.AsyncFor)
+        target = self.node.target  # type: ignore[attr-defined]
+        if isinstance(target, ast.Name):
+            return target.id
+        return None
+
+    def for_target_observed(self) -> str:
+        """Return the AST kind for a For/AsyncFor target."""
+        self._require(ast.For, ast.AsyncFor)
+        return type(self.node.target).__name__  # type: ignore[attr-defined]
 
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)
         return [SourceFragment.from_node(s, self.filename) for s in self.node.body]  # type: ignore[attr-defined]
+
+    def for_body_block(self) -> "SourceFragment":
+        """Return a Block SourceFragment for a For/AsyncFor body suite."""
+        from .block import Block
+
+        self._require(ast.For, ast.AsyncFor)
+        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+
+    def for_orelse_count(self) -> int:
+        """Return the number of else statements on a For/AsyncFor node."""
+        self._require(ast.For, ast.AsyncFor)
+        return len(self.node.orelse)  # type: ignore[attr-defined]
 
     def unparse(self) -> str:
         """Return a canonical source-text representation of this node (via ast.unparse).
