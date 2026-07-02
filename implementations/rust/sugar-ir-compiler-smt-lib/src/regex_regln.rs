@@ -5,7 +5,7 @@
 //! given-both check. We never synthesize a matching string; we never approximate
 //! the language. A regex feature we cannot render as a *regular* language is
 //! REFUSED BY NAME (`Err(RegexError::NotRegular)`), the floor row stands, and the
-//! caller drops the universe atom. silent=0 structural: every supported token
+//! caller refuses the universe atom. silent=0 structural: every supported token
 //! lowers to an exact RegLan constructor; every unsupported token errors loudly.
 //!
 //! THE OATH IS THE VENDOR'S. The regex string passed here is the verbatim

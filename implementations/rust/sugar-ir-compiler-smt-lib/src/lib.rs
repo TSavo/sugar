@@ -270,7 +270,7 @@ pub fn compile_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileErr
         .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
     validate_formula(&formula).map_err(CompileError::MalformedIr)?;
     check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    Ok(generated::compile_formula(&formula))
+    generated::compile_formula(&formula)
 }
 
 pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
@@ -278,7 +278,7 @@ pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, C
         .map_err(|e| CompileError::MalformedIr(e.to_string()))?;
     validate_formula(&formula).map_err(CompileError::MalformedIr)?;
     check_mixed_sort_conjunction(&formula).map_err(CompileError::UnsupportedSort)?;
-    Ok(generated::compile_asserted_formula(&formula))
+    generated::compile_asserted_formula(&formula)
 }
 
 pub fn emit_asserted(ir_formula: &Json) -> Result<String, String> {
@@ -1330,18 +1330,17 @@ mod tests {
     }
 
     #[test]
-    fn in_regex_nonregular_feature_drops_atom() {
+    fn in_regex_nonregular_feature_refuses() {
         // REFUSE BY NAME (backstop): a non-regular regex (lookahead) must NOT
-        // render an approximated language. The emitter drops the atom; the row
-        // never becomes an uninterpreted predicate.
+        // render an approximated language or become an uninterpreted predicate.
         let inv = string_theory_atom("str.in-regex", vec![var("r"), string_const("foo(?=bar)")]);
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
-        let script = format!("{}{}", parts.preamble, parts.body);
+        let err = compile_asserted_to_parts(&inv).expect_err("non-regular regex must refuse");
+        let msg = err.to_string();
         assert!(
-            !script.contains("(declare-fun str.in-regex")
-                && !script.contains("(declare-fun |str.in-regex|")
-                && !script.contains("str.in_re"),
-            "non-regular regex must drop the atom, never approximate or declare it:\n{script}"
+            msg.contains("str.in-regex")
+                && msg.contains("lookahead")
+                && msg.contains("refusing rather than weakening"),
+            "non-regular regex must refuse by name: {msg}"
         );
     }
 

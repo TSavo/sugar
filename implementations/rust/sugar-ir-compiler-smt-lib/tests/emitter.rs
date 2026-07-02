@@ -95,6 +95,64 @@ fn atomic_unicode_ge_translates_to_smt_ge() {
 }
 
 // ---------------------------------------------------------------------------
+// Strong string-theory atoms: malformed means refuse, not generic fallback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn malformed_bv_blocks_refuses() {
+    let f = json!({
+        "kind": "atomic",
+        "name": "str.eq-bv-blocks",
+        "args": [
+            {"kind": "var", "name": "out"},
+            {"kind": "const", "value": "not json",
+             "sort": {"kind": "primitive", "name": "String"}}
+        ]
+    });
+    let err = emit(&f).expect_err("malformed str.eq-bv-blocks must refuse loudly");
+    assert!(err.contains("str.eq-bv-blocks"), "{err}");
+    assert!(err.contains("malformed"), "{err}");
+    assert!(err.contains("refusing rather than weakening"), "{err}");
+}
+
+#[test]
+fn non_regular_regex_refuses_by_name() {
+    let f = json!({
+        "kind": "atomic",
+        "name": "str.in-regex",
+        "args": [
+            {"kind": "var", "name": "subject"},
+            {"kind": "const", "value": "foo(?=bar)",
+             "sort": {"kind": "primitive", "name": "String"}}
+        ]
+    });
+    let err = emit(&f).expect_err("non-regular str.in-regex must refuse loudly");
+    assert!(err.contains("str.in-regex"), "{err}");
+    assert!(err.contains("lookahead"), "{err}");
+    assert!(err.contains("refusing rather than weakening"), "{err}");
+}
+
+#[test]
+fn generic_atoms_still_pass_through() {
+    let f = json!({
+        "kind": "atomic",
+        "name": "domain.opaque",
+        "args": [
+            {"kind": "var", "name": "x"}
+        ]
+    });
+    let s = emit(&f).expect("generic domain predicate should still emit");
+    assert!(
+        s.contains("(declare-fun domain.opaque (Int) Bool)"),
+        "generic predicate declaration missing:\n{s}"
+    );
+    assert!(
+        s.contains("(domain.opaque x)"),
+        "generic predicate application missing:\n{s}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Connectives
 // ---------------------------------------------------------------------------
 
