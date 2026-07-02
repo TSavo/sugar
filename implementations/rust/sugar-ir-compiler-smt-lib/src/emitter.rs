@@ -1,19 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// SMT-LIB v2.6 compiler.
-//
-// HISTORICAL NOTE on the "GENERATED" label: this file's logic has been
-// HAND-MAINTAINED for a long time (see git log -- every SMT-encoding fix is a
-// manual edit; there is NO active generator that writes this file). The CDDL
-// generator `tools/generate-from-cddl.py` emits the IR *type* definitions
-// (`sugar-ir-types`) and a JSON Document emitter -- NOT this SMT-LIB
-// compiler. The label is vestigial.
-//
-// CLOBBER-PROOFING: to be safe against a hypothetical future regeneration, the
-// literal-constant encoding (string -> uninterpreted Int const, bool -> int,
-// None/str/number cross-type distinctness per Python `==`) lives in the
-// SEPARATE hand-maintained module `crate::literal_encoding`, which this file
-// merely CALLS. Even a full rewrite of this file cannot silently revert that
-// soundness-critical encoding without also touching `literal_encoding.rs`.
+// HAND-MAINTAINED. Enum totality is compiler-enforced; atom/op-table totality
+// is enforced by the vocabulary audit test (tests/vocabulary_totality.rs).
 
 #![allow(unused_imports, unused_mut, unreachable_patterns)]
 

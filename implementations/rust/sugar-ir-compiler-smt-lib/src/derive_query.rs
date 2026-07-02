@@ -23,7 +23,7 @@
 // DESIGN: we parse the bv_tree JSON directly (raw serde_json::Value) rather
 // than deserializing into IrTerm, because IrTerm::Const requires a `sort`
 // field that the bv_tree nodes may not carry. The rendering logic mirrors
-// `emit_bv32_term` / `emit_bv32_bool_term` from generated.rs exactly.
+// `emit_bv32_term` / `emit_bv32_bool_term` from emitter.rs exactly.
 
 use std::collections::HashMap;
 
@@ -356,7 +356,7 @@ pub struct BlocksDeriveQuery {
 /// String const JSON of a `str.eq-bv-blocks` atom). Returns the script and the
 /// result symbol. The output string is read from z3's `(get-value (subj))`.
 pub fn emit_blocks_derive_query(payload_json: &str) -> Result<BlocksDeriveQuery, DeriveQueryError> {
-    let body = crate::generated::render_b64_blocks_body(payload_json).ok_or_else(|| {
+    let body = crate::emitter::render_b64_blocks_body(payload_json).ok_or_else(|| {
         DeriveQueryError("could not render strong-tier block payload (malformed JSON?)".into())
     })?;
     let result_var = "subj".to_string();
