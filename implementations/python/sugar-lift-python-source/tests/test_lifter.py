@@ -352,6 +352,14 @@ def _with_stmt(body: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:with", "args": [body]}
 
 
+def _import_stmt(*names: str) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:import",
+        "args": [_str_const(name) for name in names],
+    }
+
+
 def _fstring(*parts: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:fstring", "args": list(parts)}
 
@@ -3602,6 +3610,129 @@ def test_listcomp_roundtrip_is_structurally_stable() -> None:
     body = _function_body(relifted)
     assert body == _return(term)
     assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_local_import_statement_lifts_as_opaque_io_binding() -> None:
+    source = "def f():\n    import os\n    return os.getcwd()\n"
+
+    result = lift_source(source, "local_import.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert _function_body(result) == _seq(
+        _import_stmt("os"),
+        _return(_call("os.getcwd")),
+    )
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "os.getcwd"} in contract["effects"]
+
+
+def test_local_import_asname_binds_alias_opaquely_for_following_body() -> None:
+    source = (
+        'np = "global"\n'
+        "def f():\n"
+        "    import numpy as np\n"
+        "    value = np.array(1)\n"
+        "    return np\n"
+    )
+
+    result = lift_source(source, "local_import_alias.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    array_access = _attr(_var("np"), "array")
+    assert _function_body(result) == _seq(
+        _seq(
+            _import_stmt("np"),
+            _assign(_var("value"), _call("np.array", _int_const(1))),
+        ),
+        _return(_var("np")),
+    )
+    assert _runtime_failure_loci(contract)[0]["argTerm"] == array_access
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "np.array"} in contract["effects"]
+
+
+def test_local_import_from_binds_imported_name_but_not_module() -> None:
+    source = (
+        'pkg = "global-pkg"\n'
+        'y = "global-y"\n'
+        "def f():\n"
+        "    from pkg import y\n"
+        "    return (y, pkg)\n"
+    )
+
+    result = lift_source(source, "local_import_from.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _import_stmt("y"),
+        _return(_tuple(_var("y"), _str_const("global-pkg"))),
+    )
+    assert {"kind": "io"} in _contract(result.ir, ".f")["effects"]
+
+
+def test_local_import_from_asname_binds_alias_not_original_name() -> None:
+    source = (
+        'y = "global-y"\n'
+        'z = "global-z"\n'
+        "def f():\n"
+        "    from pkg import y as z\n"
+        "    return (z, y)\n"
+    )
+
+    result = lift_source(source, "local_import_from_alias.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _import_stmt("z"),
+        _return(_tuple(_var("z"), _str_const("global-y"))),
+    )
+
+
+def test_dotted_local_import_binds_head_name_only() -> None:
+    source = (
+        'pkg = "global-pkg"\n'
+        "def f():\n"
+        "    import pkg.sub\n"
+        "    return pkg\n"
+    )
+
+    result = lift_source(source, "local_import_dotted.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _import_stmt("pkg"),
+        _return(_var("pkg")),
+    )
+
+
+def test_import_floor_discriminates_delete_statement() -> None:
+    result = lift_source("def f(x):\n    del x\n", "import_delete_refusal.py")
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "import_delete_refusal.f",
+            "line": 2,
+            "reason": "unhandled statement kind: Delete",
+        }
+    ]
+
+
+def test_import_roundtrip_is_structurally_stable() -> None:
+    term = _seq(
+        _import_stmt("os", "np"),
+        _return(_call("np.array", _int_const(1))),
+    )
+
+    compiled = compile_body_term(term)
+    relifted = lift_source(compiled, "roundtrip_import.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_none_guarded_attribute_access_emits_one_runtime_failure_locus() -> None:

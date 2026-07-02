@@ -197,6 +197,15 @@ def _stmt(term: Json) -> ast.stmt:
             orelse=[] if _name(args[2]) == "python:pass" else _stmt_list(args[2]),
             finalbody=[] if _name(args[3]) == "python:pass" else _stmt_list(args[3]),
         )
+    if name == "python:import":
+        if not args:
+            raise ValueError("python:import needs at least one bound name")
+        return ast.Import(
+            names=[
+                ast.alias(name=_const_string(arg), asname=None)
+                for arg in args
+            ]
+        )
     if name == "python:with":
         return ast.With(
             items=[
