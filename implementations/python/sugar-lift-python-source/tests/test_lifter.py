@@ -229,6 +229,10 @@ def _binary(
     return {"kind": "ctor", "name": name, "args": [left, right]}
 
 
+def _unary(name: str, operand: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": name, "args": [operand]}
+
+
 def _call(name: str, *args: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -3197,39 +3201,123 @@ def test_dict_literal_defaults_are_literal_parameter_shape() -> None:
     assert relifted_contract["parameterShape"] == contract["parameterShape"]
 
 
+def test_liftable_nonliteral_defaults_preserve_parameter_shape() -> None:
+    source = (
+        "def f(items=[1, 2], choose=(1 if True else 2), fn=(lambda y: y), ratio=1.5):\n"
+        "    return items\n"
+    )
+
+    result = lift_source(source, "liftable_defaults.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert contract["parameterShape"] == [
+        {
+            "name": "items",
+            "kind": "positional-or-keyword",
+            "default": _list(_int_const(1), _int_const(2)),
+        },
+        {
+            "name": "choose",
+            "kind": "positional-or-keyword",
+            "default": _ifexp(_bool_const(True), _int_const(1), _int_const(2)),
+        },
+        {
+            "name": "fn",
+            "kind": "positional-or-keyword",
+            "default": _lambda_expr(_str_const("y"), _var("y")),
+        },
+        {
+            "name": "ratio",
+            "kind": "positional-or-keyword",
+            "default": _float_const(1.5),
+        },
+    ]
+
+
+def test_liftable_nonliteral_defaults_roundtrip_stably() -> None:
+    source = (
+        "def f(choose=(1 if True else 2), fn=(lambda y: y), ratio=1.5):\n"
+        "    return choose\n"
+    )
+
+    result = lift_source(source, "roundtrip_liftable_defaults.py")
+    contract = _contract(result.ir, ".f")
+    compiled = compile_ir_document([contract])
+    relifted = lift_source(compiled, "roundtrip_liftable_defaults.py")
+    relifted_contract = _contract(relifted.ir, ".f")
+
+    assert result.refusals == []
+    assert relifted.refusals == []
+    assert relifted_contract["parameterShape"] == contract["parameterShape"]
+    assert cid_of_json(relifted_contract["parameterShape"]) == cid_of_json(
+        contract["parameterShape"]
+    )
+
+
 def test_b1_nonliteral_default_remains_refused_as_definition_time_hazard() -> None:
     result = lift_source("def f(x=make()):\n    return x\n", "b1_default_refusal.py")
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "non-literal-default",
             "function": "b1_default_refusal.f",
             "line": 1,
-            "reason": "non-literal default parameter values are refused",
+            "reason": "non-literal default: Call",
         }
     ]
 
 
-@pytest.mark.parametrize(
-    ("source", "module"),
-    [
-        ("def f(x=-y):\n    return x\n", "b1_unary_name_default_refusal.py"),
-        ("def f(x=~0):\n    return x\n", "b1_unary_invert_default_refusal.py"),
-    ],
-)
-def test_b1_unary_defaults_remain_refused_unless_signed_integer_literal(
-    source: str,
-    module: str,
-) -> None:
-    result = lift_source(source, module)
+def test_b1_unary_name_default_remains_refused_as_definition_time_read() -> None:
+    result = lift_source("def f(x=-y):\n    return x\n", "b1_unary_name_default_refusal.py")
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
-            "function": f"{module.removesuffix('.py')}.f",
+            "kind": "non-literal-default",
+            "function": "b1_unary_name_default_refusal.f",
             "line": 1,
-            "reason": "non-literal default parameter values are refused",
+            "reason": "non-literal default: UnaryOp",
         }
+    ]
+
+
+def test_pure_unary_default_lifts_via_tentative_default_expr() -> None:
+    result = lift_source("def f(x=~0):\n    return x\n", "b1_unary_invert_default.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert contract["parameterShape"] == [
+        {
+            "name": "x",
+            "kind": "positional-or-keyword",
+            "default": _unary("python:bitnot", _int_const(0)),
+        }
+    ]
+
+
+def test_rejected_default_does_not_leak_tentative_effects() -> None:
+    source = (
+        "def bad(x=np.zeros(3)):\n"
+        "    return x\n"
+        "\n"
+        "def good(y=1):\n"
+        "    return y\n"
+    )
+
+    result = lift_source(source, "default_effect_leak.py")
+
+    assert result.refusals == [
+        {
+            "kind": "non-literal-default",
+            "function": "default_effect_leak.bad",
+            "line": 1,
+            "reason": "non-literal default: Call",
+        }
+    ]
+    good = _contract(result.ir, ".good")
+    assert good["effects"] == []
+    assert good["parameterShape"] == [
+        {"name": "y", "kind": "positional-or-keyword", "default": _int_const(1)}
     ]
 
 
@@ -4029,10 +4117,10 @@ def test_lambda_nonliteral_default_refuses_on_parameter_default() -> None:
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "non-literal-default",
             "function": "lambda_nonliteral_default.f",
             "line": 2,
-            "reason": "non-literal default parameter values are refused",
+            "reason": "non-literal default: Call",
         }
     ]
 

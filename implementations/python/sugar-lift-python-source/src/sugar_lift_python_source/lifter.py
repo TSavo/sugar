@@ -4,7 +4,7 @@ import ast
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .canonical import cid_of_json
 from .value_pins import ValuePin, scan_module_value_pins
@@ -634,6 +634,15 @@ class _LocalCollector(ast.NodeVisitor):
             self.visit(generator.iter)
             for condition in generator.ifs:
                 self.visit(condition)
+
+
+class _LoadNameCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.names.add(node.id)
 
 
 class _Emitter:
@@ -1384,7 +1393,7 @@ class _Emitter:
         default: ast.expr | None = None,
     ) -> Json:
         default_term = (
-            ctor("python:no_value") if default is None else _literal_default(default)
+            ctor("python:no_value") if default is None else self.literal_default(default)
         )
         return ctor(
             "python:lambda_param",
@@ -1392,6 +1401,42 @@ class _Emitter:
             str_const(kind),
             default_term,
         )
+
+    def literal_default(self, node: ast.expr) -> Json:
+        return _literal_default(node, self._tentative_default_expr)
+
+    def _tentative_default_expr(self, node: ast.expr) -> Json:
+        effects = _EffectSet()
+        panic_loci: list[Json] = []
+        result = LiftResult()
+        loaded_names = _loaded_names(node)
+        emitter = _Emitter(
+            fn_name=self.fn_name,
+            locals_=set(self.locals),
+            module_globals=self.module_globals | (loaded_names - self.locals),
+            effects=effects,
+            source_path=self.source_path,
+            panic_loci=panic_loci,
+            result=result,
+            contract_sink=[],
+            value_pins=self.value_pins,
+        )
+        try:
+            term = emitter.expr(node)
+        except _UnsupportedSyntax as exc:
+            raise _non_literal_default(node) from exc
+        if (
+            effects.sorted()
+            or effects.opacity_report()
+            or panic_loci
+            or result.diagnostics
+            or result.opacity_report
+            or result.refusals
+            or result.ir
+            or emitter.contract_sink
+        ):
+            raise _non_literal_default(node)
+        return term
 
     def constant(self, node: ast.Constant) -> Json:
         value = node.value
@@ -1626,7 +1671,18 @@ def _lift_function(
             raise _UnsupportedSyntax(node, "async functions are refused")
         if _has_non_authoring_decorators(node):
             raise _UnsupportedSyntax(node, "decorated functions are refused")
-        formals, parameter_shape = _parameter_shape(node)
+        default_emitter = _Emitter(
+            fn_name=info.fn_name,
+            locals_=set(closure_locals or set()),
+            module_globals=module_globals,
+            effects=_EffectSet(),
+            source_path=source_path,
+            panic_loci=[],
+            result=LiftResult(),
+            contract_sink=[],
+            value_pins=value_pins,
+        )
+        formals, parameter_shape = _parameter_shape(node, default_emitter.literal_default)
         refused = _contains_refused_control(node)
         if refused is not None:
             raise refused
@@ -2167,7 +2223,10 @@ def _sorted_json_entries(entries: Iterable[Json]) -> list[Json]:
     )
 
 
-def _parameter_shape(node: ast.FunctionDef) -> tuple[list[str], list[Json]]:
+def _parameter_shape(
+    node: ast.FunctionDef,
+    literal_default: Callable[[ast.expr], Json],
+) -> tuple[list[str], list[Json]]:
     formals: list[str] = []
     shape: list[Json] = []
     positional = [*node.args.posonlyargs, *node.args.args]
@@ -2180,7 +2239,7 @@ def _parameter_shape(node: ast.FunctionDef) -> tuple[list[str], list[Json]]:
     for index, arg in enumerate(node.args.posonlyargs):
         entry: Json = {"name": arg.arg, "kind": "positional-only"}
         if index in default_by_index:
-            entry["default"] = _literal_default(default_by_index[index])
+            entry["default"] = literal_default(default_by_index[index])
         formals.append(arg.arg)
         shape.append(entry)
 
@@ -2188,7 +2247,7 @@ def _parameter_shape(node: ast.FunctionDef) -> tuple[list[str], list[Json]]:
         index = len(node.args.posonlyargs) + local_index
         entry = {"name": arg.arg, "kind": "positional-or-keyword"}
         if index in default_by_index:
-            entry["default"] = _literal_default(default_by_index[index])
+            entry["default"] = literal_default(default_by_index[index])
         formals.append(arg.arg)
         shape.append(entry)
 
@@ -2199,7 +2258,7 @@ def _parameter_shape(node: ast.FunctionDef) -> tuple[list[str], list[Json]]:
     for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True):
         entry = {"name": arg.arg, "kind": "keyword-only"}
         if default is not None:
-            entry["default"] = _literal_default(default)
+            entry["default"] = literal_default(default)
         formals.append(arg.arg)
         shape.append(entry)
 
@@ -2217,7 +2276,10 @@ def _has_nontrivial_parameter_shape(shape: list[Json]) -> bool:
     )
 
 
-def _literal_default(node: ast.expr) -> Json:
+def _literal_default(
+    node: ast.expr,
+    tentative_expr: Callable[[ast.expr], Json],
+) -> Json:
     if isinstance(node, ast.Constant):
         value = node.value
         if isinstance(value, bool):
@@ -2245,24 +2307,40 @@ def _literal_default(node: ast.expr) -> Json:
             return int_const(value)
     if isinstance(node, ast.Tuple):
         return ctor(
-            "python:tuple", *[_literal_default(element) for element in node.elts]
+            "python:tuple",
+            *[_literal_default(element, tentative_expr) for element in node.elts],
         )
     if isinstance(node, ast.List):
         return ctor(
-            "python:list", *[_literal_default(element) for element in node.elts]
+            "python:list",
+            *[_literal_default(element, tentative_expr) for element in node.elts],
         )
     if isinstance(node, ast.Dict):
         keys = [
-            none_const() if key is None else _literal_default(key)
+            none_const() if key is None else _literal_default(key, tentative_expr)
             for key in node.keys
         ]
-        values = [_literal_default(value) for value in node.values]
+        values = [_literal_default(value, tentative_expr) for value in node.values]
         entries = [
             ctor("python:dict_entry", key, value)
             for key, value in zip(keys, values)
         ]
         return ctor("python:dict", *entries)
-    raise _UnsupportedSyntax(node, "non-literal default parameter values are refused")
+    return tentative_expr(node)
+
+
+def _non_literal_default(node: ast.expr) -> _UnsupportedSyntax:
+    return _UnsupportedSyntax(
+        node,
+        f"non-literal default: {type(node).__name__}",
+        kind="non-literal-default",
+    )
+
+
+def _loaded_names(node: ast.AST) -> set[str]:
+    collector = _LoadNameCollector()
+    collector.visit(node)
+    return collector.names
 
 
 def _refusal(
