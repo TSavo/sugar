@@ -1675,12 +1675,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     (
         "wildcard_none",
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "binary_result_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
         "block_tail_expr",
         "_ => None",
     ),
@@ -1748,30 +1742,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
         "wildcard_none",
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
         "expr_return_crate",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "expr_sort",
         "_ => None",
     ),
     (
@@ -1915,12 +1885,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     (
         "wildcard_none",
         "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
-        "sort_from_type",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
         "sort_from_type_name",
         "_ => None",
     ),
@@ -2035,30 +1999,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     (
         "wildcard_none",
         "implementations/rust/sugar-walk/src/emit.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/emit.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/emit.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/emit.rs",
-        "expr_sort",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/emit.rs",
         "local_pat_type",
         "_ => None",
     ),
@@ -2096,12 +2036,6 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
         "wildcard_none",
         "implementations/rust/sugar-walk/src/emit.rs",
         "partial_return_loss",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/emit.rs",
-        "sort_from_type",
         "_ => None",
     ),
     (
@@ -2197,31 +2131,7 @@ const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[
     (
         "wildcard_none",
         "implementations/rust/sugar-walk/src/lift.rs",
-        "lift_expr_to_term_inner",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/lift.rs",
-        "lift_expr_to_term_inner",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/lift.rs",
-        "lift_expr_to_term_inner",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/lift.rs",
         "lift_macro_contribution",
-        "_ => None",
-    ),
-    (
-        "wildcard_none",
-        "implementations/rust/sugar-walk/src/lift.rs",
-        "lift_predicate_inner",
         "_ => None",
     ),
     (

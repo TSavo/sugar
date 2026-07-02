@@ -2090,12 +2090,19 @@ fn expr_sort(expr: &Expr, ctx: &LoweringContext) -> Option<ExprSort> {
         Expr::Lit(lit) => match &lit.lit {
             Lit::Bool(_) => Some(ExprSort::Bool),
             Lit::Int(_) => Some(ExprSort::Int),
-            _ => None,
+            Lit::Byte(_) | Lit::Char(_) => Some(ExprSort::Int),
+            Lit::Float(_) | Lit::Str(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_) => {
+                // #3017 item 2 owns richer scalar floors; ExprSort only proves
+                // the current Unit/Bool/Int subset.
+                None
+            }
+            _ => panic!("sugar-walk emit expr_sort refused unknown syn::Lit variant"),
         },
         Expr::Path(path) => {
             local_path_name_for_expr(path, ctx).and_then(|name| ctx.vars.get(&name).copied())
         }
         Expr::Paren(paren) => expr_sort(&paren.expr, ctx),
+        Expr::Group(group) => expr_sort(&group.expr, ctx),
         Expr::Block(block) => {
             block_single_tail_expr(&block.block).and_then(|expr| expr_sort(expr, ctx))
         }
@@ -2106,9 +2113,14 @@ fn expr_sort(expr: &Expr, ctx: &LoweringContext) -> Option<ExprSort> {
             UnOp::Not(_) => match expr_sort(&unary.expr, ctx) {
                 Some(ExprSort::Bool) => Some(ExprSort::Bool),
                 Some(ExprSort::Int) => Some(ExprSort::Int),
-                _ => None,
+                Some(ExprSort::Unit) | None => {
+                    // #3017 item 8 owns the predicate-vs-raw-term split that
+                    // would let unknown `!x` classify without guessing.
+                    None
+                }
             },
-            _ => None,
+            UnOp::Deref(_) => expr_sort(&unary.expr, ctx),
+            _ => panic!("sugar-walk emit expr_sort refused unknown syn::UnOp variant"),
         },
         Expr::Binary(binary) => {
             if arithmetic_binary_op(&binary.op).is_some() || bitwise_binary_op(&binary.op).is_some()
@@ -2126,7 +2138,40 @@ fn expr_sort(expr: &Expr, ctx: &LoweringContext) -> Option<ExprSort> {
             }
             None
         }
-        _ => None,
+        Expr::Array(_)
+        | Expr::Assign(_)
+        | Expr::Async(_)
+        | Expr::Await(_)
+        | Expr::Break(_)
+        | Expr::Call(_)
+        | Expr::Cast(_)
+        | Expr::Closure(_)
+        | Expr::Const(_)
+        | Expr::Continue(_)
+        | Expr::Field(_)
+        | Expr::ForLoop(_)
+        | Expr::If(_)
+        | Expr::Index(_)
+        | Expr::Infer(_)
+        | Expr::Let(_)
+        | Expr::Loop(_)
+        | Expr::Macro(_)
+        | Expr::Match(_)
+        | Expr::MethodCall(_)
+        | Expr::Range(_)
+        | Expr::RawAddr(_)
+        | Expr::Reference(_)
+        | Expr::Repeat(_)
+        | Expr::Return(_)
+        | Expr::Struct(_)
+        | Expr::Try(_)
+        | Expr::TryBlock(_)
+        | Expr::Tuple(_)
+        | Expr::Unsafe(_)
+        | Expr::Verbatim(_)
+        | Expr::While(_)
+        | Expr::Yield(_) => None,
+        _ => panic!("sugar-walk emit expr_sort refused unknown syn::Expr variant"),
     }
 }
 
@@ -2207,7 +2252,24 @@ fn sort_from_type(ty: &Type) -> Option<ExprSort> {
         Type::Paren(paren) => sort_from_type(&paren.elem),
         Type::Group(group) => sort_from_type(&group.elem),
         Type::Tuple(tuple) if tuple.elems.is_empty() => Some(ExprSort::Unit),
-        _ => None,
+        Type::Path(_)
+        | Type::Array(_)
+        | Type::BareFn(_)
+        | Type::ImplTrait(_)
+        | Type::Infer(_)
+        | Type::Macro(_)
+        | Type::Never(_)
+        | Type::Ptr(_)
+        | Type::Reference(_)
+        | Type::Slice(_)
+        | Type::TraitObject(_)
+        | Type::Tuple(_)
+        | Type::Verbatim(_) => {
+            // #3017 item 2 keeps non-primitive and sort-neutral values out of
+            // this scalar classifier; concept_sort_from_type carries them.
+            None
+        }
+        _ => panic!("sugar-walk emit sort_from_type refused unknown syn::Type variant"),
     }
 }
 
