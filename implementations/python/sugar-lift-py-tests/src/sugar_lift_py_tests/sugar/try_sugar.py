@@ -13,6 +13,7 @@ from sugar_lift_py_tests.operations import (
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.try_handler import TryHandler
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -37,6 +38,40 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed in {"Try", "TryStar"}
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return SugarWitnessPair(
+            name="try_body",
+            owner_sugar=cls.__name__,
+            family="try",
+            truthful=WitnessSource(
+                source=(
+                    "def wrapped(x):\n"
+                    "    try:\n"
+                    "        return x + 1\n"
+                    "    except Exception:\n"
+                    "        return 99\n"
+                    "\n"
+                    "def test_wrapped():\n"
+                    "    assert wrapped(5) == 6\n"
+                ),
+                expected="sat",
+            ),
+            lying=WitnessSource(
+                source=(
+                    "def wrapped(x):\n"
+                    "    try:\n"
+                    "        return x + 1\n"
+                    "    except Exception:\n"
+                    "        return 99\n"
+                    "\n"
+                    "def test_wrapped():\n"
+                    "    assert wrapped(5) == 7\n"
+                ),
+                expected="unsat",
+            ),
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "TrySugar":

@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ReturnValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -20,6 +21,34 @@ class ReturnSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Return"
+
+    @classmethod
+    def witnesses(cls) -> SugarWitnessPair:
+        return SugarWitnessPair(
+            name="literal_call_return",
+            owner_sugar=cls.__name__,
+            family="literal-call",
+            truthful=WitnessSource(
+                source=(
+                    "def A(x):\n"
+                    "    return x + 1\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 6\n"
+                ),
+                expected="sat",
+            ),
+            lying=WitnessSource(
+                source=(
+                    "def A(x):\n"
+                    "    return x + 1\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 7\n"
+                ),
+                expected="unsat",
+            ),
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "ReturnSugar":

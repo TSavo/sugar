@@ -7,6 +7,8 @@ if TYPE_CHECKING:
 
 
 class FloorValue:
+    non_fol_support = False
+
     def inplace_binary_operator_with(self, operation, ctx):
         return operation.inplace_default(self, ctx)
 
