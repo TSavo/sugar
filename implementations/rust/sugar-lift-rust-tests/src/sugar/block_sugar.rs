@@ -48,7 +48,7 @@ use crate::sugar::raise_value::RaiseValue;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     sugar_ctx_with_factory_audits, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx,
-    Sugar, SugarCtx,
+    Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim =
@@ -119,71 +119,14 @@ impl Sugar for BlockSugar {
                 // child_ctx, reducer, items drop here -> scope_clone borrow released
             };
 
-            match result {
-                Outcome::Incomplete(effect) => {
-                    let Some(raise) = RaiseValue::from_effect(effect.clone(), &scope_clone) else {
-                        return Outcome::Incomplete(effect);
-                    };
-                    raised.push(guard_raise(
-                        Desugared::StmtRaise(raise),
-                        &pending,
-                        "BlockSugar",
-                    ));
-                }
-                Outcome::Complete(desugared) => match desugared {
-                    // Inert statement: side-effect, macro invocation, item definition, etc.
-                    Desugared::StmtSupport => {}
-                    // Let binding: thread into scope for downstream term translation.
-                    Desugared::StmtBound(bound) => {
-                        scope_clone.record_bound_var(bound);
-                    }
-                    // Single return: emit under the current accumulated pending guards.
-                    Desugared::StmtReturn(term) => {
-                        emitted.push(guard_exit(
-                            Desugared::StmtReturn(term),
-                            &pending,
-                            "BlockSugar",
-                        ));
-                    }
-                    Desugared::StmtGuarded(guarded_return) => {
-                        emitted.push(guard_exit(
-                            Desugared::StmtGuarded(guarded_return),
-                            &pending,
-                            "BlockSugar",
-                        ));
-                    }
-                    Desugared::StmtRaise(raise) => {
-                        raised.push(guard_raise(
-                            Desugared::StmtRaise(raise),
-                            &pending,
-                            "BlockSugar",
-                        ));
-                    }
-                    Desugared::StmtGuardedRaise(guarded_raise) => {
-                        raised.push(guard_raise(
-                            Desugared::StmtGuardedRaise(guarded_raise),
-                            &pending,
-                            "BlockSugar",
-                        ));
-                    }
-                    // Nested block/if: merge its guarded clauses (prefixed with pending),
-                    // extend pending with any fall_through conditions.
-                    Desugared::StmtBlock {
-                        guarded,
-                        raises,
-                        fall_through,
-                    } => {
-                        let (guarded, raises, fall_through) =
-                            guard_block(guarded, raises, fall_through, &pending, "BlockSugar");
-                        emitted.extend(guarded);
-                        raised.extend(raises);
-                        pending.extend(fall_through);
-                    }
-                    other => block_stmt_gap(&format!(
-                        "statement role produced non-statement floor {}",
-                        statement_floor_name(&other)
-                    )),
-                },
+            if let Err(outcome) = compose_statement_result(
+                result,
+                &mut scope_clone,
+                &mut emitted,
+                &mut raised,
+                &mut pending,
+            ) {
+                return outcome;
             }
         }
 
@@ -193,6 +136,82 @@ impl Sugar for BlockSugar {
             fall_through: pending,
         })
     }
+}
+
+fn compose_statement_result(
+    result: Outcome,
+    scope_clone: &mut TemporalScope,
+    emitted: &mut Vec<GuardedReturn>,
+    raised: &mut Vec<GuardedRaise>,
+    pending: &mut Vec<Rc<Formula>>,
+) -> Result<(), Outcome> {
+    match result {
+        Outcome::Incomplete(effect) => {
+            let Some(raise) = RaiseValue::from_effect(effect.clone(), scope_clone) else {
+                return Err(Outcome::Incomplete(effect));
+            };
+            raised.push(guard_raise(
+                Desugared::StmtRaise(raise),
+                pending,
+                "BlockSugar",
+            ));
+        }
+        Outcome::Complete(desugared) => match desugared {
+            // Inert statement: side-effect, macro invocation, item definition, etc.
+            Desugared::StmtSupport => {}
+            // Let binding: thread into scope for downstream term translation.
+            Desugared::StmtBound(bound) => {
+                scope_clone.record_bound_var(bound);
+            }
+            // Single return: emit under the current accumulated pending guards.
+            Desugared::StmtReturn(term) => {
+                emitted.push(guard_exit(
+                    Desugared::StmtReturn(term),
+                    pending,
+                    "BlockSugar",
+                ));
+            }
+            Desugared::StmtGuarded(guarded_return) => {
+                emitted.push(guard_exit(
+                    Desugared::StmtGuarded(guarded_return),
+                    pending,
+                    "BlockSugar",
+                ));
+            }
+            Desugared::StmtRaise(raise) => {
+                raised.push(guard_raise(
+                    Desugared::StmtRaise(raise),
+                    pending,
+                    "BlockSugar",
+                ));
+            }
+            Desugared::StmtGuardedRaise(guarded_raise) => {
+                raised.push(guard_raise(
+                    Desugared::StmtGuardedRaise(guarded_raise),
+                    pending,
+                    "BlockSugar",
+                ));
+            }
+            // Nested block/if: merge its guarded clauses (prefixed with pending),
+            // extend pending with any fall_through conditions.
+            Desugared::StmtBlock {
+                guarded,
+                raises: block_raises,
+                fall_through,
+            } => {
+                let (guarded, block_raises, fall_through) =
+                    guard_block(guarded, block_raises, fall_through, pending, "BlockSugar");
+                emitted.extend(guarded);
+                raised.extend(block_raises);
+                pending.extend(fall_through);
+            }
+            other => block_stmt_gap(&format!(
+                "statement role produced non-statement floor {}",
+                statement_floor_name(&other)
+            )),
+        },
+    }
+    Ok(())
 }
 
 // ── Formula conversion (for source_contract.rs) ───────────────────────────────
@@ -270,6 +289,7 @@ fn block_stmt_gap(reason: &str) -> ! {
 mod tests {
     use std::rc::Rc;
 
+    use super::compose_statement_result;
     use sugar_ir_symbolic::{atomic_, num};
     use syn::{Expr, Item, Stmt};
 
@@ -280,10 +300,12 @@ mod tests {
     };
     use crate::sugar::factory::SugarBuildCtx;
     use crate::sugar::guarded_return::GuardedReturn;
+    use crate::sugar::object_value::ObjectValue;
     use crate::sugar::route_raises_operation::{
         RouteRaiseHandler, RouteRaisesAccept, RouteRaisesOperation,
     };
     use crate::sugar::source_contract::emit_value_contract;
+    use crate::sugar::term_dispatch::{term_floor_dispatch, FloorDispatch};
     use crate::{
         sugar_ctx_with_factory_audits, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome,
         ReductionCtx, TemporalPlan, TemporalScope,
@@ -313,6 +335,21 @@ mod tests {
         let ctx =
             sugar_ctx_with_factory_audits(&scope, &options, &reducer, &mut float_widths, 0, None);
         node.reduce(&ctx)
+    }
+
+    fn synthetic_open_edge_gap() -> Effect {
+        let floor = Desugared::ObjectValue(ObjectValue::new("PluginFloor", Vec::new(), Vec::new()));
+        match term_floor_dispatch(floor, "BlockSugarTest", "synthetic PluginFloor") {
+            FloorDispatch::Dispatched(_) => {
+                panic!("synthetic open-edge floor unexpectedly dispatched")
+            }
+            FloorDispatch::Gap(gap) => {
+                match FloorDispatch::<Rc<sugar_ir_symbolic::Term>>::Gap(gap).into_result() {
+                    Err(effect) => effect,
+                    Ok(_) => panic!("gap unexpectedly lowered to a term"),
+                }
+            }
+        }
     }
 
     #[test]
@@ -353,6 +390,33 @@ mod tests {
 
         let _ = Desugared::StmtSupport
             .accept_control_flow_guard(ControlFlowGuardOperation::new(vec![guard], "test"));
+    }
+
+    #[test]
+    fn floor_dispatch_gap_propagates_through_block_composition() {
+        let effect = synthetic_open_edge_gap();
+        let mut scope = TemporalScope::new("floor-dispatch-gap-test", TemporalPlan::default());
+        let mut emitted = Vec::new();
+        let mut raised = Vec::new();
+        let mut pending = Vec::new();
+
+        let result = compose_statement_result(
+            Outcome::Incomplete(effect),
+            &mut scope,
+            &mut emitted,
+            &mut raised,
+            &mut pending,
+        );
+
+        let Err(Outcome::Incomplete(Effect::CoverageGap { boundary, reason })) = result else {
+            panic!("coverage gap should propagate as an incomplete block outcome");
+        };
+        assert_eq!(boundary, "ObjectValue");
+        assert!(reason.contains("owner=BlockSugarTest"));
+        assert!(reason.contains("observed=ObjectValue"));
+        assert!(emitted.is_empty());
+        assert!(raised.is_empty());
+        assert!(pending.is_empty());
     }
 
     #[test]
