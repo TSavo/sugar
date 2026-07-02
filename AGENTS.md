@@ -142,6 +142,55 @@ responsibility:
 - Fire again: once the background signal is launched, move to the next shot. If CI red, delayed logs, or long-run failures land later, treat them as measured impact for the next fix-forward PR.
 - Parallel fire: launch independent work streams when they do not collide. If a merge conflict, broken main, or failed background run blocks the next shot, resolve that concrete blocker and keep moving.
 
+## The enforcement ladder: every instrument should climb until it retires
+
+Instruments are not all equal. They live on a ladder, and each rung up, the
+red arrives earlier and costs less:
+
+**prose < review < auditor < test < panic < compiler.**
+
+Prose decays. Review is a gate. An auditor fires at check-time, a test at
+run-time, a panic at contact — but the type checker fires *before the program
+exists*. An illegal state that cannot be constructed never needs detection,
+never needs a frontier, never needs a drain. The compiler is the one gate this
+process permits, because it is a gate that takes milliseconds and serializes
+nothing: the design itself forbids incorrect construction.
+
+So the prime directive sitting above "instrument first" is: **every instrument
+should be trying to climb the ladder and retire itself.** An auditor is a
+confession that the type system cannot yet say the thing. Some confessions are
+forced — `syn::Expr` is `#[non_exhaustive]`, so grammar totality needs a
+ledger; that auditor earns its keep forever. But most are temporary scaffolds:
+the moment a frontier axis can become a type, a visibility boundary, a closed
+enum, or a move, promote it and delete the check. Worked examples from this
+repo:
+
+- `expected_cid: Option<String>` → `String`: the fail-open ingress became
+  unwritable. No audit needed; it does not parse.
+- The privatized catalog decoder: a decode bypass is a visibility error, not a
+  finding.
+- `ComponentPlanOutcome::{Claimed, Declined, Failed}` and
+  `PlanIntent::{Lift, Prove, Verify}`: crashed-vs-absent and verb-confusion
+  stopped being string-matching bugs and became match arms rustc demands.
+- Closed floor visitor traits: adding a floor kind makes every operation that
+  does not handle it a compile failure — totality the Python kit needs a
+  runtime gap plus two auditors to approximate.
+- Passing a value by move where reuse would be a bug: the "callers don't reuse
+  this" claim stops being a comment and becomes a borrow error.
+
+When you build a new instrument, state which rung it is on and why it cannot
+yet stand a rung higher. When you drain a frontier, prefer the fix that
+deletes the axis over the fix that greens it: a type that forbids the
+offender beats a test that detects it, every time. The endgame for any red
+instrument is silence at stable zero — but the *best* endgame is that the
+instrument becomes unnecessary because the illegal shape became
+unrepresentable. Make the illegal thing inexpressible, and correctness stops
+being vigilance and becomes geometry.
+
+The same law runs through every layer of this system: the compiler forbids
+ill-typed programs, the factory forbids un-owned constructions, the proofchain
+forbids unwitnessed claims. One principle, three substrates.
+
 ## Repository Mechanics
 
 The manifesto above is the operating model. The rest of this file is local
