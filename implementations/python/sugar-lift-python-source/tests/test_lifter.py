@@ -281,6 +281,10 @@ def _list(*items: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:list", "args": list(items)}
 
 
+def _set(*items: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:set", "args": list(items)}
+
+
 def _listcomp(
     elt: dict[str, object], *generators: dict[str, object]
 ) -> dict[str, object]:
@@ -1264,11 +1268,53 @@ def test_empty_dict_literal_lifts_to_empty_dict_term() -> None:
 
 
 def test_dict_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f():\n    return {1, 2}\n", "set_literal.py")
+    result = lift_source("def f(xs):\n    return {x for x in xs}\n", "setcomp.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled expression kind: Set"
+        "unhandled expression kind: SetComp"
     ]
+
+
+def test_set_literal_lifts_to_set_term_without_refusal() -> None:
+    result = lift_source('def f():\n    return {"a", "b"}\n', "set_literal.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_set(_str_const("a"), _str_const("b")))
+
+
+def test_set_literal_element_refusal_propagates_without_swallowing() -> None:
+    result = lift_source(
+        "def f(xs):\n    return {{x for x in xs}}\n",
+        "set_literal_element_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "set_literal_element_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: SetComp",
+        }
+    ]
+
+
+def test_empty_braces_are_dict_not_set_literal() -> None:
+    result = lift_source("def f():\n    return {}\n", "empty_braces.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_dict())
+
+
+def test_set_literal_roundtrip_is_stable_nested_in_call() -> None:
+    term = _call("uses", _set(_str_const("a"), _str_const("b")), _set(_int_const(1)))
+
+    compiled = compile_body_term(_return(term))
+    relifted = lift_source(compiled, "roundtrip_set_call.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
 
 
 def test_dict_roundtrip_is_structurally_stable_and_ordered() -> None:

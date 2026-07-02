@@ -346,6 +346,8 @@ def _expr(term: Json) -> ast.expr:
         return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name == "python:list":
         return ast.List(elts=[_expr(arg) for arg in args], ctx=ast.Load())
+    if name == "python:set":
+        return ast.Set(elts=[_expr(arg) for arg in args])
     if name == "python:listcomp":
         return ast.ListComp(
             elt=_expr(args[0]),
