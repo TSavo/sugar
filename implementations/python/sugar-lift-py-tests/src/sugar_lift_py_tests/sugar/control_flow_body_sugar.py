@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.ir import Formula, and_, eq, implies, make_var
+from sugar_lift_py_tests.ir import Formula, Term, and_, eq, implies, make_var
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -28,7 +28,7 @@ class ControlFlowBodySugar(FunctionBodyUniverse):
 
     parameter: str
     # each path: (tuple of guard Formulas, the return-value Term)
-    paths: tuple[tuple[tuple[Formula, ...], object], ...]
+    paths: tuple[tuple[tuple[Formula, ...], Term], ...]
     formals: tuple[str, ...]
     statements: tuple[SugarBody, ...] = ()
 

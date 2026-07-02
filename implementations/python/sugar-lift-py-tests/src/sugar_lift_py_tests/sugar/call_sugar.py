@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+from typing import Protocol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
-from sugar_lift_py_tests.ir import Formula, eq, make_var, str_const
+from sugar_lift_py_tests.ir import Formula, Term, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -18,6 +19,10 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 # SugarBody) or a multi-statement universe (control flow / encoder, a FunctionBodyUniverse).
 FunctionCallBody = SugarBody | FunctionBodyUniverse
 _BODY_TYPES = (SugarBody, FunctionBodyUniverse)
+
+
+class CallStrategy(Protocol):
+    def emit(self, sugar: "CallSugar", ctx: object) -> Outcome: ...
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,7 @@ class BridgeStrategy:
     def callsite_fact_formulas(self, expected: StringValue) -> list[Formula]:
         if isinstance(self.body, SugarBody):
             return [eq(make_var("out"), str_const(expected.value))]
+        body = self.body
         if len(self.arguments) != 1:
             raise ValueError("BridgeStrategy callsite facts require one argument")
         argument = complete_value(
@@ -134,7 +140,7 @@ class BridgeStrategy:
         if not isinstance(argument, StringValue):
             raise ValueError("write more Floor for BridgeStrategy argument")
         return [
-            eq(make_var(self.body.parameter), str_const(argument.value)),
+            eq(make_var(body.parameter), str_const(argument.value)),
             eq(make_var("out"), str_const(expected.value)),
         ]
 
@@ -298,7 +304,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     call no specific sugar claimed -- resolved (BridgeStrategy) or not (RefuseStrategy).
     """
 
-    strategy: object
+    strategy: CallStrategy
 
     @classmethod
     def owns(cls, fragment) -> bool:
@@ -706,10 +712,10 @@ class AssertionFactStrategy:
     byte-canonical -- the same name a vendor's proof emits for the same call."""
 
     callee_name: str
-    arg_terms: tuple
-    expected_term: object
+    arg_terms: tuple[Term, ...]
+    expected_term: Term
 
-    def _euf_term(self):
+    def _euf_term(self) -> Term:
         from sugar_lift_py_tests.factory.literal_call_report import euf_call_term
 
         return euf_call_term(self.callee_name, list(self.arg_terms))
@@ -721,7 +727,7 @@ class AssertionFactStrategy:
             self.callee_name, self._euf_term(), suffix="::assertion"
         )
 
-    def fact_formula(self):
+    def fact_formula(self) -> Formula:
         return eq(self._euf_term(), self.expected_term)
 
     def emit(self, sugar, ctx) -> Outcome:

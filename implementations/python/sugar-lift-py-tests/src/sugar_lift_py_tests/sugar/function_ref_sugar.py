@@ -59,11 +59,6 @@ class FunctionRefSugar:
         )
 
 
-def function_ref_sugar_from_site(site, functions_by_name):
-    """Public site-based entry point -- no raw AST required."""
-    return _from_site_impl(site, functions_by_name)
-
-
 def function_ref_sugar(node, functions_by_name):
     """Legacy entry-point accepting a raw AST node -- wraps it in a SourceFragment."""
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment

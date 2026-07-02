@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.floor import FunctionCallable
 from sugar_lift_py_tests.operations import CallableMapOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 
@@ -35,6 +36,8 @@ class MapBuiltinSugar:
             self.callable.desugar(),
             owner="MapBuiltinSugar callable",
         )
+        if not isinstance(callable_value, FunctionCallable):
+            raise TypeError("MapBuiltinSugar callable must reduce to a function")
         return perform_operation(
             owner="MapBuiltinSugar",
             blame=self.blame,

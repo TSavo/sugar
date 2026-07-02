@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.floor import FloorValue
 
@@ -58,7 +59,7 @@ class TemporalContext:
         observed: str,
         requested: str,
         fix: str,
-    ) -> None:
+    ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
             FactoryGap,

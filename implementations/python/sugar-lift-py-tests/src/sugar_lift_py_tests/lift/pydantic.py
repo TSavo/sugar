@@ -308,7 +308,7 @@ def _py_literal(value: Any) -> str:
 
 def _field_required(
     model_name: str, field_name: str, field_info: Any
-) -> bool | "_RequirednessUnknown":
+) -> bool | _RequirednessUnknown:
     is_required = getattr(field_info, "is_required", None)
     if callable(is_required):
         try:

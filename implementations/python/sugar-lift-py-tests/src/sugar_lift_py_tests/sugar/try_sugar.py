@@ -71,6 +71,8 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         if isinstance(outcome, Incomplete):
             return self._route_incomplete(outcome, ctx)
         block = complete_value(outcome, owner="try body")
+        if not isinstance(block, BlockValue):
+            raise TypeError("TrySugar body must reduce to a block")
         routed = perform_operation(
             owner="TrySugar",
             blame=self.blame,
@@ -86,6 +88,8 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         if isinstance(routed, Incomplete):
             return routed
         block = complete_value(routed, owner="try routed body")
+        if not isinstance(block, BlockValue):
+            raise TypeError("TrySugar routed body must reduce to a block")
         if self.else_body is not None and _runs_else(block):
             return self.else_body.reduce(ctx)
         return Complete(block)
@@ -117,6 +121,8 @@ def _apply_finally(
     if isinstance(outcome, Incomplete):
         return outcome
     final_block = complete_value(outcome, owner="try finally")
+    if not isinstance(final_block, BlockValue):
+        raise TypeError("TrySugar finally body must reduce to a block")
     if not final_block.statements:
         return incoming
     if not final_block.fall_through:
@@ -129,6 +135,8 @@ def _apply_finally(
             )
         )
     incoming_block = complete_value(incoming, owner="try incoming exit")
+    if not isinstance(incoming_block, BlockValue):
+        raise TypeError("TrySugar incoming exit must reduce to a block")
     return perform_operation(
         owner="TrySugar.finally",
         blame=blame,

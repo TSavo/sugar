@@ -129,6 +129,8 @@ def _guard_exit(statement: object, guards: tuple, ctx, blame: str):
         ),
         owner="block guarded exit",
     )
+    if not isinstance(guarded, BlockValue):
+        raise TypeError("BlockSugar guard dispatch must return a block")
     if len(guarded.statements) != 1:
         raise TypeError("BlockSugar guard dispatch must preserve one exit")
     return guarded.statements[0]

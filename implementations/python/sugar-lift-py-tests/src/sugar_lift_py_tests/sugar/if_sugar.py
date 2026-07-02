@@ -8,6 +8,7 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
 )
 from sugar_lift_py_tests.ir import (
+    Formula,
     ctor,
     eq,
     gt,
@@ -35,9 +36,9 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
     the test, the else branch under its negation. Control flow is the composition of
     child blocks, not a walker; nesting is just blocks within blocks."""
 
-    test: object  # a guard Formula lifted from the `if` test
+    test: Formula  # a guard Formula lifted from the `if` test
     then: SugarBody
-    else_block: object  # SugarBody | None
+    else_block: SugarBody | None
     blame: str
 
     @classmethod
@@ -64,18 +65,24 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx) -> Outcome:
         then_bv = complete_value(self.then.reduce(ctx), owner="if then-block")
+        if not isinstance(then_bv, BlockValue):
+            raise TypeError("IfSugar then branch must reduce to a block")
         then_guarded = self._guard_block(then_bv, (self.test,), ctx)
         guarded = list(then_guarded.statements)
         if self.else_block is not None:
             else_bv = complete_value(self.else_block.reduce(ctx), owner="if else-block")
+            if not isinstance(else_bv, BlockValue):
+                raise TypeError("IfSugar else branch must reduce to a block")
             negated = (not_(self.test),)
             else_guarded = self._guard_block(else_bv, negated, ctx)
             guarded.extend(else_guarded.statements)
             return Complete(BlockValue(tuple(guarded)))
         return Complete(BlockValue(tuple(guarded), (not_(self.test),)))
 
-    def _guard_block(self, block: BlockValue, guards: tuple, ctx) -> BlockValue:
-        return complete_value(
+    def _guard_block(
+        self, block: BlockValue, guards: tuple[Formula, ...], ctx
+    ) -> BlockValue:
+        guarded = complete_value(
             perform_operation(
                 owner="IfSugar",
                 blame=self.blame,
@@ -90,6 +97,9 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             ),
             owner="if guarded block",
         )
+        if not isinstance(guarded, BlockValue):
+            raise TypeError("IfSugar guard dispatch must return a block")
+        return guarded
 
 
 def _cf_operand(frag):

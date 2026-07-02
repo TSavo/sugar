@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
@@ -73,7 +74,9 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
 
-def _raise_async_for_gap(site, *, observed: str, requested: str, fix: str) -> None:
+def _raise_async_for_gap(
+    site, *, observed: str, requested: str, fix: str
+) -> NoReturn:
     info = FactoryGapInfo(
         owner="python.factory",
         blame=site.blame,
