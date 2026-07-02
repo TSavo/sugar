@@ -372,3 +372,22 @@ Also from that review: the verdict-witness registry must RUN every registered pa
 **Amendment 2 (T Savo, same day): witnesses talk RPC to sugar lift.** Verdict witnesses are MINIMAL SOURCE PROGRAMS driven through the production RPC door (`sugar lift` — the `_run_lift_rpc` mechanism), truthful and lying variants; the verdict renders through the real solve path on the real emitted document. No test-local SMT translation exists (deleted). The witness thereby anchors the entire chain — recognition, emission, node class, compiler, solver. Constructor-invariant teeth remain unit-level; verdict teeth are pipeline-level. This also sets the migration target for the decorative sat_unsat tests (#3272).
 
 **Final composition (T Savo, closing decision of record, 2026-07-02):** "The sugar owns the code example. The ProofIR owns the sat/unsat semantics. That's the final test composition." The sugar contributes the syntax witness (source snippets — its territory); the ProofIR node class contributes the verdict semantics (denotation + expected SAT/UNSAT — its meaning); the production pipeline (RPC `sugar lift` → emission → ir compiler → solver) is the ONLY composer of the two. Neither owner reaches the verdict except through the production door. The sibling sugar shape/witness-trait campaign therefore FEEDS the vocabulary witnesses rather than duplicating them: sugar examples are the inputs, node-class semantics are the expectations, one composition.
+## Addendum 3 (T Savo, 2026-07-02, verbatim design directive): the typed composition graph — no naked Formula crosses a boundary
+
+"The move is: no naked Formula crosses a boundary. We don't just make FOL terms typed; we make the composition graph typed, so valid-looking but orphaned or wrongly-warranted FOL also becomes unconstructible."
+
+**Exact shape (T's):** Split ProofIR into tiny typed files — sorts/ (int_sort, real_sort, bool_sort, string_sort, identity_sort, bv_sort), terms/ (var, const, call_term, identity_term, bv_ops), formulas/ (eq, and_formula, not_formula, implies, quantifier), nodes/ (equality_fact, body_universe, function_contract, bridge_atom, refusal_record), provenance/ (source_warrant, vendor_warrant, plan_memento).
+
+**Construction laws:** Eq(left: Term[S], right: Term[S]) only accepts matching or explicitly coercible sorts. Not/And/Implies only accept Formula. FunctionContract only accepts a scoped/closed postcondition whose free vars are exactly legal formals plus out. EqualityFact must be built from a CallTerm, not a caller-supplied string key. RefusalRecord cannot carry predicates. BridgeAtom must carry typed unresolved linkage, not raw JSON/string folklore.
+
+**Role wrappers (formulas cannot float loose):** OpenFormula, ScopedFormula, ClosedFormula, ProvenancedFormula, ClaimFormula. A proof member accepts only the right wrapper. A raw Formula can exist temporarily inside construction, but it cannot be serialized, reported, conjoined, or inserted into a .proof.
+
+**RPC serialization behind typed nodes only:** _formula_to_rpc becomes private serialization internals. Lifters/sugars/factories never build dict FOL. DTOs become wire output, not construction APIs. Reports read typed proof members, not side payloads.
+
+**Provenance at construction:** FactAtom requires VendorWarrant | SourceWarrant. UniverseAtom requires body/source provenance. PlanAtom requires a PlanMemento. Anything reportable must be reconstructible from the .proof.
+
+**Instruments:** scanner reds on _formula_to_rpc outside ProofIR serialization; on raw BodyUniverseDto(post=/inv=/pre=); on formula fields typed dict/str/Any. Unit tests assert invalid construction panics loudly: wrong-sort equality, naked formula insertion, universe with illegal free var, refusal with predicate.
+
+**The missed trick (T verbatim):** "well-typed FOL is not enough. We need well-typed ProofIR membership. A formula must know whether it is a vendor fact, a body universe, a bridge obligation, a refusal boundary, or a derived implication. That is how we make 'invalid FOL in the proof' literally impossible, not merely unlikely."
+
+**Sequencing (T's):** next slice = the red instrument plus the first tiny class family: Sort, Term[S], Formula, Eq, And, ClosedFormula, EqualityFact. Then migrate ONE emission seat and let the instrument count the rest.
