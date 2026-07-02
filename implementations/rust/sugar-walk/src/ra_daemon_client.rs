@@ -59,6 +59,15 @@ pub struct DaemonResolutionBatch {
     pub reachable: bool,
     pub ready: bool,
     pub resolutions: HashMap<(String, u32, u32), DaemonResolution>,
+    pub refusal: Option<String>,
+}
+
+impl DaemonResolutionBatch {
+    fn refuse(&mut self, reason: impl Into<String>) {
+        self.ready = false;
+        self.resolutions.clear();
+        self.refusal = Some(reason.into());
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +101,7 @@ pub fn resolve_receiver_crates(
         Err(e) => {
             // Unreachable daemon is a refuse, not an error: the syntactic tiers
             // still produce a sound (if smaller) bridge set.
+            batch.refuse(format!("connect/spawn sugar-linkerd: {e}"));
             warn!(
                 socket = %socket_path.display(),
                 error = %e,
@@ -114,6 +124,10 @@ pub fn resolve_receiver_crates(
             );
         }
         Ok(readiness) => {
+            batch.refuse(format!(
+                "readiness not passed: phase={:?} detail={:?}",
+                readiness.phase, readiness.detail
+            ));
             warn!(
                 phase = ?readiness.phase,
                 detail = ?readiness.detail,
@@ -122,6 +136,7 @@ pub fn resolve_receiver_crates(
             return batch;
         }
         Err(error) => {
+            batch.refuse(error.clone());
             warn!(
                 error = %error,
                 "ra-daemon: rust-analyzer readiness RPC failed; refusing all method-call resolutions"
@@ -149,29 +164,40 @@ pub fn resolve_receiver_crates(
     let resp = match send_one(&mut stream, &req) {
         Ok(r) => r,
         Err(e) => {
+            batch.refuse(format!("resolveReceiverCrate transport: {e}"));
             warn!(error = %e, "ra-daemon: resolveReceiverCrate transport failed; refusing");
             return batch;
         }
     };
 
     if let Some(err_obj) = resp.get("error") {
+        batch.refuse(format!(
+            "resolveReceiverCrate returned RPC error: {err_obj}"
+        ));
         warn!(error = %err_obj, "ra-daemon: daemon returned RPC error; refusing");
         return batch;
     }
 
-    let result = resp.get("result").cloned().unwrap_or(Json::Null);
-    let ready = result
-        .get("ready")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let resolved_obj = result.get("resolved").and_then(|v| v.as_object());
-    let resolved_count = resolved_obj.map(|m| m.len()).unwrap_or(0);
+    let (ready, resolutions) = match parse_resolve_response(&resp) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            batch.refuse(format!("malformed resolveReceiverCrate response: {error}"));
+            warn!(
+                error = %error,
+                "ra-daemon: malformed resolveReceiverCrate response; refusing whole batch"
+            );
+            return batch;
+        }
+    };
+    let resolved_count = resolutions.len();
 
     if !ready && resolved_count == 0 {
         // Readiness passed, but RA still reported not-ready during resolution
         // and nothing was cache-resolved. Refuse rather than caching partial
         // answers or guessing edges.
+        batch.refuse(
+            "resolveReceiverCrate reported not-ready after readiness gate with no cached answers",
+        );
         info!(
             queries = queries.len(),
             "ra-daemon: resolution returned not-ready after readiness gate; \
@@ -180,34 +206,8 @@ pub fn resolve_receiver_crates(
         return batch;
     }
 
-    if let Some(map) = resolved_obj {
-        for (key, val) in map {
-            // val is `{ "crate": <str>, "type": <str>|null }` (current shape) or
-            // a bare crate string (backward-compatible). Parse both.
-            let (krate, type_stem, effect) = match val {
-                Json::String(s) => (Some(s.as_str()), None, "unknown"),
-                Json::Object(_) => (
-                    val.get("crate").and_then(|v| v.as_str()),
-                    val.get("type").and_then(|v| v.as_str()).map(str::to_string),
-                    val.get("effect")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown"),
-                ),
-                _ => (None, None, "unknown"),
-            };
-            let Some(krate) = krate else { continue };
-            if let Some((file, line, col)) = parse_pos_key(key) {
-                batch.resolutions.insert(
-                    (file, line, col),
-                    DaemonResolution {
-                        krate: krate.to_string(),
-                        type_stem,
-                        effect: effect.to_string(),
-                    },
-                );
-            }
-        }
-    }
+    batch.ready = ready;
+    batch.resolutions = resolutions;
 
     info!(
         ready,
@@ -236,42 +236,170 @@ fn request_readiness(
     if let Some(error) = resp.get("error") {
         return Err(format!("rustAnalyzerReady returned RPC error: {error}"));
     }
-    let result = resp.get("result").cloned().unwrap_or(Json::Null);
+    let result = required_field(&resp, "result", "rustAnalyzerReady response")?;
     Ok(DaemonReadiness {
-        ready: result
-            .get("ready")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        phase: result
-            .get("phase")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        detail: result
-            .get("detail")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
+        ready: required_bool_field(result, "ready", "rustAnalyzerReady.result")?,
+        phase: optional_string_field(result, "phase", "rustAnalyzerReady.result")?,
+        detail: optional_string_field(result, "detail", "rustAnalyzerReady.result")?,
     })
 }
 
 fn ready_timeout_ms() -> u64 {
-    std::env::var("SUGAR_ORACLE_READY_TIMEOUT_MS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(300_000)
+    const DEFAULT_TIMEOUT_MS: u64 = 300_000;
+    match std::env::var("SUGAR_ORACLE_READY_TIMEOUT_MS") {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(value) if value > 0 => value,
+            Ok(_) | Err(_) => DEFAULT_TIMEOUT_MS,
+        },
+        Err(_) => DEFAULT_TIMEOUT_MS,
+    }
 }
 
 /// Parse a `"<file>:<line>:<col>"` position key back into its parts. The file
 /// path itself may contain colons on exotic systems, so split from the RIGHT:
 /// the last two colon-separated fields are line and col, the rest is the file.
-fn parse_pos_key(key: &str) -> Option<(String, u32, u32)> {
-    let col_idx = key.rfind(':')?;
+fn parse_pos_key(key: &str) -> Result<(String, u32, u32), String> {
+    let col_idx = key
+        .rfind(':')
+        .ok_or_else(|| "missing column separator".to_string())?;
     let (head, col_str) = key.split_at(col_idx);
-    let col: u32 = col_str[1..].parse().ok()?;
-    let line_idx = head.rfind(':')?;
+    let col: u32 = col_str[1..]
+        .parse()
+        .map_err(|err| format!("invalid column {:?}: {err}", &col_str[1..]))?;
+    let line_idx = head
+        .rfind(':')
+        .ok_or_else(|| "missing line separator".to_string())?;
     let (file, line_str) = head.split_at(line_idx);
-    let line: u32 = line_str[1..].parse().ok()?;
-    Some((file.to_string(), line, col))
+    let line: u32 = line_str[1..]
+        .parse()
+        .map_err(|err| format!("invalid line {:?}: {err}", &line_str[1..]))?;
+    if file.is_empty() {
+        return Err("missing file path".to_string());
+    }
+    Ok((file.to_string(), line, col))
+}
+
+fn parse_resolve_response(
+    resp: &Json,
+) -> Result<(bool, HashMap<(String, u32, u32), DaemonResolution>), String> {
+    let result = required_field(resp, "result", "resolveReceiverCrate response")?;
+    let ready = required_bool_field(result, "ready", "resolveReceiverCrate.result")?;
+    let resolved = required_object_field(result, "resolved", "resolveReceiverCrate.result")?;
+    let mut resolutions = HashMap::new();
+    for (key, val) in resolved {
+        let (file, line, col) = parse_pos_key(key)
+            .map_err(|err| format!("resolveReceiverCrate.result.resolved[{key:?}]: {err}"))?;
+        let (krate, type_stem, effect) = parse_resolution_value(key, val)?;
+        resolutions.insert(
+            (file, line, col),
+            DaemonResolution {
+                krate,
+                type_stem,
+                effect,
+            },
+        );
+    }
+    Ok((ready, resolutions))
+}
+
+fn parse_resolution_value(
+    key: &str,
+    val: &Json,
+) -> Result<(String, Option<String>, String), String> {
+    let context = format!("resolveReceiverCrate.result.resolved[{key:?}]");
+    match val {
+        Json::String(krate) if !krate.is_empty() => {
+            Ok((krate.to_string(), None, "unknown".to_string()))
+        }
+        Json::String(_) => Err(format!("{context}.crate must not be empty")),
+        Json::Object(_) => {
+            let krate = required_nonempty_string_field(val, "crate", &context)?.to_string();
+            let type_stem = optional_string_field(val, "type", &context)?;
+            let effect = match optional_string_field(val, "effect", &context)? {
+                Some(effect) => effect,
+                None => "unknown".to_string(),
+            };
+            Ok((krate, type_stem, effect))
+        }
+        other => Err(format!(
+            "{context} must be object or string, got {}",
+            json_kind(other)
+        )),
+    }
+}
+
+fn required_field<'a>(value: &'a Json, field: &str, context: &str) -> Result<&'a Json, String> {
+    value
+        .get(field)
+        .ok_or_else(|| format!("{context}.{field} missing"))
+}
+
+fn required_bool_field(value: &Json, field: &str, context: &str) -> Result<bool, String> {
+    match value.get(field) {
+        Some(Json::Bool(v)) => Ok(*v),
+        Some(other) => Err(format!(
+            "{context}.{field} must be bool, got {}",
+            json_kind(other)
+        )),
+        None => Err(format!("{context}.{field} missing")),
+    }
+}
+
+fn required_object_field<'a>(
+    value: &'a Json,
+    field: &str,
+    context: &str,
+) -> Result<&'a serde_json::Map<String, Json>, String> {
+    match value.get(field) {
+        Some(Json::Object(map)) => Ok(map),
+        Some(other) => Err(format!(
+            "{context}.{field} must be object, got {}",
+            json_kind(other)
+        )),
+        None => Err(format!("{context}.{field} missing")),
+    }
+}
+
+fn required_nonempty_string_field<'a>(
+    value: &'a Json,
+    field: &str,
+    context: &str,
+) -> Result<&'a str, String> {
+    match value.get(field) {
+        Some(Json::String(s)) if !s.is_empty() => Ok(s.as_str()),
+        Some(Json::String(_)) => Err(format!("{context}.{field} must not be empty")),
+        Some(other) => Err(format!(
+            "{context}.{field} must be string, got {}",
+            json_kind(other)
+        )),
+        None => Err(format!("{context}.{field} missing")),
+    }
+}
+
+fn optional_string_field(
+    value: &Json,
+    field: &str,
+    context: &str,
+) -> Result<Option<String>, String> {
+    match value.get(field) {
+        Some(Json::String(s)) => Ok(Some(s.to_string())),
+        Some(Json::Null) | None => Ok(None),
+        Some(other) => Err(format!(
+            "{context}.{field} must be string or null, got {}",
+            json_kind(other)
+        )),
+    }
+}
+
+fn json_kind(value: &Json) -> &'static str {
+    match value {
+        Json::Null => "null",
+        Json::Bool(_) => "bool",
+        Json::Number(_) => "number",
+        Json::String(_) => "string",
+        Json::Array(_) => "array",
+        Json::Object(_) => "object",
+    }
 }
 
 /// Deterministic project CID from the absolute workspace root, so two mints of
@@ -410,20 +538,28 @@ fn send_one(stream: &mut UnixStream, req: &Json) -> std::io::Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    use std::thread;
+
+    static TEST_SOCKET_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn pos_key_roundtrips() {
         assert_eq!(
-            parse_pos_key("/a/b/c.rs:12:7"),
-            Some(("/a/b/c.rs".to_string(), 12, 7))
+            parse_pos_key("/a/b/c.rs:12:7").unwrap(),
+            ("/a/b/c.rs".to_string(), 12, 7)
         );
     }
 
     #[test]
     fn pos_key_tolerates_colon_in_path() {
         assert_eq!(
-            parse_pos_key("/weird:dir/c.rs:3:0"),
-            Some(("/weird:dir/c.rs".to_string(), 3, 0))
+            parse_pos_key("/weird:dir/c.rs:3:0").unwrap(),
+            ("/weird:dir/c.rs".to_string(), 3, 0)
         );
     }
 
@@ -433,5 +569,122 @@ mod tests {
         let b = project_cid_from_workspace(Path::new("/tmp"));
         assert_eq!(a, b);
         assert!(a.starts_with("ra-"));
+    }
+
+    #[test]
+    fn resolve_response_missing_ready_refuses_whole_batch() {
+        let key = "/tmp/ra-client-missing-ready.rs:0:0";
+        let batch = resolve_with_fake_daemon(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "resolved": {
+                        key: { "crate": "alloc", "type": "vec", "effect": "mutating" }
+                    }
+                }
+            }),
+            &[DaemonQuery {
+                file: "/tmp/ra-client-missing-ready.rs".to_string(),
+                line: 0,
+                col: 0,
+            }],
+        );
+
+        assert!(batch.reachable);
+        assert!(
+            !batch.ready,
+            "malformed daemon response must not preserve a ready=true observation"
+        );
+        assert!(
+            batch.resolutions.is_empty(),
+            "missing ready must refuse the whole resolution batch, not use content"
+        );
+    }
+
+    #[test]
+    fn resolve_response_bad_position_key_refuses_whole_batch() {
+        let good_key = "/tmp/ra-client-good.rs:0:0";
+        let batch = resolve_with_fake_daemon(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "ready": true,
+                    "resolved": {
+                        good_key: { "crate": "alloc", "type": "vec", "effect": "mutating" },
+                        "not-a-position-key": { "crate": "core", "type": "option" }
+                    }
+                }
+            }),
+            &[DaemonQuery {
+                file: "/tmp/ra-client-good.rs".to_string(),
+                line: 0,
+                col: 0,
+            }],
+        );
+
+        assert!(batch.reachable);
+        assert!(
+            !batch.ready,
+            "malformed daemon map keys must clear the ready observation"
+        );
+        assert!(
+            batch.resolutions.is_empty(),
+            "one malformed entry must refuse the whole batch, not keep partial answers"
+        );
+    }
+
+    fn resolve_with_fake_daemon(
+        resolve_response: Json,
+        queries: &[DaemonQuery],
+    ) -> DaemonResolutionBatch {
+        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let counter = TEST_SOCKET_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let test_dir = std::env::temp_dir().join(format!(
+            "sugar-ra-daemon-client-{}-{counter}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let socket_path = test_dir.join("linkerd.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": { "ready": true, "phase": "ready", "detail": "test" }
+                }))
+                .unwrap()
+            )
+            .unwrap();
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            writeln!(
+                stream,
+                "{}",
+                serde_json::to_string(&resolve_response).unwrap()
+            )
+            .unwrap();
+        });
+
+        let previous_socket = std::env::var_os("SUGAR_LINKERD_SOCKET");
+        std::env::set_var("SUGAR_LINKERD_SOCKET", &socket_path);
+        let batch = resolve_receiver_crates(Path::new("/tmp"), queries);
+        match previous_socket {
+            Some(value) => std::env::set_var("SUGAR_LINKERD_SOCKET", value),
+            None => std::env::remove_var("SUGAR_LINKERD_SOCKET"),
+        }
+        handle.join().unwrap();
+        drop(env_lock);
+        let _ = std::fs::remove_dir_all(&test_dir);
+        batch
     }
 }
