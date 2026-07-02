@@ -257,7 +257,7 @@ mod tests {
     use sugar_ir_symbolic::{atomic_, num};
 
     use super::*;
-    use crate::{TemporalPlan, TemporalScope};
+    use crate::{RaiseEffect, TemporalPlan, TemporalScope};
 
     struct PanicHandler;
 
@@ -279,6 +279,28 @@ mod tests {
             },
             TemporalScope::new("route-raise-test", TemporalPlan::default()),
         )
+    }
+
+    fn result_err_raise(guards: Vec<Rc<Formula>>) -> GuardedRaise {
+        GuardedRaise::new(
+            guards,
+            Effect::Raise(RaiseEffect::ResultErr {
+                boundary: "fallible()?".to_string(),
+            }),
+            TemporalScope::new("route-result-err-test", TemporalPlan::default()),
+        )
+    }
+
+    struct ResultErrHandler;
+
+    impl RouteRaiseHandler for ResultErrHandler {
+        fn matches(&self, effect: &Effect) -> bool {
+            matches!(effect, Effect::Raise(RaiseEffect::ResultErr { .. }))
+        }
+
+        fn reduce(&self, _scope: &TemporalScope, _effect: &Effect) -> Outcome {
+            Outcome::Complete(Desugared::StmtReturn(num(7)))
+        }
     }
 
     #[test]
@@ -304,6 +326,35 @@ mod tests {
         assert_eq!(guarded[0].guards.len(), 1);
         assert!(Rc::ptr_eq(&guarded[0].guards[0], &guard));
         assert!(raises.is_empty(), "handled raise must not remain residual");
+        assert!(fall_through.is_empty());
+    }
+
+    #[test]
+    fn route_raises_operation_accepts_typed_result_err_raise_effect() {
+        let guard = atomic_("result_guard", vec![]);
+        let handler = ResultErrHandler;
+        let outcome = Desugared::StmtBlock {
+            guarded: Vec::new(),
+            raises: vec![result_err_raise(vec![guard.clone()])],
+            fall_through: Vec::new(),
+        }
+        .accept_route_raises(RouteRaisesOperation::new(vec![&handler], "test"));
+
+        let Outcome::Complete(Desugared::StmtBlock {
+            guarded,
+            raises,
+            fall_through,
+        }) = outcome
+        else {
+            panic!("expected routed block");
+        };
+        assert_eq!(guarded.len(), 1);
+        assert_eq!(guarded[0].guards.len(), 1);
+        assert!(Rc::ptr_eq(&guarded[0].guards[0], &guard));
+        assert!(
+            raises.is_empty(),
+            "handled Result::Err raise must not remain residual"
+        );
         assert!(fall_through.is_empty());
     }
 

@@ -167,15 +167,17 @@ pub fn broad_functional_warrant(
     // Try encoder body Sugar (str.eq-bv-blocks) BEFORE the generic structural
     // lift. This produces strong symbolic teeth for functional string-encoder
     // bodies (const table + ord byte-assigns + subscript-concat return).
-    if let Some(encoder_atom) =
-        super::generic_body_sugar::recognize_and_emit_encoder_contract(name, sig, block)
-    {
-        let mut decl = source_value_contract(name, encoder_atom);
-        if let Some(ref pre_decl) = callable_pre_decl {
-            decl.pre = pre_decl.pre.clone();
+    let generic_body_fold = super::generic_body_sugar::fold_generic_body_contract(name, sig, block);
+    let euf_handoff = match generic_body_fold {
+        super::generic_body_sugar::GenericBodyFold::EncoderContract(encoder_atom) => {
+            let mut decl = source_value_contract(name, encoder_atom);
+            if let Some(ref pre_decl) = callable_pre_decl {
+                decl.pre = pre_decl.pre.clone();
+            }
+            return Some(decl);
         }
-        return Some(decl);
-    }
+        super::generic_body_sugar::GenericBodyFold::EufHandoff(handoff) => handoff,
+    };
     if !block_has_for_loop(block) {
         if let Some(mut value_decl) = emit_value_contract(name, block) {
             if let Some(assertion_decl) = assertion_decl {
@@ -202,13 +204,7 @@ pub fn broad_functional_warrant(
             }
             return Some(decl);
         }
-        let fallback = eq(
-            make_var("out"),
-            Rc::new(Term::Ctor {
-                name: format!("call:{name}"),
-                args: sig_param_vars(sig),
-            }),
-        );
+        let fallback = eq(make_var("out"), Rc::clone(euf_handoff.term()));
         let inv = assertion_decl
             .inv
             .unwrap_or_else(|| atomic_("true", Vec::new()));
@@ -226,10 +222,7 @@ pub fn broad_functional_warrant(
     }
     // Bare functionality: out = call:NAME(params). The fn name keys it to the
     // vendor's call-site pins (intra-kit; CID-canonicalization is downstream).
-    let term = Rc::new(Term::Ctor {
-        name: format!("call:{name}"),
-        args: sig_param_vars(sig),
-    });
+    let term = euf_handoff.into_term();
     let mut decl = source_value_contract(name, eq(make_var("out"), term));
     if let Some(callable_pre_decl) = callable_pre_decl {
         decl.pre = callable_pre_decl.pre;
@@ -260,22 +253,10 @@ pub fn sig_returns_unit(sig: &syn::Signature) -> bool {
     }
 }
 
-/// The bound parameter names as EUF vars: a receiver -> `self`, a simple
-/// `ident: T` -> `ident`. Destructuring/complex param patterns are skipped (they
-/// only weaken the opaque functional term, never make it unsound).
-fn sig_param_vars(sig: &syn::Signature) -> Vec<Rc<Term>> {
-    sig.inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Receiver(_) => Some(make_var("self")),
-            syn::FnArg::Typed(pt) => match &*pt.pat {
-                syn::Pat::Ident(id) => Some(make_var(id.ident.to_string())),
-                _ => None,
-            },
-        })
-        .collect()
-}
-
+/// The bound parameter names whose callsites can contribute preconditions:
+/// a receiver -> `self`, a simple `ident: T` -> `ident`. Destructuring/complex
+/// param patterns are skipped (they only weaken the opaque functional term,
+/// never make it unsound).
 fn sig_param_name_set(sig: &syn::Signature) -> BTreeSet<String> {
     sig.inputs
         .iter()

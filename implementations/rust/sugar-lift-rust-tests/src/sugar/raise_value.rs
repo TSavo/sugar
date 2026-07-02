@@ -39,6 +39,37 @@ impl RaiseValue {
 pub(crate) fn is_raise_like_effect(effect: &Effect) -> bool {
     matches!(
         effect,
-        Effect::PanicMacro { .. } | Effect::LiteralPanic { .. } | Effect::ControlFlow { .. }
+        Effect::Raise(_)
+            | Effect::PanicMacro { .. }
+            | Effect::LiteralPanic { .. }
+            | Effect::ControlFlow { .. }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RaiseEffect;
+
+    #[test]
+    fn typed_raise_effect_family_is_raise_like_but_coverage_gap_is_not() {
+        for effect in [
+            Effect::Raise(RaiseEffect::Panic {
+                boundary: "panic!(\"boom\")".to_string(),
+            }),
+            Effect::Raise(RaiseEffect::ResultErr {
+                boundary: "fallible()?".to_string(),
+            }),
+            Effect::Raise(RaiseEffect::EarlyReturn {
+                boundary: "return Err(e)".to_string(),
+            }),
+        ] {
+            assert!(is_raise_like_effect(&effect));
+        }
+
+        assert!(!is_raise_like_effect(&Effect::CoverageGap {
+            boundary: "FutureFloor".to_string(),
+            reason: "no routing arm".to_string(),
+        }));
+    }
 }
