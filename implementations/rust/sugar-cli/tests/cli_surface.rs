@@ -708,7 +708,7 @@ done
         "conjoined proof must load cleanly: {:?}",
         pool.load_errors
     );
-    let bridge = pool.bridges_by_symbol.get("callee").unwrap_or_else(|| {
+    let bridge = pool.bridge_by_symbol("callee").unwrap_or_else(|| {
         panic!(
             "consumer bridge should be indexed by sourceSymbol=callee; got {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()

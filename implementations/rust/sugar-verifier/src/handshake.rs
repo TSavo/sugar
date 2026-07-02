@@ -116,19 +116,21 @@ fn serde_to_canonical(v: &Json) -> std::sync::Arc<Value> {
 /// Locate the producer (post) contract memento that the callsite's
 /// inner Ctor references. Returns `(post_formula, post_hash)` if
 /// the chain resolves: arg_term is a ctor whose name is in
-/// `pool.bridges_by_symbol`, and that bridge's targetContractCid
+/// `pool.bridges_by_symbol`, and that bridge CID resolves to a
+/// bridge whose targetContractCid
 /// names a contract memento with a `post` slot.
 pub fn locate_producer_post(
     arg_term: &Option<Json>,
     pool_mementos: &std::collections::BTreeMap<String, Json>,
-    bridges_by_symbol: &std::collections::BTreeMap<String, Json>,
+    bridges_by_symbol: &std::collections::BTreeMap<String, String>,
 ) -> Option<(Json, String)> {
     let arg = producer_lookup_term(arg_term.as_ref()?);
     if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
         return None;
     }
     let inner_name = arg.get("name").and_then(|v| v.as_str())?;
-    let producer_bridge = bridges_by_symbol.get(inner_name)?;
+    let producer_bridge_cid = bridges_by_symbol.get(inner_name)?;
+    let producer_bridge = pool_mementos.get(producer_bridge_cid)?;
     // Shape-agnostic: production mint emits v1.2-layered mementos (fields on
     // `header`); only v1.1-flat carries them on `evidence.body`. Reading the
     // flat path alone meant the producer post never resolved for harvested
@@ -391,13 +393,29 @@ mod tests {
         })
     }
 
+    fn insert_bridge(
+        pool_mementos: &mut BTreeMap<String, Json>,
+        bridges_by_symbol: &mut BTreeMap<String, String>,
+        source_symbol: &str,
+        target_cid: &str,
+    ) {
+        let bridge_cid = format!("blake3-512:{source_symbol}-bridge");
+        pool_mementos.insert(bridge_cid.clone(), bridge_to(target_cid));
+        bridges_by_symbol.insert(source_symbol.to_string(), bridge_cid);
+    }
+
     #[test]
     fn locate_producer_post_resolves_through_single_await_seam() {
         let producer_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let mut pool_mementos = BTreeMap::new();
         pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
-        bridges_by_symbol.insert("producer".to_string(), bridge_to(producer_cid));
+        insert_bridge(
+            &mut pool_mementos,
+            &mut bridges_by_symbol,
+            "producer",
+            producer_cid,
+        );
 
         let arg_term = Some(json!({
             "kind": "ctor",
@@ -419,7 +437,12 @@ mod tests {
         let mut pool_mementos = BTreeMap::new();
         pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
-        bridges_by_symbol.insert("producer".to_string(), bridge_to(producer_cid));
+        insert_bridge(
+            &mut pool_mementos,
+            &mut bridges_by_symbol,
+            "producer",
+            producer_cid,
+        );
 
         let arg_term = Some(json!({
             "kind": "ctor",
@@ -467,7 +490,12 @@ mod tests {
         let mut pool_mementos = BTreeMap::new();
         pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
-        bridges_by_symbol.insert("channel:recv:rx".to_string(), bridge_to(producer_cid));
+        insert_bridge(
+            &mut pool_mementos,
+            &mut bridges_by_symbol,
+            "channel:recv:rx",
+            producer_cid,
+        );
 
         for wrapper in ["method:unwrap", "method:expect"] {
             let arg_term = Some(json!({
@@ -499,7 +527,12 @@ mod tests {
         let mut pool_mementos = BTreeMap::new();
         pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
-        bridges_by_symbol.insert("producer".to_string(), bridge_to(producer_cid));
+        insert_bridge(
+            &mut pool_mementos,
+            &mut bridges_by_symbol,
+            "producer",
+            producer_cid,
+        );
 
         let arg_term = Some(json!({
             "kind": "ctor",

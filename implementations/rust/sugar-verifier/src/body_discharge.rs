@@ -193,7 +193,7 @@ impl<'a> CatalogResolver<'a> {
     /// is no bridge for that symbol, the target CID is not in the pool, or
     /// the target memento is not a contract.
     fn target_contract_body(&self, op_name: &str) -> Option<Json> {
-        let bridge = self.pool.bridges_by_symbol.get(op_name)?;
+        let bridge = self.pool.bridge_by_symbol(op_name)?;
         let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
             .and_then(|v| v.as_str())?;
         let env = self.pool.mementos.get(target_cid)?;
@@ -803,7 +803,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
                     line,
                     producer_symbol.to_string(),
                 );
-                match pool.bridges_by_callsite.get(&key) {
+                match pool.bridge_by_callsite_key(&key) {
                     Some(b) => {
                         gdbg!(
                             "cond2 callsite-scoped: producer bridge for {ctor_name} \
@@ -830,7 +830,7 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
             }
         }
     } else {
-        let Some(b) = pool.bridges_by_symbol.get(ctor_name) else {
+        let Some(b) = pool.bridge_by_symbol(ctor_name) else {
             gdbg!("REJECT cond2: no bridge in bridges_by_symbol for ctor_name={ctor_name} (have keys: {:?})",
                 pool.bridges_by_symbol.keys().collect::<Vec<_>>());
             return None;
@@ -1497,8 +1497,7 @@ mod callee_post_guard_fact_tests {
         });
         let mut pool = MementoPool::default();
         pool.mementos.insert(contract_cid.into(), contract_env);
-        pool.bridges_by_symbol
-            .insert(bridge_symbol.into(), bridge_env);
+        pool.insert_bridge_by_symbol(bridge_symbol, format!("{contract_cid}:bridge"), bridge_env);
         pool
     }
 
@@ -1547,8 +1546,11 @@ mod callee_post_guard_fact_tests {
         let mut pool = MementoPool::default();
         pool.mementos
             .insert(GENERIC_CONTRACT_CID.into(), contract_env);
-        pool.bridges_by_symbol
-            .insert(GENERIC_BRIDGE_SYMBOL.into(), bridge_env);
+        pool.insert_bridge_by_symbol(
+            GENERIC_BRIDGE_SYMBOL,
+            "blake3-512:generic-result-bridge",
+            bridge_env,
+        );
         pool
     }
 
@@ -1729,13 +1731,14 @@ mod callee_post_guard_fact_tests {
                 }
             }
         });
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_callsite(
             (
                 callsite_bundle.to_string(),
                 "src/core/types.rs".to_string(),
                 2137,
                 BRIDGE_SYMBOL.to_string(),
             ),
+            "blake3-512:callsite-producer-bridge",
             producer_bridge,
         );
 
@@ -1778,13 +1781,14 @@ mod callee_post_guard_fact_tests {
                 }
             }
         });
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_callsite(
             (
                 callsite_bundle.to_string(),
                 "src/core/bind.rs".to_string(),
                 549,
                 OPTION_BRIDGE_SYMBOL.to_string(),
             ),
+            "blake3-512:option-callsite-producer-bridge",
             producer_bridge,
         );
 
@@ -1860,8 +1864,9 @@ mod callee_post_guard_fact_tests {
                 }
             }),
         );
-        pool.bridges_by_symbol.insert(
-            "method:expect".into(),
+        pool.insert_bridge_by_symbol(
+            "method:expect",
+            "blake3-512:method-expect-bridge",
             json!({
                 "envelope": true,
                 "header": {
@@ -1966,8 +1971,7 @@ mod eq_both_calls_discharge_tests {
         });
         let mut pool = MementoPool::default();
         pool.mementos.insert(DOUBLE_CID.into(), contract_env);
-        pool.bridges_by_symbol
-            .insert(DOUBLE_SYMBOL.into(), bridge_env);
+        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, "blake3-512:double-bridge", bridge_env);
         pool
     }
 
@@ -2173,8 +2177,7 @@ mod eq_both_calls_discharge_tests {
         });
         let mut pool = MementoPool::default();
         pool.mementos.insert(opaque_cid.into(), contract_env);
-        pool.bridges_by_symbol
-            .insert(opaque_symbol.into(), bridge_env);
+        pool.insert_bridge_by_symbol(opaque_symbol, "blake3-512:opaque-bridge", bridge_env);
 
         let cs = CallSite {
             bridge_ir_name: opaque_symbol.into(),
@@ -2329,12 +2332,14 @@ mod nested_call_reduce_in_place_tests {
         });
         let mut pool = MementoPool::default();
         pool.mementos.insert(DOUBLE_CID.into(), double_contract);
-        pool.bridges_by_symbol
-            .insert(DOUBLE_SYMBOL.into(), double_bridge);
+        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, "blake3-512:double-bridge", double_bridge);
         pool.mementos
             .insert(PRE_BEARING_CID.into(), pre_bearing_contract);
-        pool.bridges_by_symbol
-            .insert(PRE_BEARING_SYMBOL.into(), pre_bearing_bridge);
+        pool.insert_bridge_by_symbol(
+            PRE_BEARING_SYMBOL,
+            "blake3-512:pre-bearing-bridge",
+            pre_bearing_bridge,
+        );
         pool
     }
 

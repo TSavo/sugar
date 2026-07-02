@@ -61,9 +61,12 @@ pub struct MementoPool {
     /// they exchange hashes. This index lets us find the memento
     /// for a given formula hash without scanning all mementos.
     pub formula_to_memento: BTreeMap<String, String>,
-    /// sourceSymbol (IR ctor name) -> bridge envelope JSON.
-    pub bridges_by_symbol: BTreeMap<String, Json>,
-    /// `(bundle_cid, file, line, sourceSymbol)` -> bridge envelope JSON.
+    /// sourceSymbol (IR ctor name) -> bridge memento CID.
+    ///
+    /// The bridge envelope itself lives exactly once in `mementos`; this index
+    /// is a pointer into that verified pool entry.
+    pub bridges_by_symbol: BTreeMap<String, String>,
+    /// `(bundle_cid, file, line, sourceSymbol)` -> bridge memento CID.
     ///
     /// Callsite-SCOPED bridge index, populated alongside `bridges_by_symbol`
     /// for every bridge whose body carries a `callsite` with both a file and a
@@ -84,7 +87,7 @@ pub struct MementoPool {
     /// wins per full key; a `(bundle,file,line,symbol)` collision would mean
     /// two same-symbol calls on one source line, which (same bundle => same
     /// target contract => same post) is a K-completeness edge, not a false-pass.
-    pub bridges_by_callsite: BTreeMap<(String, String, usize, String), Json>,
+    pub bridges_by_callsite: BTreeMap<(String, String, usize, String), String>,
     /// `(bundle_cid, file, line, callee)` -> panic-freedom annotation memento.
     ///
     /// Effect-site annotations are diagnostic proof mementos, not discharge
@@ -204,6 +207,53 @@ impl MementoPool {
         self.mementos
             .get(cid)
             .and_then(|env| sugar_proof_envelope::member_field(env, name))
+    }
+
+    /// Return the verified bridge envelope indexed for a source symbol.
+    pub fn bridge_by_symbol<'a>(&'a self, source_symbol: &str) -> Option<&'a Json> {
+        self.bridges_by_symbol
+            .get(source_symbol)
+            .and_then(|memento_cid| self.mementos.get(memento_cid))
+    }
+
+    /// Return the verified bridge envelope indexed for a callsite-scoped key.
+    pub fn bridge_by_callsite_key<'a>(
+        &'a self,
+        key: &(String, String, usize, String),
+    ) -> Option<&'a Json> {
+        self.bridges_by_callsite
+            .get(key)
+            .and_then(|memento_cid| self.mementos.get(memento_cid))
+    }
+
+    /// Insert a bridge envelope and index it by source symbol.
+    ///
+    /// Production loading validates member CIDs and signatures before calling
+    /// into the pool. This helper preserves the same storage shape for tests
+    /// and synthetic in-memory pools: the envelope is stored once in
+    /// `mementos`, and the bridge index stores only its CID.
+    pub fn insert_bridge_by_symbol(
+        &mut self,
+        source_symbol: impl Into<String>,
+        bridge_cid: impl Into<String>,
+        bridge_env: Json,
+    ) {
+        let bridge_cid = bridge_cid.into();
+        self.mementos.insert(bridge_cid.clone(), bridge_env);
+        self.bridges_by_symbol
+            .insert(source_symbol.into(), bridge_cid);
+    }
+
+    /// Insert a bridge envelope and index it by exact callsite key.
+    pub fn insert_bridge_by_callsite(
+        &mut self,
+        key: (String, String, usize, String),
+        bridge_cid: impl Into<String>,
+        bridge_env: Json,
+    ) {
+        let bridge_cid = bridge_cid.into();
+        self.mementos.insert(bridge_cid.clone(), bridge_env);
+        self.bridges_by_callsite.insert(key, bridge_cid);
     }
 
     /// Return the semantic contract body for a loaded contract memento.
@@ -374,15 +424,20 @@ impl MementoPool {
         // category error as `preHash`/`antecedentHash`. Proven implications
         // discharge via `verify_implication`/`can_implies`, which scan
         // implication mementos directly and don't need the consequent here.
-        for field in &["postHash", "invHash"] {
-            if let Some(hash) =
-                sugar_proof_envelope::member_field(&envelope, field).and_then(|v| v.as_str())
-            {
-                self.formula_to_memento
-                    .insert(hash.to_string(), memento_cid.clone());
-            }
+        let formula_hashes: Vec<String> = ["postHash", "invHash"]
+            .iter()
+            .filter_map(|field| {
+                sugar_proof_envelope::member_field(&envelope, field)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        let indexed_memento_cid = memento_cid.clone();
+        self.mementos.insert(memento_cid, envelope);
+        let memento_cid = indexed_memento_cid;
+        for hash in formula_hashes {
+            self.formula_to_memento.insert(hash, memento_cid.clone());
         }
-        self.mementos.insert(memento_cid.clone(), envelope);
 
         // Index by contract name for cross-kit resolution.
         // Gate on memento kind: only contract-shaped mementos carry a

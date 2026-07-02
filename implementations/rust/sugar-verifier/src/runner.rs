@@ -221,7 +221,7 @@ impl Runner {
             discover_named_artifact_cid(&self.cfg.project_root, "plugin-registry.json")
                 .unwrap_or_else(|| placeholder_cid("absent-plugin-registry"));
 
-        let mut stages = Vec::new();
+        let mut stages = Vec::with_capacity(4);
         let mut report = Report::default();
 
         let load_stage = StageCapture::start(
@@ -286,8 +286,9 @@ impl Runner {
         let n_invoc = AtomicUsize::new(0);
         let n_reflexive = AtomicUsize::new(0);
         let n_substantive = AtomicUsize::new(0);
-        let invs_sink: Mutex<Vec<SolverInvocation>> = Mutex::new(vec![]);
-        let minted_sink = Mutex::new(Vec::new());
+        let invs_sink: Mutex<Vec<SolverInvocation>> =
+            Mutex::new(Vec::with_capacity(callsites.len()));
+        let minted_sink = Mutex::new(Vec::with_capacity(callsites.len()));
 
         let fanout_input = sorted(
             callsites
@@ -368,7 +369,7 @@ impl Runner {
                 violations += 1;
             }
             report_stage::add_callsite_with_discharge(
-                &cs,
+                cs,
                 verdict,
                 &reason,
                 method,
@@ -605,14 +606,15 @@ impl Runner {
 
         // Per-solver telemetry sink. Mutex-guarded; rayon workers append
         // their per-callsite SolverInvocations here.
-        let invs_sink: Mutex<Vec<SolverInvocation>> = Mutex::new(vec![]);
+        let invs_sink: Mutex<Vec<SolverInvocation>> =
+            Mutex::new(Vec::with_capacity(callsites.len()));
 
         let cfg = &self.cfg;
         let plan = &self.plan;
         let registry = &self.registry;
         let compilers = &self.compilers;
 
-        let minted_sink = Mutex::new(Vec::new());
+        let minted_sink = Mutex::new(Vec::with_capacity(callsites.len()));
         let per_results: Vec<CallsiteResult> = callsites
             .par_iter()
             .map(|cs| {
@@ -663,7 +665,7 @@ impl Runner {
                 violations += 1;
             }
             report_stage::add_callsite_with_discharge(
-                &cs,
+                cs,
                 verdict,
                 &reason,
                 method,
@@ -2199,8 +2201,7 @@ mod consistency_owned_callsite_tests {
         let mut pool = MementoPool::default();
         pool.insert(assertion_cid.to_string(), assertion);
         pool.mementos.insert(vendor_cid.to_string(), vendor);
-        pool.bridges_by_symbol
-            .insert(source_symbol.to_string(), bridge);
+        pool.insert_bridge_by_symbol(source_symbol, "blake3-512:linked-post-bridge", bridge);
         let cs = CallSite {
             bridge_ir_name: source_symbol.to_string(),
             property_name: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
@@ -2277,8 +2278,11 @@ mod consistency_owned_callsite_tests {
         let mut pool = MementoPool::default();
         pool.mementos.insert(producer_cid.to_string(), producer);
         pool.mementos.insert(consumer_cid.to_string(), consumer);
-        pool.bridges_by_symbol
-            .insert(producer_symbol.to_string(), producer_bridge);
+        pool.insert_bridge_by_symbol(
+            producer_symbol,
+            "blake3-512:tier2-producer-bridge",
+            producer_bridge,
+        );
         pool.bundle_members
             .entry(consumer_bundle_cid.to_string())
             .or_default()

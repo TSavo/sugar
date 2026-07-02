@@ -289,9 +289,43 @@ fn load_catalog_bytes(
                 continue;
             }
         }
-        // Index for handshake. The memento IS the verification;
-        // inserting it into the pool IS caching the verification result.
-        pool.insert(cid.clone(), env.clone());
+        // Bridge indexing metadata. Shape-aware helpers (member_kind /
+        // member_field) cover both v1.1 (evidence.kind /
+        // evidence.body.sourceSymbol) and v1.2 (header.kind /
+        // header.sourceSymbol) without branching at the call site. The indexes
+        // themselves store only the bridge memento CID; the verified envelope
+        // lives once in `pool.mementos`.
+        let bridge_index = if sugar_proof_envelope::member_kind(&env) == Some("bridge") {
+            sugar_proof_envelope::member_field(&env, "sourceSymbol")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|sym| {
+                    let callsite_key = sugar_proof_envelope::member_body(&env).and_then(|body| {
+                        let cs = body.get("callsite");
+                        let file = cs
+                            .and_then(|v| v.get("file"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty());
+                        let line = cs
+                            .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as usize);
+                        match (file, line) {
+                            (Some(file), Some(line)) => Some((
+                                derived_full.clone(),
+                                file.to_string(),
+                                line,
+                                sym.to_string(),
+                            )),
+                            _ => None,
+                        }
+                    });
+                    (sym.to_string(), callsite_key)
+                })
+        } else {
+            None
+        };
+
         // Track bundle membership so resolve_target can enforce
         // BridgeDeclaration.ConsequentBundlePinned. The bundle's CID is
         // the .proof file's content hash (derived_full above). A given
@@ -303,52 +337,31 @@ fn load_catalog_bytes(
             .insert(cid.clone());
         index_effect_site_annotation(&source_label, &derived_full, &cid, &env, pool);
 
-        // Bridge indexing. Shape-aware helpers (member_kind / member_field)
-        // cover both v1.1 (evidence.kind / evidence.body.sourceSymbol) and v1.2
-        // (header.kind / header.sourceSymbol) without branching at the call site.
-        if sugar_proof_envelope::member_kind(&env) == Some("bridge") {
-            if let Some(sym) = sugar_proof_envelope::member_field(&env, "sourceSymbol")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                pool.bridges_by_symbol.insert(sym.to_string(), env.clone());
-                // Record the bundle this bridge was loaded from so the
-                // self-pinned (no targetProofCid) case can be enforced as
-                // same-bundle co-membership. `derived_full` is this
-                // `.proof`'s content CID (the bundle CID).
-                pool.bridge_self_bundle_by_symbol
-                    .insert(sym.to_string(), derived_full.clone());
-                // Callsite-scoped index. A bridge whose body carries a
-                // `callsite` with file + line is the producer guarantee for
-                // a SPECIFIC call (not just the symbol). Keying it by
-                // `(bundle, file, line, symbol)` lets a panic obligation
-                // whose arg is itself a call select the producer post that
-                // governs THAT call, rather than whichever same-symbol
-                // bridge won the per-symbol slot. Bundle scoping is required
-                // for soundness: relative paths (`src/lib.rs`) collide
-                // across crates. First-writer wins per full key.
-                if let Some(body) = sugar_proof_envelope::member_body(&env) {
-                    let cs = body.get("callsite");
-                    let file = cs
-                        .and_then(|v| v.get("file"))
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty());
-                    let line = cs
-                        .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
-                        .and_then(|v| v.as_u64())
-                        .map(|n| n as usize);
-                    if let (Some(file), Some(line)) = (file, line) {
-                        let key = (
-                            derived_full.clone(),
-                            file.to_string(),
-                            line,
-                            sym.to_string(),
-                        );
-                        pool.bridges_by_callsite
-                            .entry(key)
-                            .or_insert_with(|| env.clone());
-                    }
-                }
+        // Index for handshake. The memento IS the verification;
+        // inserting it into the pool IS caching the verification result.
+        pool.insert(cid.clone(), env);
+
+        if let Some((sym, callsite_key)) = bridge_index {
+            pool.bridges_by_symbol.insert(sym.clone(), cid.clone());
+            // Record the bundle this bridge was loaded from so the
+            // self-pinned (no targetProofCid) case can be enforced as
+            // same-bundle co-membership. `derived_full` is this
+            // `.proof`'s content CID (the bundle CID).
+            pool.bridge_self_bundle_by_symbol
+                .insert(sym, derived_full.clone());
+            // Callsite-scoped index. A bridge whose body carries a
+            // `callsite` with file + line is the producer guarantee for
+            // a SPECIFIC call (not just the symbol). Keying it by
+            // `(bundle, file, line, symbol)` lets a panic obligation
+            // whose arg is itself a call select the producer post that
+            // governs THAT call, rather than whichever same-symbol
+            // bridge won the per-symbol slot. Bundle scoping is required
+            // for soundness: relative paths (`src/lib.rs`) collide
+            // across crates. First-writer wins per full key.
+            if let Some(key) = callsite_key {
+                pool.bridges_by_callsite
+                    .entry(key)
+                    .or_insert_with(|| cid.clone());
             }
         }
     }

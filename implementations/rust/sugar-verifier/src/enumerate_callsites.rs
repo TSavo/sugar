@@ -21,7 +21,7 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         bridges = pool.bridges_by_symbol.len(),
         "enumerate_callsites: scanning contracts for callsites"
     );
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(pool.bridges_by_symbol.len());
     for (cid, env) in &pool.mementos {
         // Shape-agnostic (matches resolve_target): v1.2-layered contracts
         // carry their kind on `header.kind` and pre/post/inv on `header`;
@@ -200,7 +200,7 @@ fn callsite_from_panic_locus(
         .map(str::to_string);
 
     let scoped_bridge = match (callsite_bundle_cid, file.as_deref(), line) {
-        (Some(bundle), Some(file), Some(line)) => pool.bridges_by_callsite.get(&(
+        (Some(bundle), Some(file), Some(line)) => pool.bridge_by_callsite_key(&(
             bundle.to_string(),
             file.to_string(),
             line,
@@ -759,7 +759,7 @@ fn callsite_scoped_bridge_for_locus<'a>(
         .get("line")
         .or_else(|| locus.get("start_line"))
         .and_then(|v| v.as_u64())? as usize;
-    pool.bridges_by_callsite.get(&(
+    pool.bridge_by_callsite_key(&(
         bundle.to_string(),
         file.to_string(),
         line,
@@ -776,10 +776,13 @@ fn callsite_scoped_bridge_for_arg_terms<'a>(
     let bundle = callsite_bundle_cid?;
     let callee = callee;
     let mut matched = None;
-    for ((bridge_bundle, _file, _line, bridge_callee), bridge) in &pool.bridges_by_callsite {
+    for ((bridge_bundle, _file, _line, bridge_callee), bridge_cid) in &pool.bridges_by_callsite {
         if bridge_bundle != bundle || bridge_callee != callee {
             continue;
         }
+        let Some(bridge) = pool.mementos.get(bridge_cid) else {
+            continue;
+        };
         if !bridge_formal_actuals_match_arg_terms(pool, bridge, arg_terms) {
             continue;
         }
@@ -905,7 +908,7 @@ fn walk_term(
     let bridge_env = if scoped_panic_locus.is_some() {
         scoped_bridge
     } else {
-        scoped_arg_bridge.or_else(|| pool.bridges_by_symbol.get(&bridge_name))
+        scoped_arg_bridge.or_else(|| pool.bridge_by_symbol(&bridge_name))
     };
     if let Some(benv) = bridge_env {
         // Shape-agnostic: v1.2-layered bridges carry the fields on
@@ -1301,8 +1304,7 @@ mod guard_propagation_tests {
                 "targetLayer": "rust-tests",
             }
         });
-        pool.bridges_by_symbol
-            .insert("panic_call".to_string(), bridge);
+        pool.insert_bridge_by_symbol("panic_call", "blake3-512:panic-call-bridge", bridge);
         let contract = json!({
             "envelope": true,
             "header": {
@@ -1358,21 +1360,23 @@ mod guard_propagation_tests {
         let mut pool = MementoPool::default();
         let bundle = "blake3-512:caller-bundle".to_string();
         let caller = "blake3-512:caller".to_string();
-        pool.bridges_by_symbol.insert(
+        pool.insert_bridge_by_symbol(
             "panic_call".to_string(),
+            "blake3-512:wrong-symbol-bridge",
             bridge(
                 "blake3-512:wrong-symbol-target",
                 Some("src/lib.rs"),
                 Some(99),
             ),
         );
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_callsite(
             (
                 bundle.clone(),
                 "src/lib.rs".to_string(),
                 10,
                 "panic_call".to_string(),
             ),
+            "blake3-512:right-callsite-bridge",
             bridge(
                 "blake3-512:right-callsite-target",
                 Some("src/lib.rs"),
@@ -1474,24 +1478,29 @@ mod guard_propagation_tests {
             }
         });
         pool.mementos.insert(target.clone(), target_contract);
-        pool.bridges_by_symbol
-            .insert("method:to_digit".to_string(), internal_bridge.clone());
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_symbol(
+            "method:to_digit",
+            "blake3-512:internal-to-digit-bridge",
+            internal_bridge.clone(),
+        );
+        pool.insert_bridge_by_callsite(
             (
                 bundle.clone(),
                 "src/core_char_methods.rs".to_string(),
                 344,
                 "method:to_digit".to_string(),
             ),
+            "blake3-512:internal-to-digit-bridge",
             internal_bridge,
         );
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_callsite(
             (
                 bundle.clone(),
                 "src/lib.rs".to_string(),
                 3,
                 "method:to_digit".to_string(),
             ),
+            "blake3-512:caller-to-digit-bridge",
             caller_bridge,
         );
         pool.bundle_members
@@ -1539,8 +1548,9 @@ mod guard_propagation_tests {
         let mut pool = MementoPool::default();
         let bundle = "blake3-512:caller-bundle".to_string();
         let caller = "blake3-512:caller".to_string();
-        pool.bridges_by_symbol.insert(
+        pool.insert_bridge_by_symbol(
             bridge_method.to_string(),
+            "blake3-512:leaf-wrong-symbol-bridge",
             bridge_for_symbol(
                 bridge_method,
                 "blake3-512:wrong-symbol-target",
@@ -1548,13 +1558,14 @@ mod guard_propagation_tests {
                 Some(99),
             ),
         );
-        pool.bridges_by_callsite.insert(
+        pool.insert_bridge_by_callsite(
             (
                 bundle.clone(),
                 "src/lib.rs".to_string(),
                 10,
                 bridge_method.to_string(),
             ),
+            "blake3-512:leaf-right-callsite-bridge",
             bridge_for_symbol(
                 bridge_method,
                 "blake3-512:right-callsite-target",

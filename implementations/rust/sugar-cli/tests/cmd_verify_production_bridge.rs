@@ -340,7 +340,7 @@ fn mint_auto_writes_body_discharge_bridge() {
 
     // mint auto-indexed the bridge by sourceSymbol (the same index
     // `enumerate_callsites` consults). The TOOL wrote this, not the test.
-    let bridge = pool.bridges_by_symbol.get("double").unwrap_or_else(|| {
+    let bridge = pool.bridge_by_symbol("double").unwrap_or_else(|| {
         panic!(
             "mint must auto-write + index a bridge with sourceSymbol=double; indexed symbols: {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
@@ -400,7 +400,7 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
     let (project, _proof) = mint_project_from_ir("zeroarg-bridge", zero_arg_ir_document(42));
     let pool = pool_of_project(&project);
 
-    let bridge = pool.bridges_by_symbol.get("answer").unwrap_or_else(|| {
+    let bridge = pool.bridge_by_symbol("answer").unwrap_or_else(|| {
         panic!(
             "mint must auto-write + index a bridge with sourceSymbol=answer; indexed symbols: {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
