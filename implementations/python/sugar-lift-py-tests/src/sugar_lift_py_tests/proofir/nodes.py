@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from dataclasses import InitVar, dataclass, field
-from typing import Any, ClassVar, Iterable, Literal, Mapping
+from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
@@ -115,6 +115,7 @@ class VerdictWitnessCase:
     expected: Literal["sat", "unsat", "construction-refusal"]
     formulas: tuple[Formula, ...] = ()
     declarations: Mapping[str, Sort] = field(default_factory=dict)
+    construct: Callable[[], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,12 @@ class ProofIRNode(ABC):
 
     def cid(self) -> str:
         return blake3_512_of(self.to_proof_ir().encode("utf-8"))
+
+    def to_semantic_declaration(self) -> dict[str, Any]:
+        return self.to_declaration()
+
+    def semantic_cid(self) -> str:
+        return _cid_for_declaration(self.to_semantic_declaration())
 
     @classmethod
     @abstractmethod
@@ -195,16 +202,30 @@ class EqualityFact(ProofIRNode):
             source_warrants=[self.provenance().warrant_memento()],
         ).to_rpc()
 
+    def to_semantic_declaration(self) -> dict[str, Any]:
+        return BodyUniverseDto(
+            name=self.euf_key,
+            out_binding="out",
+            inv=_formula_to_rpc(self.denotation()),
+        ).to_rpc()
+
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:
         call = ctor("call:A", [])
         key = canonical_euf_callsite_name(call)
-        truthful = cls(
+        stated_truth = cls(
             euf_key=key,
             call_term=call,
             rhs_term=num(0),
-            provenance=_witness_provenance(cls.node_class, warrants=("Stated", "Derived")),
+            provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
         )
+        derived_truth = cls(
+            euf_key=key,
+            call_term=call,
+            rhs_term=num(0),
+            provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+        )
+        truthful = merge_equality_facts(stated_truth, derived_truth)
         stated_lie = cls(
             euf_key=key,
             call_term=call,
@@ -548,12 +569,21 @@ class RefusalRecord(ProofIRNode):
                 expected="sat",
                 formulas=(),
                 declarations={},
+                construct=lambda: cls.from_incomplete(
+                    _runtime_effect_incomplete("opaque runtime effect"),
+                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                ),
             ),
             lying=VerdictWitnessCase(
                 name="refusal-record-fact-and-refusal-refuses",
                 expected="construction-refusal",
                 formulas=(),
                 declarations={},
+                construct=lambda: cls.from_incomplete(
+                    _runtime_effect_incomplete("opaque runtime effect"),
+                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
+                    formula=eq(make_var("call"), num(0)),
+                ),
             ),
         )
 
@@ -579,6 +609,28 @@ def registered_verdict_witnesses() -> tuple[tuple[str, bool, bool], ...]:
     return tuple(registrations)
 
 
+def merge_equality_facts(left: EqualityFact, right: EqualityFact) -> EqualityFact:
+    if left.semantic_cid() != right.semantic_cid():
+        _proofir_gap(
+            owner="EqualityFact.merge",
+            observed=(
+                f"left semantic_cid={left.semantic_cid()} "
+                f"right semantic_cid={right.semantic_cid()}"
+            ),
+            requested="equal semantic_cid for EqualityFact merge",
+            fix="keep disagreeing stated/derived facts as separate formulas",
+        )
+    if left.provenance() == right.provenance():
+        return left
+    merged_provenance = _merge_provenance(left.provenance(), right.provenance())
+    return EqualityFact(
+        euf_key=left.euf_key,
+        call_term=left.call_term,
+        rhs_term=left.rhs_term,
+        provenance=merged_provenance,
+    )
+
+
 def canonical_euf_callsite_name(call_term: Term, *, suffix: str = "::assertion") -> str:
     if not isinstance(call_term, _Ctor) or not call_term.name.startswith("call:"):
         _proofir_gap(
@@ -595,6 +647,40 @@ def _normalize_warrants(warrant: Warrant | Iterable[Warrant]) -> tuple[Warrant, 
     if isinstance(warrant, (Stated, Derived)):
         return (warrant,)
     return tuple(warrant)
+
+
+def _cid_for_declaration(declaration: dict[str, Any]) -> str:
+    wire = encode_jcs(_json_like_to_value(declaration))
+    return blake3_512_of(wire.encode("utf-8"))
+
+
+def _merge_provenance(left: Provenance, right: Provenance) -> Provenance:
+    if left.node_class != right.node_class:
+        _proofir_gap(
+            owner="Provenance.merge",
+            observed=f"{left.node_class}!={right.node_class}",
+            requested="matching ProofIR node classes",
+            fix="merge warrants only between nodes of the same vocabulary class",
+        )
+    return Provenance(
+        node_class=left.node_class,
+        construction_site=left.construction_site,
+        warrant=_union_warrants(left.warrants, right.warrants),
+    )
+
+
+def _union_warrants(
+    left: tuple[Warrant, ...], right: tuple[Warrant, ...]
+) -> tuple[Warrant, ...]:
+    merged: list[Warrant] = []
+    seen: set[str] = set()
+    for warrant in (*left, *right):
+        key = encode_jcs(_json_like_to_value(warrant.to_rpc()))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(warrant)
+    return tuple(merged)
 
 
 def _require_provenance(provenance: Provenance, *, owner: str) -> None:
@@ -664,6 +750,12 @@ def _witness_provenance(node_class: str, *, warrants: tuple[str, ...]) -> Proven
         construction_site=site,
         warrant=tuple(resolved),
     )
+
+
+def _runtime_effect_incomplete(reason: str) -> Incomplete:
+    from sugar_lift_py_tests.effect import RuntimeEffect
+
+    return Incomplete(RuntimeEffect(reason))
 
 
 def _canonical_term_sig(term: Term) -> str:

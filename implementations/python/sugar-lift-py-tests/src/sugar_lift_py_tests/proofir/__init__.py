@@ -8,11 +8,13 @@ from .nodes import (
     FunctionContractBuilder,
     ProofIRNode,
     Provenance,
+    REGISTERED_PROOFIR_NODE_CLASSES,
     RefusalRecord,
     Stated,
     VerdictWitnessCase,
     VerdictWitnessPair,
     canonical_euf_callsite_name,
+    merge_equality_facts,
     registered_verdict_witnesses,
 )
 
@@ -24,10 +26,12 @@ __all__ = [
     "FunctionContractBuilder",
     "ProofIRNode",
     "Provenance",
+    "REGISTERED_PROOFIR_NODE_CLASSES",
     "RefusalRecord",
     "Stated",
     "VerdictWitnessCase",
     "VerdictWitnessPair",
     "canonical_euf_callsite_name",
+    "merge_equality_facts",
     "registered_verdict_witnesses",
 ]

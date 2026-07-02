@@ -39,9 +39,11 @@ from sugar_lift_py_tests.proofir import (
     EqualityFact,
     FunctionContract,
     Provenance,
+    REGISTERED_PROOFIR_NODE_CLASSES,
     RefusalRecord,
     Stated,
     canonical_euf_callsite_name,
+    merge_equality_facts,
 )
 
 
@@ -151,7 +153,24 @@ def _smt_name(name: str) -> str:
 
 
 def _run_witness_case(case) -> str:
+    if case.expected == "construction-refusal":
+        assert case.construct is not None
+        with pytest.raises(FactoryGap):
+            case.construct()
+        return "construction-refusal"
+    if case.construct is not None:
+        constructed = case.construct()
+        if isinstance(constructed, RefusalRecord):
+            assert constructed.denotation() is None
     return _z3_status(_SolverCase(case.formulas, dict(case.declarations)))
+
+
+@pytest.mark.parametrize("node_class", REGISTERED_PROOFIR_NODE_CLASSES)
+def test_registered_proofir_witnesses_are_solver_checked(node_class) -> None:
+    pair = node_class.verdict_witnesses()
+
+    assert _run_witness_case(pair.truthful) == pair.truthful.expected
+    assert _run_witness_case(pair.lying) == pair.lying.expected
 
 
 def test_instrument_c_registers_the_three_spine_witness_classes() -> None:
@@ -171,6 +190,59 @@ def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver() -> None:
 
     assert _run_witness_case(pair.truthful) == "sat"
     assert _run_witness_case(pair.lying) == "unsat"
+
+
+def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() -> None:
+    call_term = euf_call_term("h", [num(5)])
+    key = canonical_euf_callsite_name(call_term)
+    stated = EqualityFact(
+        euf_key=key,
+        call_term=call_term,
+        rhs_term=num(6),
+        provenance=_stated_provenance("EqualityFact"),
+    )
+    derived = EqualityFact(
+        euf_key=key,
+        call_term=call_term,
+        rhs_term=num(6),
+        provenance=_derived_provenance("EqualityFact"),
+    )
+
+    assert stated.cid() != derived.cid()
+    assert stated.semantic_cid() == derived.semantic_cid()
+    merged = merge_equality_facts(stated, derived)
+
+    assert merged.semantic_cid() == stated.semantic_cid()
+    assert len(merged.provenance().warrants) == 2
+    assert merge_equality_facts(stated, stated) == stated
+    assert merge_equality_facts(merged, stated) == merged
+
+
+def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
+    call_term = euf_call_term("h", [])
+    key = canonical_euf_callsite_name(call_term)
+    stated_lie = EqualityFact(
+        euf_key=key,
+        call_term=call_term,
+        rhs_term=num(7),
+        provenance=_stated_provenance("EqualityFact"),
+    )
+    derived_truth = EqualityFact(
+        euf_key=key,
+        call_term=call_term,
+        rhs_term=num(6),
+        provenance=_derived_provenance("EqualityFact"),
+    )
+
+    assert stated_lie.semantic_cid() != derived_truth.semantic_cid()
+    with pytest.raises(FactoryGap, match="semantic_cid"):
+        merge_equality_facts(stated_lie, derived_truth)
+    assert _z3_status(
+        _SolverCase(
+            (stated_lie.denotation(), derived_truth.denotation()),
+            {"call:h": Int()},
+        )
+    ) == "unsat"
 
 
 def test_equality_fact_constructor_invariants_are_loud() -> None:
