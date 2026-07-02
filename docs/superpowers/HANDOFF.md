@@ -119,6 +119,9 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
 - Merge cycle per PR: read+soundness-read → admin-merge → verify mergedAt → delete branch → ff main → remove worktree → prune → create next worktree (verify HEAD) → dispatch full inline brief.
 - Every discovered red/debt → gh issue at decision time, before moving on. Never raise a ceiling / soften a refusal / #[ignore] to green.
 
+## DECISION OF RECORD (T Savo, 2026-07-02, verbal): ProofIR is the semantic carrier
+Sat/unsat knowledge belongs with ProofIR, not sugar. Sugar = syntax→ProofIR construction only. Every emission = `new` of a typed ProofIR node class; constructor = the only door; ill-formed FOL unrepresentable (parse-don't-validate on the emission side). Each ProofIR class owns its FOL denotation + constructor invariants + its OWN sat/unsat witness pair (solver-anchored, once per class not per sugar). Sugar testimony becomes purely structural (construction provenance). Graph fully attributed — orphan formulas inexpressible (subsumes #3220). Anchors: grammar (shapes), provenance (wiring), solver (vocabulary), corpus (coverage). Sibling campaign (later): sugar shape/witness trait (mine()/near_miss(), generated from declared shapes). Agent `proofir-vocab-plan` (Opus) is writing the campaign plan + slice issues; collect its deliverable, route plan through T review before dispatching slices.
+
 ## HELD FOR T (do not act autonomously)
 - KB dangling:92 — PAUSED by T; leave until he has focus.
 - #3017 Phase-4 seam: DECIDED Option A (one representation); seam-plan agent executing. No open gate now.
