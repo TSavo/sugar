@@ -265,6 +265,14 @@ def _starred_arg(value: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _starred(value: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:starred",
+        "args": [value],
+    }
+
+
 def _double_starred_kwarg(value: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -402,6 +410,10 @@ def _assert_stmt(
 
 def _with_stmt(body: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:with", "args": [body]}
+
+
+def _delete_stmt(*targets: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:delete", "args": list(targets)}
 
 
 def _import_stmt(*names: str) -> dict[str, object]:
@@ -1510,10 +1522,13 @@ def test_assert_with_complex_condition_lifts_condition_tree() -> None:
 
 
 def test_assert_floor_discriminates_other_unhandled_statement_kinds() -> None:
-    result = lift_source("def f(x):\n    del x\n", "delete.py")
+    result = lift_source(
+        "def f(x):\n    match x:\n        case _:\n            return 1\n",
+        "match.py",
+    )
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled statement kind: Delete"
+        "unhandled statement kind: Match"
     ]
 
 
@@ -3748,6 +3763,69 @@ def test_with_as_non_name_target_is_named_refusal() -> None:
     ]
 
 
+def test_delete_name_lifts_with_panics_effect() -> None:
+    result = lift_source("def f(x):\n    del x\n    return 1\n", "delete_name.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _delete_stmt(_var("x")),
+        _return(_int_const(1)),
+    )
+    assert contract["effects"] == [{"kind": "panics"}]
+
+
+def test_delete_attribute_and_subscript_targets_route_through_target_terms() -> None:
+    source = "def f(obj, xs, key):\n    del obj.name, xs[key]\n    return 0\n"
+
+    result = lift_source(source, "delete_targets.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _delete_stmt(_attr(_var("obj"), "name"), _subscript(_var("xs"), _var("key"))),
+        _return(_int_const(0)),
+    )
+    assert {"kind": "panics"} in contract["effects"]
+
+
+def test_delete_target_refusal_propagates_and_plain_function_gets_no_delete_panic() -> None:
+    refused = lift_source(
+        "def f(xs, key):\n    del xs[(await key)]\n",
+        "delete_target_refusal.py",
+    )
+    plain = lift_source("def g(x):\n    return x\n", "no_delete.py")
+
+    plain_contract = _contract(plain.ir, ".g")
+    assert refused.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "delete_target_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+    assert plain.refusals == []
+    assert {"kind": "panics"} not in plain_contract["effects"]
+
+
+def test_delete_roundtrip_is_structurally_stable() -> None:
+    term = _seq(
+        _delete_stmt(_var("x"), _attr(_var("obj"), "name")),
+        _return(_int_const(1)),
+    )
+
+    compiled = compile_body_term(term, formals=["x", "obj"])
+    relifted = lift_source(compiled, "roundtrip_delete.py")
+
+    contract = _contract(relifted.ir, ".f")
+    body = _function_body(relifted)
+    assert relifted.refusals == []
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
+    assert {"kind": "panics"} in contract["effects"]
+
+
 def test_b1_decorated_functions_remain_deferred() -> None:
     source = (
         "def dispatcher(a):\n"
@@ -3786,6 +3864,61 @@ def test_starred_call_arguments_lift_as_loudly_unresolved_shape() -> None:
     assert _function_body(result) == _return(term)
     assert {"kind": "unresolved_call", "name": "make"} in contract["effects"]
     assert {"kind": "unresolved_call", "name": "(starred)"} in contract["effects"]
+
+
+def test_starred_expression_lifts_inside_list_without_call_starred_arg() -> None:
+    result = lift_source("def f(a):\n    return [*a, 1, 2]\n", "starred_expr.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _list(_starred(_var("a")), _int_const(1), _int_const(2))
+    )
+
+
+def test_starred_call_argument_and_expression_position_keep_distinct_ctors() -> None:
+    source = (
+        "def f(a):\n"
+        "    value = make(*a)\n"
+        "    return [*a]\n"
+    )
+
+    result = lift_source(source, "starred_distinct.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("value"), _call("make", _starred_arg(_var("a")))),
+        _return(_list(_starred(_var("a")))),
+    )
+    assert {"kind": "unresolved_call", "name": "(starred)"} in contract["effects"]
+
+
+def test_starred_expression_inner_refusal_propagates_without_shape() -> None:
+    result = lift_source(
+        "def f(xs):\n    return [*(await xs)]\n",
+        "starred_expr_inner_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "starred_expr_inner_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+
+
+def test_starred_expression_roundtrip_preserves_return_tuple_and_nested_unpack() -> None:
+    term = _return(_tuple(_starred(_var("x")), _list(_starred(_var("y")))))
+
+    compiled = compile_body_term(term, formals=["x", "y"])
+    relifted = lift_source(compiled, "roundtrip_starred_expr.py")
+
+    body = _function_body(relifted)
+    assert relifted.refusals == []
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_plain_call_does_not_get_starred_unresolved_effect() -> None:
@@ -4478,15 +4611,18 @@ def test_dotted_local_import_binds_head_name_only() -> None:
     )
 
 
-def test_import_floor_discriminates_delete_statement() -> None:
-    result = lift_source("def f(x):\n    del x\n", "import_delete_refusal.py")
+def test_import_floor_discriminates_other_unhandled_statement_kinds() -> None:
+    result = lift_source(
+        "def f(x):\n    match x:\n        case _:\n            return 1\n",
+        "import_match_refusal.py",
+    )
 
     assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "import_delete_refusal.f",
+            "function": "import_match_refusal.f",
             "line": 2,
-            "reason": "unhandled statement kind: Delete",
+            "reason": "unhandled statement kind: Match",
         }
     ]
 
@@ -4586,7 +4722,9 @@ def test_nested_function_body_refusal_is_reported_without_swallowing_outer() -> 
     source = (
         "def outer():\n"
         "    def inner(x):\n"
-        "        del x\n"
+        "        match x:\n"
+        "            case _:\n"
+        "                return 1\n"
         "    return inner\n"
     )
 
@@ -4597,7 +4735,7 @@ def test_nested_function_body_refusal_is_reported_without_swallowing_outer() -> 
             "kind": "unhandled-syntax",
             "function": "nested_refusal.outer.<locals>.inner",
             "line": 3,
-            "reason": "unhandled statement kind: Delete",
+            "reason": "unhandled statement kind: Match",
         }
     ]
     outer = _contract(result.ir, ".outer")

@@ -273,6 +273,8 @@ def _stmt(term: Json) -> ast.stmt:
             test=_expr(args[0]),
             msg=None if _is_none_const(args[1]) else _expr(args[1]),
         )
+    if name == "python:delete":
+        return ast.Delete(targets=[_target(arg) for arg in args])
     return ast.Expr(value=_expr(term))
 
 
@@ -348,6 +350,8 @@ def _expr(term: Json) -> ast.expr:
         return ast.List(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name == "python:set":
         return ast.Set(elts=[_expr(arg) for arg in args])
+    if name == "python:starred":
+        return ast.Starred(value=_expr(args[0]), ctx=ast.Load())
     if name == "python:listcomp":
         return ast.ListComp(
             elt=_expr(args[0]),

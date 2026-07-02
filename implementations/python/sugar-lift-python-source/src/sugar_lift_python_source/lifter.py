@@ -845,6 +845,10 @@ class _Emitter:
                 )
             )
             return ctor("python:assert", condition, message)
+        if isinstance(node, ast.Delete):
+            targets = [self.target(target) for target in node.targets]
+            self.effects.add_panics()
+            return ctor("python:delete", *targets)
         if isinstance(node, ast.Raise):
             self.effects.add_panics()
             value = none_const() if node.exc is None else self.expr(node.exc)
@@ -1223,6 +1227,8 @@ class _Emitter:
             return ctor("python:list", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.Set):
             return ctor("python:set", *[self.expr(element) for element in node.elts])
+        if isinstance(node, ast.Starred):
+            return ctor("python:starred", self.expr(node.value))
         if isinstance(node, ast.Lambda):
             return self.lambda_expr(node)
         if isinstance(node, ast.ListComp):
