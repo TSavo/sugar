@@ -224,6 +224,52 @@ impl MementoPool {
         self.mementos.get(cid)
     }
 
+    /// Iterate verified members of one kind in pool CID order.
+    pub fn members_by_kind(
+        &self,
+        kind: MemberKind,
+    ) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.mementos
+            .iter()
+            .filter(move |(_, member)| member.kind() == kind)
+    }
+
+    pub fn member_count_by_kind(&self, kind: MemberKind) -> usize {
+        self.members_by_kind(kind).count()
+    }
+
+    pub fn has_member_kind(&self, kind: MemberKind) -> bool {
+        self.members_by_kind(kind).next().is_some()
+    }
+
+    pub fn contract_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::Contract)
+    }
+
+    pub fn bridge_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::Bridge)
+    }
+
+    pub fn implication_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::Implication)
+    }
+
+    pub fn witness_memento_members(
+        &self,
+    ) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::WitnessMemento)
+    }
+
+    pub fn source_memento_members(
+        &self,
+    ) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::SourceMemento)
+    }
+
+    pub fn plan_memento_members(&self) -> impl Iterator<Item = (&MementoCid, &StoredMember)> + '_ {
+        self.members_by_kind(MemberKind::PlanMemento)
+    }
+
     /// Resolve a contract member's semantic body without exposing the legacy
     /// compatibility accessor name to migrated consumers.
     pub fn contract_body_for_member(&self, member: &StoredMember) -> Option<Json> {

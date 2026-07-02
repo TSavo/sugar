@@ -1586,11 +1586,8 @@ fn source_report_from_proof_pool(
 ) -> LiftSourceReport {
     let mut contracts = Vec::new();
     let mut contract_names_by_cid = BTreeMap::new();
-    for (cid, envelope) in &pool.mementos {
-        if !pool.member_is_kind(cid, MemberKind::Contract) {
-            continue;
-        }
-        let mut contract = proof_contract_value(pool, cid, envelope);
+    for (cid, member) in pool.contract_members() {
+        let mut contract = proof_contract_value(pool, cid, member);
         if let Some(name) = contract_value_name(&contract) {
             contract_names_by_cid.insert(cid.clone(), name.to_string());
         }
@@ -1606,14 +1603,8 @@ fn source_report_from_proof_pool(
     // surfaced as contracts so they appear in the report's contracts list.
     // Bridge envelopes carry `sourceSymbol` in the header, not `name`; the
     // report convention is "dig:<sourceSymbol>" per the consumer IR naming.
-    for (cid, _envelope) in &pool.mementos {
-        if !pool.member_is_kind(cid, MemberKind::Bridge) {
-            continue;
-        }
-        let source_symbol = match pool
-            .member_field(cid, "sourceSymbol")
-            .and_then(|v| v.as_str())
-        {
+    for (cid, member) in pool.bridge_members() {
+        let source_symbol = match member.field("sourceSymbol").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s,
             _ => continue,
         };
@@ -1634,11 +1625,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut source_mementos = Vec::new();
-    for (_, envelope) in &pool.mementos {
-        if envelope.kind() != MemberKind::SourceMemento {
-            continue;
-        }
-        let Some(body) = envelope.body() else {
+    for (_, member) in pool.source_memento_members() {
+        let Some(body) = member.body() else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !proof_source_memento_matches_filter(body, filter))
@@ -1649,11 +1637,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut factory_walk = Vec::new();
-    for (_, envelope) in &pool.mementos {
-        if envelope.kind() != MemberKind::FactoryWalkMemento {
-            continue;
-        }
-        let Some(body) = envelope.body() else {
+    for (_, member) in pool.members_by_kind(MemberKind::FactoryWalkMemento) {
+        let Some(body) = member.body() else {
             continue;
         };
         if contract_filter.is_some_and(|filter| !factory_audit_matches_filter(body, filter)) {
@@ -1663,11 +1648,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut assertion_surface_audits = Vec::new();
-    for (_, envelope) in &pool.mementos {
-        if envelope.kind() != MemberKind::AssertionSurfaceMemento {
-            continue;
-        }
-        let Some(body) = envelope.body() else {
+    for (_, member) in pool.members_by_kind(MemberKind::AssertionSurfaceMemento) {
+        let Some(body) = member.body() else {
             continue;
         };
         if contract_filter
@@ -1679,11 +1661,8 @@ fn source_report_from_proof_pool(
     }
 
     let mut plan_mementos = Vec::new();
-    for (_, envelope) in &pool.mementos {
-        if envelope.kind() != MemberKind::PlanMemento {
-            continue;
-        }
-        if let Some(plan) = proof_plan_memento_with_atoms(pool, envelope) {
+    for (_, member) in pool.plan_memento_members() {
+        if let Some(plan) = proof_plan_memento_with_atoms(pool, member) {
             plan_mementos.push(plan);
         }
     }
@@ -1696,16 +1675,8 @@ fn source_report_from_proof_pool(
             contract_filter.is_none_or(|filter| call_edge_matches_filter(edge, filter, &[]))
         })
         .collect::<Vec<_>>();
-    let implication_count = pool
-        .mementos
-        .iter()
-        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::Implication))
-        .count();
-    let witness_count = pool
-        .mementos
-        .iter()
-        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::WitnessMemento))
-        .count();
+    let implication_count = pool.member_count_by_kind(MemberKind::Implication);
+    let witness_count = pool.member_count_by_kind(MemberKind::WitnessMemento);
     if implication_count > 0 && call_edges.is_empty() {
         call_edges.push(serde_json::json!({
             "sourceContract": "proof-members",
@@ -1727,14 +1698,11 @@ fn source_report_from_proof_pool(
     // when given a default_contract_name). Top-level sourceMementos[] entries do not
     // have contractName and are excluded here.
     let mut source_warrants_map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for (_, envelope) in &pool.mementos {
-        if envelope.kind() != MemberKind::SourceMemento {
+    for (_, member) in pool.source_memento_members() {
+        let Some(contract_name) = member.field("contractName").and_then(Value::as_str) else {
             continue;
         };
-        let Some(contract_name) = envelope.field("contractName").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(body) = envelope.body() else {
+        let Some(body) = member.body() else {
             continue;
         };
         source_warrants_map
@@ -1780,10 +1748,8 @@ fn proof_implication_call_edges(
     pool: &sugar_verifier::types::MementoPool,
     contract_names_by_cid: &BTreeMap<sugar_verifier::MementoCid, String>,
 ) -> Vec<Value> {
-    pool.mementos
-        .iter()
-        .filter(|(cid, _)| pool.member_is_kind(cid, MemberKind::Implication))
-        .filter_map(|(cid, _)| proof_implication_call_edge(pool, cid, contract_names_by_cid))
+    pool.implication_members()
+        .filter_map(|(_, member)| proof_implication_call_edge(member, contract_names_by_cid))
         .collect()
 }
 
@@ -1797,26 +1763,21 @@ fn contract_name_for_cid(
 }
 
 fn proof_implication_call_edge(
-    pool: &sugar_verifier::types::MementoPool,
-    cid: &sugar_verifier::MementoCid,
+    member: &sugar_verifier::StoredMember,
     contract_names_by_cid: &BTreeMap<sugar_verifier::MementoCid, String>,
 ) -> Option<Value> {
-    let antecedent_cid = pool
-        .member_field(cid, "antecedentCid")
-        .and_then(|v| v.as_str())?;
-    let consequent_cid = pool
-        .member_field(cid, "consequentCid")
-        .and_then(|v| v.as_str())?;
+    let antecedent_cid = member.field("antecedentCid").and_then(|v| v.as_str())?;
+    let consequent_cid = member.field("consequentCid").and_then(|v| v.as_str())?;
     let source = contract_name_for_cid(contract_names_by_cid, antecedent_cid)
         .unwrap_or_else(|| antecedent_cid.to_string());
     let target = contract_name_for_cid(contract_names_by_cid, consequent_cid)
         .unwrap_or_else(|| consequent_cid.to_string());
-    let source_slot = pool
-        .member_field(cid, "antecedentSlot")
+    let source_slot = member
+        .field("antecedentSlot")
         .and_then(|v| v.as_str())
         .unwrap_or("post");
-    let target_slot = pool
-        .member_field(cid, "consequentSlot")
+    let target_slot = member
+        .field("consequentSlot")
         .and_then(|v| v.as_str())
         .unwrap_or("pre");
     let mut edge = serde_json::json!({
@@ -1830,7 +1791,7 @@ fn proof_implication_call_edge(
         "targetContractCid": consequent_cid,
     });
     for field in ["prover", "proofWitness", "smtLibInput"] {
-        if let Some(value) = pool.member_field(cid, field).cloned() {
+        if let Some(value) = member.field(field).cloned() {
             edge[field] = value;
         }
     }
@@ -1983,8 +1944,7 @@ fn proof_contract_slot_formula_by_name(
     slot: &str,
 ) -> Option<Value> {
     let cid = pool.name_to_cid.get(name)?;
-    let envelope = pool.mementos.get(cid)?;
-    let body = pool.resolve_contract_body(envelope)?;
+    let body = pool.contract_body_by_cid(cid)?;
     body.get(slot).cloned()
 }
 
@@ -2175,11 +2135,11 @@ fn source_oracle_attempt_json(route: &SourceOracleRoute, reason: Option<String>)
 fn proof_contract_value(
     pool: &sugar_verifier::types::MementoPool,
     cid: &sugar_verifier::MementoCid,
-    envelope: &sugar_verifier::StoredMember,
+    member: &sugar_verifier::StoredMember,
 ) -> Value {
-    let name = pool
-        .member_field(cid, "contractName")
-        .or_else(|| pool.member_field(cid, "name"))
+    let name = member
+        .field("contractName")
+        .or_else(|| member.field("name"))
         .and_then(|v| v.as_str())
         .unwrap_or("<unknown contract>");
     let mut contract = serde_json::json!({
@@ -2187,7 +2147,7 @@ fn proof_contract_value(
         "name": name,
         "contractCid": cid,
     });
-    if let Some(body) = pool.resolve_contract_body(envelope) {
+    if let Some(body) = pool.contract_body_for_member(member) {
         for slot in ["pre", "post", "inv"] {
             if let Some(formula) = body.get(slot) {
                 contract[slot] = formula.clone();

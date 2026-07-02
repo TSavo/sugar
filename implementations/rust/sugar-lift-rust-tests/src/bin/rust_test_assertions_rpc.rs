@@ -3579,7 +3579,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             let Some(source_symbol) = callsite.get("name").and_then(Value::as_str) else {
                 continue;
             };
-            let Some(bridge_env) = pool.bridge_by_symbol(source_symbol) else {
+            let Some(bridge_env) = pool.bridge_member_for_symbol(source_symbol) else {
                 continue;
             };
             let bridge_source_symbol = bridge_env
@@ -3606,16 +3606,16 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                         .get(bridge_source_symbol)
                         .map(|cid| cid.to_string())
                 });
-            let target_env = pool.mementos.get(&target_memento_cid).unwrap_or_else(|| {
+            let target_env = pool.stored_member(&target_memento_cid).unwrap_or_else(|| {
                 let proof = proof_cid.as_deref().unwrap_or("<unknown proof>");
                 panic!(
                     "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
                 )
             });
-            if !pool.member_is_kind(&target_memento_cid, sugar_verifier::MemberKind::Contract) {
+            if target_env.kind() != sugar_verifier::MemberKind::Contract {
                 continue;
             }
-            let Some(target_body) = target_env.body() else {
+            let Some(target_body) = pool.contract_body_for_member(target_env) else {
                 continue;
             };
             let Some(post) = target_body
@@ -3625,7 +3625,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
             else {
                 continue;
             };
-            let Some(formals) = string_array_field(target_body, "formals") else {
+            let Some(formals) = string_array_field(&target_body, "formals") else {
                 continue;
             };
             let Some(args) = callsite.get("args").and_then(Value::as_array) else {
@@ -3653,7 +3653,7 @@ fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<V
                 out_binding,
                 &callsite,
             );
-            let vendor_source = source_memento_for_contract(&pool, target_body, target_cid)
+            let vendor_source = source_memento_for_contract(&pool, &target_body, target_cid)
                 .map(|memento| resolve_source_memento_for_report(workspace_root, &memento))
                 .unwrap_or_else(|| {
                     json!({
@@ -3904,10 +3904,7 @@ fn source_memento_member_for_contract(
         .and_then(|name| name.strip_prefix("rust-source::").or(Some(name)))
         .map(str::to_string);
 
-    for (cid, env) in &pool.mementos {
-        if !pool.member_is_kind(cid, sugar_verifier::MemberKind::SourceMemento) {
-            continue;
-        }
+    for (_, env) in pool.source_memento_members() {
         let Some(payload) = source_memento_payload(env) else {
             continue;
         };

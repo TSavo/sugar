@@ -6,7 +6,7 @@
 use serde_json::Value as Json;
 
 use crate::types::{
-    CallSite, LoadError, MemberKind, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
+    CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
     ToolchainPlanReport,
 };
 
@@ -168,26 +168,21 @@ pub fn add_toolchain_plans(pool: &MementoPool, r: &mut Report) {
 
 pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
     let mut witness_outputs = Vec::new();
-    for (cid, _) in &pool.mementos {
-        if !pool.member_is_kind(cid, MemberKind::WitnessMemento) {
-            continue;
-        }
-        let actual = pool
-            .member_field(cid, "actualOutputCids")
+    for (cid, member) in pool.witness_memento_members() {
+        let actual = member
+            .field("actualOutputCids")
             .and_then(json_str_vec)
-            .or_else(|| {
-                pool.member_field(cid, "actual_output_cids")
-                    .and_then(json_str_vec)
-            })
+            .or_else(|| member.field("actual_output_cids").and_then(json_str_vec))
             .unwrap_or_default();
         if actual.is_empty() {
             continue;
         }
-        let plan_cid = pool
-            .member_field(cid, "planCid")
+        let plan_cid = member
+            .field("planCid")
             .and_then(|v| v.as_str().map(str::to_string))
             .or_else(|| {
-                pool.member_field(cid, "plan_cid")
+                member
+                    .field("plan_cid")
                     .and_then(|v| v.as_str().map(str::to_string))
             });
         witness_outputs.push(WitnessOutputs {
@@ -198,22 +193,16 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
     }
 
     let mut rows = Vec::new();
-    for (cid, _) in &pool.mementos {
-        if !pool.member_is_kind(cid, MemberKind::PlanMemento) {
-            continue;
-        }
-        let plan_cid = pool
-            .member_field(cid, "planCid")
+    for (cid, member) in pool.plan_memento_members() {
+        let plan_cid = member
+            .field("planCid")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let expected = pool
-            .member_field(cid, "expectedOutputCids")
+        let expected = member
+            .field("expectedOutputCids")
             .and_then(json_str_vec)
-            .or_else(|| {
-                pool.member_field(cid, "expected_output_cids")
-                    .and_then(json_str_vec)
-            })
+            .or_else(|| member.field("expected_output_cids").and_then(json_str_vec))
             .unwrap_or_default();
         let plan_specific: Vec<&WitnessOutputs> = witness_outputs
             .iter()
