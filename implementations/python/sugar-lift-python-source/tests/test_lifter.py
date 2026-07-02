@@ -2946,6 +2946,41 @@ def test_effects_are_sorted_and_loop_cid_is_blake3_512() -> None:
     assert len(loop_cid) == len("blake3-512:") + 128
 
 
+def test_while_loop_populates_opacity_report() -> None:
+    source = (
+        "def countdown(n):\n"
+        "    while n:\n"
+        "        n = n - 1\n"
+        "    return n\n"
+    )
+
+    result = lift_source(source, "opaque_loop.py")
+
+    contract = _contract(result.ir, ".countdown")
+    loop_cid = next(
+        effect["loopCid"]
+        for effect in contract["effects"]
+        if effect["kind"] == "opaque_loop"
+    )
+    assert result.opacity_report == [
+        {
+            "file": "opaque_loop.py",
+            "line": 2,
+            "col": 4,
+            "kind": "opaque_loop",
+            "cid": loop_cid,
+        }
+    ]
+
+
+def test_source_without_loops_keeps_opacity_report_empty() -> None:
+    source = "def add_one(n):\n    return n + 1\n"
+
+    result = lift_source(source, "transparent.py")
+
+    assert result.opacity_report == []
+
+
 def test_cid_of_json_uses_protocol_jcs_control_char_escaping() -> None:
     value = {"source": "def f():\n  return 1\n"}
     expected = (
