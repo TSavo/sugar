@@ -210,6 +210,7 @@ pub mod sugar {
     pub mod string_add;
     pub mod string_predicate;
     pub mod struct_term;
+    pub mod symbolic_value;
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;

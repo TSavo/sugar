@@ -89,6 +89,10 @@ pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
 pub(crate) struct IeeeFloatFloor;
 pub(crate) struct IpAddrFloor;
+/// SymbolicValue floor family. Carries a sort-neutral symbolic variable; the
+/// backend chooses the carrier sort from surrounding operations.
+#[allow(dead_code)]
+pub(crate) struct SymbolicValueFloor;
 /// CarrierEmbedding floor family. #3125 slice 2 implements the Duration
 /// refinement; MonoidFold still reports this family for unimplemented carriers.
 #[allow(dead_code)]
@@ -107,6 +111,7 @@ impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
 impl BodyFloor for IeeeFloatFloor {}
 impl BodyFloor for IpAddrFloor {}
+impl BodyFloor for SymbolicValueFloor {}
 impl BodyFloor for CarrierEmbeddingFloor {}
 
 /// A factory-built child/body for a parent Sugar.
