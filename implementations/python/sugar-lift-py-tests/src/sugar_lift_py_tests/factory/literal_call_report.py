@@ -794,8 +794,19 @@ def _emit_euf_fact(
     Both land under the same #euf# key, so they conjoin -- agreement discharges, disagreement
     is UNSAT. One emitter means the key is spelled once: a vendor lie and a Python truth meet
     on the same name or they never meet at all."""
-    call_term = euf_call_term(callee_name, arg_terms)
-    contract_name = euf_callsite_name(callee_name, call_term, suffix="::assertion")
+    from sugar_lift_py_tests.proofir import (
+        CallTerm,
+        canonical_euf_callsite_name,
+        term_from_ir,
+    )
+
+    rhs_term = term_from_ir(value_term)
+    call_term = CallTerm(
+        callee_name,
+        tuple(term_from_ir(arg_term) for arg_term in arg_terms),
+        sort=rhs_term.sort,
+    )
+    contract_name = canonical_euf_callsite_name(call_term, suffix="::assertion")
     memento = _statement_source_memento(
         stmt,
         fn,
@@ -805,9 +816,8 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
     )
     member = EqualityFact(
-        euf_key=contract_name,
         call_term=call_term,
-        rhs_term=value_term,
+        rhs_term=rhs_term,
         provenance=Provenance(
             node_class=EqualityFact.node_class,
             construction_site=_proofir_construction_site(stmt, memento_file),
