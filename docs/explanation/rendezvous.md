@@ -1,7 +1,7 @@
 <!--
   Rendezvous — how kits register interest in a project and the CLI selects them.
-  Grounded in implementations/rust/sugar-cli/src/{component_plan.rs,kit_declaration.rs}:
-  census_workspace → discover_components → kit-declaration handshake → ComponentPlan.
+  Grounded in implementations/rust/sugar-cli/src/component_plan.rs:
+  census_workspace → discover_components → component-plan handshake → ComponentPlan.
   This is the FRONT of the pipeline (kit selection), distinct from verification/recompute.
 -->
 # Rendezvous — how kits register interest in a project
@@ -36,7 +36,7 @@ A manifest is small — it only says *who you are and how to start you*:
 
 ```toml
 name = "rust-walk"
-protocol_version = "sugar-lsp-shared/1"
+protocol_version = "sugar-component/1"
 command = ["sugar-walk-rpc", "--rpc"]
 # working_dir = "..."   # optional
 ```
@@ -48,17 +48,20 @@ registered component's binary wasn't built yet.)
 ## 3. Each kit declares what it claims
 
 For every discovered component, the CLI spawns its `command` and runs a short JSON-RPC
-handshake (`kit_declaration.rs`):
+handshake (`component_plan.rs`):
 
 ```
-initialize  ->  sugar.plugin.kit_declaration  ->  shutdown
+initialize  ->  sugar.component.plan  ->  shutdown
 ```
 
-The middle call is the one that matters: **the kit owns its declaration.** Given the
-census, the kit says which surfaces and roles it claims for *this* project — which lift
-surfaces it provides, which IR compilers it brings, which package shapes it understands.
-The CLI never infers this; it asks, and the kit answers. A kit that doesn't recognize the
-project simply claims nothing.
+The initialize request carries `protocol_version = "sugar-component/1"`. The middle
+call is the one that matters: **the kit owns its declaration.** Given the census, the
+kit says which surfaces and roles it claims for *this* project — which lift surfaces it
+provides, which IR compilers it brings, which package shapes it understands. The request
+also names the planning verb with `params.intent`: one of `lift`, `prove`, or `verify`.
+That intent field is an additive `sugar-component/1` request field; a component that
+doesn't support an intent can decline it, and the CLI records that answer instead of
+retrying the query as `lift`.
 
 ## 4. Assemble the component plan
 
@@ -74,7 +77,7 @@ reproduce the same lift later, not just the same inputs.
 To make your kit show up in a project's rendezvous:
 
 1. **Ship an RPC entry point** that speaks the handshake — at minimum `initialize`,
-   `sugar.plugin.kit_declaration`, and `shutdown` — and returns a declaration naming the
+   `sugar.component.plan`, and `shutdown` — and returns a declaration naming the
    lift surfaces / IR compilers you provide.
 2. **Register a manifest** (`name`, `protocol_version`, `command`) in a discovery root —
    `.sugar/components/<name>/manifest.toml` for project-local, `~/.config/sugar/components/`

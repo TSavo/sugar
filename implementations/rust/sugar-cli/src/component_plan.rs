@@ -36,6 +36,23 @@ pub struct ComponentPlanOptions {
     pub allow_failed_components: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanIntent {
+    Lift,
+    Prove,
+    Verify,
+}
+
+impl PlanIntent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlanIntent::Lift => "lift",
+            PlanIntent::Prove => "prove",
+            PlanIntent::Verify => "verify",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceCensus {
     pub languages: Vec<LanguageEvidence>,
@@ -152,12 +169,13 @@ struct ComponentDecline {
     reason: Option<String>,
 }
 
-pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
-    plan_workspace_with_options(project_root, ComponentPlanOptions::default())
+pub fn plan_workspace(project_root: &Path, intent: PlanIntent) -> ComponentPlan {
+    plan_workspace_with_options(project_root, intent, ComponentPlanOptions::default())
 }
 
 pub fn plan_workspace_with_options(
     project_root: &Path,
+    intent: PlanIntent,
     options: ComponentPlanOptions,
 ) -> ComponentPlan {
     let project_root = absolute_path(project_root);
@@ -172,12 +190,13 @@ pub fn plan_workspace_with_options(
     let mut declined_languages = BTreeSet::new();
     info!(
         project = %project_root.display(),
+        intent = intent.as_str(),
         components = components.len(),
         languages = ?plan.census.languages.iter().map(|e| e.language.as_str()).collect::<Vec<_>>(),
         "component plan discovery complete"
     );
     for component in components {
-        match request_component_plan(&component, &project_root, &plan.census) {
+        match request_component_plan(&component, &project_root, &plan.census, intent) {
             ComponentPlanOutcome::Claimed { result, languages } => {
                 info!(
                     component = component.name,
@@ -240,7 +259,7 @@ pub fn plan_workspace_with_options(
 
 #[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove.
 pub(crate) fn planned_lift_plugins(project_root: &Path) -> Vec<PluginEntry> {
-    plan_workspace(project_root).plugins
+    plan_workspace(project_root, PlanIntent::Lift).plugins
 }
 
 #[allow(dead_code)] // Used by CLI modules; the library test target does not compile those consumers.
@@ -263,7 +282,7 @@ pub(crate) fn planned_lift_manifest(
     project_root: &Path,
     surface: &str,
 ) -> Option<PlannedLiftManifest> {
-    plan_workspace(project_root)
+    plan_workspace(project_root, PlanIntent::Lift)
         .lift_manifests
         .into_iter()
         .find(|manifest| manifest.surface == surface)
@@ -271,12 +290,12 @@ pub(crate) fn planned_lift_manifest(
 
 #[allow(dead_code)] // Used by the CLI binary; the library test target does not compile witness_verify.
 pub(crate) fn planned_lift_manifests(project_root: &Path) -> Vec<PlannedLiftManifest> {
-    plan_workspace(project_root).lift_manifests
+    plan_workspace(project_root, PlanIntent::Lift).lift_manifests
 }
 
 #[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
 pub(crate) fn planned_ir_compilers(project_root: &Path) -> Vec<PlannedIrCompiler> {
-    plan_workspace(project_root).ir_compilers
+    plan_workspace(project_root, PlanIntent::Prove).ir_compilers
 }
 
 #[allow(dead_code)] // Used by the CLI binary; the library test target does not compile cmd_prove/cmd_verify.
@@ -641,8 +660,9 @@ fn request_component_plan(
     component: &ComponentRegistration,
     project_root: &Path,
     census: &WorkspaceCensus,
+    intent: PlanIntent,
 ) -> ComponentPlanOutcome {
-    match request_component_plan_inner(component, project_root, census) {
+    match request_component_plan_inner(component, project_root, census, intent) {
         Ok(ComponentPlanDecision::Claim(result)) => {
             let languages =
                 languages_covered_by_plan(component, &result, &census_languages(census));
@@ -660,6 +680,7 @@ fn request_component_plan_inner(
     component: &ComponentRegistration,
     project_root: &Path,
     census: &WorkspaceCensus,
+    intent: PlanIntent,
 ) -> Result<ComponentPlanDecision, String> {
     let mut child = spawn_component(component)?;
     let outcome = (|| {
@@ -703,7 +724,7 @@ fn request_component_plan_inner(
                     })).collect::<Vec<_>>(),
                     "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
                 },
-                "intent": "lift",
+                "intent": intent.as_str(),
             }
         });
         writeln!(stdin, "{req}").map_err(|error| format!("write component plan: {error}"))?;

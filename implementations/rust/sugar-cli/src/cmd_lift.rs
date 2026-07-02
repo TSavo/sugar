@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 use sugar_proof_envelope::Member;
 
-use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions};
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
 use crate::report_fmt;
@@ -323,7 +323,8 @@ fn lift_report_graph_plugins(
     {
         return Ok(Vec::new());
     }
-    let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+    let component_plan =
+        component_plan::plan_workspace_with_options(project_root, PlanIntent::Lift, options);
     check_component_plan_errors(&component_plan)?;
     if options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);
@@ -404,7 +405,8 @@ fn configured_or_planned_lift_surface(
         });
     }
 
-    let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+    let component_plan =
+        component_plan::plan_workspace_with_options(project_root, PlanIntent::Lift, options);
     check_component_plan_errors(&component_plan)?;
     if options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);
@@ -808,7 +810,8 @@ fn lift_report_mint_plugins(
         .or_else(|| user_cfg.surface_for("lift"))
         .is_none()
     {
-        let component_plan = component_plan::plan_workspace_with_options(project_root, options);
+        let component_plan =
+            component_plan::plan_workspace_with_options(project_root, PlanIntent::Lift, options);
         check_component_plan_errors(&component_plan)?;
         if options.allow_failed_components {
             emit_component_plan_warnings(&component_plan);

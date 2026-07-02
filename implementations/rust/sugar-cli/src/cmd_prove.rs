@@ -18,7 +18,9 @@ use walkdir::WalkDir;
 
 use sugar_verifier::{Runner, RunnerConfig};
 
-use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlannedLiftManifest};
+use crate::component_plan::{
+    self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
+};
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::ProveArgs;
@@ -260,8 +262,11 @@ pub(crate) fn build_prove_report_with_options(
     component_plan_options: ComponentPlanOptions,
 ) -> Result<sugar_verifier::Report, String> {
     let cfg_doc = read_project_config(project_root);
-    let component_plan =
-        component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    let component_plan = component_plan::plan_workspace_with_options(
+        project_root,
+        PlanIntent::Prove,
+        component_plan_options,
+    );
     check_component_plan_errors(&component_plan)?;
     if component_plan_options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);

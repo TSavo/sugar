@@ -1888,7 +1888,10 @@ fn toolchain_plan_seed(
             })
         })
         .collect();
-    let component_plan = crate::component_plan::plan_workspace(project_root);
+    let component_plan = crate::component_plan::plan_workspace(
+        project_root,
+        crate::component_plan::PlanIntent::Lift,
+    );
     let mut plan_atoms = plan_atoms_for_plugins(project_root, plugins);
     plan_atoms.extend(support_plan_atoms_for_component_plan(
         project_root,
@@ -4240,7 +4243,10 @@ pub fn run(args: MintArgs) -> u8 {
             .or_else(|| user_cfg.surface_for("lift"))
             .is_none()
     {
-        let component_plan = crate::component_plan::plan_workspace(&project_root);
+        let component_plan = crate::component_plan::plan_workspace(
+            &project_root,
+            crate::component_plan::PlanIntent::Lift,
+        );
         let lift_plugins = component_plan
             .plugins
             .iter()

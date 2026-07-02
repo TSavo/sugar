@@ -27,6 +27,7 @@ LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
 PYTHON_LIFT_NAME = "python-lift"
 PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
+COMPONENT_PLAN_INTENTS = {"lift", "prove", "verify"}
 PARSE_ERROR = object()
 
 
@@ -157,6 +158,13 @@ def _first_python_claim(params: Dict[str, Any], workspace_root: str) -> Optional
 
 
 def _component_plan_result(params: Dict[str, Any]) -> Dict[str, Any]:
+    intent = str(params.get("intent", "lift"))
+    if intent not in COMPONENT_PLAN_INTENTS:
+        return {
+            "decision": "decline",
+            "languages": [PYTHON_SURFACE],
+            "reason": f"unsupported plan intent: {intent}",
+        }
     workspace_root = str(params.get("workspace_root", "."))
     claim_item = _first_python_claim(params, workspace_root)
     if claim_item is None:
