@@ -223,6 +223,12 @@ def _walrus(target: dict[str, object], value: dict[str, object]) -> dict[str, ob
     }
 
 
+def _binary(
+    name: str, left: dict[str, object], right: dict[str, object]
+) -> dict[str, object]:
+    return {"kind": "ctor", "name": name, "args": [left, right]}
+
+
 def _call(name: str, *args: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -253,6 +259,24 @@ def _tuple(*items: dict[str, object]) -> dict[str, object]:
 
 def _list(*items: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:list", "args": list(items)}
+
+
+def _listcomp(
+    elt: dict[str, object], *generators: dict[str, object]
+) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:listcomp", "args": [elt, *generators]}
+
+
+def _comprehension(
+    target: dict[str, object],
+    iterator: dict[str, object],
+    *ifs: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:comprehension",
+        "args": [target, iterator, *ifs],
+    }
 
 
 def _dict(*entries: dict[str, object]) -> dict[str, object]:
@@ -2978,14 +3002,9 @@ def test_compile_lift_roundtrip_preserves_name_annassign_explicit_none_value() -
             "subscript_unpack_target_refusal.py",
             "unsupported assignment target: Tuple",
         ),
-        (
-            "def f(xs, compute):\n    return [y for x in xs if (y := compute(x))]\n",
-            "walrus_listcomp_refusal.py",
-            "unhandled expression kind: ListComp",
-        ),
     ],
 )
-def test_slice_13_keeps_complex_unpacking_and_listcomp_out_of_scope(
+def test_slice_13_keeps_complex_unpacking_out_of_scope(
     source: str,
     module: str,
     reason: str,
@@ -3453,6 +3472,138 @@ def test_chained_call_roundtrip_is_structurally_stable() -> None:
     assert cid_of_json(body) == cid_of_json(_return(term))
 
 
+def test_simple_listcomp_lifts_element_generator_and_opaque_loop_effect() -> None:
+    source = "def f(xs):\n    return [f(x) for x in xs]\n"
+
+    result = lift_source(source, "listcomp_simple.py")
+
+    term = _listcomp(_call("f", _var("x")), _comprehension(_var("x"), _var("xs")))
+    contract = _contract(result.ir, ".f")
+    loop_cid = cid_of_json(term)
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+    assert {"kind": "unresolved_call", "name": "f"} in contract["effects"]
+    assert {"kind": "opaque_loop", "loopCid": loop_cid} in contract["effects"]
+    assert result.opacity_report == [
+        {
+            "file": "listcomp_simple.py",
+            "line": 2,
+            "col": 11,
+            "kind": "opaque_loop",
+            "cid": loop_cid,
+        }
+    ]
+
+
+def test_listcomp_with_if_filter_binds_target_for_filter_and_element() -> None:
+    source = "def f(xs):\n    return [x * 2 for x in xs if x > 0]\n"
+
+    result = lift_source(source, "listcomp_filter.py")
+
+    term = _listcomp(
+        _binary("python:mul", _var("x"), _int_const(2)),
+        _comprehension(
+            _var("x"),
+            _var("xs"),
+            _compare(">", _var("x"), _int_const(0)),
+        ),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+
+
+def test_nested_listcomp_generators_bind_prior_targets_for_later_iters() -> None:
+    source = "def f(m):\n    return [x for row in m for x in row]\n"
+
+    result = lift_source(source, "listcomp_nested.py")
+
+    term = _listcomp(
+        _var("x"),
+        _comprehension(_var("row"), _var("m")),
+        _comprehension(_var("x"), _var("row")),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+
+
+def test_listcomp_tuple_target_unpack_binds_each_name_opaquely() -> None:
+    source = "def f(pairs):\n    return [a + b for (a, b) in pairs]\n"
+
+    result = lift_source(source, "listcomp_tuple_target.py")
+
+    term = _listcomp(
+        _binary("python:add", _var("a"), _var("b")),
+        _comprehension(_tuple(_var("a"), _var("b")), _var("pairs")),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+
+
+def test_listcomp_target_binding_does_not_leak_to_following_statement() -> None:
+    source = (
+        'x = "global"\n'
+        "def f(xs):\n"
+        "    values = [x for x in xs]\n"
+        "    return x\n"
+    )
+
+    result = lift_source(source, "listcomp_scope.py")
+
+    term = _listcomp(_var("x"), _comprehension(_var("x"), _var("xs")))
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("values"), term),
+        _return(_str_const("global")),
+    )
+
+
+def test_listcomp_floor_discriminates_set_and_dict_comprehensions() -> None:
+    set_result = lift_source(
+        "def f(xs):\n    return {x for x in xs}\n",
+        "setcomp_refusal.py",
+    )
+    dict_result = lift_source(
+        "def f(xs):\n    return {x: x for x in xs}\n",
+        "dictcomp_refusal.py",
+    )
+
+    assert set_result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "setcomp_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: SetComp",
+        }
+    ]
+    assert dict_result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "dictcomp_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: DictComp",
+        }
+    ]
+
+
+def test_listcomp_roundtrip_is_structurally_stable() -> None:
+    term = _listcomp(
+        _binary("python:add", _var("a"), _var("b")),
+        _comprehension(
+            _tuple(_var("a"), _var("b")),
+            _var("pairs"),
+            _compare(">", _var("a"), _int_const(0)),
+        ),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["pairs"])
+    relifted = lift_source(compiled, "roundtrip_listcomp.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
 def test_none_guarded_attribute_access_emits_one_runtime_failure_locus() -> None:
     source = (
         "def f(obj):\n"
@@ -3540,7 +3691,7 @@ def test_compile_lift_roundtrip_preserves_cf_guarded_none_if_body() -> None:
 
 
 def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
-    source = "def bad(xs):\n    return [x for x in xs]\n"
+    source = "def bad(xs):\n    return {x for x in xs}\n"
 
     result = lift_source(source, "badmodule.py")
 
@@ -3553,13 +3704,13 @@ def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
     assert refusal["kind"] == "unhandled-syntax"
     assert refusal["function"] == "badmodule.bad"
     assert refusal["line"] == 2
-    assert "ListComp" in refusal["reason"]
+    assert "SetComp" in refusal["reason"]
     assert "python:unknown" not in _canon(result.refusals)
     assert "python:skip" not in _canon(result.refusals)
 
 
-def test_list_comprehension_refusal_does_not_fire_different_variant() -> None:
-    source = "def bad(xs):\n    return [x for x in xs]\n"
+def test_set_comprehension_refusal_does_not_fire_different_variant() -> None:
+    source = "def bad(xs):\n    return {x for x in xs}\n"
 
     result = lift_source(source, "badmodule.py")
 

@@ -302,6 +302,11 @@ def _expr(term: Json) -> ast.expr:
         return ast.Tuple(elts=[_expr(arg) for arg in args], ctx=ast.Load())
     if name == "python:list":
         return ast.List(elts=[_expr(arg) for arg in args], ctx=ast.Load())
+    if name == "python:listcomp":
+        return ast.ListComp(
+            elt=_expr(args[0]),
+            generators=[_comprehension(arg) for arg in args[1:]],
+        )
     if name == "python:dict":
         keys: list[ast.expr | None] = []
         values: list[ast.expr] = []
@@ -371,6 +376,39 @@ def _unpack_name_target(term: Json) -> ast.Name:
         raise ValueError(f"unpack target is not a name: {ast.dump(expr)}")
     expr.ctx = ast.Store()
     return expr
+
+
+def _comprehension(term: Json) -> ast.comprehension:
+    if _name(term) != "python:comprehension":
+        raise ValueError(f"expected python:comprehension: {term!r}")
+    args = term.get("args", [])
+    if len(args) < 2:
+        raise ValueError(f"python:comprehension needs target and iter: {term!r}")
+    return ast.comprehension(
+        target=_comprehension_target(args[0]),
+        iter=_expr(args[1]),
+        ifs=[_expr(condition) for condition in args[2:]],
+        is_async=0,
+    )
+
+
+def _comprehension_target(term: Json) -> ast.expr:
+    return _with_comprehension_target_context(_expr(term))
+
+
+def _with_comprehension_target_context(expr: ast.expr) -> ast.expr:
+    if isinstance(expr, ast.Name):
+        expr.ctx = ast.Store()
+        return expr
+    if isinstance(expr, ast.Tuple):
+        expr.elts = [_with_comprehension_target_context(elt) for elt in expr.elts]
+        expr.ctx = ast.Store()
+        return expr
+    if isinstance(expr, ast.List):
+        expr.elts = [_with_comprehension_target_context(elt) for elt in expr.elts]
+        expr.ctx = ast.Store()
+        return expr
+    raise ValueError(f"comprehension target is not assignable: {ast.dump(expr)}")
 
 
 def _except_handlers(term: Json) -> list[ast.ExceptHandler]:

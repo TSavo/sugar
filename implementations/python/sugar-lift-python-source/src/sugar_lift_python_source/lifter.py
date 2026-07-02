@@ -600,9 +600,37 @@ class _LocalCollector(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         return
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self.visit(node.elt)
+        self._visit_comprehension_generators(node.generators)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self.visit(node.elt)
+        self._visit_comprehension_generators(node.generators)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self.visit(node.key)
+        self.visit(node.value)
+        self._visit_comprehension_generators(node.generators)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self.visit(node.elt)
+        self._visit_comprehension_generators(node.generators)
+
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.names.add(node.id)
+
+    def _visit_comprehension_generators(
+        self, generators: list[ast.comprehension]
+    ) -> None:
+        for generator in generators:
+            self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
 
 
 class _Emitter:
@@ -1127,6 +1155,8 @@ class _Emitter:
             return ctor("python:tuple", *[self.expr(element) for element in node.elts])
         if isinstance(node, ast.List):
             return ctor("python:list", *[self.expr(element) for element in node.elts])
+        if isinstance(node, ast.ListComp):
+            return self.listcomp(node)
         if isinstance(node, ast.Dict):
             keys = [
                 none_const() if key is None else self.expr(key) for key in node.keys
@@ -1160,8 +1190,64 @@ class _Emitter:
             else:
                 raise _UnsupportedSyntax(
                     value, f"unknown f-string part: {type(value).__name__}"
-                )
+            )
         return ctor("python:fstring", *parts)
+
+    def listcomp(self, node: ast.ListComp) -> Json:
+        previous_locals = self.locals
+        active_locals: set[str] = set()
+        generators: list[Json] = []
+        try:
+            for generator in node.generators:
+                if generator.is_async:
+                    raise _UnsupportedSyntax(
+                        generator,
+                        "async comprehensions are refused",
+                    )
+                self.locals = previous_locals | active_locals
+                iterator = self.expr(generator.iter)
+                target, target_names = self.comprehension_target(generator.target)
+                active_locals.update(target_names)
+                self.locals = previous_locals | active_locals
+                filters = [self.expr(condition) for condition in generator.ifs]
+                generators.append(
+                    ctor("python:comprehension", target, iterator, *filters)
+                )
+            self.locals = previous_locals | active_locals
+            elt = self.expr(node.elt)
+        finally:
+            self.locals = previous_locals
+        term = ctor("python:listcomp", elt, *generators)
+        self.effects.add_opaque_loop(term, source_path=self.source_path, node=node)
+        return term
+
+    def comprehension_target(self, node: ast.expr) -> tuple[Json, set[str]]:
+        if isinstance(node, ast.Name):
+            return var(node.id), {node.id}
+        if isinstance(node, ast.Tuple):
+            return self.comprehension_sequence_target(node, "python:tuple")
+        if isinstance(node, ast.List):
+            return self.comprehension_sequence_target(node, "python:list")
+        raise _UnsupportedSyntax(
+            node,
+            f"unsupported comprehension target: {type(node).__name__}",
+        )
+
+    def comprehension_sequence_target(
+        self, node: ast.Tuple | ast.List, name: str
+    ) -> tuple[Json, set[str]]:
+        if not node.elts:
+            raise _UnsupportedSyntax(
+                node,
+                f"unsupported comprehension target: {type(node).__name__}",
+            )
+        terms: list[Json] = []
+        names: set[str] = set()
+        for element in node.elts:
+            target, target_names = self.comprehension_target(element)
+            terms.append(target)
+            names.update(target_names)
+        return ctor(name, *terms), names
 
     def fstring_value(self, node: ast.FormattedValue) -> Json:
         conversion = self.fstring_conversion(node)
