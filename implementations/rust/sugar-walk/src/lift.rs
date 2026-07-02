@@ -147,6 +147,7 @@ pub struct PureFreeGuardRule {
     pub callee: String,
     pub post_predicate: String,
     pub source_line: Option<usize>,
+    pub allow_line_less_match: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1824,7 +1825,7 @@ fn statement_pure_free_guard_fact_for_is_some(
             && rule.post_predicate == panic_freedom::IS_SOME
             && match rule.source_line {
                 Some(line) => line == call_line,
-                None => false,
+                None => rule.allow_line_less_match,
             }
     })?;
     let args = call.args.iter().cloned().collect::<Vec<_>>();
@@ -4492,6 +4493,7 @@ mod tests {
             callee: "helper".to_string(),
             post_predicate: panic_freedom::IS_SOME.to_string(),
             source_line: None,
+            allow_line_less_match: false,
         };
         let post = lift_function_postcondition_with_return_facts_and_pure_free_guards(
             &item_fn,
