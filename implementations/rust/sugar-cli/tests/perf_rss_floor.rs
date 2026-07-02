@@ -95,3 +95,22 @@ fn perf_rss_and_dhat_documentation_has_copy_paste_commands() {
         "docs must name dhat's heap profile output"
     );
 }
+
+#[test]
+fn ci_workflow_arms_synthetic_rss_floor_smoke_job() {
+    let workflow = std::fs::read_to_string(repo_root().join(".github/workflows/ci.yml"))
+        .expect("read CI workflow");
+
+    assert!(
+        workflow.contains("rss-floor-smoke:"),
+        "CI must have a dedicated RSS floor smoke job"
+    );
+    assert!(
+        workflow.contains("synthetic_rss_fixture"),
+        "CI RSS smoke job must generate the synthetic 120-bridge fixture"
+    );
+    assert!(
+        workflow.contains("tools/perf/verify-rss.sh") && workflow.contains("--reference-kib 33096"),
+        "CI RSS smoke job must arm verify-rss with the Battleaxe Linux median reference"
+    );
+}

@@ -253,6 +253,7 @@ sync_file .sugar/config.toml
 sync_dir .sugar/lift
 sync_dir .sugar/realize
 sync_dir .sugar/ir-compilers
+sync_dir .github
 
 sync_dir implementations/rust
 sync_dir implementations/python

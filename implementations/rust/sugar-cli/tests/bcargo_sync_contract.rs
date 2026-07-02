@@ -23,6 +23,10 @@ fn bcargo_syncs_ir_compiler_manifests() {
         bcargo.contains("sync_dir docs/perf"),
         "bcargo must sync docs/perf so remote perf-gate tests see the documented RSS and dhat commands"
     );
+    assert!(
+        bcargo.contains("sync_dir .github"),
+        "bcargo must sync .github so remote CI-wiring tests see workflow sources"
+    );
 }
 
 #[test]
