@@ -358,6 +358,17 @@ def _expr(term: Json) -> ast.expr:
             elt=_expr(args[0]),
             generators=[_comprehension(arg) for arg in args[1:]],
         )
+    if name == "python:setcomp":
+        return ast.SetComp(
+            elt=_expr(args[0]),
+            generators=[_comprehension(arg) for arg in args[1:]],
+        )
+    if name == "python:dictcomp":
+        return ast.DictComp(
+            key=_expr(args[0]),
+            value=_expr(args[1]),
+            generators=[_comprehension(arg) for arg in args[2:]],
+        )
     if name == "python:lambda":
         if not args:
             raise ValueError("python:lambda needs a body")
