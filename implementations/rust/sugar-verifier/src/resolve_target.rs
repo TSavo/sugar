@@ -13,7 +13,7 @@
 use serde_json::{json, Value as Json};
 use tracing::{debug, warn};
 
-use crate::types::{CallSite, MemberKind, MementoPool, ResolvedProperty};
+use crate::types::{BridgePin, CallSite, MemberKind, MementoPool, ResolvedProperty};
 
 pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String> {
     debug!(
@@ -64,8 +64,8 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     // substituted for the pinned bundle. See protocol/specs/2026-04-30-
     // ir-formal-grammar.md § "Bridge target pinning: the shim-poisoning
     // vector".
-    match cs.bridge_target_proof_cid.as_ref() {
-        Some(expected_bundle) => {
+    match &cs.bridge_pin {
+        BridgePin::Cross(expected_bundle) => {
             debug!(
                 bridge = %cs.bridge_ir_name,
                 pinned_bundle = %expected_bundle,
@@ -95,7 +95,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
                 ));
             }
         }
-        None => {
+        BridgePin::SelfPinned => {
             // Self-pinned: a bridge with no `targetProofCid` commits to a
             // target that is a co-member of its OWN bundle (it was minted
             // into the same `.proof` as its target, by the same mint run; it

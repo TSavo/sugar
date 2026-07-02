@@ -8,16 +8,16 @@
 //   - fail-closed when the resolved memento has no body
 //   - returns the memento's CID in `cid`
 //   - forward pin (BridgeDeclaration.ConsequentBundlePinned): when the
-//     CallSite carries `bridge_target_proof_cid = Some(...)`, the
+//     CallSite carries `bridge_pin = BridgePin::Cross(...)`, the
 //     contract member MUST live in that bundle, else reject
-//   - self pin: when `bridge_target_proof_cid = None`, the target MUST be a
+//   - self pin: when `bridge_pin = BridgePin::SelfPinned`, the target MUST be a
 //     co-member of the bridge's own bundle (`bridge_self_bundle_cid`), else
 //     reject. There is NO unenforced path: every bridge is pinned, either to
-//     a named external bundle (Some) or to its own bundle (None).
+//     a named external bundle or to its own bundle.
 
 use serde_json::{json, Value as Json};
 
-use sugar_verifier::{resolve_target, CallSite, MementoCid, MementoPool, StoredMember};
+use sugar_verifier::{resolve_target, BridgePin, CallSite, MementoCid, MementoPool, StoredMember};
 
 /// Bundle the basic happy-path tests treat as the bridge's own. Registered
 /// in `pool_with` and pinned by `callsite_targeting` so a no-`targetProofCid`
@@ -318,7 +318,7 @@ fn rejects_when_target_proof_cid_does_not_match_bundle() {
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: Some(memento_cid(honest_bundle)),
+        bridge_pin: BridgePin::Cross(memento_cid(honest_bundle)),
         ..Default::default()
     };
 
@@ -346,7 +346,7 @@ fn accepts_when_target_proof_cid_matches_bundle() {
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: Some(memento_cid(honest_bundle)),
+        bridge_pin: BridgePin::Cross(memento_cid(honest_bundle)),
         ..Default::default()
     };
 
@@ -363,7 +363,7 @@ fn rejects_when_pinned_bundle_is_not_loaded() {
     let cs = CallSite {
         bridge_ir_name: "parseInt".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: Some(memento_cid("never-loaded")),
+        bridge_pin: BridgePin::Cross(memento_cid("never-loaded")),
         ..Default::default()
     };
 
@@ -393,7 +393,7 @@ fn accepts_self_pinned_when_target_is_co_member() {
     let cs = CallSite {
         bridge_ir_name: "selfPinned".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: None,
+        bridge_pin: BridgePin::SelfPinned,
         bridge_self_bundle_cid: Some(memento_cid(self_bundle)),
         ..Default::default()
     };
@@ -426,7 +426,7 @@ fn rejects_self_pinned_when_target_not_co_member() {
     let cs = CallSite {
         bridge_ir_name: "selfPinnedForeign".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: None,
+        bridge_pin: BridgePin::SelfPinned,
         bridge_self_bundle_cid: Some(memento_cid(self_bundle)),
         ..Default::default()
     };
@@ -456,7 +456,7 @@ fn rejects_self_pinned_when_self_bundle_unknown() {
     let cs = CallSite {
         bridge_ir_name: "noBundle".into(),
         bridge_target_cid: Some(memento_cid(target_cid)),
-        bridge_target_proof_cid: None,
+        bridge_pin: BridgePin::SelfPinned,
         bridge_self_bundle_cid: None,
         ..Default::default()
     };
