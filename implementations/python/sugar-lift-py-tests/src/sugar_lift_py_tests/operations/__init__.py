@@ -6,6 +6,7 @@ from .binary_operator_operation import BinaryOperatorOperation
 from .bitwise_operation import BitwiseOperation
 from .callable_map_operation import CallableMapOperation
 from .contains_operation import ContainsOperation
+from .context_manager_operation import ContextManagerOperation
 from .control_flow_guard_operation import ControlFlowGuardOperation
 from .finally_fallthrough_operation import FinallyFallthroughOperation
 from .inplace_binary_operator_operation import InplaceBinaryOperatorOperation
@@ -27,6 +28,7 @@ __all__ = [
     "BitwiseOperation",
     "CallableMapOperation",
     "ContainsOperation",
+    "ContextManagerOperation",
     "ControlFlowGuardOperation",
     "FinallyFallthroughOperation",
     "InplaceBinaryOperatorOperation",

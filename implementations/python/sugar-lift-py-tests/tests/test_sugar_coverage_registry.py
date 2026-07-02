@@ -35,6 +35,7 @@ COVERAGE: dict[str, list[str]] = {
     "raise_sugar": ["test_raise_sugar.py"],
     "return_sugar": ["test_return_sugar.py"],
     "try_sugar": ["test_try_sugar.py"],
+    "with_sugar": ["test_object_context_manager_dunder.py"],
     "primitive_literal_sugar": ["test_primitive_literal_sugar.py"],
     "string_literal_sugar": ["test_string_literal_sugar.py"],
     "constant_sugar": ["test_constant_sugar.py"],
