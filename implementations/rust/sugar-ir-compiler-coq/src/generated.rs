@@ -4,12 +4,47 @@
 #![deny(unreachable_patterns)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use sugar_ir_compiler::FreeVar;
+use sugar_ir_compiler::{CompileError, FreeVar};
 use sugar_ir_types::*;
 
-pub fn emit_term(term: &Term) -> String {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CoqUninterpretedPosition {
+    Atom,
+    Ctor,
+}
+
+struct CoqUninterpretedAllowlistEntry {
+    name: &'static str,
+    position: CoqUninterpretedPosition,
+}
+
+/// Every name here is DELIBERATELY uninterpreted in Coq; adding a name is a semantic decision — the symbol carries no constraints.
+const COQ_UNINTERPRETED_ALLOWLIST: &[CoqUninterpretedAllowlistEntry] = &[
+    // Kit-defined relation; Coq keeps it as an opaque predicate.
+    CoqUninterpretedAllowlistEntry {
+        name: "roundTrips",
+        position: CoqUninterpretedPosition::Atom,
+    },
+    // Kit-defined error-state relation; Coq keeps it as an opaque predicate.
+    CoqUninterpretedAllowlistEntry {
+        name: "isErr",
+        position: CoqUninterpretedPosition::Atom,
+    },
+    // Kit-defined malformed-input relation; Coq keeps it as an opaque predicate.
+    CoqUninterpretedAllowlistEntry {
+        name: "isMalformed",
+        position: CoqUninterpretedPosition::Atom,
+    },
+    // Python object identity witness; Coq keeps the value term opaque.
+    CoqUninterpretedAllowlistEntry {
+        name: "py.object.identity",
+        position: CoqUninterpretedPosition::Ctor,
+    },
+];
+
+pub fn emit_term(term: &Term) -> Result<String, CompileError> {
     match term {
-        Term::Var { name, .. } => name.clone(),
+        Term::Var { name, .. } => Ok(name.clone()),
         Term::Const { value, sort, .. } => {
             // Coq: Function/Dependent sorts on a Const are structurally unusual but
             // not unsound. Coq's higher-order universe permits e.g. `(fun x => x) : nat -> nat`
@@ -20,21 +55,24 @@ pub fn emit_term(term: &Term) -> String {
                 Sort::Primitive { name } => name.as_str(),
                 Sort::Function { .. } | Sort::Dependent { .. } | Sort::Region { .. } => "",
             };
-            emit_const_value(value, sort_name)
+            Ok(emit_const_value(value, sort_name))
         }
         Term::Ctor { name, args, .. } => {
-            if args.is_empty() {
-                return coq_ident(name);
-            };
             let args_str = args.iter();
             let args_str = args_str.map(emit_term);
-            let args_str: Vec<String> = args_str.collect();
-            if let Some(op) = coq_binop(name) {
+            let args_str: Result<Vec<String>, CompileError> = args_str.collect();
+            let args_str = args_str?;
+            if coq_binop(name).is_some() || is_coq_binop_candidate(name) {
+                let op = coq_binop(name).ok_or_else(|| unsupported_coq_binop(name))?;
                 if args_str.len() == 2 {
-                    return format!("({} {} {})", args_str[0], op, args_str[1]);
+                    return Ok(format!("({} {} {})", args_str[0], op, args_str[1]));
                 }
+                return Err(unsupported_coq_binop_arity(name, args_str.len()));
             }
-            format!("({} {})", coq_ident(name), args_str.join(" "))
+            if coq_uninterpreted_allowed(name, CoqUninterpretedPosition::Ctor) {
+                return Ok(coq_uninterpreted_application(name, &args_str));
+            }
+            Err(unsupported_coq_ctor(name))
         }
         Term::Lambda {
             param_name,
@@ -43,26 +81,34 @@ pub fn emit_term(term: &Term) -> String {
             ..
         } => {
             let sort_str = emit_sort(param_sort);
-            let body_str = emit_term(body);
-            format!("fun ({} : {}) => {}", param_name, sort_str, body_str)
+            let body_str = emit_term(body)?;
+            Ok(format!(
+                "fun ({} : {}) => {}",
+                param_name, sort_str, body_str
+            ))
         }
         Term::Let { bindings, body, .. } => {
             let mut parts = Vec::new();
             for b in bindings {
-                parts.push(format!("let {} := {} in", b.name, emit_term(&b.bound_term)));
+                parts.push(format!(
+                    "let {} := {} in",
+                    b.name,
+                    emit_term(&b.bound_term)?
+                ));
             }
-            let body_str = emit_term(body);
-            format!("{} {}", parts.join(" "), body_str)
+            let body_str = emit_term(body)?;
+            Ok(format!("{} {}", parts.join(" "), body_str))
         }
     }
 }
-pub fn emit_formula(formula: &Formula) -> String {
+pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { name, args } => {
             let args_str = args.iter();
             let args_str = args_str.map(emit_term);
-            let args_str: Vec<String> = args_str.collect();
-            match name.as_str() {
+            let args_str: Result<Vec<String>, CompileError> = args_str.collect();
+            let args_str = args_str?;
+            let emitted = match name.as_str() {
                 "=" => format!("({} = {})", args_str[0].clone(), args_str[1].clone()),
                 ">" => format!("({} > {})", args_str[0].clone(), args_str[1].clone()),
                 "<" => format!("({} < {})", args_str[0].clone(), args_str[1].clone()),
@@ -71,36 +117,42 @@ pub fn emit_formula(formula: &Formula) -> String {
                 "\u{2260}" => format!("({} <> {})", args_str[0].clone(), args_str[1].clone()),
                 "true" => "True".to_string(),
                 "false" => "False".to_string(),
-                _ => format!("{} {}", coq_ident(name), args_str.join(" ")),
-            }
+                _ if coq_uninterpreted_allowed(name, CoqUninterpretedPosition::Atom) => {
+                    coq_uninterpreted_application(name, &args_str)
+                }
+                _ => return Err(unsupported_coq_atom(name)),
+            };
+            Ok(emitted)
         }
         Formula::And { operands } => {
             let ops = operands.iter();
             let ops = ops.map(emit_formula);
-            let ops: Vec<String> = ops.collect();
-            format!("({})", ops.join(r#" /\ "#))
+            let ops: Result<Vec<String>, CompileError> = ops.collect();
+            let ops = ops?;
+            Ok(format!("({})", ops.join(r#" /\ "#)))
         }
         Formula::Or { operands } => {
             let ops = operands.iter();
             let ops = ops.map(emit_formula);
-            let ops: Vec<String> = ops.collect();
-            format!("({})", ops.join(r#" \/ "#))
+            let ops: Result<Vec<String>, CompileError> = ops.collect();
+            let ops = ops?;
+            Ok(format!("({})", ops.join(r#" \/ "#)))
         }
-        Formula::Not { operands } => format!("(~{})", emit_formula(&operands[0])),
-        Formula::Implies { operands } => format!(
+        Formula::Not { operands } => Ok(format!("(~{})", emit_formula(&operands[0])?)),
+        Formula::Implies { operands } => Ok(format!(
             "({} -> {})",
-            emit_formula(&operands[0]),
-            emit_formula(&operands[1])
-        ),
+            emit_formula(&operands[0])?,
+            emit_formula(&operands[1])?
+        )),
         Formula::Forall { name, sort, body } => {
             let coq_sort = sort_to_coq(sort);
-            let body_str = emit_formula(body);
-            format!("forall {} : {}, {}", name, coq_sort, body_str)
+            let body_str = emit_formula(body)?;
+            Ok(format!("forall {} : {}, {}", name, coq_sort, body_str))
         }
         Formula::Exists { name, sort, body } => {
             let coq_sort = sort_to_coq(sort);
-            let body_str = emit_formula(body);
-            format!("exists {} : {}, {}", name, coq_sort, body_str)
+            let body_str = emit_formula(body)?;
+            Ok(format!("exists {} : {}, {}", name, coq_sort, body_str))
         }
         Formula::Choice {
             var_name,
@@ -108,11 +160,11 @@ pub fn emit_formula(formula: &Formula) -> String {
             body,
         } => {
             let coq_sort = sort_to_coq(sort);
-            let body_str = emit_formula(body);
-            format!(
+            let body_str = emit_formula(body)?;
+            Ok(format!(
                 "@sig {} {} (fun {} => {})",
                 var_name, coq_sort, var_name, body_str
-            )
+            ))
         }
         // wp-rule schema nodes (spec 2026-05-13-wp-as-formula.md §2.3):
         // `substitute` / `apply` appear only inside an unreduced `wp_rule`
@@ -132,6 +184,48 @@ pub fn emit_formula(formula: &Formula) -> String {
             )
         }
     }
+}
+
+fn coq_uninterpreted_allowed(name: &str, position: CoqUninterpretedPosition) -> bool {
+    COQ_UNINTERPRETED_ALLOWLIST
+        .iter()
+        .any(|entry| entry.name == name && entry.position == position)
+}
+
+fn coq_uninterpreted_application(name: &str, args_str: &[String]) -> String {
+    if args_str.is_empty() {
+        coq_ident(name)
+    } else {
+        format!("{} {}", coq_ident(name), args_str.join(" "))
+    }
+}
+
+fn unsupported_coq_atom(name: &str) -> CompileError {
+    CompileError::UnsupportedPredicate(format!(
+        "`{name}`: no Coq encoding registered; refusing rather than weakening; add to COQ_UNINTERPRETED_ALLOWLIST only after a semantic review"
+    ))
+}
+
+fn unsupported_coq_ctor(name: &str) -> CompileError {
+    CompileError::MalformedIr(format!(
+        "unsupported Coq term constructor `{name}`: no Coq encoding registered; refusing rather than weakening; add to COQ_UNINTERPRETED_ALLOWLIST only after a semantic review"
+    ))
+}
+
+fn unsupported_coq_binop(name: &str) -> CompileError {
+    CompileError::MalformedIr(format!(
+        "unsupported Coq binary operator `{name}`: no Coq encoding registered; refusing rather than weakening; implement coq_binop or add to COQ_UNINTERPRETED_ALLOWLIST only after a semantic review"
+    ))
+}
+
+fn unsupported_coq_binop_arity(name: &str, arity: usize) -> CompileError {
+    CompileError::MalformedIr(format!(
+        "unsupported Coq binary operator `{name}` arity {arity}: no Coq encoding registered; refusing rather than weakening; implement coq_binop or add to COQ_UNINTERPRETED_ALLOWLIST only after a semantic review"
+    ))
+}
+
+fn is_coq_binop_candidate(name: &str) -> bool {
+    matches!(name, "/" | "%" | "!=" | "\u{2260}" | "<>" | "&&" | "||")
 }
 
 #[cfg(test)]
@@ -161,7 +255,7 @@ mod tests {
             body: Box::new(var("x")),
         };
 
-        assert_eq!(emit_term(&term), "fun (x : Z) => x");
+        assert_eq!(emit_term(&term).unwrap(), "fun (x : Z) => x");
     }
 
     #[test]
@@ -174,7 +268,7 @@ mod tests {
             body: Box::new(var("x")),
         };
 
-        assert_eq!(emit_term(&term), "let x := 1 in x");
+        assert_eq!(emit_term(&term).unwrap(), "let x := 1 in x");
     }
 }
 fn emit_sort(sort: &Sort) -> String {
@@ -388,7 +482,7 @@ fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
         _ => "0".to_string(),
     }
 }
-pub fn compile_formula(formula: &Formula) -> (String, String, Vec<FreeVar>) {
+pub fn compile_formula(formula: &Formula) -> Result<(String, String, Vec<FreeVar>), CompileError> {
     let mut free_vars = BTreeMap::new();
     let bound = BTreeSet::new();
     collect_free_vars_formula(formula, &mut free_vars, &bound);
@@ -412,7 +506,7 @@ pub fn compile_formula(formula: &Formula) -> (String, String, Vec<FreeVar>) {
         body.push_str(&format!("Parameter {} : {}.\n", coq_ident(name), coq_sort));
     }
     body.push_str("\nGoal ");
-    body.push_str(&emit_formula(formula));
+    body.push_str(&emit_formula(formula)?);
     body.push_str(".\n");
     // A real proof closed by `Qed` is the soundness gate: Coq rejects an
     // incomplete proof at `Qed`, so a clean exit means the goal holds. `intros`
@@ -434,7 +528,7 @@ pub fn compile_formula(formula: &Formula) -> (String, String, Vec<FreeVar>) {
         .into_iter()
         .map(|(name, sort)| FreeVar { name, sort });
     let free_vars_vec = free_vars_vec.collect();
-    (preamble, body, free_vars_vec)
+    Ok((preamble, body, free_vars_vec))
 }
 pub fn collect_free_vars_formula(
     formula: &Formula,

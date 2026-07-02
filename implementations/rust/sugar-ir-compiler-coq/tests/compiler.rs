@@ -371,3 +371,76 @@ fn let_with_multiple_bindings() {
         let_count
     );
 }
+
+#[test]
+fn unknown_atom_refuses_loudly() {
+    let ir = json!({
+        "kind": "atomic",
+        "name": "totally.unknown.op",
+        "args": [{"kind": "var", "name": "x"}]
+    });
+    let compiler = CoqCompiler::new();
+
+    match compiler.compile(&ir, DIALECT) {
+        Ok(compiled) => panic!(
+            "unknown atom must refuse instead of weakening; before-output was:\n{}{}",
+            compiled.preamble, compiled.body
+        ),
+        Err(err) => {
+            let msg = err.to_string();
+            assert!(msg.contains("totally.unknown.op"), "{msg}");
+            assert!(msg.contains("no Coq encoding registered"), "{msg}");
+            assert!(msg.contains("COQ_UNINTERPRETED_ALLOWLIST"), "{msg}");
+        }
+    }
+}
+
+#[test]
+fn allowlisted_atom_emits_uninterpreted() {
+    let ir = json!({
+        "kind": "atomic",
+        "name": "roundTrips",
+        "args": [{"kind": "var", "name": "s"}]
+    });
+    let compiler = CoqCompiler::new();
+
+    let compiled = compiler
+        .compile(&ir, DIALECT)
+        .expect("roundTrips is deliberately opaque in Coq");
+
+    assert!(
+        compiled.body.contains("Parameter s : Z."),
+        "{}",
+        compiled.body
+    );
+    assert!(
+        compiled.body.contains("Goal roundTrips s."),
+        "{}",
+        compiled.body
+    );
+}
+
+#[test]
+fn unmapped_binop_refuses() {
+    let ir = json!({
+        "kind": "ctor",
+        "name": "\u{2260}",
+        "args": [
+            {"kind": "var", "name": "x"},
+            {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
+        ]
+    });
+    let compiler = CoqCompiler::new();
+
+    match compiler.compile(&ir, DIALECT) {
+        Ok(compiled) => panic!(
+            "unmapped Coq binop must refuse instead of weakening; before-output was:\n{}{}",
+            compiled.preamble, compiled.body
+        ),
+        Err(err) => {
+            let msg = err.to_string();
+            assert!(msg.contains("\u{2260}"), "{msg}");
+            assert!(msg.contains("no Coq encoding registered"), "{msg}");
+        }
+    }
+}
