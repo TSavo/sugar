@@ -3,12 +3,12 @@
 // Wrap a `FunctionContractMemento` as a signed layered MintedEnvelope.
 // Per #372 part 2.
 //
-// `sugar-claim-envelope::mint_contract` is the substrate's canonical
+// `sugar-claim-envelope::mint_contract_with_body_cid` is the substrate's canonical
 // path for emitting contract mementos: it produces the v1.2 layered
 // shape `{envelope, header, metadata}` with an Ed25519 attestation
 // signature embedded in the envelope. The minted CID is the
 // attestation CID; the header carries the signer-independent
-// `contract_cid`.
+// `contract_cid` plus the graph body pointer.
 //
 // This module is the converter from walk's internal contract type to
 // the kit's `MintContractArgs`. Once a contract is wrapped, it plugs
@@ -19,10 +19,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use sugar_canonicalizer::{encode_jcs, Value};
 use sugar_claim_envelope::{
-    contract_cid as kit_contract_cid, mint_contract, Authoring, ClaimEnvelopeError,
+    contract_cid as kit_contract_cid, mint_contract_with_body_cid, Authoring, ClaimEnvelopeError,
     MintContractArgs, MintedEnvelope,
 };
-use sugar_proof_envelope::Ed25519Seed;
+use sugar_proof_envelope::{AtomMemento, ContractBody, Ed25519Seed, FlatAtom, ProofGraph};
 
 use crate::canonical::formula_to_canonical;
 use crate::contract::FunctionContractMemento;
@@ -41,7 +41,7 @@ pub fn wrap_function_contract(
     signer_seed: &Ed25519Seed,
 ) -> Result<MintedEnvelope, ClaimEnvelopeError> {
     let args = mint_args(contract, produced_at, signer_seed)?;
-    mint_contract(&args)
+    mint_graph_backed_contract(&args)
 }
 
 /// Content-addressed envelope cache + mint counter. Per #368 AC #6:
@@ -57,7 +57,7 @@ pub fn wrap_function_contract(
 pub struct EnvelopeCache {
     /// contract_cid + panic_loci fingerprint → cached MintedEnvelope
     by_contract: HashMap<String, MintedEnvelope>,
-    /// Number of times mint_contract was actually invoked.
+    /// Number of times mint_contract_with_body_cid was actually invoked.
     pub mints: u64,
     /// Number of times the cache served a previously-minted envelope.
     pub hits: u64,
@@ -95,10 +95,82 @@ pub fn wrap_function_contract_cached(
         cache.hits += 1;
         return Ok(env.clone());
     }
-    let env = mint_contract(&args)?;
+    let env = mint_graph_backed_contract(&args)?;
     cache.mints += 1;
     cache.by_contract.insert(cache_key, env.clone());
     Ok(env)
+}
+
+/// Register the graph body that `wrap_function_contract` points at.
+///
+/// Callers that bundle the returned envelope into a `.proof` graph must
+/// register this body in that same graph before pushing the contract memento.
+/// The body CID is derived from the same canonical pre/post/inv slots used by
+/// the wrapped member's `bodyCid` header.
+pub fn register_function_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    contract: &FunctionContractMemento,
+    produced_at: &str,
+    signer_seed: &Ed25519Seed,
+) -> Result<ContractBody, ClaimEnvelopeError> {
+    let args = mint_args(contract, produced_at, signer_seed)?;
+    register_contract_body_graph(
+        proof_graph,
+        args.pre.as_ref(),
+        args.post.as_ref(),
+        args.inv.as_ref(),
+    )
+}
+
+fn mint_graph_backed_contract(
+    args: &MintContractArgs,
+) -> Result<MintedEnvelope, ClaimEnvelopeError> {
+    let mut proof_graph = ProofGraph::new();
+    let body = register_contract_body_graph(
+        &mut proof_graph,
+        args.pre.as_ref(),
+        args.post.as_ref(),
+        args.inv.as_ref(),
+    )?;
+    mint_contract_with_body_cid(args, Some(body.cid().as_str()))
+}
+
+fn register_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    pre: Option<&Arc<Value>>,
+    post: Option<&Arc<Value>>,
+    inv: Option<&Arc<Value>>,
+) -> Result<ContractBody, ClaimEnvelopeError> {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(formula) = pre {
+        slots.push((
+            "pre",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = post {
+        slots.push((
+            "post",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = inv {
+        slots.push((
+            "inv",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if slots.is_empty() {
+        return Err(ClaimEnvelopeError::Other(
+            "contract body graph requires at least one formula slot".to_string(),
+        ));
+    }
+
+    let slot_refs = slots
+        .iter()
+        .map(|(slot, atom)| (*slot, atom))
+        .collect::<Vec<_>>();
+    Ok(proof_graph.register_body(ContractBody::from_slots(slot_refs)))
 }
 
 fn envelope_cache_key(
