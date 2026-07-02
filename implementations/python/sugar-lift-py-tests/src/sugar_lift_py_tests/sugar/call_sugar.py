@@ -100,7 +100,7 @@ class BridgeStrategy:
                 arg_values=arg_values,
                 parameters=self.parameters,
                 term=term,
-                body=self.body if isinstance(self.body, SugarBody) else None,
+                body=self.body,
             )
         )
 

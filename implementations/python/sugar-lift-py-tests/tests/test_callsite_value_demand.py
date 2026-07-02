@@ -7,21 +7,25 @@ import pytest
 from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap, SourceFragment
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
+    BlockValue,
     CallSiteValue,
+    GuardedReturn,
     ObjectValue,
     ReturnValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, num, str_const
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.object_equality_term_sugar import ObjectEqualityTermSugar
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _ctx_for_module(source: str) -> FactoryBuildContext:
@@ -61,6 +65,147 @@ def _reduce_function_return(source: str, name: str):
     returned = value.statements[0]
     assert isinstance(returned, ReturnValue)
     return returned.value
+
+
+def _callsite_value(source: str, expr: str) -> tuple[CallSiteValue, FactoryBuildContext]:
+    ctx = _ctx_for_module(source)
+    node = ast.parse(expr, mode="eval").body
+    value = complete_value(
+        ctx.build_body(node, SugarRole.TERM).reduce(ctx),
+        owner="callsite value demand",
+    )
+    assert isinstance(value, CallSiteValue)
+    return value, ctx
+
+
+def test_control_flow_body_callsite_can_force_floor_through_block_sugar() -> None:
+    source = """\
+def f(x):
+    if x == 1:
+        return 1
+    return 0
+"""
+
+    callsite, ctx = _callsite_value(source, "f(1)")
+    demand_ctx = ReduceContext.root(owner="control-flow callsite demand")
+
+    floor = force_floor(callsite, demand_ctx, owner="control-flow callsite demand")
+
+    assert isinstance(floor, BlockValue)
+    assert len(floor.statements) == 2
+    assert all(isinstance(statement, GuardedReturn) for statement in floor.statements)
+    assert demand_ctx.operation_log[-1] == (
+        "control-flow callsite demand",
+        "project_callsite_with",
+        "CallsiteProjectionOperation",
+    )
+
+
+def test_terminating_callsite_chain_forces_exact_literal_floor() -> None:
+    source = """\
+def b():
+    return 0
+
+def a():
+    return b()
+"""
+
+    callsite, ctx = _callsite_value(source, "a()")
+
+    assert force_floor(callsite, ctx, owner="terminating chain demand") == TermValue(0)
+
+
+def test_mutual_recursion_refuses_floor_honestly_without_false_literal() -> None:
+    values: dict[str, CallSiteValue] = {}
+
+    class ReturnCallsiteSugar:
+        def __init__(self, target: str) -> None:
+            self.target = target
+
+        def desugar(self, ctx):
+            del ctx
+            return Complete(values[self.target])
+
+    values["a"] = CallSiteValue(
+        target_name="a",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:a", []),
+        body=SugarBody(ReturnCallsiteSugar("b"), SugarRole.TERM),
+    )
+    values["b"] = CallSiteValue(
+        target_name="b",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:b", []),
+        body=SugarBody(ReturnCallsiteSugar("a"), SugarRole.TERM),
+    )
+    ctx = ReduceContext.root(owner="mutual recursion demand")
+
+    with pytest.raises(FactoryGap) as raised:
+        force_floor(values["a"], ctx, owner="mutual recursion demand")
+
+    assert raised.value.info["gap_kind"] == "Floor"
+    assert raised.value.info["observed"] == "recursive callsite value demand"
+    assert raised.value.info["requested"] == "force callsite floor"
+
+
+def test_callsite_force_floor_budget_refuses_deep_unique_chain() -> None:
+    values: dict[str, CallSiteValue | TermValue] = {"leaf": TermValue(0)}
+
+    class ReturnFloorSugar:
+        def __init__(self, target: str) -> None:
+            self.target = target
+
+        def desugar(self, ctx):
+            del ctx
+            return Complete(values[self.target])
+
+    values["c2"] = CallSiteValue(
+        target_name="c2",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:c2", []),
+        body=SugarBody(ReturnFloorSugar("leaf"), SugarRole.TERM),
+    )
+    values["c1"] = CallSiteValue(
+        target_name="c1",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:c1", []),
+        body=SugarBody(ReturnFloorSugar("c2"), SugarRole.TERM),
+    )
+    values["c0"] = CallSiteValue(
+        target_name="c0",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:c0", []),
+        body=SugarBody(ReturnFloorSugar("c1"), SugarRole.TERM),
+    )
+    ctx = ReduceContext.root(owner="deep chain demand")
+
+    with pytest.raises(FactoryGap) as raised:
+        force_floor(values["c0"], ctx, owner="deep chain demand", budget=2)
+
+    assert raised.value.info["gap_kind"] == "Floor"
+    assert raised.value.info["observed"] == "callsite value demand budget exhausted"
+    assert raised.value.info["requested"] == "force callsite floor"
+
+
+def test_effectful_callsite_refuses_floor_without_fabricated_value() -> None:
+    source = """\
+def f():
+    return 1 // 0
+"""
+
+    callsite, ctx = _callsite_value(source, "f()")
+
+    with pytest.raises(FactoryGap) as raised:
+        force_floor(callsite, ctx, owner="effectful callsite demand")
+
+    assert raised.value.info["gap_kind"] == "Floor"
+    assert raised.value.info["observed"] == "Incomplete"
+    assert "runtime effect" in raised.value.info["fix"]
 
 
 def test_callsite_projects_to_bridge_but_floors_only_when_value_is_demanded() -> None:
