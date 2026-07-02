@@ -391,7 +391,7 @@ fn validate_member_view(
     }
 }
 
-fn verify_member_signature(env: &Json) -> Result<(), String> {
+pub(crate) fn verify_member_signature(env: &Json) -> Result<(), String> {
     if let Some(envelope) = env.get("envelope") {
         let signer = envelope
             .get("signer")
@@ -407,9 +407,10 @@ fn verify_member_signature(env: &Json) -> Result<(), String> {
         let metadata = env
             .get("metadata")
             .ok_or_else(|| "layered envelope metadata missing".to_string())?;
+        let signing_header = layered_signature_header(env, header)?;
         let signing_value = Json::Object(
             [
-                ("header".to_string(), header.clone()),
+                ("header".to_string(), signing_header),
                 ("metadata".to_string(), metadata.clone()),
             ]
             .into_iter()
@@ -439,6 +440,34 @@ fn verify_member_signature(env: &Json) -> Result<(), String> {
     } else {
         Err("legacy envelope producerSignature does not verify".to_string())
     }
+}
+
+fn layered_signature_header(env: &Json, header: &Json) -> Result<Json, String> {
+    let mut signing_header = header.clone();
+    // Proof-run and stage-receipt producers store the member identity in
+    // `header.cid`; their signed preimage uses the derived header-content CID
+    // to avoid a signature/CID fixed point.
+    if matches!(
+        sugar_proof_envelope::member_kind(env),
+        Some("proof-run" | "stage-receipt")
+    ) {
+        let cid = layered_header_content_cid(header)?;
+        let Json::Object(map) = &mut signing_header else {
+            return Err("layered envelope header is not an object".to_string());
+        };
+        map.insert("cid".to_string(), Json::String(cid));
+    }
+    Ok(signing_header)
+}
+
+fn layered_header_content_cid(header: &Json) -> Result<String, String> {
+    let mut preimage = header.clone();
+    let Json::Object(map) = &mut preimage else {
+        return Err("layered envelope header is not an object".to_string());
+    };
+    map.shift_remove("cid");
+    let canonical = encode_jcs(&json_to_value(&preimage));
+    Ok(blake3_512_of(canonical.as_bytes()))
 }
 
 fn json_contains_string(value: &Json, needle: &str) -> bool {

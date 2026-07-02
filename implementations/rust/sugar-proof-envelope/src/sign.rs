@@ -55,8 +55,9 @@ pub fn ed25519_pubkey_string(seed: &Ed25519Seed) -> String {
 /// `"ed25519:" + base64(sig)`) using `pubkey_string`
 /// (spec form `"ed25519:" + base64(pubkey)`).
 /// Returns `true` iff the signature is valid. Returns `false` for any
-/// malformed input rather than panicking: verifiers must fail
-/// closed, but on a separate code path.
+/// malformed input rather than panicking. The verifier load path treats a
+/// carried member signature that returns `false` as a load error; unsigned
+/// members remain accepted until a separate trust policy requires presence.
 pub fn ed25519_verify_string(pubkey_string: &str, sig_string: &str, message: &[u8]) -> bool {
     let pk_b64 = match pubkey_string.strip_prefix(ED25519_KEY_PREFIX) {
         Some(s) => s,
