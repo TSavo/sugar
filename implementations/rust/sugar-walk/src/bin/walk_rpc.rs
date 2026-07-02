@@ -664,12 +664,9 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     let graph = sugar_proof_envelope::ProofGraph::read(&bytes)
         .map_err(|error| format!("decode Rust vendor proof {}: {error}", path.display()))?;
 
-    let mut parsed_members: Vec<(String, Value)> = Vec::new();
+    let mut parsed_members: Vec<RustVendorProofMember> = Vec::new();
     for view in graph.members_view() {
-        let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
-            continue;
-        };
-        parsed_members.push((view.cid().as_str().to_string(), parsed));
+        parsed_members.push(RustVendorProofMember::from_view(view));
     }
 
     // First pass: collect bridge members that map a source symbol to a target contract CID.
@@ -679,8 +676,8 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     // field, bad CID format, unknown kind) is treated as "not a qualifying bridge" and the
     // member is skipped, matching the old stringly None path exactly.
     let mut bridge_source_by_target: HashMap<String, String> = HashMap::new();
-    for (_cid, member) in &parsed_members {
-        let bridge = match sugar_proof_envelope::Member::from_value(member) {
+    for member in &parsed_members {
+        let bridge = match sugar_proof_envelope::Member::from_value(&member.json) {
             Ok(sugar_proof_envelope::Member::Bridge(b)) => b,
             _ => continue,
         };
@@ -717,7 +714,8 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
     // about kind/body-backed shape, but accept the Rust minter's canonical
     // `name` spelling so dependency proofs can be indexed.
     let mut bindings = Vec::new();
-    for (member_cid, member) in parsed_members {
+    for member in parsed_members {
+        let member_cid = member.cid.clone();
         let Some(bridge_source_symbol) = bridge_source_by_target.get(&member_cid).cloned() else {
             continue;
         };
@@ -809,21 +807,47 @@ struct RustVendorContractBindingMember {
     discharge_policy: Option<Value>,
 }
 
+struct RustVendorProofMember {
+    cid: String,
+    kind: Option<String>,
+    body_cid: Option<String>,
+    json: Value,
+}
+
+impl RustVendorProofMember {
+    fn from_view(view: sugar_proof_envelope::MemberView<'_>) -> Self {
+        Self {
+            cid: view.cid().as_str().to_string(),
+            kind: view.kind(),
+            body_cid: view.body_cid(),
+            json: view.json(),
+        }
+    }
+
+    fn body_cid(&self) -> Option<&str> {
+        self.body_cid
+            .as_deref()
+            .or_else(|| self.field("bodyCid").and_then(Value::as_str))
+    }
+
+    fn field(&self, field: &str) -> Option<&Value> {
+        sugar_proof_envelope::member_field(&self.json, field)
+    }
+}
+
 fn rust_vendor_contract_binding_member(
-    member: &Value,
+    member: &RustVendorProofMember,
 ) -> Result<Option<RustVendorContractBindingMember>, String> {
-    if rust_vendor_member_field(member, "kind").and_then(Value::as_str) != Some("contract") {
+    if member.kind.as_deref() != Some("contract") {
         return Ok(None);
     }
     // Graph-backed Rust contracts prove the body map exists by carrying bodyCid.
-    if rust_vendor_member_field(member, "bodyCid")
-        .and_then(Value::as_str)
-        .is_none()
-    {
+    if member.body_cid().is_none() {
         return Ok(None);
     }
-    let Some(name) = rust_vendor_member_field(member, "name")
-        .or_else(|| rust_vendor_member_field(member, "contractName"))
+    let Some(name) = member
+        .field("name")
+        .or_else(|| member.field("contractName"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -831,25 +855,27 @@ fn rust_vendor_contract_binding_member(
     else {
         return Ok(None);
     };
-    let Some(formals_value) = rust_vendor_member_field(member, "formals") else {
+    let Some(formals_value) = member.field("formals") else {
         return Ok(None);
     };
     let formals =
         serde_json::from_value::<Vec<String>>(formals_value.clone()).map_err(|error| {
             format!("contract member `{name}` has invalid `formals` array: {error}")
         })?;
-    let formal_sorts = match rust_vendor_member_field(member, "formalSorts") {
+    let formal_sorts = match member.field("formalSorts") {
         Some(value) => Some(serde_json::from_value::<Vec<Value>>(value.clone()).map_err(
             |error| format!("contract member `{name}` has invalid `formalSorts` array: {error}"),
         )?),
         None => None,
     };
-    let has_pre = rust_vendor_member_field(member, "pre").is_some_and(has_nontrivial_pre_json)
-        || rust_vendor_member_field(member, "preHash")
+    let has_pre = member.field("pre").is_some_and(has_nontrivial_pre_json)
+        || member
+            .field("preHash")
             .and_then(Value::as_str)
             .is_some_and(|hash| !hash.trim().is_empty());
-    let has_post = rust_vendor_member_field(member, "post").is_some()
-        || rust_vendor_member_field(member, "postHash")
+    let has_post = member.field("post").is_some()
+        || member
+            .field("postHash")
             .and_then(Value::as_str)
             .is_some_and(|hash| !hash.trim().is_empty());
     Ok(Some(RustVendorContractBindingMember {
@@ -858,35 +884,19 @@ fn rust_vendor_contract_binding_member(
         formal_sorts,
         has_pre,
         has_post,
-        library: rust_vendor_member_field(member, "library")
+        library: member
+            .field("library")
             .and_then(Value::as_str)
             .map(str::to_string),
-        body_discharge_eligible: rust_vendor_member_field(member, "bodyDischargeEligible")
+        body_discharge_eligible: member
+            .field("bodyDischargeEligible")
             .and_then(Value::as_bool),
-        body_discharge_refusal_reason: rust_vendor_member_field(
-            member,
-            "bodyDischargeRefusalReason",
-        )
-        .and_then(Value::as_str)
-        .map(str::to_string),
-        discharge_policy: rust_vendor_member_field(member, "dischargePolicy").cloned(),
+        body_discharge_refusal_reason: member
+            .field("bodyDischargeRefusalReason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        discharge_policy: member.field("dischargePolicy").cloned(),
     }))
-}
-
-fn rust_vendor_member_field<'a>(member: &'a Value, field: &str) -> Option<&'a Value> {
-    [
-        member.get("header"),
-        member.get("metadata"),
-        member.pointer("/envelope/header"),
-        member.pointer("/envelope/metadata"),
-        member.get("body"),
-        member.pointer("/evidence/body"),
-        Some(member),
-    ]
-    .into_iter()
-    .flatten()
-    .filter_map(Value::as_object)
-    .find_map(|layer| layer.get(field))
 }
 
 fn binding_template_from_sugar_entry(
