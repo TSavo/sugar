@@ -244,7 +244,15 @@ def lift_pydantic_model_witnesses(
             field_name, getattr(field_info, "annotation", None)
         )
         formulas: List[Formula] = []
-        if _field_required(field_info) and not _is_optional_annotation(annotation):
+        is_optional = _is_optional_annotation(annotation)
+        requiredness = _field_required(
+            getattr(model_cls, "__name__", "<unknown>"), field_name, field_info
+        )
+        requiredness_loss_record: Dict[str, Any] = {}
+        if isinstance(requiredness, _RequirednessUnknown):
+            if not is_optional:
+                requiredness_loss_record = requiredness.to_loss_record()
+        elif requiredness and not is_optional:
             formulas.append(
                 comparison_with_none_guard("≠", make_var(field_name), ctor("None", []))
             )
@@ -260,9 +268,12 @@ def lift_pydantic_model_witnesses(
             predicate_text = _formula_text(predicate)
             extension_fields: Dict[str, Any] = {
                 "field": field_name,
-                "loss_record": _pydantic_loss_record(
-                    original_predicate_text,
-                    predicate_text,
+                "loss_record": _merge_loss_records(
+                    _pydantic_loss_record(
+                        original_predicate_text,
+                        predicate_text,
+                    ),
+                    requiredness_loss_record,
                 ),
                 "surface": "pydantic-field",
             }
@@ -295,17 +306,53 @@ def _py_literal(value: Any) -> str:
     return str(value)
 
 
-def _field_required(field_info: Any) -> bool:
+def _field_required(
+    model_name: str, field_name: str, field_info: Any
+) -> bool | "_RequirednessUnknown":
     is_required = getattr(field_info, "is_required", None)
     if callable(is_required):
         try:
             return bool(is_required())
-        except Exception:
-            return False
+        except Exception as exc:
+            return gap_record(model_name, field_name, exc)
     required = getattr(field_info, "required", None)
     if required is not None:
         return bool(required)
     return getattr(field_info, "default", None) is ...
+
+
+@dataclass(frozen=True)
+class _RequirednessUnknown:
+    model: str
+    field: str
+    caught: str
+    reason: str
+
+    @property
+    def dropped_precondition(self) -> str:
+        return f"{self.field} != None"
+
+    def to_loss_record(self) -> Dict[str, Any]:
+        return {
+            "pydantic_requiredness_loss": {
+                "model": self.model,
+                "field": self.field,
+                "caught": self.caught,
+                "dropped_precondition": self.dropped_precondition,
+                "reason": self.reason,
+            }
+        }
+
+
+def gap_record(
+    model_name: str, field_name: str, exc: Exception
+) -> _RequirednessUnknown:
+    return _RequirednessUnknown(
+        model=model_name,
+        field=field_name,
+        caught=type(exc).__name__,
+        reason=f"is_required() raised: {exc}",
+    )
 
 
 def _is_optional_annotation(annotation: Any) -> bool:
@@ -349,6 +396,13 @@ def _pydantic_loss_record(
             "surface_predicate_text": surface_predicate_text,
         }
     }
+
+
+def _merge_loss_records(*records: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for record in records:
+        merged.update(record)
+    return merged
 
 
 def _formula_text(formula: Dict[str, Any]) -> str:
