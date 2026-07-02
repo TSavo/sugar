@@ -271,6 +271,16 @@ def _listcomp(
     return {"kind": "ctor", "name": "python:listcomp", "args": [elt, *generators]}
 
 
+def _generatorexp(
+    elt: dict[str, object], *generators: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:generatorexp",
+        "args": [elt, *generators],
+    }
+
+
 def _comprehension(
     target: dict[str, object],
     iterator: dict[str, object],
@@ -1338,10 +1348,10 @@ def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
 
 
 def test_fstring_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f(xs):\n    return (x for x in xs)\n", "generator.py")
+    result = lift_source("def f(xs):\n    return {x for x in xs}\n", "setcomp.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled expression kind: GeneratorExp"
+        "unhandled expression kind: SetComp"
     ]
 
 
@@ -1768,7 +1778,7 @@ def test_subscript_index_lifts_slice_bounds_and_omissions() -> None:
 
 
 def test_subscript_index_slice_bound_refusal_propagates() -> None:
-    node = ast.parse("xs[1:(i for i in xs)]", mode="eval").body
+    node = ast.parse("xs[1:{i for i in xs}]", mode="eval").body
     assert isinstance(node, ast.Subscript)
     emitter = _Emitter(
         fn_name="slice.f",
@@ -1782,7 +1792,7 @@ def test_subscript_index_slice_bound_refusal_propagates() -> None:
     with pytest.raises(_UnsupportedSyntax) as exc:
         emitter.subscript_index(node)
 
-    assert exc.value.reason == "unhandled expression kind: GeneratorExp"
+    assert exc.value.reason == "unhandled expression kind: SetComp"
 
 
 def test_tuple_slice_index_keeps_existing_refusal() -> None:
@@ -3757,7 +3767,7 @@ def test_subscript_callees_lift_as_opaque_unresolved_calls() -> None:
 
 def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
     result = lift_source(
-        "def f(factory, ys):\n    return factory[(y for y in ys)](1)\n",
+        "def f(factory, ys):\n    return factory[{y for y in ys}](1)\n",
         "subscript_callee_inner_refusal.py",
     )
 
@@ -3766,7 +3776,7 @@ def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
             "kind": "unhandled-syntax",
             "function": "subscript_callee_inner_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: GeneratorExp",
+            "reason": "unhandled expression kind: SetComp",
         }
     ]
 
@@ -3922,6 +3932,104 @@ def test_listcomp_roundtrip_is_structurally_stable() -> None:
 
     compiled = compile_body_term(_return(term), formals=["pairs"])
     relifted = lift_source(compiled, "roundtrip_listcomp.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == _return(term)
+    assert cid_of_json(body) == cid_of_json(_return(term))
+
+
+def test_generatorexp_lifts_call_argument_and_records_opaque_loop_effect() -> None:
+    source = "def f(items):\n    return sum(x * 2 for x in items)\n"
+
+    result = lift_source(source, "generatorexp_simple.py")
+
+    term = _generatorexp(
+        _binary("python:mul", _var("x"), _int_const(2)),
+        _comprehension(_var("x"), _var("items")),
+    )
+    contract = _contract(result.ir, ".f")
+    loop_cid = cid_of_json(term)
+    assert result.refusals == []
+    assert _function_body(result) == _return(_call("sum", term))
+    assert {"kind": "unresolved_call", "name": "sum"} in contract["effects"]
+    assert {"kind": "opaque_loop", "loopCid": loop_cid} in contract["effects"]
+    assert result.opacity_report == [
+        {
+            "file": "generatorexp_simple.py",
+            "line": 2,
+            "col": 14,
+            "kind": "opaque_loop",
+            "cid": loop_cid,
+        }
+    ]
+
+
+def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(rows):\n    return sum({x for x in row} for row in rows)\n",
+        "generatorexp_element_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "generatorexp_element_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: SetComp",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_generatorexp_iterable_refusal_propagates_without_opaque_term() -> None:
+    result = lift_source(
+        "def f(xs):\n    return sum(x for x in {y for y in xs})\n",
+        "generatorexp_iter_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "generatorexp_iter_refusal.f",
+            "line": 2,
+            "reason": "unhandled expression kind: SetComp",
+        }
+    ]
+    assert result.opacity_report == []
+
+
+def test_generatorexp_target_binding_does_not_leak_to_following_statement() -> None:
+    source = (
+        'x = "global"\n'
+        "def f(xs):\n"
+        "    values = (x for x in xs)\n"
+        "    return x\n"
+    )
+
+    result = lift_source(source, "generatorexp_scope.py")
+
+    term = _generatorexp(_var("x"), _comprehension(_var("x"), _var("xs")))
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("values"), term),
+        _return(_str_const("global")),
+    )
+
+
+def test_generatorexp_roundtrip_is_structurally_stable_and_nested() -> None:
+    term = _generatorexp(
+        _var("x"),
+        _comprehension(_var("row"), _var("matrix")),
+        _comprehension(
+            _var("x"),
+            _var("row"),
+            _compare(">", _var("x"), _int_const(0)),
+        ),
+    )
+
+    compiled = compile_body_term(_return(term), formals=["matrix"])
+    relifted = lift_source(compiled, "roundtrip_generatorexp.py")
 
     assert relifted.refusals == []
     body = _function_body(relifted)
@@ -4333,7 +4441,7 @@ def test_lambda_variadic_parameters_are_carried_and_bound() -> None:
 
 def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(xs):\n    return lambda x: (y for y in x)\n",
+        "def f(xs):\n    return lambda x: {y for y in x}\n",
         "lambda_body_refusal.py",
     )
 
@@ -4342,7 +4450,7 @@ def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
             "kind": "unhandled-syntax",
             "function": "lambda_body_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: GeneratorExp",
+            "reason": "unhandled expression kind: SetComp",
         }
     ]
 
@@ -4375,7 +4483,7 @@ def test_ifexp_lifts_explicit_ternary_condition_and_branches() -> None:
 
 def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(cond, x, ys):\n    return x if cond else (y for y in ys)\n",
+        "def f(cond, x, ys):\n    return x if cond else {y for y in ys}\n",
         "ifexp_else_refusal.py",
     )
 
@@ -4384,7 +4492,7 @@ def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> No
             "kind": "unhandled-syntax",
             "function": "ifexp_else_refusal.f",
             "line": 2,
-            "reason": "unhandled expression kind: GeneratorExp",
+            "reason": "unhandled expression kind: SetComp",
         }
     ]
 

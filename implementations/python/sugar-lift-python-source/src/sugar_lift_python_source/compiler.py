@@ -343,6 +343,11 @@ def _expr(term: Json) -> ast.expr:
             elt=_expr(args[0]),
             generators=[_comprehension(arg) for arg in args[1:]],
         )
+    if name == "python:generatorexp":
+        return ast.GeneratorExp(
+            elt=_expr(args[0]),
+            generators=[_comprehension(arg) for arg in args[1:]],
+        )
     if name == "python:lambda":
         if not args:
             raise ValueError("python:lambda needs a body")
