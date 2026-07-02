@@ -6,20 +6,24 @@
 // mapped value it cannot materialize back to an `Expr`. Lifted verbatim from the
 // `Adaptor::Map(closure)` arm of the former `apply_one_adaptor` match.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 use syn::{Expr, Pat, Type};
 
-use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::method_family;
+use crate::sugar::factory::{
+    desugar_build_ctx, CompositeFloor, SugarBody, SugarBuildCtx, TermFloor,
+};
 use crate::sugar::sequence_floor::{sequence_elem_term_floor, sequence_value_term_floor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
+use crate::sugar::{format::stable_let_bindings, method_family};
 use crate::{
     canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
     const_eval_unary_closure_with_u128_shift, curry_param_name, curry_param_term,
-    strip_refs_groups, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    strip_refs_groups, substitute_expr, token_key, ConstVal, Desugared, DesugaredElem, Effect,
+    Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -97,7 +101,9 @@ impl MapClosure {
         fcx: &SugarBuildCtx,
         u128_shift_hint: bool,
     ) -> Option<Self> {
-        let param = closure_single_param_name(&expr)?;
+        let param = closure_single_param_name(&expr).or_else(|| {
+            closure_single_wildcard_literal_sequence(&expr, fcx).then(|| "_".to_string())
+        })?;
         let curry_param = curry_param_name(&param);
         let body_scope = fcx
             .scope()
@@ -114,6 +120,16 @@ impl MapClosure {
 
     fn expr(&self) -> &syn::ExprClosure {
         &self.expr
+    }
+
+    fn substituted_body_for(&self, value: &ConstVal) -> Option<Expr> {
+        if self.expr.inputs.len() != 1 {
+            return None;
+        }
+        let tail = closure_tail_expr(&self.expr)?;
+        let mut bindings = BTreeMap::new();
+        bind_expr_closure_arg(&self.expr.inputs[0], value, &mut bindings)?;
+        Some(substitute_expr(tail, &bindings))
     }
 }
 
@@ -246,6 +262,18 @@ fn reduce_map_sequence(
                 );
                 return Ok(MappedSequence::Values(values));
             }
+            match reduce_map_sequence_to_nested_values(&seq, mapper, ctx) {
+                Ok(Some(values)) => {
+                    tracing::debug!(
+                        target: "sugar_lift_rust_tests::sugar::map",
+                        len = values.len(),
+                        "literal closure map reduced to nested value sequence"
+                    );
+                    return Ok(MappedSequence::Values(values));
+                }
+                Ok(None) => {}
+                Err(outcome) => return Err(outcome),
+            }
             let mut out = Vec::with_capacity(seq.len());
             for (idx, elem) in seq.into_iter().enumerate() {
                 out.push(curry_map_body_for_elem(mapper, &elem, idx, ctx)?);
@@ -297,6 +325,56 @@ fn reduce_map_sequence_to_values(
         });
     }
     Some(out)
+}
+
+fn reduce_map_sequence_to_nested_values(
+    seq: &[DesugaredElem],
+    mapper: &MapClosure,
+    ctx: &SugarCtx,
+) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits: BTreeMap<String, &Expr> = stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect();
+    let fcx = desugar_build_ctx(ctx.scope, ctx.options, &let_inits);
+    let mut out = Vec::with_capacity(seq.len());
+    for elem in seq {
+        let Some(value) = elem.value.as_ref() else {
+            return Ok(None);
+        };
+        let Some(body) = mapper.substituted_body_for(value) else {
+            return Ok(None);
+        };
+        if !expr_is_literal_sequence_body(&body) {
+            return Ok(None);
+        }
+        let Some(node) = method_family::build_literal_sequence_composite(&body, &fcx) else {
+            return Ok(None);
+        };
+        let nested = match SugarBody::<CompositeFloor>::from_node(node).reduce(ctx) {
+            Outcome::Complete(desugared) => desugared
+                .into_seq()
+                .unwrap_or_else(|| map_gap("map closure composite body reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+        };
+        let mut values = Vec::with_capacity(nested.len());
+        for nested_elem in nested {
+            let Some(value) = nested_elem.value else {
+                return Ok(None);
+            };
+            values.push(value);
+        }
+        let value = ConstVal::Array(values);
+        let expr = value
+            .to_expr()
+            .unwrap_or_else(|| map_gap("map nested sequence value did not reify to an expr"));
+        out.push(DesugaredElem {
+            expr,
+            value: Some(value),
+        });
+    }
+    Ok(Some(out))
 }
 
 fn curry_map_body_for_elem(
@@ -352,6 +430,66 @@ fn pat_single_name(pat: &Pat) -> Option<String> {
         Pat::Paren(paren) => pat_single_name(&paren.pat),
         Pat::Reference(reference) => pat_single_name(&reference.pat),
         Pat::Type(typed) => pat_single_name(&typed.pat),
+        _ => None,
+    }
+}
+
+fn closure_single_wildcard_literal_sequence(
+    closure: &syn::ExprClosure,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    if closure.inputs.len() != 1 || !matches!(&closure.inputs[0], Pat::Wild(_)) {
+        return false;
+    }
+    closure_tail_expr(closure).is_some_and(|tail| {
+        expr_is_literal_sequence_body(tail)
+            && method_family::build_literal_sequence_composite(tail, fcx).is_some()
+    })
+}
+
+fn closure_tail_expr(closure: &syn::ExprClosure) -> Option<&Expr> {
+    match closure.body.as_ref() {
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [syn::Stmt::Expr(expr, None)] => Some(expr),
+            _ => None,
+        },
+        other => Some(other),
+    }
+}
+
+fn expr_is_literal_sequence_body(expr: &Expr) -> bool {
+    matches!(
+        strip_refs_groups(expr),
+        Expr::Array(_) | Expr::Range(_) | Expr::Repeat(_) | Expr::Macro(_)
+    )
+}
+
+fn bind_expr_closure_arg(
+    pat: &Pat,
+    value: &ConstVal,
+    bindings: &mut BTreeMap<String, Expr>,
+) -> Option<()> {
+    match pat {
+        Pat::Ident(ident) if ident.subpat.is_none() => {
+            bindings.insert(ident.ident.to_string(), value.to_expr()?);
+            Some(())
+        }
+        Pat::Tuple(tuple) => {
+            let ConstVal::Tuple(items) = value else {
+                return None;
+            };
+            if tuple.elems.len() != items.len() {
+                return None;
+            }
+            for (pat, item) in tuple.elems.iter().zip(items) {
+                bind_expr_closure_arg(pat, item, bindings)?;
+            }
+            Some(())
+        }
+        Pat::Wild(_) => Some(()),
+        Pat::Paren(paren) => bind_expr_closure_arg(&paren.pat, value, bindings),
+        Pat::Reference(reference) => bind_expr_closure_arg(&reference.pat, value, bindings),
+        Pat::Type(typed) => bind_expr_closure_arg(&typed.pat, value, bindings),
         _ => None,
     }
 }

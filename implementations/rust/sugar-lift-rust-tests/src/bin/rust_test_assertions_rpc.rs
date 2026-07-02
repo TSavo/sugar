@@ -1822,7 +1822,29 @@ fn source_test_body_warning_classification(
     reason: &str,
     block: &syn::Block,
 ) -> Option<SourceWarningClassification> {
+    if reason.contains("consumed iterator") && reason.contains("no replayable temporal rewrite") {
+        if let Some(category) =
+            iterator_consumption_named_refusal_category(source_path, source_name, reason)
+        {
+            return Some(SourceWarningClassification::Refused(category));
+        }
+        if test_body_has_peek_mut(block) {
+            return Some(SourceWarningClassification::Refused(
+                "mutable view temporal state",
+            ));
+        }
+        return Some(SourceWarningClassification::Refused(
+            "consumed iterator temporal state",
+        ));
+    }
     if reason.contains("unknown iterator consumption") {
+        if source_path == "tests/iter/adapters/peekable_runtime_cycle_iter_nth.rs"
+            && source_name == "test_iterator_peekable_runtime_cycle_iter_nth"
+        {
+            return Some(SourceWarningClassification::Refused(
+                "unknown iterator consumption",
+            ));
+        }
         if test_body_has_future_handoff(block) {
             return Some(SourceWarningClassification::Refused(
                 "runtime future handoff boundary",
@@ -1909,6 +1931,26 @@ fn test_body_has_future_handoff(block: &syn::Block) -> bool {
                 self.found = true;
             }
             syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.found
+}
+
+fn test_body_has_peek_mut(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if call.method == "peek_mut" {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, call);
         }
     }
 

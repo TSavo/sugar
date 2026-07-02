@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{FloorRead, FormatValueFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{FloorRead, FormatValueFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::{FmtValue, IntKind};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
@@ -48,6 +48,7 @@ struct StringPredicateSugar {
 
 enum PredicateOperand {
     Value(SugarBody<FormatValueFloor>),
+    Term(SugarBody<TermFloor>),
     ByteString(Vec<u8>),
     Child(Box<PredicateOperand>),
 }
@@ -363,7 +364,10 @@ fn recognize_method(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dy
     if matches!(
         kind,
         StringPredicateKind::Contains | StringPredicateKind::Prefix | StringPredicateKind::Suffix
-    ) && !string_receiver_shape_frag(&receiver_frag, fcx, 0)
+    ) && !frag
+        .call_args()
+        .first()
+        .is_some_and(|arg| string_pattern_shape_frag(arg, fcx, 0))
     {
         return None;
     }
@@ -376,10 +380,25 @@ fn recognize_method(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dy
     Some(Box::new(StringPredicateSugar {
         method,
         receiver_name: frag.call_receiver_simple_ident(),
-        receiver: PredicateOperand::new_frag(receiver_frag, fcx),
+        receiver: predicate_receiver_frag(receiver_frag, kind, fcx),
         arg: predicate_arg_frag(frag, kind, fcx),
         kind,
     }))
+}
+
+fn predicate_receiver_frag(
+    frag: SourceFragment<'_>,
+    kind: StringPredicateKind,
+    fcx: &SugarBuildCtx,
+) -> PredicateOperand {
+    if matches!(
+        kind,
+        StringPredicateKind::Contains | StringPredicateKind::Prefix | StringPredicateKind::Suffix
+    ) && !string_receiver_shape_frag(&frag, fcx, 0)
+    {
+        return PredicateOperand::Term(SugarBody::term_frag(&frag, fcx));
+    }
+    PredicateOperand::new_frag(frag, fcx)
 }
 
 fn predicate_arg_frag(
@@ -441,8 +460,8 @@ impl StringPredicateSugar {
                 });
             }
         }
-        let receiver = match self.receiver_string(ctx) {
-            Ok(value) => str_const(value),
+        let receiver = match self.receiver_term(ctx) {
+            Ok(value) => value,
             Err(outcome) => return outcome,
         };
         let pattern = match &self.arg {
@@ -539,6 +558,13 @@ impl StringPredicateSugar {
             })
         })
     }
+
+    fn receiver_term(&self, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+        match &self.receiver {
+            PredicateOperand::Term(body) => term_body(body, ctx),
+            _ => self.receiver_string(ctx).map(str_const),
+        }
+    }
 }
 
 fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
@@ -565,10 +591,26 @@ impl PredicateOperand {
                 FloorRead::Complete(value) => Ok(PredicateLiteral::from_format_value(value)),
                 FloorRead::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
             },
+            PredicateOperand::Term(_) => {
+                panic!("term-backed string predicate operand cannot dispatch as a literal")
+            }
             PredicateOperand::ByteString(bytes) => Ok(PredicateLiteral::ByteString(bytes.clone())),
             PredicateOperand::Child(child) => child.dispatch(ctx),
         }
     }
+}
+
+fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .ok_or_else(|| string_predicate_gap("receiver term body reduced to non-term")),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+fn string_predicate_gap(reason: &str) -> Outcome {
+    panic!("string predicate did not reach a lawful floor: {reason}")
 }
 
 impl PredicateLiteral {
@@ -644,6 +686,11 @@ fn eval_ascii_byte_class(byte: u8, atom_name: &str) -> bool {
 fn string_receiver_shape_frag(frag: &SourceFragment, fcx: &SugarBuildCtx, depth: usize) -> bool {
     frag.as_expr()
         .is_some_and(|e| string_receiver_shape(e, fcx, depth))
+}
+
+fn string_pattern_shape_frag(frag: &SourceFragment, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    frag.as_expr()
+        .is_some_and(|e| string_pattern_shape(e, fcx, depth))
 }
 
 /// `ascii_char_class_receiver_shape` wrapped for a `&SourceFragment` caller.
@@ -735,6 +782,19 @@ fn string_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool
     }
 }
 
+fn string_pattern_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if matches!(
+        strip_refs_groups(expr),
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(_),
+            ..
+        })
+    ) {
+        return true;
+    }
+    string_receiver_shape(expr, fcx, depth)
+}
+
 fn ascii_char_class_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
     if depth > 8 {
         return false;
@@ -820,6 +880,24 @@ mod tests {
         assert!(
             recognize(&frag, &fcx).is_some(),
             "recognize should claim \"hello\".starts_with(\"he\")"
+        );
+    }
+
+    #[test]
+    fn from_src_starts_with_opaque_receiver_and_literal_arg() {
+        let file = parse_file(r#"fn f() -> bool { compute().starts_with("he") }"#);
+        let frag = string_pred_frag(&file, "f.rs");
+
+        assert_eq!(frag.observed(), "MethodCall");
+        assert_eq!(frag.call_method_key().as_deref(), Some("starts_with"));
+
+        let scope = TemporalScope::new("string-predicate-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = make_fcx(&scope, &options, &let_inits);
+        assert!(
+            recognize(&frag, &fcx).is_some(),
+            "opaque string receivers with literal patterns should still claim prefix-of"
         );
     }
 

@@ -358,6 +358,11 @@ fn block_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
     if let Some(inv) = let_prefix_inv(block, scope) {
         return Some(inv);
     }
+    if block.stmts.last().is_some_and(
+        |stmt| matches!(stmt, Stmt::Expr(tail, None) if is_non_term_control_expr(tail)),
+    ) {
+        return None;
+    }
     block_stmt_inv(block, scope)
 }
 
