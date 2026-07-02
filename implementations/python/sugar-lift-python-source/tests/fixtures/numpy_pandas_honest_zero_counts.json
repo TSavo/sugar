@@ -5,37 +5,31 @@
   },
   "total_files": 1828,
   "counts_by_kind": {
-    "callee-binop-refused": 97,
+    "async-refused": 3,
+    "callee-binop-refused": 104,
+    "callee-boolop-refused": 1,
     "callee-call-refused": 7,
-    "callee-compare-refused": 197,
-    "callee-constant-refused": 260,
+    "callee-compare-refused": 224,
+    "callee-constant-refused": 280,
     "callee-dict-refused": 23,
     "callee-ifexp-refused": 2,
     "callee-joinedstr-refused": 33,
     "callee-set-refused": 1,
-    "callee-subscript-refused": 1062,
+    "callee-setcomp-refused": 1,
+    "callee-subscript-refused": 1216,
     "callee-unaryop-refused": 9,
     "decorator-refused": 9196,
     "enum-pin-refused": 50,
+    "for-else-refused": 5,
+    "generator-refused": 91,
+    "global-nonlocal-refused": 36,
     "match-refused": 14,
-    "multi-target-assign-refused": 65,
-    "non-literal-default": 217,
-    "unhandled-syntax": 1507,
+    "multi-target-assign-refused": 71,
+    "non-literal-default": 218,
     "value-pin-refused": 499
   },
   "expected_unhandled": {
-    "total": 1507,
-    "reasons": {
-      "async functions are refused": 3,
-      "for/else is refused": 4,
-      "generators are refused": 91,
-      "global/nonlocal declarations are refused": 36,
-      "unhandled expression kind: Slice": 656,
-      "unsupported annotation expression: List": 3,
-      "unsupported assignment target: Starred": 1,
-      "unsupported assignment target: Tuple": 711,
-      "unsupported comprehension target: Starred": 1,
-      "unsupported with-as target: Attribute": 1
-    }
+    "total": 0,
+    "reasons": {}
   }
 }

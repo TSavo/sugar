@@ -808,12 +808,17 @@ class _Emitter:
                 self.effects.add_io()
                 if item.optional_vars is None:
                     continue
-                if not isinstance(item.optional_vars, ast.Name):
-                    raise _UnsupportedSyntax(
-                        item.optional_vars,
-                        f"unsupported with-as target: {type(item.optional_vars).__name__}",
-                    )
-                extra_locals.add(item.optional_vars.id)
+                if isinstance(item.optional_vars, ast.Name):
+                    extra_locals.add(item.optional_vars.id)
+                    continue
+                if isinstance(item.optional_vars, (ast.Attribute, ast.Subscript)):
+                    self.assign_target(item.optional_vars)
+                    self._record_write_if_nonlocal(item.optional_vars)
+                    continue
+                raise _UnsupportedSyntax(
+                    item.optional_vars,
+                    f"unsupported with-as target: {type(item.optional_vars).__name__}",
+                )
             body = (
                 self.statements_with_extra_locals(node.body, extra_locals)
                 if extra_locals
@@ -834,8 +839,12 @@ class _Emitter:
             return term
         if isinstance(node, ast.For):
             if node.orelse:
-                raise _UnsupportedSyntax(node, "for/else is refused")
-            target = self.target(node.target)
+                raise _UnsupportedSyntax(
+                    node,
+                    "for/else is refused",
+                    kind="for-else-refused",
+                )
+            target = self.assign_target(node.target)
             self._record_write_if_nonlocal(node.target)
             term = ctor(
                 "python:for",
@@ -1011,6 +1020,8 @@ class _Emitter:
         )
 
     def assign_target(self, node: ast.expr) -> Json:
+        if isinstance(node, ast.Starred):
+            return ctor("python:starred", self.assign_target(node.value))
         if isinstance(node, ast.Tuple):
             if not node.elts:
                 raise _UnsupportedSyntax(
@@ -1163,6 +1174,11 @@ class _Emitter:
         if isinstance(node, ast.Tuple):
             return ctor(
                 "python:annotation_tuple",
+                *[self.annotation_expr(element) for element in node.elts],
+            )
+        if isinstance(node, ast.List):
+            return ctor(
+                "python:annotation_list",
                 *[self.annotation_expr(element) for element in node.elts],
             )
         if isinstance(node, ast.Subscript):
@@ -1431,6 +1447,9 @@ class _Emitter:
     def comprehension_target(self, node: ast.expr) -> tuple[Json, set[str]]:
         if isinstance(node, ast.Name):
             return var(node.id), {node.id}
+        if isinstance(node, ast.Starred):
+            target, target_names = self.comprehension_target(node.value)
+            return ctor("python:starred", target), target_names
         if isinstance(node, ast.Tuple):
             return self.comprehension_sequence_target(node, "python:tuple")
         if isinstance(node, ast.List):
@@ -1680,9 +1699,17 @@ class _Emitter:
         return ctor("python:call", str_const(callee), *arguments())
 
     def subscript_index(self, node: ast.Subscript) -> Json:
-        if isinstance(node.slice, ast.Slice):
-            return self.slice_index(node.slice)
-        return self.expr(node.slice)
+        return self.index_expr(node.slice)
+
+    def index_expr(self, node: ast.expr | ast.slice) -> Json:
+        if isinstance(node, ast.Slice):
+            return self.slice_index(node)
+        if isinstance(node, ast.Tuple):
+            return ctor(
+                "python:tuple",
+                *[self.index_expr(element) for element in node.elts],
+            )
+        return self.expr(node)
 
     def slice_index(self, node: ast.Slice) -> Json:
         lower = none_const() if node.lower is None else self.expr(node.lower)
@@ -1829,7 +1856,11 @@ def _lift_function(
     assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     try:
         if isinstance(node, ast.AsyncFunctionDef):
-            raise _UnsupportedSyntax(node, "async functions are refused")
+            raise _UnsupportedSyntax(
+                node,
+                "async functions are refused",
+                kind="async-refused",
+            )
         refused_decorator = _refused_decorator(node)
         if refused_decorator is not None:
             raise refused_decorator
@@ -2631,23 +2662,37 @@ def _contains_refused_control(fn: ast.FunctionDef) -> _UnsupportedSyntax | None:
             return
 
         def visit_Global(self, node: ast.Global) -> None:
-            self._refuse(node, "global/nonlocal declarations are refused")
+            self._refuse(
+                node,
+                "global/nonlocal declarations are refused",
+                kind="global-nonlocal-refused",
+            )
 
         def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-            self._refuse(node, "global/nonlocal declarations are refused")
+            self._refuse(
+                node,
+                "global/nonlocal declarations are refused",
+                kind="global-nonlocal-refused",
+            )
 
         def visit_Yield(self, node: ast.Yield) -> None:
-            self._refuse(node, "generators are refused")
+            self._refuse(node, "generators are refused", kind="generator-refused")
 
         def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
-            self._refuse(node, "generators are refused")
+            self._refuse(node, "generators are refused", kind="generator-refused")
 
         def visit_Await(self, node: ast.Await) -> None:
             self._refuse(node, "await expressions are refused")
 
-        def _refuse(self, node: ast.AST, reason: str) -> None:
+        def _refuse(
+            self,
+            node: ast.AST,
+            reason: str,
+            *,
+            kind: str = "unhandled-syntax",
+        ) -> None:
             if self.refused is None:
-                self.refused = _UnsupportedSyntax(node, reason)
+                self.refused = _UnsupportedSyntax(node, reason, kind=kind)
 
     scanner = _RefusedControlScanner()
     scanner.visit(fn)

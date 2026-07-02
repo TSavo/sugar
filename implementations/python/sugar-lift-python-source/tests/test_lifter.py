@@ -233,6 +233,14 @@ def _annotation_tuple(*items: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _annotation_list(*items: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:annotation_list",
+        "args": list(items),
+    }
+
+
 def _walrus(target: dict[str, object], value: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -428,6 +436,18 @@ def _assert_stmt(
 
 def _with_stmt(body: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:with", "args": [body]}
+
+
+def _for_loop(
+    target: dict[str, object],
+    iterator: dict[str, object],
+    body: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:for",
+        "args": [target, iterator, body],
+    }
 
 
 def _delete_stmt(*targets: dict[str, object]) -> dict[str, object]:
@@ -965,6 +985,25 @@ def test_walrus_while_condition_lifts_condition_as_expression() -> None:
     loop = body["args"][0]
     assert loop["name"] == "python:while"
     assert loop["args"][0] == _walrus(_var("x"), _call("next_value"))
+
+
+def test_for_tuple_target_routes_through_assign_target() -> None:
+    source = (
+        "def f(rows):\n"
+        "    for left, right in rows:\n"
+        "        return left\n"
+        "    return 0\n"
+    )
+
+    result = lift_source(source, "for_tuple_target.py")
+
+    term = _for_loop(
+        _tuple_target(_var("left"), _var("right")),
+        _var("rows"),
+        _return(_var("left")),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _seq(term, _return(_int_const(0)))
 
 
 @pytest.mark.parametrize(
@@ -1908,14 +1947,20 @@ def test_subscript_index_slice_bound_refusal_propagates() -> None:
     assert exc.value.reason == "unhandled expression kind: Await"
 
 
-def test_tuple_slice_index_keeps_existing_refusal() -> None:
+def test_tuple_slice_index_routes_slice_elements_through_slice_index() -> None:
     source = "def f(xs):\n    value = xs[1:2, 3]\n    return value\n"
 
     result = lift_source(source, "tuple_slice_index.py")
 
-    assert [(refusal["kind"], refusal["reason"]) for refusal in result.refusals] == [
-        ("unhandled-syntax", "unhandled expression kind: Slice")
-    ]
+    term = _subscript(
+        _var("xs"),
+        _tuple(_slice(_int_const(1), _int_const(2), _none_const()), _int_const(3)),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _assign(_var("value"), term),
+        _return(_var("value")),
+    )
 
 
 @pytest.mark.parametrize(
@@ -2822,6 +2867,22 @@ def test_annotation_tuple_lifts_tuple_annotation_expression() -> None:
     )
 
 
+def test_annotation_list_lifts_list_annotation_expression() -> None:
+    source = "def f():\n    x: [int, str]\n    return x\n"
+
+    result = lift_source(source, "annotation_list.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _ann_assign(
+            _var("x"),
+            _annotation_list(_var("int"), _var("str")),
+            _no_value(),
+        ),
+        _return(_var("x")),
+    )
+
+
 def test_annotation_non_bitor_binop_stays_refused() -> None:
     result = lift_source(
         "def f():\n    x: int + str\n    return x\n",
@@ -3419,19 +3480,20 @@ def test_compile_lift_roundtrip_preserves_name_annassign_explicit_none_value() -
     assert "x: int = None" in compiled
 
 
-def test_tuple_unpack_starred_element_refuses_named_element() -> None:
+def test_tuple_unpack_starred_element_routes_through_unpack_target() -> None:
     source = "def f(pair):\n    a, *rest = pair\n    return rest\n"
 
-    result = lift_source(source, "starred_unpacking_refusal.py")
+    result = lift_source(source, "starred_unpacking.py")
 
-    assert result.refusals == [
-        {
-            "kind": "unhandled-syntax",
-            "function": "starred_unpacking_refusal.f",
-            "line": 2,
-            "reason": "unsupported assignment target: Starred",
-        }
-    ]
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _unpack_assign(
+            "tuple",
+            _unpack_targets(_var("a"), _starred(_var("rest"))),
+            _var("pair"),
+        ),
+        _return(_var("rest")),
+    )
 
 
 def test_tuple_unpack_multi_target_assignment_still_refuses() -> None:
@@ -3814,6 +3876,22 @@ def test_with_as_name_binds_opaque_local_for_body() -> None:
     assert {"kind": "io"} in contract["effects"]
     assert {"kind": "unresolved_call", "name": "ctx"} in contract["effects"]
     assert {"kind": "reads", "target": "handle"} not in contract["effects"]
+
+
+def test_with_as_attribute_routes_through_assign_target() -> None:
+    source = "def f(ctx, obj):\n    with ctx() as obj.handle:\n        return obj\n"
+
+    result = lift_source(source, "with_as_attribute.py")
+
+    contract = _contract(result.ir, ".f")
+    assert result.refusals == []
+    assert _function_body(result) == _with_stmt(_return(_var("obj")))
+    assert {"kind": "io"} in contract["effects"]
+    assert {"kind": "panics"} in contract["effects"]
+    assert {"kind": "unresolved_call", "name": "ctx"} in contract["effects"]
+    loci = _runtime_failure_loci(contract)
+    assert [locus["subkind"] for locus in loci] == ["attribute-write"]
+    assert [locus["argTerm"] for locus in loci] == [_attr(_var("obj"), "handle")]
 
 
 def test_with_open_as_handle_lifts_body_claims_under_opaque_binding() -> None:
@@ -4558,6 +4636,19 @@ def test_listcomp_tuple_target_unpack_binds_each_name_opaquely() -> None:
     assert _function_body(result) == _return(term)
 
 
+def test_listcomp_starred_target_binds_inner_name_opaquely() -> None:
+    source = "def f(rows):\n    return [rest for *rest in rows]\n"
+
+    result = lift_source(source, "listcomp_starred_target.py")
+
+    term = _listcomp(
+        _var("rest"),
+        _comprehension(_starred(_var("rest")), _var("rows")),
+    )
+    assert result.refusals == []
+    assert _function_body(result) == _return(term)
+
+
 def test_listcomp_target_binding_does_not_leak_to_following_statement() -> None:
     source = (
         'x = "global"\n'
@@ -4589,6 +4680,48 @@ def test_listcomp_floor_discriminates_other_unhandled_expression_kinds() -> None
             "line": 2,
             "reason": "await expressions are refused",
         }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind", "expected_reason"),
+    [
+        (
+            "def f():\n    yield 1\n",
+            "generator-refused",
+            "generators are refused",
+        ),
+        (
+            "def f():\n    global x\n    return x\n",
+            "global-nonlocal-refused",
+            "global/nonlocal declarations are refused",
+        ),
+        (
+            "def f(xs):\n"
+            "    for x in xs:\n"
+            "        pass\n"
+            "    else:\n"
+            "        pass\n"
+            "    return 0\n",
+            "for-else-refused",
+            "for/else is refused",
+        ),
+        (
+            "async def f():\n    return 1\n",
+            "async-refused",
+            "async functions are refused",
+        ),
+    ],
+)
+def test_closed_control_taxonomy_uses_named_refusal_kinds(
+    source: str,
+    expected_kind: str,
+    expected_reason: str,
+) -> None:
+    result = lift_source(source, "closed_control_taxonomy.py")
+
+    assert [(refusal["kind"], refusal["reason"]) for refusal in result.refusals] == [
+        (expected_kind, expected_reason)
     ]
 
 
