@@ -12,7 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -24,24 +25,27 @@ use tracing::{debug, info, warn};
 
 use crate::project_config::PluginEntry;
 
-pub(crate) const COMPONENT_PROTOCOL_VERSION: &str = "sugar-component/1";
-pub(crate) const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
+pub const COMPONENT_PROTOCOL_VERSION: &str = "sugar-component/1";
+pub const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
+const COMPONENT_PLAN_TIMEOUT_ENV: &str = "SUGAR_COMPONENT_PLAN_TIMEOUT_SECS";
+// Component planning is metadata-only; the verifier's 120s timeout is for solver work.
+const COMPONENT_PLAN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WorkspaceCensus {
+pub struct WorkspaceCensus {
     pub languages: Vec<LanguageEvidence>,
     pub items: Vec<ForensicItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LanguageEvidence {
+pub struct LanguageEvidence {
     pub language: String,
     pub path: String,
     pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ForensicItem {
+pub struct ForensicItem {
     pub id: String,
     pub kind: String,
     pub path: String,
@@ -50,7 +54,7 @@ pub(crate) struct ForensicItem {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ComponentPlan {
+pub struct ComponentPlan {
     pub plugins: Vec<PluginEntry>,
     pub lift_manifests: Vec<PlannedLiftManifest>,
     pub ir_compilers: Vec<PlannedIrCompiler>,
@@ -59,20 +63,20 @@ pub(crate) struct ComponentPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ComponentDiagnostic {
+pub struct ComponentDiagnostic {
     pub level: DiagnosticLevel,
     pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DiagnosticLevel {
+pub enum DiagnosticLevel {
     Info,
     Warning,
     Error,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct PlannedLiftManifest {
+pub struct PlannedLiftManifest {
     pub surface: String,
     pub name: String,
     pub version: Option<String>,
@@ -88,7 +92,7 @@ pub(crate) struct PlannedLiftManifest {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct PlannedIrCompiler {
+pub struct PlannedIrCompiler {
     pub name: String,
     pub version: Option<String>,
     pub protocol_version: String,
@@ -116,7 +120,7 @@ struct ComponentManifest {
     working_dir: Option<PathBuf>,
 }
 
-pub(crate) fn plan_workspace(project_root: &Path) -> ComponentPlan {
+pub fn plan_workspace(project_root: &Path) -> ComponentPlan {
     let project_root = absolute_path(project_root);
     let census = census_workspace(&project_root);
     let mut plan = ComponentPlan {
@@ -160,6 +164,7 @@ pub(crate) fn plan_workspace(project_root: &Path) -> ComponentPlan {
                     "component plan failed"
                 );
                 plan.diagnostics.push(ComponentDiagnostic {
+                    // TODO(#2987): escalate to Error when crashed-vs-declined lands.
                     level: DiagnosticLevel::Warning,
                     message: format!(
                         "component `{}` could not be queried from {}: {error}",
@@ -527,68 +532,83 @@ fn request_component_plan(
     census: &WorkspaceCensus,
 ) -> Result<Option<ComponentPlanResult>, String> {
     let mut child = spawn_component(component)?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "component stdin unavailable".to_string())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "component stdout unavailable".to_string())?;
-    let mut reader = BufReader::new(stdout);
+    let outcome = (|| {
+        let timeout = component_plan_timeout()?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "component stdin unavailable".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "component stdout unavailable".to_string())?;
+        let responses = spawn_response_reader(stdout);
 
-    let init = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "client": {"name": "sugar-cli-component-planner", "version": env!("CARGO_PKG_VERSION")},
-            "protocol_version": COMPONENT_PROTOCOL_VERSION,
+        let init = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "client": {"name": "sugar-cli-component-planner", "version": env!("CARGO_PKG_VERSION")},
+                "protocol_version": COMPONENT_PROTOCOL_VERSION,
+            }
+        });
+        writeln!(stdin, "{init}").map_err(|error| format!("write initialize: {error}"))?;
+        let _ = read_response_with_timeout(&responses, &mut child, 1, "initialize", timeout)?;
+
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": COMPONENT_PLAN_RPC_METHOD,
+            "params": {
+                "workspace_root": project_root.display().to_string(),
+                "project_forensics": {
+                    "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
+                },
+                "workspace_evidence": {
+                    "languages": census.languages.iter().map(|language| json!({
+                        "language": language.language,
+                        "path": language.path,
+                        "reason": language.reason,
+                    })).collect::<Vec<_>>(),
+                    "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
+                },
+                "intent": "lift",
+            }
+        });
+        writeln!(stdin, "{req}").map_err(|error| format!("write component plan: {error}"))?;
+        let response = read_response_with_timeout(
+            &responses,
+            &mut child,
+            2,
+            COMPONENT_PLAN_RPC_METHOD,
+            timeout,
+        )?;
+
+        let shutdown = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "shutdown",
+        });
+        writeln!(stdin, "{shutdown}").map_err(|error| format!("write shutdown: {error}"))?;
+        let _ = read_response_with_timeout(&responses, &mut child, 3, "shutdown", timeout)?;
+        drop(stdin);
+        let _ = child.wait();
+
+        if let Some(error) = response.get("error") {
+            if rpc_error_is_method_not_supported(error) {
+                return Ok(None);
+            }
+            return Err(format!("component plan RPC error: {error}"));
         }
-    });
-    writeln!(stdin, "{init}").map_err(|error| format!("write initialize: {error}"))?;
-    let _ = read_response(&mut reader, 1)?;
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": COMPONENT_PLAN_RPC_METHOD,
-        "params": {
-            "workspace_root": project_root.display().to_string(),
-            "project_forensics": {
-                "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
-            },
-            "workspace_evidence": {
-                "languages": census.languages.iter().map(|language| json!({
-                    "language": language.language,
-                    "path": language.path,
-                    "reason": language.reason,
-                })).collect::<Vec<_>>(),
-                "items": census.items.iter().map(forensic_item_to_json).collect::<Vec<_>>(),
-            },
-            "intent": "lift",
-        }
-    });
-    writeln!(stdin, "{req}").map_err(|error| format!("write component plan: {error}"))?;
-    let response = read_response(&mut reader, 2)?;
-
-    let shutdown = json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "shutdown",
-    });
-    let _ = writeln!(stdin, "{shutdown}");
-    drop(stdin);
-    let _ = child.wait();
-
-    if let Some(error) = response.get("error") {
-        if rpc_error_is_method_not_supported(error) {
-            return Ok(None);
-        }
-        return Err(format!("component plan RPC error: {error}"));
+        let result = response.get("result").cloned().unwrap_or(Value::Null);
+        parse_component_plan_result(component, result)
+    })();
+    if outcome.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
-    parse_component_plan_result(component, result)
+    outcome
 }
 
 fn spawn_component(component: &ComponentRegistration) -> Result<Child, String> {
@@ -625,7 +645,83 @@ fn spawn_component(component: &ComponentRegistration) -> Result<Child, String> {
     ))
 }
 
-fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, String> {
+fn component_plan_timeout() -> Result<Duration, String> {
+    let Some(raw) = std::env::var_os(COMPONENT_PLAN_TIMEOUT_ENV) else {
+        return Ok(COMPONENT_PLAN_TIMEOUT);
+    };
+    let raw = raw
+        .into_string()
+        .map_err(|_| format!("{COMPONENT_PLAN_TIMEOUT_ENV} must be valid UTF-8"))?;
+    let secs = raw.parse::<u64>().map_err(|error| {
+        format!("invalid {COMPONENT_PLAN_TIMEOUT_ENV}={raw:?}: expected seconds: {error}")
+    })?;
+    if secs == 0 {
+        return Err(format!(
+            "invalid {COMPONENT_PLAN_TIMEOUT_ENV}={raw:?}: timeout must be at least 1s"
+        ));
+    }
+    if secs >= 300 {
+        return Err(format!(
+            "invalid {COMPONENT_PLAN_TIMEOUT_ENV}={raw:?}: timeout must be less than 300s"
+        ));
+    }
+    Ok(Duration::from_secs(secs))
+}
+
+fn spawn_response_reader(
+    stdout: std::process::ChildStdout,
+) -> mpsc::Receiver<Result<Value, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            match read_response(&mut reader) {
+                Ok(value) => {
+                    if tx.send(Ok(value)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+fn read_response_with_timeout(
+    responses: &mpsc::Receiver<Result<Value, String>>,
+    child: &mut Child,
+    id: i64,
+    exchange: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let value = match responses.recv_timeout(timeout) {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(format!("{exchange}: {error}")),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "component plan RPC {exchange} timed out after {}s",
+                timeout.as_secs()
+            ));
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(format!(
+                "component response reader stopped before {exchange} response"
+            ));
+        }
+    };
+    if value.get("id").and_then(Value::as_i64) != Some(id) {
+        return Err(format!("expected response id {id}, got {value}"));
+    }
+    Ok(value)
+}
+
+fn read_response(reader: &mut impl BufRead) -> Result<Value, String> {
     let mut line = String::new();
     let n = reader
         .read_line(&mut line)
@@ -635,9 +731,6 @@ fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, String> {
     }
     let value: Value = serde_json::from_str(line.trim())
         .map_err(|error| format!("parse JSON-RPC response: {error}; raw={}", line.trim()))?;
-    if value.get("id").and_then(Value::as_i64) != Some(id) {
-        return Err(format!("expected response id {id}, got {value}"));
-    }
     Ok(value)
 }
 
