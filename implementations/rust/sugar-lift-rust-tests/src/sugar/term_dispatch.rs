@@ -288,6 +288,131 @@ impl ScalarFloorAccept for Rc<Term> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Bv32UnaryOp {
+    Neg,
+}
+
+impl Bv32UnaryOp {
+    pub(crate) fn ctor_name(self) -> &'static str {
+        match self {
+            Self::Neg => "bv32.neg",
+        }
+    }
+
+    fn from_ctor_name(name: &str) -> Option<Self> {
+        match name {
+            "bv32.neg" => Some(Self::Neg),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Bv32BinaryOp {
+    Shl,
+    Lshr,
+    And,
+    Or,
+    Xor,
+    Add,
+    Sub,
+    Mul,
+}
+
+impl Bv32BinaryOp {
+    pub(crate) fn ctor_name(self) -> &'static str {
+        match self {
+            Self::Shl => "bv32.shl",
+            Self::Lshr => "bv32.lshr",
+            Self::And => "bv32.and",
+            Self::Or => "bv32.or",
+            Self::Xor => "bv32.xor",
+            Self::Add => "bv32.add",
+            Self::Sub => "bv32.sub",
+            Self::Mul => "bv32.mul",
+        }
+    }
+
+    fn from_ctor_name(name: &str) -> Option<Self> {
+        match name {
+            "bv32.shl" => Some(Self::Shl),
+            "bv32.lshr" => Some(Self::Lshr),
+            "bv32.and" => Some(Self::And),
+            "bv32.or" => Some(Self::Or),
+            "bv32.xor" => Some(Self::Xor),
+            "bv32.add" => Some(Self::Add),
+            "bv32.sub" => Some(Self::Sub),
+            "bv32.mul" => Some(Self::Mul),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) trait Bv32FloorVisitor {
+    type Output;
+
+    fn visit_bv32_const(self, term: &Rc<Term>, value: u32) -> Self::Output;
+    fn visit_bv32_unary(self, term: &Rc<Term>, op: Bv32UnaryOp, arg: &Rc<Term>) -> Self::Output;
+    fn visit_bv32_binary(
+        self,
+        term: &Rc<Term>,
+        op: Bv32BinaryOp,
+        left: &Rc<Term>,
+        right: &Rc<Term>,
+    ) -> Self::Output;
+    fn visit_bv32_ite(
+        self,
+        term: &Rc<Term>,
+        cond: &Rc<Term>,
+        then_term: &Rc<Term>,
+        else_term: &Rc<Term>,
+    ) -> Self::Output;
+    fn visit_non_bv32(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait Bv32FloorAccept {
+    fn accept_bv32_floor<V: Bv32FloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl Bv32FloorAccept for Rc<Term> {
+    fn accept_bv32_floor<V: Bv32FloorVisitor>(&self, visitor: V) -> V::Output {
+        if let Some(value) = bv32_const_value(self) {
+            return visitor.visit_bv32_const(self, value);
+        }
+        match self.as_ref() {
+            Term::Ctor { name, args } if args.len() == 1 => {
+                if let Some(op) = Bv32UnaryOp::from_ctor_name(name) {
+                    visitor.visit_bv32_unary(self, op, &args[0])
+                } else {
+                    visitor.visit_non_bv32(self)
+                }
+            }
+            Term::Ctor { name, args } if args.len() == 2 => {
+                if let Some(op) = Bv32BinaryOp::from_ctor_name(name) {
+                    visitor.visit_bv32_binary(self, op, &args[0], &args[1])
+                } else {
+                    visitor.visit_non_bv32(self)
+                }
+            }
+            Term::Ctor { name, args } if name == "bv32.ite" && args.len() == 3 => {
+                visitor.visit_bv32_ite(self, &args[0], &args[1], &args[2])
+            }
+            _ => visitor.visit_non_bv32(self),
+        }
+    }
+}
+
+fn bv32_const_value(term: &Rc<Term>) -> Option<u32> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Int(value),
+            sort,
+        } if matches!(sort.name.as_str(), "u32" | "bv32") => u32::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
 pub(crate) trait MonadicFloorVisitor {
     type Output;
 
@@ -689,7 +814,7 @@ pub(crate) fn fold_int_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_ir_symbolic::num;
+    use sugar_ir_symbolic::{num, Sort};
 
     fn var(name: &str) -> Rc<Term> {
         make_var(name)
@@ -1016,5 +1141,184 @@ mod tests {
             }
             other => panic!("expected let body floor, got {other:?}"),
         }
+    }
+
+    fn bv32_const(value: u32) -> Rc<Term> {
+        Rc::new(Term::Const {
+            value: ConstValue::Int(i128::from(value)),
+            sort: Sort {
+                name: "u32".to_string(),
+            },
+        })
+    }
+
+    fn bv32_ctor(name: &str, args: Vec<Rc<Term>>) -> Rc<Term> {
+        Rc::new(Term::Ctor {
+            name: name.to_string(),
+            args,
+        })
+    }
+
+    struct Bv32KindProbe;
+
+    impl Bv32FloorVisitor for Bv32KindProbe {
+        type Output = String;
+
+        fn visit_bv32_const(self, _term: &Rc<Term>, value: u32) -> Self::Output {
+            format!("const:{value}")
+        }
+
+        fn visit_bv32_unary(
+            self,
+            _term: &Rc<Term>,
+            op: Bv32UnaryOp,
+            _arg: &Rc<Term>,
+        ) -> Self::Output {
+            format!("unary:{}", op.ctor_name())
+        }
+
+        fn visit_bv32_binary(
+            self,
+            _term: &Rc<Term>,
+            op: Bv32BinaryOp,
+            _left: &Rc<Term>,
+            _right: &Rc<Term>,
+        ) -> Self::Output {
+            format!("binary:{}", op.ctor_name())
+        }
+
+        fn visit_bv32_ite(
+            self,
+            _term: &Rc<Term>,
+            _cond: &Rc<Term>,
+            _then_term: &Rc<Term>,
+            _else_term: &Rc<Term>,
+        ) -> Self::Output {
+            "ite".to_string()
+        }
+
+        fn visit_non_bv32(self, term: &Rc<Term>) -> Self::Output {
+            format!("non:{}", canonical_term_sig(term))
+        }
+    }
+
+    fn bv32_leaf_sig(term: &Rc<Term>) -> String {
+        match term.as_ref() {
+            Term::Var { name } => format!("var:{name}"),
+            _ => canonical_term_sig(term),
+        }
+    }
+
+    struct Bv32TreeProbe;
+
+    impl Bv32FloorVisitor for Bv32TreeProbe {
+        type Output = String;
+
+        fn visit_bv32_const(self, _term: &Rc<Term>, value: u32) -> Self::Output {
+            format!("const:{value}")
+        }
+
+        fn visit_bv32_unary(
+            self,
+            _term: &Rc<Term>,
+            op: Bv32UnaryOp,
+            arg: &Rc<Term>,
+        ) -> Self::Output {
+            format!(
+                "{}({})",
+                op.ctor_name(),
+                arg.accept_bv32_floor(Bv32TreeProbe)
+            )
+        }
+
+        fn visit_bv32_binary(
+            self,
+            _term: &Rc<Term>,
+            op: Bv32BinaryOp,
+            left: &Rc<Term>,
+            right: &Rc<Term>,
+        ) -> Self::Output {
+            format!(
+                "{}({},{})",
+                op.ctor_name(),
+                left.accept_bv32_floor(Bv32TreeProbe),
+                right.accept_bv32_floor(Bv32TreeProbe)
+            )
+        }
+
+        fn visit_bv32_ite(
+            self,
+            _term: &Rc<Term>,
+            cond: &Rc<Term>,
+            then_term: &Rc<Term>,
+            else_term: &Rc<Term>,
+        ) -> Self::Output {
+            format!(
+                "bv32.ite({},{},{})",
+                bv32_leaf_sig(cond),
+                then_term.accept_bv32_floor(Bv32TreeProbe),
+                else_term.accept_bv32_floor(Bv32TreeProbe)
+            )
+        }
+
+        fn visit_non_bv32(self, term: &Rc<Term>) -> Self::Output {
+            bv32_leaf_sig(term)
+        }
+    }
+
+    #[test]
+    fn bv32_floor_dispatches_value_forms_to_typed_arms() {
+        assert_eq!(bv32_const(7).accept_bv32_floor(Bv32KindProbe), "const:7");
+
+        assert_eq!(
+            bv32_ctor("bv32.neg", vec![var("x")]).accept_bv32_floor(Bv32KindProbe),
+            "unary:bv32.neg"
+        );
+
+        assert_eq!(
+            bv32_ctor("bv32.and", vec![var("a"), var("b")]).accept_bv32_floor(Bv32KindProbe),
+            "binary:bv32.and"
+        );
+
+        assert_eq!(
+            bv32_ctor(
+                "bv32.ite",
+                vec![bool_const(true), bv32_const(1), bv32_const(0)]
+            )
+            .accept_bv32_floor(Bv32KindProbe),
+            "ite"
+        );
+    }
+
+    #[test]
+    fn bv32_floor_routes_non_bv32_and_predicates_to_escape() {
+        assert!(num(7).accept_bv32_floor(Bv32KindProbe).starts_with("non:"));
+
+        assert!(bv32_ctor("bv32.eq", vec![var("a"), var("b")])
+            .accept_bv32_floor(Bv32KindProbe)
+            .starts_with("non:"));
+
+        assert!(Rc::new(Term::Ctor {
+            name: "+".to_string(),
+            args: vec![
+                bv32_ctor("bv32.and", vec![var("a"), var("b")]),
+                bv32_const(1)
+            ],
+        })
+        .accept_bv32_floor(Bv32KindProbe)
+        .starts_with("non:"));
+    }
+
+    #[test]
+    fn bv32_floor_dispatches_nested_value_terms_consistently() {
+        let nested = bv32_ctor(
+            "bv32.or",
+            vec![bv32_ctor("bv32.and", vec![var("a"), var("b")]), var("c")],
+        );
+
+        assert_eq!(
+            nested.accept_bv32_floor(Bv32TreeProbe),
+            "bv32.or(bv32.and(var:a,var:b),var:c)"
+        );
     }
 }
