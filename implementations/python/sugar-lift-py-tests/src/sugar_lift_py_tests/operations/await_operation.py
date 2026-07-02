@@ -25,7 +25,12 @@ class AwaitOperation:
         )
         try:
             return Complete(
-                force_floor(value, ctx, owner=f"{self.owner}.__await__")
+                force_floor(
+                    value,
+                    ctx,
+                    owner=f"{self.owner}.__await__",
+                    project_callsite=False,
+                )
             )
         except TypeError as exc:
             return Incomplete(

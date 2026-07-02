@@ -8,6 +8,7 @@ from .factory_spine_offender import FactorySpineOffender
 from .factory_spine_report import FactorySpineReport
 
 _LITERAL_CALL_REPORT = "factory/literal_call_report.py"
+_CALL_SUGAR = "sugar/call_sugar.py"
 
 
 def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
@@ -22,6 +23,13 @@ def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
             if fragment.observed not in {"FunctionDef", "AsyncFunctionDef"}:
                 continue
             offenders.extend(_function_offenders(fragment, lines))
+    call_sugar = kit_src / _CALL_SUGAR
+    if call_sugar.exists():
+        offenders.extend(
+            _call_sugar_offenders(
+                call_sugar.read_text(encoding="utf-8").splitlines()
+            )
+        )
     return FactorySpineReport(offenders=sorted(offenders, key=_sort_key))
 
 
@@ -153,10 +161,34 @@ def _concrete_return_value_offenders(
     return []
 
 
-def _offender(kind: str, line: int, observed: str, fix: str) -> FactorySpineOffender:
+def _call_sugar_offenders(source_lines: list[str]) -> list[FactorySpineOffender]:
+    offenders: list[FactorySpineOffender] = []
+    for line_no, text in enumerate(source_lines, start=1):
+        compact = "".join(text.split())
+        if "body=self.bodyifisinstance(self.body,SugarBody)elseNone" in compact:
+            offenders.append(
+                _offender(
+                    "callsite_values_with_null_multistatement_body",
+                    line_no,
+                    "BridgeStrategy drops FunctionBodyUniverse bodies to None",
+                    "carry the FunctionBodyUniverse into CallSiteValue and reduce it through BlockSugar in force_floor",
+                    path=_CALL_SUGAR,
+                )
+            )
+    return offenders
+
+
+def _offender(
+    kind: str,
+    line: int,
+    observed: str,
+    fix: str,
+    *,
+    path: str = _LITERAL_CALL_REPORT,
+) -> FactorySpineOffender:
     return FactorySpineOffender(
         kind=kind,
-        path=_LITERAL_CALL_REPORT,
+        path=path,
         line=line,
         observed=observed,
         fix=fix,

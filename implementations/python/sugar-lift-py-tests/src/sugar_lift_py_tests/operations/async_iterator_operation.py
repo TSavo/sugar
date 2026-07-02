@@ -87,7 +87,7 @@ def _force_dunder(
         owner=owner,
     )
     try:
-        return force_floor(value, ctx, owner=owner)
+        return force_floor(value, ctx, owner=owner, project_callsite=False)
     except TypeError as exc:
         return Incomplete(
             RuntimeEffect(

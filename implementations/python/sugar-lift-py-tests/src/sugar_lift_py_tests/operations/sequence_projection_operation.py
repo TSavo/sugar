@@ -43,6 +43,7 @@ class SequenceProjectionOperation:
             ),
             ctx,
             owner=f"{self.owner}.__iter__",
+            project_callsite=False,
         )
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
 

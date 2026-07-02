@@ -16,6 +16,7 @@ class FactorySpineVector:
         values = {
             "callee_body_worklists": 0,
             "block_of_callee_body_reductions": 0,
+            "callsite_values_with_null_multistatement_body": 0,
             "transitive_worklist_drains": 0,
             "projection_ladders": 0,
             "prior_assignment_replays": 0,
