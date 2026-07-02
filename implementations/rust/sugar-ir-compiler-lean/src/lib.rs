@@ -515,10 +515,11 @@ fn emit_term(term: &Term, ctx: &mut EmitContext) -> Result<String, CompileError>
 }
 
 fn emit_const(value: &Json, sort: &Sort) -> Result<String, CompileError> {
+    let sort_name = primitive_sort_name(sort, value)?;
     // A `Real` const is carried as a canonical decimal STRING (e.g. "0.00000015",
     // or "-0.00000015"). Emit it as an ascribed Lean real literal, not a quoted
     // string, so Mathlib reads it as `Real` rather than a `Nat`/`String`.
-    if primitive_sort_name(sort) == "Real" {
+    if sort_name == "Real" {
         if let Json::String(s) = value {
             return Ok(format!("({s} : Real)"));
         }
@@ -527,14 +528,14 @@ fn emit_const(value: &Json, sort: &Sort) -> Result<String, CompileError> {
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
                 if i < 0 {
-                    Ok(format!("({i} : {})", primitive_sort_name(sort)))
+                    Ok(format!("({i} : {sort_name})"))
                 } else {
                     Ok(i.to_string())
                 }
             } else if let Some(u) = n.as_u64() {
                 Ok(u.to_string())
             } else {
-                Ok(format!("({n} : {})", primitive_sort_name(sort)))
+                Ok(format!("({n} : {sort_name})"))
             }
         }
         Json::Bool(b) => Ok(if *b { "true".into() } else { "false".into() }),
@@ -608,12 +609,18 @@ fn emit_sort_paren(sort: &Sort, ctx: &mut EmitContext) -> Result<String, Compile
     }
 }
 
-fn primitive_sort_name(sort: &Sort) -> &'static str {
+fn primitive_sort_name(sort: &Sort, value: &Json) -> Result<&'static str, CompileError> {
     match sort {
-        Sort::Primitive { name } if name == "Real" => "Real",
-        Sort::Primitive { name } if name == "Bool" => "Bool",
-        Sort::Primitive { name } if name == "String" => "String",
-        _ => "Int",
+        Sort::Primitive { name } if name == "Int" => Ok("Int"),
+        Sort::Primitive { name } if name == "Real" => Ok("Real"),
+        Sort::Primitive { name } if name == "Bool" => Ok("Bool"),
+        Sort::Primitive { name } if name == "String" => Ok("String"),
+        Sort::Primitive { name } => Err(CompileError::UnsupportedSort(format!(
+            "Lean const literal {value} has unsupported primitive sort {name}"
+        ))),
+        other => Err(CompileError::UnsupportedSort(format!(
+            "Lean const literal {value} has unsupported sort {other:?}"
+        ))),
     }
 }
 
