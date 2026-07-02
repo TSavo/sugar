@@ -7754,7 +7754,7 @@ mod tests {
     use super::*;
     use crate::project_config::PluginEntry;
     use crate::OutputFlags;
-    use sugar_verifier::{CallSite, Report, ReportRow};
+    use sugar_verifier::{CallSite, ObligationVerdict, Report, ReportRow};
     use syn::spanned::Spanned;
 
     fn minimal_source_report() -> LiftSourceReport {
@@ -7855,7 +7855,7 @@ mod tests {
                 property_name: "consistency:method:is_match".to_string(),
                 ..CallSite::default()
             },
-            status: "discharged".to_string(),
+            status: ObligationVerdict::Discharged,
             reason: "solver witness accepted".to_string(),
             discharge_method: Some("solver-substantive".to_string()),
             body_discharge_tier: None,

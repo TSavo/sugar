@@ -198,17 +198,6 @@ fn build_lone_opaque_proof_bundle(literal: &str) -> ProofBytes {
 
 // ─── Runner helper ───────────────────────────────────────────────────────────
 
-fn status_to_verdict(status: &str) -> ObligationVerdict {
-    match status {
-        "discharged" => ObligationVerdict::Discharged,
-        "unsatisfied" => ObligationVerdict::Unsatisfied,
-        "undecidable" => ObligationVerdict::Undecidable,
-        "disagreement" => ObligationVerdict::Disagreement,
-        "refused" => ObligationVerdict::Refused,
-        _ => ObligationVerdict::Undecidable,
-    }
-}
-
 fn run_with_bundle(literal: &str) -> Vec<(String, ObligationVerdict)> {
     let bundle = build_lone_opaque_proof_bundle(literal);
     let tmp = std::env::temp_dir().join(format!(
@@ -242,12 +231,7 @@ fn run_with_bundle(literal: &str) -> Vec<(String, ObligationVerdict)> {
     report
         .rows
         .iter()
-        .map(|r| {
-            (
-                r.callsite.bridge_ir_name.clone(),
-                status_to_verdict(&r.status),
-            )
-        })
+        .map(|r| (r.callsite.bridge_ir_name.clone(), r.status))
         .collect()
 }
 

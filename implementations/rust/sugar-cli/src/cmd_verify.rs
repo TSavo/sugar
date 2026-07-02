@@ -623,32 +623,11 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     let witness_results =
         witness_verify::verify_witnesses_with_options(project_root, &pool, component_plan_options);
     let witnesses_ok = witness_results.iter().all(|w| w.is_ok());
-    let hard_failed_rows = report
-        .rows
-        .iter()
-        .filter(|row| {
-            matches!(
-                row.status.as_str(),
-                "unsatisfied" | "refused" | "disagreement"
-            )
-        })
-        .count();
-    let undecided_rows = report
-        .rows
-        .iter()
-        .filter(|row| row.status == "undecidable")
-        .count();
-    let proof_ok = !report.rows.is_empty()
-        && report.load_errors.is_empty()
-        && hard_failed_rows == 0
-        && undecided_rows == 0;
-    let proof_code = if proof_ok {
-        EXIT_OK
-    } else if hard_failed_rows > 0 {
-        EXIT_VERIFY_FAIL
-    } else {
-        EXIT_SOLVER_FAIL
-    };
+    let proof_gate = proof_report_gate(&report);
+    let hard_failed_rows = proof_gate.hard_failed_rows;
+    let undecided_rows = proof_gate.undecided_rows;
+    let proof_ok = proof_gate.proof_ok;
+    let proof_code = proof_gate.proof_code;
     let ok = proof_ok && witnesses_ok;
 
     if json_out {
@@ -742,10 +721,58 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
 fn format_undecided_rows(report: &sugar_verifier::Report, undecided_rows: usize) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "  undecided rows  : {}", undecided_rows);
-    for row in report.rows.iter().filter(|row| row.status == "undecidable") {
+    for row in report
+        .rows
+        .iter()
+        .filter(|row| row.status == ObligationVerdict::Undecidable)
+    {
         let _ = writeln!(out, "      reason: {}", row.reason);
     }
     out
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProofReportGate {
+    hard_failed_rows: usize,
+    undecided_rows: usize,
+    proof_ok: bool,
+    proof_code: u8,
+}
+
+fn proof_report_gate(report: &sugar_verifier::Report) -> ProofReportGate {
+    let mut hard_failed_rows = 0usize;
+    let mut undecided_rows = 0usize;
+    for row in &report.rows {
+        match row.status {
+            ObligationVerdict::Discharged => {}
+            ObligationVerdict::Unsatisfied
+            | ObligationVerdict::Refused
+            | ObligationVerdict::Disagreement => hard_failed_rows += 1,
+            ObligationVerdict::Undecidable => undecided_rows += 1,
+        }
+    }
+    let proof_ok = !report.rows.is_empty()
+        && report.load_errors.is_empty()
+        && hard_failed_rows == 0
+        && undecided_rows == 0;
+    let proof_code = if proof_ok {
+        EXIT_OK
+    } else if hard_failed_rows > 0 {
+        EXIT_VERIFY_FAIL
+    } else {
+        EXIT_SOLVER_FAIL
+    };
+    ProofReportGate {
+        hard_failed_rows,
+        undecided_rows,
+        proof_ok,
+        proof_code,
+    }
+}
+
+#[cfg(test)]
+fn proof_report_exit_code(report: &sugar_verifier::Report) -> u8 {
+    proof_report_gate(report).proof_code
 }
 
 /// Build the solver plan + registry for verification.
@@ -1703,6 +1730,43 @@ mod tests {
         let args = verify_args(None, None);
         assert!(use_artifact_project_verify(&args, &root));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn report_with_status(status: ObligationVerdict) -> sugar_verifier::Report {
+        let mut report = sugar_verifier::Report::default();
+        report.rows.push(sugar_verifier::ReportRow {
+            callsite: sugar_verifier::CallSite {
+                bridge_ir_name: "bridge".to_string(),
+                property_name: "property".to_string(),
+                ..sugar_verifier::CallSite::default()
+            },
+            status,
+            reason: status.as_str().to_string(),
+            discharge_method: None,
+            body_discharge_tier: None,
+            verification: None,
+        });
+        report
+    }
+
+    #[test]
+    fn proof_report_exit_code_is_exhaustive_over_obligation_verdicts() {
+        let cases = [
+            (ObligationVerdict::Discharged, EXIT_OK),
+            (ObligationVerdict::Unsatisfied, EXIT_VERIFY_FAIL),
+            (ObligationVerdict::Undecidable, EXIT_SOLVER_FAIL),
+            (ObligationVerdict::Disagreement, EXIT_VERIFY_FAIL),
+            (ObligationVerdict::Refused, EXIT_VERIFY_FAIL),
+        ];
+
+        for (verdict, expected) in cases {
+            let report = report_with_status(verdict);
+            assert_eq!(
+                proof_report_exit_code(&report),
+                expected,
+                "unexpected exit code for {verdict:?}"
+            );
+        }
     }
 
     #[test]

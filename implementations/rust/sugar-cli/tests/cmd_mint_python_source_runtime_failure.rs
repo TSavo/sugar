@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value as Json};
+use sugar_verifier::ObligationVerdict;
 
 const RUNTIME_FAILURE_SITE: &str = "concept:panic-freedom.leaf.runtime-failure-site";
 
@@ -945,7 +946,7 @@ fn python_classshape_open_attribute_stays_unproven_falsepass_guard() {
         report.violations, 1,
         "non-guaranteed attr must be loudly unproven: {report:#?}"
     );
-    assert_eq!(report.rows[0].status, "undecidable");
+    assert_eq!(report.rows[0].status, ObligationVerdict::Undecidable);
     assert!(
         report.rows[0].reason.contains("not a guaranteed-present"),
         "falsePass guard should fail for the classShapes reason, got {}",

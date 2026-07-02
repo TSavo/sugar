@@ -44,7 +44,7 @@ use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, AtomMemento, ClaimContractMemento, ContractBody,
     Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
-use sugar_verifier::{Runner, RunnerConfig};
+use sugar_verifier::{ObligationVerdict, Runner, RunnerConfig};
 
 fn register_contract_body_graph(
     proof_graph: &mut ProofGraph,
@@ -260,7 +260,9 @@ fn run() -> Result<(), String> {
         };
         println!(
             "    {}: {}{}",
-            row.callsite.property_name, row.status, reason
+            row.callsite.property_name,
+            row.status.as_str(),
+            reason
         );
         if row.callsite.property_name == "calls-parseInt-with-positive-5" {
             passing = Some(row);
@@ -274,10 +276,10 @@ fn run() -> Result<(), String> {
             eprintln!("FAIL: missing positive-5 row");
             ok = false;
         }
-        Some(r) if r.status != "discharged" => {
+        Some(r) if r.status != ObligationVerdict::Discharged => {
             eprintln!(
                 "FAIL: parse_int(num(5)) status = {}, want discharged",
-                r.status
+                r.status.as_str()
             );
             ok = false;
         }
@@ -288,10 +290,10 @@ fn run() -> Result<(), String> {
             eprintln!("FAIL: missing zero row");
             ok = false;
         }
-        Some(r) if r.status != "unsatisfied" => {
+        Some(r) if r.status != ObligationVerdict::Unsatisfied => {
             eprintln!(
                 "FAIL: parse_int(num(0)) status = {}, want unsatisfied",
-                r.status
+                r.status.as_str()
             );
             ok = false;
         }
