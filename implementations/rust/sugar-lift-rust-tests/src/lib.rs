@@ -160,6 +160,7 @@ pub mod sugar {
     pub mod method_family;
     pub mod monadic;
     pub mod nonzero;
+    pub mod object_value;
     pub mod offset_of;
     pub mod option_adaptor;
     pub mod option_predicate;
@@ -8735,6 +8736,7 @@ pub(crate) struct Warrant {
 
 /// The output of `Sugar::desugar`: a (value, warrant) pair. `Seq` is the literal
 /// floor (a finite element sequence); `Constraints` is the emitted obligation.
+#[derive(Clone)]
 pub(crate) enum Desugared {
     /// A finite element sequence -- the desugared literal floor (written or
     /// synthetic-but-warranted). Produced by `LiteralSugar` and the sequence
@@ -8779,6 +8781,9 @@ pub(crate) enum Desugared {
     /// `tuple_decomp` consumes this to emit component-wise scalar equalities while
     /// the producer sugar owns the decomposition semantics.
     TupleComponents(Vec<Rc<Term>>),
+    /// A constructed object floor whose receiver owns attribute and method
+    /// dispatch via ObjectValue operations. Mirrors Python `ObjectValue`.
+    ObjectValue(sugar::object_value::ObjectValue),
 
     // ── Statement-composition floor (phase-3 decode) ─────────────────────────
     // These variants carry the result of reducing a single statement through the
@@ -8833,6 +8838,7 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
+            Desugared::ObjectValue(_) => None,
             // Statement-composition floor variants never flow into seq contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8860,6 +8866,7 @@ impl Desugared {
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
+            Desugared::ObjectValue(_) => None,
             // Statement-composition floor variants never flow into term contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8880,7 +8887,8 @@ impl Desugared {
             | Desugared::Term(_)
             | Desugared::LiteralString(_)
             | Desugared::LiteralCStr(_)
-            | Desugared::FormatValue(_) => None,
+            | Desugared::FormatValue(_)
+            | Desugared::ObjectValue(_) => None,
             // Statement-composition floor variants never flow into tuple contexts.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -8920,6 +8928,7 @@ impl Desugared {
             Desugared::TermSeq(_) => return None,
             Desugared::Constraints { .. } => return None,
             Desugared::TupleComponents(_) => return None,
+            Desugared::ObjectValue(_) => return None,
             // Statement-composition floor variants never carry a string literal.
             Desugared::StmtSupport
             | Desugared::StmtBound(_)
@@ -9100,6 +9109,10 @@ enum Effect {
     /// walk -- a SOURCE/effect property, not a lifter gap. (Drains the `future.rs`
     /// join!-over-`try` row unclassified -> refused; the block is held + named.)
     ControlFlow { boundary: String },
+    /// COVERAGE-GAP: an algebra operation reached a known floor but the requested
+    /// member/arm has no owning implementation yet. This is live work, not a
+    /// terminal source refusal; direct callers receive `Outcome::Incomplete`.
+    CoverageGap { boundary: String, reason: String },
     /// REFLECTION: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION over
     /// runtime type identity -- `Type::of::<T>()` / a `TypeId::of::<T>()` comparison, read
     /// through `.kind` and a `match` arm binding. A `TypeId` is an opaque, target-determined
@@ -9375,6 +9388,7 @@ impl Effect {
                  constructed from source literals); refused"
             ),
             Effect::AmbiguousTemporalIdentity { reason, .. } => reason.clone(),
+            Effect::CoverageGap { reason, .. } => reason.clone(),
             Effect::ControlFlow { boundary } => format!(
                 "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
                  timeless point-wise value; refused"
@@ -9536,6 +9550,7 @@ impl Effect {
             | Effect::MutableLocalSlicePredicate { boundary, .. }
             | Effect::AmbiguousTemporalIdentity { boundary, .. }
             | Effect::ControlFlow { boundary }
+            | Effect::CoverageGap { boundary, .. }
             | Effect::Reflection { boundary }
             | Effect::SourceLocation { boundary }
             | Effect::TypeLayout { boundary }
@@ -10795,6 +10810,7 @@ fn emit_desugared(
         Desugared::LiteralCStr(_) => false,
         Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
+        Desugared::ObjectValue(_) => false,
         // Statement-composition floor variants are not emitted here; BlockSugar
         // consumes them internally and emits a Constraints when it closes.
         Desugared::StmtSupport

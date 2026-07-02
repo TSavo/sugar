@@ -105,6 +105,10 @@ pub(crate) struct SymbolicValueFloor;
 /// refinement; MonoidFold still reports this family for unimplemented carriers.
 #[allow(dead_code)]
 pub(crate) struct CarrierEmbeddingFloor;
+/// ObjectValue floor family. Constructed object receivers own attribute and
+/// method dispatch through ObjectValue operations.
+#[allow(dead_code)]
+pub(crate) struct ObjectValueFloor;
 
 impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
@@ -123,6 +127,7 @@ impl BodyFloor for BoundVarFloor {}
 impl BodyFloor for RaiseValueFloor {}
 impl BodyFloor for SymbolicValueFloor {}
 impl BodyFloor for CarrierEmbeddingFloor {}
+impl BodyFloor for ObjectValueFloor {}
 
 /// A factory-built child/body for a parent Sugar.
 ///
@@ -809,6 +814,9 @@ impl FactoryAuditSeed {
             }
             Outcome::Complete(Desugared::TupleComponents(_)) => {
                 (FactoryDisposition::Warranted, "tuple-components", None)
+            }
+            Outcome::Complete(Desugared::ObjectValue(_)) => {
+                (FactoryDisposition::Warranted, "object-value", None)
             }
             Outcome::Complete(Desugared::TermSeq(_)) => {
                 (FactoryDisposition::Warranted, "term-sequence", None)
