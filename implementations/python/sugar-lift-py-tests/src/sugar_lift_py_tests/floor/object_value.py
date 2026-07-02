@@ -35,6 +35,9 @@ class ObjectValue(FloorValue):
             blame=operation.blame,
         )
 
+    def context_manager_with(self, operation, ctx):
+        return operation.context_object(self, ctx)
+
     def next_with(self, operation, ctx):
         del ctx
         return self.call_method_value(

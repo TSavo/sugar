@@ -684,6 +684,44 @@ class SourceFragment:
             return None
         return SourceFragment.from_node(self.node.exc, self.filename)  # type: ignore[attr-defined]
 
+    # --- context managers -------------------------------------------------
+
+    def with_item_count(self) -> int:
+        """Return the number of context-manager items in a With node."""
+        self._require(ast.With)
+        return len(self.node.items)  # type: ignore[attr-defined]
+
+    def with_context_expr(self, index: int = 0) -> "SourceFragment":
+        """Return the context expression for a With item."""
+        self._require(ast.With)
+        item = self.node.items[index]  # type: ignore[attr-defined]
+        return SourceFragment.from_node(item.context_expr, self.filename)
+
+    def with_optional_vars_name(self, index: int = 0) -> "str | None":
+        """Return the simple `as name` binding for a With item, if any."""
+        self._require(ast.With)
+        target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
+        if target is None:
+            return None
+        if isinstance(target, ast.Name):
+            return target.id
+        return None
+
+    def with_optional_vars_observed(self, index: int = 0) -> "str | None":
+        """Return the optional-vars AST kind for With, if present."""
+        self._require(ast.With)
+        target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
+        if target is None:
+            return None
+        return type(target).__name__
+
+    def with_body(self) -> "SourceFragment":
+        """Return a Block SourceFragment for a With body suite."""
+        from .block import Block
+
+        self._require(ast.With)
+        return SourceFragment.from_node(Block.of(self.node.body), self.filename)  # type: ignore[attr-defined]
+
     # --- for loops --------------------------------------------------------
 
     def for_body(self) -> "list[SourceFragment]":
