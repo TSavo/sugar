@@ -6,6 +6,7 @@ from sugar_lift_py_tests.floor import ObjectValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
 
 from .dunder_force import force_dunder_floor_or_runtime_effect
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -15,7 +16,7 @@ class AwaitOperation:
 
     def await_object(self, receiver: ObjectValue, ctx):
         value = complete_value(
-            receiver.call_method_value(
+            call_object_method_value(receiver,
                 "__await__",
                 (),
                 owner=f"{self.owner}.__await__",

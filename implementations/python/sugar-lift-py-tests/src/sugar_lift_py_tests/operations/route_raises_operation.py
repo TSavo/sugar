@@ -27,6 +27,8 @@ class RouteRaisesOperation:
             if isinstance(routed, Incomplete):
                 return routed
             handled_block = complete_value(routed, owner="raise handler")
+            if not isinstance(handled_block, BlockValue):
+                raise TypeError("raise handler must produce BlockValue")
             guards = _raise_guards(statement)
             guarded = complete_value(
                 perform_operation(
@@ -43,6 +45,8 @@ class RouteRaisesOperation:
                 ),
                 owner="guarded raise handler",
             )
+            if not isinstance(guarded, BlockValue):
+                raise TypeError("raise handler guard must produce BlockValue")
             statements.extend(guarded.statements)
             if handled_block.fall_through:
                 fall_through.append(

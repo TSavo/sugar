@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -8,6 +9,7 @@ from sugar_lift_py_tests.floor import (
     Bv32Value,
     EncodedStringValue,
     FloorValue,
+    ObjectValue,
     SliceValue,
     StringValue,
     SymbolicValue,
@@ -17,6 +19,8 @@ from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -66,9 +70,9 @@ class SubscriptOperation:
             fix=f"add array index floor for {type(index).__name__}",
         )
 
-    def subscript_object(self, receiver, ctx: object) -> Outcome:
+    def subscript_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx
-        return receiver.call_method_value(
+        return call_object_method_value(receiver,
             "__getitem__",
             (self.index,),
             owner=self.owner,
@@ -94,7 +98,7 @@ def _string_index_term(value: FloorValue):
     if isinstance(value, Bv32Value):
         return value.term
     if isinstance(value, TermValue):
-        return num(value.value)
+        return num(int(value.value))
     raise TypeError(
         f"write more Floor for StringSubscriptSugar index `{type(value).__name__}`: "
         "expected TermValue or Bv32Value"
@@ -129,7 +133,7 @@ def _raise_string_slice_gap(
     observed: str,
     requested: str,
     fix: str,
-) -> None:
+) -> NoReturn:
     info = FactoryGapInfo(
         owner="StringSubscriptSugar.string_slice",
         blame=blame,
@@ -160,7 +164,7 @@ def _raise_subscript_gap(
     observed: str,
     requested: str,
     fix: str,
-) -> None:
+) -> NoReturn:
     info = FactoryGapInfo(
         owner=owner,
         blame=blame,

@@ -6,6 +6,7 @@ from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Outcome
 
 from .descriptor_operation import DescriptorOperation
+from .object_method_call import call_object_method_value, raise_object_floor_gap
 from .perform_operation import perform_operation
 
 
@@ -34,13 +35,14 @@ class AttributeDeleteOperation:
                 ctx=ctx,
             )
         if receiver.has_method("__delattr__"):
-            return receiver.call_method_value(
+            return call_object_method_value(receiver,
                 "__delattr__",
                 (StringValue(self.name),),
                 owner=self.owner,
                 blame=self.blame,
             )
-        return receiver._floor_gap(
+        raise_object_floor_gap(
+            receiver,
             owner=self.owner,
             blame=self.blame,
             observed=f"{receiver.class_name}.{self.name}",

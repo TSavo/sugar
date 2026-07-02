@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, NoReturn
 
 from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
@@ -16,7 +17,7 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
-_FOLD = {
+_FOLD: dict[str, Callable[[int | float, int | float], int | float]] = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
     "*": lambda a, b: a * b,
@@ -150,7 +151,7 @@ class BinaryOperatorOperation:
             )
         )
 
-    def _floor_gap(self, *, receiver: str) -> None:
+    def _floor_gap(self, *, receiver: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,

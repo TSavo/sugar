@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
@@ -14,6 +15,8 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.outcome.complete_value import complete_value
+
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,7 @@ class SequenceProjectionOperation:
     def project_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         iter_value = force_floor(
             complete_value(
-                receiver.call_method_value(
+                call_object_method_value(receiver,
                     "__iter__",
                     (),
                     owner=f"{self.owner}.__iter__",
@@ -71,7 +74,7 @@ class SequenceProjectionOperation:
             fix=f"add bounds-safe projection support for {receiver}",
         )
 
-    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> None:
+    def _floor_gap(self, *, observed: str, requested: str, fix: str) -> NoReturn:
         info = FactoryGapInfo(
             owner=self.owner,
             blame=self.blame,

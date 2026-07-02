@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.floor import FloorValue
+from sugar_lift_py_tests.floor import FloorValue, ObjectValue
 from sugar_lift_py_tests.outcome import Outcome
+
+from .object_method_call import call_object_method_value
 
 
 @dataclass(frozen=True)
@@ -12,9 +14,9 @@ class DictMissingOperation:
     owner: str = "DictMissingOperation"
     blame: str = "<unknown>"
 
-    def missing_object(self, receiver, ctx: object) -> Outcome:
+    def missing_object(self, receiver: ObjectValue, ctx: object) -> Outcome:
         del ctx
-        return receiver.call_method_value(
+        return call_object_method_value(receiver,
             "__missing__",
             (self.key,),
             owner=self.owner,
