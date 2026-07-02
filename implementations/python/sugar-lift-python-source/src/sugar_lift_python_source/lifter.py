@@ -79,6 +79,7 @@ class _UnsupportedSyntax(Exception):
 class _EffectSet:
     def __init__(self) -> None:
         self._effects: list[Json] = []
+        self._opacity_report: list[Json] = []
         self._seen: set[tuple[str, str]] = set()
 
     def add_reads(self, target: str) -> None:
@@ -96,15 +97,34 @@ class _EffectSet:
     def add_unresolved_call(self, name: str) -> None:
         self._add(("unresolved_call", name), {"kind": "unresolved_call", "name": name})
 
-    def add_opaque_loop(self, loop_term: Json) -> None:
+    def add_opaque_loop(
+        self,
+        loop_term: Json,
+        *,
+        source_path: str | None = None,
+        node: ast.AST | None = None,
+    ) -> None:
         loop_cid = cid_of_json(loop_term)
         self._add(
             ("opaque_loop", loop_cid),
             {"kind": "opaque_loop", "loopCid": loop_cid},
         )
+        if source_path is not None and node is not None:
+            self._opacity_report.append(
+                {
+                    "file": source_path,
+                    "line": int(getattr(node, "lineno", 0) or 0),
+                    "col": int(getattr(node, "col_offset", 0) or 0),
+                    "kind": "opaque_loop",
+                    "cid": loop_cid,
+                }
+            )
 
     def sorted(self) -> list[Json]:
         return sorted(self._effects, key=_effect_sort_key)
+
+    def opacity_report(self) -> list[Json]:
+        return list(self._opacity_report)
 
     def _add(self, key: tuple[str, str], effect: Json) -> None:
         if key in self._seen:
@@ -705,7 +725,11 @@ class _Emitter:
             term = ctor(
                 "python:while", self.expr(node.test), self.statements(node.body)
             )
-            self.effects.add_opaque_loop(term)
+            self.effects.add_opaque_loop(
+                term,
+                source_path=self.source_path,
+                node=node,
+            )
             return term
         if isinstance(node, ast.For):
             if node.orelse:
@@ -718,7 +742,11 @@ class _Emitter:
                 self.expr(node.iter),
                 self.statements(node.body),
             )
-            self.effects.add_opaque_loop(term)
+            self.effects.add_opaque_loop(
+                term,
+                source_path=self.source_path,
+                node=node,
+            )
             return term
         if isinstance(node, ast.Expr):
             return ctor("python:expr", self.expr(node.value))
@@ -1322,6 +1350,7 @@ def _lift_function(
             value_pins=value_pins,
         )
         body = emitter.statements(node.body)
+        result.opacity_report.extend(effects.opacity_report())
         return function_contract(
             fn_name=info.fn_name,
             formals=formals,
