@@ -248,12 +248,10 @@ fn type_is_string(ty: &Type) -> bool {
     let Type::Path(type_path) = ty else {
         return false;
     };
-    type_path
-        .path
-        .segments
-        .last()
-        .map(|seg| seg.ident == "String")
-        .unwrap_or(false)
+    let Some(seg) = type_path.path.segments.last() else {
+        return false;
+    };
+    seg.ident == "String"
 }
 
 fn type_is_result_string(ty: &Type) -> bool {
@@ -635,13 +633,9 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
 /// condition head and emit the bare predicate name. The verifier never sees
 /// this normalization -- it only threads the resolved bare atom.
 fn branch_guard_head(cond_head: &str, else_branch: bool) -> Option<&'static str> {
-    let method_head = cond_head.strip_prefix("method:");
-    let head = method_head.unwrap_or(cond_head);
-    let head = if method_head.is_some() {
-        head
-    } else {
-        let head = head;
-        head
+    let head = match cond_head.strip_prefix("method:") {
+        Some(method_head) => method_head,
+        None => cond_head,
     };
     match (head, else_branch) {
         (panic_freedom::IS_SOME, false) | (panic_freedom::IS_NONE, true) => {
@@ -824,7 +818,10 @@ fn opaque_token_hash<T: quote::ToTokens>(node: &T) -> String {
     let full = sugar_canonicalizer::blake3_512_hex(rendered.as_bytes());
     // `blake3_512_hex` returns a `blake3-512:<hex>` prefixed string; take
     // the hex tail and keep it short for readable terms.
-    let hex = full.rsplit(':').next().unwrap_or(&full);
+    let hex = match full.rsplit_once(':') {
+        Some((_, hex)) => hex,
+        None => full.as_str(),
+    };
     hex.chars().take(16).collect()
 }
 
@@ -935,6 +932,24 @@ fn collect_pat_names(pat: &Pat, out: &mut HashSet<String>) {
     }
 }
 
+fn pat_contains_mut_ident(pat: &Pat) -> bool {
+    match pat {
+        Pat::Ident(ident) => ident.mutability.is_some(),
+        Pat::Type(typed) => pat_contains_mut_ident(&typed.pat),
+        Pat::Reference(reference) => pat_contains_mut_ident(&reference.pat),
+        Pat::Paren(paren) => pat_contains_mut_ident(&paren.pat),
+        Pat::Tuple(tuple) => tuple.elems.iter().any(pat_contains_mut_ident),
+        Pat::TupleStruct(tuple) => tuple.elems.iter().any(pat_contains_mut_ident),
+        Pat::Struct(strukt) => strukt
+            .fields
+            .iter()
+            .any(|field| pat_contains_mut_ident(&field.pat)),
+        Pat::Slice(slice) => slice.elems.iter().any(pat_contains_mut_ident),
+        Pat::Or(or) => or.cases.iter().any(pat_contains_mut_ident),
+        _ => false,
+    }
+}
+
 fn seed_mutable_param_roots(item_fn: &ItemFn, ctx: &mut LiftCtx) {
     for input in &item_fn.sig.inputs {
         let FnArg::Typed(arg) = input else {
@@ -979,9 +994,10 @@ fn collect_assertion_guard_facts(stmts: &[Stmt], ctx: &mut LiftCtx) {
             Stmt::Local(local) => {
                 let mut names = HashSet::new();
                 collect_pat_names(&local.pat, &mut names);
-                let local_mutable = local_binding_ident(local)
-                    .map(|(_, mutable)| mutable)
-                    .unwrap_or(false);
+                let local_mutable = match local_binding_ident(local) {
+                    Some((_, mutable)) => mutable,
+                    None => pat_contains_mut_ident(&local.pat),
+                };
                 for name in names {
                     ctx.invalidate_root(&name);
                     if local_mutable {
@@ -1019,7 +1035,10 @@ fn assert_macro_condition(mac: &Macro) -> Option<Expr> {
     if seg.ident != "assert" {
         return None;
     }
-    let parsed_cond = syn::parse2::<Expr>(first_macro_arg_tokens(mac.tokens.clone())).ok()?;
+    let parsed_cond = match syn::parse2::<Expr>(first_macro_arg_tokens(mac.tokens.clone())) {
+        Ok(expr) => expr,
+        Err(err) => panic!("sugar-walk refused unparsable assert! condition: {err}"),
+    };
     // Keep the prior tuple fallback for already-parenthesized conditions.
     match parsed_cond {
         Expr::Tuple(t) => t.elems.first().cloned(),
@@ -1135,7 +1154,10 @@ fn expr_root_ident(expr: &Expr) -> Option<String> {
 }
 
 fn term_key(term: &IrTerm) -> Option<String> {
-    serde_json::to_string(term).ok()
+    match serde_json::to_string(term) {
+        Ok(key) => Some(key),
+        Err(err) => panic!("sugar-walk refused unserializable IR term key: {err}"),
+    }
 }
 
 /// Track local json! construction facts for this function body.
@@ -1173,8 +1195,11 @@ fn collect_local_binding_value_fact(local: &Local, ctx: &mut LiftCtx) {
     let kind = local
         .init
         .as_ref()
-        .map(|init| infer_value_kind(&init.expr, ctx))
-        .unwrap_or(ValueKind::Unknown);
+        .map(|init| infer_value_kind(&init.expr, ctx));
+    let kind = match kind {
+        Some(kind) => kind,
+        None => ValueKind::Unknown,
+    };
     ctx.local_value_kinds.insert(name, kind);
 }
 
@@ -1237,13 +1262,13 @@ fn infer_value_kind(expr: &Expr, ctx: &LiftCtx) -> ValueKind {
             Lit::Bool(_) => ValueKind::Bool,
             _ => ValueKind::Unknown,
         },
-        Expr::Path(path) => path
-            .path
-            .segments
-            .last()
-            .and_then(|seg| ctx.local_value_kinds.get(&seg.ident.to_string()))
-            .cloned()
-            .unwrap_or(ValueKind::Unknown),
+        Expr::Path(path) => match path.path.segments.last() {
+            Some(seg) => match ctx.local_value_kinds.get(&seg.ident.to_string()) {
+                Some(kind) => kind.clone(),
+                None => ValueKind::Unknown,
+            },
+            None => ValueKind::Unknown,
+        },
         Expr::Paren(paren) => infer_value_kind(&paren.expr, ctx),
         Expr::Reference(reference) => infer_value_kind(&reference.expr, ctx),
         Expr::Group(group) => infer_value_kind(&group.expr, ctx),
@@ -1297,7 +1322,10 @@ fn infer_indexed_json_value_kind(index: &syn::ExprIndex, ctx: &LiftCtx) -> Value
     let Some(key) = expr_string_literal(&index.index) else {
         return ValueKind::Unknown;
     };
-    fields.get(&key).cloned().unwrap_or(ValueKind::Unknown)
+    match fields.get(&key) {
+        Some(kind) => kind.clone(),
+        None => ValueKind::Unknown,
+    }
 }
 
 fn expr_string_literal(expr: &Expr) -> Option<String> {
@@ -1315,9 +1343,10 @@ fn expr_string_literal(expr: &Expr) -> Option<String> {
 fn infer_macro_value_kind(mac: &Macro, ctx: &LiftCtx) -> ValueKind {
     match macro_leaf_name(mac).as_deref() {
         Some("format") => ValueKind::String,
-        Some("json") => parse_json_object_macro(mac, ctx)
-            .map(ValueKind::JsonObject)
-            .unwrap_or(ValueKind::Unknown),
+        Some("json") => match parse_json_object_macro(mac, ctx) {
+            Some(fields) => ValueKind::JsonObject(fields),
+            None => ValueKind::Unknown,
+        },
         _ => ValueKind::Unknown,
     }
 }
@@ -1375,22 +1404,26 @@ fn infer_json_value_tokens(tokens: TokenStream, ctx: &LiftCtx) -> ValueKind {
     let mut iter = tokens.clone().into_iter();
     if let Some(TokenTree::Group(group)) = iter.next() {
         if group.delimiter() == Delimiter::Brace && iter.next().is_none() {
-            return parse_json_object_tokens(group.stream(), ctx)
-                .map(ValueKind::JsonObject)
-                .unwrap_or(ValueKind::Unknown);
+            return match parse_json_object_tokens(group.stream(), ctx) {
+                Some(fields) => ValueKind::JsonObject(fields),
+                None => ValueKind::Unknown,
+            };
         }
     }
-    syn::parse2::<Expr>(tokens)
-        .ok()
-        .map(|expr| infer_value_kind(&expr, ctx))
-        .unwrap_or(ValueKind::Unknown)
+    match syn::parse2::<Expr>(tokens) {
+        Ok(expr) => infer_value_kind(&expr, ctx),
+        Err(_) => ValueKind::Unknown,
+    }
 }
 
 fn token_string_literal(token: &TokenTree) -> Option<String> {
     let TokenTree::Literal(lit) = token else {
         return None;
     };
-    let parsed = syn::parse_str::<Lit>(&lit.to_string()).ok()?;
+    let parsed = match syn::parse_str::<Lit>(&lit.to_string()) {
+        Ok(lit) => lit,
+        Err(_) => return None,
+    };
     match parsed {
         Lit::Str(s) => Some(s.value()),
         _ => None,
@@ -1789,10 +1822,10 @@ fn statement_pure_free_guard_fact_for_is_some(
     let rule = ctx.pure_free_guard_rules.iter().find(|rule| {
         rule.callee == callee
             && rule.post_predicate == panic_freedom::IS_SOME
-            && rule
-                .source_line
-                .map(|line| line == call_line)
-                .unwrap_or(true)
+            && match rule.source_line {
+                Some(line) => line == call_line,
+                None => false,
+            }
     })?;
     let args = call.args.iter().cloned().collect::<Vec<_>>();
     if !args.iter().all(pure_free_guard_arg_is_stable) {
@@ -2176,16 +2209,13 @@ fn path_arguments_mentions_ident(args: &PathArguments, needle: &str) -> bool {
 }
 
 fn method_turbofish_mentions_ident(method: &syn::ExprMethodCall, needle: &str) -> bool {
-    method
-        .turbofish
-        .as_ref()
-        .map(|args| {
-            args.args.iter().any(|arg| match arg {
-                GenericArgument::Type(ty) => type_mentions_ident(ty, needle),
-                _ => false,
-            })
-        })
-        .unwrap_or(false)
+    let Some(args) = method.turbofish.as_ref() else {
+        return false;
+    };
+    args.args.iter().any(|arg| match arg {
+        GenericArgument::Type(ty) => type_mentions_ident(ty, needle),
+        _ => false,
+    })
 }
 
 fn expr_as_method_call_lift(expr: &Expr) -> Option<&syn::ExprMethodCall> {
@@ -3321,11 +3351,10 @@ fn block_only_panics(block: &syn::Block) -> bool {
         Stmt::Macro(StmtMacro { mac, .. }) => mac,
         _ => return false,
     };
-    mac.path
-        .segments
-        .last()
-        .map(|s| s.ident == "panic")
-        .unwrap_or(false)
+    let Some(segment) = mac.path.segments.last() else {
+        return false;
+    };
+    segment.ident == "panic"
 }
 
 fn negate(f: IrFormula) -> IrFormula {
@@ -4443,6 +4472,37 @@ mod tests {
         assert!(
             !json.contains("concept:panic-freedom.result.ok"),
             "Rust v1 writer must keep emitting the old result predicate token: {json}"
+        );
+    }
+
+    #[test]
+    fn line_less_pure_free_guard_rule_does_not_guard_later_unwrap() {
+        let item_fn = parse_fn(
+            r#"
+            fn f(x: i64) -> i64 {
+                if helper(x).is_some() {
+                    helper(x).unwrap()
+                } else {
+                    0
+                }
+            }
+        "#,
+        );
+        let rule = PureFreeGuardRule {
+            callee: "helper".to_string(),
+            post_predicate: panic_freedom::IS_SOME.to_string(),
+            source_line: None,
+        };
+        let post = lift_function_postcondition_with_return_facts_and_pure_free_guards(
+            &item_fn,
+            &FunctionReturnFacts::default(),
+            &[rule],
+        )
+        .into_formula();
+        let json = serde_json::to_string(&post).unwrap();
+        assert!(
+            !json.contains("panic_effect"),
+            "a guard rule with no source line must not match every helper(x) callsite: {json}"
         );
     }
 
