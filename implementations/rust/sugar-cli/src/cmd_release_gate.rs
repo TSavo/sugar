@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::doctor::{report_from_floor_signals, CheckSeverity, DoctorMode, DoctorReport};
-use crate::floor_runtime_check::FloorSignals;
+use crate::floor_runtime_check::{algebra_gap_boundary, FloorSignals};
 use crate::{EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 #[derive(Parser, Debug, Clone)]
@@ -378,6 +378,7 @@ fn floor_signals_from_self_check_json(json: &Value) -> FloorSignals {
             .get("dischargeSplit")
             .is_some_and(|value| !value.is_null()),
         monoid_fold_gaps_by_element_type: monoid_fold_gaps_by_element_type_from_json(json),
+        algebra_gaps_by_boundary: algebra_gaps_by_boundary_from_json(json),
     }
 }
 
@@ -410,6 +411,23 @@ fn monoid_fold_gap_element_type(reason: &str) -> Option<String> {
         .trim()
         .trim_matches('`');
     (!element_type.is_empty()).then(|| element_type.to_string())
+}
+
+fn algebra_gaps_by_boundary_from_json(json: &Value) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    let Some(rows) = json.get("panicCensus").and_then(Value::as_array) else {
+        return counts;
+    };
+    for row in rows {
+        let Some(reason) = row.get("reason").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(boundary) = algebra_gap_boundary(reason) else {
+            continue;
+        };
+        *counts.entry(boundary).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn k_panic_safe(json: &Value) -> u64 {
@@ -590,6 +608,7 @@ fn floor_json(floor: &FloorSignals) -> Value {
         "droppedSites": floor.dropped_sites_count,
         "panicCensusUnnamed": floor.panic_census_unnamed_count,
         "monoidFoldCarrierEmbeddingGaps": &floor.monoid_fold_gaps_by_element_type,
+        "algebraGapsByBoundary": &floor.algebra_gaps_by_boundary,
         "totalCallsites": floor.total_callsites,
         "dischargeSplitPresent": floor.discharge_split_present,
     })
