@@ -48,6 +48,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions};
 use crate::project_config::read_project_config;
 use crate::report_fmt;
 use crate::witness_verify;
@@ -164,6 +165,10 @@ pub struct VerifyArgs {
     /// `<project>/.sugar/witnesses`.
     #[arg(long = "emit-witnesses")]
     pub emit_witnesses: Option<PathBuf>,
+
+    /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
+    #[arg(long = "allow-failed-components")]
+    pub allow_failed_components: bool,
 
     /// Require that a concept has reached the empirically-witnessed
     /// promotion tier. When set, the standard solver-dispatch flow is
@@ -341,6 +346,9 @@ pub fn run(args: VerifyArgs) -> u8 {
 
     let quiet = args.out.quiet;
     let json_out = args.out.json;
+    let component_plan_options = ComponentPlanOptions {
+        allow_failed_components: args.allow_failed_components,
+    };
 
     if !quiet && !json_out {
         println!(
@@ -401,7 +409,17 @@ pub fn run(args: VerifyArgs) -> u8 {
     // The kit author's declared `[solvers]` plan wins; otherwise the
     // default verify dispatch table over a single-Z3 registry.
     let (plan, solver_registry, plan_is_default) = build_plan_and_registry(&project_root, &args.z3);
-    let compiler_registry = crate::component_plan::compiler_registry(&project_root);
+    let component_plan =
+        component_plan::plan_workspace_with_options(&project_root, component_plan_options);
+    if let Err(error) = check_component_plan_errors(&component_plan) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
+    if component_plan_options.allow_failed_components {
+        emit_component_plan_warnings(&component_plan);
+    }
+    let compiler_registry =
+        component_plan::compiler_registry_from_plan(&project_root, &component_plan);
 
     if !quiet && !json_out {
         let plan_label = match (&plan, plan_is_default) {
@@ -481,7 +499,8 @@ pub fn run(args: VerifyArgs) -> u8 {
     // oracle, blake3 it OURSELVES, and audit the signature. A body the oracle
     // approves that does not recompute to the pinned CID is a broken oracle,
     // caught because rust does the math anyway. Any non-verified witness fails.
-    let witness_results = witness_verify::verify_witnesses(&project_root, &pool);
+    let witness_results =
+        witness_verify::verify_witnesses_with_options(&project_root, &pool, component_plan_options);
     let witnesses_ok = witness_results.iter().all(|w| w.is_ok());
     let ok = failed == 0 && witnesses_ok;
 
@@ -521,12 +540,41 @@ fn use_artifact_project_verify(args: &VerifyArgs, project_root: &Path) -> bool {
         && (args.project.is_some() || project_root.join(".sugar").join("config.toml").exists())
 }
 
+fn check_component_plan_errors(component_plan: &ComponentPlan) -> Result<(), String> {
+    if let Some(diagnostic) = component_plan::first_error_diagnostic(component_plan) {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+fn emit_component_plan_warnings(component_plan: &ComponentPlan) {
+    for diagnostic in component_plan::warning_diagnostics(component_plan) {
+        eprintln!("{}: {}", "warning".yellow().bold(), diagnostic.message);
+    }
+}
+
 fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     let quiet = args.out.quiet;
     let json_out = args.out.json;
     let cfg_doc = read_project_config(project_root);
+    let component_plan_options = ComponentPlanOptions {
+        allow_failed_components: args.allow_failed_components,
+    };
+    let component_plan =
+        component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    if let Err(error) = check_component_plan_errors(&component_plan) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
+    if component_plan_options.allow_failed_components {
+        emit_component_plan_warnings(&component_plan);
+    }
 
-    crate::cmd_prove::configure_witness_discharge_env(project_root, &cfg_doc);
+    crate::cmd_prove::configure_witness_discharge_env_with_plan(
+        project_root,
+        &cfg_doc,
+        Some(&component_plan),
+    );
 
     let mut extra_projects: Vec<PathBuf> = Vec::new();
     for callee in &cfg_doc.callees {
@@ -554,7 +602,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         extra_proofs: dependency_proofs,
         ..Default::default()
     };
-    let compilers = crate::component_plan::compiler_registry(project_root);
+    let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);
     let runner = Runner::new_with_compilers(cfg, compilers);
     let run_artifact = match runner.run_with_proof_run() {
         Ok(artifact) => artifact,
@@ -565,7 +613,8 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     };
     let report = run_artifact.report;
     let pool = load_all_proofs::run(project_root);
-    let witness_results = witness_verify::verify_witnesses(project_root, &pool);
+    let witness_results =
+        witness_verify::verify_witnesses_with_options(project_root, &pool, component_plan_options);
     let witnesses_ok = witness_results.iter().all(|w| w.is_ok());
     let hard_failed_rows = report
         .rows
@@ -1579,6 +1628,7 @@ mod tests {
             project,
             z3: "z3".to_string(),
             emit_witnesses,
+            allow_failed_components: false,
             require_empirically_witnessed: None,
             require_fixture: None,
             consensus_policy: None,

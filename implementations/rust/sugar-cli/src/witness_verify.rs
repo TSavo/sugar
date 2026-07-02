@@ -47,9 +47,42 @@ impl WitnessVerifyResult {
 
 /// Verify every `witness-memento` in the pool. Returns one result per witness
 /// (empty when the `.proof` carries no witnesses).
+#[allow(dead_code)] // Kept as the default wrapper for callers without component-plan options.
 pub fn verify_witnesses(project_root: &Path, pool: &MementoPool) -> Vec<WitnessVerifyResult> {
+    verify_witnesses_with_options(
+        project_root,
+        pool,
+        crate::component_plan::ComponentPlanOptions::default(),
+    )
+}
+
+pub fn verify_witnesses_with_options(
+    project_root: &Path,
+    pool: &MementoPool,
+    component_plan_options: crate::component_plan::ComponentPlanOptions,
+) -> Vec<WitnessVerifyResult> {
     let mut out = Vec::new();
-    let resolvers = find_resolvers(project_root);
+    let resolvers = match find_resolvers(project_root, component_plan_options) {
+        Ok(resolvers) => resolvers,
+        Err(reason) => {
+            for (cid, _env) in &pool.mementos {
+                if pool.member_kind(cid) != Some("witness-memento") {
+                    continue;
+                }
+                out.push(WitnessVerifyResult {
+                    witness_cid: pool
+                        .member_field(cid, "witnessCid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    verdict: "refused".to_string(),
+                    checks: Vec::new(),
+                    reason: format!("component plan failed while resolving witnesses: {reason}"),
+                });
+            }
+            return out;
+        }
+    };
     for (cid, env) in &pool.mementos {
         if pool.member_kind(cid) != Some("witness-memento") {
             continue;
@@ -214,7 +247,10 @@ pub fn has_witnesses(pool: &MementoPool) -> bool {
 /// to its pinned CID (see `verify_witnesses`). A wrong kit cannot forge a hashing
 /// body, so trying each is sound and removes the order-dependence a single
 /// first-found scan would have in a multi-kit project.
-fn find_resolvers(project_root: &Path) -> Vec<(Vec<String>, Option<PathBuf>, String)> {
+fn find_resolvers(
+    project_root: &Path,
+    component_plan_options: crate::component_plan::ComponentPlanOptions,
+) -> Result<Vec<(Vec<String>, Option<PathBuf>, String)>, String> {
     let lift_dir = project_root.join(".sugar").join("lift");
     let mut found = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&lift_dir) {
@@ -228,7 +264,12 @@ fn find_resolvers(project_root: &Path) -> Vec<(Vec<String>, Option<PathBuf>, Str
             }
         }
     }
-    for manifest in crate::component_plan::planned_lift_manifests(project_root) {
+    let component_plan =
+        crate::component_plan::plan_workspace_with_options(project_root, component_plan_options);
+    if let Some(diagnostic) = crate::component_plan::first_error_diagnostic(&component_plan) {
+        return Err(diagnostic.message.clone());
+    }
+    for manifest in component_plan.lift_manifests {
         if manifest.resolve_witness_command.is_empty() {
             continue;
         }
@@ -244,7 +285,7 @@ fn find_resolvers(project_root: &Path) -> Vec<(Vec<String>, Option<PathBuf>, Str
                 .unwrap_or_else(|| "sugar.plugin.resolve_witness".to_string()),
         ));
     }
-    found
+    Ok(found)
 }
 
 /// Minimal TOML read for the `resolve_witness_command` array + `working_dir`,
