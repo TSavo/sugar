@@ -36,3 +36,6 @@ class ArrayLiteral(FloorValue):
 
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_array(self, ctx)
+
+    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
+        return operation.project_literal(self, ctx)

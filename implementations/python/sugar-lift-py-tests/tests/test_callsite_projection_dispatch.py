@@ -6,17 +6,20 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import euf_call_term
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     BlockValue,
     BoolValue,
     Bv32Value,
     CallSiteValue,
+    FloorValue,
     ObjectValue,
     ReturnValue,
     StringValue,
     SymbolicValue,
     TermValue,
+    TupleLiteralValue,
 )
-from sugar_lift_py_tests.ir import bool_const, eq, make_var, num, str_const
+from sugar_lift_py_tests.ir import bool_const, ctor, eq, make_var, num, str_const
 from sugar_lift_py_tests.operations import (
     CallsiteProjectionOperation,
     perform_operation,
@@ -116,6 +119,30 @@ def test_multi_exit_block_projects_no_single_floor_fact() -> None:
     )
 
     assert fact is None
+
+
+def test_sequence_floor_values_project_exact_callsite_fact_by_dispatch() -> None:
+    assert _project(ArrayLiteral((TermValue(2), TermValue(3)))) == eq(
+        _call_term(), ctor("array", [num(2), num(3)])
+    )
+    assert _project(TupleLiteralValue((TermValue(2), TermValue(3)))) == eq(
+        _call_term(), ctor("tuple", [num(2), num(3)])
+    )
+
+
+def test_sequence_projection_refuses_when_any_element_cannot_project() -> None:
+    class UnprojectableFloor(FloorValue):
+        pass
+
+    receiver = ArrayLiteral((TupleLiteralValue((UnprojectableFloor(),)),))
+
+    with pytest.raises(FactoryGap) as exc:
+        _project(receiver)
+
+    assert exc.value.info["gap_kind"] == "Floor"
+    assert exc.value.info["gap_locus"] == "Projection"
+    assert exc.value.info["observed"] == "UnprojectableFloor"
+    assert exc.value.info["requested"] == "project this floor value to a term"
 
 
 def test_unprojectable_floor_refuses_with_projection_gap() -> None:
