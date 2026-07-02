@@ -74,6 +74,8 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
   it down, deleting pinned rows in the same PR. Never sanction-comment your way to a lower R.
 
 ## Where things stand (update this section as you go)
+- 2026-07-01 tick: #3065 merged (canonicalizer, closed #2999). #3066 merged (this handoff).
+  Main at 4ac1b51c9. No open PRs. GitHub API rate-limited (~resets hourly); fleet on SSH, unaffected.
 - Crime board (the four-lens audit, #2981–#3001): essentially cleared. Last item #2995 (generated.rs
   rename + vocabulary-totality instrument) in flight on window 85868.
 - Rust-kit spine campaign: plan #3014/#3015, capstone crime #3043 (five-frontier closure vector),
@@ -82,7 +84,7 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
 - Perf: instrument #3039 then drains #3040 (bridge-envelope 2-3x clone) / architectural #3041
   (MementoPool typed-member migration — gated on #3039 numbers + zero crime board).
 - Test debt: #3018 (restore quarantined bad-twin — HIGH, CI-red suspect).
-- Review-bot findings #3050–#3063: UNREAD as of handoff — triage them.
+- Review-bot findings #3050–#3063: still UNREAD (blocked on gh rate limit) — triage them.
 - KB: memory_lint.py live, honestly red at dangling:92 (41 never-written memories; top target
   red_gate_is_not_a_gate ×10). T's call: write top 8 or strip.
 
@@ -92,4 +94,4 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
 - Acid-CI monitor: armed for the first COMPLETED main run verdict — consume it as real ΔR.
 
 ## Codex worker windows (this session — re-`list_workers` to confirm, IDs change across sessions)
-85868, 85870, 85873. Never reuse IDs blindly; list first.
+85868 (#2995), 85870 (working), 85873 (#3022 queued). Never reuse IDs blindly; list first.
