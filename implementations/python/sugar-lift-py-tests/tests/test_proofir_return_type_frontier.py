@@ -5,13 +5,13 @@ import pytest
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.factory.literal_call_report import (
     _require_proofir_emission_node,
-    euf_call_term,
-    euf_callsite_name,
 )
-from sugar_lift_py_tests.ir import num
 from sugar_lift_py_tests.proofir import (
+    CallTerm,
+    ConstTerm,
     ConstructionSite,
     EqualityFact,
+    IntSort,
     Provenance,
     Stated,
 )
@@ -27,11 +27,10 @@ def _provenance() -> Provenance:
 
 
 def test_proofir_return_type_seam_accepts_typed_node() -> None:
-    call_term = euf_call_term("h", [num(5)])
+    call_term = CallTerm("h", (ConstTerm(5, sort=IntSort()),), sort=IntSort())
     node = EqualityFact(
-        euf_key=euf_callsite_name("h", call_term, suffix="::assertion"),
         call_term=call_term,
-        rhs_term=num(6),
+        rhs_term=ConstTerm(6, sort=IntSort()),
         provenance=_provenance(),
     )
 

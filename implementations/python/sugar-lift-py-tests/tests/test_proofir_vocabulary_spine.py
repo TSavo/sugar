@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.factory.literal_call_report import euf_call_term, euf_callsite_name
+from sugar_lift_py_tests.factory.literal_call_report import euf_callsite_name
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.ir import (
     Bool,
@@ -23,10 +23,13 @@ from sugar_lift_py_tests.idd.proofir_vocab_instruments import (
     collect_proofir_vocabulary_frontier,
 )
 from sugar_lift_py_tests.proofir import (
+    CallTerm,
+    ConstTerm,
     ConstructionSite,
     Derived,
     EqualityFact,
     FunctionContract,
+    IntSort,
     Provenance,
     REGISTERED_PROOFIR_NODE_CLASSES,
     RefusalRecord,
@@ -412,18 +415,15 @@ def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver(
 
 
 def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() -> None:
-    call_term = euf_call_term("h", [num(5)])
-    key = canonical_euf_callsite_name(call_term)
+    call_term = CallTerm("h", (ConstTerm(5, sort=IntSort()),), sort=IntSort())
     stated = EqualityFact(
-        euf_key=key,
         call_term=call_term,
-        rhs_term=num(6),
+        rhs_term=ConstTerm(6, sort=IntSort()),
         provenance=_stated_provenance("EqualityFact"),
     )
     derived = EqualityFact(
-        euf_key=key,
         call_term=call_term,
-        rhs_term=num(6),
+        rhs_term=ConstTerm(6, sort=IntSort()),
         provenance=_derived_provenance("EqualityFact"),
     )
 
@@ -445,18 +445,15 @@ def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() ->
 
 
 def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
-    call_term = euf_call_term("h", [])
-    key = canonical_euf_callsite_name(call_term)
+    call_term = CallTerm("h", (), sort=IntSort())
     stated_lie = EqualityFact(
-        euf_key=key,
         call_term=call_term,
-        rhs_term=num(7),
+        rhs_term=ConstTerm(7, sort=IntSort()),
         provenance=_stated_provenance("EqualityFact"),
     )
     derived_truth = EqualityFact(
-        euf_key=key,
         call_term=call_term,
-        rhs_term=num(6),
+        rhs_term=ConstTerm(6, sort=IntSort()),
         provenance=_derived_provenance("EqualityFact"),
     )
 
@@ -466,30 +463,29 @@ def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
 
 
 def test_equality_fact_constructor_invariants_are_loud() -> None:
-    call_term = euf_call_term("h", [num(5)])
+    call_term = CallTerm("h", (ConstTerm(5, sort=IntSort()),), sort=IntSort())
     good_key = canonical_euf_callsite_name(call_term)
-    assert good_key == euf_callsite_name("h", call_term, suffix="::assertion")
+    assert good_key == euf_callsite_name("h", call_term.ir_term, suffix="::assertion")
 
     fact = EqualityFact(
-        euf_key=good_key,
         call_term=call_term,
-        rhs_term=num(5),
+        rhs_term=ConstTerm(5, sort=IntSort()),
         provenance=_two_warrant_provenance("EqualityFact"),
     )
-    assert fact.denotation() == eq(call_term, num(5))
+    assert fact.euf_key == good_key
+    assert fact.denotation() == eq(call_term.ir_term, num(5))
     assert len(fact.provenance().warrants) == 2
     assert fact.cid().startswith("blake3-512:")
 
-    with pytest.raises(FactoryGap, match="euf_key"):
+    with pytest.raises(TypeError, match="euf_key"):
         EqualityFact(
             euf_key="free-typed-key",
             call_term=call_term,
-            rhs_term=num(5),
+            rhs_term=ConstTerm(5, sort=IntSort()),
             provenance=_stated_provenance("EqualityFact"),
         )
-    with pytest.raises(FactoryGap, match="rhs_term must be a typed Term"):
+    with pytest.raises(FactoryGap, match="typed ProofIR Term"):
         EqualityFact(
-            euf_key=good_key,
             call_term=call_term,
             rhs_term={"kind": "const"},
             provenance=_stated_provenance("EqualityFact"),

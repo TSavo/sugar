@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import InitVar, dataclass, field
-from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.factory.dig_refusal import DigRefusal
 from sugar_lift_py_tests.ir import (
     Formula,
+    Int,
     Sort,
     Term,
     _Atomic,
@@ -32,6 +33,15 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
+from sugar_lift_py_tests.proofir.formulas import Eq as ProofEq
+from sugar_lift_py_tests.proofir.scope import ClosedFormula
+from sugar_lift_py_tests.proofir.sorts import IntSort
+from sugar_lift_py_tests.proofir.terms import (
+    CallTerm,
+    ConstTerm,
+    Term as ProofTerm,
+)
 
 
 @dataclass(frozen=True)
@@ -161,39 +171,47 @@ class ProofIRNode(ABC):
         raise NotImplementedError
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class EqualityFact(ProofIRNode):
     node_class: ClassVar[str] = "EqualityFact"
 
-    euf_key: str
-    call_term: Term
-    rhs_term: Term
-    provenance: InitVar[Provenance]
+    euf_key: str = field(init=False)
+    call_term: CallTerm[Any] = field(init=False)
+    rhs_term: ProofTerm[Any] = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
+    _closed_formula: ClosedFormula = field(init=False, repr=False)
 
-    def __post_init__(self, provenance: Provenance) -> None:
+    def __init__(
+        self,
+        *,
+        call_term: CallTerm[Any],
+        rhs_term: ProofTerm[Any],
+        provenance: Provenance,
+    ) -> None:
         _require_provenance(provenance, owner=self.node_class)
-        _require_term(self.call_term, owner=self.node_class, field_name="call_term")
-        _require_term(self.rhs_term, owner=self.node_class, field_name="rhs_term")
-        if not isinstance(self.call_term, _Ctor) or not self.call_term.name.startswith("call:"):
-            _proofir_gap(
+        if not isinstance(call_term, CallTerm):
+            proofir_construction_gap(
                 owner=self.node_class,
-                observed=repr(self.call_term),
-                requested="call_term with a call:<callee> ctor head",
-                fix="construct EqualityFact from euf_call_term(callee, args)",
+                observed=type(call_term).__name__,
+                requested="CallTerm",
+                fix="construct EqualityFact from proofir.terms.CallTerm, never a naked Formula or raw ir term",
             )
-        expected_key = canonical_euf_callsite_name(self.call_term)
-        if self.euf_key != expected_key:
-            _proofir_gap(
+        if not isinstance(rhs_term, ProofTerm):
+            proofir_construction_gap(
                 owner=self.node_class,
-                observed=f"euf_key={self.euf_key!r}",
-                requested=f"euf_key={expected_key!r}",
-                fix="derive the key from the call term with the canonical #euf# speller",
+                observed=type(rhs_term).__name__,
+                requested="typed ProofIR Term",
+                fix="wrap the rhs ir.py term before constructing EqualityFact",
             )
+        closed = ClosedFormula(ProofEq(call_term, rhs_term))
+        object.__setattr__(self, "euf_key", canonical_euf_callsite_name(call_term))
+        object.__setattr__(self, "call_term", call_term)
+        object.__setattr__(self, "rhs_term", rhs_term)
         object.__setattr__(self, "_provenance", provenance)
+        object.__setattr__(self, "_closed_formula", closed)
 
     def denotation(self) -> Formula:
-        return eq(self.call_term, self.rhs_term)
+        return self._closed_formula.ir_formula
 
     def provenance(self) -> Provenance:
         return self._provenance
@@ -215,31 +233,26 @@ class EqualityFact(ProofIRNode):
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:
-        call = ctor("call:A", [])
-        key = canonical_euf_callsite_name(call)
+        call = CallTerm("A", (), sort=IntSort())
         stated_truth = cls(
-            euf_key=key,
             call_term=call,
-            rhs_term=num(0),
+            rhs_term=ConstTerm(0, sort=IntSort()),
             provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
         )
         derived_truth = cls(
-            euf_key=key,
             call_term=call,
-            rhs_term=num(0),
+            rhs_term=ConstTerm(0, sort=IntSort()),
             provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
         )
         truthful = merge_equality_facts(stated_truth, derived_truth)
         stated_lie = cls(
-            euf_key=key,
             call_term=call,
-            rhs_term=num(1),
+            rhs_term=ConstTerm(1, sort=IntSort()),
             provenance=_witness_provenance(cls.node_class, warrants=("Stated",)),
         )
         derived = cls(
-            euf_key=key,
             call_term=call,
-            rhs_term=num(0),
+            rhs_term=ConstTerm(0, sort=IntSort()),
             provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
         )
         return VerdictWitnessPair(
@@ -264,7 +277,7 @@ class EqualityFact(ProofIRNode):
         )
 
 
-_INT_SORT = num(0).sort
+_INT_SORT = Int()
 
 
 @dataclass(frozen=True)
@@ -484,38 +497,44 @@ class FunctionContractBuilder:
             symbol=self.symbol,
             formals=self._formals,
             pre=self._pre,
-            post=self._post,
+            post=cast(Formula, self._post),
             warrants=(self.provenance,),
             out_binding=self.out_binding,
             out_sort=self.out_sort,
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RefusalRecord(ProofIRNode):
     node_class: ClassVar[str] = "RefusalRecord"
 
-    effect_kind: str
-    reason: str
-    provenance: InitVar[Provenance]
+    effect_kind: str = field(init=False)
+    reason: str = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
 
-    def __post_init__(self, provenance: Provenance) -> None:
+    def __init__(
+        self,
+        effect_kind: str,
+        reason: str,
+        provenance: Provenance,
+    ) -> None:
         _require_provenance(provenance, owner=self.node_class)
-        if not self.effect_kind:
+        if not effect_kind:
             _proofir_gap(
                 owner=self.node_class,
                 observed="empty effect kind",
                 requested="typed effect kind",
                 fix="construct RefusalRecord from Incomplete or a typed gap",
             )
-        if not self.reason:
+        if not reason:
             _proofir_gap(
                 owner=self.node_class,
                 observed="empty reason",
                 requested="effect reason",
                 fix="preserve the refusal reason when constructing RefusalRecord",
             )
+        object.__setattr__(self, "effect_kind", effect_kind)
+        object.__setattr__(self, "reason", reason)
         object.__setattr__(self, "_provenance", provenance)
 
     @classmethod
@@ -686,23 +705,27 @@ def merge_equality_facts(left: EqualityFact, right: EqualityFact) -> EqualityFac
         return left
     merged_provenance = _merge_provenance(left.provenance(), right.provenance())
     return EqualityFact(
-        euf_key=left.euf_key,
         call_term=left.call_term,
         rhs_term=left.rhs_term,
         provenance=merged_provenance,
     )
 
 
-def canonical_euf_callsite_name(call_term: Term, *, suffix: str = "::assertion") -> str:
-    if not isinstance(call_term, _Ctor) or not call_term.name.startswith("call:"):
+def canonical_euf_callsite_name(
+    call_term: Term | CallTerm[Any],
+    *,
+    suffix: str = "::assertion",
+) -> str:
+    ir_call_term = call_term.ir_term if isinstance(call_term, CallTerm) else call_term
+    if not isinstance(ir_call_term, _Ctor) or not ir_call_term.name.startswith("call:"):
         _proofir_gap(
             owner="EqualityFact",
-            observed=repr(call_term),
+            observed=repr(ir_call_term),
             requested="call:<callee> ctor term",
             fix="derive #euf# keys only from euf_call_term outputs",
         )
-    callee = call_term.name.removeprefix("call:")
-    return f"{callee}#euf#{_canonical_term_sig(call_term)}{suffix}"
+    callee = ir_call_term.name.removeprefix("call:")
+    return f"{callee}#euf#{_canonical_term_sig(ir_call_term)}{suffix}"
 
 
 def _normalize_warrants(warrant: Warrant | Iterable[Warrant]) -> tuple[Warrant, ...]:
@@ -843,7 +866,7 @@ def _proofir_gap(
     observed: str,
     requested: str,
     fix: str,
-) -> None:
+) -> NoReturn:
     info = FactoryGapInfo(
         owner=owner,
         blame="proofir-vocabulary",

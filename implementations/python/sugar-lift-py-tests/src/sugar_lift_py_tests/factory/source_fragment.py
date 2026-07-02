@@ -440,6 +440,26 @@ class SourceFragment:
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return self.node.name  # type: ignore[attr-defined]
 
+    def function_arg_annotations(
+        self,
+    ) -> "list[tuple[str, SourceFragment | None, int]]":
+        """Return argument names, annotation fragments, and source lines."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        args = self.node.args  # type: ignore[attr-defined]
+        all_args = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        return [
+            (
+                arg.arg,
+                (
+                    SourceFragment.from_node(arg.annotation, self.filename)
+                    if arg.annotation is not None
+                    else None
+                ),
+                getattr(arg, "lineno", self.line),
+            )
+            for arg in all_args
+        ]
+
     def function_node(self) -> "ast.FunctionDef | ast.AsyncFunctionDef":
         """Return the underlying function node after checking its kind."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
