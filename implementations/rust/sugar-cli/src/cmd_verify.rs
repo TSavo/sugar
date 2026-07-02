@@ -626,8 +626,15 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
             )
         })
         .count();
-    let proof_ok =
-        !report.rows.is_empty() && report.load_errors.is_empty() && hard_failed_rows == 0;
+    let undecided_rows = report
+        .rows
+        .iter()
+        .filter(|row| row.status == "undecidable")
+        .count();
+    let proof_ok = !report.rows.is_empty()
+        && report.load_errors.is_empty()
+        && hard_failed_rows == 0
+        && undecided_rows == 0;
     let proof_code = if proof_ok {
         EXIT_OK
     } else if hard_failed_rows > 0 {
@@ -688,6 +695,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
             obj.insert("claims".into(), Json::Array(claims));
             obj.insert("totalClaims".into(), json!(rows.len()));
             obj.insert("failed".into(), json!(hard_failed_rows));
+            obj.insert("undecided".into(), json!(undecided_rows));
             obj.insert(
                 "witnessDimension".into(),
                 json!({
@@ -707,6 +715,9 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
         }
     } else {
         report_fmt::print_report_pretty(&report, quiet);
+        if !quiet && undecided_rows > 0 {
+            print!("{}", format_undecided_rows(&report, undecided_rows));
+        }
         if !quiet && !witness_results.is_empty() {
             print!("{}", format_witness_replay_report(&witness_results));
         }
@@ -719,6 +730,15 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     } else {
         proof_code
     }
+}
+
+fn format_undecided_rows(report: &sugar_verifier::Report, undecided_rows: usize) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "  undecided rows  : {}", undecided_rows);
+    for row in report.rows.iter().filter(|row| row.status == "undecidable") {
+        let _ = writeln!(out, "      reason: {}", row.reason);
+    }
+    out
 }
 
 /// Build the solver plan + registry for verification.

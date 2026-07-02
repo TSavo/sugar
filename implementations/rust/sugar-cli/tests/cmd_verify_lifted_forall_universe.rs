@@ -251,11 +251,13 @@ fn lifted_universe_decides_unnamed_inputs_both_ways() {
         "discharged",
         "lifted universe must discharge the true g(4)==1; rows: {rows:?}"
     );
-    // The universe itself is internally consistent.
+    // The ambient loop universe is supporting evidence for the user rows above.
+    // It is no longer a standalone discharge row in the current verifier: the
+    // loop row is refused rather than minted as an independently proven claim.
     assert_eq!(
         status_of(&rows, "::loop::"),
-        "discharged",
-        "the loop universe alone must be consistent; rows: {rows:?}"
+        "refused",
+        "the loop universe support row should stay explicit, not green; rows: {rows:?}"
     );
     let _ = fs::remove_dir_all(&dir);
 }

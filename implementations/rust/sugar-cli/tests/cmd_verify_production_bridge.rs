@@ -363,22 +363,28 @@ fn mint_auto_writes_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let Ok(sugar_proof_envelope::Member::Contract(target_contract)) =
-        sugar_proof_envelope::Member::from_value(target_env)
-    else {
-        panic!("bridge target must be a contract memento");
-    };
-    let formals = target_contract
-        .formals
-        .as_ref()
+    assert_eq!(
+        sugar_proof_envelope::member_kind(target_env),
+        Some("contract"),
+        "bridge target must be a contract memento"
+    );
+    let formals = sugar_proof_envelope::member_field(target_env, "formals")
+        .and_then(|v| v.as_array())
         .expect("tool-written op-contract must carry formals (delta 2)");
     assert_eq!(
-        formals.first().map(|s| s.as_str()),
+        formals.first().and_then(|s| s.as_str()),
         Some("x"),
         "op-contract formals must be [x]"
     );
     assert!(
-        target_contract.post.is_some(),
+        sugar_proof_envelope::member_field(target_env, "postHash").is_some(),
+        "op-contract must carry a post hash"
+    );
+    let target_body = pool
+        .resolve_contract_body(target_env)
+        .expect("op-contract body graph must resolve");
+    assert!(
+        target_body.get("post").is_some(),
         "op-contract must carry the body-derived post"
     );
 
@@ -413,21 +419,27 @@ fn mint_auto_writes_zero_arg_body_discharge_bridge() {
             pool.mementos.keys().collect::<Vec<_>>()
         )
     });
-    let Ok(sugar_proof_envelope::Member::Contract(target_contract2)) =
-        sugar_proof_envelope::Member::from_value(target_env2)
-    else {
-        panic!("bridge target must be a contract memento");
-    };
-    let formals = target_contract2
-        .formals
-        .as_ref()
+    assert_eq!(
+        sugar_proof_envelope::member_kind(target_env2),
+        Some("contract"),
+        "bridge target must be a contract memento"
+    );
+    let formals = sugar_proof_envelope::member_field(target_env2, "formals")
+        .and_then(|v| v.as_array())
         .expect("zero-arg op-contract must carry an explicit formals array");
     assert!(
         formals.is_empty(),
         "zero-arg op-contract formals must stay empty; got {formals:?}"
     );
     assert!(
-        target_contract2.post.is_some(),
+        sugar_proof_envelope::member_field(target_env2, "postHash").is_some(),
+        "zero-arg op-contract must carry a post hash"
+    );
+    let target_body = pool
+        .resolve_contract_body(target_env2)
+        .expect("zero-arg op-contract body graph must resolve");
+    assert!(
+        target_body.get("post").is_some(),
         "zero-arg op-contract must carry the body-derived post"
     );
 

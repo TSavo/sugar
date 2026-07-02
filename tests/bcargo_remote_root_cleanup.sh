@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
+repo_root="${1:-}"
+if [[ -z "$repo_root" ]]; then
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [[ -z "$repo_root" ]]; then
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -36,14 +42,26 @@ printf '%s\n' "$*" >>"$BCARGO_FAKE_RSYNC_LOG"
 exit 0
 SH
 
-chmod +x "$fake_bin/ssh" "$fake_bin/rsync"
+cat >"$fake_bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
+  printf '%s\n' "$BCARGO_FAKE_REPO_ROOT"
+  exit 0
+fi
+echo "unexpected fake git invocation: $*" >&2
+exit 1
+SH
+
+chmod +x "$fake_bin/ssh" "$fake_bin/rsync" "$fake_bin/git"
 
 run_fake_bcargo() {
   BCARGO_SSH="$fake_bin/ssh" \
   BCARGO_RSYNC="$fake_bin/rsync" \
   BCARGO_FAKE_SSH_LOG="$ssh_log" \
   BCARGO_FAKE_RSYNC_LOG="$rsync_log" \
+  BCARGO_FAKE_REPO_ROOT="$repo_root" \
   BCARGO_PYTHON_ENV=0 \
+  PATH="$fake_bin:$PATH" \
     "$repo_root/bin/bcargo" check --manifest-path implementations/rust/Cargo.toml
 }
 
