@@ -29,6 +29,7 @@ EXPECTED_FACTORY_SPINE_R = {
     "transitive_worklist_drains": 0,
     "projection_ladders": 0,
     "prior_assignment_replays": 0,
+    "xsugar_build_bypasses": 5,
 }
 
 
@@ -40,21 +41,28 @@ def _agreement_diagnostic(report):
     )
 
 
-def test_factory_spine_frontier_is_a_stable_zero_gate() -> None:
+def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
     report = collect_factory_spine_frontier(ROOT)
 
     assert report.r.values == EXPECTED_FACTORY_SPINE_R
-    assert report.r.total == 0
-    assert report.is_zero
-    assert report.offenders == []
+    assert report.r.total == 5
+    assert not report.is_zero
+    assert [f"{o.path}:{o.line}" for o in report.offenders] == [
+        "factory/array_map_report.py:172",
+        "factory/array_map_report.py:264",
+        "factory/array_map_report.py:266",
+        "factory/literal_call_report.py:432",
+        "floor/call_site_value.py:156",
+    ]
+    assert all(offender.kind == "xsugar_build_bypasses" for offender in report.offenders)
 
 
-def test_factory_spine_frontier_cli_exits_green_at_stable_zero(
+def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
     capsys,
 ) -> None:
     status = cli.main(["--root", str(ROOT), "--factory-spine-frontier"])
 
-    assert status == 0
+    assert status == 1
     stdout = capsys.readouterr().out
     assert "python factory spine frontier audit" in stdout
     assert "  callee_body_worklists: 0" in stdout
@@ -64,8 +72,11 @@ def test_factory_spine_frontier_cli_exits_green_at_stable_zero(
     assert "  transitive_worklist_drains: 0" in stdout
     assert "  projection_ladders: 0" in stdout
     assert "  prior_assignment_replays: 0" in stdout
-    assert "  total: 0" in stdout
-    assert "second-engine body reductions:" not in stdout
+    assert "  xsugar_build_bypasses: 5" in stdout
+    assert "  total: 5" in stdout
+    assert "factory spine frontier offenders:" in stdout
+    assert "factory/literal_call_report.py:432" in stdout
+    assert "floor/call_site_value.py:156" in stdout
 
 
 def test_factory_spine_frontier_bad_twin_flags_fresh_block_reduce(
@@ -133,6 +144,28 @@ def test_factory_spine_frontier_bad_twin_flags_assert_consumer_side_door(
     assert offender.line == 2
     assert "_construct_callsite" in offender.observed
     assert "force_floor" in offender.fix
+
+
+def test_factory_spine_frontier_bad_twin_flags_xsugar_build_bypass(
+    tmp_path,
+) -> None:
+    kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "consumer"
+    kit_src.mkdir(parents=True)
+    (kit_src / "bad_consumer.py").write_text(
+        "def planted(site, ctx):\n"
+        "    return CallSugar.build(site, ctx)\n",
+        encoding="utf-8",
+    )
+
+    report = collect_factory_spine_frontier(tmp_path)
+
+    assert report.r.values["xsugar_build_bypasses"] == 1
+    assert report.r.total == 1
+    offender = report.offenders[0]
+    assert offender.path == "consumer/bad_consumer.py"
+    assert offender.line == 2
+    assert "CallSugar.build" in offender.observed
+    assert "factory catalog" in offender.fix
 
 
 def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> None:

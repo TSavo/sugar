@@ -21,6 +21,7 @@ class FactorySpineVector:
             "transitive_worklist_drains": 0,
             "projection_ladders": 0,
             "prior_assignment_replays": 0,
+            "xsugar_build_bypasses": 0,
         }
         for offender in offenders:
             values[offender.kind] += 1

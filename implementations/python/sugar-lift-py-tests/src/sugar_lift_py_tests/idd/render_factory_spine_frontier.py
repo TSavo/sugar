@@ -9,7 +9,7 @@ def render_text(report: FactorySpineReport) -> str:
         lines.append(f"  {key}: {value}")
     lines.append(f"  total: {report.r.total}")
     if report.offenders:
-        lines.append("second-engine body reductions:")
+        lines.append("factory spine frontier offenders:")
         for offender in report.offenders:
             lines.append(
                 f"  - {offender.kind} {offender.path}:{offender.line}: "

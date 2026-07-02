@@ -9,6 +9,7 @@ from .factory_spine_report import FactorySpineReport
 
 _LITERAL_CALL_REPORT = "factory/literal_call_report.py"
 _CALL_SUGAR = "sugar/call_sugar.py"
+_FACTORY_BUILD = "factory/build.py"
 
 
 def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
@@ -30,6 +31,7 @@ def collect_factory_spine_frontier(root: Path) -> FactorySpineReport:
                 call_sugar.read_text(encoding="utf-8").splitlines()
             )
         )
+    offenders.extend(_xsugar_build_bypass_offenders(kit_src))
     return FactorySpineReport(offenders=sorted(offenders, key=_sort_key))
 
 
@@ -195,6 +197,47 @@ def _call_sugar_offenders(source_lines: list[str]) -> list[FactorySpineOffender]
                 )
             )
     return offenders
+
+
+def _xsugar_build_bypass_offenders(kit_src: Path) -> list[FactorySpineOffender]:
+    offenders: list[FactorySpineOffender] = []
+    for path in sorted(kit_src.rglob("*.py")):
+        rel = path.relative_to(kit_src).as_posix()
+        if _xsugar_bypass_path_is_exempt(rel):
+            continue
+        source = path.read_text(encoding="utf-8")
+        root_fragment = SourceFragment.from_source(source, rel)
+        for fragment in root_fragment.walk():
+            if fragment.observed != "Call":
+                continue
+            target = fragment.call_target_name()
+            if target not in {"build", "desugar"}:
+                continue
+            source_text = fragment.source_text(source) or f"{target}(...)"
+            offenders.append(
+                _offender(
+                    "xsugar_build_bypasses",
+                    fragment.line,
+                    f"direct {source_text.strip()} outside factory/build.py",
+                    _xsugar_bypass_fix(target),
+                    path=rel,
+                )
+            )
+    return offenders
+
+
+def _xsugar_bypass_path_is_exempt(rel: str) -> bool:
+    if rel == _FACTORY_BUILD:
+        return True
+    if rel.startswith("sugar/"):
+        return True
+    return False
+
+
+def _xsugar_bypass_fix(method: str) -> str:
+    if method == "build":
+        return "route construction through the factory catalog / FactoryBuildContext"
+    return "route reduction through the factory spine rather than direct Sugar.desugar"
 
 
 def _offender(
