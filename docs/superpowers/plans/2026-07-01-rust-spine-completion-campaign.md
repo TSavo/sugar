@@ -19,7 +19,7 @@ The Rust kit is NOT greenfield. Spine inventory against the Python reference:
 | Totality ledger | `grammar_ledger.py` — three-status enumerated ledger, import-time RuntimeError | `tests/grammar_totality.rs` ratchet (uncovered-(kind,shape) histogram + `UNCOVERED_CEILING`), `teethed_ledger_ratchet.rs` | 65 |
 | **Floor value algebra** | `floor/*.py` ~35 value classes, methods-as-operations | ad-hoc `Term`/`Desugared`/`NumericFloor` variants + visitor traits in `term_dispatch.rs`; enforcement half exists (`sugar-cli/src/floor_runtime_check.rs` wired into doctor/self_check/release_gate) but no owned value hierarchy | **55** |
 | **Temporal floor** | `temporal/` — TemporalContext, perform_temporal_operation, bind/curry/rewrite ops, BoundVar scope-capture | only `sugar/temporal_read.rs` (read recognizer) + TemporalScope/Plan/Context types; NO operation family, NO owned name-time algebra | **40** |
-| **Operation double-dispatch** | `operations/perform_operation.py` — open dispatch, missing method = Floor-kind FactoryGap | fixed visitor set (`accept_scalar_floor`/`accept_monadic_floor`); no open registry, no floor-gap on missing method | **35** |
+| **Operation double-dispatch** | `operations/perform_operation.py` — open dispatch, missing method = Floor-kind FactoryGap | closed visitor set = compile-time totality (STRONGER on the common path); missing: the open plugin edge (`FloorDispatch` seam) and ~1/3 of the operation family (matrix: 15 EXISTS, 6 PARTIAL, 1 MISSING-NEEDED RouteRaises, 8 N/A) | **60** |
 | **Effect algebra** | `effect/` RaiseEffect/RuntimeEffect; TrySugar routes effects as values (`sugar/try_sugar.py` `_route_incomplete`); propagation = nobody consumed the effect | `Outcome::Incomplete(Effect)` exists; no RaiseEffect-style typed effect family, no TrySugar-equivalent router for `?`/panic/early-return | **~35** |
 
 **The anti-spine (demolition targets):**
@@ -44,13 +44,27 @@ Note: `libsugar/src/desugar.rs`'s Refusal machinery (NonConfluent/NonTerminating
 - #2998: lift-ownership gate, construction-law chokepoint gate, rustfmt gate.
 - Exit criterion: both on main, red with pinned vectors, in CI.
 
-### Phase 1 — Floor value algebra (55% → 100%)
-Build the owned FloorValue hierarchy, porting `floor/*.py`:
-- `trait FloorValue` with the projection law from the Python Task-7 fix: `to_term(owner)` default implementation raises the Floor-kind gap ("write more Floor: implement <T>.to_term"); each concrete floor value owns its projection. Rust idiom: default trait method returning `Err(CoverageGap)` — never a blanket impl that succeeds.
-- Concrete values mirroring the Python set where Rust semantics need them (TermValue, BoolValue, StringValue, SymbolicValue, ArrayLiteral, TupleValue, SliceValue, ObjectValue, BlockValue, ReturnValue, BoundVar, …). Enumerate by grepping the Python `floor/__init__.py` export list and mapping each to needed-now / not-yet-Rust-relevant (with reasons).
-- **Open operation dispatch** replacing the fixed visitor set: `perform_operation(owner, blame, receiver, method, operation, ctx)` mirror. Rust cannot getattr; the port is a small method-table/enum-dispatch on the FloorValue trait where a missing arm returns the Floor-kind gap carrying owner/blame/fix — the SHAPE that matters is "missing method = loud gap naming the write-more-Floor fix", not the reflection.
-- Instrument: floor-projection gate (no isinstance/match-ladder over floor types outside the floor module — the Rust twin of Python's ladder gate) + extend `floor_runtime_check.rs` signals to count algebra gaps.
-- Exit: term_dispatch.rs visitor traits deprecated in favor of the algebra; ladder gate green; bad-twin per value type.
+### Phase 1 — Grow the floor algebra (55% → 100%)
+
+**Corrected framing (audit 2026-07-01, full matrix below):** the double-dispatch mechanism already exists in Rust and PREDATES the Python port — `term_dispatch.rs`'s visitor traits (TermFloorVisitor, BoolFloorVisitor, ScalarFloorVisitor, MonadicFloorVisitor, DesugaredFloorVisitor) plus 13 `BodyFloor` phantom markers in `factory.rs:79-105`. The visitors are CLOSED, which is a strength: adding a floor kind or operation forces every implementation at compile time — totality rustc gives for free where Python needs runtime FactoryGap + auditors. Phase 1 is NOT "port perform_operation"; it is **feed the existing algebra to Python coverage, keeping compile-time exhaustiveness as the gate.**
+
+- **Keep, don't deprecate, `term_dispatch.rs`** — it is the foundation. The `ScalarFloorVisitor::visit_runtime` fall-through is the sanctioned escape pattern: every new floor dimension gets a visitor trait with its typed arms plus one `visit_non_<kind>` escape arm, compile-time exhaustive with a runtime-admitting tail.
+- **Priority work list, ordered by ladder blast-radius** (each item names the lift.rs ladder it demolishes — see Phase 4):
+  1. `GuardedReturn` floor + guard-composition protocol → demolishes `lift_tail_expr_to_result_term` + the guard reconstruction in `lift_tail_if_to_ite_term`.
+  2. `SymbolicValue` floor (sort-neutral wrapper over `Term::Var`) + visitor arm → demolishes the hand-emitted `cf_ite` sort-neutral ctor synthesis (lift.rs:601-611); lets the SMT compiler choose sorts, as in Python.
+  3. `ControlFlowGuardOperation` as a dispatched operation → formalizes `wrap_branch_guard` (lift.rs:678-699).
+  4. `BoundVar` floor — `(name, source_body, definition_scope)` as a recomposable unit (today let-threading is implicit in the SugarBody chain and unrecoverable). Prerequisite for Phase 3's temporal floor.
+  5. `RaiseValue`/`GuardedRaise` as BLOCK-INTERIOR control-flow DATA + `RouteRaisesOperation` — the critical semantic gap: today `Outcome::Incomplete` aborts block composition immediately, so a raise under an inner `if` can never be routed by a wrapping handler. This is the Phase 2 dependency (TrySugar-equivalent is impossible without it).
+  6. `ObjectValue` floor (class_name/fields/methods routing `attribute_with`/`call_method_with`) — for lifted OO-pattern proofs.
+  7. `Bv32FloorVisitor` — bv terms are emitted today but consumers cannot dispatch on bitvec-sortedness.
+  8. `PredicateValue` as a distinct floor from BoolValue-as-term — makes the predicate/raw-term distinction type-level (today re-derived structurally in `lift_predicate_inner`).
+  9. `BuilderState`, first-class `LambdaCallable`/`FunctionCallable` apply, lazy `CallSiteValue` force_floor — as the drains demand them.
+- **Justified N/A (do not port):** ImportAliasValue, AttributeDelete/DelItem, DescriptorOperation, DictMissingOperation, ReflectedBinaryOperator (dunder reflection), ContextManager/FinallyFallthrough (Python `with`/`finally`; Rust's story is Drop — Phase 2 decides how Drop semantics enter the effect algebra, deliberately, not by analogy).
+- **Mechanism item — `FloorDispatch<T>`:** replace the unconditional `term_dispatch_gap` panic (term_dispatch.rs:112) and the gap arm in `SugarBody::reduce` (factory.rs:~126) with `enum FloorDispatch<T> { Dispatched(T), Gap(CoverageGapInfo) }` propagating as `Outcome::Incomplete(Effect::CoverageGap(info))` — the open edge for plugin/kit-supplied values ONLY; the common path stays compile-time exhaustive.
+- Instrument: floor-projection gate (no match-ladder over floor kinds outside the algebra modules) + extend `floor_runtime_check.rs` signals to count algebra gaps.
+- Exit: priority items 1-8 landed with bad-twins; ladder gate green; `FloorDispatch` seam in place.
+
+**The IrTerm/Term seam (feeds Phase 4):** the audit's structural finding — `sugar-walk`'s `IrTerm` and the algebra's `Rc<Term>` are SEPARATE IR types, which is why `wrap_branch_guard` re-implements `is_some/is_none/is_ok/is_err` complement resolution that `accept_monadic_floor` already owns: the ladder physically cannot call the algebra. Phase 4's demolition therefore has a prerequisite decision per slice: either the contract layer's dispatch tables are GENERATED from the algebra, or the two layers converge on one term type. Architect decision at Phase 4 start; do not let slices resolve it ad hoc.
 
 ### Phase 2 — Effect algebra + control-flow routers (35% → 100%)
 Port the effect family and the TrySugar design:
