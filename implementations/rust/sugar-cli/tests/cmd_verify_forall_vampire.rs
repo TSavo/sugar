@@ -11,9 +11,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, ContractBody, ContractMemento, Ed25519Seed,
+    build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, ContractBody, Ed25519Seed,
     FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
@@ -148,6 +148,59 @@ fn bad_false_universal_obligation() -> Json {
     forall_int("x", pred("must_hold", vec![var("x")]))
 }
 
+fn push_direct_obligation_contract(
+    graph: &mut ProofGraph,
+    name: &str,
+    inv: Json,
+    signer_seed: Ed25519Seed,
+    declared_at: &str,
+) {
+    let inv_atom = graph.register_atom(FlatAtom::new(json_to_canonical_value(&inv)));
+    let body = graph.register_body(ContractBody::new_inv(&inv_atom));
+    let header_preimage = json!({
+        "kind": "contract",
+        "name": name,
+        "bodyCid": body.cid().as_str(),
+        "inv": inv,
+        "invVerification": "obligation",
+    });
+    let header_cid =
+        blake3_512_of(encode_jcs(&json_to_canonical_value(&header_preimage)).as_bytes());
+    let header = json!({
+        "schemaVersion": "2",
+        "kind": "contract",
+        "cid": header_cid,
+        "name": name,
+        "contractName": name,
+        "bodyCid": body.cid().as_str(),
+        "outBinding": "out",
+        "inv": header_preimage["inv"].clone(),
+        "invVerification": "obligation",
+        "inputCids": [],
+        "verdict": "holds",
+    });
+    let metadata = json!({
+        "authoring": {
+            "evidence": "test direct obligation",
+            "lifter": "cmd_verify_forall_vampire"
+        },
+        "producedAt": declared_at,
+        "producedBy": "sugar-cli-test"
+    });
+    let envelope = json!({
+        "signer": ed25519_pubkey_string(&signer_seed),
+        "declaredAt": declared_at,
+        "signature": format!("ed25519:test-direct-obligation-{header_cid}")
+    });
+    let memento = json!({
+        "envelope": envelope,
+        "header": header,
+        "metadata": metadata,
+    });
+    let bytes = encode_jcs(&json_to_canonical_value(&memento)).into_bytes();
+    graph.push_claim_contract(ClaimContractMemento::new(bytes));
+}
+
 fn publish_forall_project() -> PathBuf {
     let dir = unique_dir("vampire");
     let proof_dir = dir.join(".sugar");
@@ -180,7 +233,6 @@ version = "5.x"
 
     let signer_seed: Ed25519Seed = [0x42u8; 32];
     let mut graph = ProofGraph::new();
-    let metadata = graph.register_atom(FlatAtom::empty_metadata());
     for (name, inv) in [
         (
             "forall_vampire_good_right_identity",
@@ -191,15 +243,13 @@ version = "5.x"
             bad_false_universal_obligation(),
         ),
     ] {
-        let inv = graph.register_atom(FlatAtom::new(json_to_canonical_value(&inv)));
-        let body = graph.register_body(ContractBody::new_inv(&inv));
-        graph.register_contract(ContractMemento::new_with_metadata_at(
+        push_direct_obligation_contract(
+            &mut graph,
             name,
-            &body,
-            &metadata,
+            inv,
             signer_seed,
             "2026-06-09T00:00:00.000Z",
-        ));
+        );
     }
 
     let signer_pubkey = ed25519_pubkey_string(&signer_seed);

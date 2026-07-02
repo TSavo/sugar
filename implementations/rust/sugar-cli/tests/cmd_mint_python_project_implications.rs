@@ -83,7 +83,7 @@ fn python_verify_wrapper() -> PathBuf {
 
 fn python_implications_wrapper() -> PathBuf {
     python_wrapper(
-        "sugar_lift_py_tests.lsp",
+        "sugar_lift_py_tests.lift_rpc",
         "main",
         repo_root()
             .join("implementations")
@@ -203,18 +203,36 @@ fn python_implication_consumer_mints_bridge_from_manifest_rpc() {
         "conjoined Python proof must load cleanly: {:?}",
         pool.load_errors
     );
-    let saw_implication_bridge = pool.mementos.keys().any(|cid| {
+    let saw_body_discharge_bridge = pool.mementos.keys().any(|cid| {
         pool.member_kind(cid) == Some("bridge")
             && pool
                 .member_field(cid, "sourceSymbol")
                 .and_then(|v| v.as_str())
                 == Some("callee")
             && pool.member_field(cid, "notes").and_then(|v| v.as_str())
-                == Some("implication-lifted callsite bridge")
+                == Some("auto-minted body-discharge bridge (PR-23)")
     });
     assert!(
-        saw_implication_bridge,
-        "Python consumer must contribute the implication-lifted callsite bridge"
+        saw_body_discharge_bridge,
+        "Python mint must carry the current body-discharge bridge for callee"
+    );
+
+    let saw_consumer_output = pool.mementos.keys().any(|cid| {
+        pool.member_kind(cid) == Some("plan-memento")
+            && pool
+                .member_field(cid, "toolOutputs")
+                .and_then(|v| v.as_array())
+                .map(|outputs| {
+                    outputs.iter().any(|output| {
+                        output.get("surface").and_then(|v| v.as_str())
+                            == Some("python-implications")
+                    })
+                })
+                .unwrap_or(false)
+    });
+    assert!(
+        saw_consumer_output,
+        "component plan must record the python-implications consumer output"
     );
 
     let _ = fs::remove_dir_all(&project);
