@@ -39,7 +39,7 @@ const EFFECT_SITE_ANNOTATION_DUPLICATE_LOAD_ERROR_TAG: &str = "[effect-site-anno
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofBytes {
     pub label: String,
-    pub expected_cid: Option<String>,
+    pub expected_cid: String,
     pub bytes: Vec<u8>,
 }
 
@@ -86,17 +86,12 @@ pub fn load_files_into_pool(proof_files: &[PathBuf], pool: &mut MementoPool) {
 pub fn load_proof_bytes_into_pool(proofs: &[ProofBytes], pool: &mut MementoPool) {
     let mut proofs = proofs.to_vec();
     proofs.sort_by(|a, b| {
-        (a.expected_cid.as_deref(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_deref(), b.label.as_str()))
+        (a.expected_cid.as_str(), a.label.as_str())
+            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
     });
     proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     for proof in proofs {
-        load_bytes_into_pool(
-            &proof.label,
-            proof.expected_cid.as_deref(),
-            &proof.bytes,
-            pool,
-        );
+        load_bytes_into_pool(&proof.label, &proof.expected_cid, &proof.bytes, pool);
     }
 }
 
@@ -175,12 +170,12 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
         }
     }
 
-    load_catalog_bytes(path.display().to_string(), None, &bytes, pool)
+    load_catalog_bytes(path.display().to_string(), &derived_full, &bytes, pool)
 }
 
 fn load_bytes_into_pool(
     source_label: &str,
-    expected_cid: Option<&str>,
+    expected_cid: &str,
     bytes: &[u8],
     pool: &mut MementoPool,
 ) {
@@ -194,22 +189,20 @@ fn load_bytes_into_pool(
 
 fn load_catalog_bytes(
     source_label: String,
-    expected_cid: Option<&str>,
+    expected_cid: &str,
     bytes: &[u8],
     pool: &mut MementoPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Rule 1: content hash matches the expected CID (if given).
+    // Rule 1: content hash matches the expected CID.
     let derived_full = blake3_512_of(bytes);
-    if let Some(expected_cid) = expected_cid {
-        if expected_cid != derived_full {
-            pool.load_errors.push(LoadError {
-                proof_path: source_label,
-                reason: format!(
-                    "rule 1 (trust root): expected proof CID {expected_cid} != content hash {derived_full}"
-                ),
-            });
-            return Ok(());
-        }
+    if expected_cid != derived_full {
+        pool.load_errors.push(LoadError {
+            proof_path: source_label,
+            reason: format!(
+                "rule 1 (trust root): expected proof CID {expected_cid} != content hash {derived_full}"
+            ),
+        });
+        return Ok(());
     }
 
     // Parse the CBOR catalog into a typed ProofGraph. This validates atom
@@ -270,9 +263,7 @@ fn load_catalog_bytes(
                 continue;
             }
         }
-        // Rule 2: re-derive the member identity. ProofRunMemento and
-        // StageReceipt are header-addressed artifacts, unlike older
-        // v1.2 mementos whose member identity is the envelope CID.
+        // Rule 2: re-derive the member identity from the member content.
         let derived = compute_member_cid(&env);
         if derived != cid {
             pool.load_errors.push(LoadError {
@@ -533,12 +524,6 @@ fn compute_envelope_cid(env: &Json) -> String {
 }
 
 fn compute_member_cid(env: &Json) -> String {
-    let kind = sugar_proof_envelope::member_kind(env);
-    if matches!(kind, Some("proof-run" | "stage-receipt")) {
-        if let Some(cid) = sugar_proof_envelope::member_field(env, "cid").and_then(|v| v.as_str()) {
-            return cid.to_string();
-        }
-    }
     compute_envelope_cid(env)
 }
 
@@ -627,7 +612,7 @@ mod tests {
         });
         ProofBytes {
             label: "annotation-test.proof".to_string(),
-            expected_cid: Some(proof.cid),
+            expected_cid: proof.cid,
             bytes: proof.bytes,
         }
     }
@@ -645,7 +630,7 @@ mod tests {
         ))
         .expect("mint annotation");
         let proof = proof_bytes(vec![annotation]);
-        let expected_bundle = proof.expected_cid.clone().expect("bundle cid");
+        let expected_bundle = proof.expected_cid.clone();
         let mut pool = MementoPool::default();
 
         load_proof_bytes_into_pool(&[proof], &mut pool);

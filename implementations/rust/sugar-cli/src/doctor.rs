@@ -1309,13 +1309,11 @@ where
     let proofs = resolver(kit_dir)?;
     for proof in proofs {
         let fingerprint = fingerprint_bytes(proof.label.clone(), &proof.bytes);
-        if let Some(expected) = proof.expected_cid {
-            if expected != fingerprint.derived_cid {
-                return Err(format!(
-                    "dependency proof CID mismatch: expected {}, derived {}",
-                    expected, fingerprint.derived_cid
-                ));
-            }
+        if proof.expected_cid != fingerprint.derived_cid {
+            return Err(format!(
+                "dependency proof CID mismatch: expected {}, derived {}",
+                proof.expected_cid, fingerprint.derived_cid
+            ));
         }
         fs::write(
             dest.join(proof_filename(&fingerprint.derived_cid)),
@@ -1364,13 +1362,11 @@ fn proof_pool_from_rpc_proofs(proofs: Vec<ProofBytes>) -> Result<DependencyProof
     let mut fingerprints = Vec::new();
     for proof in proofs {
         let fingerprint = fingerprint_bytes(proof.label, &proof.bytes);
-        if let Some(expected) = proof.expected_cid {
-            if expected != fingerprint.derived_cid {
-                return Err(format!(
-                    "dependency proof CID mismatch: expected {}, derived {}",
-                    expected, fingerprint.derived_cid
-                ));
-            }
+        if proof.expected_cid != fingerprint.derived_cid {
+            return Err(format!(
+                "dependency proof CID mismatch: expected {}, derived {}",
+                proof.expected_cid, fingerprint.derived_cid
+            ));
         }
         fingerprints.push(fingerprint);
     }
@@ -3221,7 +3217,10 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         let consumer = report
             .checks
             .iter()
-            .find(|check| check.id == "kit.consumer_surface.contract")
+            .find(|check| {
+                check.id == "kit.consumer_surface.contract"
+                    && check.detail.contains("Add both lines to the manifest")
+            })
             .expect("consumer surface contract check");
         assert_eq!(consumer.status, CheckStatus::Fail);
         assert_eq!(consumer.severity, CheckSeverity::Hard);
@@ -3502,7 +3501,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
     fn proof_bytes(label: &str, bytes: &[u8]) -> sugar_verifier::load_all_proofs::ProofBytes {
         sugar_verifier::load_all_proofs::ProofBytes {
             label: label.to_string(),
-            expected_cid: Some(sugar_canonicalizer::blake3_512_of(bytes)),
+            expected_cid: sugar_canonicalizer::blake3_512_of(bytes),
             bytes: bytes.to_vec(),
         }
     }

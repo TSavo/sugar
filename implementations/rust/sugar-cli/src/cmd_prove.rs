@@ -300,11 +300,7 @@ pub(crate) fn build_prove_report_with_options(
     let dependency_proofs = match crate::kit_dispatch::dependency_proofs_via_rpc(project_root) {
         Ok(proofs) => proofs,
         Err(error) => {
-            eprintln!(
-                "{}: dependency proof resolution skipped: {error}",
-                "warning".yellow().bold()
-            );
-            Vec::new()
+            return Err(format!("dependency proof resolution failed: {error}"));
         }
     };
 

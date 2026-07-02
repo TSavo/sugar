@@ -295,8 +295,8 @@ pub fn dependency_proofs_via_rpc(workspace_root: &Path) -> Result<Vec<ProofBytes
         proofs.append(&mut resolved);
     }
     proofs.sort_by(|a, b| {
-        (a.expected_cid.as_deref(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_deref(), b.label.as_str()))
+        (a.expected_cid.as_str(), a.label.as_str())
+            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
     });
     proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     Ok(proofs)
@@ -311,14 +311,13 @@ fn rpc_error_is_method_not_supported(error: &Value, method: &str) -> bool {
     if code == Some(-32601) {
         return true;
     }
-    if code != Some(-32602) {
-        return false;
-    }
     let Some(message) = error.get("message").and_then(Value::as_str) else {
         return false;
     };
     let message = message.to_ascii_lowercase();
-    message.contains("unknown method") && message.contains(method)
+    (code == Some(-32602) || code == Some(-32603))
+        && message.contains("unknown method")
+        && message.contains(method)
 }
 
 fn dependency_proofs_for_command(
@@ -419,8 +418,9 @@ fn dependency_proofs_for_command(
     let mut out = Vec::new();
     for proof in proofs {
         match decode_dependency_proof_entry(cmd_spec, &proof) {
-            Some(decoded) => out.push(decoded),
-            None => continue,
+            Ok(Some(decoded)) => out.push(decoded),
+            Ok(None) => continue,
+            Err(error) => return Err(error),
         }
     }
 
@@ -439,28 +439,46 @@ fn dependency_proofs_for_command(
     }
 
     out.sort_by(|a, b| {
-        (a.expected_cid.as_deref(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_deref(), b.label.as_str()))
+        (a.expected_cid.as_str(), a.label.as_str())
+            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
     });
     out.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
     Ok(Some(out))
 }
 
-fn decode_dependency_proof_entry(cmd_spec: &ResolvedCommand, proof: &Value) -> Option<ProofBytes> {
+fn decode_dependency_proof_entry(
+    cmd_spec: &ResolvedCommand,
+    proof: &Value,
+) -> Result<Option<ProofBytes>, String> {
     let Some(object) = proof.as_object() else {
         record_dependency_proof_diagnostic(format!(
             "dependency proof resolver {:?} returned a non-object proof entry: {proof}",
             cmd_spec.argv
         ));
-        return None;
+        return Ok(None);
     };
-    let expected_cid = object
+    let label_field = object
+        .get("source")
+        .or_else(|| object.get("label"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let Some(expected_cid) = object
         .get("cid")
         .or_else(|| object.get("proof_cid"))
         .or_else(|| object.get("proofCid"))
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .map(str::to_string);
+        .map(str::to_string)
+    else {
+        let label = label_field
+            .as_deref()
+            .unwrap_or("<unlabeled dependency proof>");
+        return Err(format!(
+            "dependency proof resolver `{}` kit returned dependency proof without a content address for label `{label}`",
+            cmd_spec.plugin_name
+        ));
+    };
     let Some(bytes_base64) = object
         .get("bytes_base64")
         .or_else(|| object.get("bytesBase64"))
@@ -470,7 +488,7 @@ fn decode_dependency_proof_entry(cmd_spec: &ResolvedCommand, proof: &Value) -> O
             "dependency proof resolver {:?} returned a proof entry without bytes_base64: {proof}",
             cmd_spec.argv
         ));
-        return None;
+        return Ok(None);
     };
     let bytes = match BASE64.decode(bytes_base64) {
         Ok(bytes) => bytes,
@@ -479,24 +497,16 @@ fn decode_dependency_proof_entry(cmd_spec: &ResolvedCommand, proof: &Value) -> O
                 "dependency proof resolver {:?} returned invalid bytes_base64: {error}",
                 cmd_spec.argv
             ));
-            return None;
+            return Ok(None);
         }
     };
-    let derived_cid = blake3_512_of(&bytes);
-    let label = object
-        .get("source")
-        .or_else(|| object.get("label"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .or_else(|| expected_cid.clone())
-        .unwrap_or(derived_cid);
+    let label = label_field.unwrap_or_else(|| expected_cid.clone());
 
-    Some(ProofBytes {
+    Ok(Some(ProofBytes {
         label,
         expected_cid,
         bytes,
-    })
+    }))
 }
 
 fn record_dependency_proof_diagnostic(message: String) {
@@ -531,7 +541,11 @@ fn resolved_command_from_manifest(
             }
         })
         .or_else(|| Some(workspace_root));
-    ResolvedCommand { argv, working_dir }
+    ResolvedCommand {
+        plugin_name: parsed.name.clone(),
+        argv,
+        working_dir,
+    }
 }
 
 fn absolute_workspace_root(workspace_root: &Path) -> PathBuf {
@@ -577,6 +591,7 @@ impl std::fmt::Display for KitUnavailable {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedCommand {
+    pub(crate) plugin_name: String,
     pub(crate) argv: Vec<String>,
     pub(crate) working_dir: Option<PathBuf>,
 }
@@ -1301,6 +1316,10 @@ mod tests {
         ));
         assert!(rpc_error_is_method_not_supported(
             &json!({"code": -32602, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
+            "sugar.plugin.resolve_dependency_proofs"
+        ));
+        assert!(rpc_error_is_method_not_supported(
+            &json!({"code": -32603, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
             "sugar.plugin.resolve_dependency_proofs"
         ));
         assert!(!rpc_error_is_method_not_supported(

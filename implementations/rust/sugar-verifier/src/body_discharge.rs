@@ -235,19 +235,16 @@ impl OpContractResolver for CatalogResolver<'_> {
         let slots: Vec<SlotInfo> = formals.iter().map(SlotInfo::value).collect();
 
         let mut info = OpContractInfo::new(slots);
-        // The post equates the function's RESULT var with the body value expression, and that
-        // var is the contract's OUT-BINDING -- the rust-kit emits "result", the python-kit
-        // emits "out" (carried through the mint from `outBinding`). Hardcoding "result" makes a
-        // perfectly good `out == +(x, 1)` universe look unreducible, so read the out-binding
-        // from the body, falling back to the post's own non-formal var side. wp then
-        // substitutes the call into the var the post actually equates.
-        if let Some(rv) = body
+        // The post equation itself is authoritative for the result variable:
+        // older producers may carry `outBinding = "out"` while the body post
+        // still spells `result == <expr>`. Prefer the post's non-formal var and
+        // use the explicit out-binding only as a fallback.
+        let explicit_out_binding = body
             .get("outBinding")
             .or_else(|| body.get("out_binding"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| post_result_var(&post, &formals))
-        {
+            .map(|s| s.to_string());
+        if let Some(rv) = post_result_var(&post, &formals).or(explicit_out_binding) {
             info.result_var = rv;
         }
         info.post = Some(post);
@@ -347,10 +344,13 @@ pub fn extract_body_obligation(
     let resolver = CatalogResolver::new(pool);
 
     // The callee must have a body-derived contract; otherwise this is not
-    // a body-bearing claim (fall through honestly).
-    if resolver.lookup(&cs.bridge_ir_name).is_none() {
+    // a body-bearing claim (fall through honestly). Keep the contract view so
+    // the generated query postcondition names the same result variable the
+    // target body uses (`result` for Rust, `out` for the Python source lifter).
+    let Some(contract_info) = resolver.lookup(&cs.bridge_ir_name) else {
         return Ok(None);
-    }
+    };
+    let result_var = contract_info.result_var.clone();
 
     // From here on the callee IS body-bearing. Every failure to build the
     // obligation is a REFUSAL (`Err`), never an `Ok(None)` fall-through —
@@ -427,12 +427,7 @@ pub fn extract_body_obligation(
     })?;
     let q = IrFormula::Atomic {
         name: "=".to_string(),
-        args: vec![
-            IrTerm::Var {
-                name: RESULT_VAR.to_string(),
-            },
-            expected_ir,
-        ],
+        args: vec![IrTerm::Var { name: result_var }, expected_ir],
     };
 
     // Reduce: push Q back through the body. wp inlines `double`'s body

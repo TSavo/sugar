@@ -885,16 +885,13 @@ where
     let mut count = 0usize;
     for proof in proofs {
         let derived_cid = blake3_512_of(&proof.bytes);
-        let cid = match proof.expected_cid {
-            Some(expected_cid) if expected_cid != derived_cid => {
-                return Err(format!(
-                    "RPC dependency proof {} CID mismatch: expected {}, derived {}",
-                    proof.label, expected_cid, derived_cid
-                ));
-            }
-            Some(expected_cid) => expected_cid,
-            None => derived_cid,
-        };
+        if proof.expected_cid != derived_cid {
+            return Err(format!(
+                "RPC dependency proof {} CID mismatch: expected {}, derived {}",
+                proof.label, proof.expected_cid, derived_cid
+            ));
+        }
+        let cid = proof.expected_cid;
         let dest = imports.join(proof_filename(&cid));
         fs::write(&dest, &proof.bytes).map_err(|e| {
             format!(
@@ -2011,7 +2008,7 @@ mod tests {
         let count = stage_rpc_dependency_proofs_to_imports(&target, &imports, |_| {
             Ok(vec![sugar_verifier::load_all_proofs::ProofBytes {
                 label: source_path_label.display().to_string(),
-                expected_cid: Some(cid.clone()),
+                expected_cid: cid.clone(),
                 bytes: bytes.clone(),
             }])
         })

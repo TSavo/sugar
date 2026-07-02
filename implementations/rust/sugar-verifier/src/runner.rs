@@ -905,6 +905,7 @@ fn make_stage_receipt(
         .recompute_header_cid()
         .map_err(|e| ProofRunArtifactError::Build(e.to_string()))?;
     receipt.envelope.signature = sign_header_metadata(&receipt.header, &receipt.metadata)?;
+    receipt.header.cid = proof_run_envelope_cid(&receipt.envelope)?;
     Ok(receipt)
 }
 
@@ -946,6 +947,7 @@ fn make_proof_run_memento(
         .recompute_header_cid()
         .map_err(|e| ProofRunArtifactError::Build(e.to_string()))?;
     memento.envelope.signature = sign_header_metadata(&memento.header, &memento.metadata)?;
+    memento.header.cid = proof_run_envelope_cid(&memento.envelope)?;
     Ok(memento)
 }
 
@@ -1014,6 +1016,16 @@ fn sign_header_metadata<H: serde::Serialize, M: serde::Serialize>(
         &RUN_SIGNER_SEED,
         jcs.as_bytes(),
     ))
+}
+
+fn proof_run_envelope_cid(
+    envelope: &sugar_ir_types::ProofRunEnvelope,
+) -> Result<String, ProofRunArtifactError> {
+    let json =
+        serde_json::to_value(envelope).map_err(|e| ProofRunArtifactError::Build(e.to_string()))?;
+    let canonical = json_to_canonical(&json)?;
+    let jcs = sugar_canonicalizer::encode_jcs(&canonical);
+    Ok(sugar_canonicalizer::blake3_512_of(jcs.as_bytes()))
 }
 
 fn verifier_pipeline_placeholder_cid() -> String {

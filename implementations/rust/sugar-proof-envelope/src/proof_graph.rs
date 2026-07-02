@@ -82,18 +82,6 @@ impl MementoCid {
         }
     }
 
-    fn from_json_field(bytes: &[u8], pointer: &str, type_name: &str) -> Self {
-        let value: Json = serde_json::from_slice(bytes)
-            .unwrap_or_else(|err| panic!("{type_name} bytes must be canonical JSON: {err}"));
-        let cid = value
-            .pointer(pointer)
-            .and_then(Json::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| panic!("{type_name} must carry non-empty `{pointer}`"))
-            .to_string();
-        Self::new(cid)
-    }
-
     fn from_layered_envelope(bytes: &[u8], type_name: &str) -> Self {
         let value: Json = serde_json::from_slice(bytes)
             .unwrap_or_else(|err| panic!("{type_name} bytes must be canonical JSON: {err}"));
@@ -317,13 +305,6 @@ impl MemberRecord {
     fn from_layered_envelope(bytes: Vec<u8>, type_name: &str) -> Self {
         Self::new(MementoCid::from_layered_envelope(&bytes, type_name), bytes)
     }
-
-    fn from_header_cid(bytes: Vec<u8>, type_name: &str) -> Self {
-        Self::new(
-            MementoCid::from_json_field(&bytes, "/header/cid", type_name),
-            bytes,
-        )
-    }
 }
 
 macro_rules! whole_byte_memento {
@@ -397,37 +378,13 @@ macro_rules! layered_memento {
     };
 }
 
-macro_rules! header_cid_memento {
-    ($name:ident, [$($kind:literal),+ $(,)?]) => {
-        #[derive(Clone, Debug)]
-        pub struct $name {
-            record: MemberRecord,
-        }
-
-        impl $name {
-            pub fn new(bytes: Vec<u8>) -> Self {
-                validate_memento_kind(&bytes, stringify!($name), &[$($kind),+]);
-                Self {
-                    record: MemberRecord::from_header_cid(bytes, stringify!($name)),
-                }
-            }
-
-            pub fn cid(&self) -> &MementoCid {
-                &self.record.cid
-            }
-
-            pub fn bytes(&self) -> &[u8] {
-                &self.record.bytes
-            }
-        }
-    };
-}
-
 layered_memento!(AuthorityMemento, ["authority"]);
 layered_memento!(BridgeMemento, ["bridge"]);
 layered_memento!(ClaimContractMemento, ["contract"]);
 layered_memento!(EffectSiteAnnotationMemento, ["effect-site-annotation"]);
 layered_memento!(ImplicationMemento, ["implication"]);
+layered_memento!(ProofRunMemento, ["proof-run"]);
+layered_memento!(StageReceiptMemento, ["stage-receipt"]);
 layered_memento!(WitnessClaimMemento, ["witness"]);
 
 impl From<&ClaimContractMemento> for ContractMementoRef {
@@ -452,9 +409,6 @@ whole_byte_memento!(FactoryWalkMemento, ["factory-walk-memento"]);
 whole_byte_memento!(PlanMemento, ["plan-memento"]);
 whole_byte_memento!(SourceMemento, ["source-memento"]);
 whole_byte_memento!(WitnessMemento, ["witness-memento"]);
-
-header_cid_memento!(ProofRunMemento, ["proof-run"]);
-header_cid_memento!(StageReceiptMemento, ["stage-receipt"]);
 
 #[derive(Clone, Debug)]
 pub struct ContractMemento {
@@ -491,21 +445,63 @@ impl ContractMemento {
         signer_seed: Ed25519Seed,
         declared_at: &str,
     ) -> Self {
+        Self::new_with_metadata_and_header_fields_at(
+            name,
+            body,
+            metadata,
+            signer_seed,
+            declared_at,
+            Vec::new(),
+        )
+    }
+
+    pub fn new_obligation_with_metadata_at(
+        name: impl Into<String>,
+        body: &ContractBody,
+        metadata: &AtomMemento,
+        signer_seed: Ed25519Seed,
+        declared_at: &str,
+    ) -> Self {
+        Self::new_with_metadata_and_header_fields_at(
+            name,
+            body,
+            metadata,
+            signer_seed,
+            declared_at,
+            vec![(
+                "invVerification".to_string(),
+                Value::string("obligation".to_string()),
+            )],
+        )
+    }
+
+    fn new_with_metadata_and_header_fields_at(
+        name: impl Into<String>,
+        body: &ContractBody,
+        metadata: &AtomMemento,
+        signer_seed: Ed25519Seed,
+        declared_at: &str,
+        extra_header_fields: Vec<(String, Arc<Value>)>,
+    ) -> Self {
         let name = name.into();
-        let header_preimage = Value::object([
-            ("kind", Value::string("contract")),
-            ("name", Value::string(name.clone())),
-            ("bodyCid", Value::string(body.cid().as_str())),
-        ]);
+        let mut header_preimage_fields: Vec<(String, Arc<Value>)> = vec![
+            ("kind".into(), Value::string("contract")),
+            ("name".into(), Value::string(name.clone())),
+            ("bodyCid".into(), Value::string(body.cid().as_str())),
+        ];
+        header_preimage_fields.extend(extra_header_fields.iter().cloned());
+        let header_preimage = Value::object(header_preimage_fields);
         let header_cid = blake3_512_of(encode_jcs(&header_preimage).as_bytes());
-        let header = Value::object([
-            ("schemaVersion", Value::string("2")),
-            ("kind", Value::string("contract")),
-            ("cid", Value::string(header_cid)),
-            ("name", Value::string(name.clone())),
-            ("contractName", Value::string(name.clone())),
-            ("bodyCid", Value::string(body.cid().as_str())),
-        ]);
+        let mut header_fields: Vec<(String, Arc<Value>)> = vec![
+            ("schemaVersion".into(), Value::string("2")),
+            ("kind".into(), Value::string("contract")),
+            ("cid".into(), Value::string(header_cid)),
+            ("name".into(), Value::string(name.clone())),
+            ("contractName".into(), Value::string(name.clone())),
+            ("bodyCid".into(), Value::string(body.cid().as_str())),
+        ];
+        header_fields.extend(extra_header_fields);
+        let header = Value::object(header_fields);
         let signing_message =
             Value::object([("header", header.clone()), ("metadata", metadata.value())]);
         let signature = ed25519_sign_string(&signer_seed, encode_jcs(&signing_message).as_bytes());
@@ -1233,6 +1229,12 @@ mod tests {
         encode_jcs(&json_to_canonical_value(&value)).into_bytes()
     }
 
+    fn layered_envelope_cid(bytes: &[u8]) -> String {
+        let value: Json = serde_json::from_slice(bytes).expect("layered member JSON");
+        let envelope = value.get("envelope").expect("layered envelope");
+        blake3_512_of(encode_jcs(&json_to_canonical_value(envelope)).as_bytes())
+    }
+
     #[test]
     fn graph_requires_atom_before_body_and_body_before_contract() {
         let atom = FlatAtom::result_eq_int(7);
@@ -1311,8 +1313,9 @@ mod tests {
             "header": {"cid": "blake3-512:run", "kind": "proof-run"},
             "metadata": {}
         }));
+        let run_cid = layered_envelope_cid(&run);
         let proof_run = ProofRunMemento::new(run.clone());
-        assert_eq!(proof_run.cid().as_str(), "blake3-512:run");
+        assert_eq!(proof_run.cid().as_str(), run_cid);
 
         let mut graph = ProofGraph::new();
         graph.push_source(source_memento);
@@ -1321,7 +1324,7 @@ mod tests {
             graph.members_map().get(&blake3_512_of(&source)),
             Some(&source)
         );
-        assert_eq!(graph.members_map().get("blake3-512:run"), Some(&run));
+        assert_eq!(graph.members_map().get(&run_cid), Some(&run));
     }
 
     #[test]

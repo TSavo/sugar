@@ -39,7 +39,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value as Json;
+use serde_json::{json, Value as Json};
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
@@ -50,6 +50,10 @@ fn rust_workspace() -> PathBuf {
         .parent()
         .expect("sugar-cli has a parent workspace")
         .to_path_buf()
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn z3_available() -> bool {
@@ -78,6 +82,7 @@ fn build_fixture(with_vendor: bool, suffix: &str) -> PathBuf {
     let dir = unique_dir(suffix);
     fs::create_dir_all(dir.join("tests")).unwrap();
     fs::create_dir_all(dir.join(".sugar/lift/rust-test-assertions")).unwrap();
+    fs::create_dir_all(dir.join(".sugar/components/rust-test-assertions")).unwrap();
     fs::create_dir_all(dir.join(".sugar/ir-compilers/smt-lib")).unwrap();
 
     // USER sources: separate files -> separate `#euf#` callsite mementos. `g` is
@@ -152,6 +157,91 @@ ir_version = "v1.1.0"
 emits_signed_mementos = false
 "#,
             ws = ws.display()
+        ),
+    )
+    .unwrap();
+
+    let component_script = dir
+        .join(".sugar/components/rust-test-assertions")
+        .join("component.sh");
+    let lift_command = vec![
+        "cargo",
+        "run",
+        "-p",
+        "sugar-lift-rust-tests",
+        "--bin",
+        "rust_test_assertions_rpc",
+        "--quiet",
+        "--",
+    ];
+    let initialize_response = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "name": "rust-test-assertions-component",
+            "protocol_version": "sugar-component/1",
+            "capabilities": {}
+        }
+    })
+    .to_string();
+    let plan_response = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "decision": "claim",
+            "plugins": [{
+                "name": "rust-test-assertions-lift",
+                "kind": "lift",
+                "surface": "rust-test-assertions",
+                "emit": "ir-document"
+            }],
+            "lift_manifests": [{
+                "surface": "rust-test-assertions",
+                "name": "rust-test-assertions-lift",
+                "version": "0.1.0",
+                "protocol_version": "pep/1.7.0",
+                "command": lift_command,
+                "working_dir": ws.display().to_string()
+            }],
+            "diagnostics": [{
+                "level": "info",
+                "message": "rust-test-assertions component planned"
+            }]
+        }
+    })
+    .to_string();
+    let shutdown_response = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": null
+    })
+    .to_string();
+    fs::write(
+        &component_script,
+        format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{initialize_response}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{plan_response}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{shutdown_response}'
+      exit 0
+      ;;
+  esac
+done
+"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join(".sugar/components/rust-test-assertions/manifest.toml"),
+        format!(
+            "name = \"rust-test-assertions-component\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"/bin/sh\", {}]\n",
+            toml_string(&component_script.display().to_string())
         ),
     )
     .unwrap();
