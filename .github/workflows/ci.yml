@@ -39,6 +39,10 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Check Rust formatting
+        working-directory: implementations/rust
+        run: cargo fmt --all -- --check
+
       - name: Restore Rust target dirs
         if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v5
