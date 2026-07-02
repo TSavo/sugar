@@ -34,16 +34,53 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use sugar_canonicalizer::blake3_512_of;
-use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
+use sugar_canonicalizer::{blake3_512_of, Value};
+use sugar_claim_envelope::{mint_contract_with_body_cid, Authoring, MintContractArgs};
 use sugar_ir_symbolic::serialize::formula_to_value;
 use sugar_ir_symbolic::{begin_collecting, eq, finish, must, num, parse_int, reset_collector};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, ClaimContractMemento, Ed25519Seed,
-    ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, AtomMemento, ClaimContractMemento, ContractBody,
+    Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::{Runner, RunnerConfig};
+
+fn register_contract_body_graph(
+    proof_graph: &mut ProofGraph,
+    pre: Option<&Arc<Value>>,
+    post: Option<&Arc<Value>>,
+    inv: Option<&Arc<Value>>,
+) -> Result<ContractBody, String> {
+    let mut slots: Vec<(&'static str, AtomMemento)> = Vec::new();
+    if let Some(formula) = pre {
+        slots.push((
+            "pre",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = post {
+        slots.push((
+            "post",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if let Some(formula) = inv {
+        slots.push((
+            "inv",
+            proof_graph.register_atom(FlatAtom::new(formula.clone())),
+        ));
+    }
+    if slots.is_empty() {
+        return Err("contract body graph requires at least one formula slot".to_string());
+    }
+
+    let slot_refs = slots
+        .iter()
+        .map(|(slot, atom)| (*slot, atom))
+        .collect::<Vec<_>>();
+    Ok(proof_graph.register_body(ContractBody::from_slots(slot_refs)))
+}
 
 fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     if let Some(parent) = dst.parent() {
@@ -118,7 +155,7 @@ fn run() -> Result<(), String> {
         ));
     }
 
-    // ---- 3. Mint each contract memento (Rust signs Rust) ----
+    // ---- 3. Mint each graph-backed contract memento (Rust signs Rust) ----
     let signer_seed: Ed25519Seed = [0x37; 32];
     let declared_at = "2026-04-30T15:30:00.000Z";
     let produced_by = "rust-consumer@1";
@@ -150,7 +187,16 @@ fn run() -> Result<(), String> {
             },
             signer_seed,
         };
-        let minted = mint_contract(&args).map_err(|e| format!("mint_contract({}): {e}", d.name))?;
+        let contract_body = register_contract_body_graph(
+            &mut graph,
+            args.pre.as_ref(),
+            args.post.as_ref(),
+            args.inv.as_ref(),
+        )
+        .map_err(|e| format!("contract body graph({}): {e}", d.name))?;
+        let body_cid = contract_body.cid().as_str().to_string();
+        let minted = mint_contract_with_body_cid(&args, Some(&body_cid))
+            .map_err(|e| format!("mint_contract_with_body_cid({}): {e}", d.name))?;
         println!("  contract minted: {} -> CID {}", d.name, minted.cid);
         let memento = ClaimContractMemento::new(minted.canonical_bytes);
         assert_eq!(memento.cid().as_str(), minted.cid);
