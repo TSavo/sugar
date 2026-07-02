@@ -30,6 +30,7 @@ use serde_json::Value as Json;
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_proof_envelope::ed25519_verify_string;
+use tracing::debug;
 
 use sugar_proof_envelope::ProofGraph;
 
@@ -217,7 +218,12 @@ pub fn try_tier2(
     cache_dir: &Path,
     producer_post_hash: &str,
     consumer_pre_hash: &str,
+    trusted_implication_signers: &[String],
 ) -> Option<String> {
+    if trusted_implication_signers.is_empty() {
+        debug!("tier2: skipping implication cache because no trusted implication signers are configured");
+        return None;
+    }
     if !cache_dir.exists() {
         return None;
     }
@@ -228,14 +234,20 @@ pub fn try_tier2(
         if path.extension().and_then(|s| s.to_str()) != Some("proof") {
             continue;
         }
-        if let Some(cid) = scan_proof_for_implication(&path, &want_property_hash) {
+        if let Some(cid) =
+            scan_proof_for_implication(&path, &want_property_hash, trusted_implication_signers)
+        {
             return Some(cid);
         }
     }
     None
 }
 
-fn scan_proof_for_implication(path: &Path, want_property_hash: &str) -> Option<String> {
+fn scan_proof_for_implication(
+    path: &Path,
+    want_property_hash: &str,
+    trusted_implication_signers: &[String],
+) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     let graph = ProofGraph::read(&bytes).ok()?;
     for view in graph.implications() {
@@ -259,6 +271,18 @@ fn scan_proof_for_implication(path: &Path, want_property_hash: &str) -> Option<S
         // implication memento embeds `producerPubkey` in its body
         // when minted by `cache_implication_memento`).
         let pubkey = view.field("producerPubkey")?;
+        if !trusted_implication_signers
+            .iter()
+            .any(|trusted| trusted == &pubkey)
+        {
+            debug!(
+                path = %path.display(),
+                implication_cid = %cid,
+                producer_pubkey = %pubkey,
+                "tier2: skipping implication cache entry signed by an untrusted key"
+            );
+            continue;
+        }
         if !ed25519_verify_string(&pubkey, sig, unsigned_bytes.as_bytes()) {
             continue;
         }

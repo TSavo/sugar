@@ -309,6 +309,7 @@ pub(crate) fn build_prove_report_with_options(
         z3_path: z3.to_string(),
         extra_projects,
         extra_proofs: dependency_proofs,
+        trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         ..Default::default()
     };
     let compilers = component_plan::compiler_registry_from_plan(project_root, &component_plan);

@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::formula_rewrite;
 
 use rayon::prelude::*;
+use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value as Json;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
@@ -85,6 +86,9 @@ pub struct RunnerConfig {
     pub mint_seed: Option<[u8; 32]>,
     /// Producer id stamped into minted implication mementos.
     pub mint_producer_id: Option<String>,
+    /// Local project trust anchors for Tier-2 implication cache entries.
+    /// Empty means the cache tier is skipped entirely.
+    pub trusted_implication_signers: Vec<String>,
     /// Optional pre-loaded SolversConfig. If set, bypasses
     /// `.sugar/config.toml` discovery (used by tests and the
     /// multi-solver demo).
@@ -163,11 +167,21 @@ impl Runner {
         Self::new_with_compilers(cfg, compilers)
     }
 
-    pub fn new_with_compilers(cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
+    pub fn new_with_compilers(mut cfg: RunnerConfig, compilers: CompilerRegistry) -> Self {
         // Resolve solver config. Precedence:
         //   1. cfg.solvers_config (test/demo override)
         //   2. .sugar/config.toml under project_root
         //   3. fallback: single Z3 at cfg.z3_path
+        if cfg.trusted_implication_signers.is_empty() {
+            cfg.trusted_implication_signers =
+                match load_trusted_implication_signers(&cfg.project_root) {
+                    Ok(signers) => signers,
+                    Err(error) => {
+                        warn!(error = %error, "failed to load trusted implication signers");
+                        Vec::new()
+                    }
+                };
+        }
         let (plan, registry) = build_plan_and_registry(&cfg);
         Self {
             cfg,
@@ -1185,6 +1199,28 @@ fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<String, S
     )
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct TrustAnchorConfig {
+    #[serde(default)]
+    trusted_implication_signers: Vec<String>,
+}
+
+fn load_trusted_implication_signers(project_root: &Path) -> Result<Vec<String>, String> {
+    let path = project_root.join(".sugar").join("config.toml");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let body =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let cfg: TrustAnchorConfig = toml::from_str(&body).map_err(|e| format!("parse toml: {e}"))?;
+    Ok(cfg
+        .trusted_implication_signers
+        .into_iter()
+        .map(|signer| signer.trim().to_string())
+        .filter(|signer| !signer.is_empty())
+        .collect())
+}
+
 /// One contract's self-post verification outcome.
 struct SelfPostResult {
     contract_cid: String,
@@ -1622,7 +1658,12 @@ fn work_one(
             );
         }
         if let Some(cache_dir) = &cfg.cache_dir {
-            if let Some(impl_cid) = try_tier2(cache_dir, post_hash, pre_hash) {
+            if let Some(impl_cid) = try_tier2(
+                cache_dir,
+                post_hash,
+                pre_hash,
+                &cfg.trusted_implication_signers,
+            ) {
                 n_cache.fetch_add(1, Ordering::Relaxed);
                 return (
                     cs.clone(),
@@ -2180,5 +2221,292 @@ mod consistency_owned_callsite_tests {
         let (mut pool, cs) = linked_pool_and_callsite();
         pool.bridges_by_symbol.clear();
         assert!(!callsite_row_is_owned_by_consistency(&cs, &pool));
+    }
+
+    fn int_sort() -> Json {
+        json!({"kind": "primitive", "name": "Int"})
+    }
+
+    fn int_const(n: i64) -> Json {
+        json!({"kind": "const", "sort": int_sort(), "value": n})
+    }
+
+    fn int_ge(lhs: Json, rhs: Json) -> Json {
+        json!({"kind": "atomic", "name": ">=", "args": [lhs, rhs]})
+    }
+
+    fn tier2_pool_and_callsite() -> (MementoPool, CallSite, String, String) {
+        let producer_symbol = "call:trusted_producer";
+        let producer_cid = "blake3-512:tier2-producer";
+        let consumer_cid = "blake3-512:tier2-consumer";
+        let consumer_bundle_cid = "blake3-512:tier2-consumer-bundle";
+
+        let producer_post = int_ge(json!({"kind": "var", "name": "result"}), int_const(10));
+        let consumer_pre = int_ge(json!({"kind": "var", "name": "value"}), int_const(0));
+
+        let producer = json!({
+            "evidence": {
+                "kind": "contract",
+                "body": {
+                    "contractName": "producer",
+                    "post": producer_post
+                }
+            }
+        });
+        let consumer = json!({
+            "evidence": {
+                "kind": "contract",
+                "body": {
+                    "contractName": "consumer",
+                    "formals": ["value"],
+                    "formalSorts": [int_sort()],
+                    "pre": consumer_pre
+                }
+            }
+        });
+        let producer_bridge = json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": producer_symbol,
+                    "targetContractCid": producer_cid
+                }
+            }
+        });
+
+        let mut pool = MementoPool::default();
+        pool.mementos.insert(producer_cid.to_string(), producer);
+        pool.mementos.insert(consumer_cid.to_string(), consumer);
+        pool.bridges_by_symbol
+            .insert(producer_symbol.to_string(), producer_bridge);
+        pool.bundle_members
+            .entry(consumer_bundle_cid.to_string())
+            .or_default()
+            .insert(consumer_cid.to_string());
+
+        let producer_arg = json!({
+            "kind": "ctor",
+            "name": producer_symbol,
+            "args": [int_const(10)]
+        });
+        let cs = CallSite {
+            bridge_ir_name: "consumer_bridge".to_string(),
+            bridge_target_cid: consumer_cid.to_string(),
+            bridge_target_proof_cid: Some(consumer_bundle_cid.to_string()),
+            property_name: "consumer_pre".to_string(),
+            property_cid: "blake3-512:tier2-property".to_string(),
+            arg_term: Some(producer_arg.clone()),
+            arg_terms: vec![producer_arg],
+            ..CallSite::default()
+        };
+
+        let (_, post_hash) =
+            locate_producer_post(&cs.arg_term, &pool.mementos, &pool.bridges_by_symbol)
+                .expect("producer post resolves");
+        let pre_hash = resolve_target::run(&cs, &pool)
+            .expect("consumer target resolves")
+            .ir_formula
+            .as_ref()
+            .map(formula_hash)
+            .expect("consumer pre exists");
+
+        (pool, cs, post_hash, pre_hash)
+    }
+
+    fn run_tier2_fixture(
+        cache_dir: &Path,
+        trusted_implication_signers: Vec<String>,
+    ) -> CallsiteResult {
+        let (pool, cs, _post_hash, _pre_hash) = tier2_pool_and_callsite();
+        let cfg = RunnerConfig {
+            project_root: std::env::temp_dir(),
+            cache_dir: Some(cache_dir.to_path_buf()),
+            trusted_implication_signers,
+            ..Default::default()
+        };
+        let plan = SolverPlan::Single("stub".to_string());
+        let registry = HashMap::new();
+        let compilers = CompilerRegistry::new();
+        let n_hash = AtomicUsize::new(0);
+        let n_cache = AtomicUsize::new(0);
+        let n_vacuous = AtomicUsize::new(0);
+        let n_solved = AtomicUsize::new(0);
+        let n_residue = AtomicUsize::new(0);
+        let n_disagree = AtomicUsize::new(0);
+        let n_invoc = AtomicUsize::new(0);
+        let n_reflexive = AtomicUsize::new(0);
+        let n_substantive = AtomicUsize::new(0);
+        let invs_sink = Mutex::new(vec![]);
+        let minted_sink = Mutex::new(vec![]);
+
+        work_one(
+            &cs,
+            &pool,
+            &plan,
+            &registry,
+            &compilers,
+            &cfg,
+            &n_hash,
+            &n_cache,
+            &n_vacuous,
+            &n_solved,
+            &n_residue,
+            &n_disagree,
+            &n_invoc,
+            &n_reflexive,
+            &n_substantive,
+            &invs_sink,
+            &minted_sink,
+        )
+    }
+
+    fn make_unique_cache_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sugar-tier2-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create cache dir");
+        dir
+    }
+
+    fn json_to_canonical_value(value: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
+        match value {
+            Json::Null => sugar_canonicalizer::Value::null(),
+            Json::Bool(v) => sugar_canonicalizer::Value::boolean(*v),
+            Json::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    sugar_canonicalizer::Value::integer(i128::from(i))
+                } else if let Some(u) = n.as_u64() {
+                    sugar_canonicalizer::Value::integer(i128::from(u))
+                } else if let Some(f) = n.as_f64() {
+                    sugar_canonicalizer::Value::string(f.to_string())
+                } else {
+                    sugar_canonicalizer::Value::null()
+                }
+            }
+            Json::String(s) => sugar_canonicalizer::Value::string(s.clone()),
+            Json::Array(items) => sugar_canonicalizer::Value::array(
+                items.iter().map(json_to_canonical_value).collect(),
+            ),
+            Json::Object(map) => sugar_canonicalizer::Value::object(
+                map.iter()
+                    .map(|(k, v)| (k.as_str(), json_to_canonical_value(v)))
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    fn jcs(value: &Json) -> String {
+        sugar_canonicalizer::encode_jcs(&json_to_canonical_value(value))
+    }
+
+    fn write_self_signed_flat_implication_cache(
+        cache_dir: &Path,
+        seed: &[u8; 32],
+        post_hash: &str,
+        pre_hash: &str,
+    ) -> String {
+        let property_hash = implication_property_hash(post_hash, pre_hash);
+        let pubkey = sugar_proof_envelope::ed25519_pubkey_string(seed);
+        let mut env = json!({
+            "evidence": {
+                "kind": "implication",
+                "body": {
+                    "antecedentHash": post_hash,
+                    "consequentHash": pre_hash,
+                    "propertyHash": property_hash,
+                    "producerPubkey": pubkey,
+                    "verdict": "holds"
+                }
+            },
+            "antecedentHash": post_hash,
+            "consequentHash": pre_hash,
+            "propertyHash": property_hash
+        });
+        let signature = sugar_proof_envelope::ed25519_sign_string(seed, jcs(&env).as_bytes());
+        env.as_object_mut()
+            .expect("flat implication object")
+            .insert("producerSignature".to_string(), Json::String(signature));
+        let member_bytes = jcs(&env).into_bytes();
+        let member_cid = sugar_canonicalizer::blake3_512_of(&member_bytes);
+
+        let mut proof_bytes = Vec::new();
+        sugar_proof_envelope::cbor_encode_map_head(&mut proof_bytes, 1);
+        sugar_proof_envelope::cbor_encode_tstr(&mut proof_bytes, "members");
+        sugar_proof_envelope::cbor_encode_map_head(&mut proof_bytes, 1);
+        sugar_proof_envelope::cbor_encode_tstr(&mut proof_bytes, &member_cid);
+        sugar_proof_envelope::cbor_encode_bstr(&mut proof_bytes, &member_bytes);
+
+        let path = cache_dir.join(format!(
+            "{}-forged-flat.proof",
+            property_hash.replace(':', "_")
+        ));
+        std::fs::write(path, proof_bytes).expect("write forged cache proof");
+        pubkey
+    }
+
+    #[test]
+    fn tier2_ignores_self_signed_memento_without_trust_anchor() {
+        let cache_dir = make_unique_cache_dir("untrusted");
+        let (_pool, _cs, post_hash, pre_hash) = tier2_pool_and_callsite();
+        let attacker_seed = [0xA4; 32];
+        write_self_signed_flat_implication_cache(&cache_dir, &attacker_seed, &post_hash, &pre_hash);
+
+        let (_cs, verdict, reason, discharge_method, _body_tier) =
+            run_tier2_fixture(&cache_dir, Vec::new());
+
+        assert_ne!(
+            verdict,
+            ObligationVerdict::Discharged,
+            "self-signed cache memento must not discharge without a trust anchor: {reason}"
+        );
+        assert_ne!(
+            discharge_method.as_deref(),
+            Some("hash-tier"),
+            "self-signed cache memento must not report cache/hash discharge: {reason}"
+        );
+        assert!(
+            !reason.contains("tier2: cache hit"),
+            "self-signed cache memento must not report an n_cache hit: {reason}"
+        );
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn tier2_accepts_trusted_signer() {
+        let cache_dir = make_unique_cache_dir("trusted");
+        let (_pool, _cs, post_hash, pre_hash) = tier2_pool_and_callsite();
+        let signer_seed = [0xB5; 32];
+        let pubkey = write_self_signed_flat_implication_cache(
+            &cache_dir,
+            &signer_seed,
+            &post_hash,
+            &pre_hash,
+        );
+
+        let (_cs, verdict, reason, discharge_method, _body_tier) =
+            run_tier2_fixture(&cache_dir, vec![pubkey]);
+
+        assert_eq!(
+            verdict,
+            ObligationVerdict::Discharged,
+            "trusted signer cache memento should discharge: {reason}"
+        );
+        assert_eq!(
+            discharge_method.as_deref(),
+            Some("hash-tier"),
+            "trusted cache memento should report hash-tier discharge: {reason}"
+        );
+        assert!(
+            reason.contains("tier2: cache hit"),
+            "trusted cache memento should report an n_cache hit: {reason}"
+        );
+
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }
