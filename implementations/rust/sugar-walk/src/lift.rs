@@ -30,7 +30,10 @@ use std::rc::Rc;
 
 use libsugar::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
-use sugar_floor_algebra::{guard_exit, Desugared, GuardedReturn, SymbolicValue};
+use sugar_floor_algebra::{
+    guard_exit, Desugared, GuardedReturn, PredicateValue, PredicateValueFloorAccept,
+    RequiredPredicateValueVisitor, SymbolicValue,
+};
 use sugar_ir_symbolic::Term as AlgebraTerm;
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
 use syn::spanned::Spanned;
@@ -3456,26 +3459,27 @@ pub fn lift_predicate(expr: &Expr) -> Option<IrFormula> {
 }
 
 fn lift_predicate_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula> {
-    lift_predicate_value_inner(expr, ctx).map(PredicateValue::into_formula)
+    lift_predicate_value_inner(expr, ctx).map(predicate_value_to_ir_formula)
 }
 
-/// Predicate-position value. A bool-sorted `IrTerm` is data; a
-/// `PredicateValue` is an assertion-position formula. The Python reference has
-/// `floor/predicate_value.py` for this distinction. The legacy sugar-walk API
-/// still returns `IrFormula`, so this wrapper is intentionally local to the
-/// inner seam.
-struct PredicateValue {
-    formula: IrFormula,
+/// Predicate-position boundary seam. A bool-sorted `IrTerm` is data; a
+/// `PredicateValue` is an assertion-position formula. Python carries this as
+/// `floor/predicate_value.py` beside `floor/bool_value.py`; Rust routes the
+/// same distinction through the shared closed visitor and converts only at the
+/// `IrTerm` boundary.
+fn require_predicate_value_floor(floor: Desugared, owner: &str) -> PredicateValue {
+    floor.accept_predicate_value_floor(RequiredPredicateValueVisitor { owner })
 }
 
-impl PredicateValue {
-    fn new(formula: IrFormula) -> Self {
-        Self { formula }
-    }
+fn predicate_value_from_ir_formula(formula: IrFormula) -> PredicateValue {
+    require_predicate_value_floor(
+        Desugared::PredicateValue(PredicateValue::new(lower_ir_formula(&formula))),
+        "sugar-walk.predicate",
+    )
+}
 
-    fn into_formula(self) -> IrFormula {
-        self.formula
-    }
+fn predicate_value_to_ir_formula(predicate: PredicateValue) -> IrFormula {
+    raise_ir_formula(predicate.formula())
 }
 
 fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<PredicateValue> {
@@ -3483,23 +3487,23 @@ fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<Predicat
         Expr::Lit(syn::ExprLit {
             lit: Lit::Bool(value),
             ..
-        }) => Some(PredicateValue::new(bool_term_predicate(bool_const_term(
-            value.value,
-        )))),
+        }) => Some(predicate_value_from_ir_formula(bool_term_predicate(
+            bool_const_term(value.value),
+        ))),
         Expr::Binary(ExprBinary {
             left, op, right, ..
         }) => match op {
             BinOp::And(_) => {
-                let l = lift_predicate_value_inner(left, ctx)?.into_formula();
-                let r = lift_predicate_value_inner(right, ctx)?.into_formula();
-                Some(PredicateValue::new(IrFormula::And {
+                let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
+                let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
+                Some(predicate_value_from_ir_formula(IrFormula::And {
                     operands: vec![l, r],
                 }))
             }
             BinOp::Or(_) => {
-                let l = lift_predicate_value_inner(left, ctx)?.into_formula();
-                let r = lift_predicate_value_inner(right, ctx)?.into_formula();
-                Some(PredicateValue::new(IrFormula::Or {
+                let l = predicate_value_to_ir_formula(lift_predicate_value_inner(left, ctx)?);
+                let r = predicate_value_to_ir_formula(lift_predicate_value_inner(right, ctx)?);
+                Some(predicate_value_from_ir_formula(IrFormula::Or {
                     operands: vec![l, r],
                 }))
             }
@@ -3508,7 +3512,7 @@ fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<Predicat
                 let name = bin_op_to_predicate_name(op)?;
                 let l_term = lift_expr_to_term_inner(left, ctx)?;
                 let r_term = lift_expr_to_term_inner(right, ctx)?;
-                Some(PredicateValue::new(IrFormula::Atomic {
+                Some(predicate_value_from_ir_formula(IrFormula::Atomic {
                     name: name.to_string(),
                     args: vec![l_term, r_term],
                 }))
@@ -3519,10 +3523,10 @@ fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<Predicat
             expr,
             ..
         }) => {
-            let inner = lift_predicate_value_inner(expr, ctx)?.into_formula();
+            let inner = predicate_value_to_ir_formula(lift_predicate_value_inner(expr, ctx)?);
             // Apply De Morgan / double-negation via the negate helper,
             // so `!(x >= 10)` lifts to `x < 10`, not `¬(x ≥ 10)`.
-            Some(PredicateValue::new(negate(inner)))
+            Some(predicate_value_from_ir_formula(negate(inner)))
         }
         Expr::Paren(p) => lift_predicate_value_inner(&p.expr, ctx),
         Expr::Group(g) => lift_predicate_value_inner(&g.expr, ctx),
@@ -3547,7 +3551,7 @@ fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<Predicat
             );
             if is_bool_predicate {
                 let recv_term = lift_expr_to_term_inner(receiver, ctx)?;
-                Some(PredicateValue::new(IrFormula::Atomic {
+                Some(predicate_value_from_ir_formula(IrFormula::Atomic {
                     name: method_name,
                     args: vec![recv_term],
                 }))
@@ -3617,7 +3621,7 @@ fn lift_bool_term_predicate(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrFormula>
 }
 
 fn lift_bool_term_predicate_value(expr: &Expr, ctx: &mut LiftCtx) -> Option<PredicateValue> {
-    lift_bool_term_predicate(expr, ctx).map(PredicateValue::new)
+    lift_bool_term_predicate(expr, ctx).map(predicate_value_from_ir_formula)
 }
 
 /// Lift a Rust expression to a canonical `IrTerm`. Supported shapes:
@@ -4998,6 +5002,49 @@ mod tests {
             json.contains("is_some"),
             "if !x.is_some() panic must lift is_some to precondition: {}",
             json
+        );
+    }
+
+    #[test]
+    fn predicate_value_boundary_distinguishes_predicate_from_data_bool_term() {
+        let data_bool = bool_const_term(true);
+        let predicate = predicate_value_from_ir_formula(bool_term_predicate(data_bool.clone()));
+        let predicate_wire = raise_ir_formula(predicate.formula());
+
+        assert_ne!(
+            serde_json::to_value(&data_bool).unwrap(),
+            serde_json::to_value(&predicate_wire).unwrap(),
+            "BoolValue-as-term and PredicateValue must stay different wire positions"
+        );
+        assert!(
+            matches!(data_bool, IrTerm::Const { .. }),
+            "data-position bool stays a term"
+        );
+        assert!(
+            matches!(predicate_wire, IrFormula::Atomic { name, .. } if name == "="),
+            "predicate-position bool becomes an assertion formula"
+        );
+    }
+
+    #[test]
+    fn predicate_value_boundary_refuses_raw_term_as_predicate() {
+        let refusal = std::panic::catch_unwind(|| {
+            let raw_bool = Desugared::Term(lower_ir(&bool_const_term(true)));
+            let _ = require_predicate_value_floor(raw_bool, "predicate boundary twin");
+        });
+        let Err(payload) = refusal else {
+            panic!("raw bool term silently crossed the PredicateValue boundary");
+        };
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|msg| (*msg).to_string()))
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        assert!(
+            message.contains(
+                "predicate boundary twin completed Term floor where a PredicateValue floor was required"
+            ),
+            "raw term refusal should name the PredicateValue floor seam: {message}"
         );
     }
 

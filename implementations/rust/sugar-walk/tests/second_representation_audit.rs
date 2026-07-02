@@ -67,13 +67,6 @@ const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[
         replacement: "let the algebra guarded-return floor own cf_guarded construction",
     },
     ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/lift.rs",
-        symbol: "lift_predicate_inner",
-        kind: "irterm_predicate_reasoning",
-        owner_slice: "S5: PredicateValue",
-        replacement: "route predicate/raw-term distinction through PredicateValue",
-    },
-    ExpectedStructuralSite {
         file: "implementations/rust/sugar-walk/src/walk.rs",
         symbol: "collect_pat_bindings",
         kind: "irterm_pattern_projection",
