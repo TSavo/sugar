@@ -249,6 +249,35 @@ The same law runs through every layer of this system: the compiler forbids
 ill-typed programs, the factory forbids un-owned constructions, the proofchain
 forbids unwitnessed claims. One principle, three substrates.
 
+### The capstone law (T Savo, 2026-07-02)
+
+**"Enrollment is existence, enforced by the type system, enumerated by the
+instrument, made loud by the panic, and the fix becomes unavoidable by any
+agent."**
+
+The whole ladder in one sentence — and the last clause is the design goal.
+This system is built and maintained by agents (human and AI) whose judgment
+is spiky and whose context is partial. The enforcement stack exists so that
+NO agent — a coordinator sixteen merges deep, a worker with no memory of why
+a rule exists, a future model with different failure modes — can rationalize,
+sanction-comment, or merge around an invariant. Judgment is spent exactly
+once, deciding what the invariants ARE; honoring them is mechanical, because
+dishonoring them is unrepresentable, uncompilable, or loudly red.
+
+The canonical composition (the "one dumb test"): every sugar owns the source
+statements that construct it (its territory — the only fact it is
+authoritative about); every ProofIR node class owns the situations that make
+claims of its kind SAT or UNSAT (its meaning — the only fact IT is
+authoritative about); and ONE parametrized test foreach-es the catalog,
+drives each sugar's truthful/lying source pair through the production RPC
+pipeline (`sugar lift` → ir compiler → solver), and asserts the triple:
+THAT sugar fired, THAT node was emitted, THAT verdict came back. The test
+itself is deliberately dumb — every ounce of intelligence lives with an
+owner, every failure mode has exactly one address, and enrollment is
+existence: a sugar in the catalog testifies or reds; a sugar that cannot
+testify does not compile. When reviewing or building anything in this repo,
+measure it against this sentence.
+
 ## Repository Mechanics
 
 The manifesto above is the operating model. The rest of this file is local
