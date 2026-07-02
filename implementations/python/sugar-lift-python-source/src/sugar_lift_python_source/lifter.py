@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import locale
 import os
+import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -210,6 +212,7 @@ def lift_source(source: str, source_path: str) -> LiftResult:
 
     module_path = _module_path(source_path)
     module_globals = _module_global_names(tree)
+    module_imports = _module_import_aliases(tree)
     pin_scan = scan_module_value_pins(tree)
     result.refusals.extend(pin_scan.refusals)
     result.opacity_report.extend(
@@ -231,6 +234,7 @@ def lift_source(source: str, source_path: str) -> LiftResult:
             result,
             receiver_context=receiver_contexts.get(info.qualname),
             value_pins=pin_scan.pins,
+            module_imports=module_imports,
             contract_sink=contracts,
         )
         if contract is None:
@@ -712,6 +716,7 @@ class _Emitter:
         contract_sink: list[Json] | None = None,
         attribute_receiver: _AttributeReceiverContext | None = None,
         value_pins: dict[str, ValuePin] | None = None,
+        module_imports: dict[str, str] | None = None,
     ) -> None:
         self.fn_name = fn_name
         self.locals = set(locals_)
@@ -723,6 +728,7 @@ class _Emitter:
         self.contract_sink = contract_sink if contract_sink is not None else []
         self.attribute_receiver = attribute_receiver
         self.value_pins = value_pins or {}
+        self.module_imports = module_imports or {}
 
     def statements(self, statements: list[ast.stmt]) -> Json:
         emitted: list[Json] = []
@@ -976,6 +982,7 @@ class _Emitter:
             self.module_globals,
             self.result,
             value_pins=self.value_pins,
+            module_imports=self.module_imports,
             contract_sink=self.contract_sink,
             closure_locals=set(self.locals),
         )
@@ -1621,6 +1628,9 @@ class _Emitter:
         return _literal_default(node, self._tentative_default_expr)
 
     def _tentative_default_expr(self, node: ast.expr) -> Json:
+        known_constant = _known_external_default_constant(node, self.module_imports)
+        if known_constant is not None:
+            return known_constant
         effects = _EffectSet()
         panic_loci: list[Json] = []
         result = LiftResult()
@@ -1635,6 +1645,7 @@ class _Emitter:
             result=result,
             contract_sink=[],
             value_pins=self.value_pins,
+            module_imports=self.module_imports,
         )
         try:
             term = emitter.expr(node)
@@ -1919,6 +1930,7 @@ def _lift_function(
     *,
     receiver_context: _AttributeReceiverContext | None = None,
     value_pins: dict[str, ValuePin] | None = None,
+    module_imports: dict[str, str] | None = None,
     contract_sink: list[Json] | None = None,
     closure_locals: set[str] | None = None,
 ) -> Json | None:
@@ -1947,6 +1959,7 @@ def _lift_function(
             result=LiftResult(),
             contract_sink=[],
             value_pins=value_pins,
+            module_imports=module_imports,
         )
         formals, parameter_shape = _parameter_shape(node, default_emitter.literal_default)
         refused = _contains_refused_control(node)
@@ -1977,6 +1990,7 @@ def _lift_function(
             contract_sink=contract_sink if contract_sink is not None else [],
             attribute_receiver=receiver_context,
             value_pins=value_pins,
+            module_imports=module_imports,
         )
         body = emitter.statements(node.body)
         result.opacity_report.extend(effects.opacity_report())
@@ -2575,23 +2589,39 @@ def _literal_default(
             "python:tuple",
             *[_literal_default(element, tentative_expr) for element in node.elts],
         )
-    if isinstance(node, ast.List):
-        return ctor(
-            "python:list",
-            *[_literal_default(element, tentative_expr) for element in node.elts],
-        )
-    if isinstance(node, ast.Dict):
-        keys = [
-            none_const() if key is None else _literal_default(key, tentative_expr)
-            for key in node.keys
-        ]
-        values = [_literal_default(value, tentative_expr) for value in node.values]
-        entries = [
-            ctor("python:dict_entry", key, value)
-            for key, value in zip(keys, values)
-        ]
-        return ctor("python:dict", *entries)
+    if isinstance(node, (ast.List, ast.Dict, ast.Set)):
+        raise _non_literal_default(node)
     return tentative_expr(node)
+
+
+def _known_external_default_constant(
+    node: ast.expr,
+    module_imports: dict[str, str],
+) -> Json | None:
+    name = _resolved_imported_dotted_name(node, module_imports)
+    if name == "numpy.nan":
+        return float_const(float("nan"))
+    if name == "os.curdir":
+        return str_const(os.curdir)
+    if name == "pickle.HIGHEST_PROTOCOL":
+        return int_const(pickle.HIGHEST_PROTOCOL)
+    if name == "locale.LC_ALL":
+        return int_const(locale.LC_ALL)
+    return None
+
+
+def _resolved_imported_dotted_name(
+    node: ast.expr,
+    module_imports: dict[str, str],
+) -> str | None:
+    dotted = _dotted_name(node)
+    if dotted is None:
+        return None
+    root, _, rest = dotted.partition(".")
+    imported = module_imports.get(root)
+    if imported is None:
+        return None
+    return f"{imported}.{rest}" if rest else imported
 
 
 def _non_literal_default(node: ast.expr) -> _UnsupportedSyntax:
@@ -2969,6 +2999,46 @@ def _module_global_names(tree: ast.Module) -> set[str]:
         elif isinstance(stmt, ast.AnnAssign):
             names.update(_stored_names(stmt.target))
     return names
+
+
+def _module_import_aliases(tree: ast.Module) -> dict[str, str]:
+    imports: dict[str, str] = {}
+    rebound: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                bound = alias.asname or alias.name.split(".", 1)[0]
+                imports[bound] = alias.name
+            continue
+        if isinstance(stmt, ast.ImportFrom) and stmt.module is not None:
+            for alias in stmt.names:
+                bound = alias.asname or alias.name
+                imports[bound] = f"{stmt.module}.{alias.name}"
+            continue
+        rebound.update(_module_statement_bound_names(stmt))
+    for name in rebound:
+        imports.pop(name, None)
+    return imports
+
+
+def _module_statement_bound_names(stmt: ast.stmt) -> set[str]:
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {stmt.name}
+    if isinstance(stmt, ast.Assign):
+        names: set[str] = set()
+        for target in stmt.targets:
+            names.update(_stored_names(target))
+        return names
+    if isinstance(stmt, ast.AnnAssign):
+        return _stored_names(stmt.target)
+    if isinstance(stmt, ast.AugAssign):
+        return _stored_names(stmt.target)
+    if isinstance(stmt, ast.Delete):
+        names: set[str] = set()
+        for target in stmt.targets:
+            names.update(_stored_names(target))
+        return names
+    return set()
 
 
 def _stored_names(node: ast.AST) -> set[str]:

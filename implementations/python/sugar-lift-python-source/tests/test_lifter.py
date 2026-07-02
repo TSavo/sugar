@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import pickle
 import subprocess
 import sys
 from pathlib import Path
@@ -3657,33 +3658,37 @@ def test_b1_signed_integer_defaults_are_literal_parameter_shape() -> None:
     ]
 
 
-def test_dict_literal_defaults_are_literal_parameter_shape() -> None:
-    source = "def f(mapping={'a': 1}, *, options={}):\n    return mapping\n"
+def test_mutable_container_defaults_refuse_as_shared_definition_time_state() -> None:
+    source = (
+        "def list_default(items=[]):\n"
+        "    return items\n"
+        "\n"
+        "def dict_default(options={}):\n"
+        "    return options\n"
+    )
 
-    result = lift_source(source, "dict_default.py")
+    result = lift_source(source, "mutable_default.py")
 
-    assert result.refusals == []
-    contract = _contract(result.ir, ".f")
-    assert contract["parameterShape"] == [
+    assert result.refusals == [
         {
-            "name": "mapping",
-            "kind": "positional-or-keyword",
-            "default": _dict(_dict_entry(_str_const("a"), _int_const(1))),
+            "kind": "non-literal-default",
+            "function": "mutable_default.list_default",
+            "line": 1,
+            "reason": "non-literal default: List",
         },
-        {"name": "options", "kind": "keyword-only", "default": _dict()},
+        {
+            "kind": "non-literal-default",
+            "function": "mutable_default.dict_default",
+            "line": 4,
+            "reason": "non-literal default: Dict",
+        },
     ]
-
-    compiled = compile_ir_document([contract])
-    relifted = lift_source(compiled, "dict_default.py")
-    relifted_contract = _contract(relifted.ir, ".f")
-    assert relifted.refusals == []
-    assert relifted_contract["parameterShape"] == contract["parameterShape"]
 
 
 def test_liftable_nonliteral_defaults_preserve_parameter_shape() -> None:
     source = (
-        "def f(items=[1, 2], choose=(1 if True else 2), fn=(lambda y: y), ratio=1.5):\n"
-        "    return items\n"
+        "def f(choose=(1 if True else 2), fn=(lambda y: y), ratio=1.5):\n"
+        "    return choose\n"
     )
 
     result = lift_source(source, "liftable_defaults.py")
@@ -3691,11 +3696,6 @@ def test_liftable_nonliteral_defaults_preserve_parameter_shape() -> None:
     assert result.refusals == []
     contract = _contract(result.ir, ".f")
     assert contract["parameterShape"] == [
-        {
-            "name": "items",
-            "kind": "positional-or-keyword",
-            "default": _list(_int_const(1), _int_const(2)),
-        },
         {
             "name": "choose",
             "kind": "positional-or-keyword",
@@ -3732,6 +3732,77 @@ def test_liftable_nonliteral_defaults_roundtrip_stably() -> None:
     assert cid_of_json(relifted_contract["parameterShape"]) == cid_of_json(
         contract["parameterShape"]
     )
+
+
+def test_known_external_constant_defaults_lift_without_effects() -> None:
+    source = (
+        "import numpy as np\n"
+        "import os\n"
+        "import pickle\n"
+        "\n"
+        "def f(missing=np.nan, dest=os.curdir, protocol=pickle.HIGHEST_PROTOCOL):\n"
+        "    return missing\n"
+    )
+
+    result = lift_source(source, "known_external_default.py")
+
+    assert result.refusals == []
+    contract = _contract(result.ir, ".f")
+    assert contract["effects"] == []
+    assert contract["parameterShape"] == [
+        {
+            "name": "missing",
+            "kind": "positional-or-keyword",
+            "default": _float_const(float("nan")),
+        },
+        {
+            "name": "dest",
+            "kind": "positional-or-keyword",
+            "default": _str_const("."),
+        },
+        {
+            "name": "protocol",
+            "kind": "positional-or-keyword",
+            "default": _int_const(pickle.HIGHEST_PROTOCOL),
+        },
+    ]
+
+
+def test_rebound_import_constant_default_remains_refused() -> None:
+    source = (
+        "import numpy as np\n"
+        "np = object()\n"
+        "\n"
+        "def f(missing=np.nan):\n"
+        "    return missing\n"
+    )
+
+    result = lift_source(source, "rebound_import_constant_default.py")
+
+    assert result.refusals == [
+        {
+            "kind": "non-literal-default",
+            "function": "rebound_import_constant_default.f",
+            "line": 4,
+            "reason": "non-literal default: Attribute",
+        }
+    ]
+
+
+def test_unpinnable_attribute_default_remains_refused() -> None:
+    result = lift_source(
+        "def f(x=unpinnable.thing):\n    return x\n",
+        "unpinnable_attribute_default.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "non-literal-default",
+            "function": "unpinnable_attribute_default.f",
+            "line": 1,
+            "reason": "non-literal default: Attribute",
+        }
+    ]
 
 
 def test_b1_nonliteral_default_remains_refused_as_definition_time_hazard() -> None:
