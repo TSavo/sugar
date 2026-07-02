@@ -1578,7 +1578,14 @@ fn collect_guarded_panic_effects_in_expr(
         Expr::Block(block) => {
             collect_guarded_panic_effects_in_stmts(&block.block.stmts, ctx, guard_facts, out);
         }
+        Expr::Unsafe(unsafe_expr) => {
+            collect_guarded_panic_effects_in_stmts(&unsafe_expr.block.stmts, ctx, guard_facts, out);
+        }
+        Expr::TryBlock(try_block) => {
+            collect_guarded_panic_effects_in_stmts(&try_block.block.stmts, ctx, guard_facts, out);
+        }
         Expr::Assign(assign) => {
+            collect_guarded_panic_effects_in_child_expr(&assign.left, ctx, guard_facts, out);
             collect_guarded_panic_effects_in_child_expr(&assign.right, ctx, guard_facts, out);
             let roots = statement_expr_assignment_roots(&assign.left);
             invalidate_statement_guard_facts_for_roots(&roots, guard_facts);
@@ -1596,6 +1603,27 @@ fn collect_guarded_panic_effects_in_expr(
             for arg in &call.args {
                 collect_guarded_panic_effects_in_child_expr(arg, ctx, guard_facts, out);
             }
+        }
+        Expr::Match(match_expr) => {
+            collect_guarded_panic_effects_in_child_expr(&match_expr.expr, ctx, guard_facts, out);
+            let saved_guard_facts = guard_facts.clone();
+            for arm in &match_expr.arms {
+                let mut arm_guard_facts = saved_guard_facts.clone();
+                ctx.push_frame();
+                bind_pat_idents_lift(&arm.pat, ctx);
+                invalidate_statement_guard_facts_for_pat(&arm.pat, &mut arm_guard_facts);
+                if let Some((_, guard)) = &arm.guard {
+                    collect_guarded_panic_effects_in_child_expr(
+                        guard,
+                        ctx,
+                        &mut arm_guard_facts,
+                        out,
+                    );
+                }
+                collect_guarded_panic_effects_in_expr(&arm.body, ctx, &mut arm_guard_facts, out);
+                ctx.pop_frame();
+            }
+            *guard_facts = saved_guard_facts;
         }
         Expr::MethodCall(method) => {
             if let Some(formula) =
@@ -1627,6 +1655,18 @@ fn collect_guarded_panic_effects_in_expr(
                 collect_guarded_panic_effects_in_child_expr(elem, ctx, guard_facts, out);
             }
         }
+        Expr::Repeat(repeat) => {
+            collect_guarded_panic_effects_in_child_expr(&repeat.expr, ctx, guard_facts, out);
+            collect_guarded_panic_effects_in_child_expr(&repeat.len, ctx, guard_facts, out);
+        }
+        Expr::Range(range) => {
+            if let Some(start) = &range.start {
+                collect_guarded_panic_effects_in_child_expr(start, ctx, guard_facts, out);
+            }
+            if let Some(end) = &range.end {
+                collect_guarded_panic_effects_in_child_expr(end, ctx, guard_facts, out);
+            }
+        }
         Expr::Cast(cast) => {
             collect_guarded_panic_effects_in_expr(&cast.expr, ctx, guard_facts, out)
         }
@@ -1637,7 +1677,71 @@ fn collect_guarded_panic_effects_in_expr(
             collect_guarded_panic_effects_in_child_expr(&index.expr, ctx, guard_facts, out);
             collect_guarded_panic_effects_in_child_expr(&index.index, ctx, guard_facts, out);
         }
-        _ => {}
+        Expr::Await(await_expr) => match await_expr.base.as_ref() {
+            Expr::Async(async_expr) => {
+                collect_guarded_panic_effects_in_stmts(
+                    &async_expr.block.stmts,
+                    ctx,
+                    guard_facts,
+                    out,
+                );
+            }
+            base => collect_guarded_panic_effects_in_child_expr(base, ctx, guard_facts, out),
+        },
+        Expr::Break(break_expr) => {
+            if let Some(expr) = &break_expr.expr {
+                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+            }
+        }
+        Expr::Const(const_expr) => {
+            collect_guarded_panic_effects_in_stmts(&const_expr.block.stmts, ctx, guard_facts, out);
+        }
+        Expr::Let(let_expr) => {
+            collect_guarded_panic_effects_in_child_expr(&let_expr.expr, ctx, guard_facts, out);
+            invalidate_statement_guard_facts_for_pat(&let_expr.pat, guard_facts);
+        }
+        Expr::RawAddr(raw_addr) => {
+            collect_guarded_panic_effects_in_expr(&raw_addr.expr, ctx, guard_facts, out)
+        }
+        Expr::Return(return_expr) => {
+            if let Some(expr) = &return_expr.expr {
+                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for field in &struct_expr.fields {
+                collect_guarded_panic_effects_in_child_expr(&field.expr, ctx, guard_facts, out);
+            }
+            if let Some(rest) = &struct_expr.rest {
+                collect_guarded_panic_effects_in_child_expr(rest, ctx, guard_facts, out);
+            }
+        }
+        Expr::Try(try_expr) => {
+            collect_guarded_panic_effects_in_child_expr(&try_expr.expr, ctx, guard_facts, out);
+        }
+        Expr::Unary(unary) => {
+            collect_guarded_panic_effects_in_expr(&unary.expr, ctx, guard_facts, out)
+        }
+        Expr::Yield(yield_expr) => {
+            if let Some(expr) = &yield_expr.expr {
+                collect_guarded_panic_effects_in_child_expr(expr, ctx, guard_facts, out);
+            }
+        }
+        // Closure and async block bodies are delayed work, not immediate effects
+        // of evaluating the expression that creates them. Expression macros are
+        // opaque to this unwrap/expect guard collector; if they expand to
+        // panics, the precondition panic collector owns those explicit patterns.
+        Expr::Async(_)
+        | Expr::Closure(_)
+        | Expr::Continue(_)
+        | Expr::Infer(_)
+        | Expr::Lit(_)
+        | Expr::Macro(_)
+        | Expr::Path(_) => {}
+        Expr::Verbatim(_) => {
+            panic!("sugar-walk guarded panic collector refused uninterpreted verbatim expression")
+        }
+        _ => panic!("sugar-walk guarded panic collector refused unknown syn::Expr variant"),
     }
 }
 
@@ -4250,6 +4354,34 @@ mod tests {
         assert!(
             !json.contains("concept:panic-freedom.result.ok"),
             "Rust v1 writer must keep emitting the old result predicate token: {json}"
+        );
+    }
+
+    #[test]
+    fn match_arm_guarded_panic_effect_is_collected() {
+        let item_fn = parse_fn(
+            r#"
+            fn f(map: BTreeMap<String, String>, choose: bool) {
+                for key in map.keys() {
+                    match choose {
+                        true => {
+                            map.get(key).expect("present");
+                        }
+                        false => {}
+                    }
+                }
+            }
+        "#,
+        );
+        let post = lift_function_postcondition(&item_fn).into_formula();
+        let json = serde_json::to_string(&post).unwrap();
+        assert!(
+            json.contains("cf_guarded"),
+            "guarded panic effect in a match arm must not be silently dropped: {json}"
+        );
+        assert!(
+            json.contains("is_some"),
+            "match-arm guard must carry the keyset membership proof: {json}"
         );
     }
 
