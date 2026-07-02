@@ -3,7 +3,9 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
-from typing import List
+from typing import List, cast
+
+from .block import Block
 
 
 def _is_suite(value) -> bool:
@@ -42,11 +44,18 @@ class SourceFragment:
     col: int
 
     @classmethod
-    def from_node(cls, node: ast.AST, filename: str) -> "SourceFragment":
+    def from_node(cls, node: object, filename: str) -> "SourceFragment":
         # A container node (Module) has no position; it is never a site itself, only a
         # source of fragments, so default its position rather than refuse to wrap it.
+        # Block is the factory's synthetic suite node; SourceFragment is the sole
+        # gateway allowed to carry it beside real ast nodes.
+        if not isinstance(node, (ast.AST, Block)):
+            raise TypeError(
+                f"SourceFragment.from_node requires ast.AST or Block, got "
+                f"{type(node).__name__}"
+            )
         return cls(
-            node=node,
+            node=cast(ast.AST, node),
             filename=filename,
             line=getattr(node, "lineno", 0),
             col=getattr(node, "col_offset", 0),
@@ -56,8 +65,6 @@ class SourceFragment:
         """The immediate child fragments, in source order. A `list[stmt]` suite (a
         `body`/`orelse`) becomes ONE Block fragment (it composes its own statements);
         every other AST child is its own fragment."""
-        from .block import Block
-
         node = self.node
         if isinstance(node, Block):
             return [SourceFragment.from_node(stmt, self.filename) for stmt in node.body]
@@ -80,8 +87,6 @@ class SourceFragment:
     def statements(self) -> List["SourceFragment"]:
         """This fragment as a series of source statements -- the statement children
         (a body's lines). A statement composes at the STATEMENT role."""
-        from .block import Block
-
         return [
             child
             for child in self.fragments()
@@ -405,11 +410,6 @@ class SourceFragment:
         self._require(ast.ExceptHandler)
         return self.node.name  # type: ignore[attr-defined]
 
-    def function_name(self) -> str:
-        """Return the name string for a FunctionDef or AsyncFunctionDef."""
-        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return self.node.name  # type: ignore[attr-defined]
-
     def function_params(self) -> "list[str]":
         """Return the argument names for a FunctionDef or AsyncFunctionDef."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
@@ -439,6 +439,20 @@ class SourceFragment:
         """Return the name string for a FunctionDef or AsyncFunctionDef node."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         return self.node.name  # type: ignore[attr-defined]
+
+    def function_node(self) -> "ast.FunctionDef | ast.AsyncFunctionDef":
+        """Return the underlying function node after checking its kind."""
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return cast(ast.FunctionDef | ast.AsyncFunctionDef, self.node)
+
+    def stmt_node(self) -> ast.stmt:
+        """Return the underlying statement node after checking its kind."""
+        if not isinstance(self.node, ast.stmt):
+            raise TypeError(
+                f"SourceFragment statement node required, got {type(self.node).__name__}"
+                f" at {self.blame}"
+            )
+        return self.node
 
     def class_name(self) -> str:
         """Return the name string for a ClassDef node."""
@@ -518,6 +532,11 @@ class SourceFragment:
         or assemble raw ast directly.
         """
         self._require(ast.Assert)
+        if not isinstance(test.node, ast.expr):
+            raise TypeError(
+                f"SourceFragment assert test requires expr, got {type(test.node).__name__}"
+                f" at {test.blame}"
+            )
         node = ast.Assert(test=test.node, msg=None)
         ast.copy_location(node, self.node)
         ast.fix_missing_locations(node)

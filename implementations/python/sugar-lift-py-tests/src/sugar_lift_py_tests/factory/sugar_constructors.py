@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from sugar_lift_py_tests.claim import SugarRole
 
 from .source_fragment import SourceFragment
@@ -111,13 +113,23 @@ def build_control_flow_body_sugar(site, ctx):
             blame=site.blame,
         )
     from sugar_lift_py_tests.factory.block import Block
-    from sugar_lift_py_tests.floor import EncodedStringValue, GuardedReturn, ReturnValue
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        EncodedStringValue,
+        GuardedReturn,
+        ReturnValue,
+    )
     from sugar_lift_py_tests.outcome import complete_value
     from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
     body = site.node.body
     block = ctx.build_body(Block.of(body), SugarRole.STATEMENT)
     block_value = complete_value(block.reduce(reduce_ctx), owner="function body")
+    if type(block_value) is not BlockValue:
+        raise TypeError(
+            f"ControlFlowBodySugar expected BlockValue, got {type(block_value).__name__}"
+        )
+    block_value = cast(BlockValue, block_value)
     stmts = block_value.statements
     statements = block.sugar.statements
     if (

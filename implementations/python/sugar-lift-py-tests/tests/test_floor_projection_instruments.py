@@ -48,10 +48,10 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
     assert report.r.total == 11
     assert not report.is_zero
     assert [f"{o.path}:{o.line}" for o in report.offenders] == [
-        "factory/array_map_report.py:172",
-        "factory/array_map_report.py:264",
-        "factory/array_map_report.py:266",
-        "factory/literal_call_report.py:434",
+        "factory/array_map_report.py:179",
+        "factory/array_map_report.py:275",
+        "factory/array_map_report.py:277",
+        "factory/literal_call_report.py:443",
         "floor/call_site_value.py:156",
         "sugar/builtin_call_sugar.py:45",
         "sugar/builtin_call_sugar.py:122",
@@ -60,7 +60,9 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
         "sugar/map_builtin_sugar.py:33",
         "sugar/map_builtin_sugar.py:36",
     ]
-    assert all(offender.kind == "xsugar_build_bypasses" for offender in report.offenders)
+    assert all(
+        offender.kind == "xsugar_build_bypasses" for offender in report.offenders
+    )
 
 
 def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
@@ -81,7 +83,7 @@ def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
     assert "  xsugar_build_bypasses: 11" in stdout
     assert "  total: 11" in stdout
     assert "factory spine frontier offenders:" in stdout
-    assert "factory/literal_call_report.py:434" in stdout
+    assert "factory/literal_call_report.py:443" in stdout
     assert "floor/call_site_value.py:156" in stdout
     assert "sugar/builtin_call_sugar.py:45" in stdout
     assert "sugar/map_builtin_sugar.py:36" in stdout
@@ -160,8 +162,7 @@ def test_factory_spine_frontier_bad_twin_flags_xsugar_build_bypass(
     kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "consumer"
     kit_src.mkdir(parents=True)
     (kit_src / "bad_consumer.py").write_text(
-        "def planted(site, ctx):\n"
-        "    return CallSugar.build(site, ctx)\n",
+        "def planted(site, ctx):\n" "    return CallSugar.build(site, ctx)\n",
         encoding="utf-8",
     )
 
@@ -203,8 +204,7 @@ def test_factory_spine_frontier_does_not_flag_non_sugar_builders(tmp_path) -> No
     kit_src = tmp_path / "src" / "sugar_lift_py_tests" / "proofir"
     kit_src.mkdir(parents=True)
     (kit_src / "nodes.py").write_text(
-        "def planted(cls):\n"
-        "    return cls.builder().post(1).build()\n",
+        "def planted(cls):\n" "    return cls.builder().post(1).build()\n",
         encoding="utf-8",
     )
 
@@ -235,10 +235,7 @@ def test_floor_contract_agreement_counter_reports_zero_for_current_chain() -> No
 def test_floor_contract_agreement_bad_twin_trips_gate() -> None:
     report = build_literal_call_report(
         source=(
-            "def h(x):\n"
-            "    return x + 1\n"
-            "def t():\n"
-            "    assert h(5) == 6\n"
+            "def h(x):\n" "    return x + 1\n" "def t():\n" "    assert h(5) == 6\n"
         ),
         filename="t.py",
         memento_file="t.py",
