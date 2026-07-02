@@ -1456,6 +1456,10 @@ class _Emitter:
             )
             return args
 
+        if isinstance(node.func, ast.Subscript):
+            callee = self.expr(node.func)
+            self.effects.add_unresolved_call("(subscript)")
+            return ctor("python:call", callee, *arguments())
         if _callee_has_call_result(node.func):
             callee = self.expr(node.func)
             self.effects.add_unresolved_call("(chained)")
