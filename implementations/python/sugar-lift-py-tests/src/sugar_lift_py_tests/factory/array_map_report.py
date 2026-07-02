@@ -10,6 +10,7 @@ from typing import Any
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.context import ReduceContext
+from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, TermValue
 from sugar_lift_py_tests.ir import and_, eq, formula_to_value, make_var, num
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -72,13 +73,19 @@ def build_array_map_report(
             call_edges.extend(edges)
     if not contracts:
         return None
+    ir_payload: list[BodyUniverseDto | dict[str, Any]] = []
+    ir_payload.extend(contracts)
+    memento_payload: list[SourceMementoDto | dict[str, Any]] = []
+    memento_payload.extend(source_mementos)
+    walk_payload: list[FactoryWalkRowDto | dict[str, Any]] = []
+    walk_payload.extend(factory_walk)
     return SourceReportBuild(
         LiftReportPayloadDto(
-            ir=contracts,
-            source_mementos=source_mementos,
+            ir=ir_payload,
+            source_mementos=memento_payload,
             source_ledger=_source_ledger(len(source_audits)),
             source_audits=source_audits,
-            factory_walk=factory_walk,
+            factory_walk=walk_payload,
             call_edges=call_edges,
         )
     )
@@ -170,7 +177,11 @@ def _lift_fluent_array_map_assert(
     reduce_ctx = ReduceContext.derived(factory_ctx, owner="array_map_report")
     actual = complete_value(map_body.reduce(reduce_ctx), owner="array-map actual")
     expected = complete_value(expected_sugar.desugar(), owner="array-map expected")
-    if len(actual.items) != len(expected.items):
+    actual_items = _array_number_items(actual)
+    expected_items = _array_number_items(expected)
+    if actual_items is None or expected_items is None:
+        return None
+    if len(actual_items) != len(expected_items):
         return None
 
     function_memento = _function_source_memento(fn, memento_file, source_lines)
@@ -182,10 +193,10 @@ def _lift_fluent_array_map_assert(
         contract_name=f"{Path(memento_file).stem}::{fn.function_name()}::array-map-sugar",
     )
     formula = and_(
-        [eq(num(len(actual.items)), num(len(expected.items)))]
+        [eq(num(len(actual_items)), num(len(expected_items)))]
         + [
-            eq(num(left.value), num(right.value))
-            for left, right in zip(actual.items, expected.items)
+            eq(num(left), num(right))
+            for left, right in zip(actual_items, expected_items)
         ]
     )
     inv = json.loads(encode_jcs(formula_to_value(formula)))
@@ -265,7 +276,11 @@ def _lift_native_list_map_assert(
     expected = complete_value(
         expected_sugar.desugar(), owner="native list-map expected"
     )
-    if len(actual.items) != len(expected.items):
+    actual_items = _array_number_items(actual)
+    expected_items = _array_number_items(expected)
+    if actual_items is None or expected_items is None:
+        return None
+    if len(actual_items) != len(expected_items):
         return None
 
     callable_sugar = list_sugar_value.body.callable
@@ -302,10 +317,10 @@ def _lift_native_list_map_assert(
         )
     )
     formula = and_(
-        [eq(num(len(actual.items)), num(len(expected.items)))]
+        [eq(num(len(actual_items)), num(len(expected_items)))]
         + [
-            eq(num(left.value), num(right.value))
-            for left, right in zip(actual.items, expected.items)
+            eq(num(left), num(right))
+            for left, right in zip(actual_items, expected_items)
         ]
     )
     inv = json.loads(encode_jcs(formula_to_value(formula)))
@@ -474,6 +489,17 @@ def _callable_source_audit(
     }
 
 
+def _array_number_items(value: FloorValue) -> list[int] | None:
+    if not isinstance(value, ArrayLiteral):
+        return None
+    numbers: list[int] = []
+    for item in value.items:
+        if not isinstance(item, TermValue):
+            return None
+        numbers.append(int(item.value))
+    return numbers
+
+
 def _source_audit(
     stmt: SourceFragment,
     fn: SourceFragment,
@@ -612,7 +638,7 @@ def _body_source_locator(
         if str(sibling_src) not in sys.path:
             sys.path.insert(0, str(sibling_src))
         from sugar_lift_python_source.bind_lifter import _body_source_locator as locator
-    return locator(fn.node, memento_file.replace(os.sep, "/"), source_lines)
+    return locator(fn.function_node(), memento_file.replace(os.sep, "/"), source_lines)
 
 
 def _statement_source_locator(
@@ -628,7 +654,8 @@ def _statement_source_locator(
     function_param_names, stmt_to_template, blake3_512_of, template_cid_of_json = (
         _statement_source_api()
     )
-    ast_template = stmt_to_template(stmt.node, function_param_names(fn.node))
+    fn_node = fn.function_node()
+    ast_template = stmt_to_template(stmt.stmt_node(), function_param_names(fn_node))
     return {
         "file": memento_file.replace(os.sep, "/"),
         "source_cid": blake3_512_of(source_text.encode("utf-8")),
@@ -639,7 +666,7 @@ def _statement_source_locator(
             "end_col": stmt.end_col,
         },
         "template_cid": template_cid_of_json(ast_template),
-        "param_names": function_param_names(fn.node),
+        "param_names": function_param_names(fn_node),
     }
 
 

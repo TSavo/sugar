@@ -47,7 +47,7 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "idd": 0,
     "lift": 0,
     "kit_rpc": 0,
-    "factory": 52,
+    "factory": 0,
 }
 
 

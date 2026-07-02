@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import NoReturn, Optional
 
 from sugar_lift_py_tests.claim import SugarCandidate, SugarCatalog, SugarRole
 
@@ -192,7 +192,7 @@ def _dominates(
 
 def _raise_ambiguous_candidates(
     site: SourceFragment, role: SugarRole, candidates: list[SugarCandidate]
-) -> None:
+) -> NoReturn:
     names = [candidate.name for candidate in candidates]
     info = FactoryGapInfo(
         owner="python.factory",
