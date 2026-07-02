@@ -34,31 +34,11 @@
         "out_binding": "'out'",
         "post": "None",
         "pre": "None"
-      },
-      {
-        "bridge_source_symbol": "None",
-        "formals": "[]",
-        "inv": "{'args': [{'args': [], 'kind': 'ctor', 'name': 'call:h'}, {'kind': 'const', 'sort': {'kind': 'primitive', 'name': 'Int'}, 'value': 42}], 'kind': 'atomic', 'name': '='}",
-        "kind": "'contract'",
-        "name": "'h#euf#c:call:h()::assertion'",
-        "out_binding": "'out'",
-        "post": "None",
-        "pre": "None"
       }
     ]
   },
   "two_calls_same_callee": {
     "contracts": [
-      {
-        "bridge_source_symbol": "None",
-        "formals": "[]",
-        "inv": "{'args': [{'args': [{'kind': 'const', 'sort': {'kind': 'primitive', 'name': 'Int'}, 'value': 5}], 'kind': 'ctor', 'name': 'call:make_value_xc'}, {'kind': 'const', 'sort': {'kind': 'primitive', 'name': 'Int'}, 'value': 1}], 'kind': 'atomic', 'name': '='}",
-        "kind": "'contract'",
-        "name": "'make_value_xc#euf#c:call:make_value_xc(i:5)::assertion'",
-        "out_binding": "'out'",
-        "post": "None",
-        "pre": "None"
-      },
       {
         "bridge_source_symbol": "None",
         "formals": "[]",

@@ -20,6 +20,11 @@ def _assertion_facts(src: str) -> dict[str | None, list[object]]:
     return out
 
 
+def _assertion_contracts(src: str):
+    report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
+    return [contract for contract in report.payload.ir if contract.name.endswith("::assertion")]
+
+
 def _diagnostics(src: str) -> list[dict]:
     report = build_literal_call_report(source=src, filename="t.py", memento_file="t.py")
     return report.payload.diagnostics
@@ -47,7 +52,7 @@ def test_transitive_literal_floor_catches_top_level_lie() -> None:
 
 
 def test_truthful_transitive_literal_floor_stays_consistent() -> None:
-    facts = _assertion_facts(
+    source = (
         "def B():\n"
         "    return 0\n"
         "def A():\n"
@@ -55,10 +60,24 @@ def test_truthful_transitive_literal_floor_stays_consistent() -> None:
         "def t():\n"
         "    assert A() == 0\n"
     )
+    facts = _assertion_facts(source)
 
-    assert facts["call:A"].count(0) >= 2
+    assert facts["call:A"].count(0) == 1
     assert "call:B" in facts["call:A"]
     assert 1 not in facts["call:A"]
+    truthful_rows = [
+        contract
+        for contract in _assertion_contracts(source)
+        if contract.inv["args"][1].get("value") == 0
+    ]
+    assert len(truthful_rows) == 1
+    provenance = truthful_rows[0].proofir_provenance
+    assert provenance["kind"] == "proofir-provenance"
+    assert provenance["nodeClass"] == "EqualityFact"
+    assert {warrant["kind"] for warrant in provenance["warrants"]} == {
+        "Derived",
+        "Stated",
+    }
 
 
 def test_effectful_callee_records_refusal_and_emits_no_floor_fact() -> None:

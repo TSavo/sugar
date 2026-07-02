@@ -336,6 +336,12 @@ def _has_function_contract(doc: dict) -> bool:
 
 def _proofir_provenance_classes(doc: dict) -> set[str]:
     classes: set[str] = set()
+    for row in doc.get("ir", []):
+        provenance = row.get("proofirProvenance")
+        if isinstance(provenance, dict):
+            node_class = provenance.get("nodeClass")
+            if isinstance(node_class, str):
+                classes.add(node_class)
     for diagnostic in doc.get("diagnostics", []):
         if diagnostic.get("kind") != "proofir-formula-provenance":
             continue
@@ -427,6 +433,13 @@ def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() ->
 
     assert merged.semantic_cid() == stated.semantic_cid()
     assert len(merged.provenance().warrants) == 2
+    merged_wire = json.loads(merged.to_proof_ir())
+    assert "sourceWarrants" not in merged_wire
+    assert merged_wire["proofirProvenance"]["nodeClass"] == "EqualityFact"
+    assert {
+        warrant["kind"]
+        for warrant in merged_wire["proofirProvenance"]["warrants"]
+    } == {"Derived", "Stated"}
     assert merge_equality_facts(stated, stated) == stated
     assert merge_equality_facts(merged, stated) == merged
 

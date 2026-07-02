@@ -43,11 +43,9 @@ def test_numeric_body_constructs_the_python_value(body, arg, expected):
     invs = _assertion_invs(
         f"def g(x):\n    {body}\ndef t():\n    assert g({arg}) == {expected}\n"
     )
-    # the vendor fact and the constructed fact -- both the #euf# key, agreeing on the value.
-    assert len(invs) == 2
-    assert (
-        invs[0] == invs[1]
-    ), "construction must equal the vendor value when the vendor is right"
+    # The vendor fact and constructed fact have the same #euf# key and same
+    # formula, so they collapse into one EqualityFact with merged warrants.
+    assert len(invs) == 1
 
 
 def test_a_vendor_lie_is_caught_by_the_construction():

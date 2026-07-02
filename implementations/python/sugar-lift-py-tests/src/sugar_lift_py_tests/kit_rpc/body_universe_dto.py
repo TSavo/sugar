@@ -18,6 +18,7 @@ class BodyUniverseDto:
     source_warrants: list[SourceMementoDto | dict[str, Any]] = field(
         default_factory=list
     )
+    proofir_provenance: dict[str, Any] | None = None
     warranted_by: CallsiteFactDto | dict[str, Any] | None = None
     # The universal variables of `post` (the function's formal params). The
     # verifier's `collect_ambient_posts` only treats a post as an ambient
@@ -52,6 +53,8 @@ class BodyUniverseDto:
             out["sourceWarrants"] = [
                 to_rpc_value(warrant) for warrant in self.source_warrants
             ]
+        if self.proofir_provenance is not None:
+            out["proofirProvenance"] = to_rpc_value(self.proofir_provenance)
         if self.warranted_by is not None:
             out["warrantedBy"] = to_rpc_value(self.warranted_by)
         return out

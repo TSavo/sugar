@@ -33,6 +33,14 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.proofir import (
+    ConstructionSite,
+    Derived,
+    EqualityFact,
+    Provenance,
+    Stated,
+    merge_equality_facts,
+)
 
 from .dig_refusal import DigRefusal
 from .floor_contract_agreement import (
@@ -54,6 +62,7 @@ def _canonical_term_sig(term) -> str:
     from sugar_lift_py_tests.ir import (
         _ConstBool,
         _ConstInt,
+        _ConstReal,
         _ConstStr,
         _Ctor,
         _Var,
@@ -67,6 +76,8 @@ def _canonical_term_sig(term) -> str:
         return f"s:{term.value!r}"
     if isinstance(term, _ConstBool):
         return f"b:{term.value}"
+    if isinstance(term, _ConstReal):
+        return f"r:{term.value}"
     if isinstance(term, _Ctor):
         inner = ",".join(_canonical_term_sig(a) for a in term.args)
         return f"c:{term.name}({inner})"
@@ -96,7 +107,7 @@ def euf_callsite_name(callee_name: str, euf_term, *, suffix: str) -> str:
 # One lift, returned as five parallel lists: (contracts, source_mementos,
 # source_audits, factory_walk_rows, call_edges).
 LiftResult = tuple[
-    list[BodyUniverseDto],
+    list[Any],
     list[SourceMementoDto],
     list[dict[str, Any]],
     list[FactoryWalkRowDto],
@@ -107,6 +118,12 @@ LiftResult = tuple[
 @dataclass(frozen=True)
 class SourceReportBuild:
     payload: LiftReportPayloadDto
+
+
+@dataclass(frozen=True)
+class EqualityFactEmission:
+    fact: EqualityFact
+    source_warrants: tuple[SourceMementoDto, ...]
 
 
 def _is_free_var_definition(formula_value: dict[str, Any], bound: set[str]) -> bool:
@@ -132,7 +149,7 @@ def build_literal_call_report(
     root_frag = SourceFragment.from_source(source, filename)
     lines = source.splitlines(keepends=True)
     rel_file = memento_file or filename
-    contracts: list[BodyUniverseDto] = []
+    contracts: list[Any] = []
     source_mementos: list[SourceMementoDto] = []
     source_audits: list[dict[str, Any]] = []
     factory_walk: list[FactoryWalkRowDto] = []
@@ -183,16 +200,17 @@ def build_literal_call_report(
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
             lifted_contracts, mementos, audits, rows, edges = lifted
-            contracts.extend(lifted_contracts)
+            contracts = _merge_contract_rows([*contracts, *lifted_contracts])
             source_mementos.extend(mementos)
             source_audits.extend(audits)
             factory_walk.extend(rows)
             call_edges.extend(edges)
     if not contracts:
         return None
+    materialized_contracts = _materialize_contract_rows(contracts)
     enforce_floor_contract_agreement_gate(agreement_violations)
     ir_payload: list[BodyUniverseDto | dict[str, Any]] = []
-    ir_payload.extend(contracts)
+    ir_payload.extend(materialized_contracts)
     memento_payload: list[SourceMementoDto | dict[str, Any]] = []
     memento_payload.extend(source_mementos)
     walk_payload: list[FactoryWalkRowDto | dict[str, Any]] = []
@@ -208,7 +226,9 @@ def build_literal_call_report(
             diagnostics=[
                 *[refusal.to_json() for refusal in dig_refusals],
                 floor_contract_agreement_diagnostic(agreement_violations),
-                proofir_formula_provenance_diagnostic(contracts, factory_walk),
+                proofir_formula_provenance_diagnostic(
+                    materialized_contracts, factory_walk
+                ),
             ],
         )
     )
@@ -751,6 +771,7 @@ def _lift_callsite_assertion(
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
+        warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
     )
 
 
@@ -764,6 +785,7 @@ def _emit_euf_fact(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    warrant: Stated | Derived,
 ) -> LiftResult:
     """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
 
@@ -772,10 +794,8 @@ def _emit_euf_fact(
     Both land under the same #euf# key, so they conjoin -- agreement discharges, disagreement
     is UNSAT. One emitter means the key is spelled once: a vendor lie and a Python truth meet
     on the same name or they never meet at all."""
-    from sugar_lift_py_tests.sugar.call_sugar import AssertionFactStrategy
-
-    fact = AssertionFactStrategy(callee_name, tuple(arg_terms), value_term)
-    contract_name = fact.contract_name()
+    call_term = euf_call_term(callee_name, arg_terms)
+    contract_name = euf_callsite_name(callee_name, call_term, suffix="::assertion")
     memento = _statement_source_memento(
         stmt,
         fn,
@@ -784,20 +804,24 @@ def _emit_euf_fact(
         contract_name=contract_name,
         role="python.literal-call-sugar",
     )
-    inv = _formula_to_rpc(fact.fact_formula())
+    member = EqualityFact(
+        euf_key=contract_name,
+        call_term=call_term,
+        rhs_term=value_term,
+        provenance=Provenance(
+            node_class=EqualityFact.node_class,
+            construction_site=_proofir_construction_site(stmt, memento_file),
+            warrant=warrant,
+        ),
+    )
     _require_proofir_emission_node(
-        inv,
+        member,
         construction_site=(
             f"_emit_euf_fact:{memento.role or 'unknown-sugar'}:{contract_name}"
         ),
         replacement="EqualityFact",
     )
-    contract = BodyUniverseDto(
-        name=contract_name,
-        out_binding="out",
-        inv=inv,
-        source_warrants=[memento],
-    )
+    inv = _body_universe_from_declaration(member.to_declaration()).inv
     walk = _walk_row(
         "CallSugar",
         "Call",
@@ -817,7 +841,7 @@ def _emit_euf_fact(
         role="python.literal-call-sugar",
         ast_kind="Assert",
     )
-    return ([contract], [memento], [audit], [walk], [])
+    return ([EqualityFactEmission(member, (memento,))], [memento], [audit], [walk], [])
 
 
 def _require_proofir_emission_node(
@@ -929,6 +953,111 @@ def _merge_many(lifts: list[LiftResult]) -> LiftResult:
     merged = lifts[0]
     for extra in lifts[1:]:
         merged = _merge_lifts(merged, extra)
+    return merged
+
+def _merge_contract_rows(rows: list[Any]) -> list[Any]:
+    merged: list[Any] = []
+    for row in rows:
+        fact = _equality_fact_for_row(row)
+        if fact is None:
+            merged.append(row)
+            continue
+        for index, existing in enumerate(merged):
+            existing_fact = _equality_fact_for_row(existing)
+            if existing_fact is None:
+                continue
+            if existing_fact.euf_key != fact.euf_key:
+                continue
+            if existing_fact.semantic_cid() != fact.semantic_cid():
+                continue
+            merged_fact = merge_equality_facts(existing_fact, fact)
+            merged[index] = _merge_equality_fact_rows(existing, row, merged_fact)
+            break
+        else:
+            merged.append(row)
+    return merged
+
+
+def _materialize_contract_rows(rows: list[Any]) -> list[BodyUniverseDto]:
+    materialized: list[BodyUniverseDto] = []
+    for row in _merge_contract_rows(rows):
+        if isinstance(row, EqualityFactEmission):
+            declaration = row.fact.to_declaration()
+            contract = _body_universe_from_declaration(declaration)
+            materialized.append(
+                replace(contract, source_warrants=list(row.source_warrants))
+            )
+            continue
+        if isinstance(row, BodyUniverseDto):
+            materialized.append(row)
+            continue
+        node = _require_proofir_emission_node(
+            row,
+            construction_site=f"{type(row).__name__}.to_declaration",
+            replacement="ProofIRNode",
+        )
+        materialized.append(_body_universe_from_declaration(node.to_declaration()))
+    return materialized
+
+
+def _body_universe_from_declaration(declaration: dict[str, Any]) -> BodyUniverseDto:
+    return BodyUniverseDto(
+        name=declaration["name"],
+        out_binding=declaration.get("outBinding", "out"),
+        pre=declaration.get("pre"),
+        post=declaration.get("post"),
+        inv=declaration.get("inv"),
+        source_warrants=list(declaration.get("sourceWarrants", [])),
+        proofir_provenance=declaration.get("proofirProvenance"),
+        warranted_by=declaration.get("warrantedBy"),
+        formals=list(declaration.get("formals", [])),
+        kind=declaration.get("kind", "contract"),
+        bridge_source_symbol=declaration.get("bridgeSourceSymbol"),
+    )
+
+
+def _proofir_construction_site(
+    stmt: SourceFragment, memento_file: str
+) -> ConstructionSite:
+    return ConstructionSite(path=memento_file, line=stmt.line, column=stmt.col)
+
+
+def _equality_fact_for_row(row: object) -> EqualityFact | None:
+    if isinstance(row, EqualityFactEmission):
+        return row.fact
+    if isinstance(row, EqualityFact):
+        return row
+    return None
+
+
+def _merge_equality_fact_rows(
+    left: object, right: object, merged_fact: EqualityFact
+) -> EqualityFact | EqualityFactEmission:
+    warrants = _union_source_warrants(
+        [*_source_warrants_for_row(left), *_source_warrants_for_row(right)]
+    )
+    if warrants:
+        return EqualityFactEmission(merged_fact, tuple(warrants))
+    return merged_fact
+
+
+def _source_warrants_for_row(row: object) -> tuple[SourceMementoDto, ...]:
+    if isinstance(row, EqualityFactEmission):
+        return row.source_warrants
+    return ()
+
+
+def _union_source_warrants(
+    warrants: list[SourceMementoDto],
+) -> list[SourceMementoDto]:
+    merged: list[SourceMementoDto] = []
+    seen: set[str] = set()
+    for warrant in warrants:
+        key = json.dumps(warrant.to_rpc(), sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(warrant)
     return merged
 
 
@@ -1052,6 +1181,12 @@ def _construct_callsite_from_factory_term(
                 filename=filename,
                 memento_file=memento_file,
                 source_lines=source_lines,
+                warrant=Derived(
+                    floor_chain=(
+                        "literal_call_report.callsite_floor",
+                        call_value.target_name,
+                    )
+                ),
             )
         )
         return True
@@ -1587,7 +1722,7 @@ def _merge_lifts(universe: LiftResult | None, assertion: LiftResult) -> LiftResu
     if universe is None:
         return assertion
     return (
-        [*universe[0], *assertion[0]],
+        _merge_contract_rows([*universe[0], *assertion[0]]),
         [*universe[1], *assertion[1]],
         [*universe[2], *assertion[2]],
         [*universe[3], *assertion[3]],

@@ -14,6 +14,8 @@ def proofir_formula_provenance_diagnostic(
         for field_name in ("pre", "post", "inv"):
             if getattr(contract, field_name) is None:
                 continue
+            if _contract_field_has_proofir_provenance(contract):
+                continue
             missing.append(
                 {
                     "nodeClass": _node_class_for_contract_field(contract, field_name),
@@ -47,3 +49,17 @@ def _node_class_for_contract_field(contract: BodyUniverseDto, field_name: str) -
     if field_name == "inv":
         return "EqualityFact"
     return "FunctionContract"
+
+
+def _contract_field_has_proofir_provenance(contract: BodyUniverseDto) -> bool:
+    if contract.proofir_provenance is not None:
+        return True
+    for warrant in contract.source_warrants:
+        if isinstance(warrant, dict) and warrant.get("kind") == "proofir-provenance":
+            return True
+        to_rpc = getattr(warrant, "to_rpc", None)
+        if callable(to_rpc):
+            rpc = to_rpc()
+            if isinstance(rpc, dict) and rpc.get("kind") == "proofir-provenance":
+                return True
+    return False

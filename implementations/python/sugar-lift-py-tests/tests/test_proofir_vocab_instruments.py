@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[4]
 def test_proofir_vocab_instruments_pin_surviving_counters() -> None:
     report = collect_proofir_vocabulary_frontier(ROOT)
 
-    assert report.formula_fragments_without_provenance == 15
+    assert report.formula_fragments_without_provenance == 13
     assert report.proofir_classes_without_verdict_witnesses == 4
 
 
@@ -31,7 +31,7 @@ def test_proofir_vocab_cli_exits_red_with_pinned_vectors(capsys) -> None:
     stdout = capsys.readouterr().out
     assert "ProofIR semantic vocabulary frontier" in stdout
     assert "R(untyped-emission-sites)" not in stdout
-    assert "R(formula-fragments-without-provenance): 15" in stdout
+    assert "R(formula-fragments-without-provenance): 13" in stdout
     assert "R(proofir-classes-without-verdict-witnesses): 4" in stdout
 
 
@@ -59,7 +59,15 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
             BodyUniverseDto(
                 name="h#euf#c:call:h(i:5)::assertion",
                 inv={"kind": "atomic", "name": "=", "args": []},
-            )
+                proofir_provenance={
+                    "kind": "proofir-provenance",
+                    "nodeClass": "EqualityFact",
+                },
+            ),
+            BodyUniverseDto(
+                name="t::f::callable",
+                post={"kind": "atomic", "name": "=", "args": []},
+            ),
         ],
         [
             FactoryWalkRowDto(
@@ -77,6 +85,10 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
     )
 
     assert diagnostic["r"]["formula_fragments_without_provenance"] > 0
+    assert not any(
+        row["constructionSite"] == "h#euf#c:call:h(i:5)::assertion.inv"
+        for row in diagnostic["missing"]
+    )
     assert diagnostic["r"]["total"] == len(diagnostic["missing"])
     assert all("nodeClass" in row for row in diagnostic["missing"])
     assert all("constructionSite" in row for row in diagnostic["missing"])

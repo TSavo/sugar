@@ -147,6 +147,12 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         function_contract["sourceWarrants"][0]["sourceFunctionName"] == "encodeBase64"
     )
     assert function_contract["sourceWarrants"][0]["span"]["start_line"] == 1
+    assertion_warrant = assertion_contract["proofirProvenance"]
+    assert assertion_warrant["kind"] == "proofir-provenance"
+    assert assertion_warrant["nodeClass"] == "EqualityFact"
+    assert [warrant["kind"] for warrant in assertion_warrant["warrants"]] == [
+        "Stated"
+    ]
     assert assertion_contract["sourceWarrants"][0]["sourceFunctionName"] == (
         "test_encode_base64"
     )
@@ -154,6 +160,14 @@ def test_literal_encode_base64_assertion_warrants_function_dig(tmp_path: Path) -
         assertion_contract["sourceWarrants"][0]["role"] == "python.literal-call-sugar"
     )
     assert assertion_contract["sourceWarrants"][0]["source_kind"] == "python.ast-stmt"
+    assertion_memento = next(
+        row
+        for row in good_doc["sourceMementos"]
+        if row["contractName"] == assertion_contract["name"]
+    )
+    assert assertion_memento["sourceFunctionName"] == "test_encode_base64"
+    assert assertion_memento["role"] == "python.literal-call-sugar"
+    assert assertion_memento["source_kind"] == "python.ast-stmt"
     # No warrantedBy / callsite-fact anymore: the euf inv IS the fact, and the universe
     # composes via ambient-post specialization rather than a bespoke warrant.
     assert "warrantedBy" not in assertion_contract
