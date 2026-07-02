@@ -104,7 +104,7 @@ This is the load-bearing S2 design, and it must be gotten right: **the vocabular
 4. **Semantics lives once, on the vocabulary.** A node class owns its denotation, invariants, and witnesses. No slice re-implements a denotation in a sugar or a consumer. The `floor_contract_agreement` raw-dict interpreter is DELETED, not relocated.
 5. **Stated-vs-derived is sacred.** Dedup is by `(key, IDENTICAL formula, distinct provenance)` ONLY, never by key alone. Dropping the differing stated fact in the lying case is UNSOUND and forbidden.
 6. **Byte-compat on goldens.** Each migration slice is byte-behavior-preserving on the pinned assertion/golden fixtures, EXCEPT the deliberate golden changes the #3220 collapse requires — those are documented and re-pinned in the same slice (campaign law: a deliberate golden change is stated on the record and re-pinned, never silent).
-7. **Climb the ladder.** The return-type frontier belongs to the compiler (Rust) / a pyright gate + a runtime `FactoryGap` seam (Python) — the top rung. The auditor survives only for what types cannot yet see: provenance completeness and the single-seat invariant. Prefer the fix that makes the untyped shape unrepresentable over the fix that detects it.
+7. **Climb the ladder.** The return-type frontier belongs to the compiler (Rust) / a runtime `FactoryGap` seam that recruits the test suite as the enumerator (Python) — the top rung. The auditor survives only for what types cannot yet see: provenance completeness and the single-seat invariant. Prefer the fix that makes the untyped shape unrepresentable over the fix that detects it.
 
 ## Instruments
 
@@ -120,9 +120,9 @@ For every emitted formula fragment in a lift, check it carries its `{node-class,
 
 For every ProofIR node class, run its `{truthful → SAT, lying-twin → UNSAT}` pair through the REAL solver, in the vocabulary's own harness (NOT in sugar tests — sugars never touch the solver). Report `R(proofir-classes-without-verdict-witnesses)`. Red-first: a class registered without a passing witness pair is red. This is the instrument that pins "semantics lives on the vocabulary": if a class's denotation is wrong, its lying twin fails to go UNSAT.
 
-### Instrument D — return-type frontier (the compiler rung; armed in S3)
+### Instrument D — return-type frontier (compiler rung in Rust; panic-recruits-test rung in Python; armed in S3)
 
-The abstract emission base's construction method returns ONLY the typed vocabulary (`ProofIRNode`). Rust: rustc's error list is the frontier. Python: a pyright/mypy CI gate pinned to the campaign files (`factory/`, `floor/`, `operations/`, the emission seat) PLUS a runtime `isinstance` check at the single reduce→emit seam that raises `FactoryGap` on a raw `dict`/`str` return (the panic rung backing the type rung, because Python's static typing alone cannot gate it). The offender list IS `R(untyped-emission-sites)` — free, undriftable, unsanctionable.
+The abstract emission base's construction method returns ONLY the typed vocabulary (`ProofIRNode`). Rust: rustc's error list is the frontier. Python: a runtime `isinstance` check at the single reduce→emit seam that raises `FactoryGap` on a raw `dict`/`str` return is SUFFICIENT — and it recruits the test suite as the enumerator. The coverage registry guarantees every sugar HAS tests, so the moment the seam raises, every unmigrated sugar's existing unit tests break; the failing-test list IS Python's compiler-error list — complete, self-locating (each failure names the sugar), unsanctionable, no offender can hide. That is the panic rung recruiting the test rung, and it is the load-bearing mechanism. A pyright/mypy annotation on the base is OPTIONAL polish for editor-time feedback, NOT a required CI gate — do not over-engineer the static-typing side. The offender list IS `R(untyped-emission-sites)` — free, undriftable, unsanctionable.
 
 ## Ratchet vector
 
@@ -168,7 +168,7 @@ Exit: three node classes own their denotation + invariants + solver-anchored wit
 
 ### Slice 3 — Return-type flip (the compiler/gate frontier)
 
-Flip the abstract emission base's construction method to return ONLY `ProofIRNode`. Land RED. Python: base return annotation + pyright/mypy gate pinned to the campaign files, PLUS a runtime `isinstance` check at the single reduce→emit seam raising `FactoryGap` on a raw `dict`/`str`. Rust: literal return-type change (stageable per-crate). The offender list IS `R(untyped-emission-sites)`.
+Flip the abstract emission base's construction method to return ONLY `ProofIRNode`. Land RED. Python: a runtime `isinstance` check at the single reduce→emit seam raising `FactoryGap` on a raw `dict`/`str` — this is SUFFICIENT, because it recruits the test suite as the enumerator (every sugar has tests via the coverage registry, so every unmigrated sugar's tests break the moment the seam raises; the failing-test list IS the offender list, self-locating, unsanctionable). A base return annotation is optional editor-time polish, NOT a required CI gate. Rust: literal return-type change (stageable per-crate). The offender list IS `R(untyped-emission-sites)`.
 
 - Red-first: the flip lands RED — the gate/compiler enumerates every site still returning a raw `dict`/`str`.
 - Bad-twin: a site returning a raw dict must fail the gate / raise `FactoryGap`; a site returning a `ProofIRNode` passes.
