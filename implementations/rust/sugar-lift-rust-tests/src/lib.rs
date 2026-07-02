@@ -9,6 +9,7 @@
 
 pub mod cargo_cfg;
 pub mod source_oracle;
+pub use sugar_floor_algebra as floor_algebra;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};

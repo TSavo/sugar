@@ -11,6 +11,7 @@ build = "build.rs"
 doctest = false
 
 [dependencies]
+sugar-floor-algebra = { path = "../sugar-floor-algebra" }
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
 # RegexSugar: the SINGLE regex→RegLan lowering authority (`regex_regln`). The
 # lifter calls `regex_to_regln` ONLY as a pure regularity GATE at lift time — to

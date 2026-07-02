@@ -6,6 +6,7 @@ members = [
     "sugar-plugin-loader",
     "sugar-proof-envelope",
     "sugar-claim-envelope",
+    "sugar-floor-algebra",
     "sugar-ir-symbolic",
     "sugar-ir-types",
     "sugar-ir-compiler",

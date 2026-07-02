@@ -270,6 +270,7 @@ fn collect_report(root: &Path) -> Report {
     let mut unexpected = Vec::new();
     for rel in [
         "implementations/rust/sugar-walk/src/lift.rs",
+        "implementations/rust/sugar-walk/src/term_boundary.rs",
         "implementations/rust/sugar-walk/src/walk.rs",
         "implementations/rust/sugar-walk/src/llbc_lift.rs",
     ] {
