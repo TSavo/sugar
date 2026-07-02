@@ -4988,13 +4988,7 @@ fn literal_empty_callsite_twin_warrants() {
             "refused",
             Some("side-effecting closure body"),
         );
-        assert_factory_audit_status(
-            &root,
-            &response,
-            "it . next_back ()",
-            "refused",
-            Some("unknown iterator consumption"),
-        );
+        assert_factory_audit_status(&root, &response, "it . next_back ()", "warranted", None);
         assert_factory_audit_status(
             &root,
             &response,
