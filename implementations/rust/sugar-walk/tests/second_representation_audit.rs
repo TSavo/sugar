@@ -66,13 +66,6 @@ const EXPECTED_STRUCTURAL_IRTERM_SITES: &[ExpectedStructuralSite] = &[
         owner_slice: "S3: ControlFlowGuardOperation/branch-guard",
         replacement: "let the algebra guarded-return floor own cf_guarded construction",
     },
-    ExpectedStructuralSite {
-        file: "implementations/rust/sugar-walk/src/walk.rs",
-        symbol: "collect_pat_bindings",
-        kind: "irterm_pattern_projection",
-        owner_slice: "S7: pattern catalog claims",
-        replacement: "route destructuring projections through catalog claims via the boundary",
-    },
 ];
 
 const ALLOWED_STRUCTURAL_PATTERN_FNS: &[(&str, &str)] = &[

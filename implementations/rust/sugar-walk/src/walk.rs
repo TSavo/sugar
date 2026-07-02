@@ -25,6 +25,10 @@ use sugar_ir_types::{IrFormula, IrTerm};
 use syn::{Expr, ExprCall, ExprIf, ExprPath, ItemFn, Local, Pat, Stmt};
 
 use crate::lift::lift_predicate;
+use crate::term_boundary::{
+    pattern_field_projection, pattern_index_projection, pattern_tuple_projection,
+    pattern_tuple_struct_projection,
+};
 use crate::wp::{substitute_in_formula, Wp};
 
 /// One step in the walk. Records the WP that holds at this AST location
@@ -558,8 +562,8 @@ fn walk_expr_for_callsites(
 /// (bound-name, bound-term) pairs. Single bindings (`let x = e`) yield
 /// one pair; destructuring bindings (`let (a, b) = pair`,
 /// `let Point { x, y } = p`, `let [a, b] = arr`) yield one pair per
-/// bound name, with each name's term being a structural projection of
-/// the RHS.
+/// bound name, with each name's term being a catalog projection of the
+/// RHS routed through the IrTerm boundary.
 fn let_binding(stmt: &Stmt) -> Option<Vec<(String, IrTerm)>> {
     match stmt {
         Stmt::Local(Local {
@@ -599,66 +603,33 @@ fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Opt
         Pat::Reference(r) => collect_into(&r.pat, term, out),
         Pat::Paren(p) => collect_into(&p.pat, term, out),
         Pat::Tuple(t) => {
-            // (a, b, c) destructures into projections of the RHS tuple.
             for (i, sub) in t.elems.iter().enumerate() {
-                let projected = IrTerm::Ctor {
-                    name: "tuple_proj".to_string(),
-                    args: vec![
-                        term.clone(),
-                        IrTerm::Var {
-                            name: format!(".{}", i),
-                        },
-                    ],
-                };
+                let projected = pattern_tuple_projection(&term, i);
                 collect_into(sub, projected, out)?;
             }
             Some(())
         }
         Pat::TupleStruct(ts) => {
-            // Variant(a, b, c): same shape as tuple but with the
-            // variant name embedded.
             for (i, sub) in ts.elems.iter().enumerate() {
-                let projected = IrTerm::Ctor {
-                    name: "tuple_struct_proj".to_string(),
-                    args: vec![
-                        term.clone(),
-                        IrTerm::Var {
-                            name: format!(".{}", i),
-                        },
-                    ],
-                };
+                let projected = pattern_tuple_struct_projection(&term, i);
                 collect_into(sub, projected, out)?;
             }
             Some(())
         }
         Pat::Struct(s) => {
-            // Point { x, y }: each field binding gets a field-access
-            // projection.
             for field in &s.fields {
                 let field_name = match &field.member {
                     syn::Member::Named(id) => id.to_string(),
                     syn::Member::Unnamed(idx) => idx.index.to_string(),
                 };
-                let projected = IrTerm::Ctor {
-                    name: "field".to_string(),
-                    args: vec![
-                        term.clone(),
-                        IrTerm::Var {
-                            name: format!(".{}", field_name),
-                        },
-                    ],
-                };
+                let projected = pattern_field_projection(&term, &field_name);
                 collect_into(&field.pat, projected, out)?;
             }
             Some(())
         }
         Pat::Slice(s) => {
-            // [a, b, c]: indexed projections.
             for (i, sub) in s.elems.iter().enumerate() {
-                let projected = IrTerm::Ctor {
-                    name: "index".to_string(),
-                    args: vec![term.clone(), crate::wp::const_int(i as i64)],
-                };
+                let projected = pattern_index_projection(&term, i);
                 collect_into(sub, projected, out)?;
             }
             Some(())
@@ -670,8 +641,39 @@ fn collect_into(pat: &Pat, term: IrTerm, out: &mut Vec<(String, IrTerm)>) -> Opt
         | Pat::Path(_)
         | Pat::Range(_)
         | Pat::Rest(_)
-        | Pat::Verbatim(_) => None,
+        | Pat::Verbatim(_) => refuse_unsupported_pattern(pat),
         _ => panic!("sugar-walk WP pattern collector refused unknown syn::Pat variant"),
+    }
+}
+
+fn refuse_unsupported_pattern(pat: &Pat) -> ! {
+    panic!(
+        "sugar-walk WP pattern collector refused unsupported syn::Pat shape {}; \
+         route it through a catalog projection before accepting this binding",
+        pat_kind(pat)
+    )
+}
+
+fn pat_kind(pat: &Pat) -> &'static str {
+    match pat {
+        Pat::Const(_) => "Const",
+        Pat::Ident(_) => "Ident",
+        Pat::Lit(_) => "Lit",
+        Pat::Macro(_) => "Macro",
+        Pat::Or(_) => "Or",
+        Pat::Paren(_) => "Paren",
+        Pat::Path(_) => "Path",
+        Pat::Range(_) => "Range",
+        Pat::Reference(_) => "Reference",
+        Pat::Rest(_) => "Rest",
+        Pat::Slice(_) => "Slice",
+        Pat::Struct(_) => "Struct",
+        Pat::Tuple(_) => "Tuple",
+        Pat::TupleStruct(_) => "TupleStruct",
+        Pat::Type(_) => "Type",
+        Pat::Verbatim(_) => "Verbatim",
+        Pat::Wild(_) => "Wild",
+        _ => "Unknown",
     }
 }
 
@@ -714,6 +716,97 @@ mod tests {
                 _ => None,
             })
             .expect("function present")
+    }
+
+    fn term_json(term: &IrTerm) -> String {
+        serde_json::to_string(term).expect("term serializes")
+    }
+
+    fn panic_text(result: std::thread::Result<Option<Vec<(String, IrTerm)>>>) -> String {
+        match result {
+            Ok(value) => panic!("expected pattern collector to refuse, got {value:?}"),
+            Err(payload) => {
+                if let Some(text) = payload.downcast_ref::<&str>() {
+                    (*text).to_string()
+                } else if let Some(text) = payload.downcast_ref::<String>() {
+                    text.clone()
+                } else {
+                    "<non-string panic>".to_string()
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pattern_projection_boundary_helper_preserves_wire_shape() {
+        let rhs = IrTerm::Var {
+            name: "root".into(),
+        };
+
+        assert_eq!(
+            crate::term_boundary::pattern_tuple_projection(&rhs, 1),
+            IrTerm::Ctor {
+                name: "tuple_proj".into(),
+                args: vec![rhs.clone(), IrTerm::Var { name: ".1".into() }],
+            }
+        );
+        assert_eq!(
+            crate::term_boundary::pattern_tuple_struct_projection(&rhs, 2),
+            IrTerm::Ctor {
+                name: "tuple_struct_proj".into(),
+                args: vec![rhs.clone(), IrTerm::Var { name: ".2".into() }],
+            }
+        );
+        assert_eq!(
+            crate::term_boundary::pattern_field_projection(&rhs, "x"),
+            IrTerm::Ctor {
+                name: "field".into(),
+                args: vec![rhs.clone(), IrTerm::Var { name: ".x".into() }],
+            }
+        );
+        assert_eq!(
+            crate::term_boundary::pattern_index_projection(&rhs, 3),
+            IrTerm::Ctor {
+                name: "index".into(),
+                args: vec![rhs, const_int(3)],
+            }
+        );
+    }
+
+    #[test]
+    fn nested_destructure_projects_byte_identically() {
+        let pat: Pat = syn::parse_quote!((Point { x, y }, [first, _, third]));
+        let rhs = IrTerm::Var {
+            name: "payload".into(),
+        };
+        let bindings = collect_pat_bindings(&pat, rhs).expect("nested pattern binds names");
+
+        let keys: Vec<_> = bindings.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(keys, ["x", "y", "first", "third"]);
+
+        let x_term = term_json(&bindings[0].1);
+        assert!(
+            x_term.contains("\"tuple_proj\"") && x_term.contains("\"field\""),
+            "struct inside tuple must be field(tuple_proj(payload, .0), .x): {x_term}"
+        );
+        let third_term = term_json(&bindings[3].1);
+        assert!(
+            third_term.contains("\"tuple_proj\"") && third_term.contains("\"index\""),
+            "slice inside tuple must be index(tuple_proj(payload, .1), 2): {third_term}"
+        );
+    }
+
+    #[test]
+    fn unsupported_pattern_shape_refuses_loudly() {
+        let pat: Pat = syn::parse_quote!([head, ..]);
+        let rhs = IrTerm::Var { name: "arr".into() };
+
+        let reason = panic_text(std::panic::catch_unwind(|| collect_pat_bindings(&pat, rhs)));
+
+        assert!(
+            reason.contains("refused unsupported syn::Pat shape Rest"),
+            "unsupported pattern must be a loud refusal, got: {reason}"
+        );
     }
 
     #[test]
