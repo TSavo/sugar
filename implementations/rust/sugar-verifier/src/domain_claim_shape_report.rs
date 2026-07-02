@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// DomainClaim verifier entry point.
+// DomainClaim shape-report entry point.
 //
-// Implements the `k(I) = t` surface of the verifier: accepts a slice of
+// Implements the `k(I) = t` shape-report surface: accepts a slice of
 // `sugar_ir_types::DomainClaim` wire objects, validates the trichotomy
-// invariants per spec §1.2, and aggregates results into a `ClaimReport`.
+// invariants per spec §1.2, and aggregates results into a `DomainClaimShapeReport`.
 //
 // Source of truth:
 //   protocol/specs/2026-05-13-domain-claim-normalization.md §1.2, §4, §5
 //
 // This module does NOT run SMT or touch the MementoPool. The verdict is
-// already on the wire-form claim; verification here is shape-validation +
+// already on the wire-form claim; work here is shape-validation +
 // aggregation only. Signature verification and CID recomputation require
 // the JCS encoder in `sugar-claim-envelope`; both are out of scope for
 // this PR and tracked as follow-ups per spec §3.1.
@@ -194,12 +194,12 @@ impl std::error::Error for TrichotomyError {}
 // Per-claim outcome
 // ---------------------------------------------------------------------------
 
-/// The outcome of verifying a single `DomainClaim` (shape-only, no SMT).
+/// The stated wire outcome of a single `DomainClaim` (shape-only, no SMT).
 ///
 /// Matches the trichotomy buckets from spec §1 plus an `Invalid` bucket for
 /// claims that fail the §1.2 consistency invariants.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaimOutcome {
+pub enum StatedClaimOutcome {
     /// `k(I) = t` holds exactly. `discharge_receipt_cid` is confirmed present.
     Exact {
         kit_cid: String,
@@ -230,12 +230,14 @@ pub enum ClaimOutcome {
 // Aggregated report
 // ---------------------------------------------------------------------------
 
-/// Aggregated result of verifying a collection of `DomainClaim`s.
+/// SHAPE VALIDATION ONLY. Verdicts are read from the wire and are TESTIMONY. Discharge requires the runner tier path / receipt CID recomputation.
 ///
-/// Source of truth: spec §4 (verifier consumption preview) and the task
-/// spec for PR-C.
+/// See `runner.rs` / `crate::runner` for the discharge tiers that recompute
+/// proof content, compare CIDs, and consume trusted receipts. This report only
+/// validates trichotomy shape and aggregates the stated verdict fields.
+#[must_use]
 #[derive(Debug, Default, Clone)]
-pub struct ClaimReport {
+pub struct DomainClaimShapeReport {
     /// Claims that held exactly: `loss_record` empty, `discharge_receipt_cid` present.
     /// Each entry is `(kit_cid, input_cid, truth_cid, discharge_receipt_cid)`.
     pub exact: Vec<(String, String, String, String)>,
@@ -252,10 +254,10 @@ pub struct ClaimReport {
     pub invalid: Vec<TrichotomyError>,
 }
 
-impl ClaimReport {
-    /// True iff all claims are either `Exact` or `LoudlyBoundedLossy` and none
-    /// are `Invalid` or `Refuse`.
-    pub fn all_discharged(&self) -> bool {
+impl DomainClaimShapeReport {
+    /// True iff all wire verdicts state `Exact` or `LoudlyBoundedLossy` and
+    /// none are shape-invalid or `Refuse`.
+    pub fn all_claims_stated_discharged(&self) -> bool {
         self.gaps.is_empty() && self.invalid.is_empty()
     }
 
@@ -355,18 +357,18 @@ pub fn validate_trichotomy(claim: &DomainClaim) -> Result<(), TrichotomyError> {
 }
 
 // ---------------------------------------------------------------------------
-// Per-claim verifier
+// Per-claim shape report
 // ---------------------------------------------------------------------------
 
-/// Verify a single `DomainClaim` wire object.
+/// Shape-report a single `DomainClaim` wire object.
 ///
-/// Validates trichotomy invariants (spec §1.2) and maps to a `ClaimOutcome`.
+/// Validates trichotomy invariants (spec §1.2) and maps to a `StatedClaimOutcome`.
 /// Shape-only: no SMT, no MementoPool, no signature check.
-pub fn verify_claim(claim: &DomainClaim) -> ClaimOutcome {
+pub fn shape_report_claim(claim: &DomainClaim) -> StatedClaimOutcome {
     match validate_trichotomy(claim) {
-        Err(e) => ClaimOutcome::Invalid(e),
+        Err(e) => StatedClaimOutcome::Invalid(e),
         Ok(()) => match &claim.verdict.kind {
-            VerdictKind::Exact => ClaimOutcome::Exact {
+            VerdictKind::Exact => StatedClaimOutcome::Exact {
                 kit_cid: claim.kit_cid.clone(),
                 input_cid: claim.input_cid.clone(),
                 truth_cid: claim.truth_cid.clone(),
@@ -376,7 +378,7 @@ pub fn verify_claim(claim: &DomainClaim) -> ClaimOutcome {
                     .clone()
                     .expect("invariant: Exact has discharge_receipt_cid"),
             },
-            VerdictKind::LoudlyBoundedLossy => ClaimOutcome::LoudlyBoundedLossy {
+            VerdictKind::LoudlyBoundedLossy => StatedClaimOutcome::LoudlyBoundedLossy {
                 kit_cid: claim.kit_cid.clone(),
                 input_cid: claim.input_cid.clone(),
                 truth_cid: claim.truth_cid.clone(),
@@ -387,7 +389,7 @@ pub fn verify_claim(claim: &DomainClaim) -> ClaimOutcome {
                     .expect("invariant: LoudlyBoundedLossy has discharge_receipt_cid"),
                 loss_record: claim.verdict.loss_record.clone(),
             },
-            VerdictKind::Refuse => ClaimOutcome::Refuse {
+            VerdictKind::Refuse => StatedClaimOutcome::Refuse {
                 kit_cid: claim.kit_cid.clone(),
                 input_cid: claim.input_cid.clone(),
                 truth_cid: claim.truth_cid.clone(),
@@ -402,21 +404,21 @@ pub fn verify_claim(claim: &DomainClaim) -> ClaimOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Batch verifier
+// Batch shape report
 // ---------------------------------------------------------------------------
 
-/// Verify a collection of `DomainClaim` wire objects.
+/// Shape-report a collection of `DomainClaim` wire objects.
 ///
 /// Each claim is validated independently. Results are aggregated into a
-/// `ClaimReport` with four buckets: `exact`, `lossy`, `gaps`, `invalid`.
+/// `DomainClaimShapeReport` with four buckets: `exact`, `lossy`, `gaps`, `invalid`.
 ///
-/// This is the primary entry point for the `k(I) = t` verifier surface.
+/// This is the primary entry point for the `k(I) = t` shape-report surface.
 /// No SMT, no MementoPool, no signature check.
-pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
-    let mut report = ClaimReport::default();
+pub fn shape_report_claims(claims: &[DomainClaim]) -> DomainClaimShapeReport {
+    let mut report = DomainClaimShapeReport::default();
     for claim in claims {
-        match verify_claim(claim) {
-            ClaimOutcome::Exact {
+        match shape_report_claim(claim) {
+            StatedClaimOutcome::Exact {
                 kit_cid,
                 input_cid,
                 truth_cid,
@@ -426,7 +428,7 @@ pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
                     .exact
                     .push((kit_cid, input_cid, truth_cid, discharge_receipt_cid));
             }
-            ClaimOutcome::LoudlyBoundedLossy {
+            StatedClaimOutcome::LoudlyBoundedLossy {
                 kit_cid,
                 input_cid,
                 truth_cid,
@@ -441,7 +443,7 @@ pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
                     loss_record,
                 ));
             }
-            ClaimOutcome::Refuse {
+            StatedClaimOutcome::Refuse {
                 kit_cid,
                 input_cid,
                 truth_cid,
@@ -451,7 +453,7 @@ pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
                     .gaps
                     .push((kit_cid, input_cid, truth_cid, refusal_reason));
             }
-            ClaimOutcome::Invalid(e) => {
+            StatedClaimOutcome::Invalid(e) => {
                 report.invalid.push(e);
             }
         }
@@ -465,11 +467,11 @@ pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
 //
 // These shims allow existing callers that build typed mementos to route
 // through the unified `DomainClaim` path automatically. Each is marked
-// `#[deprecated]` with a note pointing at the `verify_claims` entry point.
+// `#[deprecated]` with a note pointing at the `shape_report_claims` entry point.
 //
 // The shim is a thin wrapper: convert the source memento to a `DomainClaim`
-// via `TryFrom`, then delegate to `verify_claim`. A `TryFrom` error (e.g.
-// `UnboundContract` for a bare FCM) becomes `ClaimOutcome::Invalid` with
+// via `TryFrom`, then delegate to `shape_report_claim`. A `TryFrom` error (e.g.
+// `UnboundContract` for a bare FCM) becomes `StatedClaimOutcome::Invalid` with
 // a synthetic `TrichotomyError`-shaped message surfaced as
 // `Invalid(TrichotomyError::RefuseMissingReason)` -- but only if the
 // conversion error is itself a substrate invariant violation.
@@ -485,6 +487,7 @@ pub fn verify_claims(claims: &[DomainClaim]) -> ClaimReport {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
 
     use sugar_ir_types::{
         DomainClaim, DomainClaimProvenance, IrFormula, LossRecord, VerdictBody, VerdictKind,
@@ -559,27 +562,135 @@ mod tests {
         )
     }
 
+    fn verifier_crate_root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn rust_workspace_root() -> PathBuf {
+        verifier_crate_root()
+            .parent()
+            .expect("sugar-verifier has a rust workspace parent")
+            .to_path_buf()
+    }
+
+    fn read_crate_source(relative_path: &str) -> String {
+        std::fs::read_to_string(verifier_crate_root().join(relative_path))
+            .unwrap_or_else(|err| panic!("read {relative_path}: {err}"))
+    }
+
+    // -----------------------------------------------------------------------
+    // Soundness tripwires: this module reports shape/testimony only.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn this_module_never_discharges() {
+        let module_source = read_crate_source("src/domain_claim_shape_report.rs");
+        let production_source = module_source
+            .split("// ---------------------------------------------------------------------------\n// Unit tests")
+            .next()
+            .expect("module has a production section before unit tests");
+        let solver_invocation_patterns = [
+            "run_plan(",
+            "run_plan_with_compilers(",
+            "SubprocessSolver::",
+            "SolverPlan::",
+            "build_default_z3(",
+            "solve_obligation::run(",
+            "smt_emitter::emit(",
+            "Command::new(\"z3\")",
+        ];
+        for pattern in solver_invocation_patterns {
+            assert!(
+                !production_source.contains(pattern),
+                "shape-report module must not invoke solvers; found pattern {pattern:?}"
+            );
+        }
+
+        let report_type = std::any::type_name::<DomainClaimShapeReport>();
+        assert!(
+            report_type.contains("Stated") || report_type.contains("Shape"),
+            "report type name must carry the stated/shape caveat, got {report_type}"
+        );
+
+        let hazardous_method = format!("fn {}{}", "all_", "discharged");
+        assert!(
+            !module_source.contains(&hazardous_method),
+            "shape-report module must not expose a discharge-sounding method name"
+        );
+    }
+
+    #[test]
+    fn stated_verdict_is_not_trusted_by_any_caller() {
+        let workspace_root = rust_workspace_root();
+        let module_needle = "domain_claim_shape_report";
+        let allowed_relative_paths = [
+            Path::new("sugar-verifier/src/domain_claim_shape_report.rs"),
+            Path::new("sugar-verifier/src/lib.rs"),
+        ];
+        let mut hits = Vec::new();
+
+        for entry in walkdir::WalkDir::new(&workspace_root) {
+            let entry = entry.expect("walk rust workspace");
+            if !entry.file_type().is_file()
+                || entry.path().extension().and_then(|s| s.to_str()) != Some("rs")
+            {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(&workspace_root)
+                .expect("source under workspace root")
+                .to_path_buf();
+            if relative.starts_with("target") {
+                continue;
+            }
+            let source = std::fs::read_to_string(entry.path())
+                .unwrap_or_else(|err| panic!("read {}: {err}", entry.path().display()));
+            for (line_index, line) in source.lines().enumerate() {
+                if line.contains(module_needle) {
+                    hits.push((relative.clone(), line_index + 1, line.trim().to_string()));
+                }
+            }
+        }
+
+        assert!(
+            hits.iter().any(
+                |(path, _, line)| path == Path::new("sugar-verifier/src/lib.rs")
+                    && line.contains("pub mod domain_claim_shape_report")
+            ),
+            "lib.rs must export the caveated shape-report module; hits: {hits:?}"
+        );
+        let disallowed: Vec<_> = hits
+            .iter()
+            .filter(|(path, _, _)| !allowed_relative_paths.iter().any(|allowed| allowed == path))
+            .collect();
+        assert!(
+            disallowed.is_empty(),
+            "shape-report module is intentionally unwired; unexpected references: {disallowed:?}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Vec<DomainClaim> acceptance
     // -----------------------------------------------------------------------
 
     #[test]
     fn empty_slice_yields_empty_report() {
-        let report = verify_claims(&[]);
+        let report = shape_report_claims(&[]);
         assert_eq!(report.total(), 0);
-        assert!(report.all_discharged());
+        assert!(report.all_claims_stated_discharged());
         assert_eq!(report.green_count(), 0);
     }
 
     #[test]
     fn single_exact_claim_accepted() {
         let claim = make_claim(exact_verdict());
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.exact.len(), 1, "one exact claim expected");
         assert_eq!(report.lossy.len(), 0);
         assert_eq!(report.gaps.len(), 0);
         assert_eq!(report.invalid.len(), 0);
-        assert!(report.all_discharged());
+        assert!(report.all_claims_stated_discharged());
         assert_eq!(report.green_count(), 1);
     }
 
@@ -590,13 +701,16 @@ mod tests {
             make_claim(lossy_verdict()),
             make_claim(refuse_verdict()),
         ];
-        let report = verify_claims(&claims);
+        let report = shape_report_claims(&claims);
         assert_eq!(report.total(), 3);
         assert_eq!(report.exact.len(), 1);
         assert_eq!(report.lossy.len(), 1);
         assert_eq!(report.gaps.len(), 1);
         assert_eq!(report.invalid.len(), 0);
-        assert!(!report.all_discharged(), "one gap means not all discharged");
+        assert!(
+            !report.all_claims_stated_discharged(),
+            "one gap means not all discharged"
+        );
         assert_eq!(report.green_count(), 2);
     }
 
@@ -614,7 +728,7 @@ mod tests {
         );
         v.loss_record = LossRecord(map);
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1, "exact+loss_record must be invalid");
         assert!(
             matches!(&report.invalid[0], TrichotomyError::ExactWithLoss { .. }),
@@ -628,7 +742,7 @@ mod tests {
         let mut v = exact_verdict();
         v.discharge_receipt_cid = None;
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(
@@ -645,7 +759,7 @@ mod tests {
         let mut v = exact_verdict();
         v.refusal_reason = Some("should not be here".to_string());
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(
@@ -662,7 +776,7 @@ mod tests {
         let mut v = lossy_verdict();
         v.loss_record = LossRecord(BTreeMap::new());
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(&report.invalid[0], TrichotomyError::LossyWithoutLoss { .. }),
@@ -676,7 +790,7 @@ mod tests {
         let mut v = lossy_verdict();
         v.discharge_receipt_cid = None;
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(
@@ -697,7 +811,7 @@ mod tests {
                 .to_string(),
         );
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(
@@ -714,7 +828,7 @@ mod tests {
         let mut v = refuse_verdict();
         v.refusal_reason = None;
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.invalid.len(), 1);
         assert!(
             matches!(
@@ -744,7 +858,7 @@ mod tests {
         let mut v = lossy_verdict();
         v.loss_record = LossRecord(map.clone());
         let claim = make_claim(v);
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.lossy.len(), 1);
         let (_, _, _, _, lr) = &report.lossy[0];
         assert_eq!(
@@ -759,7 +873,7 @@ mod tests {
     #[test]
     fn refuse_surfaces_as_gap_with_reason() {
         let claim = make_claim(refuse_verdict());
-        let report = verify_claims(std::slice::from_ref(&claim));
+        let report = shape_report_claims(std::slice::from_ref(&claim));
         assert_eq!(report.gaps.len(), 1);
         let (k, i, t, reason) = &report.gaps[0];
         assert!(!k.is_empty());
@@ -776,26 +890,26 @@ mod tests {
             make_claim(lossy_verdict()),
             make_claim(refuse_verdict()),
         ];
-        let report = verify_claims(&claims);
+        let report = shape_report_claims(&claims);
         assert_eq!(report.green_count(), 3, "2 exact + 1 lossy = 3 green");
         assert_eq!(report.gaps.len(), 1);
-        assert!(!report.all_discharged());
+        assert!(!report.all_claims_stated_discharged());
     }
 
     #[test]
-    fn all_discharged_true_when_no_gaps_or_invalid() {
+    fn all_claims_stated_discharged_true_when_no_gaps_or_invalid() {
         let claims = vec![make_claim(exact_verdict()), make_claim(lossy_verdict())];
-        let report = verify_claims(&claims);
-        assert!(report.all_discharged());
+        let report = shape_report_claims(&claims);
+        assert!(report.all_claims_stated_discharged());
     }
 
     #[test]
-    fn invalid_claim_sets_all_discharged_false() {
+    fn invalid_claim_sets_all_claims_stated_discharged_false() {
         let mut v = exact_verdict();
         v.discharge_receipt_cid = None; // trigger ExactMissingReceipt
         let claims = vec![make_claim(exact_verdict()), make_claim(v)];
-        let report = verify_claims(&claims);
-        assert!(!report.all_discharged());
+        let report = shape_report_claims(&claims);
+        assert!(!report.all_claims_stated_discharged());
         assert_eq!(report.invalid.len(), 1);
     }
 

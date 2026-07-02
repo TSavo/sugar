@@ -39,7 +39,7 @@ pub mod callee_purity;
 pub mod cbor_decode;
 pub mod compiler_registry;
 pub mod consistency;
-pub mod domain_claim_verifier;
+pub mod domain_claim_shape_report;
 pub mod enumerate_callsites;
 pub mod formula_rewrite;
 pub mod handshake;
@@ -56,8 +56,9 @@ pub mod solvers;
 pub mod superposition;
 pub mod types;
 
-pub use domain_claim_verifier::{
-    validate_trichotomy, verify_claim, verify_claims, ClaimOutcome, ClaimReport, TrichotomyError,
+pub use domain_claim_shape_report::{
+    shape_report_claim, shape_report_claims, validate_trichotomy, DomainClaimShapeReport,
+    StatedClaimOutcome, TrichotomyError,
 };
 pub use runner::{
     ProofRunArtifact, ProofRunArtifactError, Runner, RunnerConfig, SolverStats, TierStats,
