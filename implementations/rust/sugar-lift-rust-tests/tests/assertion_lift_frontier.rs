@@ -36,24 +36,8 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:macro-visible-source",
     ),
     (
-        "case1_cloned_sideeffectful_any_is_refused_bail",
-        "vacuity-expectation-staleness:#2813",
-    ),
-    (
         "catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused",
         "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "chained_next_len_over_unresolved_sequence_helper_stays_opaque",
-        "vacuity-expectation-staleness:#2813",
-    ),
-    (
-        "chained_next_len_over_visible_sequence_helper_bad_twin_keeps_callsite_chain",
-        "vacuity-expectation-staleness:#2813",
-    ),
-    (
-        "chained_next_len_over_visible_sequence_helper_preserves_callsite_chain",
-        "vacuity-expectation-staleness:#2813",
     ),
     (
         "chained_next_next_len_bad_twin_refutes",
@@ -70,18 +54,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "closure_driver_invocation_recurses_body_per_temporal_callsite",
         "floor-gap:temporal-closure-adaptor",
-    ),
-    (
-        "const_block_wrapped_method_call_result_gets_stable_euf_key",
-        "const-eval-gap:callsite-key-or-range-fold",
-    ),
-    (
-        "const_range_for_loop_index_assignment_replays_post_loop_reads",
-        "const-eval-gap:callsite-key-or-range-fold",
-    ),
-    (
-        "direct_method_call_result_string_assertion_uses_euf_callsite_key",
-        "vacuity-expectation-staleness:#2813",
     ),
     (
         "emit_value_contract_guard_return_non_value_tail_refused",
@@ -108,20 +80,12 @@ const EXPECTED_RED: &[(&str, &str)] = &[
         "floor-gap:emit-value-contract",
     ),
     (
-        "float_cast_lifts_as_opaque_euf_ctor",
-        "const-eval-gap:callsite-key-or-range-fold",
-    ),
-    (
         "forloop_runtime_body_read_refuses_with_named_body_effect",
         "floor-gap:runtime-boundary-refusal",
     ),
     (
         "forloop_runtime_valued_accumulator_refuses_with_named_accum_effect",
         "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "int_sqrt_chained_domain_replays_helper_callsite_axioms",
-        "const-eval-gap:callsite-key-or-range-fold",
     ),
     (
         "iter_scan_last_over_literal_digs_with_teeth",
@@ -178,10 +142,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "opaque_mut_borrow_call_read_refuses_not_false_refutation",
         "floor-gap:mutable-alias-state",
-    ),
-    (
-        "peekable_empty_slice_literal_warrants_none_with_teeth",
-        "vacuity-expectation-staleness:#2813",
     ),
     (
         "peekable_runtime_nth_after_peek_is_named_refused_not_work",
@@ -258,14 +218,6 @@ const EXPECTED_RED: &[(&str, &str)] = &[
     (
         "top_level_scanner_discovers_vendor_surface_by_macro_body_shape",
         "floor-gap:macro-visible-source",
-    ),
-    (
-        "u128_lots_of_isqrt_tail_range_lifts_primitive_axioms",
-        "const-eval-gap:callsite-key-or-range-fold",
-    ),
-    (
-        "wide_duration_u128_call_result_stays_exact_integer",
-        "const-eval-gap:callsite-key-or-range-fold",
     ),
 ];
 

@@ -146,6 +146,7 @@ pub(crate) fn duration_term_from_total_nanos(total: i128) -> Option<Rc<Term>> {
     }
     let secs = total.checked_div(NANOS_PER_SEC)?;
     let nanos = total.checked_rem(NANOS_PER_SEC)?;
+    u64::try_from(secs).ok()?;
     Some(duration_term(secs, nanos))
 }
 
@@ -236,6 +237,14 @@ mod tests {
         assert_eq!(
             total_nanos("Duration::from_weeks(1)"),
             Some(604_800_000_000_000)
+        );
+    }
+
+    #[test]
+    fn rejects_total_nanos_beyond_u64_seconds() {
+        assert_eq!(
+            total_nanos("Duration::from_nanos_u128(18446744073709551616000000000u128)"),
+            None
         );
     }
 }

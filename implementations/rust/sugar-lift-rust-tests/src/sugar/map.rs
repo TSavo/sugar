@@ -18,8 +18,8 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
 use crate::{
     canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
-    curry_param_name, curry_param_term, strip_refs_groups, token_key, Desugared, DesugaredElem,
-    Effect, Outcome, Sugar, SugarCtx,
+    const_eval_unary_closure_with_u128_shift, curry_param_name, curry_param_term,
+    strip_refs_groups, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -52,7 +52,7 @@ pub(crate) fn recognize_composite(
         mapper: MapClosure::build(
             f.clone(),
             fcx,
-            receiver_is_u128_count_ones_range(&call.receiver),
+            receiver_has_unsigned_count_ones_range(&call.receiver),
         )?,
     }))
 }
@@ -79,7 +79,7 @@ pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Opti
         mapper: MapClosure::build(
             f.clone(),
             fcx,
-            receiver_is_u128_count_ones_range(&call.receiver),
+            receiver_has_unsigned_count_ones_range(&call.receiver),
         )?,
     }))
 }
@@ -285,7 +285,11 @@ fn reduce_map_sequence_to_values(
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
         let value = elem.value.as_ref()?;
-        let mapped = const_eval_unary_closure(mapper.expr(), value)?;
+        let mapped = if mapper.u128_shift_hint {
+            const_eval_unary_closure_with_u128_shift(mapper.expr(), value)?
+        } else {
+            const_eval_unary_closure(mapper.expr(), value)?
+        };
         let expr = mapped.to_expr()?;
         out.push(DesugaredElem {
             expr,
@@ -356,39 +360,46 @@ fn map_gap(reason: &str) -> ! {
     panic!("map completed without typed closure-body floors: {reason}")
 }
 
-fn receiver_is_u128_count_ones_range(expr: &Expr) -> bool {
+pub(crate) fn receiver_has_unsigned_count_ones_range(expr: &Expr) -> bool {
     let Expr::Range(range) = strip_refs_groups(expr) else {
         return false;
     };
-    range.end.as_deref().is_some_and(expr_is_u128_count_ones)
+    range
+        .end
+        .as_deref()
+        .is_some_and(expr_is_unsigned_count_ones)
 }
 
-fn expr_is_u128_count_ones(expr: &Expr) -> bool {
+fn expr_is_unsigned_count_ones(expr: &Expr) -> bool {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return false;
     };
-    call.method == "count_ones" && expr_is_u128_assoc_const(&call.receiver)
+    call.method == "count_ones" && expr_is_unsigned_assoc_const(&call.receiver)
 }
 
-fn expr_is_u128_assoc_const(expr: &Expr) -> bool {
+fn expr_is_unsigned_assoc_const(expr: &Expr) -> bool {
     let Expr::Path(path) = strip_refs_groups(expr) else {
         return false;
     };
     if let Some(qself) = &path.qself {
-        return type_is_u128(&qself.ty);
+        return type_is_unsigned_int(&qself.ty);
     }
     path.path
         .segments
         .first()
-        .is_some_and(|segment| segment.ident == "u128")
+        .is_some_and(|segment| is_unsigned_int_name(&segment.ident.to_string()))
 }
 
-fn type_is_u128(ty: &Type) -> bool {
+fn type_is_unsigned_int(ty: &Type) -> bool {
     let Type::Path(path) = ty else {
         return false;
     };
     path.path
         .segments
         .last()
-        .is_some_and(|segment| segment.ident == "u128")
+        .is_some_and(|segment| is_unsigned_int_name(&segment.ident.to_string()))
+}
+
+fn is_unsigned_int_name(name: &str) -> bool {
+    matches!(name, "u8" | "u16" | "u32" | "u64" | "u128" | "usize")
 }

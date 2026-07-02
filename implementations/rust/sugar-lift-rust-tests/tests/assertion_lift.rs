@@ -102,6 +102,29 @@ fn assert_warranted_decl_count(out: &AdapterOutput, expected: usize) {
     );
 }
 
+fn assert_support_only_warranted(out: &AdapterOutput, expected_name_needles: &[&str]) {
+    assert_warranted_decl_count(out, 0);
+    let support: Vec<_> = out
+        .assertion_facts
+        .iter()
+        .filter(|fact| fact.kind == AssertionFactKind::Warranted && fact.claim_count == 0)
+        .collect();
+    assert!(
+        !support.is_empty(),
+        "expected support-only warranted facts: {:?}",
+        out.assertion_facts
+    );
+    for needle in expected_name_needles {
+        assert!(
+            support
+                .iter()
+                .any(|fact| fact.contract_name.contains(needle)),
+            "missing support-only warranted fact containing {needle:?}; facts: {:?}",
+            out.assertion_facts
+        );
+    }
+}
+
 fn warranted_decl(out: &AdapterOutput, index: usize) -> &sugar_ir_symbolic::ContractDecl {
     let decls = warranted_decls(out);
     assert!(
@@ -7601,20 +7624,13 @@ fn string_call_result() {
     let a = Name;
     assert_eq!(a.to_string(), "hello");
 }
-"#;
+    "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_warranted_decl_count(&out, 1);
-
-    let decl = single_warranted_decl(&out);
-    assert_eq!(
-        decl.name,
-        "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt.rs::string_call_result::Name)::assertion"
-    );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_string_call_eq_atom(&operands[0], "method:to_string", "hello");
+    // #2813: a single opaque string callsite only proves panic-freedom support.
+    // It has no substantive sibling constraint, so it must not be counted as a claim.
+    assert_support_only_warranted(&out, &["method:to_string#panic_callsite"]);
 }
 
 #[test]
@@ -8973,27 +8989,11 @@ fn const_array_ops() {
             "std::array::from_fn::<_,const:5,_>#euf#c:callresult_std__array__from_fn_____const_5____a1(v:tests/array.rs::const_array_ops::doubler)::assertion",
         ]
     );
-    let operands = inv_operands(&out.decls[0]);
-    assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Var { name } => {
-                    assert_eq!(name, "literal:Array(i:10,i:12,i:2,i:4)");
-                }
-                other => panic!("expected mapped Array literal identity, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Var { name } => {
-                    assert_eq!(name, "literal:Array(i:10,i:12,i:2,i:4)");
-                }
-                other => panic!("expected Array literal identity, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
+    assert_eq!(
+        complete_eq_int_pairs(&out.decls[0]),
+        vec![(4, 4), (10, 10), (12, 12), (2, 2), (4, 4)],
+        "const block map over a literal array must decompose to scalar teeth"
+    );
 }
 
 #[test]
@@ -16614,10 +16614,8 @@ fn emit_value_contract_if_with_call_condition() {
 
 // ── TermBreadth: float casts + unsafe-block transparency + try/async refuse ──
 
-// (A) FLOAT CAST -- `x as f32` lifts to the OPAQUE EUF ctor `cast:f32(x)`, the same
-// standard as the integer/char casts. The `num/mod.rs::test_f32f64` round-trip rows
-// (`assert_eq!(max as f32, f32::MAX)`, ...) fell out at the cast fallthrough; now
-// the LHS lifts and the row pins as a structural equality.
+// (A) FLOAT CAST -- literal float locals const-fold exactly, while runtime/non-literal
+// float casts remain an OPAQUE EUF ctor with the same teeth as integer/char casts.
 #[test]
 fn float_cast_lifts_as_opaque_euf_ctor() {
     let src = r#"
@@ -16634,26 +16632,11 @@ fn cast_f32() {
         "float-cast assert must lift: {:?}",
         out.warnings
     );
-    let operands = inv_operands(&out.decls[0]);
-    assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "cast:f32", "LHS is the opaque float-cast ctor");
-                    assert_eq!(args.len(), 1);
-                    assert!(
-                        matches!(args[0].as_ref(), Term::Var { .. } | Term::Const { .. }),
-                        "cast operand is the canonical receiver value, got {:?}",
-                        args[0]
-                    );
-                }
-                other => panic!("expected cast:f32 lhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected cast equality atom, got {other:?}"),
-    }
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(1, 1)]);
+    assert_eq!(
+        complete_eq_real_pairs(&out.decls[0]),
+        vec![("1.0".to_string(), "1.0".to_string())]
+    );
 }
 
 // (A) ADVERSARIAL bad-twin: the SAME `cast:f32(x)` term cannot equal two distinct
@@ -17005,6 +16988,39 @@ fn complete_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i
                 ) = (args[0].as_ref(), args[1].as_ref())
                 {
                     out.push((*a, *b));
+                }
+            }
+            Formula::Connective { operands, .. } => {
+                for op in operands {
+                    walk(op, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(inv) = decl.inv.as_deref() {
+        walk(inv, &mut out);
+    }
+    out
+}
+
+fn complete_eq_real_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
+    fn walk(f: &Formula, out: &mut Vec<(String, String)>) {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                if let (
+                    Term::Const {
+                        value: ConstValue::Real(a),
+                        ..
+                    },
+                    Term::Const {
+                        value: ConstValue::Real(b),
+                        ..
+                    },
+                ) = (args[0].as_ref(), args[1].as_ref())
+                {
+                    out.push((a.clone(), b.clone()));
                 }
             }
             Formula::Connective { operands, .. } => {
@@ -21805,23 +21821,15 @@ fn case1_cloned_sideeffectful_any_is_refused_bail() {
         }
     "#;
     let out = lift_file(&parse(src), "tests/zip.rs");
+    // #2813: this literal `.any` reaches the assertion surface but emits only
+    // support facts, not a substantive side-effecting-clone claim.
+    assert_support_only_warranted(&out, &["panic_callsite"]);
     assert!(
         out.skip_reasons
             .iter()
-            .any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
-        "the side-effecting-clone `.any` must BAIL with its named reason: {:?}",
+            .any(|r| r.contains("emitted only support facts")),
+        "the side-effecting-clone `.any` must be released as support-only: {:?}",
         out.skip_reasons
-    );
-    use sugar_lift_rust_tests::{refusal_disposition, Disposition};
-    let r = out
-        .skip_reasons
-        .iter()
-        .find(|r| r.contains(SIDEEFFECT_CLONE_REASON))
-        .unwrap();
-    assert_eq!(
-        refusal_disposition(r),
-        Disposition::Refused,
-        "side-effecting-clone read is a TERMINAL (bin-2) refusal"
     );
 }
 
@@ -26120,14 +26128,19 @@ fn peekable_empty_slice_literal_warrants_none_with_teeth() {
     "#;
     let good_out = lift_file(&parse(good), "tests/iter/adapters/peekable.rs");
     assert_eq!(
-        good_out.assertions_lifted, 1,
-        "empty literal slice peekable should warrant None: {:?}; facts={:?}",
+        good_out.assertions_lifted, 0,
+        "empty literal slice peekable has no teeth after #2813: {:?}; facts={:?}",
         good_out.skip_reasons, good_out.assertion_facts
     );
-    let good_decl = single_warranted_decl(&good_out);
-    if let Some(sat) = z3_verdict(&inv_json(good_decl), "peekable_empty_slice_good") {
-        assert!(sat, "GOOD empty-slice peekable None should be SAT");
-    }
+    assert_support_only_warranted(&good_out, &["method:peek#panic_callsite"]);
+    assert!(
+        good_out
+            .skip_reasons
+            .iter()
+            .any(|reason| reason.contains("literal domain is empty")),
+        "empty slice must keep the named no-teeth reason: {:?}",
+        good_out.skip_reasons
+    );
 
     let bad = good.replace(
         "assert_eq!(it.peek(), None);",
@@ -26135,19 +26148,19 @@ fn peekable_empty_slice_literal_warrants_none_with_teeth() {
     );
     let bad_out = lift_file(&parse(&bad), "tests/iter/adapters/peekable_bad.rs");
     assert_eq!(
-        bad_out.assertions_lifted, 1,
-        "empty literal slice peekable bad twin should still warrant: {:?}; facts={:?}",
+        bad_out.assertions_lifted, 0,
+        "empty literal slice peekable bad twin is still vacuous/no-teeth: {:?}; facts={:?}",
         bad_out.skip_reasons, bad_out.assertion_facts
     );
-    let bad_decl = single_warranted_decl(&bad_out);
-    if let Some(sat) = z3_verdict(&inv_json(bad_decl), "peekable_empty_slice_bad") {
-        assert!(
-            !sat,
-            "BAD empty-slice peekable None should be z3-UNSAT: {}; inv={}",
-            bad_decl.name,
-            inv_json(bad_decl)
-        );
-    }
+    assert_support_only_warranted(&bad_out, &["method:peek#panic_callsite"]);
+    assert!(
+        bad_out
+            .skip_reasons
+            .iter()
+            .any(|reason| reason.contains("literal domain is empty")),
+        "empty bad twin must keep the named no-teeth reason: {:?}",
+        bad_out.skip_reasons
+    );
 }
 
 #[test]
@@ -31427,23 +31440,15 @@ fn chained_next_len_over_visible_sequence_helper_preserves_callsite_chain() {
         &parse(src),
         "coretests/iter/adapters/visible_helper_next_len.rs",
     );
-    assert_warranted_decl_count(&out, 1);
-    let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "expected one equality: {operands:?}");
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
-            let lhs = format!("{:?}", args[0]);
-            assert!(
-                lhs.contains("method:len")
-                    && lhs.contains("method:next")
-                    && lhs.contains("method:iter")
-                    && lhs.contains("call:make_vec"),
-                "helper-returned sequence must preserve the callsite chain: {lhs}"
-            );
-            assert_eq!(int_const_value(&args[1]), 1);
-        }
-        other => panic!("expected equality, got {other:?}"),
-    }
+    // #2813: helper-call iterator support is not a claim without a sibling constraint.
+    assert_support_only_warranted(
+        &out,
+        &[
+            "method:len#panic_callsite",
+            "method:next#panic_callsite",
+            "call:make_vec",
+        ],
+    );
 }
 
 #[test]
@@ -31459,14 +31464,16 @@ fn chained_next_len_over_visible_sequence_helper_bad_twin_keeps_callsite_chain()
         &parse(src),
         "coretests/iter/adapters/visible_helper_next_len_bad.rs",
     );
-    assert_warranted_decl_count(&out, 1);
-    let (lhs, rhs) = single_eq_atom(single_warranted_decl(&out));
-    let lhs = format!("{lhs:?}");
-    assert!(
-        lhs.contains("method:len") && lhs.contains("call:make_vec"),
-        "bad twin must keep the helper callsite seam for composition: {lhs}"
+    // #2813: the bad twin is still only panic-freedom support; it cannot refute
+    // without a substantive equality sibling.
+    assert_support_only_warranted(
+        &out,
+        &[
+            "method:len#panic_callsite",
+            "method:next#panic_callsite",
+            "call:make_vec",
+        ],
     );
-    assert_eq!(int_const_value(&rhs), 0);
 }
 
 #[test]
@@ -31482,20 +31489,14 @@ fn chained_next_len_over_unresolved_sequence_helper_stays_opaque() {
         &parse(src),
         "coretests/iter/adapters/unresolved_helper_next_len.rs",
     );
-    assert_warranted_decl_count(&out, 1);
-    let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "expected one equality: {operands:?}");
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
-            assert!(
-                format!("{:?}", args[0]).contains("call:make_vec")
-                    && format!("{:?}", args[0]).contains("method:len"),
-                "unresolved helper body must stay at the helper callsite seam, not fake literal iterator state: {:?}",
-                args[0]
-            );
-        }
-        other => panic!("expected equality, got {other:?}"),
-    }
+    assert_support_only_warranted(
+        &out,
+        &[
+            "method:len#panic_callsite",
+            "method:next#panic_callsite",
+            "call:make_vec",
+        ],
+    );
 }
 
 /// Discrimination twins for the iter_terminal.rs opaque-EUF gate fix (#19 fix-forward).

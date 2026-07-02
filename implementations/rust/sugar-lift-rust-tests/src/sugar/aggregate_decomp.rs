@@ -477,6 +477,9 @@ fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Out
         Term::Ctor { name, .. } if name == "agg:Array" => Ok(None),
         Term::Var { name } if name.starts_with("agg:Array(") => Ok(None),
         Term::Const { .. } => Ok(Some(vec![Rc::clone(&term)])),
+        Term::Var { name } if name.starts_with("literal:Array(") => {
+            Ok(literal_array_var_int_components(name))
+        }
         Term::Var { name } if name.starts_with("literal:") => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { .. } => Ok(None),
         Term::Ctor { name, args } if name == "literal:Array" => {
@@ -502,6 +505,17 @@ fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Out
         }
         _ => Ok(None),
     }
+}
+
+fn literal_array_var_int_components(name: &str) -> Option<Vec<Rc<Term>>> {
+    let inner = name.strip_prefix("literal:Array(")?.strip_suffix(')')?;
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|part| part.strip_prefix("i:")?.parse::<i128>().ok().map(num))
+        .collect()
 }
 
 fn text_structural_ctor(name: &str) -> bool {
