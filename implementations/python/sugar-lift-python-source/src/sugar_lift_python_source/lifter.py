@@ -1532,7 +1532,7 @@ class _Emitter:
 
     def subscript_index(self, node: ast.Subscript) -> Json:
         if isinstance(node.slice, ast.Slice):
-            raise _UnsupportedSyntax(node.slice, "slice subscripts are refused")
+            return self.slice_index(node.slice)
         return self.expr(node.slice)
 
     def slice_index(self, node: ast.Slice) -> Json:

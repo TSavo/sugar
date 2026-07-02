@@ -523,6 +523,20 @@ def _constant_dispatch_refusal_reason(value: object) -> str:
     return exc.value.reason
 
 
+def _subscript_index_for(expr_source: str) -> dict[str, object]:
+    node = ast.parse(expr_source, mode="eval").body
+    assert isinstance(node, ast.Subscript)
+    emitter = _Emitter(
+        fn_name="slice.f",
+        locals_={"xs", "i"},
+        module_globals=set(),
+        effects=_EffectSet(),
+        source_path="slice.py",
+        panic_loci=[],
+    )
+    return emitter.subscript_index(node)
+
+
 def _assert_guard(
     term: object, expected_head: str, expected_arg: str
 ) -> dict[str, object]:
@@ -1740,6 +1754,47 @@ def test_slice_load_receiver_is_evaluated_before_slice_bounds() -> None:
     }
 
 
+def test_subscript_index_lifts_slice_bounds_and_omissions() -> None:
+    assert _subscript_index_for("xs[1:3]") == _slice(
+        _int_const(1),
+        _int_const(3),
+        _none_const(),
+    )
+    assert _subscript_index_for("xs[::2]") == _slice(
+        _none_const(),
+        _none_const(),
+        _int_const(2),
+    )
+
+
+def test_subscript_index_slice_bound_refusal_propagates() -> None:
+    node = ast.parse("xs[1:(i for i in xs)]", mode="eval").body
+    assert isinstance(node, ast.Subscript)
+    emitter = _Emitter(
+        fn_name="slice.f",
+        locals_={"xs", "i"},
+        module_globals=set(),
+        effects=_EffectSet(),
+        source_path="slice.py",
+        panic_loci=[],
+    )
+
+    with pytest.raises(_UnsupportedSyntax) as exc:
+        emitter.subscript_index(node)
+
+    assert exc.value.reason == "unhandled expression kind: GeneratorExp"
+
+
+def test_tuple_slice_index_keeps_existing_refusal() -> None:
+    source = "def f(xs):\n    value = xs[1:2, 3]\n    return value\n"
+
+    result = lift_source(source, "tuple_slice_index.py")
+
+    assert [(refusal["kind"], refusal["reason"]) for refusal in result.refusals] == [
+        ("unhandled-syntax", "unhandled expression kind: Slice")
+    ]
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -1760,6 +1815,25 @@ def test_compile_lift_roundtrip_preserves_slice_load_body(source: str) -> None:
         formals=[str(formal) for formal in contract["formals"]],
     )
     relifted = lift_source(compiled, "roundtrip_slice_access.py")
+    assert relifted.refusals == []
+    relifted_body = _contract(relifted.ir, ".f")["post"]["args"][1]
+
+    assert canonical_json_bytes(relifted_body) == canonical_json_bytes(body)
+
+
+def test_compile_lift_roundtrip_preserves_constant_slice_load_body() -> None:
+    source = "def f(xs):\n    first = xs[1:3]\n    every_other = xs[::2]\n    return every_other\n"
+    lifted = lift_source(source, "roundtrip_constant_slice_access.py")
+    assert lifted.refusals == []
+    contract = _contract(lifted.ir, ".f")
+    body = contract["post"]["args"][1]
+
+    compiled = compile_body_term(
+        body,
+        fn_name="f",
+        formals=[str(formal) for formal in contract["formals"]],
+    )
+    relifted = lift_source(compiled, "roundtrip_constant_slice_access.py")
     assert relifted.refusals == []
     relifted_body = _contract(relifted.ir, ".f")["post"]["args"][1]
 
