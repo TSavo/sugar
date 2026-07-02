@@ -30,6 +30,7 @@ pub use predicate_value::PredicateValue;
 pub use raise_value::{is_raise_like_effect, RaiseValue};
 pub use symbolic_value::SymbolicValue;
 pub use term_dispatch::{
+    PredicateValueFloorAccept, PredicateValueFloorVisitor, RequiredPredicateValueVisitor,
     SymbolicValueFloorAccept, SymbolicValueFloorVisitor, TermFloorAccept, TermFloorVisitor,
 };
 
