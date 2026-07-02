@@ -18,6 +18,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 mod cmd_bind;
 mod cmd_compose;
 mod cmd_diff;
@@ -309,6 +313,9 @@ pub struct ComposeArgs {
 }
 
 fn main() -> ExitCode {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     // Structured logging to stderr. Default level: warn, so a bare
     // `sugar mint`/`prove` run is silent. Override via RUST_LOG:
     //   RUST_LOG=info   -> pipeline narrative
