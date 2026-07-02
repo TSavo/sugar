@@ -7,6 +7,7 @@ use syn::{Expr, Item};
 
 use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audits;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory_gap_info::CoverageGapInfo;
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::ip_addr::{literal_ip_from_term, LiteralIp};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
@@ -64,12 +65,9 @@ pub(crate) fn translate_term_in_scope_with_audits(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        Outcome::Complete(d) => d.into_term().ok_or_else(|| {
-            term_dispatch_gap(format!(
-                "term factory completed `{}` without a Term floor",
-                token_key(expr)
-            ))
-        }),
+        Outcome::Complete(d) => {
+            term_floor_dispatch(d, "rust.term_dispatch", token_key(expr)).into_result()
+        }
         Outcome::Incomplete(effect) => Err(effect),
     }
 }
@@ -111,8 +109,61 @@ pub(crate) fn translate_assertion_term_in_scope_with_audits(
     }
 }
 
-fn term_dispatch_gap(reason: String) -> ! {
-    panic!("term_dispatch did not reach a lawful term floor: {reason}")
+pub(crate) enum FloorDispatch<T> {
+    Dispatched(T),
+    Gap(CoverageGapInfo),
+}
+
+impl<T> FloorDispatch<T> {
+    pub(crate) fn into_result(self) -> Result<T, Effect> {
+        match self {
+            Self::Dispatched(value) => Ok(value),
+            Self::Gap(gap) => Err(floor_dispatch_gap_effect(gap)),
+        }
+    }
+}
+
+pub(crate) fn term_floor_dispatch(
+    floor: Desugared,
+    owner: impl Into<String>,
+    blame: impl Into<String>,
+) -> FloorDispatch<Rc<Term>> {
+    match floor {
+        Desugared::Term(term) => FloorDispatch::Dispatched(term),
+        Desugared::TermSeq(terms) => {
+            FloorDispatch::Dispatched(literal_array_term_from_terms(&terms))
+        }
+        other => FloorDispatch::Gap(floor_dispatch_gap_info(
+            owner,
+            blame,
+            desugared_floor_name(&other),
+            "TermFloor",
+        )),
+    }
+}
+
+fn floor_dispatch_gap_info(
+    owner: impl Into<String>,
+    blame: impl Into<String>,
+    observed: impl Into<String>,
+    requested: impl Into<String>,
+) -> CoverageGapInfo {
+    CoverageGapInfo {
+        owner: owner.into(),
+        blame: blame.into(),
+        observed: observed.into(),
+        requested: requested.into(),
+        fix: "sugar::term_dispatch".to_string(),
+        gap_kind: "FloorDispatch".to_string(),
+        gap_locus: "TermFloor".to_string(),
+    }
+}
+
+fn floor_dispatch_gap_effect(gap: CoverageGapInfo) -> Effect {
+    Effect::CoverageGap {
+        boundary: gap.observed.clone(),
+        reason: gap.message(),
+    }
 }
 
 /// A finite-domain occurrence context for a term-floor curry.
@@ -1001,6 +1052,60 @@ mod tests {
     #[test]
     fn symbolic_value_floor_does_not_claim_carrier_committed_const() {
         assert_eq!(num(1).accept_symbolic_value_floor(SymbolicProbe), None);
+    }
+
+    #[test]
+    fn synthetic_open_edge_floor_dispatches_to_coverage_gap() {
+        let floor = Desugared::ObjectValue(crate::sugar::object_value::ObjectValue::new(
+            "PluginFloor",
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        let FloorDispatch::Gap(gap) =
+            term_floor_dispatch(floor, "synthetic.plugin", "synthetic PluginFloor")
+        else {
+            panic!("synthetic open-edge floor should dispatch to a coverage gap");
+        };
+
+        assert_eq!(gap.gap_kind, "FloorDispatch");
+        assert_eq!(gap.gap_locus, "TermFloor");
+        assert_eq!(gap.owner, "synthetic.plugin");
+        assert_eq!(gap.blame, "synthetic PluginFloor");
+        assert_eq!(gap.observed, "ObjectValue");
+        assert_eq!(gap.requested, "TermFloor");
+        assert_eq!(gap.fix, "sugar::term_dispatch");
+
+        let effect = FloorDispatch::<Rc<Term>>::Gap(gap).into_result();
+        let Err(Effect::CoverageGap { boundary, reason }) = effect else {
+            panic!("FloorDispatch::Gap must lower to Effect::CoverageGap");
+        };
+        assert_eq!(boundary, "ObjectValue");
+        assert!(reason.contains("write more FloorDispatch for this TermFloor"));
+        assert!(reason.contains("observed=ObjectValue"));
+        assert!(reason.contains("requested=TermFloor"));
+    }
+
+    #[test]
+    fn closed_term_floors_dispatch_without_gap() {
+        let FloorDispatch::Dispatched(term) =
+            term_floor_dispatch(Desugared::Term(var("x")), "closed.term", "x")
+        else {
+            panic!("Term floor is closed and must not enter the gap path");
+        };
+        assert!(matches!(term.as_ref(), Term::Var { name } if name == "x"));
+
+        let FloorDispatch::Dispatched(array_term) = term_floor_dispatch(
+            Desugared::TermSeq(vec![num(1), num(2)]),
+            "closed.seq",
+            "[1,2]",
+        ) else {
+            panic!("TermSeq floor is closed and must not enter the gap path");
+        };
+        assert!(matches!(
+            array_term.as_ref(),
+            Term::Var { name } if name == "literal:Array(i:1,i:2)"
+        ));
     }
 
     #[test]
