@@ -116,6 +116,10 @@ class VerdictWitnessCase:
     formulas: tuple[Formula, ...] = ()
     declarations: Mapping[str, Sort] = field(default_factory=dict)
     construct: Callable[[], object] | None = None
+    source: str | None = None
+    node_class: str | None = None
+    expected_sugar: str | None = None
+    refusal_absence: bool = False
 
 
 @dataclass(frozen=True)
@@ -244,12 +248,18 @@ class EqualityFact(ProofIRNode):
                 expected="sat",
                 formulas=(truthful.denotation(),),
                 declarations={"call:A": _INT_SORT},
+                source=_truthful_source(),
+                node_class=cls.node_class,
+                expected_sugar="python.literal-call-sugar",
             ),
             lying=VerdictWitnessCase(
                 name="equality-stated-derived-disagreement",
                 expected="unsat",
                 formulas=(stated_lie.denotation(), derived.denotation()),
                 declarations={"call:A": _INT_SORT},
+                source=_lying_source(),
+                node_class=cls.node_class,
+                expected_sugar="python.literal-call-sugar",
             ),
         )
 
@@ -403,12 +413,18 @@ class FunctionContract(ProofIRNode):
                 expected="sat",
                 formulas=(truthful_contract.denotation(), floor),
                 declarations={"out": _INT_SORT},
+                source=_truthful_source(),
+                node_class=cls.node_class,
+                expected_sugar="python.literal-call-sugar",
             ),
             lying=VerdictWitnessCase(
                 name="function-contract-floor-contradicts-post",
                 expected="unsat",
                 formulas=(lying_contract.denotation(), floor),
                 declarations={"out": _INT_SORT},
+                source=_lying_source(),
+                node_class=cls.node_class,
+                expected_sugar="python.literal-call-sugar",
             ),
         )
 
@@ -569,6 +585,10 @@ class RefusalRecord(ProofIRNode):
                 expected="sat",
                 formulas=(),
                 declarations={},
+                source=_effectful_refusal_source(),
+                node_class=cls.node_class,
+                expected_sugar="python.literal-call-sugar",
+                refusal_absence=True,
                 construct=lambda: cls.from_incomplete(
                     _runtime_effect_incomplete("opaque runtime effect"),
                     provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
@@ -602,11 +622,53 @@ def registered_verdict_witnesses() -> tuple[tuple[str, bool, bool], ...]:
         registrations.append(
             (
                 node_class.node_class,
-                pair.truthful.expected == "sat",
-                pair.lying.expected in {"unsat", "construction-refusal"},
+                (
+                    pair.truthful.expected == "sat"
+                    and pair.truthful.source is not None
+                    and pair.truthful.expected_sugar is not None
+                ),
+                (
+                    pair.lying.expected == "construction-refusal"
+                    or (
+                        pair.lying.expected == "unsat"
+                        and pair.lying.source is not None
+                        and pair.lying.expected_sugar is not None
+                    )
+                ),
             )
         )
     return tuple(registrations)
+
+
+def _truthful_source() -> str:
+    return (
+        "def A(x):\n"
+        "    return x + 1\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 6\n"
+    )
+
+
+def _lying_source() -> str:
+    return (
+        "def A(x):\n"
+        "    return x + 1\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 7\n"
+    )
+
+
+def _effectful_refusal_source() -> str:
+    return (
+        "def A(x):\n"
+        "    print(x)\n"
+        "    return x\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 5\n"
+    )
 
 
 def merge_equality_facts(left: EqualityFact, right: EqualityFact) -> EqualityFact:

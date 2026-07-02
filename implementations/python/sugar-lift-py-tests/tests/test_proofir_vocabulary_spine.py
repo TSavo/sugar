@@ -1,26 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.literal_call_report import euf_call_term, euf_callsite_name
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
 from sugar_lift_py_tests.ir import (
     Bool,
-    Formula,
     Int,
-    and_,
     bool_const,
     eq,
-    formula_to_value,
     make_var,
-    not_,
     num,
 )
 from sugar_lift_py_tests.outcome import Incomplete
@@ -44,12 +38,11 @@ from sugar_lift_py_tests.proofir import (
 
 ROOT = Path(__file__).resolve().parents[4]
 RUST_WORKSPACE = ROOT / "implementations" / "rust"
-SMT_LIB_DIALECT = "smt-lib-v2.6"
-
-
-@dataclass(frozen=True)
-class _SolverCase:
-    formulas: tuple[Formula, ...]
+PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
+PY_SOURCE = ROOT / "implementations" / "python" / "sugar-lift-python-source"
+PY_PYTEST_WITNESS = ROOT / "implementations" / "python" / "sugar-lift-py-pytest-witness"
+SUGAR_BIN = RUST_WORKSPACE / "target" / "debug" / "sugar"
+_SUGAR_BUILT = False
 
 
 def _construction_site() -> ConstructionSite:
@@ -83,90 +76,207 @@ def _two_warrant_provenance(node_class: str) -> Provenance:
     )
 
 
-def _z3_status(case: _SolverCase) -> str:
-    if not case.formulas:
-        return "sat"
-    # The compiler's production contract is proof-oriented: it emits
-    # `(assert (not F))` so `unsat` means an obligation is discharged. The
-    # witness harness asks a model-existence question over all formulas, so
-    # feed it `not(and(formulas))`; the production compiler's negation then
-    # yields exactly the asserted conjunction we want z3 to check.
-    compiled = _compile_formula_with_smt_lib(not_(and_(list(case.formulas))))
-    smt = f"{compiled['preamble']}{compiled['body']}"
-    completed = subprocess.run(
-        ["z3", "-in"],
-        input=smt,
-        text=True,
-        capture_output=True,
-        check=False,
+def _pythonpath() -> str:
+    return os.pathsep.join(
+        str(path / "src") for path in (PY_PYTEST_WITNESS, PY_TESTS, PY_SOURCE)
     )
-    assert completed.returncode == 0, completed.stderr
-    return completed.stdout.splitlines()[0]
 
 
-def _compile_formula_with_smt_lib(formula: Formula) -> dict[str, Any]:
-    ir_json = json.loads(encode_jcs(formula_to_value(formula)))
-    requests = [
+def _ensure_sugar_bin() -> Path:
+    global _SUGAR_BUILT
+    if SUGAR_BIN.exists():
+        return SUGAR_BIN
+    if not _SUGAR_BUILT:
+        completed = subprocess.run(
+            ["cargo", "build", "--locked", "-p", "sugar-cli", "--bin", "sugar"],
+            cwd=RUST_WORKSPACE,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=180,
+        )
+        assert completed.returncode == 0, completed.stderr
+        _SUGAR_BUILT = True
+    assert SUGAR_BIN.exists(), "cargo build did not produce target/debug/sugar"
+    return SUGAR_BIN
+
+
+def _write_source(project: Path, source: str) -> None:
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "test_witness.py").write_text(source, encoding="utf-8")
+
+
+def _stage_cli_project(project: Path, source: str) -> None:
+    _write_source(project, source)
+    sugar = project / ".sugar"
+    (sugar / "lift" / "python").mkdir(parents=True)
+    (sugar / "components" / "python-lift").mkdir(parents=True)
+    (sugar / "ir-compilers" / "smt-lib").mkdir(parents=True)
+    (sugar / "config.toml").write_text(
+        """[[plugins]]
+name = "python-lift"
+kind = "lift"
+surface = "python"
+
+[solvers]
+default = "z3"
+
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+ir_compiler = "smt-lib-v2.6"
+flags = ["-smt2", "-in"]
+""",
+        encoding="utf-8",
+    )
+    wrapper = sugar / "lift" / "python" / "proofir-python-lift-wrapper.sh"
+    wrapper_py = sugar / "lift" / "python" / "proofir_python_lift_capture"
+    capture = sugar / "lift" / "python" / "lift-rpc-capture.jsonl"
+    wrapper_py.write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "\n"
+        f"PYTHONPATH = {_pythonpath()!r}\n"
+        f"CAPTURE = Path({str(capture)!r})\n"
+        "\n"
+        "def main() -> int:\n"
+        "    env = {**os.environ, 'PYTHONPATH': PYTHONPATH}\n"
+        "    proc = subprocess.Popen(\n"
+        "        [sys.executable, '-m', 'sugar_lift_py_tests.lift_rpc', *sys.argv[1:]],\n"
+        "        stdin=sys.stdin,\n"
+        "        stdout=subprocess.PIPE,\n"
+        "        stderr=sys.stderr,\n"
+        "        text=True,\n"
+        "        env=env,\n"
+        "    )\n"
+        "    assert proc.stdout is not None\n"
+        "    CAPTURE.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    with CAPTURE.open('a', encoding='utf-8') as out:\n"
+        "        for line in proc.stdout:\n"
+        "            sys.stdout.write(line)\n"
+        "            sys.stdout.flush()\n"
+        "            out.write(line)\n"
+        "            out.flush()\n"
+        "    return proc.wait()\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        'PYTHON="${PYTHON:-python3}"\n'
+        f'exec "$PYTHON" "{wrapper_py}" "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    (sugar / "lift" / "python" / "manifest.toml").write_text(
+        f'name = "python"\ncommand = ["{wrapper}", "--rpc"]\nworking_dir = "."\n',
+        encoding="utf-8",
+    )
+    component_script = sugar / "components" / "python-lift" / "component.sh"
+    initialize_response = json.dumps(
         {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "sugar.ir.handshake",
-            "params": {
-                "sugar_version": "proofir-vocabulary-test",
-                "protocol_version": "sugar-ir-compiler/1",
+            "result": {
+                "name": "python-lift-component",
+                "protocol_version": "sugar-component/1",
+                "capabilities": {},
             },
-        },
+        }
+    )
+    plan_response = json.dumps(
         {
             "jsonrpc": "2.0",
             "id": 2,
-            "method": "sugar.ir.compile",
-            "params": {
-                "ir_json": ir_json,
-                "target_dialect": SMT_LIB_DIALECT,
+            "result": {
+                "decision": "claim",
+                "plugins": [
+                    {"name": "python-lift", "kind": "lift", "surface": "python"}
+                ],
+                "diagnostics": [
+                    {"level": "info", "message": "python lift component planned"}
+                ],
             },
-        },
-        {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "sugar.ir.shutdown",
-            "params": {},
-        },
-    ]
-    completed = subprocess.run(
-        [
-            "cargo",
-            "run",
-            "--locked",
-            "-p",
-            "sugar-ir-compiler-smt-lib",
-            "--bin",
-            "sugar-ir-smt-lib",
-            "--quiet",
-            "--",
-        ],
-        cwd=RUST_WORKSPACE,
-        input="\n".join(json.dumps(request) for request in requests) + "\n",
+        }
+    )
+    shutdown_response = json.dumps({"jsonrpc": "2.0", "id": 3, "result": None})
+    component_script.write_text(
+        "while IFS= read -r line; do\n"
+        '  case "$line" in\n'
+        f'    *\'"method":"initialize"\'*) printf \'%s\\n\' \'{initialize_response}\' ;;\n'
+        f'    *\'"method":"sugar.component.plan"\'*) printf \'%s\\n\' \'{plan_response}\' ;;\n'
+        f'    *\'"method":"shutdown"\'*) printf \'%s\\n\' \'{shutdown_response}\'; exit 0 ;;\n'
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    component_script.chmod(0o755)
+    (sugar / "components" / "python-lift" / "manifest.toml").write_text(
+        'name = "python-lift-component"\n'
+        'protocol_version = "sugar-component/1"\n'
+        f'command = ["/bin/sh", "{component_script}"]\n',
+        encoding="utf-8",
+    )
+    (sugar / "ir-compilers" / "smt-lib" / "manifest.toml").write_text(
+        'name = "smt-lib-reference"\n'
+        'version = "0.1.0"\n'
+        'protocol_version = "sugar-ir-compiler/1"\n'
+        'command = ["cargo", "run", "--locked", "-p", '
+        '"sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]\n'
+        f'working_dir = "{RUST_WORKSPACE}"\n'
+        'dialects = ["smt-lib-v2.6"]\n',
+        encoding="utf-8",
+    )
+
+
+def _mint_and_prove(project: Path) -> tuple[dict, dict]:
+    sugar = _ensure_sugar_bin()
+    capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"
+    capture.unlink(missing_ok=True)
+    mint = subprocess.run(
+        [str(sugar), "mint", "--out", ".", "--quiet"],
+        cwd=project,
         text=True,
         capture_output=True,
         check=False,
         timeout=120,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert mint.returncode == 0, f"stdout:\n{mint.stdout}\nstderr:\n{mint.stderr}"
+    lift_doc = _captured_lift_document(capture)
+    prove = subprocess.run(
+        [str(sugar), "prove", ".", "--json", "--z3", "z3"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert prove.stdout.strip(), prove.stderr
+    return lift_doc, json.loads(prove.stdout)
+
+
+def _captured_lift_document(capture: Path) -> dict:
+    assert capture.exists(), f"lift RPC capture missing at {capture}"
     responses = [
-        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
+        json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
     ]
-    assert len(responses) == 3, completed.stdout
-    compile_response = responses[1]
-    if "error" in compile_response:
-        raise AssertionError(
-            f"sugar-ir-smt-lib refused witness formula: {compile_response['error']}"
-        )
-    result = compile_response.get("result")
-    assert isinstance(result, dict), compile_response
-    return result
+    lift_responses = [
+        item for item in responses if item.get("id") == 2 and "result" in item
+    ]
+    assert len(lift_responses) == 1, responses
+    return lift_responses[0]["result"]
 
 
-def _run_witness_case(case) -> str:
+def _run_witness_case(case, tmp_path: Path) -> str:
     if case.expected == "construction-refusal":
         assert case.construct is not None
         with pytest.raises(FactoryGap):
@@ -176,22 +286,102 @@ def _run_witness_case(case) -> str:
         constructed = case.construct()
         if isinstance(constructed, RefusalRecord):
             assert constructed.denotation() is None
-    return _z3_status(_SolverCase(case.formulas))
+    assert case.source, f"{case.name} must be driven by a source witness"
+    cli_project = tmp_path / case.name / "cli"
+    _stage_cli_project(cli_project, case.source)
+    lift_doc, prove = _mint_and_prove(cli_project)
+    _assert_expected_sugar_fired(lift_doc, case)
+    _assert_lift_doc_contains_node_class(lift_doc, case)
+    _assert_real_verdict(prove, case)
+    return case.expected
 
 
-def test_witness_harness_uses_real_smt_lib_compiler() -> None:
-    compiled = _compile_formula_with_smt_lib(eq(make_var("x"), num(1)))
+def _assert_expected_sugar_fired(doc: dict, case) -> None:
+    assert case.expected_sugar, f"{case.name} must name its recognizer"
+    roles = {
+        warrant.get("role")
+        for row in doc.get("ir", [])
+        for warrant in row.get("sourceWarrants", [])
+        if isinstance(warrant, dict)
+    }
+    assert case.expected_sugar in roles, (case.expected_sugar, roles, doc)
 
-    assert "(declare-const x Int)" in compiled["preamble"]
-    assert "(check-sat)" in compiled["body"]
+
+def _assert_lift_doc_contains_node_class(doc: dict, case) -> None:
+    # S4+ moves this from shape/provenance-diagnostic inspection to reading the
+    # emitted ProofIR node-class provenance field directly.
+    if case.node_class == "EqualityFact":
+        assert _has_equality_fact(doc), doc
+        assert "EqualityFact" in _proofir_provenance_classes(doc)
+    elif case.node_class == "FunctionContract":
+        assert _has_function_contract(doc), doc
+        assert "FunctionContract" in _proofir_provenance_classes(doc)
+    elif case.node_class == "RefusalRecord":
+        assert any(d.get("kind") == "dig-refusal" for d in doc.get("diagnostics", []))
+        assert not _has_function_contract(doc), doc
+    else:
+        raise AssertionError(f"unknown witness node class: {case.node_class!r}")
+
+
+def _has_equality_fact(doc: dict) -> bool:
+    return any(row.get("inv") and "#euf#" in row.get("name", "") for row in doc["ir"])
+
+
+def _has_function_contract(doc: dict) -> bool:
+    return any(
+        row.get("kind") == "function-contract" and row.get("post")
+        for row in doc["ir"]
+    )
+
+
+def _proofir_provenance_classes(doc: dict) -> set[str]:
+    classes: set[str] = set()
+    for diagnostic in doc.get("diagnostics", []):
+        if diagnostic.get("kind") != "proofir-formula-provenance":
+            continue
+        for missing in diagnostic.get("missing", []):
+            node_class = missing.get("nodeClass")
+            if isinstance(node_class, str):
+                classes.add(node_class)
+    return classes
+
+
+def _assert_real_verdict(prove: dict, case) -> None:
+    row = _first_euf_row(prove)
+    if case.refusal_absence:
+        assert row["status"] == "discharged", prove
+        assert row["verification"]["linkedPosts"] == []
+        return
+    expected_status = {"sat": "discharged", "unsat": "unsatisfied"}[case.expected]
+    assert row["status"] == expected_status, prove
+
+
+def _first_euf_row(prove: dict) -> dict:
+    rows = prove.get("rows", [])
+    assert rows, prove
+    return next(row for row in rows if "#euf#" in row.get("property", ""))
 
 
 @pytest.mark.parametrize("node_class", REGISTERED_PROOFIR_NODE_CLASSES)
-def test_registered_proofir_witnesses_are_solver_checked(node_class) -> None:
+def test_registered_proofir_witnesses_are_source_programs(node_class) -> None:
     pair = node_class.verdict_witnesses()
 
-    assert _run_witness_case(pair.truthful) == pair.truthful.expected
-    assert _run_witness_case(pair.lying) == pair.lying.expected
+    assert pair.truthful.source
+    assert pair.truthful.expected_sugar
+    if pair.lying.expected != "construction-refusal":
+        assert pair.lying.source
+        assert pair.lying.expected_sugar
+
+
+@pytest.mark.parametrize("node_class", REGISTERED_PROOFIR_NODE_CLASSES)
+def test_registered_proofir_witnesses_are_solver_checked(
+    node_class,
+    tmp_path: Path,
+) -> None:
+    pair = node_class.verdict_witnesses()
+
+    assert _run_witness_case(pair.truthful, tmp_path) == pair.truthful.expected
+    assert _run_witness_case(pair.lying, tmp_path) == pair.lying.expected
 
 
 def test_instrument_c_registers_the_three_spine_witness_classes() -> None:
@@ -206,11 +396,13 @@ def test_instrument_c_registers_the_three_spine_witness_classes() -> None:
     ]
 
 
-def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver() -> None:
+def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver(
+    tmp_path: Path,
+) -> None:
     pair = EqualityFact.verdict_witnesses()
 
-    assert _run_witness_case(pair.truthful) == "sat"
-    assert _run_witness_case(pair.lying) == "unsat"
+    assert _run_witness_case(pair.truthful, tmp_path) == "sat"
+    assert _run_witness_case(pair.lying, tmp_path) == "unsat"
 
 
 def test_equality_fact_semantic_merge_collapses_stated_and_derived_warrants() -> None:
@@ -258,9 +450,6 @@ def test_equality_fact_semantic_merge_refuses_lying_pair() -> None:
     assert stated_lie.semantic_cid() != derived_truth.semantic_cid()
     with pytest.raises(FactoryGap, match="semantic_cid"):
         merge_equality_facts(stated_lie, derived_truth)
-    assert _z3_status(
-        _SolverCase((stated_lie.denotation(), derived_truth.denotation()))
-    ) == "unsat"
 
 
 def test_equality_fact_constructor_invariants_are_loud() -> None:
@@ -294,11 +483,11 @@ def test_equality_fact_constructor_invariants_are_loud() -> None:
         )
 
 
-def test_function_contract_witnesses_and_builder_invariants() -> None:
+def test_function_contract_witnesses_and_builder_invariants(tmp_path: Path) -> None:
     pair = FunctionContract.verdict_witnesses()
 
-    assert _run_witness_case(pair.truthful) == "sat"
-    assert _run_witness_case(pair.lying) == "unsat"
+    assert _run_witness_case(pair.truthful, tmp_path) == "sat"
+    assert _run_witness_case(pair.lying, tmp_path) == "unsat"
 
     contract = (
         FunctionContract.builder(
@@ -338,9 +527,11 @@ def test_function_contract_witnesses_and_builder_invariants() -> None:
         )
 
 
-def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible() -> None:
+def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
+    tmp_path: Path,
+) -> None:
     pair = RefusalRecord.verdict_witnesses()
-    assert _run_witness_case(pair.truthful) == "sat"
+    assert _run_witness_case(pair.truthful, tmp_path) == "sat"
     assert pair.lying.expected == "construction-refusal"
 
     record = RefusalRecord.from_incomplete(
