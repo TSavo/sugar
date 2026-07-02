@@ -234,6 +234,8 @@ fn signature_covers_header_and_metadata_via_jcs() {
     let sig = sugar_proof_envelope::member_signature(&env)
         .and_then(|v| v.as_str())
         .expect("envelope.signature");
+    let sig = sugar_proof_envelope::Signature::try_parse(sig.to_string())
+        .expect("envelope signature must parse");
 
     let msg = Json::Object(serde_json::Map::from_iter([
         ("header".to_string(), header),
@@ -243,7 +245,7 @@ fn signature_covers_header_and_metadata_via_jcs() {
     let bytes = encode_jcs(&v);
 
     assert!(
-        ed25519_verify_string(signer, sig, bytes.as_bytes()),
+        ed25519_verify_string(signer, &sig, bytes.as_bytes()),
         "spec §2 R2: signature MUST verify against JCS({{header, metadata}})"
     );
 
@@ -282,6 +284,8 @@ fn body_tamper_invalidates_signature() {
         .and_then(|v| v.as_str())
         .expect("signature")
         .to_string();
+    let sig =
+        sugar_proof_envelope::Signature::try_parse(sig).expect("envelope signature must parse");
 
     // Tamper: rewrite metadata.producedBy.
     env.pointer_mut("/metadata")

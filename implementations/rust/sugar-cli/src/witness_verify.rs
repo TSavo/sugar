@@ -25,7 +25,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Value};
 
 use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::ed25519_verify_string;
+use sugar_proof_envelope::{ed25519_verify_string, Signature};
 use sugar_verifier::{MemberKind, MementoPool};
 
 /// One witness-memento's verdict from the rust verifier.
@@ -144,15 +144,21 @@ pub fn verify_witnesses_with_options(
             .field("observed_at")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let signature_ok = if witness_cid.is_empty() {
-            false
-        } else if observed_at.is_empty() {
-            // Package family: mark over the bare CID (legacy scheme).
-            ed25519_verify_string(signer, signature, witness_cid.as_bytes())
-        } else {
-            // WitnessMemento family: mark over the sealed {cid, observed_at}.
-            let attested = sugar_ir_types::witness_attestation_payload(&witness_cid, observed_at);
-            ed25519_verify_string(signer, signature, &attested)
+        let signature_ok = match (
+            witness_cid.is_empty(),
+            Signature::try_parse(signature.to_string()),
+        ) {
+            (true, _) | (_, Err(_)) => false,
+            (false, Ok(signature)) if observed_at.is_empty() => {
+                // Package family: mark over the bare CID (legacy scheme).
+                ed25519_verify_string(signer, &signature, witness_cid.as_bytes())
+            }
+            (false, Ok(signature)) => {
+                // WitnessMemento family: mark over the sealed {cid, observed_at}.
+                let attested =
+                    sugar_ir_types::witness_attestation_payload(&witness_cid, observed_at);
+                ed25519_verify_string(signer, &signature, &attested)
+            }
         };
         if !signature_ok {
             out.push(WitnessVerifyResult {
@@ -610,19 +616,24 @@ mod tests {
     // `observed_at`. These tests exercise that exact predicate end-to-end with
     // the real ed25519 primitives, mirroring the inline logic.
 
-    use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed};
+    use sugar_proof_envelope::{
+        ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed, Signature,
+    };
 
     const TEST_SEED: Ed25519Seed = [7u8; 32];
 
     /// The exact signature predicate `verify_witnesses` applies (kept in sync).
     fn signature_ok(witness_cid: &str, observed_at: &str, signer: &str, signature: &str) -> bool {
+        let Ok(signature) = Signature::try_parse(signature.to_string()) else {
+            return false;
+        };
         if witness_cid.is_empty() {
             false
         } else if observed_at.is_empty() {
-            ed25519_verify_string(signer, signature, witness_cid.as_bytes())
+            ed25519_verify_string(signer, &signature, witness_cid.as_bytes())
         } else {
             let attested = sugar_ir_types::witness_attestation_payload(witness_cid, observed_at);
-            ed25519_verify_string(signer, signature, &attested)
+            ed25519_verify_string(signer, &signature, &attested)
         }
     }
 

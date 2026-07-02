@@ -54,8 +54,8 @@ pub use proof_graph::{
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
-    ed25519_verify_string, Ed25519PublicKey, Ed25519Seed, Ed25519Signature, ED25519_KEY_PREFIX,
-    ED25519_SIG_PREFIX,
+    ed25519_verify_string, Ed25519PublicKey, Ed25519Seed, Ed25519Signature, Signature,
+    SignatureParseError, ED25519_KEY_PREFIX, ED25519_SIG_PREFIX,
 };
 pub use typed_member::{
     AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContractMember,
