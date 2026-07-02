@@ -695,7 +695,11 @@ class _Emitter:
             return ctor("python:return", value)
         if isinstance(node, ast.Assign):
             if len(node.targets) != 1:
-                raise _UnsupportedSyntax(node, "multiple-target assignment is refused")
+                raise _UnsupportedSyntax(
+                    node,
+                    "multiple-target assignment is refused",
+                    kind="multi-target-assign-refused",
+                )
             target_node = node.targets[0]
             if isinstance(target_node, (ast.Tuple, ast.List)):
                 value = self.expr(node.value)
@@ -2811,7 +2815,12 @@ def _callee_name(node: ast.expr) -> str:
     if isinstance(node, ast.Attribute):
         base = _callee_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
-    raise _UnsupportedSyntax(node, f"unsupported callee kind: {type(node).__name__}")
+    callee_kind = type(node).__name__
+    raise _UnsupportedSyntax(
+        node,
+        f"callee is a {callee_kind}: not a callable expression",
+        kind=f"callee-{callee_kind.lower()}-refused",
+    )
 
 
 def _callee_has_call_result(node: ast.expr) -> bool:

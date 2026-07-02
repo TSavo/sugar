@@ -3439,9 +3439,26 @@ def test_tuple_unpack_multi_target_assignment_still_refuses() -> None:
 
     result = lift_source(source, "multi_target_assignment_refusal.py")
 
-    assert [refusal["reason"] for refusal in result.refusals] == [
-        "multiple-target assignment is refused"
+    assert result.refusals == [
+        {
+            "kind": "multi-target-assign-refused",
+            "function": "multi_target_assignment_refusal.f",
+            "line": 2,
+            "reason": "multiple-target assignment is refused",
+        }
     ]
+
+
+def test_multi_target_refusal_does_not_swallow_tuple_unpack_assignment() -> None:
+    source = "def f(pair):\n    a, b = pair\n    return b\n"
+
+    result = lift_source(source, "multi_target_tuple_unpack.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _unpack_assign("tuple", _unpack_targets(_var("a"), _var("b")), _var("pair")),
+        _return(_var("b")),
+    )
 
 
 def test_nested_tuple_unpack_roundtrip_is_structurally_stable() -> None:
@@ -4241,6 +4258,59 @@ def test_subscript_callee_roundtrip_is_structurally_stable() -> None:
     assert body == _return(term)
     assert cid_of_json(body) == cid_of_json(_return(term))
     assert {"kind": "unresolved_call", "name": "(subscript)"} in contract["effects"]
+
+
+@pytest.mark.parametrize(
+    ("callee_expr", "kind", "reason"),
+    [
+        (
+            "(5)(x)",
+            "callee-constant-refused",
+            "callee is a Constant: not a callable expression",
+        ),
+        (
+            "(factory + other)(x)",
+            "callee-binop-refused",
+            "callee is a BinOp: not a callable expression",
+        ),
+        (
+            "(a < b)(x)",
+            "callee-compare-refused",
+            "callee is a Compare: not a callable expression",
+        ),
+        (
+            "(-factory)(x)",
+            "callee-unaryop-refused",
+            "callee is a UnaryOp: not a callable expression",
+        ),
+    ],
+)
+def test_callee_shapes_refuse_with_typed_kind(
+    callee_expr: str, kind: str, reason: str
+) -> None:
+    module_name = kind.replace("-", "_")
+    source = (
+        "def f(factory, other, a, b, x):\n"
+        f"    return {callee_expr}\n"
+    )
+
+    result = lift_source(source, f"{module_name}.py")
+
+    assert result.refusals == [
+        {
+            "kind": kind,
+            "function": f"{module_name}.f",
+            "line": 2,
+            "reason": reason,
+        }
+    ]
+
+
+def test_name_callee_still_lifts_without_typed_callee_refusal() -> None:
+    result = lift_source("def f(fn, x):\n    return fn(x)\n", "name_callee.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_call("fn", _var("x")))
 
 
 def test_chained_call_roundtrip_is_structurally_stable() -> None:
