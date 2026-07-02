@@ -215,6 +215,24 @@ def _ann_assign(
     }
 
 
+def _annotation_union(
+    left: dict[str, object], right: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:annotation_union",
+        "args": [left, right],
+    }
+
+
+def _annotation_tuple(*items: dict[str, object]) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:annotation_tuple",
+        "args": list(items),
+    }
+
+
 def _walrus(target: dict[str, object], value: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -1523,12 +1541,12 @@ def test_assert_with_complex_condition_lifts_condition_tree() -> None:
 
 def test_assert_floor_discriminates_other_unhandled_statement_kinds() -> None:
     result = lift_source(
-        "def f(x):\n    match x:\n        case _:\n            return 1\n",
-        "match.py",
+        "def f():\n    try:\n        return 1\n    except* Exception:\n        return 2\n",
+        "trystar.py",
     )
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled statement kind: Match"
+        "unhandled statement kind: TryStar"
     ]
 
 
@@ -2321,6 +2339,31 @@ def test_compile_lift_roundtrip_preserves_slice_assign_body(source: str) -> None
     assert canonical_json_bytes(relifted_body) == canonical_json_bytes(body)
 
 
+def test_matmul_binary_operator_lifts_to_python_matmul() -> None:
+    result = lift_source("def f(A, B):\n    return A @ B\n", "matmul.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(
+        _binary("python:matmul", _var("A"), _var("B"))
+    )
+
+
+def test_matmul_augassign_stays_refused() -> None:
+    result = lift_source(
+        "def f(A, B):\n    A @= B\n    return A\n",
+        "matmul_augassign_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "matmul_augassign_refusal.f",
+            "line": 2,
+            "reason": "unsupported binary operator: MatMult",
+        }
+    ]
+
+
 def test_name_augassign_lifts_to_aug_assign_without_runtime_failure_loci() -> None:
     source = "def f(x, y):\n    x += y\n    return x\n"
 
@@ -2745,6 +2788,96 @@ def test_name_annassign_with_value_has_no_runtime_failure_loci_or_effects() -> N
     assert contract["effects"] == []
     assert contract.get("panicLoci", []) == []
     assert body["args"][0] == _ann_assign(_var("x"), _var("int"), _var("y"))
+
+
+def test_annotation_union_lifts_pep604_binop_annotation() -> None:
+    source = "def f():\n    x: int | str\n    return x\n"
+
+    result = lift_source(source, "annotation_union.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _ann_assign(
+            _var("x"),
+            _annotation_union(_var("int"), _var("str")),
+            _no_value(),
+        ),
+        _return(_var("x")),
+    )
+
+
+def test_annotation_tuple_lifts_tuple_annotation_expression() -> None:
+    source = "def f():\n    x: (int, str)\n    return x\n"
+
+    result = lift_source(source, "annotation_tuple.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _seq(
+        _ann_assign(
+            _var("x"),
+            _annotation_tuple(_var("int"), _var("str")),
+            _no_value(),
+        ),
+        _return(_var("x")),
+    )
+
+
+def test_annotation_non_bitor_binop_stays_refused() -> None:
+    result = lift_source(
+        "def f():\n    x: int + str\n    return x\n",
+        "annotation_add_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "annotation_add_refusal.f",
+            "line": 2,
+            "reason": "unsupported annotation expression: BinOp",
+        }
+    ]
+
+
+def test_annotation_union_arm_refusal_propagates() -> None:
+    result = lift_source(
+        "def f():\n    x: int | (await str)\n    return x\n",
+        "annotation_union_arm_refusal.py",
+    )
+
+    assert result.refusals == [
+        {
+            "kind": "unhandled-syntax",
+            "function": "annotation_union_arm_refusal.f",
+            "line": 2,
+            "reason": "await expressions are refused",
+        }
+    ]
+
+
+def test_annotation_union_and_tuple_roundtrip_is_structurally_stable() -> None:
+    term = _seq(
+        _ann_assign(
+            _var("x"),
+            _annotation_union(
+                _annotation_union(_var("A"), _var("B")),
+                _var("C"),
+            ),
+            _no_value(),
+        ),
+        _ann_assign(
+            _var("y"),
+            _annotation_tuple(_var("int"), _var("str")),
+            _no_value(),
+        ),
+    )
+
+    compiled = compile_body_term(term, formals=["A", "B", "C", "int", "str"])
+    relifted = lift_source(compiled, "roundtrip_annotations.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_direct_attribute_annassign_without_value_does_not_access_final_attribute() -> (
@@ -3726,18 +3859,66 @@ def test_with_multiple_items_lifts_single_body_with_each_context_effect() -> Non
     assert {"kind": "reads", "target": "value"} not in contract["effects"]
 
 
-def test_with_floor_discriminates_match_statement() -> None:
+def test_with_floor_discriminates_other_unhandled_statement_kinds() -> None:
+    source = (
+        "def f():\n"
+        "    try:\n"
+        "        return 1\n"
+        "    except* Exception:\n"
+        "        return 2\n"
+    )
+
+    result = lift_source(source, "trystar_statement.py")
+
+    assert [refusal["reason"] for refusal in result.refusals] == [
+        "unhandled statement kind: TryStar"
+    ]
+
+
+def test_match_statement_refuses_with_typed_pattern_kind() -> None:
+    source = (
+        "def f(x):\n"
+        "    match x:\n"
+        "        case int():\n"
+        "            return 1\n"
+    )
+
+    result = lift_source(source, "match_class_refusal.py")
+
+    assert result.refusals == [
+        {
+            "kind": "match-refused",
+            "function": "match_class_refusal.f",
+            "line": 2,
+            "reason": "match statement refused (pattern kinds: ['MatchClass'])",
+        }
+    ]
+
+
+def test_match_refusal_lists_multiple_pattern_kinds_sorted() -> None:
     source = (
         "def f(x):\n"
         "    match x:\n"
         "        case 0:\n"
         "            return 0\n"
+        "        case int():\n"
+        "            return 1\n"
+        "        case _:\n"
+        "            return 2\n"
     )
 
-    result = lift_source(source, "match_statement.py")
+    result = lift_source(source, "match_multi_refusal.py")
 
-    assert [refusal["reason"] for refusal in result.refusals] == [
-        "unhandled statement kind: Match"
+    assert result.refusals == [
+        {
+            "kind": "match-refused",
+            "function": "match_multi_refusal.f",
+            "line": 2,
+            "reason": (
+                "match statement refused "
+                "(pattern kinds: ['MatchAs', 'MatchClass', 'MatchValue'])"
+            ),
+        }
     ]
 
 
@@ -4613,16 +4794,16 @@ def test_dotted_local_import_binds_head_name_only() -> None:
 
 def test_import_floor_discriminates_other_unhandled_statement_kinds() -> None:
     result = lift_source(
-        "def f(x):\n    match x:\n        case _:\n            return 1\n",
-        "import_match_refusal.py",
+        "def f():\n    try:\n        return 1\n    except* Exception:\n        return 2\n",
+        "import_trystar_refusal.py",
     )
 
     assert result.refusals == [
         {
             "kind": "unhandled-syntax",
-            "function": "import_match_refusal.f",
+            "function": "import_trystar_refusal.f",
             "line": 2,
-            "reason": "unhandled statement kind: Match",
+            "reason": "unhandled statement kind: TryStar",
         }
     ]
 
@@ -4722,9 +4903,10 @@ def test_nested_function_body_refusal_is_reported_without_swallowing_outer() -> 
     source = (
         "def outer():\n"
         "    def inner(x):\n"
-        "        match x:\n"
-        "            case _:\n"
-        "                return 1\n"
+        "        try:\n"
+        "            return 1\n"
+        "        except* Exception:\n"
+        "            return 2\n"
         "    return inner\n"
     )
 
@@ -4735,7 +4917,7 @@ def test_nested_function_body_refusal_is_reported_without_swallowing_outer() -> 
             "kind": "unhandled-syntax",
             "function": "nested_refusal.outer.<locals>.inner",
             "line": 3,
-            "reason": "unhandled statement kind: Match",
+            "reason": "unhandled statement kind: TryStar",
         }
     ]
     outer = _contract(result.ir, ".outer")
