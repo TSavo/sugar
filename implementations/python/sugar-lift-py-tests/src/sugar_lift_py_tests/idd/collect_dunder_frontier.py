@@ -151,6 +151,9 @@ def _owned_dunder_slots() -> dict[str, str]:
         "__iter__": "SequenceProjectionOperation",
         "__next__": "NextOperation",
         "__bool__": "object_truthiness",
+        "__getattr__": "AttributeLookupOperation",
+        "__enter__": "ContextManagerOperation",
+        "__exit__": "ContextManagerOperation",
     }
     for name in object_value._BINARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._BINARY_DUNDER_METHODS"
