@@ -18,7 +18,7 @@
     "callee-setcomp-refused": 1,
     "callee-subscript-refused": 1216,
     "callee-unaryop-refused": 9,
-    "decorator-refused": 9196,
+    "decorator-refused": 9189,
     "enum-pin-refused": 50,
     "for-else-refused": 5,
     "generator-refused": 91,
