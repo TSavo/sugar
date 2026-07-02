@@ -102,10 +102,30 @@ Cap ~3 concurrent workers (bcargo/battleaxe is one box; more contends).
   red_gate_is_not_a_gate ×10). T's call: write top 8 or strip. 2026-07-02: T explicitly PAUSED
   this — leave as-is until he has focus; do not draft or strip autonomously.
 
-## Loops running
-- Cron (30-min): poll fleet, merge, redispatch, reconcile main, stop when crime board zero.
-- PR monitor: fires on each new open PR.
-- Acid-CI monitor: armed for the first COMPLETED main run verdict — consume it as real ΔR.
+## LIVE FLEET MAP (2026-07-02 ~07:40 PDT — the state git/gh does NOT hold; re-list_workers to confirm)
+- 85870 → worktree ~/provekit-wt/typed-pool-3, branch codex/typed-pool-3 → #3041 Slice 3 (load-time indexes). Lane order after: S4→S5→S6→S7, strictly serial (each slice's audit ratchet is next baseline). #3160 BridgePin slots after S4.
+- 85868 → worktree ~/provekit-wt/boundvar-floor, branch codex/boundvar-floor → #3017 item 4 (BoundVar floor). Lane: reds-first then items 5→10 in order; #3142 floor-gap rows drain AS items land (no separate dispatch). item 4 = Phase-3 prereq; item 5 (RaiseValue/RouteRaises) = Phase-2 prereq.
+- 85873 → worktree ~/provekit-wt/pykit-lambda, branch codex/pykit-lambda → #3103 Lambda. Lane: recognizer tail (#3104→#3106→batch #3107-3120) INTERLEAVED with floor-projection slices #3181→#3187 (blocked-by chained, strict order); file-disjoint so can alternate.
+- Background Opus agent `seam-plan` RUNNING: writing docs/superpowers/plans/2026-07-02-irterm-boundary-collapse-campaign.md + filing [rust-kit][irterm-boundary] slice issues + #3017 comment. Collect its idle-notification deliverable. (Prior agent `tower-dig-plan` DONE: floor-projection plan + #3181-3187 + #3150 comment.)
 
-## Codex worker windows (this session — re-`list_workers` to confirm, IDs change across sessions)
-85868 (#2995), 85870 (working), 85873 (#3022 queued). Never reuse IDs blindly; list first.
+## COORDINATOR REFLEXES (muscle memory — lost on compaction, re-learn the hard way otherwise)
+- Verify `gh pr view N --json mergedAt` is NON-NULL before deleting a branch. Lost #3159's branch this way; recovered from local ref.
+- cargo/bcargo HALTS at the first failing test target — a lib-target red masks every downstream bin/integration target. ALWAYS run explicit bin targets + quote EVERY test-binary summary line. This masking hid reds all session (#3085/#3089/#3131/#3142/#3173/#3179).
+- `git worktree prune` before recreating a worktree at a path that errored; fast merge cadence causes fetch ref-lock races — re-fetch and retry.
+- Codex "usage limit" tails: note the reset time, re-dispatch the FULL brief after it (queued briefs pre-limit do not run). Reset seen ~02:09 and ~07:10 PDT.
+- Merge cycle per PR: read+soundness-read → admin-merge → verify mergedAt → delete branch → ff main → remove worktree → prune → create next worktree (verify HEAD) → dispatch full inline brief.
+- Every discovered red/debt → gh issue at decision time, before moving on. Never raise a ceiling / soften a refusal / #[ignore] to green.
+
+## HELD FOR T (do not act autonomously)
+- KB dangling:92 — PAUSED by T; leave until he has focus.
+- #3017 Phase-4 seam: DECIDED Option A (one representation); seam-plan agent executing. No open gate now.
+- #3150 mini-interpreter: design blessed, #3181-3187 filed; dispatchable.
+
+## Loops running
+- Cron (30-min): poll fleet, merge, redispatch, reconcile main.
+- PR monitor (persistent): fires on each new open PR.
+- Worker-idle monitor (persistent, osascript reads iTerm tails): fires when a window flips working→idle.
+- Acid-CI monitor (persistent): armed for the first COMPLETED (non-cancelled) main run verdict.
+
+## Codex worker windows (IDs change across sessions — re-`list_workers` to confirm; never reuse blindly)
+85868, 85870, 85873. Three-worker cap (battleaxe is one box; remote bcargo serial per worker).
