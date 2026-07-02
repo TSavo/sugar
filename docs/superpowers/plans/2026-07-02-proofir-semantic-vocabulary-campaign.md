@@ -74,6 +74,18 @@ Each class below is a real emission shape in the graph today. Each gets: a **den
 
 **No `GenericFact`.** There is no semantic-wildcard node class. A shape not yet expressible refuses loudly (`RefusalRecord` / `FactoryGap`), exactly like the floor base's `to_term` gap (`floor_value.py:11`). A wildcard would be the side door (see Anti-goals).
 
+## Deepened target state — the ProofIR Construction Law (T Savo, 2026-07-02; design doc Addendum 3/3b)
+
+The node classes above (landed in S2, `proofir/nodes.py`) are necessary but NOT sufficient. T's directive deepens the target: **No naked `Formula` crosses a boundary.** A syntactically valid formula is not enough — it must be **scoped, sorted, provenanced, and installed into a typed ProofIR role** before it can enter a proof, report, RPC payload, or solver call. The gap on main today: `proofir/nodes.py` has the node classes, but `ir.py` still has union-shaped `Sort`/`Term`/`Formula` and `BodyUniverseDto` still accepts raw `dict` formula slots. **We are not just typing FOL; we are typing FOL MEMBERSHIP** — a formula must know whether it is a vendor fact, a body universe, a bridge obligation, a refusal boundary, or a derived implication. That is how "invalid FOL in the proof" becomes literally unconstructible, not merely unlikely.
+
+**Tiny typed files (one class per concept):** `proofir/sorts/*` (IntSort, RealSort, BoolSort, StringSort, IdentitySort, BvSort(width), FunctionSort); `proofir/terms/*` (Var[S], Const[S], CallTerm[S], CtorTerm[S], BvAnd/BvShl, IdentityValue — every term carries a sort; bit-vector ops accept only compatible-width bv terms; identity terms never enter numeric sort space); `proofir/formulas/*` (Eq[S], Predicate, And, Or, Not, Implies, ForAll, Exists — `Eq(Int, String)` cannot construct; numeric coercion is explicit `Coerce(Int→Real)`; identity equality is a separate `IdentityEq`); `proofir/scope/*` **(THE TRICK)** (OpenFormula, ScopedFormula, ClosedFormula, PostCondition, PreCondition — a member accepts only the right wrapper); `proofir/provenance/*` (Provenance as a REQUIRED TYPE: ConstructionSite, StatedWarrant, DerivedWarrant, SourceWarrant, PlanMemento); `proofir/nodes/*` (one file per role: EqualityFact, FunctionContract, BodyUniverse, UniverseMint, VendorConjoin, CallEdgeDecl, BridgeAtom, AuditMemento, RefusalRecord — **the ONLY things allowed to serialize to proof/RPC/report; raw formulas cannot**).
+
+**Construction laws (violation panics at construction, not downstream):** `Eq(left: Term[S], right: Term[S])` accepts only matching/explicitly-coercible sorts; `Not`/`And`/`Implies` accept only `Formula`; `FunctionContract` accepts a `PostCondition`, NOT a `Formula` — its constructor checks `out` is mentioned, free vars are exactly declared formals plus `out`, every var has a sort, the formula is closed under the contract scope; `EqualityFact` is built from a `CallTerm[S]` + `Term[S]` (the `#euf#` key is DERIVED, never a caller-supplied string); `RefusalRecord` cannot carry predicates (disjoint from FOL — effect/refusal only); `BridgeAtom` carries typed unresolved linkage, not raw JSON/string folklore; `VendorConjoin` takes typed members (`FactAtom` + `UniverseAtom`), not arbitrary formulas.
+
+**Role wrappers — formulas cannot float loose:** `OpenFormula → ScopedFormula → ClosedFormula → ProvenancedFormula → ClaimFormula`. A raw `Formula` may exist TEMPORARILY inside construction, but it cannot be serialized, reported, conjoined, or inserted into a `.proof`. Provenance is a required type at construction (`FactAtom` requires `VendorWarrant | SourceWarrant`; `UniverseAtom` requires body/source provenance; `PlanAtom` requires a `PlanMemento`); anything reportable is reconstructible from the `.proof`.
+
+**wrap-vs-replace decision (byte-compat law).** `ir.py`'s existing typed unions (`_Var`/`_Ctor`/`_Atomic`/…) are the SUBSTRATE. Decision: **REPLACE the construction surface, WRAP the representation.** Lifters/sugars/factories stop constructing `ir.py` unions (and raw dicts) directly and construct the tiny typed `proofir/*` classes; those classes CARRY an `ir.py` term/formula internally and lower to the wire through the existing `formula_to_value`/`encode_jcs` path, so the emitted bytes do NOT move (the repr-snapshot goldens and the CDDL-frozen `Declaration` wire are conserved, except documented re-pins). The tiny files are a typed CONSTRUCTION+MEMBERSHIP layer over the conserved serialization substrate — not a new wire format.
+
 ## Where construction happens — the vocabulary is the codomain of the Outcome algebra
 
 This is the load-bearing S2 design, and it must be gotten right: **the vocabulary is NOT a free-floating layer. It is the natural codomain of the existing reduction algebra** (`Complete`/`Incomplete`, the floors, `desugar`, `project_callsite_with`). Construction happens at the moment a floor meets an assertion/contract position — AFTER `desugar` has composed and reduction has terminated in `Complete(floor)` (or honestly refused via `Incomplete(effect)`).
@@ -105,7 +117,8 @@ This is the load-bearing S2 design, and it must be gotten right: **the vocabular
 5. **Stated-vs-derived is sacred.** Dedup is by `(key, IDENTICAL formula, distinct provenance)` ONLY, never by key alone. Dropping the differing stated fact in the lying case is UNSOUND and forbidden.
 6. **Byte-compat on goldens.** Each migration slice is byte-behavior-preserving on the pinned assertion/golden fixtures, EXCEPT the deliberate golden changes the #3220 collapse requires — those are documented and re-pinned in the same slice (campaign law: a deliberate golden change is stated on the record and re-pinned, never silent).
 7. **Climb the ladder.** The return-type frontier belongs to the compiler (Rust) / a runtime `FactoryGap` seam that recruits the test suite as the enumerator (Python) — the top rung. The auditor survives only for what types cannot yet see: provenance completeness and the single-seat invariant. Prefer the fix that makes the untyped shape unrepresentable over the fix that detects it.
-8. **Every reach for an auditor is the signal to grab the type system instead.** "The type system is there to scream; all we are doing is giving it a mouth." No auditor lands in this campaign without one of two justifications, on the record: (a) it is replaced by a type-level mechanism NOW — a closed enum, a return-type flip, a constructor refusal; or (b) it is watching something the type system cannot yet see, stated in one sentence, WITH its retirement plan naming the later slice/type change that deletes it. An auditor with neither is a bug in the plan. (Audit of this campaign's four instruments against this law is in the Instruments section below.)
+8. **Every reach for an auditor is the signal to grab the type system instead.** "The type system is there to scream; all we are doing is giving it a mouth." No auditor lands in this campaign without one of two justifications, on the record: (a) it is replaced by a type-level mechanism NOW — a closed enum, a return-type flip, a constructor refusal; or (b) it is watching something the type system cannot yet see, stated in one sentence, WITH its retirement plan naming the later slice/type change that deletes it. An auditor with neither is a bug in the plan. (Audit of this campaign's instruments against this law is in the Instruments section below.)
+9. **No naked `Formula` crosses a boundary (Construction Law, from S5 on).** A raw `Formula` may exist temporarily inside construction, but it cannot be serialized, reported, conjoined, or inserted into a `.proof` — it must first be scoped, sorted, provenanced, and installed into a typed ProofIR role (a `proofir/nodes/*` member) via its role wrapper. Membership, not mere FOL well-formedness, is the invariant. The scanner (Instrument E) is the mouth until the wrappers make the axis unrepresentable.
 
 ## Instruments
 
@@ -133,6 +146,12 @@ The abstract emission base's construction method returns ONLY the typed vocabula
 
 **Ladder audit (law 8): this IS justification (a) — it is not an auditor.** Instrument D is the type mechanism itself (return-type flip → compiler in Rust, panic-seam-recruiting-tests in Python). It is the top of the ladder that Instruments A and B are measured against; it retires A on arrival and is the target rung B aspires to for provenance.
 
+### Instrument E — the Construction-Law live scanner (from S5; supersedes Instrument A's static baseline)
+
+The static offender baseline in `idd/proofir_vocab_instruments.py` becomes a LIVE SCANNER — no authored offender tuple; the repo tells us where it is dirty. Three red axes: (1) `_formula_to_rpc` called OUTSIDE ProofIR serialization internals; (2) raw `BodyUniverseDto(pre=|post=|inv=)` outside a typed node's serializer; (3) `Formula`/`dict[str, Any]`/`str`/`Any`-typed formula slots in ProofIR node constructors or DTO formula fields — plus a fourth once the split begins: a monolithic ProofIR semantic class still in one file. It reports `R(naked-formula-boundary-crossings)` as the live count. Paired with the construction-law UNIT TWINS (invalid construction must panic loudly): wrong-sort equality, naked-formula insertion, universe with an illegal free var, refusal carrying a predicate.
+
+**Ladder audit (law 8): justification (a) with a staged retirement — the wrappers ARE the retirement.** The scanner is scaffolding whose axes go to UNREPRESENTABLE as the tiny typed files + role wrappers land: once `Eq[S]` refuses mismatched sorts at construction, "wrong-sort equality" cannot be written (axis 3 dies); once `FunctionContract` takes only a `PostCondition` and DTOs are wire-only, "raw `BodyUniverseDto(post=dict)`" cannot be written (axis 2 dies); once `_formula_to_rpc` is private to the node serializers, "called outside serialization" is a visibility error (axis 1 dies). Each drain slice deletes one scanner axis by making it a type/visibility fact; the scanner is fully retired at the Python close when every axis is unrepresentable. Until then it is the live mouth for the axes types cannot yet reach.
+
 ## Ratchet vector
 
 | Signal | Starts as | Target |
@@ -145,6 +164,8 @@ The abstract emission base's construction method returns ONLY the typed vocabula
 | `R(duplicate-emission-rows)` (#3220) | S4 measures (bridge-chain + demanded-floor identical rows). | 0 via provenance collapse; lying-case conjunction preserved. |
 | `R(shadow-interpreter-files)` | 1 (`floor_contract_agreement.py` over raw dicts). | 0 (denotation owned by `FunctionContract`). |
 | `R(incomplete-effect-untyped)` — Python | 1 (`Incomplete.effect: object`). | 0 (typed `Effect` union, Rust parity). |
+| `R(naked-formula-boundary-crossings)` | S5 live scanner pins (the 3 axes: `_formula_to_rpc` outside serialization; raw `BodyUniverseDto(pre/post/inv=)`; `Formula`/`dict`/`str`/`Any` formula slots). | 0 — each drain slice deletes an axis by making it a type/visibility fact. |
+| `R(union-shaped-ir-not-tiny-typed)` | S5 measures (`ir.py` union `Sort`/`Term`/`Formula`; no `proofir/sorts,terms,formulas,scope,provenance/*`). | 0 after the tiny-files split lands per node family. |
 
 ## Slices
 
@@ -194,48 +215,60 @@ Re-point `_emit_euf_fact` (`literal_call_report.py:744`) to construct an `Equali
 
 Exit: `EqualityFact` is the only `#euf#` emitter; `R(duplicate-emission-rows)=0`; #3220 subsumed; the untyped-site count drops by Class A.
 
-### Slice 5 — Migrate `FunctionContract` / BodyUniverse; retire the shadow interpreter
+> **Slices 5-9 are the deepened Construction-Law phase (T Savo directive, design doc Addendum 3/3b), restructured after S4 lands.** S4 (`EqualityFact` typed node at the seat + #3220) is a COMPATIBLE step that stays as-is; the directive EXTENDS beyond it into typed FOL MEMBERSHIP. T's sequencing: the next slice is the red construction-law scanner + the FIRST tiny class family + the construction-law twins + migrate ONE seat; then the counted migrations (the scanner's rows are the work-list): `FunctionContract`, then `RefusalRecord`, then the remaining vocab nodes; then the close.
 
-Make `BodyUniverseDto.{pre,post,inv}` carry typed `Formula` (via `FunctionContract`) instead of `dict`. DELETE `floor_contract_agreement.py`'s raw-dict `_formula_models`/`_normalize_term`/`_fold_ctor` interpreter — the `FunctionContract` node OWNS the floor⊨post denotation. Keep the agreement GATE armed (it now checks the typed node, not a dict).
+### Slice 5 — The Construction Law: live scanner + first tiny class family + one seat (T's next slice)
 
-- Bad-twins: (a) a callable whose floor models its post → SAT (gate green); (b) a floor contradicting its post → UNSAT (gate red); (c) a malformed `post` (no `out` binding) refuses at construction, not at the gate.
-- Pinned tests: the `floor_contract_agreement` gate suite (now typed); function-universe golden fixtures.
+Stand up **Instrument E** — turn the static baseline in `idd/proofir_vocab_instruments.py` into a LIVE SCANNER (no authored offender tuple) over its three red axes (`_formula_to_rpc` outside serialization; raw `BodyUniverseDto(pre/post/inv=)`; `Formula`/`dict`/`str`/`Any` formula slots). Build the FIRST tiny class family — exactly `proofir/sorts/` (Sort), `proofir/terms/` (Term[S]), `proofir/formulas/` (Formula, `Eq[S]`, `And`), `proofir/scope/` (`ClosedFormula`) — and REBUILD `EqualityFact` on them (its `Eq[S]` is built from a `CallTerm[S]` + `Term[S]`, the `#euf#` key DERIVED). Land the construction-law UNIT TWINS: wrong-sort equality panics, naked-formula insertion panics, universe with an illegal free var panics, refusal carrying a predicate panics. Migrate ONE emission seat (the `EqualityFact` seat from S4) onto the wrapped/typed path; the scanner counts the rest. wrap-vs-replace per the byte-compat law: the tiny classes CARRY `ir.py` terms internally and lower through the existing serialization, so bytes do not move.
 
-Exit: `R(shadow-interpreter-files)=0`; BodyUniverse carries typed formulas; untyped-site count drops by Classes C/F.
+- Red-first: the live scanner reds on every current axis-1/2/3 site (the repo tells us where it is dirty); each construction-law twin reds until its class refuses.
+- Bad-twins: (a) `Eq(IntSort, StringSort)` cannot construct (panics); (b) inserting a naked `Formula` into a node panics (only the role wrapper is accepted); (c) `EqualityFact` from a caller-supplied string key is unrepresentable (it takes a `CallTerm[S]`); (d) the one migrated seat's golden stays byte-identical.
+- Pinned tests: new `test_construction_law.py` (the twins); `test_callsite_emission_golden.py` byte-stable for the migrated seat.
 
-### Slice 6 — Migrate `RefusalRecord` + type `Incomplete.effect`
+Exit: the live scanner pins `R(naked-formula-boundary-crossings)`; the first tiny family + `ClosedFormula` + rebuilt `EqualityFact` exist; construction-law twins panic; one seat migrated; `R(union-shaped-ir-not-tiny-typed)` measured.
 
-Give Python `Incomplete.effect` a typed `Effect` union mirroring Rust's `Effect::CoverageGap`. Route `dig_refusal.py`, the agreement-violation records, and every `Incomplete` through `RefusalRecord` (exactly one vocabulary-legal expression per Outcome). No `Incomplete` may become a fact or a silent skip.
+### Slice 6 — Migrate `FunctionContract` onto `PostCondition`; retire the shadow interpreter
 
-- Bad-twins: (a) an effectful callee → `RefusalRecord`, bridge-only, SAT; (b) an `Incomplete` that tried to emit both a fact and a refusal refuses at construction; (c) a `CoverageGap` (floor reached, no owning arm) records loudly, never silently drops.
-- Pinned tests: `test_dig_refusal_ledger.py` (same-or-more-precise refusals); a new Incomplete-expression test.
+Add `proofir/scope/PostCondition` (and `PreCondition`) and make `FunctionContract` accept a `PostCondition`, NOT a raw `Formula`: its constructor checks `out` is mentioned, free vars are exactly declared formals plus `out`, every var has a sort, the formula is closed under the contract scope. Make `BodyUniverseDto.{pre,post,inv}` wire-only (lifters construct the typed node; serialization lowers it). DELETE `floor_contract_agreement.py`'s raw-dict `_formula_models`/`_normalize_term`/`_fold_ctor` interpreter — `FunctionContract` OWNS the floor⊨post denotation; keep the GATE armed on the typed node. This deletes scanner axis 2 (`BodyUniverseDto(post=dict)` becomes unconstructible).
 
-Exit: `R(incomplete-effect-untyped)=0`; every `Incomplete` has one typed expression; untyped-site count drops by Class D.
+- Bad-twins: (a) floor models post → SAT (gate green); (b) floor contradicts post → UNSAT; (c) a `PostCondition` with an illegal free var (not a formal or `out`) panics at construction; (d) `FunctionContract(post=<raw Formula>)` cannot construct (needs `PostCondition`).
+- Pinned tests: the `floor_contract_agreement` gate suite (typed); function-universe goldens byte-stable.
 
-### Slice 7 — Migrate Bridge/CallEdge, SourceAudit/walk-memento, VendorConjoin/diagnostics
+Exit: `R(shadow-interpreter-files)=0`; scanner axis 2 deleted (unrepresentable); `FunctionContract` scoped/closed; untyped-site count drops by Classes C/F.
 
-Route Class B through the existing typed `CallEdgeDecl`/`BridgeDecl` (delete the hand-built `dict` at `literal_call_report.py:1580`); route Classes E and G through typed carriers referencing a live node-class + construction site (feeding provenance completeness).
+### Slice 7 — Migrate `RefusalRecord` (disjoint from FOL) + type `Incomplete.effect`
 
-- Bad-twins: (a) a sound `post→pre` edge → SAT; (b) `post ∧ ¬pre` → UNSAT; (c) an audit row with no owning node refuses.
-- Pinned tests: call-edge golden fixtures; report-shape suites.
+Give Python `Incomplete.effect` a typed `Effect` union mirroring Rust's `Effect::CoverageGap`. Route `dig_refusal.py`, the agreement-violation records, and every `Incomplete` through `RefusalRecord` — which is DISJOINT from FOL by type: it cannot carry a predicate/formula (the construction-law twin), only an effect/refusal. Exactly one vocabulary-legal expression per `Outcome::Incomplete`; never a fact, never a silent skip.
 
-Exit: untyped-site count drops by Classes B/E/G; `R(formula-fragments-without-provenance)` approaches zero.
+- Bad-twins: (a) an effectful callee → `RefusalRecord`, bridge-only, SAT; (b) `RefusalRecord` carrying a predicate is unconstructible (panics — disjoint from FOL); (c) an `Incomplete` that tried to emit both a fact and a refusal refuses; (d) a `CoverageGap` records loudly.
+- Pinned tests: `test_dig_refusal_ledger.py`; the `RefusalRecord`-disjointness twin.
 
-### Slice 8 — Delete the raw door; arm the provenance + attribution gates; close (Python)
+Exit: `R(incomplete-effect-untyped)=0`; `RefusalRecord` is type-disjoint from FOL; untyped-site count drops by Class D.
 
-Delete the `_formula_to_rpc → dict[str, Any]` DTO store path (BodyUniverseDto and LiftReportPayloadDto carry typed nodes; serialization happens AT THE EDGE from the typed node). Instrument A pins `R(untyped-emission-sites)=0` (Python); flip Instrument B (provenance) and the attribution check from counters to GATES (orphan formulas inexpressible).
+### Slice 8 — Migrate the remaining vocab nodes onto tiny files + role wrappers + required provenance
 
-- Red-first: the auditor gates flip to expect zero; deletion turns them green. Structural grep in the PR body: `rg -n '_formula_to_rpc|dict\[str, Any\]' implementations/python/sugar-lift-py-tests/src` → no production emission hits.
-- Bad-twins: re-run the Slice 4 discrimination trio against the deleted-door build; plant an orphan fragment → provenance gate red; remove → green.
+Migrate the rest onto their tiny typed files with required provenance TYPES (not metadata): `BridgeAtom`/`CallEdgeDecl` (typed unresolved linkage, not raw JSON/string folklore — delete the hand-built `dict` at `literal_call_report.py:1580`), `BodyUniverse`/`UniverseMint`, `VendorConjoin` (takes typed members `FactAtom`+`UniverseAtom`, not arbitrary formulas), `AuditMemento`, diagnostics. Every reportable node requires its warrant type at construction (`FactAtom`→`VendorWarrant|SourceWarrant`, `UniverseAtom`→body/source provenance, `PlanAtom`→`PlanMemento`). This drives `R(formula-fragments-without-provenance)` toward zero by construction and deletes scanner axis 3 for these nodes.
+
+- Bad-twins: (a) a sound `post→pre` edge → SAT; (b) `post ∧ ¬pre` → UNSAT; (c) a node built without its required warrant type is unconstructible; (d) `VendorConjoin(<raw formula>)` cannot construct (needs typed members).
+- Pinned tests: call-edge goldens; report-shape suites; a provenance-required twin per node.
+
+Exit: remaining nodes on tiny typed files with required provenance; `R(formula-fragments-without-provenance)` approaches zero by construction; untyped-site count drops by Classes B/E/G.
+
+### Slice 9 — Python close: RPC private, DTOs wire-only, reports read typed members; arm the gates; scanner retired
+
+Make `_formula_to_rpc` PRIVATE serialization internals of the node serializers (a call from outside becomes a visibility error — scanner axis 1 deleted). DTOs are wire OUTPUT only, never construction APIs. Reports READ typed proof members, not side payloads. Arm the provenance + attribution gates (orphan formulas inexpressible; every reportable node reconstructible from the `.proof`). The live scanner (Instrument E) reaches zero on all axes and RETIRES — each axis is now a type/visibility fact (law 8 endgame: the wrappers ARE the retirement).
+
+- Red-first: the gates expect zero; deletion turns them green. Structural grep: `rg -n '_formula_to_rpc|BodyUniverseDto\((pre|post|inv)=|dict\[str, Any\]' implementations/python/sugar-lift-py-tests/src` → no production hits outside the node serializers.
+- Bad-twins: re-run the S4 discrimination trio against the closed build; plant an orphan fragment → provenance gate red; a `_formula_to_rpc` call outside a serializer → visibility error.
 - Pinned tests: full `sugar-lift-py-tests` suite green.
 
-Exit: no raw emission door in Python; auditor + structural grep agree on zero; provenance/attribution are armed gates.
+Exit: no naked `Formula` crosses a boundary in Python; `_formula_to_rpc` private; DTOs wire-only; reports read typed members; provenance/attribution armed; the scanner is retired (all axes unrepresentable).
 
-### Slice 9+ — Rust mirror phase (own slices, sequenced AFTER irterm-boundary #3198)
+### Slice 10 — Rust mirror phase (own slices, sequenced AFTER irterm-boundary #3198)
 
-Mirror the vocabulary onto the ~5 residual Rust `serde_json::json!` scaffolds (`contract.rs:142`, `envelope.rs:322-342`, `lift.rs:3685-3701`), reusing the `StoredMember`/`MemberKind` typed-carrier precedent. Rust is mostly typed already, so this is small — but it MUST land after the irterm-boundary campaign has collapsed `IrTerm`→`Rc<Term>` (see Sequencing): running an emission-vocabulary byte change while the boundary refactor is holding `R(byte-drift)=0` would make byte-drift ambiguous and destroy the boundary campaign's acceptance instrument.
+Mirror the Construction Law onto Rust: Rust already has typed `IrFormula`/`IrTerm`/`Declaration` and `StoredMember`/`MemberKind` (the wire vocabulary), but it lacks the MEMBERSHIP layer (role wrappers, sorted-term construction laws, required provenance types) and still has the ~5 residual `serde_json::json!` scaffolds (`contract.rs:142`, `envelope.rs:322-342`, `lift.rs:3685-3701`). Mirror the tiny-files + role-wrapper + construction-law shape (the closed-visitor/typestate idiom from the ProofIRGraphMember design). It MUST land after irterm-boundary #3198 has collapsed `IrTerm`→`Rc<Term>`: an emission-vocabulary byte change while the boundary holds `R(byte-drift)=0` would make byte-drift ambiguous and destroy the boundary campaign's acceptance instrument.
 
-Exit: `R(untyped-emission-sites)` Rust = 0; both kits express the same seam in SHARED-LANGUAGE terms.
+Exit: `R(untyped-emission-sites)` Rust = 0; the membership layer exists in Rust; both kits express "no naked Formula crosses a boundary" in SHARED-LANGUAGE terms.
 
 ## Sequencing with sibling campaigns
 
@@ -252,10 +285,13 @@ Exit: `R(untyped-emission-sites)` Rust = 0; both kits express the same seam in S
 - **No dedup by key alone.** Stated-vs-derived is sacred; collapse only `(key, identical formula, distinct provenance)`. Dropping the differing stated fact in the lying case is UNSOUND.
 - **No relocating the shadow interpreter.** Deleting `floor_contract_agreement.py`'s raw-dict fold means the denotation lives on `FunctionContract`, not in a renamed helper.
 - **No Rust emission byte change during irterm-boundary.** The Rust phase waits for #3198.
+- **No naked `Formula` crossing a boundary (from S5).** A raw `Formula` cannot serialize, report, conjoin, or enter a `.proof` — only a role-wrapped, provenanced `proofir/nodes/*` member can. Typed FOL well-formedness is NOT enough; typed MEMBERSHIP is the invariant.
+- **No "split the file and keep the same constructors" (T).** The tiny typed files are a real construction+membership layer with refusing constructors (sorted terms, scoped postconditions, required provenance, `#euf#` key derived-not-supplied) — not pretty furniture around the same hole.
 
 ## Campaign closure
 
 1. Every ProofIR emission is a constructor call on a typed node class; `R(untyped-emission-sites)=0` in both kits; structural grep agrees.
+8. **No naked `Formula` crosses a boundary:** ProofIR is split into tiny typed files (`sorts/terms/formulas/scope/provenance/nodes`); construction laws refuse wrong-sort equality, naked-formula insertion, illegal-free-var postconditions, and predicate-carrying refusals; `_formula_to_rpc` is private to node serializers; DTOs are wire-only; reports read typed members. `R(naked-formula-boundary-crossings)=0` and the live scanner (Instrument E) is RETIRED because every axis became a type/visibility fact.
 2. Each node class owns its denotation, constructor invariants, and a solver-anchored `{SAT, UNSAT}` verdict-witness pair; `R(proofir-classes-without-verdict-witnesses)=0`; sugars touch no solver.
 3. The proof graph is fully attributed; `R(formula-fragments-without-provenance)=0` as an armed gate; orphan formulas are inexpressible.
 4. `EqualityFact` carries `Stated`/`Derived` provenance; #3220 is subsumed (`R(duplicate-emission-rows)=0`) and the stated-vs-derived UNSAT is preserved by construction.
