@@ -18958,29 +18958,138 @@ fn t() {
 }
 
 #[test]
-fn iter_duration_sum_gap_names_monoid_fold_carrier_embedding() {
-    // Structural tooth for #3125 slice 1: a non-Int terminal still reds, but the
-    // refusal must name the MonoidFold dispatch gap a future CarrierEmbedding will fill.
+fn iter_duration_sum_projects_via_carrier_embedding() {
+    // #3125 slice 2: Duration is a refinement of the canonical Int carrier.
+    // The vendor coretests `correct_sum` row is the spec: six literal Duration
+    // elements project to the canonical 12s + 999_999_995ns result.
     let src = r#"
 use std::time::Duration;
 
 #[test]
 fn t() {
-    let total = [
+    let durations = [
         Duration::new(1, 999_999_999),
         Duration::new(2, 999_999_999),
-        Duration::new(3, 999_999_999),
+        Duration::new(0, 999_999_999),
+        Duration::new(0, 999_999_999),
+        Duration::new(0, 999_999_999),
         Duration::new(5, 0),
-    ]
-    .iter()
-    .sum::<Duration>();
-    assert_eq!(total, Duration::new(13, 999_999_997));
+    ];
+    let total = durations.iter().sum::<Duration>();
+    assert_eq!(total, Duration::new(1 + 2 + 5 + 4, 1_000_000_000 - 5));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/time.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(
+        complete_eq_int_pairs(decl),
+        vec![(12_999_999_995, 12_999_999_995)],
+        "Duration sum must compare through the exact total-nanos carrier: {:?}",
+        decl
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_duration_sum_good") {
+        assert!(sat, "the canonical Duration carrier equality must be SAT");
+    }
+}
+
+#[test]
+fn iter_duration_sum_bad_twin_refuses_noncanonical_projection() {
+    // The value is mathematically equal in Rust, but the CarrierEmbedding seam is
+    // intentionally canonical: projected Duration values must have nanos < 1e9.
+    let good = r#"
+use std::time::Duration;
+
+#[test]
+fn t() {
+    let durations = [
+        Duration::new(1, 999_999_999),
+        Duration::new(0, 1),
+    ];
+    let total = durations.iter().sum::<Duration>();
+    assert_eq!(total, Duration::new(2, 0));
+}
+"#;
+    let out = lift_file(&parse(good), "tests/time_duration_canonical.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(2_000_000_000, 2_000_000_000)],
+        "canonical Duration projection must discharge through total nanos: {:?}",
+        warranted_dump(&out)
+    );
+
+    let src = r#"
+use std::time::Duration;
+
+#[test]
+fn t() {
+    let durations = [
+        Duration::new(1, 999_999_999),
+        Duration::new(0, 1),
+    ];
+    let total = durations.iter().sum::<Duration>();
+    assert_eq!(total, Duration::new(1, 1_000_000_000));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/time_duration_noncanonical.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.decls);
+    assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("Duration CarrierEmbedding")
+                && reason.contains("non-canonical")
+                && reason.contains("nanos")
+        }),
+        "non-canonical Duration projection must be refused by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn iter_duration_empty_sum_projects_identity() {
+    let src = r#"
+use std::time::Duration;
+
+#[test]
+fn t() {
+    let durations: [Duration; 0] = [];
+    let total = durations.iter().sum::<Duration>();
+    assert_eq!(total, Duration::ZERO);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/time_duration_empty_sum.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(
+        complete_eq_int_pairs(decl),
+        vec![(0, 0)],
+        "empty Duration sum must project the canonical zero identity: {:?}",
+        decl
+    );
+}
+
+#[test]
+fn iter_custom_struct_sum_still_names_monoid_fold_carrier_embedding_gap() {
+    // Structural tooth: slice 2 adds Duration only. Another non-Int element
+    // type must keep the enriched MonoidFold/CarrierEmbedding panic.
+    let src = r#"
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct NoCarrier(i32);
+
+#[test]
+fn t() {
+    let values = [NoCarrier(1)];
+    assert_eq!(values.iter().sum::<NoCarrier>(), NoCarrier(1));
 }
 "#;
     let panic = std::panic::catch_unwind(|| {
-        lift_file(&parse(src), "tests/time.rs");
+        lift_file(&parse(src), "tests/no_carrier_sum.rs");
     })
-    .expect_err("Duration `.sum::<Duration>()` must stay red until CarrierEmbedding lands");
+    .expect_err("non-Duration `.sum::<NoCarrier>()` must still name the CarrierEmbedding gap");
     let message = panic
         .downcast_ref::<String>()
         .map(String::as_str)
@@ -18996,7 +19105,7 @@ fn t() {
         "gap must name the terminal: {message}"
     );
     assert!(
-        message.contains("element_type=Duration"),
+        message.contains("element_type=NoCarrier"),
         "gap must name the element type: {message}"
     );
     assert!(

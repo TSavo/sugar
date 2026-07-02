@@ -89,8 +89,8 @@ pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
 pub(crate) struct IeeeFloatFloor;
 pub(crate) struct IpAddrFloor;
-/// #3125 slice 1 marker only: no CarrierEmbedding constructor exists yet.
-/// MonoidFold reports this missing floor family without inventing values.
+/// CarrierEmbedding floor family. #3125 slice 2 implements the Duration
+/// refinement; MonoidFold still reports this family for unimplemented carriers.
 #[allow(dead_code)]
 pub(crate) struct CarrierEmbeddingFloor;
 

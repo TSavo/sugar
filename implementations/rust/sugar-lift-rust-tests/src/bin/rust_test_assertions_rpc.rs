@@ -4004,6 +4004,7 @@ struct FactoryAuditSummaryAccumulator {
     refused: usize,
     support: usize,
     unresolved: usize,
+    unpinned_factory_walk_rows: usize,
     unresolved_sites: Vec<Value>,
     walk: Vec<Value>,
 }
@@ -4016,6 +4017,7 @@ impl FactoryAuditSummaryAccumulator {
             refused: 0,
             support: 0,
             unresolved: 0,
+            unpinned_factory_walk_rows: 0,
             unresolved_sites: Vec::new(),
             walk: Vec::new(),
         }
@@ -4035,7 +4037,14 @@ impl FactoryAuditSummaryAccumulator {
             if matches!(status, "unresolved" | "unclassified") {
                 self.unresolved_sites.push(factory_summary_site_row(&row));
             }
-            self.walk.push(factory_walk_row(&row));
+            // `factoryWalk` rows are minted into proof members by `sugar mint`;
+            // rows without a SourceMemento stay in the diagnostic accounting but
+            // cannot become content-addressed factory-walk mementos.
+            if row.get("sourceMemento").is_some() {
+                self.walk.push(factory_walk_row(&row));
+            } else {
+                self.unpinned_factory_walk_rows += 1;
+            }
         }
     }
 
@@ -4056,6 +4065,7 @@ impl FactoryAuditSummaryAccumulator {
             "omittedRows": 0,
             "totalRows": self.sites,
             "complete": true,
+            "unpinnedFactoryWalkRows": self.unpinned_factory_walk_rows,
             "statusCounts": {
                 "warranted": self.warranted,
                 "refused": self.refused,
@@ -4075,6 +4085,7 @@ fn factory_audit_response_summary(rows: &[Value]) -> Value {
         "omittedRows": 0,
         "totalRows": rows.len(),
         "complete": true,
+        "unpinnedFactoryWalkRows": unpinned_factory_walk_rows(rows),
         "statusCounts": factory_audit_status_counts(rows),
         "unresolvedSites": unresolved_factory_audit_rows(rows),
         "factoryWalk": factory_walk_rows(rows),
@@ -4082,7 +4093,18 @@ fn factory_audit_response_summary(rows: &[Value]) -> Value {
 }
 
 fn factory_walk_rows(rows: &[Value]) -> Vec<Value> {
-    rows.iter().map(factory_walk_row).collect()
+    rows.iter()
+        // The proof graph can only mint source-pinned factory walk rows. Keep
+        // unpinned rows in the counts and full `factoryAudits`, not here.
+        .filter(|row| row.get("sourceMemento").is_some())
+        .map(factory_walk_row)
+        .collect()
+}
+
+fn unpinned_factory_walk_rows(rows: &[Value]) -> usize {
+    rows.iter()
+        .filter(|row| row.get("sourceMemento").is_none())
+        .count()
 }
 
 fn factory_walk_row(row: &Value) -> Value {
@@ -6780,6 +6802,7 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["omittedRows"], 0);
         assert_eq!(summary["totalRows"], 3);
         assert_eq!(summary["complete"], true);
+        assert_eq!(summary["unpinnedFactoryWalkRows"], 1);
         assert_eq!(summary["statusCounts"]["warranted"], 1);
         assert_eq!(summary["statusCounts"]["unresolved"], 2);
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 2);
@@ -6787,16 +6810,17 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["unresolvedSites"][1]["line"], 3);
         assert_eq!(summary["unresolvedSites"][0]["status"], "unresolved");
         assert_eq!(summary["unresolvedSites"][0]["output"], "gap");
+        assert_eq!(summary["factoryWalk"].as_array().unwrap().len(), 2);
+        assert_eq!(summary["factoryWalk"][0]["status"], "unresolved");
+        assert_eq!(summary["factoryWalk"][0]["verdict"], "gap");
+        assert_eq!(summary["factoryWalk"][0]["output"], "gap");
         assert_eq!(summary["factoryWalk"][1]["status"], "unresolved");
         assert_eq!(summary["factoryWalk"][1]["verdict"], "gap");
         assert_eq!(summary["factoryWalk"][1]["output"], "gap");
-        assert_eq!(summary["factoryWalk"][2]["status"], "unresolved");
-        assert_eq!(summary["factoryWalk"][2]["verdict"], "gap");
-        assert_eq!(summary["factoryWalk"][2]["output"], "gap");
         assert!(summary["unresolvedSites"][0].get("term").is_none());
         assert!(summary["unresolvedSites"][0].get("site").is_none());
-        assert!(summary["factoryWalk"][1].get("term").is_none());
-        assert!(summary["factoryWalk"][1].get("site").is_none());
+        assert!(summary["factoryWalk"][0].get("term").is_none());
+        assert!(summary["factoryWalk"][0].get("site").is_none());
     }
 
     #[test]
@@ -6842,6 +6866,7 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["emittedRows"], 3);
         assert_eq!(summary["omittedRows"], 0);
         assert_eq!(summary["complete"], true);
+        assert_eq!(summary["unpinnedFactoryWalkRows"], 3);
         assert_eq!(summary["statusCounts"]["warranted"], 1);
         assert_eq!(summary["statusCounts"]["refused"], 1);
         assert_eq!(summary["statusCounts"]["unresolved"], 1);
@@ -6850,14 +6875,7 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["unresolvedSites"][0]["line"], 7);
         assert_eq!(summary["unresolvedSites"][0]["status"], "unresolved");
         assert_eq!(summary["unresolvedSites"][0]["output"], "gap");
-        let unresolved_walk = summary["factoryWalk"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["status"] == "unresolved")
-            .expect("unresolved walk row");
-        assert_eq!(unresolved_walk["verdict"], "gap");
-        assert_eq!(unresolved_walk["output"], "gap");
+        assert_eq!(summary["factoryWalk"].as_array().unwrap().len(), 0);
         assert!(summary["unresolvedSites"][0].get("site").is_none());
         assert!(summary["unresolvedSites"][0].get("term").is_none());
     }
