@@ -222,9 +222,21 @@ fn handle_line(line: &str) -> Value {
             });
         }
     };
-    let id = req.get("id").cloned().unwrap_or(Value::Null);
-    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
-    let params = req.get("params").cloned().unwrap_or(json!({}));
+    let id = match req.get("id") {
+        Some(id) => id.clone(),
+        None => Value::Null,
+    };
+    let Some(method) = req.get("method").and_then(|m| m.as_str()) else {
+        return json!({
+            "jsonrpc": "2.0",
+            "error": { "code": -32600, "message": "invalid request: missing string `method`" },
+            "id": id,
+        });
+    };
+    let params = match req.get("params") {
+        Some(params) => params.clone(),
+        None => json!({}),
+    };
 
     let result = match method {
         // Bind-IR lift surface (PEP 1.7.0 `kind = "lift"` over the legacy-retained
@@ -334,6 +346,34 @@ fn source_lines_for_memento(workspace_root: &Path, memento: &SourceMemento) -> V
     )
 }
 
+fn json_field_or_null(value: &Value, key: &str) -> Value {
+    match value.get(key) {
+        Some(field) => field.clone(),
+        None => Value::Null,
+    }
+}
+
+fn json_any_field_or_null(value: &Value, keys: &[&str]) -> Value {
+    for key in keys {
+        if let Some(field) = value.get(*key) {
+            return field.clone();
+        }
+    }
+    Value::Null
+}
+
+fn relative_display_path(path: &Path, root: &Path) -> String {
+    let display_path = match path.strip_prefix(root) {
+        Ok(rel) => rel,
+        Err(_) => path,
+    };
+    display_path.display().to_string().replace('\\', "/")
+}
+
+fn path_has_rs_extension(path: &Path) -> bool {
+    path.extension().is_some_and(|x| x == "rs")
+}
+
 fn source_memento_from_json_value(value: &Value) -> Option<SourceMemento> {
     let file = value.get("file").and_then(Value::as_str)?.to_string();
     let span = value.get("span")?;
@@ -358,10 +398,10 @@ fn source_memento_from_json_value(value: &Value) -> Option<SourceMemento> {
             .unwrap_or_default()
             .to_string(),
         span: SrcSpan {
-            start_line: span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize,
-            start_col: span.get("start_col").and_then(Value::as_u64).unwrap_or(0) as usize,
-            end_line: span.get("end_line").and_then(Value::as_u64).unwrap_or(0) as usize,
-            end_col: span.get("end_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+            start_line: span.get("start_line").and_then(Value::as_u64)? as usize,
+            start_col: span.get("start_col").and_then(Value::as_u64)? as usize,
+            end_line: span.get("end_line").and_then(Value::as_u64)? as usize,
+            end_col: span.get("end_col").and_then(Value::as_u64)? as usize,
         },
         param_names,
         source_cid: value
@@ -527,16 +567,14 @@ fn recognize_match_item_fn(
             "end_col": end.column,
         },
         "function_name": item_fn.sig.ident.to_string(),
-        "op_cid": body.get("op_cid").cloned().unwrap_or(Value::Null),
-        "library_tag": body.get("library_tag").cloned().unwrap_or(Value::Null),
+        "op_cid": json_field_or_null(body, "op_cid"),
+        "library_tag": json_field_or_null(body, "library_tag"),
         "template_cid": candidate_cid,
-        "contract_cid": body.get("contract_cid").cloned().unwrap_or(Value::Null),
-        "target_proof_cid": binding
-            .target_proof_cid
-            .as_ref()
-            .map(|cid| Value::String(cid.clone()))
-            .or_else(|| body.get("target_proof_cid").cloned())
-            .unwrap_or(Value::Null),
+        "contract_cid": json_field_or_null(body, "contract_cid"),
+        "target_proof_cid": match &binding.target_proof_cid {
+            Some(cid) => Value::String(cid.clone()),
+            None => json_field_or_null(body, "target_proof_cid"),
+        },
         "match_tier": "exact",
         "param_bindings": param_bindings,
     }))
@@ -571,7 +609,10 @@ fn binding_templates_from_proof(path: &Path) -> Result<Vec<RecognizeBindingTempl
         let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
             continue;
         };
-        let body = parsed.get("body").unwrap_or(&parsed);
+        let body = match parsed.get("body") {
+            Some(body) => body,
+            None => &parsed,
+        };
         if let Some(binding) = binding_template_from_sugar_entry(body, Some(proof_cid.clone())) {
             bindings.push(binding);
         }
@@ -726,11 +767,7 @@ fn binding_template_from_sugar_entry(
         .get("op_cid")
         .or_else(|| entry.get("opCid"))
         .and_then(Value::as_str)?;
-    let library_tag = entry
-        .get("target_library_tag")
-        .or_else(|| entry.get("library_tag"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let library_tag = json_any_field_or_null(entry, &["target_library_tag", "library_tag"]);
     let body_source = entry.get("body_source")?;
     let template_cid = body_source
         .get("template_cid")
@@ -747,7 +784,7 @@ fn binding_template_from_sugar_entry(
         "library_tag": library_tag,
         "template_cid": template_cid,
         "param_names": param_names,
-        "contract_cid": entry.get("contract_cid").cloned().unwrap_or(Value::Null),
+        "contract_cid": json_field_or_null(entry, "contract_cid"),
     });
     if let Some(cid) = &target_proof_cid {
         body["target_proof_cid"] = Value::String(cid.clone());
@@ -851,7 +888,10 @@ fn collect_recognizer_proof_files(root: &Path, proof_paths: &mut BTreeSet<PathBu
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let file_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(file_name) => file_name,
+            None => "",
+        };
         if path.is_dir() {
             match file_name {
                 ".git" | "target" | "node_modules" | "vendor" => continue,
@@ -1872,7 +1912,7 @@ impl FunctionPostconditionsManifest {
             let post_predicate =
                 required_toml_string_for(&path, &context, table, "post_predicate")?;
             let reason = required_toml_string_for(&path, &context, table, "reason")?;
-            let pure = table
+            let pure = match table
                 .get("pure")
                 .map(|value| {
                     value.as_bool().ok_or_else(|| {
@@ -1884,7 +1924,10 @@ impl FunctionPostconditionsManifest {
                     })
                 })
                 .transpose()?
-                .unwrap_or(false);
+            {
+                Some(pure) => pure,
+                None => false,
+            };
             let source_file = table
                 .get("source_file")
                 .and_then(toml::Value::as_str)
@@ -2789,17 +2832,15 @@ fn bind_option_pattern_type_id(
     value_types: &mut HashMap<String, TypeIdentity>,
 ) {
     match pat {
-        syn::Pat::TupleStruct(tuple_struct)
-            if tuple_struct
-                .path
-                .segments
-                .last()
-                .map(|segment| segment.ident == "Some")
-                .unwrap_or(false)
-                && tuple_struct.elems.len() == 1 =>
-        {
-            if let Some(inner_pat) = tuple_struct.elems.first() {
-                bind_pattern_type_id_direct(inner_pat, inner_type, local_types, value_types);
+        syn::Pat::TupleStruct(tuple_struct) => {
+            let is_some_tuple = match tuple_struct.path.segments.last() {
+                Some(segment) => segment.ident == "Some",
+                None => false,
+            };
+            if is_some_tuple && tuple_struct.elems.len() == 1 {
+                if let Some(inner_pat) = tuple_struct.elems.first() {
+                    bind_pattern_type_id_direct(inner_pat, inner_type, local_types, value_types);
+                }
             }
         }
         syn::Pat::Reference(reference) => {
@@ -4186,14 +4227,10 @@ fn expr_matches_format_repeat(
     let syn::Expr::Macro(expr_macro) = expr else {
         return false;
     };
-    if expr_macro
-        .mac
-        .path
-        .segments
-        .last()
-        .map(|seg| seg.ident != "format")
-        .unwrap_or(true)
-    {
+    let Some(macro_tail) = expr_macro.mac.path.segments.last() else {
+        return false;
+    };
+    if macro_tail.ident != "format" {
         return false;
     }
     let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
@@ -4233,10 +4270,10 @@ fn expr_matches_format_repeat(
     let syn::Lit::Int(count_int) = &count_arg.lit else {
         return false;
     };
-    count_int
-        .base10_parse::<u64>()
-        .map(|count| count == repeat_count)
-        .unwrap_or(false)
+    match count_int.base10_parse::<u64>() {
+        Ok(count) => count == repeat_count,
+        Err(_) => false,
+    }
 }
 
 /// Crate roots in source use `_`-free hyphenless identifiers; a Cargo package
@@ -4948,10 +4985,10 @@ fn binding_has_post(binding: &Value) -> bool {
 }
 
 fn binding_is_body_bearing(binding: &Value) -> bool {
-    binding
-        .get("body_bearing")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    match binding.get("body_bearing").and_then(|v| v.as_bool()) {
+        Some(body_bearing) => body_bearing,
+        None => false,
+    }
 }
 
 fn binding_contract_name(binding: &Value) -> Option<&str> {
@@ -5056,7 +5093,10 @@ fn vendor_bindings_from_proofs(project_root: &Path) -> Result<Vec<VendorBinding>
             let Ok(parsed) = serde_json::from_slice::<Value>(view.bytes()) else {
                 continue;
             };
-            let body = parsed.get("body").unwrap_or(&parsed);
+            let body = match parsed.get("body") {
+                Some(body) => body,
+                None => &parsed,
+            };
             if body.get("kind").and_then(Value::as_str) != Some("library-sugar-binding-entry") {
                 continue;
             }
@@ -5190,7 +5230,12 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
                     .entry(name.to_string())
                     .or_insert(binding);
             }
-            let leaf = name.split('@').next().unwrap_or(name).trim().to_string();
+            let leaf = match name.split_once('@') {
+                Some((leaf, _)) => leaf,
+                None => name,
+            }
+            .trim()
+            .to_string();
             if leaf.is_empty() {
                 continue;
             }
@@ -5377,8 +5422,10 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
             let raw_disambig_binding = disambig_key
                 .as_ref()
                 .and_then(|dkey| contracts_by_key.get(dkey).copied());
-            let raw_disambig_binding_has_pre =
-                raw_disambig_binding.map(binding_has_pre).unwrap_or(false);
+            let raw_disambig_binding_has_pre = match raw_disambig_binding {
+                Some(binding) => binding_has_pre(binding),
+                None => false,
+            };
             let disambig_binding = match (is_panic, raw_disambig_binding) {
                 (true, Some(binding)) if binding_has_pre(binding) => Some(binding),
                 (true, _) => None,
@@ -5631,10 +5678,10 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
         std::collections::BTreeMap::new();
     for d in &diagnostics {
         if d.get("kind").and_then(|v| v.as_str()) == Some("lift-gap") {
-            let reason = d
-                .get("reason")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unspecified");
+            let reason = match d.get("reason").and_then(|v| v.as_str()) {
+                Some(reason) => reason,
+                None => "unspecified",
+            };
             *gap_by_reason.entry(reason).or_insert(0) += 1;
         }
     }
@@ -5658,7 +5705,10 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
     // verification, so an obligation we KNOW exists is silently suppressed. That
     // is exactly the regression that made self-application collapse from 1305 to
     // 582 call sites without a single warning. It must scream.
-    let swallowed = *gap_by_reason.get("body-discharge-ineligible").unwrap_or(&0);
+    let swallowed = match gap_by_reason.get("body-discharge-ineligible") {
+        Some(swallowed) => *swallowed,
+        None => 0,
+    };
     if swallowed > 0 {
         // INVARIANT VIOLATION (Fix B): a call site that matched a known
         // contract was dropped. After Fix B this must be 0 -- ineligible
@@ -5781,7 +5831,7 @@ fn term(params: &Value) -> Result<Value, String> {
     let source = params
         .get("source")
         .and_then(|v| v.as_str())
-        .unwrap_or("<rpc>");
+        .ok_or("missing `source`")?;
     let file: syn::File = syn::parse_str(src).map_err(|e| format!("parse error: {}", e))?;
     let bytes = rust_function_term_json_for_file(&file, fn_name, source)?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -5949,14 +5999,20 @@ fn component_plan_result(params: &Value) -> Value {
             });
         }
     };
-    let vendor_manifest_item = forensic_items(params)
+    let vendor_manifest_path = format!("{vendor_root}/Cargo.toml");
+    let Some(vendor_manifest_item) = forensic_items(params)
         .into_iter()
         .find(|item| {
-            item.get("path").and_then(Value::as_str) == Some(&format!("{vendor_root}/Cargo.toml"))
+            item.get("path").and_then(Value::as_str) == Some(vendor_manifest_path.as_str())
         })
         .and_then(|item| item.get("id").and_then(Value::as_str))
-        .unwrap_or("file:vendor/base64-0.22.1/Cargo.toml")
-        .to_string();
+        .map(str::to_string)
+    else {
+        return json!({
+            "decision": "decline",
+            "reason": format!("missing base64 0.22.1 vendor Cargo.toml forensic item `{vendor_manifest_path}`"),
+        });
+    };
 
     json!({
         "decision": "claim",
@@ -6151,12 +6207,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 continue;
             }
         };
-        let rel = path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string()
-            .replace('\\', "/");
+        let rel = relative_display_path(path, &root);
         let witnesses_by_symbol =
             contract_witnesses_by_function_symbol(&file, &rel, src.as_bytes());
 
@@ -6740,12 +6791,7 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
                 continue;
             }
         };
-        let rel = path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string()
-            .replace('\\', "/");
+        let rel = relative_display_path(path, &root);
         let return_facts = collect_explicit_function_return_facts(&file);
         let local_free_functions = collect_local_free_function_names(&file);
         let pure_free_guard_rules = pure_free_guard_rules_for_function_post_lift(
@@ -6855,7 +6901,7 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
                 rel.as_str(),
                 &target,
                 &source_memento,
-            ));
+            )?);
             source_mementos.push(source_memento);
             entries.push(entry);
         }
@@ -7160,29 +7206,34 @@ fn function_contract_source_locus(
     rel: &str,
     target: &FunctionContractLiftTarget,
     source_memento: &Value,
-) -> Value {
-    let span = source_memento.get("span").unwrap_or(&Value::Null);
-    json!({
+) -> Result<Value, String> {
+    let span = source_memento
+        .get("span")
+        .ok_or("function contract source memento missing `span`")?;
+    let line = span
+        .get("start_line")
+        .and_then(Value::as_u64)
+        .ok_or("function contract source memento missing `span.start_line`")?;
+    let col = span
+        .get("start_col")
+        .and_then(Value::as_u64)
+        .ok_or("function contract source memento missing `span.start_col`")?;
+    let source_cid = source_memento
+        .get("source_cid")
+        .cloned()
+        .ok_or("function contract source memento missing `source_cid`")?;
+    Ok(json!({
         "file": rel,
         "role": "rust-fn-contracts",
         "universe_kind": "function-contract",
         "ast_kind": if target.fn_name.contains("::") { "method" } else { "fn" },
         "ast_path": target.fn_name.clone(),
         "sourceFunctionName": target.fn_name.clone(),
-        "line": span
-            .get("start_line")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "col": span
-            .get("start_col")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        "source_cid": source_memento
-            .get("source_cid")
-            .cloned()
-            .unwrap_or(Value::Null),
+        "line": line,
+        "col": col,
+        "source_cid": source_cid,
         "status": "warranted",
-    })
+    }))
 }
 
 fn source_ledger_for_loci(loci: &[Value]) -> Value {
@@ -7740,11 +7791,10 @@ fn is_result_type(ty: &syn::Type) -> bool {
     let syn::Type::Path(tp) = ty else {
         return false;
     };
-    tp.path
-        .segments
-        .last()
-        .map(|seg| seg.ident == "Result")
-        .unwrap_or(false)
+    match tp.path.segments.last() {
+        Some(seg) => seg.ident == "Result",
+        None => false,
+    }
 }
 
 /// True iff an ItemFn has a `Result<...>` return type.
@@ -7908,7 +7958,10 @@ fn rust_line_comment_body(trimmed: &str) -> Option<&str> {
 fn parse_concept_comment_body(body: &str) -> Option<String> {
     let raw = body.strip_prefix("concept:")?.trim();
     let token = raw.split_whitespace().next()?;
-    let bare = token.strip_prefix("concept:").unwrap_or(token);
+    let bare = match token.strip_prefix("concept:") {
+        Some(bare) => bare,
+        None => token,
+    };
     if bare.is_empty() {
         None
     } else {
@@ -8183,7 +8236,7 @@ fn resolve_rs_source_files(
     };
     for scan_root in &scan_roots {
         if scan_root.is_file() {
-            if scan_root.extension().map(|x| x == "rs").unwrap_or(false) {
+            if path_has_rs_extension(scan_root) {
                 visited.insert(scan_root.clone());
             }
             continue;
@@ -8205,11 +8258,11 @@ fn resolve_rs_source_files(
     visited
         .into_iter()
         .map(|abs| {
-            let rel = abs
-                .strip_prefix(workspace_root)
-                .unwrap_or(&abs)
-                .to_string_lossy()
-                .to_string();
+            let rel_path = match abs.strip_prefix(workspace_root) {
+                Ok(rel) => rel,
+                Err(_) => abs.as_path(),
+            };
+            let rel = rel_path.to_string_lossy().to_string();
             (rel, abs)
         })
         .collect()
@@ -8226,7 +8279,7 @@ fn collect_rs_files(dir: &Path, visited: &mut std::collections::BTreeSet<PathBuf
         let path = entry.path();
         if path.is_dir() {
             collect_rs_files(&path, visited);
-        } else if path.extension().map(|x| x == "rs").unwrap_or(false) {
+        } else if path_has_rs_extension(&path) {
             visited.insert(path);
         }
     }
@@ -8238,7 +8291,7 @@ fn collect_rs_files_shallow(dir: &Path, visited: &mut std::collections::BTreeSet
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().map(|x| x == "rs").unwrap_or(false) {
+        if path.is_file() && path_has_rs_extension(&path) {
             visited.insert(path);
         }
     }
@@ -10062,7 +10115,10 @@ fn non_operation_shape() -> Arc<CValue> {
 /// Render a canonicalizer `Value` as `serde_json::Value` for the RPC response.
 fn cvalue_to_json(v: &CValue) -> Value {
     let s = encode_jcs(v);
-    serde_json::from_str(&s).unwrap_or(Value::Null)
+    match serde_json::from_str(&s) {
+        Ok(value) => value,
+        Err(err) => panic!("canonicalizer emitted non-JSON JCS: {err}"),
+    }
 }
 
 #[cfg(test)]
@@ -10538,10 +10594,10 @@ pub fn wrap_positive(amount: usize) -> Option<usize> {
         );
         assert!(
             witnesses.iter().all(|w| {
-                w["extension_fields"]
-                    .as_object()
-                    .map(|fields| !fields.contains_key("role"))
-                    .unwrap_or(false)
+                match w["extension_fields"].as_object() {
+                    Some(fields) => !fields.contains_key("role"),
+                    None => false,
+                }
             }),
             "bind witness wire entries must keep role top-level only: {witnesses:#?}"
         );
@@ -12579,6 +12635,57 @@ pub fn bitwise_not() -> i64 {
             Some("sugar.plugin.lift_implications")
         );
         assert_eq!(implications["phase"].as_str(), Some("consumer"));
+        // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn component_plan_refuses_missing_base64_vendor_manifest_forensic_item() {
+        let root = temp_workspace("component_plan_missing_base64_manifest_item");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='base64-showcase-good'\nversion='0.1.0'\n",
+        )
+        .expect("write project Cargo.toml");
+        let vendor = root.join("vendor/base64-0.22.1/src");
+        fs::create_dir_all(&vendor).expect("create vendor src");
+        fs::write(
+            root.join("vendor/base64-0.22.1/Cargo.toml"),
+            "[package]\nname='base64'\nversion='0.22.1'\n",
+        )
+        .expect("write vendor Cargo.toml");
+        fs::write(vendor.join("encode.rs"), "pub fn encoded_len() {}\n")
+            .expect("write vendor source");
+
+        let response = component_plan_result(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "project_forensics": {
+                "items": [
+                    {
+                        "id": "file:Cargo.toml",
+                        "kind": "package-manifest",
+                        "path": "Cargo.toml",
+                        "language_hint": "rust",
+                        "reason": "Cargo package manifest"
+                    },
+                    {
+                        "id": "file:vendor/base64-0.22.1/src/encode.rs",
+                        "kind": "source-file",
+                        "path": "vendor/base64-0.22.1/src/encode.rs",
+                        "language_hint": "rust",
+                        "reason": "rust source file"
+                    }
+                ]
+            }
+        }));
+
+        assert_eq!(response["decision"].as_str(), Some("decline"));
+        assert!(
+            response["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("vendor Cargo.toml forensic item")),
+            "unexpected response: {response:#}"
+        );
         // sugar-audit: default-ok(test tempdir cleanup is best-effort after assertions)
         fs::remove_dir_all(&root).ok();
     }
