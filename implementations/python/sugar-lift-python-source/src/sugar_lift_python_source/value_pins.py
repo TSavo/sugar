@@ -16,7 +16,18 @@ import ast
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from .ir import Json, bool_const, ctor, int_const, none_const, str_const
+from .ir import (
+    Json,
+    bool_const,
+    bytes_const,
+    complex_const,
+    ctor,
+    ellipsis_const,
+    float_const,
+    int_const,
+    none_const,
+    str_const,
+)
 
 VALUE_PIN_REFUSAL_KIND = "value-pin-refused"
 FINAL_CONFESSION = "typing.Final"
@@ -361,6 +372,14 @@ def _render_value_term(node: ast.expr) -> Json:
             return int_const(value)
         if isinstance(value, str):
             return str_const(value)
+        if isinstance(value, float):
+            return float_const(value)
+        if isinstance(value, bytes):
+            return bytes_const(value)
+        if isinstance(value, complex):
+            return complex_const(value.real, value.imag)
+        if value is Ellipsis:
+            return ellipsis_const()
         if value is None:
             return none_const()
         raise _NotAdmissible(f"no IR term shape for {type(value).__name__} constants")

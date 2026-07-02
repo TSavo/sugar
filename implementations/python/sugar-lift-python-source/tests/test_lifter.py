@@ -21,7 +21,12 @@ from sugar_lift_py_tests.canonicalizer import jcs_hash, vobj, vstr
 from sugar_lift_python_source.canonical import canonical_json_bytes, cid_of_json
 from sugar_lift_python_source.compiler import compile_body_term, compile_ir_document
 from sugar_lift_python_source.ir import int_const, str_const
-from sugar_lift_python_source.lifter import lift_source
+from sugar_lift_python_source.lifter import (
+    _EffectSet,
+    _Emitter,
+    _UnsupportedSyntax,
+    lift_source,
+)
 from sugar_lift_python_source.rpc import dispatch, initialize_result
 
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
@@ -258,6 +263,37 @@ def _int_const(value: int) -> dict[str, object]:
     }
 
 
+def _float_const(value: float) -> dict[str, object]:
+    return {"kind": "const", "value": {"type": "float", "repr": repr(value)}}
+
+
+def _bytes_const(value: bytes) -> dict[str, object]:
+    return {"kind": "const", "value": {"type": "bytes", "repr": value.hex()}}
+
+
+def _complex_const(value: complex) -> dict[str, object]:
+    return {
+        "kind": "const",
+        "value": {
+            "type": "complex",
+            "re": repr(float(value.real)),
+            "im": repr(float(value.imag)),
+        },
+    }
+
+
+def _ellipsis_const() -> dict[str, object]:
+    return {"kind": "const", "value": {"type": "ellipsis"}}
+
+
+def _return(value: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:return", "args": [value]}
+
+
+def _expr_stmt(value: dict[str, object]) -> dict[str, object]:
+    return {"kind": "ctor", "name": "python:expr", "args": [value]}
+
+
 def _unpack_targets(*targets: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "ctor",
@@ -306,6 +342,23 @@ def _compare_pairs(node: object) -> list[tuple[str, str, str]]:
     return pairs
 
 
+def _constant_dispatch_refusal_reason(value: object) -> str:
+    node = ast.Constant(value=value)
+    node.lineno = 1
+    node.col_offset = 0
+    emitter = _Emitter(
+        fn_name="consts.f",
+        locals_=set(),
+        module_globals=set(),
+        effects=_EffectSet(),
+        source_path="consts.py",
+        panic_loci=[],
+    )
+    with pytest.raises(_UnsupportedSyntax) as exc:
+        emitter.constant(node)
+    return exc.value.reason
+
+
 def _assert_guard(
     term: object, expected_head: str, expected_arg: str
 ) -> dict[str, object]:
@@ -351,6 +404,83 @@ def _assert_none_guarded_if(
     }
     assert _assert_guard(then_branch, then_head, "x")["name"] == "python:return"
     assert _assert_guard(else_branch, else_head, "x")["name"] == "python:return"
+
+
+def _function_body(result: object, suffix: str = ".f") -> dict[str, object]:
+    assert hasattr(result, "ir")
+    contract = _contract(result.ir, suffix)
+    body = contract["post"]["args"][1]
+    assert isinstance(body, dict), body
+    return body
+
+
+def _roundtrip_return_body(term: dict[str, object]) -> dict[str, object]:
+    compiled = compile_body_term(_return(term))
+    relifted = lift_source(compiled, "roundtrip_constants.py")
+    assert relifted.refusals == []
+    return _function_body(relifted)
+
+
+def test_float_constant_lifts_to_tagged_floor_value() -> None:
+    result = lift_source("def f():\n    return 1.5\n", "float_const.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_float_const(1.5))
+
+
+def test_float_floor_discriminates_unknown_constant_kind() -> None:
+    assert _constant_dispatch_refusal_reason(object()) == "unsupported constant: object"
+
+
+def test_float_constant_roundtrip_is_structurally_stable() -> None:
+    assert _roundtrip_return_body(_float_const(1.5)) == _return(_float_const(1.5))
+
+
+def test_bytes_constant_lifts_to_tagged_floor_value() -> None:
+    result = lift_source("def f():\n    return b\"\\x00\\xff\"\n", "bytes_const.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_bytes_const(b"\x00\xff"))
+
+
+def test_bytes_floor_discriminates_unknown_constant_kind() -> None:
+    assert _constant_dispatch_refusal_reason(object()) == "unsupported constant: object"
+
+
+def test_bytes_constant_roundtrip_is_structurally_stable() -> None:
+    assert _roundtrip_return_body(_bytes_const(b"\x00\xff")) == _return(
+        _bytes_const(b"\x00\xff")
+    )
+
+
+def test_complex_constant_lifts_to_tagged_floor_value() -> None:
+    result = lift_source("def f():\n    return 2j\n", "complex_const.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _return(_complex_const(2j))
+
+
+def test_complex_floor_discriminates_unknown_constant_kind() -> None:
+    assert _constant_dispatch_refusal_reason(object()) == "unsupported constant: object"
+
+
+def test_complex_constant_roundtrip_is_structurally_stable() -> None:
+    assert _roundtrip_return_body(_complex_const(2j)) == _return(_complex_const(2j))
+
+
+def test_ellipsis_constant_lifts_to_tagged_floor_value() -> None:
+    result = lift_source("def f():\n    ...\n", "ellipsis_const.py")
+
+    assert result.refusals == []
+    assert _function_body(result) == _expr_stmt(_ellipsis_const())
+
+
+def test_ellipsis_floor_discriminates_unknown_constant_kind() -> None:
+    assert _constant_dispatch_refusal_reason(object()) == "unsupported constant: object"
+
+
+def test_ellipsis_constant_roundtrip_is_structurally_stable() -> None:
+    assert _roundtrip_return_body(_ellipsis_const()) == _return(_ellipsis_const())
 
 
 def test_lift_function_emits_source_unit_and_python_ops() -> None:

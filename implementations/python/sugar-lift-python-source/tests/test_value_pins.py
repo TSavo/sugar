@@ -50,6 +50,29 @@ def _pin_refusals(refusals):
     return [r for r in refusals if r.get("kind") == VALUE_PIN_REFUSAL_KIND]
 
 
+def _float_const(value: float):
+    return {"kind": "const", "value": {"type": "float", "repr": repr(value)}}
+
+
+def _bytes_const(value: bytes):
+    return {"kind": "const", "value": {"type": "bytes", "repr": value.hex()}}
+
+
+def _complex_const(value: complex):
+    return {
+        "kind": "const",
+        "value": {
+            "type": "complex",
+            "re": repr(float(value.real)),
+            "im": repr(float(value.imag)),
+        },
+    }
+
+
+def _ellipsis_const():
+    return {"kind": "const", "value": {"type": "ellipsis"}}
+
+
 # --- positive: admitted pins substitute the value and drop the fog read ---
 
 
@@ -63,6 +86,34 @@ def test_str_constant_pins_value_at_use_site():
     assert _tree_contains(result.ir, str_const("abc"))
     assert not _has_reads_effect(result, "X")
     assert not _pin_refusals(result.refusals)
+
+
+def test_float_constant_pins_value_at_use_site():
+    scan = _scan("X = 1.5\n")
+
+    assert scan.refusals == []
+    assert scan.pins["X"].term == _float_const(1.5)
+
+
+def test_bytes_constant_pins_value_at_use_site():
+    scan = _scan('X = b"\\x00\\xff"\n')
+
+    assert scan.refusals == []
+    assert scan.pins["X"].term == _bytes_const(b"\x00\xff")
+
+
+def test_complex_constant_pins_value_at_use_site():
+    scan = _scan("X = 2j\n")
+
+    assert scan.refusals == []
+    assert scan.pins["X"].term == _complex_const(2j)
+
+
+def test_ellipsis_constant_pins_value_at_use_site():
+    scan = _scan("X = ...\n")
+
+    assert scan.refusals == []
+    assert scan.pins["X"].term == _ellipsis_const()
 
 
 def test_int_bool_none_negative_pins():
@@ -212,10 +263,6 @@ def test_dict_refuses_as_mutable():
     _assert_single_refusal('X = {"a": 1}\n', "mutable value (dict) cannot pin")
 
 
-def test_bytes_refuses_no_term_shape():
-    _assert_single_refusal('X = b"x"\n', "no IR term shape for bytes")
-
-
 def test_tuple_containing_list_refuses():
     # Literal-shaped (so a candidate) but not immutable all the way down.
     _assert_single_refusal("X = (1, [2])\n", "mutable value (list) cannot pin")
@@ -260,8 +307,8 @@ def test_totality_candidates_equal_admitted_plus_refused():
         Z = b"x"
         """)
     assert scan.candidates == 5
-    assert len(scan.pins) == 2
-    assert len(_pin_refusals(scan.refusals)) == 3
+    assert len(scan.pins) == 3
+    assert len(_pin_refusals(scan.refusals)) == 2
     assert scan.totality_holds()
 
 

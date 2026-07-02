@@ -37,6 +37,29 @@ def str_const(value: str) -> Json:
     return const(value, "String")
 
 
+def float_const(value: float) -> Json:
+    return {"kind": "const", "value": {"type": "float", "repr": repr(float(value))}}
+
+
+def bytes_const(value: bytes) -> Json:
+    return {"kind": "const", "value": {"type": "bytes", "repr": bytes(value).hex()}}
+
+
+def complex_const(re: float, im: float) -> Json:
+    return {
+        "kind": "const",
+        "value": {
+            "type": "complex",
+            "re": repr(float(re)),
+            "im": repr(float(im)),
+        },
+    }
+
+
+def ellipsis_const() -> Json:
+    return {"kind": "const", "value": {"type": "ellipsis"}}
+
+
 def none_const() -> Json:
     return const(None, "Unit")
 
