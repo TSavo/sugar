@@ -598,7 +598,10 @@ impl LoweringContext {
 
     fn with_ssa_rebinding(&self, source_name: &str) -> (String, Self) {
         let current_name = self.current_name(source_name);
-        let next_version = self.ssa_versions.get(source_name).copied().unwrap_or(0) + 1;
+        let next_version = match self.ssa_versions.get(source_name).copied() {
+            Some(version) => version,
+            None => 0,
+        } + 1;
         let rebound_name = format!("{source_name}_v{next_version}");
         let mut vars = self.vars.clone();
         if let Some(sort) = self
@@ -1055,14 +1058,14 @@ fn literal_arg_term(lit: &Lit) -> JsonValue {
             "sort": {"kind": "ctor", "name": "Bool", "args": []},
             "value": value.value(),
         }),
-        Lit::Int(value) => {
-            let parsed = value.base10_parse::<i64>().unwrap_or(0);
-            json!({
+        Lit::Int(value) => match value.base10_parse::<i64>() {
+            Ok(parsed) => json!({
                 "kind": "const",
                 "sort": {"kind": "ctor", "name": "Int", "args": []},
                 "value": parsed,
-            })
-        }
+            }),
+            Err(_) => token_stream_term(normalize_attr_tokens(value.to_token_stream().to_string())),
+        },
         Lit::Str(value) => json!({
             "kind": "const",
             "sort": {"kind": "ctor", "name": "String", "args": []},
@@ -2287,7 +2290,10 @@ fn concept_sort_from_type(ty: &Type) -> Option<ConceptSort> {
         Type::Path(path) if path.qself.is_none() => {
             let segment = path.path.segments.last()?;
             let ident = segment.ident.to_string();
-            let name = concept_sort_name_from_type_name(&ident).unwrap_or(ident);
+            let name = match concept_sort_name_from_type_name(&ident) {
+                Some(name) => name,
+                None => ident,
+            };
             Some(ConceptSort::new(
                 name,
                 concept_sort_args_from_path_segment(segment)?,
@@ -2401,7 +2407,11 @@ fn type_is_u8(ty: &Type) -> bool {
         ty,
         Type::Path(path)
             if path.qself.is_none()
-                && path.path.segments.last().map(|segment| segment.ident == "u8").unwrap_or(false)
+                && path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "u8")
     )
 }
 
@@ -2741,6 +2751,19 @@ mod tests {
         assert_eq!(
             parsed["term"]["op_cid"].as_str(),
             crate::signature::op_cid("seq")
+        );
+    }
+
+    #[test]
+    fn overflowing_integer_literal_is_not_fabricated_as_zero() {
+        let lit: syn::Lit = syn::parse_str("9223372036854775808").expect("parse integer literal");
+        let term = literal_arg_term(&lit);
+
+        assert_eq!(term["kind"].as_str(), Some("token-stream"));
+        assert_eq!(term["surface"].as_str(), Some("9223372036854775808"));
+        assert!(
+            term.get("value").is_none(),
+            "overflow must not mint value 0"
         );
     }
 

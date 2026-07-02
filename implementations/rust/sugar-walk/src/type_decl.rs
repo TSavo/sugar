@@ -300,8 +300,11 @@ pub fn lift_enum_decl(item: &ItemEnum, file_path: Option<&str>) -> EnumDeclMemen
                         .named
                         .iter()
                         .map(|f| {
-                            let field_name =
-                                f.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
+                            let field_name = f
+                                .ident
+                                .as_ref()
+                                .expect("named enum variant field has an identifier")
+                                .to_string();
                             (field_name, infer_sort(&f.ty))
                         })
                         .collect(),
@@ -528,12 +531,10 @@ pub fn lift_impl_block(
     file_path: Option<&str>,
 ) -> (ImplMemento, Vec<crate::contract::FunctionContractMemento>) {
     let target_type = type_name(&item.self_ty);
-    let trait_name = item.trait_.as_ref().map(|(_, path, _)| {
-        path.segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .unwrap_or_default()
-    });
+    let trait_name = item
+        .trait_
+        .as_ref()
+        .and_then(|(_, path, _)| path.segments.last().map(|s| s.ident.to_string()));
 
     let mut methods = Vec::new();
     for impl_item in &item.items {

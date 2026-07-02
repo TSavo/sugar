@@ -59,17 +59,14 @@ pub fn has_unsafecell_transitive(
             .and_then(|t| t.as_array())
         {
             for t in types_arr {
-                let wrapped = if t.is_object()
-                    && t.as_object()
-                        .map(|o| o.contains_key("Untagged"))
-                        .unwrap_or(false)
-                {
-                    t.clone()
-                } else {
-                    let mut map = serde_json::Map::new();
-                    map.insert("Untagged".to_string(), t.clone());
-                    Value::Object(map)
-                };
+                let wrapped =
+                    if t.is_object() && t.as_object().is_some_and(|o| o.contains_key("Untagged")) {
+                        t.clone()
+                    } else {
+                        let mut map = serde_json::Map::new();
+                        map.insert("Untagged".to_string(), t.clone());
+                        Value::Object(map)
+                    };
                 if has_unsafecell_transitive(&wrapped, type_decls, visited) {
                     return true;
                 }
@@ -177,8 +174,7 @@ pub fn is_shared_ref_charon_ty(ty: &Value) -> bool {
         .and_then(|r| r.as_array())
         .and_then(|arr| arr.get(2))
         .and_then(|m| m.as_str())
-        .map(|m| m == "Shared")
-        .unwrap_or(false)
+        .is_some_and(|m| m == "Shared")
 }
 
 /// True when a Charon Ty JSON value is a mutable reference (`&mut T`).
@@ -188,6 +184,5 @@ pub fn is_mut_ref_charon_ty(ty: &Value) -> bool {
         .and_then(|r| r.as_array())
         .and_then(|arr| arr.get(2))
         .and_then(|m| m.as_str())
-        .map(|m| m == "Mut")
-        .unwrap_or(false)
+        .is_some_and(|m| m == "Mut")
 }

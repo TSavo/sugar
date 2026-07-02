@@ -55,7 +55,9 @@ fn main() {
     // blind to WHY a resolution refused (not-ready vs. genuine null).
     init_tracing();
 
-    if std::env::var("SUGAR_RESOLVE_ORACLE").ok().as_deref() != Some("rust-analyzer") {
+    if std::env::var_os("SUGAR_RESOLVE_ORACLE").as_deref()
+        != Some(std::ffi::OsStr::new("rust-analyzer"))
+    {
         std::env::set_var("SUGAR_RESOLVE_ORACLE", "rust-analyzer");
     }
 

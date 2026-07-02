@@ -78,7 +78,9 @@ fn collect_in_stmt(
                 if let Some(agg) = rvalue.get("Aggregate").and_then(|v| v.as_array()) {
                     if agg.len() == 2 {
                         let agg_kind = &agg[0];
-                        let captures = agg[1].as_array().map(|a| a.len()).unwrap_or(0);
+                        let Some(captures) = agg[1].as_array().map(|a| a.len()) else {
+                            return;
+                        };
                         if let Some(closure_path) = adt_kind_is_closure(agg_kind, type_decls) {
                             let body_fn_cid = find_closure_body_cid(&closure_path, fun_decls);
                             out.push(ClosureCaptureFingerprint {
@@ -212,13 +214,15 @@ fn find_closure_body_cid(prefix: &[Value], fun_decls: Option<&Value>) -> String 
         if post_prefix.first().and_then(|v| v.get("Impl")).is_none() {
             continue;
         }
-        let trailing_ident = post_prefix
+        let Some(trailing_ident) = post_prefix
             .last()
             .and_then(|v| v.get("Ident"))
             .and_then(|a| a.as_array())
             .and_then(|a| a.first())
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+        else {
+            continue;
+        };
         if matches!(
             trailing_ident,
             "call" | "call_mut" | "call_once" | "drop_in_place"

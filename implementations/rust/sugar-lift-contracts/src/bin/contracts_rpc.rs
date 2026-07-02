@@ -120,18 +120,30 @@ fn lift(params: &Value) -> Value {
         _ => vec![".".to_string()],
     };
     let mut rel_paths: Vec<String> = Vec::new();
+    let mut diagnostics: Vec<Value> = Vec::new();
     for entry in &requested {
         let abs = workspace_root.join(entry);
         if abs.is_dir() {
             // Walk the directory; emit paths relative to workspace_root so
             // the lifted contract's source path is host-independent.
-            for rel in enumerate_rs_files(&abs) {
-                let joined = if entry == "." {
-                    rel
-                } else {
-                    format!("{}/{}", entry.trim_end_matches('/'), rel)
-                };
-                rel_paths.push(joined);
+            match enumerate_rs_files(&abs) {
+                Ok(files) => {
+                    for rel in files {
+                        let joined = if entry == "." {
+                            rel
+                        } else {
+                            format!("{}/{}", entry.trim_end_matches('/'), rel)
+                        };
+                        rel_paths.push(joined);
+                    }
+                }
+                Err(e) => {
+                    diagnostics.push(json!({
+                        "kind": "lift-gap",
+                        "path": entry,
+                        "reason": format!("enumerate source files: {e}"),
+                    }));
+                }
             }
         } else {
             rel_paths.push(entry.clone());
@@ -141,7 +153,6 @@ fn lift(params: &Value) -> Value {
     rel_paths.dedup();
 
     let mut entries: Vec<Value> = Vec::new();
-    let mut diagnostics: Vec<Value> = Vec::new();
 
     for rel in &rel_paths {
         let abs = workspace_root.join(rel);
@@ -226,10 +237,10 @@ const IGNORED_DIRS: &[&str] = &[
 /// Walk `root` for `.rs` files, returning relative POSIX paths sorted in
 /// deterministic byte order. Mirrors `sugar_lift::enumerate_rs_files`
 /// so CIDs are byte-identical to the pre-sever static path.
-fn enumerate_rs_files(root: &Path) -> Vec<String> {
+fn enumerate_rs_files(root: &Path) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     if !root.exists() {
-        return out;
+        return Ok(out);
     }
     for entry in walkdir::WalkDir::new(root)
         .follow_links(false)
@@ -238,8 +249,8 @@ fn enumerate_rs_files(root: &Path) -> Vec<String> {
             let n = e.file_name().to_string_lossy();
             !IGNORED_DIRS.iter().any(|&ig| n == ig)
         })
-        .filter_map(|e| e.ok())
     {
+        let entry = entry.map_err(|e| format!("walk {}: {e}", root.display()))?;
         if entry.file_type().is_file() {
             if entry.path().extension().is_some_and(|ext| ext == "rs") {
                 if let Ok(rel) = entry.path().strip_prefix(root) {
@@ -256,12 +267,18 @@ fn enumerate_rs_files(root: &Path) -> Vec<String> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
 fn dispatch(request: &Value) -> Value {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let id = match request.get("id") {
+        Some(id) => id.clone(),
+        None => Value::Null,
+    };
+    let method = match request.get("method").and_then(Value::as_str) {
+        Some(method) => method,
+        None => "",
+    };
     let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
     match method {

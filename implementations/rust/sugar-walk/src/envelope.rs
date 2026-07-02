@@ -210,11 +210,10 @@ pub fn mint_args(
     let out_binding = contract.result_var_name();
     let panic_loci = normalized_panic_loci(&contract.panic_loci);
 
-    let input_cids: Vec<String> = contract
-        .body_cid
-        .as_ref()
-        .map(|c| vec![c.clone()])
-        .unwrap_or_default();
+    let input_cids: Vec<String> = match contract.body_cid.as_ref() {
+        Some(cid) => vec![cid.clone()],
+        None => Vec::new(),
+    };
 
     // Carry the body-derived op-contract's formals (+ sorts) into the
     // minted header so `body_discharge::CatalogResolver` can resolve the
@@ -226,10 +225,13 @@ pub fn mint_args(
         .formal_sorts
         .iter()
         .map(|s| {
-            let json = serde_json::to_value(s).unwrap_or(serde_json::Value::Null);
-            crate::canonical::serde_to_canonical(json)
+            serde_json::to_value(s)
+                .map(crate::canonical::serde_to_canonical)
+                .map_err(|err| {
+                    ClaimEnvelopeError::Other(format!("serialize formal sort for minting: {err}"))
+                })
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(MintContractArgs {
         contract_name: contract.fn_name.clone(),

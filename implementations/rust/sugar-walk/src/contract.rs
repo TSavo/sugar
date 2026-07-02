@@ -156,7 +156,10 @@ fn collect_panic_loci(
     }
 
     let mut visitor = PanicLocusVisitor {
-        file: file_path.unwrap_or("unknown").to_string(),
+        file: match file_path {
+            Some(path) => path.to_string(),
+            None => "unknown".to_string(),
+        },
         out: Vec::new(),
     };
     visitor.visit_item_fn(item_fn);
@@ -323,12 +326,10 @@ fn scan_expr_for_effects(expr: &Expr, set: &mut EffectSet) {
 }
 
 fn scan_macro_for_effects(mac: &syn::Macro, set: &mut EffectSet) {
-    let name = mac
-        .path
-        .segments
-        .last()
-        .map(|s| s.ident.to_string())
-        .unwrap_or_default();
+    let name = match mac.path.segments.last() {
+        Some(segment) => segment.ident.to_string(),
+        None => String::new(),
+    };
     match name.as_str() {
         "panic" | "unreachable" | "todo" | "unimplemented" => set.add(Effect::Panics),
         "println" | "print" | "eprintln" | "eprint" | "dbg" => set.add(Effect::Io),
