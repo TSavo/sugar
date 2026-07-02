@@ -1363,7 +1363,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
             by_key.insert(
                 key,
                 (
-                    cid.clone(),
+                    cid.to_string(),
                     body_bearing,
                     has_pre,
                     has_post,

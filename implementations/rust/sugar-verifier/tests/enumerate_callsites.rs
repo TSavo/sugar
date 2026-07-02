@@ -15,9 +15,20 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tracing_subscriber::fmt::MakeWriter;
 
-use sugar_verifier::{enumerate_callsites, MementoPool};
+use sugar_verifier::{enumerate_callsites, MementoCid, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
+
+fn memento_cid(label: &str) -> MementoCid {
+    MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
+            .expect("test CID must parse")
+    })
+}
+
+fn memento_cid_string(label: &str) -> String {
+    memento_cid(label).to_string()
+}
 
 #[derive(Clone, Default)]
 struct SharedLog(Arc<Mutex<Vec<u8>>>);
@@ -62,6 +73,7 @@ fn pool_with_bridge_and_contract(
     contract_body: serde_json::Value,
 ) -> MementoPool {
     let mut pool = MementoPool::default();
+    let target_cid = memento_cid_string(target_cid);
 
     let bridge_env = json!({
         "evidence": {
@@ -76,7 +88,7 @@ fn pool_with_bridge_and_contract(
     });
     pool.insert_bridge_by_symbol(
         bridge_symbol,
-        format!("blake3-512:bridge-{bridge_symbol}"),
+        memento_cid(&format!("bridge-{bridge_symbol}")),
         bridge_env,
     );
 
@@ -86,8 +98,10 @@ fn pool_with_bridge_and_contract(
             "body": contract_body
         }
     });
-    let contract_cid = format!("blake3-512:c-{bridge_symbol}");
-    pool.mementos.insert(contract_cid, contract_env);
+    pool.mementos.insert(
+        memento_cid(&format!("contract-{bridge_symbol}")),
+        contract_env,
+    );
     pool
 }
 
@@ -115,7 +129,7 @@ fn finds_ctor_in_atomic_args_in_pre() {
     let cs = enumerate_callsites::run(&pool);
     assert_eq!(cs.len(), 1);
     assert_eq!(cs[0].bridge_ir_name, "parseInt");
-    assert_eq!(cs[0].bridge_target_cid, target_cid);
+    assert_eq!(cs[0].bridge_target_cid, Some(memento_cid(target_cid)));
     assert_eq!(cs[0].bridge_source_layer, "ts");
     assert_eq!(cs[0].bridge_target_layer, "rust-kit");
     assert_eq!(cs[0].property_name, "useParseInt");
@@ -123,11 +137,11 @@ fn finds_ctor_in_atomic_args_in_pre() {
 
 #[test]
 fn callsite_carries_formal_actuals_from_bridge_callsite() {
-    let target_cid = "blake3-512:target";
+    let target_cid = memento_cid_string("target");
     let mut pool = MementoPool::default();
     pool.insert_bridge_by_symbol(
         "method:to_digit",
-        "blake3-512:method-to-digit-bridge",
+        memento_cid("method-to-digit-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -148,7 +162,7 @@ fn callsite_carries_formal_actuals_from_bridge_callsite() {
         }),
     );
     pool.mementos.insert(
-        "blake3-512:caller".into(),
+        memento_cid("caller"),
         json!({
             "evidence": {
                 "kind": "contract",
@@ -276,7 +290,7 @@ fn finds_ctor_inside_connective_operands() {
 fn no_callsite_when_no_bridges_registered() {
     let mut pool = MementoPool::default();
     pool.mementos.insert(
-        "blake3-512:c".into(),
+        memento_cid("contract-c"),
         json!({
             "evidence": {
                 "kind": "contract",
@@ -323,7 +337,7 @@ fn skips_non_contract_envelopes() {
     let mut pool = MementoPool::default();
     // A bridge envelope (kind=bridge): should not be walked.
     pool.mementos.insert(
-        "blake3-512:bridge".into(),
+        memento_cid("bridge-member"),
         json!({
             "evidence": {
                 "kind": "bridge",
@@ -342,13 +356,13 @@ fn skips_non_contract_envelopes() {
     );
     pool.insert_bridge_by_symbol(
         "parseInt",
-        "blake3-512:parse-int-bridge",
+        memento_cid("parse-int-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "parseInt",
-                    "targetContractCid": "blake3-512:t"
+                    "targetContractCid": memento_cid_string("parse-int-target")
                 }
             }
         }),
@@ -497,9 +511,9 @@ fn multiple_callsites_in_same_contract_each_listed() {
 
 #[test]
 fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() {
-    let property_cid = "blake3-512:imported-libsugar-contract";
-    let property_bundle = "blake3-512:imported-libsugar-proof";
-    let wrong_global_bundle = "blake3-512:target-proof-global-method-expect";
+    let property_cid = memento_cid("imported-libsugar-contract");
+    let property_bundle = memento_cid("imported-libsugar-proof");
+    let wrong_global_bundle = memento_cid("target-proof-global-method-expect");
     let receiver = json!({
         "kind": "ctor",
         "name": "to_value",
@@ -512,7 +526,7 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
             "kind": "bridge",
             "body": {
                 "sourceSymbol": "method:expect",
-                "targetContractCid": "blake3-512:result-expect",
+                "targetContractCid": memento_cid_string("result-expect"),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {"panicSite": true}
@@ -521,27 +535,27 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
     });
     pool.insert_bridge_by_symbol(
         "method:expect",
-        "blake3-512:expect-imported-bridge",
+        memento_cid("expect-imported-bridge"),
         bridge.clone(),
     );
     pool.insert_bridge_by_callsite(
         (
-            property_bundle.into(),
+            property_bundle.clone(),
             "src/core/types.rs".into(),
             2137,
             "method:expect".into(),
         ),
-        "blake3-512:expect-imported-bridge",
+        memento_cid("expect-imported-bridge"),
         bridge,
     );
     pool.bridge_self_bundle_by_symbol
-        .insert("method:expect".into(), wrong_global_bundle.into());
+        .insert("method:expect".into(), wrong_global_bundle);
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle.clone())
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -569,12 +583,12 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
     let cs = enumerate_callsites::run(&pool);
     assert_eq!(cs.len(), 1);
     assert_eq!(
-        cs[0].callsite_bundle_cid.as_deref(),
-        Some(property_bundle),
+        cs[0].callsite_bundle_cid,
+        Some(property_bundle.clone()),
         "panic producer lookup must use the bundle containing the contract being walked"
     );
     assert_eq!(
-        cs[0].bridge_self_bundle_cid.as_deref(),
+        cs[0].bridge_self_bundle_cid,
         Some(property_bundle),
         "panic producer lookup must not leak the global per-symbol bridge bundle"
     );
@@ -584,8 +598,8 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
 
 #[test]
 fn panic_loci_only_contract_becomes_panic_callsite() {
-    let property_cid = "blake3-512:panic-loci-only-contract";
-    let property_bundle = "blake3-512:panic-loci-only-proof";
+    let property_cid = memento_cid("panic-loci-only-contract");
+    let property_bundle = memento_cid("panic-loci-only-proof");
     let receiver = json!({
         "kind": "ctor",
         "name": "to_string",
@@ -598,7 +612,7 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
             "kind": "bridge",
             "body": {
                 "sourceSymbol": "method:expect",
-                "targetContractCid": "blake3-512:result-expect",
+                "targetContractCid": memento_cid_string("result-expect"),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {"panicSite": true}
@@ -607,25 +621,25 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
     });
     pool.insert_bridge_by_symbol(
         "method:expect",
-        "blake3-512:expect-panic-loci-only-bridge",
+        memento_cid("expect-panic-loci-only-bridge"),
         bridge.clone(),
     );
     pool.insert_bridge_by_callsite(
         (
-            property_bundle.into(),
+            property_bundle.clone(),
             "src/kit_dispatch.rs".into(),
             2130,
             "method:expect".into(),
         ),
-        "blake3-512:expect-panic-loci-only-bridge",
+        memento_cid("expect-panic-loci-only-bridge"),
         bridge,
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle.clone())
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -647,29 +661,29 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
     assert_eq!(cs.len(), 1);
     assert!(cs[0].panic_site);
     assert_eq!(cs[0].bridge_ir_name, "method:expect");
-    assert_eq!(cs[0].bridge_target_cid, "blake3-512:result-expect");
+    assert_eq!(cs[0].bridge_target_cid, Some(memento_cid("result-expect")));
     assert_eq!(cs[0].file.as_deref(), Some("src/kit_dispatch.rs"));
     assert_eq!(cs[0].line, Some(2130));
-    assert_eq!(cs[0].callsite_bundle_cid.as_deref(), Some(property_bundle));
+    assert_eq!(cs[0].callsite_bundle_cid, Some(property_bundle));
 }
 
 #[test]
 fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
-    let property_cid = "blake3-512:panic-loci-duplicate-contract";
-    let property_bundle = "blake3-512:panic-loci-duplicate-proof";
+    let property_cid = memento_cid("panic-loci-duplicate-contract");
+    let property_bundle = memento_cid("panic-loci-duplicate-proof");
     let formula_receiver = json!({"kind": "var", "name": "value"});
     let locus_receiver = json!({"name": "value", "kind": "var"});
 
     let mut pool = MementoPool::default();
     pool.insert_bridge_by_symbol(
         "method:unwrap",
-        "blake3-512:unwrap-duplicate-bridge",
+        memento_cid("unwrap-duplicate-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "method:unwrap",
-                    "targetContractCid": "blake3-512:option-unwrap",
+                    "targetContractCid": memento_cid_string("option-unwrap"),
                     "sourceLayer": "rust",
                     "targetLayer": "rust-tests",
                     "callsite": {"panicSite": true}
@@ -678,11 +692,11 @@ fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
         }),
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -718,16 +732,16 @@ fn panic_loci_duplicate_formula_panic_is_not_double_counted() {
 
 #[test]
 fn panic_loci_without_bridge_still_surfaces_undecidable_callsite() {
-    let property_cid = "blake3-512:panic-loci-missing-bridge-contract";
-    let property_bundle = "blake3-512:panic-loci-missing-bridge-proof";
+    let property_cid = memento_cid("panic-loci-missing-bridge-contract");
+    let property_bundle = memento_cid("panic-loci-missing-bridge-proof");
 
     let mut pool = MementoPool::default();
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -748,15 +762,15 @@ fn panic_loci_without_bridge_still_surfaces_undecidable_callsite() {
     assert_eq!(cs.len(), 1);
     assert!(cs[0].panic_site);
     assert_eq!(cs[0].bridge_ir_name, "method:expect");
-    assert_eq!(cs[0].bridge_target_cid, "");
+    assert_eq!(cs[0].bridge_target_cid, None);
     assert_eq!(cs[0].file.as_deref(), Some("src/lib.rs"));
     assert_eq!(cs[0].line, Some(99));
 }
 
 #[test]
 fn effect_loci_only_contract_becomes_panic_callsite() {
-    let property_cid = "blake3-512:effect-loci-only-contract";
-    let property_bundle = "blake3-512:effect-loci-only-proof";
+    let property_cid = memento_cid("effect-loci-only-contract");
+    let property_bundle = memento_cid("effect-loci-only-proof");
     let receiver = json!({
         "kind": "ctor",
         "name": "to_string",
@@ -766,13 +780,13 @@ fn effect_loci_only_contract_becomes_panic_callsite() {
     let mut pool = MementoPool::default();
     pool.insert_bridge_by_symbol(
         "method:expect",
-        "blake3-512:expect-effect-loci-only-bridge",
+        memento_cid("expect-effect-loci-only-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "method:expect",
-                    "targetContractCid": "blake3-512:result-expect",
+                    "targetContractCid": memento_cid_string("result-expect"),
                     "sourceLayer": "rust",
                     "targetLayer": "rust-tests",
                     "callsite": {"panicSite": true}
@@ -781,11 +795,11 @@ fn effect_loci_only_contract_becomes_panic_callsite() {
         }),
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -832,13 +846,13 @@ fn effect_site_concept_routes_bridge_as_panic_site() {
     let mut pool = pool;
     pool.insert_bridge_by_symbol(
         "method:expect",
-        "blake3-512:expect-effect-site-bridge",
+        memento_cid("expect-effect-site-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "method:expect",
-                    "targetContractCid": target_cid,
+                    "targetContractCid": memento_cid_string(target_cid),
                     "sourceLayer": "rust",
                     "targetLayer": "rust-tests",
                     "callsite": {
@@ -859,10 +873,10 @@ fn effect_site_concept_routes_bridge_as_panic_site() {
 
 #[test]
 fn non_panic_effect_loci_are_ignored() {
-    let property_cid = "blake3-512:io-effect-contract";
+    let property_cid = memento_cid("io-effect-contract");
     let mut pool = MementoPool::default();
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -889,8 +903,8 @@ fn non_panic_effect_loci_are_ignored() {
 
 #[test]
 fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
-    let property_cid = "blake3-512:matching-effect-loci-contract";
-    let property_bundle = "blake3-512:matching-effect-loci-proof";
+    let property_cid = memento_cid("matching-effect-loci-contract");
+    let property_bundle = memento_cid("matching-effect-loci-proof");
     let receiver = json!({"kind": "var", "name": "result"});
     let locus = json!({
         "argTerm": receiver,
@@ -907,13 +921,13 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
     let mut pool = MementoPool::default();
     pool.insert_bridge_by_symbol(
         "method:unwrap",
-        "blake3-512:unwrap-both-effect-fields-bridge",
+        memento_cid("unwrap-both-effect-fields-bridge"),
         json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "method:unwrap",
-                    "targetContractCid": "blake3-512:option-unwrap",
+                    "targetContractCid": memento_cid_string("option-unwrap"),
                     "sourceLayer": "rust",
                     "targetLayer": "rust-tests",
                     "callsite": {
@@ -925,11 +939,11 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
         }),
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -954,8 +968,8 @@ fn matching_panic_loci_and_effect_loci_do_not_duplicate_callsite() {
 
 #[test]
 fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
-    let property_cid = "blake3-512:disagreeing-effect-loci-contract";
-    let property_bundle = "blake3-512:disagreeing-effect-loci-proof";
+    let property_cid = memento_cid("disagreeing-effect-loci-contract");
+    let property_bundle = memento_cid("disagreeing-effect-loci-proof");
     let receiver = json!({"kind": "var", "name": "result"});
 
     let mut pool = MementoPool::default();
@@ -964,7 +978,7 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
             "kind": "bridge",
             "body": {
                 "sourceSymbol": "method:unwrap",
-                "targetContractCid": "blake3-512:option-unwrap",
+                "targetContractCid": memento_cid_string("option-unwrap"),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {
@@ -976,25 +990,25 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
     });
     pool.insert_bridge_by_symbol(
         "method:unwrap",
-        "blake3-512:unwrap-disagreeing-effect-bridge",
+        memento_cid("unwrap-disagreeing-effect-bridge"),
         bridge.clone(),
     );
     pool.insert_bridge_by_callsite(
         (
-            property_bundle.into(),
+            property_bundle.clone(),
             "src/lib.rs".into(),
             25,
             "method:unwrap".into(),
         ),
-        "blake3-512:unwrap-disagreeing-effect-bridge",
+        memento_cid("unwrap-disagreeing-effect-bridge"),
         bridge,
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",
@@ -1040,8 +1054,8 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
 
 #[test]
 fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
-    let property_cid = "blake3-512:formula-backed-effect-disagreement-contract";
-    let property_bundle = "blake3-512:formula-backed-effect-disagreement-proof";
+    let property_cid = memento_cid("formula-backed-effect-disagreement-contract");
+    let property_bundle = memento_cid("formula-backed-effect-disagreement-proof");
     let receiver = json!({"kind": "var", "name": "result"});
     let locus = json!({
         "argTerm": receiver,
@@ -1056,7 +1070,7 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
             "kind": "bridge",
             "body": {
                 "sourceSymbol": "method:unwrap",
-                "targetContractCid": "blake3-512:option-unwrap",
+                "targetContractCid": memento_cid_string("option-unwrap"),
                 "sourceLayer": "rust",
                 "targetLayer": "rust-tests",
                 "callsite": {
@@ -1068,25 +1082,25 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
     });
     pool.insert_bridge_by_symbol(
         "method:unwrap",
-        "blake3-512:unwrap-effect-only-bridge",
+        memento_cid("unwrap-effect-only-bridge"),
         bridge.clone(),
     );
     pool.insert_bridge_by_callsite(
         (
-            property_bundle.into(),
+            property_bundle.clone(),
             "src/lib.rs".into(),
             25,
             "method:unwrap".into(),
         ),
-        "blake3-512:unwrap-effect-only-bridge",
+        memento_cid("unwrap-effect-only-bridge"),
         bridge,
     );
     pool.bundle_members
-        .entry(property_bundle.into())
+        .entry(property_bundle)
         .or_default()
-        .insert(property_cid.into());
+        .insert(property_cid.clone());
     pool.mementos.insert(
-        property_cid.into(),
+        property_cid,
         json!({
             "evidence": {
                 "kind": "contract",

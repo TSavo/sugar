@@ -12,12 +12,13 @@ use std::collections::BTreeMap;
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
 use serde::Serialize;
 use serde_json::Value as Json;
+pub use sugar_proof_envelope::{AtomCid, ContractBodyCid, MementoCid};
 
-fn contract_body_pointer(envelope: &Json) -> Option<String> {
+fn contract_body_pointer(envelope: &Json) -> Option<ContractBodyCid> {
     sugar_proof_envelope::member_field(envelope, "bodyCid")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .map(str::to_string)
+        .and_then(|s| ContractBodyCid::try_parse(s.to_string()).ok())
 }
 
 #[derive(Debug, Clone)]
@@ -45,27 +46,27 @@ pub struct MementoPool {
     /// CID -> the canonical-bytes-decoded memento envelope (as JSON).
     /// The memento IS the verification. To verify something is to find
     /// its memento in this map.
-    pub mementos: BTreeMap<String, Json>,
+    pub mementos: BTreeMap<MementoCid, Json>,
     /// Atom CID -> flat atom bytes from the proof catalog.
     ///
     /// Leaves live here exactly once. Body graphs and mementos point to these
     /// CIDs instead of embedding semantic leaves inline.
-    pub atoms: BTreeMap<String, Vec<u8>>,
+    pub atoms: BTreeMap<AtomCid, Vec<u8>>,
     /// Body/composition CID -> pointer-only body bytes from the proof catalog.
     ///
     /// Contract mementos name, bind, and locate a body by `bodyCid`; the body
     /// map stores the composition graph that bottoms out in `atoms`.
-    pub body: BTreeMap<String, Vec<u8>>,
+    pub body: BTreeMap<ContractBodyCid, Vec<u8>>,
     /// Formula CID -> memento CID. Index for fast formula lookup.
     /// The hash IS the boundary: systems don't exchange formulas,
     /// they exchange hashes. This index lets us find the memento
     /// for a given formula hash without scanning all mementos.
-    pub formula_to_memento: BTreeMap<String, String>,
+    pub formula_to_memento: BTreeMap<String, MementoCid>,
     /// sourceSymbol (IR ctor name) -> bridge memento CID.
     ///
     /// The bridge envelope itself lives exactly once in `mementos`; this index
     /// is a pointer into that verified pool entry.
-    pub bridges_by_symbol: BTreeMap<String, String>,
+    pub bridges_by_symbol: BTreeMap<String, MementoCid>,
     /// `(bundle_cid, file, line, sourceSymbol)` -> bridge memento CID.
     ///
     /// Callsite-SCOPED bridge index, populated alongside `bridges_by_symbol`
@@ -87,7 +88,7 @@ pub struct MementoPool {
     /// wins per full key; a `(bundle,file,line,symbol)` collision would mean
     /// two same-symbol calls on one source line, which (same bundle => same
     /// target contract => same post) is a K-completeness edge, not a false-pass.
-    pub bridges_by_callsite: BTreeMap<(String, String, usize, String), String>,
+    pub bridges_by_callsite: BTreeMap<(MementoCid, String, usize, String), MementoCid>,
     /// `(bundle_cid, file, line, callee)` -> panic-freedom annotation memento.
     ///
     /// Effect-site annotations are diagnostic proof mementos, not discharge
@@ -97,12 +98,12 @@ pub struct MementoPool {
     /// packages, so the annotation must join only to the proof bundle that
     /// produced the row it describes.
     pub panic_effect_site_annotations:
-        BTreeMap<(String, String, usize, String), EffectSiteAnnotation>,
+        BTreeMap<(MementoCid, String, usize, String), EffectSiteAnnotation>,
     /// sourceSymbol -> the `.proof` bundle CID the bridge memento was loaded
     /// from. Lets resolve_target enforce the self-pinned (no `targetProofCid`)
     /// case: the target contract must be a co-member of this bundle. Keyed by
     /// sourceSymbol to match `bridges_by_symbol` (same last-writer-wins key).
-    pub bridge_self_bundle_by_symbol: BTreeMap<String, String>,
+    pub bridge_self_bundle_by_symbol: BTreeMap<String, MementoCid>,
     /// Bundle (.proof file) CID -> set of member CIDs the bundle contained.
     ///
     /// Required to enforce `BridgeDeclaration.ConsequentBundlePinned`
@@ -113,18 +114,18 @@ pub struct MementoPool {
     /// Multi-valued because the same member CID can legitimately appear
     /// in two bundles (an honest one and a poisoned one); we never want
     /// last-writer-wins to silently swap them.
-    pub bundle_members: BTreeMap<String, std::collections::BTreeSet<String>>,
+    pub bundle_members: BTreeMap<MementoCid, std::collections::BTreeSet<MementoCid>>,
     pub load_errors: Vec<LoadError>,
     /// Contract CID -> contract name (indexed during load)
-    pub cid_to_name: BTreeMap<String, String>,
+    pub cid_to_name: BTreeMap<MementoCid, String>,
     /// Contract name -> CID (reverse index)
-    pub name_to_cid: BTreeMap<String, String>,
+    pub name_to_cid: BTreeMap<String, MementoCid>,
     /// Contract name -> body CID pointer carried by the contract memento.
     ///
     /// `name_to_cid` keeps the resolver-facing memento/member identity. This
     /// table follows the memento's body pointer so semantic diff can compare
     /// composed pointer graphs without deriving them sideways from the envelope.
-    pub name_to_body_cid: BTreeMap<String, String>,
+    pub name_to_body_cid: BTreeMap<String, ContractBodyCid>,
 
     // ---- Opacity discharge indexes (issue #384 B.5) ----
     //
@@ -135,29 +136,29 @@ pub struct MementoPool {
     /// loopCid (from header.loopCid of a LoopInvariantMemento) ->
     /// memento CID. Populated when a "loop-invariant" kind memento is
     /// inserted. Spec: protocol/specs/2026-05-05-loop-invariant-memento.md
-    pub loop_cid_to_memento: BTreeMap<String, String>,
+    pub loop_cid_to_memento: BTreeMap<String, MementoCid>,
 
     /// tryCid (from header.tryCid of a TryBranchMemento) -> memento CID.
     /// Populated when a "try-branch" kind memento is inserted.
     /// Spec: protocol/specs/2026-05-05-try-branch-memento.md
-    pub try_cid_to_memento: BTreeMap<String, String>,
+    pub try_cid_to_memento: BTreeMap<String, MementoCid>,
 
     /// bodyFnCid (from header.bodyFnCid of a ClosureBindingMemento) ->
     /// memento CID. Populated when a "closure-binding" kind memento is
     /// inserted. Spec: protocol/specs/2026-05-05-closure-binding-memento.md
-    pub body_fn_cid_to_memento: BTreeMap<String, String>,
+    pub body_fn_cid_to_memento: BTreeMap<String, MementoCid>,
 
     /// AliasingMemento discharge index: (formal_a, formal_b) ->
     /// memento CID. Populated when an "aliasing-memento" kind memento is
     /// inserted. The key is the sorted pair of formal parameter names.
-    pub aliasing_pair_to_memento: BTreeMap<(String, String), String>,
+    pub aliasing_pair_to_memento: BTreeMap<(String, String), MementoCid>,
 
     /// Composite key "functionCid\x00target" -> memento CID. Populated
     /// when a "pin-invariant" kind memento is inserted. The composite
     /// key ensures the memento is anchored to both the function contract
     /// and the pinned parameter name.
     /// Spec: protocol/specs/2026-05-05-pin-invariant-memento.md
-    pub pin_invariant_to_memento: BTreeMap<String, String>,
+    pub pin_invariant_to_memento: BTreeMap<String, MementoCid>,
     /// Python class-shape catalog entries, indexed by their fully-qualified
     /// `className`. These entries are signed contract-header evidence emitted by
     /// the Python source lifter and are consumed only by the attribute-safety
@@ -193,7 +194,7 @@ impl MementoPool {
     /// envelope shapes (v1.2 layered, lean header/body, v1.1 flat). Typed
     /// accessor so callers write `pool.member_kind(cid)` instead of
     /// `sugar_proof_envelope::member_kind(pool.mementos.get(cid))`.
-    pub fn member_kind(&self, cid: &str) -> Option<&str> {
+    pub fn member_kind(&self, cid: &MementoCid) -> Option<&str> {
         self.mementos
             .get(cid)
             .and_then(sugar_proof_envelope::member_kind)
@@ -203,7 +204,7 @@ impl MementoPool {
     /// regardless of envelope shape. Typed accessor so callers write
     /// `pool.member_field(cid, "postHash")` instead of
     /// `sugar_proof_envelope::member_field(pool.mementos.get(cid), "postHash")`.
-    pub fn member_field<'a>(&'a self, cid: &str, name: &str) -> Option<&'a Json> {
+    pub fn member_field<'a>(&'a self, cid: &MementoCid, name: &str) -> Option<&'a Json> {
         self.mementos
             .get(cid)
             .and_then(|env| sugar_proof_envelope::member_field(env, name))
@@ -219,7 +220,7 @@ impl MementoPool {
     /// Return the verified bridge envelope indexed for a callsite-scoped key.
     pub fn bridge_by_callsite_key<'a>(
         &'a self,
-        key: &(String, String, usize, String),
+        key: &(MementoCid, String, usize, String),
     ) -> Option<&'a Json> {
         self.bridges_by_callsite
             .get(key)
@@ -235,10 +236,9 @@ impl MementoPool {
     pub fn insert_bridge_by_symbol(
         &mut self,
         source_symbol: impl Into<String>,
-        bridge_cid: impl Into<String>,
+        bridge_cid: MementoCid,
         bridge_env: Json,
     ) {
-        let bridge_cid = bridge_cid.into();
         self.mementos.insert(bridge_cid.clone(), bridge_env);
         self.bridges_by_symbol
             .insert(source_symbol.into(), bridge_cid);
@@ -247,11 +247,10 @@ impl MementoPool {
     /// Insert a bridge envelope and index it by exact callsite key.
     pub fn insert_bridge_by_callsite(
         &mut self,
-        key: (String, String, usize, String),
-        bridge_cid: impl Into<String>,
+        key: (MementoCid, String, usize, String),
+        bridge_cid: MementoCid,
         bridge_env: Json,
     ) {
-        let bridge_cid = bridge_cid.into();
         self.mementos.insert(bridge_cid.clone(), bridge_env);
         self.bridges_by_callsite.insert(key, bridge_cid);
     }
@@ -275,7 +274,10 @@ impl MementoPool {
         Some(Json::Object(body))
     }
 
-    fn resolve_body_formula_slots(&self, body_cid: &str) -> Option<BTreeMap<String, Json>> {
+    fn resolve_body_formula_slots(
+        &self,
+        body_cid: &ContractBodyCid,
+    ) -> Option<BTreeMap<String, Json>> {
         let body_bytes = self.body.get(body_cid)?;
         let body_doc: Json = serde_json::from_slice(body_bytes).ok()?;
         let slots = body_doc.pointer("/body")?.as_object()?;
@@ -283,8 +285,9 @@ impl MementoPool {
         for (slot, slot_memento) in slots {
             let atom_cid = slot_memento
                 .get("atomCid")
-                .and_then(|value| value.as_str())?;
-            let atom_bytes = self.atoms.get(atom_cid)?;
+                .and_then(|value| value.as_str())
+                .and_then(|raw| AtomCid::try_parse(raw.to_string()).ok())?;
+            let atom_bytes = self.atoms.get(&atom_cid)?;
             let formula: Json = serde_json::from_slice(atom_bytes).ok()?;
             resolved.insert(slot.clone(), formula);
         }
@@ -409,7 +412,7 @@ impl MementoPool {
     /// Insert a memento into the pool and index it by formula hash.
     /// The .proof protocol IS the cache: storing a memento IS caching
     /// the verification result.
-    pub fn insert(&mut self, memento_cid: String, envelope: Json) {
+    pub fn insert(&mut self, memento_cid: MementoCid, envelope: Json) {
         // Index ONLY the formula hashes that name an ESTABLISHED FACT into
         // `formula_to_memento` -- the map Tier 0 (`verify`) trusts as "this
         // formula is proven true". A precondition (`preHash`) and an
@@ -494,7 +497,7 @@ impl MementoPool {
                         } else {
                             // Same tier (both pre-bearing or both post-only): genuine collision.
                             self.load_errors.push(LoadError {
-                                proof_path: memento_cid.clone(),
+                                proof_path: memento_cid.to_string(),
                                 reason: format!(
                                     "duplicate contract name `{n}` resolves to two CIDs: {existing} (kept) and {memento_cid} (dropped)"
                                 ),
@@ -687,7 +690,7 @@ impl MementoPool {
             if let Some(existing) = self.formula_to_memento.get(&k) {
                 if existing != &v {
                     self.load_errors.push(LoadError {
-                        proof_path: v.clone(),
+                        proof_path: v.to_string(),
                         reason: format!(
                             "merge collision for formula `{k}`: kept `{existing}`, dropped `{v}`"
                         ),
@@ -737,7 +740,7 @@ impl MementoPool {
                         self.mementos.get(&v),
                     ) {
                         self.load_errors.push(LoadError {
-                            proof_path: v.clone(),
+                            proof_path: v.to_string(),
                             reason: format!(
                                 "merge collision for contract name `{k}`: kept `{existing}`, dropped `{v}`"
                             ),
@@ -934,7 +937,7 @@ pub fn compute_formula_cid(formula: &Json) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct CallSite {
     pub bridge_ir_name: String,
-    pub bridge_target_cid: String,
+    pub bridge_target_cid: Option<MementoCid>,
     pub bridge_source_layer: String,
     pub bridge_target_layer: String,
     /// Forward pin: the specific `.proof` bundle CID this bridge commits
@@ -944,22 +947,22 @@ pub struct CallSite {
     /// enforced; there is no unpinned path. See
     /// `protocol/specs/2026-04-30-ir-formal-grammar.md`
     /// § "Bridge target pinning: the shim-poisoning vector".
-    pub bridge_target_proof_cid: Option<String>,
+    pub bridge_target_proof_cid: Option<MementoCid>,
     /// The `.proof` bundle CID the bridge memento itself was loaded from.
     /// Used to enforce the self-pinned (`bridge_target_proof_cid == None`)
     /// case: the target contract must be a co-member of this same bundle.
     /// `None` only if the bridge memento was not associated with any bundle
     /// (a hand-built in-memory pool); resolve_target then cannot self-pin.
-    pub bridge_self_bundle_cid: Option<String>,
+    pub bridge_self_bundle_cid: Option<MementoCid>,
     pub property_name: String,
-    pub property_cid: String,
+    pub property_cid: Option<MementoCid>,
     /// The `.proof` bundle CID containing the property/contract whose body
     /// produced this callsite. For panic-site producer lookup, co-located
     /// receiver bridges are minted in this same caller bundle; this is distinct
     /// from the selected bridge memento's own bundle, which can be polluted by
     /// a global per-symbol bridge index when target and import proofs are
     /// loaded together.
-    pub callsite_bundle_cid: Option<String>,
+    pub callsite_bundle_cid: Option<MementoCid>,
     pub arg_term: Option<Json>,
     /// All actual argument terms on the bridged call, in source order. The
     /// legacy `arg_term` remains the first actual for producer-post and
@@ -1146,6 +1149,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
+
     fn make_implication_memento(ant: &str, con: &str) -> Json {
         json!({
             "cid": format!("blake3-512:{}{}", ant, con),
@@ -1222,27 +1234,20 @@ mod tests {
     fn euf_inv_only_duplicate_names_are_conjoinable_not_load_errors() {
         let name = "decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion";
         let mut pool = MementoPool::default();
+        let java_cid = cid("java");
+        let rust_cid = cid("rust");
 
-        pool.insert(
-            "blake3-512:java".to_string(),
-            make_inv_only_contract(name, 3),
-        );
-        pool.insert(
-            "blake3-512:rust".to_string(),
-            make_inv_only_contract(name, 4),
-        );
+        pool.insert(java_cid.clone(), make_inv_only_contract(name, 3));
+        pool.insert(rust_cid.clone(), make_inv_only_contract(name, 4));
 
         assert!(
             pool.load_errors.is_empty(),
             "same #euf# inv-only contracts are handled by consistency conjoin, not load errors: {:#?}",
             pool.load_errors
         );
-        assert_eq!(
-            pool.name_to_cid.get(name),
-            Some(&"blake3-512:java".to_string())
-        );
-        assert!(pool.mementos.contains_key("blake3-512:java"));
-        assert!(pool.mementos.contains_key("blake3-512:rust"));
+        assert_eq!(pool.name_to_cid.get(name), Some(&java_cid));
+        assert!(pool.mementos.contains_key(java_cid.as_str()));
+        assert!(pool.mementos.contains_key(rust_cid.as_str()));
     }
 
     #[test]
@@ -1250,8 +1255,8 @@ mod tests {
         let name = "src/lib.rs::tests::same_name";
         let mut pool = MementoPool::default();
 
-        pool.insert("blake3-512:a".to_string(), make_inv_only_contract(name, 1));
-        pool.insert("blake3-512:b".to_string(), make_inv_only_contract(name, 2));
+        pool.insert(cid("duplicate-a"), make_inv_only_contract(name, 1));
+        pool.insert(cid("duplicate-b"), make_inv_only_contract(name, 2));
 
         assert!(
             pool.load_errors
@@ -1271,8 +1276,8 @@ mod tests {
         let q = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let r = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
-        pool.insert("m1".to_string(), make_implication_memento(p, q));
-        pool.insert("m2".to_string(), make_implication_memento(q, r));
+        pool.insert(cid("m1"), make_implication_memento(p, q));
+        pool.insert(cid("m2"), make_implication_memento(q, r));
 
         // Check P → R via transitivity
         let result = pool.can_implies(p, r);
@@ -1290,7 +1295,7 @@ mod tests {
         let p = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let q = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-        pool.insert("m1".to_string(), make_implication_memento(p, q));
+        pool.insert(cid("m1"), make_implication_memento(p, q));
 
         let result = pool.can_implies(p, q);
         assert!(
@@ -1302,8 +1307,9 @@ mod tests {
 
     #[test]
     fn memento_pool_merge_preserves_effect_site_annotations() {
+        let bundle_cid = cid("bundle");
         let key = (
-            "blake3-512:bundle".to_string(),
+            bundle_cid.clone(),
             "src/lib.rs".to_string(),
             42,
             "method:unwrap".to_string(),
@@ -1318,7 +1324,7 @@ mod tests {
             tier_to_close: "irreducible".to_string(),
             reason: "lock poisoning is runtime residue".to_string(),
             memento_cid: "blake3-512:annotation".to_string(),
-            bundle_cid: "blake3-512:bundle".to_string(),
+            bundle_cid: bundle_cid.to_string(),
         };
         let mut left = MementoPool::default();
         let mut right = MementoPool::default();
@@ -1429,9 +1435,9 @@ mod tests {
     fn pin_invariant_insert_lookup_roundtrip() {
         let mut pool = MementoPool::default();
         let fc = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let m_cid = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+        let m_cid = cid_string("pin-invariant");
         pool.insert(
-            m_cid.clone(),
+            cid("pin-invariant"),
             make_pin_invariant_memento(&m_cid, fc, "pin", "0 <= state"),
         );
         let view = pool.lookup_pin_invariant(fc, "pin");
@@ -1447,9 +1453,9 @@ mod tests {
         let mut pool = MementoPool::default();
         let fc_a = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let fc_b = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let m_cid = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string();
+        let m_cid = cid_string("pin-invariant-cross");
         pool.insert(
-            m_cid.clone(),
+            cid("pin-invariant-cross"),
             make_pin_invariant_memento(&m_cid, fc_a, "pin", "0 <= state"),
         );
         // Same target "pin" but different function CID: should NOT match
@@ -1464,7 +1470,7 @@ mod tests {
         // from /evidence/body instead of /header and /metadata.
         let mut pool = MementoPool::default();
         let fc = "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-        let m_cid = "blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let m_cid = cid_string("pin-invariant-v11");
         let flat_memento = json!({
             "cid": m_cid,
             "evidence": {
@@ -1476,7 +1482,7 @@ mod tests {
                 }
             }
         });
-        pool.insert(m_cid.to_string(), flat_memento);
+        pool.insert(cid("pin-invariant-v11"), flat_memento);
         let view = pool.lookup_pin_invariant(fc, "pin");
         assert!(view.is_some(), "v1.1 flat memento must be found via lookup");
         let v = view.unwrap();
@@ -1521,11 +1527,9 @@ mod tests {
             "kind": "atomic", "pred": "eq",
             "args": [{"kind":"var","name":"result"}, {"kind":"var","name":"value"}]
         });
-        let m_cid =
-            "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .to_string();
+        let m_cid = cid_string("content-address");
         pool.insert(
-            m_cid.clone(),
+            cid("content-address"),
             make_contract_memento(&m_cid, "content_address", &pre, &post),
         );
 

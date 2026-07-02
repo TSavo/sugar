@@ -9,6 +9,7 @@ use std::process::Command;
 
 use libsugar::core::{address, Input, Path as CorePath, PathAlgebra, PathDocument, Verb};
 use serde_json::json;
+use sugar_verifier::MementoCid;
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
@@ -717,18 +718,20 @@ done
     let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
         .and_then(|v| v.as_str())
         .expect("bridge must have targetContractCid");
+    let target_cid =
+        MementoCid::try_parse(target_cid.to_string()).expect("bridge target CID must parse");
     assert!(
-        pool.mementos.contains_key(target_cid),
+        pool.mementos.contains_key(target_cid.as_str()),
         "bridge target cid {target_cid} must resolve in same proof"
     );
     assert!(
-        pool.member_kind(target_cid) == Some("contract"),
+        pool.member_kind(&target_cid) == Some("contract"),
         "bridge target must be a contract"
     );
     let implication_count = pool
         .mementos
         .keys()
-        .filter(|cid| pool.member_kind(cid.as_str()) == Some("implication"))
+        .filter(|cid| pool.member_kind(cid) == Some("implication"))
         .count();
     assert_eq!(
         implication_count, 1,

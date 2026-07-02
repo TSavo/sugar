@@ -5,15 +5,15 @@
 // has_aliasing_memento queries with canonical pair ordering.
 
 use libsugar::compose::OpacityMementoLookup;
-use sugar_verifier::types::MementoPool;
+use sugar_verifier::types::{MementoCid, MementoPool};
 
-fn blake3_cid(_data: &str) -> String {
+fn blake3_cid(data: &str) -> MementoCid {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "blake3-512:test-aliasing-{:06}",
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    )
+    MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
+        format!("{data}-{}", COUNTER.fetch_add(1, Ordering::Relaxed)).as_bytes(),
+    ))
+    .expect("test CID must parse")
 }
 
 fn make_aliasing_memento(formal_a: &str, formal_b: &str, status: &str) -> serde_json::Value {

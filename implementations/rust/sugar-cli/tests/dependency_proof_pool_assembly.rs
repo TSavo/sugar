@@ -592,7 +592,7 @@ fn dependency_proof_with_correct_cid_loads() {
         pool.load_errors
     );
     assert!(
-        pool.mementos.contains_key(&target_cid),
+        pool.mementos.contains_key(target_cid.as_str()),
         "vendor contract {target_cid} must be reachable"
     );
 
@@ -626,7 +626,7 @@ fn dependency_rpc_union_makes_vendor_contract_reachable() {
     });
     let (pool, _callsites) = runner.run_load_and_enumerate();
     assert!(
-        pool.mementos.get(&target_cid).is_some(),
+        pool.mementos.get(target_cid.as_str()).is_some(),
         "vendor contract {target_cid} must be present after dependency proof assembly"
     );
     let _ = fs::remove_dir_all(root);

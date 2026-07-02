@@ -32,6 +32,7 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_proof_envelope::ed25519_verify_string;
 use tracing::debug;
 
+use crate::types::MementoCid;
 use sugar_proof_envelope::ProofGraph;
 
 /// Outcome of a handshake attempt.
@@ -121,8 +122,8 @@ fn serde_to_canonical(v: &Json) -> std::sync::Arc<Value> {
 /// names a contract memento with a `post` slot.
 pub fn locate_producer_post(
     arg_term: &Option<Json>,
-    pool_mementos: &std::collections::BTreeMap<String, Json>,
-    bridges_by_symbol: &std::collections::BTreeMap<String, String>,
+    pool_mementos: &std::collections::BTreeMap<MementoCid, Json>,
+    bridges_by_symbol: &std::collections::BTreeMap<String, MementoCid>,
 ) -> Option<(Json, String)> {
     let arg = producer_lookup_term(arg_term.as_ref()?);
     if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
@@ -139,8 +140,9 @@ pub fn locate_producer_post(
     let bridge_body = sugar_proof_envelope::member_body(producer_bridge)?;
     let target_cid = bridge_body
         .get("targetContractCid")
-        .and_then(|v| v.as_str())?;
-    let producer_contract = pool_mementos.get(target_cid)?;
+        .and_then(|v| v.as_str())
+        .and_then(|raw| MementoCid::try_parse(raw.to_string()).ok())?;
+    let producer_contract = pool_mementos.get(&target_cid)?;
     let producer_body = sugar_proof_envelope::member_body(producer_contract)?;
     let post = producer_body
         .get("post")
@@ -319,6 +321,15 @@ mod tests {
         ed25519_sign_string,
     };
 
+    fn memento_cid(cid: &str) -> MementoCid {
+        MementoCid::try_parse(cid.to_string()).expect("test CID must parse")
+    }
+
+    fn generated_cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
     fn unique_cache_dir(suffix: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -394,12 +405,12 @@ mod tests {
     }
 
     fn insert_bridge(
-        pool_mementos: &mut BTreeMap<String, Json>,
-        bridges_by_symbol: &mut BTreeMap<String, String>,
+        pool_mementos: &mut BTreeMap<MementoCid, Json>,
+        bridges_by_symbol: &mut BTreeMap<String, MementoCid>,
         source_symbol: &str,
         target_cid: &str,
     ) {
-        let bridge_cid = format!("blake3-512:{source_symbol}-bridge");
+        let bridge_cid = generated_cid(&format!("{source_symbol}-bridge"));
         pool_mementos.insert(bridge_cid.clone(), bridge_to(target_cid));
         bridges_by_symbol.insert(source_symbol.to_string(), bridge_cid);
     }
@@ -408,7 +419,7 @@ mod tests {
     fn locate_producer_post_resolves_through_single_await_seam() {
         let producer_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let mut pool_mementos = BTreeMap::new();
-        pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
+        pool_mementos.insert(memento_cid(producer_cid), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
         insert_bridge(
             &mut pool_mementos,
@@ -435,7 +446,7 @@ mod tests {
     fn locate_producer_post_refuses_non_producer_await_base() {
         let producer_cid = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let mut pool_mementos = BTreeMap::new();
-        pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
+        pool_mementos.insert(memento_cid(producer_cid), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
         insert_bridge(
             &mut pool_mementos,
@@ -488,7 +499,7 @@ mod tests {
     fn locate_producer_post_resolves_channel_recv_through_await_unwrap_or_expect_seam() {
         let producer_cid = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
         let mut pool_mementos = BTreeMap::new();
-        pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
+        pool_mementos.insert(memento_cid(producer_cid), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
         insert_bridge(
             &mut pool_mementos,
@@ -525,7 +536,7 @@ mod tests {
     fn locate_producer_post_does_not_treat_plain_unwrap_as_channel_edge() {
         let producer_cid = "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
         let mut pool_mementos = BTreeMap::new();
-        pool_mementos.insert(producer_cid.to_string(), contract_with_post(6));
+        pool_mementos.insert(memento_cid(producer_cid), contract_with_post(6));
         let mut bridges_by_symbol = BTreeMap::new();
         insert_bridge(
             &mut pool_mementos,

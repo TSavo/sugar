@@ -203,8 +203,8 @@ fn symbol_of_row(row: &crate::types::ReportRow) -> String {
 /// else the callsite's producer locus.
 fn pin_id(row: &crate::types::ReportRow) -> String {
     let cs = &row.callsite;
-    if !cs.property_cid.is_empty() {
-        return cs.property_cid.clone();
+    if let Some(property_cid) = &cs.property_cid {
+        return property_cid.to_string();
     }
     match (&cs.producer_file, cs.producer_line) {
         (Some(f), Some(l)) => format!("{f}:{l}"),

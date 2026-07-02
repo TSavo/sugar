@@ -686,7 +686,7 @@ fn run_mint(project: &Path) {
 fn contract_runtime_failure_loci(pool: &sugar_verifier::types::MementoPool) -> Vec<Json> {
     pool.mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("contract"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("contract"))
         .filter_map(|(cid, _)| {
             pool.member_field(cid, "panicLoci")
                 .and_then(|v| v.as_array())
@@ -778,7 +778,7 @@ fn python_source_raise_mint_preserves_runtime_failure_locus_and_enumerates_calls
     assert_eq!(runtime_failure_sites[0].file.as_deref(), Some("boom.py"));
     assert_eq!(runtime_failure_sites[0].line, Some(2));
     assert!(
-        runtime_failure_sites[0].bridge_target_cid.is_empty(),
+        runtime_failure_sites[0].bridge_target_cid.is_none(),
         "no bridge exists yet, so the surfaced callsite must remain undecidable"
     );
 
@@ -860,7 +860,7 @@ fn python_source_access_mint_preserves_runtime_failure_loci_and_enumerates_calls
     assert!(
         runtime_failure_sites
             .iter()
-            .all(|cs| cs.bridge_target_cid.is_empty()),
+            .all(|cs| cs.bridge_target_cid.is_none()),
         "no bridges exist yet, so surfaced access callsites must remain undecidable"
     );
 
@@ -1113,7 +1113,7 @@ fn python_source_store_mint_preserves_runtime_failure_loci_and_enumerates_callsi
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -1277,7 +1277,7 @@ fn python_source_slice_assign_mint_preserves_runtime_failure_loci_and_enumerates
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -1445,7 +1445,7 @@ fn python_source_slice_access_mint_preserves_runtime_failure_loci_and_enumerates
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -1685,7 +1685,7 @@ fn python_source_slice_augassign_mint_preserves_runtime_failure_loci_and_enumera
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -1886,7 +1886,7 @@ fn python_source_slice_annassign_mint_preserves_runtime_failure_loci_and_enumera
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(3), true),
@@ -2004,7 +2004,7 @@ fn python_source_walrus_mint_preserves_rhs_runtime_failure_loci_and_enumerates_c
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(4), true),
@@ -2160,7 +2160,7 @@ fn python_source_unpack_mint_preserves_runtime_failure_loci_and_enumerates_calls
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -2421,7 +2421,7 @@ fn python_source_augassign_mint_preserves_runtime_failure_loci_and_enumerates_ca
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(2), true),
@@ -2629,7 +2629,7 @@ fn python_source_annassign_mint_preserves_runtime_failure_loci_and_enumerates_ca
     assert_eq!(
         runtime_failure_sites
             .iter()
-            .map(|cs| (cs.line, cs.bridge_target_cid.is_empty()))
+            .map(|cs| (cs.line, cs.bridge_target_cid.is_none()))
             .collect::<Vec<_>>(),
         vec![
             (Some(4), true),

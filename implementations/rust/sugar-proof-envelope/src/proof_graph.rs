@@ -8,10 +8,14 @@
 // Callers do not assemble `{cid -> bytes}` maps. They construct typed mementos;
 // this module derives, validates, and lowers the graph at the serialization edge.
 
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Deref;
 use std::sync::Arc;
 
+use serde::{Serialize, Serializer};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, CanonicalizerError, Value};
 
@@ -31,8 +35,42 @@ impl AtomCid {
         Self(s.into())
     }
 
+    pub fn try_parse(cid: String) -> Result<Self, String> {
+        if is_blake3_512_cid(&cid) {
+            Ok(Self(cid))
+        } else {
+            Err(cid)
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl AsRef<str> for AtomCid {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for AtomCid {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Deref for AtomCid {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for AtomCid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -50,8 +88,42 @@ impl ContractBodyCid {
         Self(s.into())
     }
 
+    pub fn try_parse(cid: String) -> Result<Self, String> {
+        if is_blake3_512_cid(&cid) {
+            Ok(Self(cid))
+        } else {
+            Err(cid)
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl AsRef<str> for ContractBodyCid {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for ContractBodyCid {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Deref for ContractBodyCid {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for ContractBodyCid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -72,10 +144,10 @@ impl MementoCid {
     }
 
     /// Fallible constructor: returns `Ok` only when `cid` carries the
-    /// `blake3-512:` tag. Used by typed-member parsing to surface a typed
-    /// error instead of panicking.
-    pub(crate) fn try_parse(cid: String) -> Result<Self, String> {
-        if cid.starts_with("blake3-512:") {
+    /// `blake3-512:` tag plus a 128-hex-character digest. Used by typed-member
+    /// parsing to surface a typed error instead of panicking.
+    pub fn try_parse(cid: String) -> Result<Self, String> {
+        if is_blake3_512_cid(&cid) {
             Ok(Self(cid))
         } else {
             Err(cid)
@@ -95,6 +167,57 @@ impl MementoCid {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+impl AsRef<str> for MementoCid {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for MementoCid {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Deref for MementoCid {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for MementoCid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+macro_rules! serialize_cid_as_str {
+    ($ty:ty) => {
+        impl Serialize for $ty {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                serializer.serialize_str(self.as_str())
+            }
+        }
+    };
+}
+
+serialize_cid_as_str!(AtomCid);
+serialize_cid_as_str!(ContractBodyCid);
+serialize_cid_as_str!(MementoCid);
+
+fn is_blake3_512_cid(cid: &str) -> bool {
+    const PREFIX: &str = "blake3-512:";
+    let Some(hex) = cid.strip_prefix(PREFIX) else {
+        return false;
+    };
+    hex.len() == 128 && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

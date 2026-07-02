@@ -372,7 +372,9 @@ pub fn report_exit_code(r: &Report) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_verifier::{CallSite, ObligationVerdict, Report, ReportRow, ToolchainPlanReport};
+    use sugar_verifier::{
+        CallSite, MementoCid, ObligationVerdict, Report, ReportRow, ToolchainPlanReport,
+    };
 
     #[test]
     fn empty_report_is_not_a_successful_proof() {
@@ -576,10 +578,13 @@ mod tests {
     #[test]
     fn report_json_includes_callsite_bundle_cid_when_present() {
         let mut r = Report::default();
+        let bundle_cid =
+            MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(b"caller-bundle"))
+                .expect("test CID must parse");
         r.rows.push(ReportRow {
             callsite: CallSite {
                 bridge_ir_name: "method:unwrap".into(),
-                callsite_bundle_cid: Some("blake3-512:caller-bundle".into()),
+                callsite_bundle_cid: Some(bundle_cid.clone()),
                 panic_site: true,
                 ..CallSite::default()
             },
@@ -592,10 +597,7 @@ mod tests {
 
         let j = report_to_json(&r);
 
-        assert_eq!(
-            j["rows"][0]["callsiteBundleCid"],
-            "blake3-512:caller-bundle"
-        );
+        assert_eq!(j["rows"][0]["callsiteBundleCid"], bundle_cid.to_string());
     }
 
     #[test]

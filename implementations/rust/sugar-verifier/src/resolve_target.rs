@@ -18,10 +18,10 @@ use crate::types::{CallSite, MementoPool, ResolvedProperty};
 pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String> {
     debug!(
         bridge = %cs.bridge_ir_name,
-        target_cid = %cs.bridge_target_cid,
+        target_cid = ?cs.bridge_target_cid,
         "resolve_target: resolving bridge target contract"
     );
-    if cs.bridge_target_cid.is_empty() {
+    let Some(target_cid) = cs.bridge_target_cid.as_ref() else {
         warn!(
             bridge = %cs.bridge_ir_name,
             "resolve_target: callsite has no targetContractCid"
@@ -30,19 +30,19 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
             "NoBridgeTarget: callsite {} has no targetContractCid",
             cs.bridge_ir_name
         ));
-    }
-    let env = pool.mementos.get(&cs.bridge_target_cid).ok_or_else(|| {
+    };
+    let env = pool.mementos.get(target_cid).ok_or_else(|| {
         warn!(
             bridge = %cs.bridge_ir_name,
-            target_cid = %cs.bridge_target_cid,
+            target_cid = %target_cid,
             "resolve_target: bridge target CID not in pool"
         );
-        format!("bridge target CID {} not in pool", cs.bridge_target_cid)
+        format!("bridge target CID {} not in pool", target_cid)
     })?;
-    if pool.member_kind(&cs.bridge_target_cid) != Some("contract") {
+    if pool.member_kind(target_cid) != Some("contract") {
         warn!(
             bridge = %cs.bridge_ir_name,
-            target_cid = %cs.bridge_target_cid,
+            target_cid = %target_cid,
             "resolve_target: target memento is not a contract"
         );
         return Err("target memento is not a contract memento".into());
@@ -64,7 +64,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     // substituted for the pinned bundle. See protocol/specs/2026-04-30-
     // ir-formal-grammar.md § "Bridge target pinning: the shim-poisoning
     // vector".
-    match cs.bridge_target_proof_cid.as_deref() {
+    match cs.bridge_target_proof_cid.as_ref() {
         Some(expected_bundle) => {
             debug!(
                 bridge = %cs.bridge_ir_name,
@@ -82,16 +82,16 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
                     expected_bundle
                 )
             })?;
-            if !bundle_members.contains(&cs.bridge_target_cid) {
+            if !bundle_members.contains(target_cid) {
                 warn!(
                     bridge = %cs.bridge_ir_name,
-                    target_cid = %cs.bridge_target_cid,
+                    target_cid = %target_cid,
                     pinned_bundle = %expected_bundle,
                     "resolve_target: pin mismatch: contract not in pinned bundle"
                 );
                 return Err(format!(
                     "BridgeTargetProofCidMismatch: contract {} is not a member of pinned bundle {}",
-                    cs.bridge_target_cid, expected_bundle
+                    target_cid, expected_bundle
                 ));
             }
         }
@@ -104,7 +104,7 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
             // there is no unenforced path. A cross-bundle target that arrives
             // with no pin (e.g. a same-named dependency contract trying to
             // pose as the local one) is refused here.
-            let self_bundle = cs.bridge_self_bundle_cid.as_deref().ok_or_else(|| {
+            let self_bundle = cs.bridge_self_bundle_cid.as_ref().ok_or_else(|| {
                 format!(
                     "BridgeSelfPinUnresolvable: bridge {} has no targetProofCid and no known \
                      source bundle, so same-bundle co-membership cannot be enforced",
@@ -117,11 +117,11 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
                     self_bundle, cs.bridge_ir_name
                 )
             })?;
-            if !bundle_members.contains(&cs.bridge_target_cid) {
+            if !bundle_members.contains(target_cid) {
                 return Err(format!(
                     "BridgeTargetProofCidMismatch: self-pinned bridge {} target {} is not a \
                      co-member of its own bundle {}",
-                    cs.bridge_ir_name, cs.bridge_target_cid, self_bundle
+                    cs.bridge_ir_name, target_cid, self_bundle
                 ));
             }
         }
@@ -163,14 +163,14 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
     let target_has_post = body.get("post").is_some();
     debug!(
         bridge = %cs.bridge_ir_name,
-        target_cid = %cs.bridge_target_cid,
+        target_cid = %target_cid,
         body_bearing = target_is_body_bearing,
         has_pre = ir_formula.is_some(),
         has_post = target_has_post,
         "resolve_target: accepted"
     );
     Ok(ResolvedProperty {
-        cid: cs.bridge_target_cid.clone(),
+        cid: target_cid.to_string(),
         ir_formula,
         ir_kit_version: String::new(),
         formal_names,

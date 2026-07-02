@@ -168,7 +168,7 @@ fn forged_stage_receipt_cid_is_rejected() {
         pool.load_errors
     );
     assert!(
-        !pool.mementos.contains_key(&claimed_cid),
+        !pool.mementos.contains_key(claimed_cid.as_str()),
         "forged stage-receipt must not enter the memento pool"
     );
 
@@ -198,7 +198,7 @@ fn honest_stage_receipt_roundtrip() {
     );
     for receipt in &run.stage_receipts {
         assert!(
-            reloaded.mementos.contains_key(&receipt.header.cid),
+            reloaded.mementos.contains_key(receipt.header.cid.as_str()),
             "stage receipt {} must be indexed",
             receipt.header.cid
         );
@@ -262,9 +262,11 @@ fn prove_run_emits_durable_content_addressed_run_and_stage_receipts() {
         "generated run bundle must reload cleanly: {:?}",
         reloaded.load_errors
     );
-    assert!(reloaded.mementos.contains_key(&run.memento.header.cid));
+    assert!(reloaded
+        .mementos
+        .contains_key(run.memento.header.cid.as_str()));
     for receipt in &run.stage_receipts {
-        assert!(reloaded.mementos.contains_key(&receipt.header.cid));
+        assert!(reloaded.mementos.contains_key(receipt.header.cid.as_str()));
     }
 
     let _ = fs::remove_dir_all(&project_root);

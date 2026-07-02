@@ -105,7 +105,7 @@ use libsugar::wp::{
 use sugar_ir_types::{IrFormula, IrTerm};
 use sugar_proof_envelope;
 
-use crate::types::{CallSite, MementoPool};
+use crate::types::{CallSite, MementoCid, MementoPool};
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -138,10 +138,13 @@ use crate::types::{CallSite, MementoPool};
 /// it can never mint a false "cannot panic." The reflexive path is the one
 /// that over-claimed on an unguarded pre-bearing site (the bug this fixes).
 pub fn target_has_nontrivial_pre(cs: &CallSite, pool: &MementoPool) -> bool {
-    let Some(env) = pool.mementos.get(&cs.bridge_target_cid) else {
+    let Some(target_cid) = cs.bridge_target_cid.as_ref() else {
         return false;
     };
-    if pool.member_kind(&cs.bridge_target_cid) != Some("contract") {
+    let Some(env) = pool.mementos.get(target_cid) else {
+        return false;
+    };
+    if pool.member_kind(target_cid) != Some("contract") {
         return false;
     }
     let Some(body) = pool.resolve_contract_body(env).filter(|v| v.is_object()) else {
@@ -162,6 +165,13 @@ fn pre_is_trivial(pre: &Json) -> bool {
     }
     pre.get("kind").and_then(|v| v.as_str()) == Some("atomic")
         && pre.get("name").and_then(|v| v.as_str()) == Some("true")
+}
+
+fn memento_cid_field(envelope: &Json, field: &str) -> Option<MementoCid> {
+    sugar_proof_envelope::member_field(envelope, field)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| MementoCid::try_parse(s.to_string()).ok())
 }
 
 /// The variable name the derived postcondition equates the call's result
@@ -194,10 +204,9 @@ impl<'a> CatalogResolver<'a> {
     /// the target memento is not a contract.
     fn target_contract_body(&self, op_name: &str) -> Option<Json> {
         let bridge = self.pool.bridge_by_symbol(op_name)?;
-        let target_cid = sugar_proof_envelope::member_field(bridge, "targetContractCid")
-            .and_then(|v| v.as_str())?;
-        let env = self.pool.mementos.get(target_cid)?;
-        if self.pool.member_kind(target_cid) != Some("contract") {
+        let target_cid = memento_cid_field(bridge, "targetContractCid")?;
+        let env = self.pool.mementos.get(&target_cid)?;
+        if self.pool.member_kind(&target_cid) != Some("contract") {
             return None;
         }
         self.pool
@@ -337,7 +346,7 @@ pub fn extract_body_obligation(
     cs: &CallSite,
     pool: &MementoPool,
 ) -> Result<Option<BodyObligation>, String> {
-    if cs.panic_site && cs.bridge_target_cid.is_empty() {
+    if cs.panic_site && cs.bridge_target_cid.is_none() {
         return Ok(None);
     }
 
@@ -792,13 +801,13 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
             return None;
         }
         match (
-            cs.callsite_bundle_cid.as_deref(),
+            cs.callsite_bundle_cid.as_ref(),
             producer_file,
             producer_line,
         ) {
             (Some(bundle), Some(file), Some(line)) => {
                 let key = (
-                    bundle.to_string(),
+                    bundle.clone(),
                     file.to_string(),
                     line,
                     producer_symbol.to_string(),
@@ -837,21 +846,19 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         };
         b
     };
-    let Some(target_cid) =
-        sugar_proof_envelope::member_field(bridge, "targetContractCid").and_then(|v| v.as_str())
-    else {
+    let Some(target_cid) = memento_cid_field(bridge, "targetContractCid") else {
         gdbg!("REJECT cond2: bridge for {ctor_name} has no targetContractCid");
         return None;
     };
 
-    let Some(env) = pool.mementos.get(target_cid) else {
+    let Some(env) = pool.mementos.get(&target_cid) else {
         gdbg!("REJECT cond2: target contract {target_cid} not in pool.mementos");
         return None;
     };
-    if pool.member_kind(target_cid) != Some("contract") {
+    if pool.member_kind(&target_cid) != Some("contract") {
         gdbg!(
             "REJECT cond2: target {target_cid} kind != contract ({:?})",
-            pool.member_kind(target_cid)
+            pool.member_kind(&target_cid)
         );
         return None;
     }
@@ -1356,19 +1363,33 @@ mod routing_predicate_tests {
     use crate::types::{CallSite, MementoPool};
     use serde_json::json;
 
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
+
     fn contract_env(body: Json) -> Json {
         json!({"evidence": {"kind": "contract", "body": body}})
     }
 
     fn pool_with(cid: &str, env: Json) -> MementoPool {
         let mut pool = MementoPool::default();
-        pool.mementos.insert(cid.into(), env);
+        pool.mementos.insert(
+            MementoCid::try_parse(cid.to_string()).expect("test CID must parse"),
+            env,
+        );
         pool
     }
 
     fn cs_targeting(cid: &str) -> CallSite {
         CallSite {
-            bridge_target_cid: cid.into(),
+            bridge_target_cid: Some(
+                MementoCid::try_parse(cid.to_string()).expect("test CID must parse"),
+            ),
             ..Default::default()
         }
     }
@@ -1377,7 +1398,7 @@ mod routing_predicate_tests {
     fn positive_real_pre_routes_to_guard_discharge() {
         // A real precondition (`is_some(opt)`) is the structural signal to
         // discharge the pre under guards.
-        let cid = "blake3-512:has-pre";
+        let cid = cid_string("has-pre");
         let env = contract_env(json!({
             "pre": {"kind": "atomic", "name": "is_some",
                 "args": [{"kind": "var", "name": "opt"}]},
@@ -1385,21 +1406,21 @@ mod routing_predicate_tests {
             "formals": ["opt"]
         }));
         assert!(target_has_nontrivial_pre(
-            &cs_targeting(cid),
-            &pool_with(cid, env)
+            &cs_targeting(&cid),
+            &pool_with(&cid, env)
         ));
     }
 
     #[test]
     fn discrimination_post_only_and_true_pre_do_not_route() {
         // No `pre`: a post-only sugar/body contract stays on body-discharge.
-        let cid = "blake3-512:post-only";
+        let cid = cid_string("post-only");
         let post_only = contract_env(json!({
             "post": {"kind": "atomic", "name": "=", "args": []},
             "formals": ["x"]
         }));
         assert!(
-            !target_has_nontrivial_pre(&cs_targeting(cid), &pool_with(cid, post_only)),
+            !target_has_nontrivial_pre(&cs_targeting(&cid), &pool_with(&cid, post_only)),
             "a post-only contract must NOT reroute"
         );
 
@@ -1409,14 +1430,14 @@ mod routing_predicate_tests {
             "formals": ["x"]
         }));
         assert!(
-            !target_has_nontrivial_pre(&cs_targeting(cid), &pool_with(cid, true_pre)),
+            !target_has_nontrivial_pre(&cs_targeting(&cid), &pool_with(&cid, true_pre)),
             "a pre=true contract is trivial and must NOT reroute"
         );
 
         // `pre = null`: absent precondition.
         let null_pre = contract_env(json!({"pre": null, "formals": ["x"]}));
         assert!(
-            !target_has_nontrivial_pre(&cs_targeting(cid), &pool_with(cid, null_pre)),
+            !target_has_nontrivial_pre(&cs_targeting(&cid), &pool_with(&cid, null_pre)),
             "a null pre must NOT reroute"
         );
     }
@@ -1427,17 +1448,17 @@ mod routing_predicate_tests {
         // byte-identical; never panics looking up a stale bridge).
         let empty = MementoPool::default();
         assert!(!target_has_nontrivial_pre(
-            &cs_targeting("blake3-512:absent"),
+            &cs_targeting(&cid_string("absent")),
             &empty
         ));
 
         // Target memento is not a contract (e.g. a bridge) -> false.
-        let cid = "blake3-512:not-a-contract";
+        let cid = cid_string("not-a-contract");
         let bridge_env = json!({"evidence": {"kind": "bridge", "body": {
             "pre": {"kind": "atomic", "name": "is_some",
                 "args": [{"kind": "var", "name": "opt"}]}}}});
         assert!(
-            !target_has_nontrivial_pre(&cs_targeting(cid), &pool_with(cid, bridge_env)),
+            !target_has_nontrivial_pre(&cs_targeting(&cid), &pool_with(&cid, bridge_env)),
             "a non-contract memento must never route, even if it carries a `pre`-named field"
         );
     }
@@ -1459,12 +1480,25 @@ mod callee_post_guard_fact_tests {
     use serde_json::json;
 
     // CIDs for hand-built contracts in these tests.
-    const TOTAL_CONTRACT_CID: &str = "blake3-512:serde-value-totality";
-    const OPTION_TOTAL_CONTRACT_CID: &str = "blake3-512:option-totality-contract";
-    const GENERIC_CONTRACT_CID: &str = "blake3-512:generic-result-contract";
+    const TOTAL_CONTRACT_LABEL: &str = "serde-value-totality";
+    const OPTION_TOTAL_CONTRACT_LABEL: &str = "option-totality-contract";
+    const GENERIC_CONTRACT_LABEL: &str = "generic-result-contract";
     const BRIDGE_SYMBOL: &str = "serde_json_to_string_value";
     const OPTION_BRIDGE_SYMBOL: &str = "grammar_op_registry_cid_known";
     const GENERIC_BRIDGE_SYMBOL: &str = "to_string_generic";
+
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
+
+    fn parse_cid(cid: &str) -> MementoCid {
+        MementoCid::try_parse(cid.to_string()).expect("test CID must parse")
+    }
 
     /// A memento pool with:
     ///   - a contract with `post = <predicate>(result)`
@@ -1496,8 +1530,12 @@ mod callee_post_guard_fact_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(contract_cid.into(), contract_env);
-        pool.insert_bridge_by_symbol(bridge_symbol, format!("{contract_cid}:bridge"), bridge_env);
+        pool.mementos.insert(parse_cid(contract_cid), contract_env);
+        pool.insert_bridge_by_symbol(
+            bridge_symbol,
+            cid(&format!("{bridge_symbol}-bridge")),
+            bridge_env,
+        );
         pool
     }
 
@@ -1505,13 +1543,17 @@ mod callee_post_guard_fact_tests {
     ///   - a contract with `post = is_ok(result)` (the Value-totality contract)
     ///   - a bridge from BRIDGE_SYMBOL to that contract
     fn totality_pool() -> MementoPool {
-        singleton_totality_pool(BRIDGE_SYMBOL, TOTAL_CONTRACT_CID, panic_freedom::IS_OK)
+        singleton_totality_pool(
+            BRIDGE_SYMBOL,
+            &cid_string(TOTAL_CONTRACT_LABEL),
+            panic_freedom::IS_OK,
+        )
     }
 
     fn option_totality_pool() -> MementoPool {
         singleton_totality_pool(
             OPTION_BRIDGE_SYMBOL,
-            OPTION_TOTAL_CONTRACT_CID,
+            &cid_string(OPTION_TOTAL_CONTRACT_LABEL),
             panic_freedom::IS_SOME,
         )
     }
@@ -1539,16 +1581,16 @@ mod callee_post_guard_fact_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": GENERIC_BRIDGE_SYMBOL,
-                    "targetContractCid": GENERIC_CONTRACT_CID
+                    "targetContractCid": cid_string(GENERIC_CONTRACT_LABEL)
                 }
             }
         });
         let mut pool = MementoPool::default();
         pool.mementos
-            .insert(GENERIC_CONTRACT_CID.into(), contract_env);
+            .insert(cid(GENERIC_CONTRACT_LABEL), contract_env);
         pool.insert_bridge_by_symbol(
             GENERIC_BRIDGE_SYMBOL,
-            "blake3-512:generic-result-bridge",
+            cid("generic-result-bridge"),
             bridge_env,
         );
         pool
@@ -1719,33 +1761,34 @@ mod callee_post_guard_fact_tests {
         // producer (`to_value(...)`) must be looked up in the bundle containing
         // the caller contract. Otherwise imported libsugar panic sites miss
         // producer bridges that are present in their own imported proof.
-        let callsite_bundle = "blake3-512:imported-libsugar-proof";
-        let wrong_bridge_bundle = "blake3-512:target-proof-global-method-expect";
+        let callsite_bundle = cid("imported-libsugar-proof");
+        let wrong_bridge_bundle = cid("target-proof-global-method-expect");
+        let total_contract_cid = cid_string(TOTAL_CONTRACT_LABEL);
         let mut pool = totality_pool();
         let producer_bridge = json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": BRIDGE_SYMBOL,
-                    "targetContractCid": TOTAL_CONTRACT_CID
+                    "targetContractCid": total_contract_cid
                 }
             }
         });
         pool.insert_bridge_by_callsite(
             (
-                callsite_bundle.to_string(),
+                callsite_bundle.clone(),
                 "src/core/types.rs".to_string(),
                 2137,
                 BRIDGE_SYMBOL.to_string(),
             ),
-            "blake3-512:callsite-producer-bridge",
+            cid("callsite-producer-bridge"),
             producer_bridge,
         );
 
         let cs = CallSite {
             panic_site: true,
-            callsite_bundle_cid: Some(callsite_bundle.into()),
-            bridge_self_bundle_cid: Some(wrong_bridge_bundle.into()),
+            callsite_bundle_cid: Some(callsite_bundle),
+            bridge_self_bundle_cid: Some(wrong_bridge_bundle),
             file: Some("src/core/types.rs".into()),
             line: Some(2137),
             arg_term: Some(json!({
@@ -1770,31 +1813,32 @@ mod callee_post_guard_fact_tests {
         // `.expect()`/`.unwrap()`, while the receiver producer bridge is keyed
         // at the receiver call. The verifier must consume those coordinates as
         // opaque data from the kit, with no Rust-specific semantics.
-        let callsite_bundle = "blake3-512:libsugar-proof";
+        let callsite_bundle = cid("libsugar-proof");
+        let option_total_contract_cid = cid_string(OPTION_TOTAL_CONTRACT_LABEL);
         let mut pool = option_totality_pool();
         let producer_bridge = json!({
             "evidence": {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": OPTION_BRIDGE_SYMBOL,
-                    "targetContractCid": OPTION_TOTAL_CONTRACT_CID
+                    "targetContractCid": option_total_contract_cid
                 }
             }
         });
         pool.insert_bridge_by_callsite(
             (
-                callsite_bundle.to_string(),
+                callsite_bundle.clone(),
                 "src/core/bind.rs".to_string(),
                 549,
                 OPTION_BRIDGE_SYMBOL.to_string(),
             ),
-            "blake3-512:option-callsite-producer-bridge",
+            cid("option-callsite-producer-bridge"),
             producer_bridge,
         );
 
         let cs = CallSite {
             panic_site: true,
-            callsite_bundle_cid: Some(callsite_bundle.into()),
+            callsite_bundle_cid: Some(callsite_bundle),
             file: Some("src/core/bind.rs".into()),
             line: Some(550),
             producer_file: Some("src/core/bind.rs".into()),
@@ -1843,10 +1887,10 @@ mod callee_post_guard_fact_tests {
         // let resolve_target report NoBridgeTarget. It must not grab a global
         // same-symbol body contract and produce the misleading body-discharge
         // refusal seen in the imported libsugar regression.
-        let body_contract_cid = "blake3-512:global-method-expect-body";
+        let body_contract_cid = cid_string("global-method-expect-body");
         let mut pool = MementoPool::default();
         pool.mementos.insert(
-            body_contract_cid.into(),
+            parse_cid(&body_contract_cid),
             json!({
                 "envelope": true,
                 "header": {
@@ -1866,7 +1910,7 @@ mod callee_post_guard_fact_tests {
         );
         pool.insert_bridge_by_symbol(
             "method:expect",
-            "blake3-512:method-expect-bridge",
+            cid("method-expect-bridge"),
             json!({
                 "envelope": true,
                 "header": {
@@ -1880,8 +1924,8 @@ mod callee_post_guard_fact_tests {
         let cs = CallSite {
             panic_site: true,
             bridge_ir_name: "method:expect".into(),
-            bridge_target_cid: String::new(),
-            callsite_bundle_cid: Some("blake3-512:caller-bundle".into()),
+            bridge_target_cid: None,
+            callsite_bundle_cid: Some(cid("caller-bundle")),
             file: Some("src/core/types.rs".into()),
             line: Some(2105),
             arg_term: Some(json!({
@@ -1930,8 +1974,17 @@ mod eq_both_calls_discharge_tests {
     use serde_json::json;
 
     /// CID for the hand-built "double" body-derived contract in these tests.
-    const DOUBLE_CID: &str = "blake3-512:double-body-contract";
+    const DOUBLE_CID_LABEL: &str = "double-body-contract";
     const DOUBLE_SYMBOL: &str = "double";
+
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
 
     /// A memento pool containing the body-derived contract for `double(x) = x*2`
     /// and a bridge from `double` to that contract.
@@ -1940,6 +1993,7 @@ mod eq_both_calls_discharge_tests {
     /// This is the same fixture the `cmd_verify_body_discharge.rs` integration
     /// tests use; here it's in-process for fast unit-test feedback.
     fn double_pool() -> MementoPool {
+        let double_cid = cid_string(DOUBLE_CID_LABEL);
         let contract_env = json!({
             "evidence": {
                 "kind": "contract",
@@ -1965,13 +2019,13 @@ mod eq_both_calls_discharge_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": DOUBLE_SYMBOL,
-                    "targetContractCid": DOUBLE_CID
+                    "targetContractCid": double_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(DOUBLE_CID.into(), contract_env);
-        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, "blake3-512:double-bridge", bridge_env);
+        pool.mementos.insert(cid(DOUBLE_CID_LABEL), contract_env);
+        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, cid("double-bridge"), bridge_env);
         pool
     }
 
@@ -2144,7 +2198,7 @@ mod eq_both_calls_discharge_tests {
 
     #[test]
     fn opaque_namespaced_one_sided_body_claim_refuses_before_solver() {
-        let opaque_cid = "blake3-512:opaque-body-contract";
+        let opaque_cid = cid_string("opaque-body-contract");
         let opaque_symbol = "halve";
         let contract_env = json!({
             "evidence": {
@@ -2176,8 +2230,9 @@ mod eq_both_calls_discharge_tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(opaque_cid.into(), contract_env);
-        pool.insert_bridge_by_symbol(opaque_symbol, "blake3-512:opaque-bridge", bridge_env);
+        pool.mementos
+            .insert(cid("opaque-body-contract"), contract_env);
+        pool.insert_bridge_by_symbol(opaque_symbol, cid("opaque-bridge"), bridge_env);
 
         let cs = CallSite {
             bridge_ir_name: opaque_symbol.into(),
@@ -2246,10 +2301,19 @@ mod nested_call_reduce_in_place_tests {
     use serde_json::json;
 
     /// CID constants for the nested-call test fixtures.
-    const DOUBLE_CID: &str = "blake3-512:nested-double-body-contract";
+    const DOUBLE_CID_LABEL: &str = "nested-double-body-contract";
     const DOUBLE_SYMBOL: &str = "double";
-    const PRE_BEARING_CID: &str = "blake3-512:nested-pre-bearing-contract";
+    const PRE_BEARING_CID_LABEL: &str = "nested-pre-bearing-contract";
     const PRE_BEARING_SYMBOL: &str = "pre_bearing_call";
+
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
 
     fn int_const(n: i64) -> serde_json::Value {
         json!({"kind": "const", "value": n, "sort": {"kind": "primitive", "name": "Int"}})
@@ -2270,6 +2334,8 @@ mod nested_call_reduce_in_place_tests {
     /// Pool with `double(x) = x*2` (body-derived, no pre) and a
     /// `pre_bearing_call` whose target has a non-trivial pre.
     fn nested_test_pool() -> MementoPool {
+        let double_cid = cid_string(DOUBLE_CID_LABEL);
+        let pre_bearing_cid = cid_string(PRE_BEARING_CID_LABEL);
         let double_contract = json!({
             "evidence": {
                 "kind": "contract",
@@ -2295,7 +2361,7 @@ mod nested_call_reduce_in_place_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": DOUBLE_SYMBOL,
-                    "targetContractCid": DOUBLE_CID
+                    "targetContractCid": double_cid
                 }
             }
         });
@@ -2326,18 +2392,18 @@ mod nested_call_reduce_in_place_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": PRE_BEARING_SYMBOL,
-                    "targetContractCid": PRE_BEARING_CID
+                    "targetContractCid": pre_bearing_cid
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert(DOUBLE_CID.into(), double_contract);
-        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, "blake3-512:double-bridge", double_bridge);
+        pool.mementos.insert(cid(DOUBLE_CID_LABEL), double_contract);
+        pool.insert_bridge_by_symbol(DOUBLE_SYMBOL, cid("double-bridge"), double_bridge);
         pool.mementos
-            .insert(PRE_BEARING_CID.into(), pre_bearing_contract);
+            .insert(cid(PRE_BEARING_CID_LABEL), pre_bearing_contract);
         pool.insert_bridge_by_symbol(
             PRE_BEARING_SYMBOL,
-            "blake3-512:pre-bearing-bridge",
+            cid("pre-bearing-bridge"),
             pre_bearing_bridge,
         );
         pool
@@ -2350,9 +2416,9 @@ mod nested_call_reduce_in_place_tests {
         CallSite {
             bridge_ir_name: bridge_name.into(),
             bridge_target_cid: if bridge_name == DOUBLE_SYMBOL {
-                DOUBLE_CID.into()
+                Some(cid(DOUBLE_CID_LABEL))
             } else {
-                PRE_BEARING_CID.into()
+                Some(cid(PRE_BEARING_CID_LABEL))
             },
             containing_atomic: Some(json!({
                 "kind": "atomic",
@@ -2548,7 +2614,7 @@ mod nested_call_reduce_in_place_tests {
         // return false, and the standard refusal path runs.
         let cs = CallSite {
             bridge_ir_name: DOUBLE_SYMBOL.into(),
-            bridge_target_cid: DOUBLE_CID.into(),
+            bridge_target_cid: Some(cid(DOUBLE_CID_LABEL)),
             containing_atomic: None,
             ..Default::default()
         };

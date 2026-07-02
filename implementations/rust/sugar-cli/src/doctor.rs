@@ -1309,7 +1309,7 @@ where
     let proofs = resolver(kit_dir)?;
     for proof in proofs {
         let fingerprint = fingerprint_bytes(proof.label.clone(), &proof.bytes);
-        if proof.expected_cid != fingerprint.derived_cid {
+        if proof.expected_cid.as_ref() != fingerprint.derived_cid.as_str() {
             return Err(format!(
                 "dependency proof CID mismatch: expected {}, derived {}",
                 proof.expected_cid, fingerprint.derived_cid
@@ -1362,7 +1362,7 @@ fn proof_pool_from_rpc_proofs(proofs: Vec<ProofBytes>) -> Result<DependencyProof
     let mut fingerprints = Vec::new();
     for proof in proofs {
         let fingerprint = fingerprint_bytes(proof.label, &proof.bytes);
-        if proof.expected_cid != fingerprint.derived_cid {
+        if proof.expected_cid.as_ref() != fingerprint.derived_cid.as_str() {
             return Err(format!(
                 "dependency proof CID mismatch: expected {}, derived {}",
                 proof.expected_cid, fingerprint.derived_cid
@@ -3503,11 +3503,12 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
     }
 
     fn proof_bytes(label: &str, bytes: &[u8]) -> sugar_verifier::load_all_proofs::ProofBytes {
-        sugar_verifier::load_all_proofs::ProofBytes {
-            label: label.to_string(),
-            expected_cid: sugar_canonicalizer::blake3_512_of(bytes),
-            bytes: bytes.to_vec(),
-        }
+        sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
+            label.to_string(),
+            sugar_canonicalizer::blake3_512_of(bytes),
+            bytes.to_vec(),
+        )
+        .expect("test proof CID must parse")
     }
 
     fn check_by_id_from_checks<'a>(checks: &'a [DoctorCheck], id: &str) -> &'a DoctorCheck {

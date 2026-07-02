@@ -846,7 +846,7 @@ fn enumerate_direct_formula_claims(pool: &MementoPool) -> Vec<DirectFormulaClaim
             .to_string();
         out.push(DirectFormulaClaim {
             property_name,
-            property_cid: cid.clone(),
+            property_cid: cid.to_string(),
             formula,
         });
     }
@@ -891,13 +891,14 @@ fn verify_direct_formula_claim(
 
     if verdict == ObligationVerdict::Discharged {
         result.discharge_method = Some("solver-substantive".to_string());
+        let property_cid = sugar_verifier::MementoCid::try_parse(claim.property_cid.clone()).ok();
         let pseudo_callsite = sugar_verifier::CallSite {
             bridge_ir_name: "direct-invariant".into(),
-            bridge_target_cid: claim.property_cid.clone(),
+            bridge_target_cid: property_cid.clone(),
             bridge_source_layer: "contract".into(),
             bridge_target_layer: "solver".into(),
             property_name: claim.property_name.clone(),
-            property_cid: claim.property_cid.clone(),
+            property_cid,
             ..Default::default()
         };
         match mint_verification_witness(
@@ -931,7 +932,11 @@ fn verify_one_claim(
 ) -> ClaimResult {
     let mut result = ClaimResult {
         property_name: cs.property_name.clone(),
-        property_cid: cs.property_cid.clone(),
+        property_cid: cs
+            .property_cid
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
         obligation_class: FormulaTheory::Default.as_str().to_string(),
         routed_solver: "<none>".to_string(),
         discharging_solver: "<none>".to_string(),
@@ -976,7 +981,7 @@ fn verify_one_claim(
     if target_has_pre {
         info!(
             bridge = %cs.bridge_ir_name,
-            target_cid = %cs.bridge_target_cid,
+            target_cid = ?cs.bridge_target_cid,
             guard_facts = cs.guard_facts.len(),
             "verify_one_claim: target carries a non-trivial pre -> routing to guard-discharge \
              (discharge the precondition under the guard context); skipping the reflexive \
@@ -985,7 +990,7 @@ fn verify_one_claim(
     } else {
         debug!(
             bridge = %cs.bridge_ir_name,
-            target_cid = %cs.bridge_target_cid,
+            target_cid = ?cs.bridge_target_cid,
             "verify_one_claim: target has no non-trivial pre -> body-discharge path (unchanged)"
         );
     }
@@ -1065,7 +1070,7 @@ fn verify_one_claim(
 
             debug!(
                 bridge = %cs.bridge_ir_name,
-                target_cid = %cs.bridge_target_cid,
+                target_cid = ?cs.bridge_target_cid,
                 resolved_pre = %resolved.ir_formula.as_ref()
                     .map(|f| f.to_string()).unwrap_or_else(|| "<none>".into()),
                 arg_terms = %json!(callsite_actual_terms(cs)),
@@ -1157,7 +1162,7 @@ fn verify_one_claim(
             if all_guard_facts.is_empty() {
                 info!(
                     bridge = %cs.bridge_ir_name,
-                    target_cid = %cs.bridge_target_cid,
+                    target_cid = ?cs.bridge_target_cid,
                     obligation = %specialized,
                     "verify_one_claim: UNGUARDED panic site -> bare specialized pre obligation \
                      (no guard establishes it; the solver must leave it SAT-for-negation -> \
@@ -1177,7 +1182,7 @@ fn verify_one_claim(
                 });
                 info!(
                     bridge = %cs.bridge_ir_name,
-                    target_cid = %cs.bridge_target_cid,
+                    target_cid = ?cs.bridge_target_cid,
                     guard_count = all_guard_facts.len(),
                     antecedent = %antecedent,
                     obligation = %guarded,
@@ -1360,8 +1365,16 @@ fn mint_verification_witness(
     let mut witness = sugar_ir_types::WitnessMemento {
         kind: "witness".to_string(),
         schema_version: "1".to_string(),
-        witness_for: cs.property_cid.clone(),
-        subject: cs.bridge_target_cid.clone(),
+        witness_for: cs
+            .property_cid
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+        subject: cs
+            .bridge_target_cid
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
         fixture_state_cid: obligation_cid,
         observed_at,
         sample_count: 1,
@@ -1671,6 +1684,19 @@ fn short_cid(cid: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_cid(label: &str) -> sugar_verifier::MementoCid {
+        sugar_verifier::MementoCid::try_parse(label.to_string()).unwrap_or_else(|_| {
+            sugar_verifier::MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(
+                label.as_bytes(),
+            ))
+            .expect("test CID must parse")
+        })
+    }
+
+    fn test_cid_string(label: &str) -> String {
+        test_cid(label).to_string()
+    }
+
     fn test_compilers() -> CompilerRegistry {
         let mut compilers = CompilerRegistry::new();
         compilers.register(std::sync::Arc::new(
@@ -1837,14 +1863,14 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("sugar-verify-test-{}", std::process::id()));
         let cs = sugar_verifier::CallSite {
             bridge_ir_name: "demo_bridge".into(),
-            bridge_target_cid: "blake3-512:target".into(),
+            bridge_target_cid: Some(test_cid("target")),
             bridge_source_layer: "rust".into(),
             bridge_target_layer: "concept".into(),
             bridge_target_proof_cid: None,
             bridge_self_bundle_cid: None,
             callsite_bundle_cid: None,
             property_name: "demo_property".into(),
-            property_cid: "blake3-512:prop".into(),
+            property_cid: Some(test_cid("prop")),
             arg_term: None,
             arg_terms: Vec::new(),
             formal_actuals: None,
@@ -1902,8 +1928,8 @@ mod tests {
     // This is the snake-eats-tail proof the mechanism is real and sound.
     // -----------------------------------------------------------------------
 
-    const PRE_BEARING_BODY_BEARING_CID: &str = "blake3-512:panic-trap-contract";
-    const TRAP_BUNDLE: &str = "blake3-512:panic-trap-bundle";
+    const PRE_BEARING_BODY_BEARING_CID: &str = "panic-trap-contract";
+    const TRAP_BUNDLE: &str = "panic-trap-bundle";
 
     /// The trap contract: pre = `is_some(opt)`, plus `formals` + a
     /// body-derived `post` (so it is body-bearing too). This is the dual-shape
@@ -1937,11 +1963,11 @@ mod tests {
         });
         let mut pool = MementoPool::default();
         pool.mementos
-            .insert(PRE_BEARING_BODY_BEARING_CID.into(), env);
+            .insert(test_cid(PRE_BEARING_BODY_BEARING_CID), env);
         pool.bundle_members
-            .entry(TRAP_BUNDLE.into())
+            .entry(test_cid(TRAP_BUNDLE))
             .or_default()
-            .insert(PRE_BEARING_BODY_BEARING_CID.into());
+            .insert(test_cid(PRE_BEARING_BODY_BEARING_CID));
         pool
     }
 
@@ -1950,14 +1976,14 @@ mod tests {
     fn panic_callsite(guard_facts: Vec<Json>) -> sugar_verifier::CallSite {
         sugar_verifier::CallSite {
             bridge_ir_name: "method:unwrap".into(),
-            bridge_target_cid: PRE_BEARING_BODY_BEARING_CID.into(),
+            bridge_target_cid: Some(test_cid(PRE_BEARING_BODY_BEARING_CID)),
             bridge_source_layer: "rust".into(),
             bridge_target_layer: "concept".into(),
             bridge_target_proof_cid: None,
-            bridge_self_bundle_cid: Some(TRAP_BUNDLE.into()),
-            callsite_bundle_cid: Some(TRAP_BUNDLE.into()),
+            bridge_self_bundle_cid: Some(test_cid(TRAP_BUNDLE)),
+            callsite_bundle_cid: Some(test_cid(TRAP_BUNDLE)),
             property_name: "panic_site".into(),
-            property_cid: "blake3-512:panic-prop".into(),
+            property_cid: Some(test_cid("panic-prop")),
             arg_term: Some(json!({"kind": "var", "name": "opt"})),
             arg_terms: Vec::new(),
             formal_actuals: None,
@@ -1995,13 +2021,13 @@ mod tests {
         // body-discharge path (the `double()` family is unaffected).
         let mut post_only = MementoPool::default();
         post_only.mementos.insert(
-            "blake3-512:post-only".into(),
+            test_cid("post-only"),
             json!({"evidence": {"kind": "contract", "body": {
                 "post": {"kind": "atomic", "name": "=", "args": []},
                 "formals": ["x"]}}}),
         );
         let mut cs = panic_callsite(vec![]);
-        cs.bridge_target_cid = "blake3-512:post-only".into();
+        cs.bridge_target_cid = Some(test_cid("post-only"));
         assert!(
             !body_discharge::target_has_nontrivial_pre(&cs, &post_only),
             "a post-only (no-pre) contract must stay on the body-discharge path"
@@ -2011,13 +2037,13 @@ mod tests {
         // reroute (a vacuous pre is nothing to discharge under guards).
         let mut total = MementoPool::default();
         total.mementos.insert(
-            "blake3-512:total".into(),
+            test_cid("total"),
             json!({"evidence": {"kind": "contract", "body": {
                 "pre": {"kind": "atomic", "name": "true", "args": []},
                 "post": {"kind": "atomic", "name": "=", "args": []},
                 "formals": ["x"]}}}),
         );
-        cs.bridge_target_cid = "blake3-512:total".into();
+        cs.bridge_target_cid = Some(test_cid("total"));
         assert!(
             !body_discharge::target_has_nontrivial_pre(&cs, &total),
             "a pre=true contract must NOT reroute (trivial precondition)"
@@ -2112,13 +2138,13 @@ mod tests {
     // -----------------------------------------------------------------------
 
     // CID constants for the D-lib test pool.
-    const DLIB_TOTALITY_CONTRACT_CID: &str = "blake3-512:dlib-totality-contract";
-    const DLIB_OPTION_TOTALITY_CONTRACT_CID: &str = "blake3-512:dlib-option-totality-contract";
-    const DLIB_RESULT_UNWRAP_CID: &str = "blake3-512:dlib-result-unwrap";
-    const DLIB_OPTION_EXPECT_CID: &str = "blake3-512:dlib-option-expect";
-    const DLIB_OPTION_EXPECT_MISMATCH_CID: &str = "blake3-512:dlib-option-expect-mismatch";
-    const DLIB_GENERIC_CONTRACT_CID: &str = "blake3-512:dlib-generic-result";
-    const DLIB_BUNDLE: &str = "blake3-512:dlib-bundle";
+    const DLIB_TOTALITY_CONTRACT_CID: &str = "dlib-totality-contract";
+    const DLIB_OPTION_TOTALITY_CONTRACT_CID: &str = "dlib-option-totality-contract";
+    const DLIB_RESULT_UNWRAP_CID: &str = "dlib-result-unwrap";
+    const DLIB_OPTION_EXPECT_CID: &str = "dlib-option-expect";
+    const DLIB_OPTION_EXPECT_MISMATCH_CID: &str = "dlib-option-expect-mismatch";
+    const DLIB_GENERIC_CONTRACT_CID: &str = "dlib-generic-result";
+    const DLIB_BUNDLE: &str = "dlib-bundle";
 
     /// Build the D-lib test pool. Contains:
     ///   (a) the Value-totality contract: post = is_ok(result), no pre
@@ -2263,7 +2289,7 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "serde_json_to_string_value",
-                    "targetContractCid": DLIB_TOTALITY_CONTRACT_CID
+                    "targetContractCid": test_cid_string(DLIB_TOTALITY_CONTRACT_CID)
                 }
             }
         });
@@ -2274,7 +2300,7 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "grammar_op_registry_cid_known",
-                    "targetContractCid": DLIB_OPTION_TOTALITY_CONTRACT_CID
+                    "targetContractCid": test_cid_string(DLIB_OPTION_TOTALITY_CONTRACT_CID)
                 }
             }
         });
@@ -2285,53 +2311,53 @@ mod tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": "to_string_generic",
-                    "targetContractCid": DLIB_GENERIC_CONTRACT_CID
+                    "targetContractCid": test_cid_string(DLIB_GENERIC_CONTRACT_CID)
                 }
             }
         });
 
         let mut pool = MementoPool::default();
         pool.mementos
-            .insert(DLIB_TOTALITY_CONTRACT_CID.into(), totality_contract);
+            .insert(test_cid(DLIB_TOTALITY_CONTRACT_CID), totality_contract);
         pool.mementos.insert(
-            DLIB_OPTION_TOTALITY_CONTRACT_CID.into(),
+            test_cid(DLIB_OPTION_TOTALITY_CONTRACT_CID),
             option_totality_contract,
         );
         pool.mementos
-            .insert(DLIB_RESULT_UNWRAP_CID.into(), result_unwrap_contract);
+            .insert(test_cid(DLIB_RESULT_UNWRAP_CID), result_unwrap_contract);
         pool.mementos
-            .insert(DLIB_OPTION_EXPECT_CID.into(), option_expect_contract);
+            .insert(test_cid(DLIB_OPTION_EXPECT_CID), option_expect_contract);
         pool.mementos.insert(
-            DLIB_OPTION_EXPECT_MISMATCH_CID.into(),
+            test_cid(DLIB_OPTION_EXPECT_MISMATCH_CID),
             option_expect_mismatch_contract,
         );
         pool.mementos
-            .insert(DLIB_GENERIC_CONTRACT_CID.into(), generic_contract);
+            .insert(test_cid(DLIB_GENERIC_CONTRACT_CID), generic_contract);
         pool.insert_bridge_by_symbol(
             "serde_json_to_string_value",
-            "blake3-512:dlib-totality-bridge",
+            test_cid("dlib-totality-bridge"),
             totality_bridge,
         );
         pool.insert_bridge_by_symbol(
             "grammar_op_registry_cid_known",
-            "blake3-512:dlib-option-totality-bridge",
+            test_cid("dlib-option-totality-bridge"),
             option_totality_bridge,
         );
         pool.insert_bridge_by_symbol(
             "to_string_generic",
-            "blake3-512:dlib-generic-bridge",
+            test_cid("dlib-generic-bridge"),
             generic_bridge,
         );
         pool.bundle_members
-            .entry(DLIB_BUNDLE.into())
+            .entry(test_cid(DLIB_BUNDLE))
             .or_default()
             .extend([
-                DLIB_TOTALITY_CONTRACT_CID.to_string(),
-                DLIB_OPTION_TOTALITY_CONTRACT_CID.to_string(),
-                DLIB_RESULT_UNWRAP_CID.to_string(),
-                DLIB_OPTION_EXPECT_CID.to_string(),
-                DLIB_OPTION_EXPECT_MISMATCH_CID.to_string(),
-                DLIB_GENERIC_CONTRACT_CID.to_string(),
+                test_cid(DLIB_TOTALITY_CONTRACT_CID),
+                test_cid(DLIB_OPTION_TOTALITY_CONTRACT_CID),
+                test_cid(DLIB_RESULT_UNWRAP_CID),
+                test_cid(DLIB_OPTION_EXPECT_CID),
+                test_cid(DLIB_OPTION_EXPECT_MISMATCH_CID),
+                test_cid(DLIB_GENERIC_CONTRACT_CID),
             ]);
         pool
     }
@@ -2346,13 +2372,13 @@ mod tests {
     ) -> sugar_verifier::CallSite {
         sugar_verifier::CallSite {
             bridge_ir_name: "result_unwrap".into(),
-            bridge_target_cid: DLIB_RESULT_UNWRAP_CID.into(),
+            bridge_target_cid: Some(test_cid(DLIB_RESULT_UNWRAP_CID)),
             bridge_source_layer: "rust".into(),
             bridge_target_layer: "concept".into(),
             bridge_target_proof_cid: None,
-            bridge_self_bundle_cid: Some(DLIB_BUNDLE.into()),
+            bridge_self_bundle_cid: Some(test_cid(DLIB_BUNDLE)),
             property_name: "dlib_panic_site".into(),
-            property_cid: "blake3-512:dlib-prop".into(),
+            property_cid: Some(test_cid("dlib-prop")),
             // The arg_term is the ctor call expression -- the result of calling
             // `callee_ctor_name(v)` that gets passed to `.unwrap()`.
             arg_term: Some(json!({
@@ -2372,13 +2398,13 @@ mod tests {
     ) -> sugar_verifier::CallSite {
         sugar_verifier::CallSite {
             bridge_ir_name: "option_expect".into(),
-            bridge_target_cid: target_cid.into(),
+            bridge_target_cid: Some(test_cid(target_cid)),
             bridge_source_layer: "rust".into(),
             bridge_target_layer: "concept".into(),
             bridge_target_proof_cid: None,
-            bridge_self_bundle_cid: Some(DLIB_BUNDLE.into()),
+            bridge_self_bundle_cid: Some(test_cid(DLIB_BUNDLE)),
             property_name: "dlib_option_panic_site".into(),
-            property_cid: "blake3-512:dlib-option-prop".into(),
+            property_cid: Some(test_cid("dlib-option-prop")),
             arg_term: Some(json!({
                 "kind": "ctor",
                 "name": callee_ctor_name,

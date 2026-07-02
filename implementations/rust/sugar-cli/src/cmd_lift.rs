@@ -1597,7 +1597,7 @@ fn source_report_from_proof_pool(
             continue;
         }
         if let Some(object) = contract.as_object_mut() {
-            object.insert("proofMemberCid".to_string(), Value::String(cid.clone()));
+            object.insert("proofMemberCid".to_string(), Value::String(cid.to_string()));
         }
         contracts.push(contract);
     }
@@ -1627,7 +1627,7 @@ fn source_report_from_proof_pool(
             continue;
         }
         if let Some(object) = contract.as_object_mut() {
-            object.insert("proofMemberCid".to_string(), Value::String(cid.clone()));
+            object.insert("proofMemberCid".to_string(), Value::String(cid.to_string()));
         }
         contracts.push(contract);
     }
@@ -1704,12 +1704,12 @@ fn source_report_from_proof_pool(
     let implication_count = pool
         .mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("implication"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("implication"))
         .count();
     let witness_count = pool
         .mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("witness-memento"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("witness-memento"))
         .count();
     if implication_count > 0 && call_edges.is_empty() {
         call_edges.push(serde_json::json!({
@@ -1783,19 +1783,28 @@ fn source_report_from_proof_pool(
 
 fn proof_implication_call_edges(
     pool: &sugar_verifier::types::MementoPool,
-    contract_names_by_cid: &BTreeMap<String, String>,
+    contract_names_by_cid: &BTreeMap<sugar_verifier::MementoCid, String>,
 ) -> Vec<Value> {
     pool.mementos
         .iter()
-        .filter(|(cid, _)| pool.member_kind(cid.as_str()) == Some("implication"))
+        .filter(|(cid, _)| pool.member_kind(cid) == Some("implication"))
         .filter_map(|(cid, _)| proof_implication_call_edge(pool, cid, contract_names_by_cid))
         .collect()
 }
 
+fn contract_name_for_cid(
+    contract_names_by_cid: &BTreeMap<sugar_verifier::MementoCid, String>,
+    cid: &str,
+) -> Option<String> {
+    sugar_verifier::MementoCid::try_parse(cid.to_string())
+        .ok()
+        .and_then(|cid| contract_names_by_cid.get(&cid).cloned())
+}
+
 fn proof_implication_call_edge(
     pool: &sugar_verifier::types::MementoPool,
-    cid: &str,
-    contract_names_by_cid: &BTreeMap<String, String>,
+    cid: &sugar_verifier::MementoCid,
+    contract_names_by_cid: &BTreeMap<sugar_verifier::MementoCid, String>,
 ) -> Option<Value> {
     let antecedent_cid = pool
         .member_field(cid, "antecedentCid")
@@ -1803,13 +1812,9 @@ fn proof_implication_call_edge(
     let consequent_cid = pool
         .member_field(cid, "consequentCid")
         .and_then(|v| v.as_str())?;
-    let source = contract_names_by_cid
-        .get(antecedent_cid)
-        .cloned()
+    let source = contract_name_for_cid(contract_names_by_cid, antecedent_cid)
         .unwrap_or_else(|| antecedent_cid.to_string());
-    let target = contract_names_by_cid
-        .get(consequent_cid)
-        .cloned()
+    let target = contract_name_for_cid(contract_names_by_cid, consequent_cid)
         .unwrap_or_else(|| consequent_cid.to_string());
     let source_slot = pool
         .member_field(cid, "antecedentSlot")
@@ -1844,7 +1849,7 @@ fn proof_callsite_precondition_edges(pool: &sugar_verifier::types::MementoPool) 
         let source = callsite_producer_contract_name(&callsite)
             .unwrap_or_else(|| callsite.property_name.clone());
         let postcondition = proof_contract_slot_formula_by_name(pool, &source, "post");
-        if callsite.bridge_target_cid.is_empty() {
+        if callsite.bridge_target_cid.is_none() {
             let mut edge = serde_json::json!({
                 "kind": "callsite-precondition-unresolved",
                 "sourceContract": source,
@@ -1916,10 +1921,9 @@ fn proof_callsite_precondition_edges(pool: &sugar_verifier::types::MementoPool) 
             continue;
         };
         let precondition = sugar_verifier::instantiate::strip_outer_forall(&obligation.ir_formula);
-        let target = pool
-            .cid_to_name
-            .get(&resolved.cid)
-            .cloned()
+        let target = sugar_verifier::MementoCid::try_parse(resolved.cid.clone())
+            .ok()
+            .and_then(|cid| pool.cid_to_name.get(&cid).cloned())
             .unwrap_or_else(|| callsite.bridge_ir_name.clone());
         let mut edge = serde_json::json!({
             "kind": "callsite-precondition",
@@ -2175,7 +2179,7 @@ fn source_oracle_attempt_json(route: &SourceOracleRoute, reason: Option<String>)
 
 fn proof_contract_value(
     pool: &sugar_verifier::types::MementoPool,
-    cid: &str,
+    cid: &sugar_verifier::MementoCid,
     envelope: &Value,
 ) -> Value {
     let name = pool
@@ -7754,8 +7758,13 @@ mod tests {
     use super::*;
     use crate::project_config::PluginEntry;
     use crate::OutputFlags;
-    use sugar_verifier::{CallSite, ObligationVerdict, Report, ReportRow};
+    use sugar_verifier::{CallSite, MementoCid, ObligationVerdict, Report, ReportRow};
     use syn::spanned::Spanned;
+
+    fn test_memento_cid(label: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
+            .expect("test CID must parse")
+    }
 
     fn minimal_source_report() -> LiftSourceReport {
         LiftSourceReport {
@@ -9172,8 +9181,11 @@ mod tests {
     #[test]
     fn proof_only_report_rehydrates_implication_edges_as_downstream_dependencies() {
         let mut pool = sugar_verifier::types::MementoPool::default();
+        let antecedent_cid = test_memento_cid("antecedent");
+        let consequent_cid = test_memento_cid("consequent");
+        let implication_cid = test_memento_cid("implication");
         pool.insert(
-            "blake3-512:antecedent".to_string(),
+            antecedent_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9184,7 +9196,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:consequent".to_string(),
+            consequent_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9195,12 +9207,12 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:implication".to_string(),
+            implication_cid,
             serde_json::json!({
                 "header": {
                     "kind": "implication",
-                    "antecedentCid": "blake3-512:antecedent",
-                    "consequentCid": "blake3-512:consequent",
+                    "antecedentCid": antecedent_cid.to_string(),
+                    "consequentCid": consequent_cid.to_string(),
                     "antecedentSlot": "post",
                     "consequentSlot": "pre"
                 },
@@ -9224,9 +9236,11 @@ mod tests {
     #[test]
     fn proof_only_forensic_report_lists_known_callers_when_implications_are_absent() {
         let mut pool = sugar_verifier::types::MementoPool::default();
-        let encoded_len_cid = "blake3-512:encoded_len_contract";
+        let encoded_len_cid = test_memento_cid("encoded_len_contract");
+        let observed_fact_cid = test_memento_cid("observed_fact");
+        let bridge_cid = test_memento_cid("bridge");
         pool.insert(
-            encoded_len_cid.to_string(),
+            encoded_len_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9246,7 +9260,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:observed_fact".to_string(),
+            observed_fact_cid,
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9269,13 +9283,13 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:bridge".to_string(),
+            bridge_cid,
             serde_json::json!({
                 "header": {
                     "kind": "bridge",
                     "sourceSymbol": "encoded_len",
                     "sourceLayer": "source",
-                    "targetContractCid": encoded_len_cid,
+                    "targetContractCid": encoded_len_cid.to_string(),
                     "targetLayer": "kit"
                 },
                 "schemaVersion": "1"
@@ -9299,13 +9313,14 @@ mod tests {
     #[test]
     fn proof_only_forensic_report_reconstructs_callsite_preconditions_from_pool() {
         let mut pool = sugar_verifier::types::MementoPool::default();
-        let bundle_cid = "blake3-512:test_bundle";
-        let callee_cid = "blake3-512:callee_contract";
-        let unwrap_cid = "blake3-512:unwrap_contract";
-        let bridge_cid = "blake3-512:unwrap_bridge";
+        let bundle_cid = test_memento_cid("test_bundle");
+        let callee_cid = test_memento_cid("callee_contract");
+        let unwrap_cid = test_memento_cid("unwrap_contract");
+        let bridge_cid = test_memento_cid("unwrap_bridge");
+        let caller_fact_cid = test_memento_cid("caller_fact");
 
         pool.insert(
-            callee_cid.to_string(),
+            callee_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9325,7 +9340,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:caller_fact".to_string(),
+            caller_fact_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9349,7 +9364,7 @@ mod tests {
             }),
         );
         pool.insert(
-            unwrap_cid.to_string(),
+            unwrap_cid.clone(),
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9372,25 +9387,22 @@ mod tests {
                 "kind": "bridge",
                 "sourceSymbol": "method:unwrap",
                 "sourceLayer": "rust-tests",
-                "targetContractCid": unwrap_cid,
+                "targetContractCid": unwrap_cid.to_string(),
                 "targetLayer": "rust-core"
             },
             "schemaVersion": "1"
         });
-        pool.insert(bridge_cid.to_string(), bridge.clone());
+        pool.insert(bridge_cid.clone(), bridge.clone());
         pool.bridges_by_symbol
-            .insert("method:unwrap".to_string(), bridge_cid.to_string());
+            .insert("method:unwrap".to_string(), bridge_cid.clone());
         pool.bridge_self_bundle_by_symbol
-            .insert("method:unwrap".to_string(), bundle_cid.to_string());
-        pool.bundle_members
-            .entry(bundle_cid.to_string())
-            .or_default()
-            .extend([
-                callee_cid.to_string(),
-                unwrap_cid.to_string(),
-                bridge_cid.to_string(),
-                "blake3-512:caller_fact".to_string(),
-            ]);
+            .insert("method:unwrap".to_string(), bundle_cid.clone());
+        pool.bundle_members.entry(bundle_cid).or_default().extend([
+            callee_cid,
+            unwrap_cid,
+            bridge_cid,
+            caller_fact_cid,
+        ]);
 
         let report = source_report_from_proof_pool(&pool, Some("callee"));
         let human = render_source_report_human(&report);
@@ -9404,9 +9416,11 @@ mod tests {
     #[test]
     fn proof_only_forensic_report_lists_unresolved_callsite_precondition_targets() {
         let mut pool = sugar_verifier::types::MementoPool::default();
-        let callee_cid = "blake3-512:callee_contract";
+        let callee_cid = test_memento_cid("callee_contract");
+        let caller_fact_cid = test_memento_cid("caller_fact");
+        let bridge_cid = test_memento_cid("unresolved_method_unwrap_bridge");
         pool.insert(
-            callee_cid.to_string(),
+            callee_cid,
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9426,7 +9440,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:caller_fact".to_string(),
+            caller_fact_cid,
             serde_json::json!({
                 "header": {
                     "kind": "contract",
@@ -9458,11 +9472,7 @@ mod tests {
             },
             "schemaVersion": "1"
         });
-        pool.insert_bridge_by_symbol(
-            "method:unwrap",
-            "blake3-512:unresolved-method-unwrap-bridge",
-            bridge,
-        );
+        pool.insert_bridge_by_symbol("method:unwrap", bridge_cid, bridge);
 
         let report = source_report_from_proof_pool(&pool, Some("callee"));
         let human = render_source_report_human(&report);
@@ -9757,9 +9767,9 @@ mod tests {
             },
             "schemaVersion": "1"
         });
-        pool.insert(format!("blake3-512:{}", "1".repeat(128)), contract);
+        pool.insert(test_memento_cid("factory-walk-contract"), contract);
         pool.insert(
-            format!("blake3-512:{}", "2".repeat(128)),
+            test_memento_cid("factory-walk-source"),
             serde_json::json!({
                 "header": {"kind": "source-memento"},
                 "body": {
@@ -9786,7 +9796,7 @@ mod tests {
             }),
         );
         pool.insert(
-            format!("blake3-512:{}", "3".repeat(128)),
+            test_memento_cid("factory-walk-row"),
             serde_json::json!({
                 "header": {"kind": "factory-walk-memento"},
                 "body": {

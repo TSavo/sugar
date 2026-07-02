@@ -36,7 +36,7 @@ use crate::solvers::{
     plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
     SolversConfig,
 };
-use crate::types::{CallSite, MementoPool, ObligationVerdict, Report};
+use crate::types::{CallSite, MementoCid, MementoPool, ObligationVerdict, Report};
 use crate::{
     body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -268,8 +268,10 @@ impl Runner {
             });
         }
         let callsites = enumerate_callsites::run(&pool);
-        let callsite_property_cids: Vec<String> =
-            callsites.iter().map(|cs| cs.property_cid.clone()).collect();
+        let callsite_property_cids: Vec<String> = callsites
+            .iter()
+            .filter_map(|cs| cs.property_cid.as_ref().map(|cid| cid.to_string()))
+            .collect();
         stages.push(enumerate_stage.finish(
             sorted(callsite_property_cids),
             Vec::new(),
@@ -293,7 +295,7 @@ impl Runner {
         let fanout_input = sorted(
             callsites
                 .iter()
-                .map(|cs| cs.property_cid.clone())
+                .filter_map(|cs| cs.property_cid.as_ref().map(|cid| cid.to_string()))
                 .chain(loaded_cids.iter().cloned())
                 .collect(),
         );
@@ -328,7 +330,7 @@ impl Runner {
         for (cid, envelope) in minted.iter() {
             pool.insert(cid.clone(), envelope.clone());
         }
-        let output_artifact_cids = sorted(minted.iter().map(|(cid, _)| cid.clone()).collect());
+        let output_artifact_cids = sorted(minted.iter().map(|(cid, _)| cid.to_string()).collect());
 
         for stage_name in [
             "resolve_target",
@@ -1118,8 +1120,8 @@ fn sorted(mut values: Vec<String>) -> Vec<String> {
     values
 }
 
-fn sorted_keys(map: &BTreeMap<String, Json>) -> Vec<String> {
-    map.keys().cloned().collect()
+fn sorted_keys<K: ToString + Ord>(map: &BTreeMap<K, Json>) -> Vec<String> {
+    map.keys().map(|key| key.to_string()).collect()
 }
 
 fn iso_now() -> String {
@@ -1240,9 +1242,12 @@ type CallsiteResult = (
 );
 
 fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
+    let Some(property_cid) = cs.property_cid.as_ref() else {
+        return false;
+    };
     let Some(body) = pool
         .mementos
-        .get(&cs.property_cid)
+        .get(property_cid)
         .and_then(|env| pool.resolve_contract_body(env))
     else {
         return false;
@@ -1257,9 +1262,12 @@ fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bo
 }
 
 fn callsite_row_is_owned_by_self_post(cs: &CallSite, pool: &MementoPool) -> bool {
+    let Some(property_cid) = cs.property_cid.as_ref() else {
+        return false;
+    };
     let Some(body) = pool
         .mementos
-        .get(&cs.property_cid)
+        .get(property_cid)
         .and_then(|env| pool.resolve_contract_body(env))
     else {
         return false;
@@ -1293,7 +1301,7 @@ fn verify_contract_self_posts(
     registry: &HashMap<String, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
-    let contracts: Vec<&String> = pool
+    let contracts: Vec<&MementoCid> = pool
         .mementos
         .keys()
         .filter(|cid| pool.member_kind(cid) == Some("contract"))
@@ -1329,7 +1337,7 @@ fn verify_contract_self_posts(
                 None => format!("self-post: {reason}"),
             };
             Some(SelfPostResult {
-                contract_cid: (*cid).clone(),
+                contract_cid: cid.to_string(),
                 verdict,
                 reason: tagged_reason,
                 method,
@@ -1356,7 +1364,7 @@ fn work_one(
     n_reflexive: &AtomicUsize,
     n_substantive: &AtomicUsize,
     invs_sink: &Mutex<Vec<SolverInvocation>>,
-    minted_sink: &Mutex<Vec<(String, Json)>>,
+    minted_sink: &Mutex<Vec<(MementoCid, Json)>>,
 ) -> CallsiteResult {
     if let Some(result) = crate::attribute_safety::try_discharge(cs, pool) {
         if result.verdict == ObligationVerdict::Discharged {
@@ -1389,7 +1397,7 @@ fn work_one(
     if target_has_pre {
         debug!(
             bridge = %cs.bridge_ir_name,
-            target_cid = %cs.bridge_target_cid,
+            target_cid = ?cs.bridge_target_cid,
             guard_facts = cs.guard_facts.len(),
             "work_one: target carries a non-trivial pre -> routing to guard-discharge \
              (precondition under guards), skipping reflexive self-post body-discharge"
@@ -1797,7 +1805,7 @@ fn work_one(
         let guarded_formula = if all_guard_facts.is_empty() {
             info!(
                 bridge = %cs.bridge_ir_name,
-                target_cid = %cs.bridge_target_cid,
+                target_cid = ?cs.bridge_target_cid,
                 obligation = %specialized,
                 "work_one: UNGUARDED panic site -> bare specialized pre obligation (no guard \
                  establishes it; the solver must leave it SAT-for-negation -> NOT-discharged: \
@@ -1816,7 +1824,7 @@ fn work_one(
             });
             info!(
                 bridge = %cs.bridge_ir_name,
-                target_cid = %cs.bridge_target_cid,
+                target_cid = ?cs.bridge_target_cid,
                 guard_count = cs.guard_facts.len(),
                 antecedent = %antecedent,
                 obligation = %guarded,
@@ -1882,8 +1890,15 @@ fn work_one(
                         Ok((cid, envelope)) => {
                             // Queue for insertion into pool after parallel
                             // work completes (pool is not Sync).
-                            if let Ok(mut g) = minted_sink.lock() {
-                                g.push((cid, envelope));
+                            match MementoCid::try_parse(cid.clone()) {
+                                Ok(cid) => {
+                                    if let Ok(mut g) = minted_sink.lock() {
+                                        g.push((cid, envelope));
+                                    }
+                                }
+                                Err(_) => {
+                                    warn!(bridge = %cs.bridge_ir_name, cid = %cid, "mint_and_cache returned an invalid memento CID");
+                                }
                             }
                         }
                         Err(e) => {
@@ -2150,6 +2165,18 @@ mod consistency_owned_callsite_tests {
     use super::*;
     use serde_json::json;
 
+    fn cid_string(seed: &str) -> String {
+        sugar_canonicalizer::blake3_512_of(seed.as_bytes())
+    }
+
+    fn memento_cid(cid: &str) -> MementoCid {
+        MementoCid::try_parse(cid.to_string()).expect("test CID must parse")
+    }
+
+    fn generated_cid(seed: &str) -> MementoCid {
+        memento_cid(&cid_string(seed))
+    }
+
     fn string_const(s: &str) -> Json {
         json!({"kind":"const","value":s,"sort":{"kind":"primitive","name":"String"}})
     }
@@ -2160,8 +2187,8 @@ mod consistency_owned_callsite_tests {
 
     fn linked_pool_and_callsite() -> (MementoPool, CallSite) {
         let source_symbol = "call:enc";
-        let vendor_cid = "blake3-512:vendor-enc";
-        let assertion_cid = "blake3-512:consumer-assertion";
+        let vendor_cid = cid_string("vendor-enc");
+        let assertion_cid = cid_string("consumer-assertion");
         let call = json!({"kind":"ctor","name":source_symbol,"args":[string_const("def")]});
         let assertion = json!({
             "evidence": {
@@ -2194,18 +2221,18 @@ mod consistency_owned_callsite_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": source_symbol,
-                    "targetContractCid": vendor_cid
+                    "targetContractCid": vendor_cid.clone()
                 }
             }
         });
         let mut pool = MementoPool::default();
-        pool.insert(assertion_cid.to_string(), assertion);
-        pool.mementos.insert(vendor_cid.to_string(), vendor);
-        pool.insert_bridge_by_symbol(source_symbol, "blake3-512:linked-post-bridge", bridge);
+        pool.insert(memento_cid(&assertion_cid), assertion);
+        pool.mementos.insert(memento_cid(&vendor_cid), vendor);
+        pool.insert_bridge_by_symbol(source_symbol, generated_cid("linked-post-bridge"), bridge);
         let cs = CallSite {
             bridge_ir_name: source_symbol.to_string(),
             property_name: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
-            property_cid: assertion_cid.to_string(),
+            property_cid: Some(memento_cid(&assertion_cid)),
             ..CallSite::default()
         };
         (pool, cs)
@@ -2238,9 +2265,9 @@ mod consistency_owned_callsite_tests {
 
     fn tier2_pool_and_callsite() -> (MementoPool, CallSite, String, String) {
         let producer_symbol = "call:trusted_producer";
-        let producer_cid = "blake3-512:tier2-producer";
-        let consumer_cid = "blake3-512:tier2-consumer";
-        let consumer_bundle_cid = "blake3-512:tier2-consumer-bundle";
+        let producer_cid = cid_string("tier2-producer");
+        let consumer_cid = cid_string("tier2-consumer");
+        let consumer_bundle_cid = cid_string("tier2-consumer-bundle");
 
         let producer_post = int_ge(json!({"kind": "var", "name": "result"}), int_const(10));
         let consumer_pre = int_ge(json!({"kind": "var", "name": "value"}), int_const(0));
@@ -2270,23 +2297,23 @@ mod consistency_owned_callsite_tests {
                 "kind": "bridge",
                 "body": {
                     "sourceSymbol": producer_symbol,
-                    "targetContractCid": producer_cid
+                    "targetContractCid": producer_cid.clone()
                 }
             }
         });
 
         let mut pool = MementoPool::default();
-        pool.mementos.insert(producer_cid.to_string(), producer);
-        pool.mementos.insert(consumer_cid.to_string(), consumer);
+        pool.mementos.insert(memento_cid(&producer_cid), producer);
+        pool.mementos.insert(memento_cid(&consumer_cid), consumer);
         pool.insert_bridge_by_symbol(
             producer_symbol,
-            "blake3-512:tier2-producer-bridge",
+            generated_cid("tier2-producer-bridge"),
             producer_bridge,
         );
         pool.bundle_members
-            .entry(consumer_bundle_cid.to_string())
+            .entry(memento_cid(&consumer_bundle_cid))
             .or_default()
-            .insert(consumer_cid.to_string());
+            .insert(memento_cid(&consumer_cid));
 
         let producer_arg = json!({
             "kind": "ctor",
@@ -2295,10 +2322,10 @@ mod consistency_owned_callsite_tests {
         });
         let cs = CallSite {
             bridge_ir_name: "consumer_bridge".to_string(),
-            bridge_target_cid: consumer_cid.to_string(),
-            bridge_target_proof_cid: Some(consumer_bundle_cid.to_string()),
+            bridge_target_cid: Some(memento_cid(&consumer_cid)),
+            bridge_target_proof_cid: Some(memento_cid(&consumer_bundle_cid)),
             property_name: "consumer_pre".to_string(),
-            property_cid: "blake3-512:tier2-property".to_string(),
+            property_cid: Some(generated_cid("tier2-property")),
             arg_term: Some(producer_arg.clone()),
             arg_terms: vec![producer_arg],
             ..CallSite::default()

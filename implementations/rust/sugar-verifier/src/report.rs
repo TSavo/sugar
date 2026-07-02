@@ -6,7 +6,8 @@
 use serde_json::Value as Json;
 
 use crate::types::{
-    CallSite, LoadError, MementoPool, ObligationVerdict, Report, ReportRow, ToolchainPlanReport,
+    CallSite, LoadError, MementoCid, MementoPool, ObligationVerdict, Report, ReportRow,
+    ToolchainPlanReport,
 };
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
@@ -80,7 +81,7 @@ pub fn add_self_post_with_method(
     // a contract self-consistency obligation, not a call site (#fix/self-post-not-a-callsite).
     let cs = CallSite {
         property_name: format!("self-post:{contract_cid}"),
-        property_cid: contract_cid.to_string(),
+        property_cid: MementoCid::try_parse(contract_cid.to_string()).ok(),
         ..CallSite::default()
     };
     r.rows.push(ReportRow {
@@ -132,7 +133,7 @@ pub fn add_consistency_with_verification(
 ) {
     let cs = CallSite {
         property_name: format!("consistency:{property_name}"),
-        property_cid: contract_cid.to_string(),
+        property_cid: MementoCid::try_parse(contract_cid.to_string()).ok(),
         ..CallSite::default()
     };
     r.rows.push(ReportRow {
@@ -190,7 +191,7 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
                     .and_then(|v| v.as_str().map(str::to_string))
             });
         witness_outputs.push(WitnessOutputs {
-            memento_cid: cid.clone(),
+            memento_cid: cid.to_string(),
             plan_cid,
             actual,
         });
@@ -224,7 +225,7 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
             .collect();
         let decision = toolchain_plan_decision(&expected, &plan_specific, &unscoped);
         rows.push(ToolchainPlanReport {
-            plan_memento_cid: cid.clone(),
+            plan_memento_cid: cid.to_string(),
             plan_cid,
             status: decision.status,
             reason: decision.reason,
@@ -334,6 +335,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn cid(seed: &str) -> MementoCid {
+        MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(seed.as_bytes()))
+            .expect("test CID must parse")
+    }
+
+    fn cid_string(seed: &str) -> String {
+        cid(seed).to_string()
+    }
+
     #[test]
     fn self_post_does_not_count_as_a_callsite() {
         let mut r = Report::default();
@@ -391,7 +401,7 @@ mod tests {
     fn toolchain_plan_without_witness_is_declared() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -409,7 +419,7 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, "declared");
-        assert_eq!(rows[0].plan_memento_cid, "blake3-512:plan-member");
+        assert_eq!(rows[0].plan_memento_cid, cid_string("plan-member"));
         assert_eq!(rows[0].plan_cid, "blake3-512:plan-letter");
         assert_eq!(rows[0].expected_output_cids, vec!["blake3-512:out"]);
         assert!(rows[0].witness_memento_cid.is_none());
@@ -419,7 +429,7 @@ mod tests {
     fn toolchain_plan_matching_witness_pointer_is_confirmed() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -433,7 +443,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:witness-member".to_string(),
+            cid("witness-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -458,7 +468,7 @@ mod tests {
         assert_eq!(rows[0].status, "confirmed");
         assert_eq!(
             rows[0].witness_memento_cid.as_deref(),
-            Some("blake3-512:witness-member")
+            Some(cid_string("witness-member").as_str())
         );
         assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:out"]);
     }
@@ -467,7 +477,7 @@ mod tests {
     fn toolchain_plan_mismatched_witness_pointer_is_refuted() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -481,7 +491,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:witness-member".to_string(),
+            cid("witness-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -512,7 +522,7 @@ mod tests {
     fn toolchain_plan_unscoped_matching_witness_is_declared_not_confirmed() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -526,7 +536,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:witness-member".to_string(),
+            cid("witness-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -553,7 +563,7 @@ mod tests {
         );
         assert_eq!(
             rows[0].witness_memento_cid.as_deref(),
-            Some("blake3-512:witness-member")
+            Some(cid_string("witness-member").as_str())
         );
         assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:out"]);
         assert!(
@@ -566,7 +576,7 @@ mod tests {
     fn toolchain_plan_unscoped_mismatched_witness_is_declared_not_refuted() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -580,7 +590,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:witness-member".to_string(),
+            cid("witness-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -607,7 +617,7 @@ mod tests {
         );
         assert_eq!(
             rows[0].witness_memento_cid.as_deref(),
-            Some("blake3-512:witness-member")
+            Some(cid_string("witness-member").as_str())
         );
         assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:actual"]);
         assert!(
@@ -620,7 +630,7 @@ mod tests {
     fn toolchain_plan_ignores_witness_scoped_to_other_plan() {
         let mut pool = MementoPool::default();
         pool.insert(
-            "blake3-512:plan-member".to_string(),
+            cid("plan-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
@@ -634,7 +644,7 @@ mod tests {
             }),
         );
         pool.insert(
-            "blake3-512:witness-member".to_string(),
+            cid("witness-member"),
             json!({
                 "schemaVersion": "1",
                 "header": {
