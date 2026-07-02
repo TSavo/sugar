@@ -368,6 +368,14 @@ def _nested_funcdef(name: str) -> dict[str, object]:
     }
 
 
+def _nested_classdef(name: str) -> dict[str, object]:
+    return {
+        "kind": "ctor",
+        "name": "python:nested_classdef",
+        "args": [_str_const(name)],
+    }
+
+
 def _fstring(*parts: dict[str, object]) -> dict[str, object]:
     return {"kind": "ctor", "name": "python:fstring", "args": list(parts)}
 
@@ -3937,20 +3945,59 @@ def test_nested_function_name_used_after_definition_is_local_binding() -> None:
     assert _function_body(result, ".outer.<locals>.inner") == _return(_int_const(1))
 
 
-def test_nested_function_floor_discriminates_classdef_statement() -> None:
-    result = lift_source(
-        "def outer():\n    class C:\n        pass\n    return C\n",
-        "nested_class_refusal.py",
+def test_nested_classdef_lifts_opaque_term_local_binding_and_io_effect() -> None:
+    source = (
+        "def outer():\n"
+        "    class Local:\n"
+        "        pass\n"
+        "    return Local\n"
     )
 
-    assert result.refusals == [
-        {
-            "kind": "unhandled-syntax",
-            "function": "nested_class_refusal.outer",
-            "line": 2,
-            "reason": "unhandled statement kind: ClassDef",
-        }
-    ]
+    result = lift_source(source, "nested_classdef.py")
+
+    assert result.refusals == []
+    outer = _contract(result.ir, ".outer")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_classdef("Local"),
+        _return(_var("Local")),
+    )
+    assert {"kind": "io"} in outer["effects"]
+    assert {"kind": "reads", "target": "Local"} not in outer["effects"]
+
+
+def test_nested_classdef_body_is_opaque_and_name_call_uses_local_binding() -> None:
+    source = (
+        "Local = global_factory\n"
+        "def outer():\n"
+        "    class Local:\n"
+        "        marker = body_call()\n"
+        "    return Local()\n"
+    )
+
+    result = lift_source(source, "nested_classdef_binding.py")
+
+    assert result.refusals == []
+    outer = _contract(result.ir, ".outer")
+    assert outer["post"]["args"][1] == _seq(
+        _nested_classdef("Local"),
+        _return(_call("Local")),
+    )
+    assert {"kind": "reads", "target": "Local"} not in outer["effects"]
+    assert {"kind": "unresolved_call", "name": "Local"} in outer["effects"]
+    assert {"kind": "unresolved_call", "name": "body_call"} not in outer["effects"]
+    assert "body_call" not in _canon(outer["post"]["args"][1])
+
+
+def test_nested_classdef_roundtrip_is_structurally_stable() -> None:
+    term = _seq(_nested_classdef("Local"), _return(_var("Local")))
+
+    compiled = compile_body_term(term)
+    relifted = lift_source(compiled, "roundtrip_nested_classdef.py")
+
+    assert relifted.refusals == []
+    body = _function_body(relifted)
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_nested_function_roundtrip_is_structurally_stable() -> None:

@@ -223,6 +223,14 @@ def _stmt(term: Json) -> ast.stmt:
             returns=None,
             type_comment=None,
         )
+    if name == "python:nested_classdef":
+        return ast.ClassDef(
+            name=_const_string(args[0]),
+            bases=[],
+            keywords=[],
+            body=[ast.Pass()],
+            decorator_list=[],
+        )
     if name == "python:with":
         return ast.With(
             items=[
