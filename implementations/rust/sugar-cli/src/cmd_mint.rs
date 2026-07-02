@@ -4882,14 +4882,15 @@ mod tests {
             pool.load_errors
         );
         let env = pool
-            .mementos
-            .values()
-            .find(|env| {
-                env.field("name").and_then(|value| value.as_str()) == Some("body_graph_contract")
+            .contract_members()
+            .find_map(|(_, member)| {
+                (member.field("name").and_then(|value| value.as_str())
+                    == Some("body_graph_contract"))
+                .then_some(member)
             })
             .expect("loaded contract memento");
         let resolved = pool
-            .resolve_contract_body(env)
+            .contract_body_for_member(env)
             .expect("resolve graph-backed contract body");
         assert!(
             resolved.get("post").is_some_and(|post| post.is_object()),

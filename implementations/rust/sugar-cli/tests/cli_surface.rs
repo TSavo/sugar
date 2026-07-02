@@ -709,7 +709,7 @@ done
         "conjoined proof must load cleanly: {:?}",
         pool.load_errors
     );
-    let bridge = pool.bridge_by_symbol("callee").unwrap_or_else(|| {
+    let bridge = pool.bridge_member_for_symbol("callee").unwrap_or_else(|| {
         panic!(
             "consumer bridge should be indexed by sourceSymbol=callee; got {:?}",
             pool.bridges_by_symbol.keys().collect::<Vec<_>>()
@@ -722,18 +722,15 @@ done
     let target_cid =
         MementoCid::try_parse(target_cid.to_string()).expect("bridge target CID must parse");
     assert!(
-        pool.mementos.contains_key(target_cid.as_str()),
+        pool.stored_member(&target_cid).is_some(),
         "bridge target cid {target_cid} must resolve in same proof"
     );
     assert!(
-        pool.member_is_kind(&target_cid, sugar_verifier::MemberKind::Contract),
+        pool.stored_member(&target_cid)
+            .is_some_and(|member| member.kind() == sugar_verifier::MemberKind::Contract),
         "bridge target must be a contract"
     );
-    let implication_count = pool
-        .mementos
-        .keys()
-        .filter(|cid| pool.member_is_kind(cid, sugar_verifier::MemberKind::Implication))
-        .count();
+    let implication_count = pool.implication_members().count();
     assert_eq!(
         implication_count, 1,
         "consumer top-level implications should mint through manifest RPC"
