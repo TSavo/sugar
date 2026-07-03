@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 46;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 159;
+const EXPECTED_SEED_CLAIMS: usize = 48;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 157;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -682,11 +682,13 @@ fn s9_batch1_pairs_match_real_rust_semantics() {
         "slice_accessor",
         "slice_search",
         "range_accessor",
+        "range_term",
         "sizeof",
         "offset_of",
         "duration_value",
         "into",
         "nonzero_new",
+        "nonzero_assoc_const",
         "nonzero_get",
         "float_literal_method",
     ];

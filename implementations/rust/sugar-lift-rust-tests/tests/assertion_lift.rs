@@ -22887,6 +22887,84 @@ fn t() {
 }
 
 #[test]
+fn nonzero_assoc_const_get_bad_twin_is_z3_unsat() {
+    let src = r#"
+use std::num::NonZeroU32;
+
+#[test]
+fn t() {
+    assert_eq!(NonZeroU32::MIN.get(), 2u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero-assoc-const-get-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad NonZero associated-const twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "nonzero_assoc_const_get_bad",
+    ) {
+        assert!(
+            !sat,
+            "NonZeroU32::MIN.get() is 1, so a claimed value of 2 must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn nonzero_assoc_const_get_good_twin_is_sat() {
+    let src = r#"
+use std::num::NonZeroU32;
+
+#[test]
+fn t() {
+    assert_eq!(NonZeroU32::MIN.get(), 1u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero-assoc-const-get-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful NonZero associated-const twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "nonzero_assoc_const_get_good",
+    ) {
+        assert!(sat, "NonZeroU32::MIN.get() == 1 must be z3-SAT");
+    }
+}
+
+#[test]
+fn nonzero_assoc_const_get_refuses_non_value_assoc_const() {
+    let src = r#"
+use std::num::NonZeroU32;
+
+#[test]
+fn t() {
+    assert_eq!(NonZeroU32::BITS.get(), 32u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero-assoc-const-get-bits.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "BITS is an integer associated const, not a NonZero value whose `.get()` can be derived; decls={:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason
+                .contains("NonZero::get associated const `BITS` is not a NonZero value")),
+        "non-value associated const get must be named-refused; skips={:?}; audits={:?}",
+        out.skip_reasons,
+        out.factory_audits
+    );
+}
+
+#[test]
 fn nonzero_isolate_highest_one_has_teeth() {
     let good = r#"
 use core::num::NonZero;
@@ -27349,6 +27427,47 @@ fn literal_range_literal_twin() {
         "literal range enumeration boundary",
     );
     assert_rpc_source_warranted(&doc, "literal_range_literal_twin");
+}
+
+#[test]
+fn range_term_equality_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(0..3, 0..4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range-term-equality-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad range literal equality twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "range_term_bad") {
+        assert!(
+            !sat,
+            "0..3 is structurally different from 0..4; the lying equality must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn range_term_equality_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(0..3, 0..3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range-term-equality-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful range literal equality twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "range_term_good") {
+        assert!(sat, "0..3 == 0..3 must be z3-SAT");
+    }
 }
 
 #[test]

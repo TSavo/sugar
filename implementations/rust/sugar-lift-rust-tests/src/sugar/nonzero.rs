@@ -43,7 +43,24 @@ pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const ASSOC_CONST_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "nonzero_assoc_const",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::num::NonZeroU32;
+
+            #[test]
+            fn t_nonzero_assoc_const_good() {
+                assert_eq!(NonZeroU32::MIN.get(), 1u32);
+            }
+        "#,
+        r#"
+            use std::num::NonZeroU32;
+
+            #[test]
+            fn t_nonzero_assoc_const_bad() {
+                assert_eq!(NonZeroU32::MIN.get(), 2u32);
+            }
+        "#,
+    ),
     recognize_assoc_const,
 );
 
@@ -95,7 +112,20 @@ fn recognize_get(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn S
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    if call.method != "get" || !call.args.is_empty() || !is_nonzero_derived(&call.receiver) {
+    if call.method != "get" || !call.args.is_empty() {
+        return None;
+    }
+    if let Expr::Path(path) = strip_refs_groups(&call.receiver) {
+        if let Some((_, konst)) = nonzero_assoc_const_path(path) {
+            if !matches!(konst.as_str(), "MIN" | "MAX") {
+                return Some(Box::new(NonZeroGetAssocConstRefusal {
+                    konst,
+                    site: token_key(expr),
+                }));
+            }
+        }
+    }
+    if !is_nonzero_derived(&call.receiver) {
         return None;
     }
     Some(Box::new(NonZeroGetSugar {
@@ -131,6 +161,11 @@ struct NonZeroNewSugar {
     site: String,
 }
 
+struct NonZeroGetAssocConstRefusal {
+    konst: String,
+    site: String,
+}
+
 impl Sugar for NonZeroNewSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let value = match self.value.reduce(ctx) {
@@ -140,6 +175,19 @@ impl Sugar for NonZeroNewSugar {
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         value.accept_scalar_floor(NonZeroNewVisitor { site: &self.site })
+    }
+}
+
+impl Sugar for NonZeroGetAssocConstRefusal {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: self.site.clone(),
+            operation: format!(
+                "NonZero::get associated const `{}` is not a NonZero value",
+                self.konst
+            ),
+            kind: "non-value".to_string(),
+        })
     }
 }
 
@@ -460,6 +508,11 @@ fn is_nonzero_derived(expr: &Expr) -> bool {
         {
             is_nonzero_derived(&call.receiver)
         }
+        Expr::Path(path) => is_nonzero_value_assoc_const_path(path),
         _ => false,
     }
+}
+
+fn is_nonzero_value_assoc_const_path(path: &ExprPath) -> bool {
+    nonzero_assoc_const_path(path).is_some_and(|(_, konst)| matches!(konst.as_str(), "MIN" | "MAX"))
 }
