@@ -5,8 +5,8 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
 ambient_testimony_sites = 1
-transport_json_backend_ingress = 6
-backend_frontend_decode_calls = 8
+transport_json_backend_ingress = 4
+backend_frontend_decode_calls = 3
 frontend_provenance_unadmitted = 0
 
 [[pipeline_seams]]
@@ -763,22 +763,6 @@ path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
 frontend_adapter = true
 
 [[frontend_boundary_transport_json_ingress]]
-id = "smt-lib-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "SmtLibCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_transport_json_ingress]]
-id = "lean-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "LeanCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_transport_json_ingress]]
 id = "coq-ircompiler-json-ingress"
 shape = "transport-json-ircompiler-impl-ingress"
 owner = "typed ProofIR frontend-boundary campaign"
@@ -809,46 +793,6 @@ owner = "typed ProofIR frontend-boundary campaign"
 retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
 baseline = true
 source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_decode_calls]]
-id = "smt-lib-emit-term-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3a moves legacy term decode into CompilerInput::decode_json so emit receives typed Term"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "emit", needles = ["serde_json::from_value(ir_formula.clone())"] }
-
-[[frontend_boundary_decode_calls]]
-id = "smt-lib-compile-to-parts-formula-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3a moves formula decode into CompilerInput::decode_json so compile_to_parts receives typed Formula"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_to_parts", needles = ["serde_json::from_value(ir_formula.clone())"] }
-
-[[frontend_boundary_decode_calls]]
-id = "smt-lib-compile-asserted-to-parts-formula-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3a moves asserted formula decode into CompilerInput::decode_json so compile_asserted_to_parts receives typed Formula"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_asserted_to_parts", needles = ["serde_json::from_value(ir_formula.clone())"] }
-
-[[frontend_boundary_decode_calls]]
-id = "lean-compile-to-parts-term-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3a moves legacy term decode into CompilerInput::decode_json so Lean compile_to_parts receives typed Term"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "compile_to_parts", needles = ["let term: Term = serde_json::from_value"] }
-
-[[frontend_boundary_decode_calls]]
-id = "lean-compile-to-parts-formula-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3a moves formula decode into CompilerInput::decode_json so Lean compile_to_parts receives typed Formula"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "compile_to_parts", needles = ["serde_json::from_value(ir.clone()).map_err"] }
 
 [[frontend_boundary_decode_calls]]
 id = "coq-compile-inner-term-from-value"
