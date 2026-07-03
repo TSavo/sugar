@@ -908,7 +908,7 @@ pub struct Truth(DomainClaim);
 /// A refuted domain claim.
 ///
 /// A `Refutation` is the finding type. It is also valid input to a fresh
-/// transform, which is what lets droppers operate on negative space.
+/// transform.
 #[derive(Debug, Clone)]
 pub struct Refutation(DomainClaim);
 

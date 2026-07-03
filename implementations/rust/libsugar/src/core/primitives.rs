@@ -105,22 +105,6 @@ pub fn verify_sig(claim: &DomainClaim) -> bool {
     )
 }
 
-/// Dropper stub: transform a refutation into a candidate completion.
-///
-/// This is the typed hook for "transform on negative space":
-/// `discharge(there exists a completion) ; serialize`. The initial pass keeps
-/// the signature stable and returns a domain stub error.
-pub fn dropper(
-    refutation: &Refutation,
-    domain: &dyn Domain,
-    _boundary: &Boundary,
-) -> Result<DomainClaim, DomainError> {
-    let _ = refutation;
-    Err(DomainError::DropperStub {
-        domain: domain.name(),
-    })
-}
-
 /// Composition errors for primitive 6.
 #[derive(Debug, Error)]
 pub enum ComposeError {

@@ -210,9 +210,6 @@ pub enum DomainError {
     /// Witness checking was requested for a claim without a witness.
     #[error("domain {domain:?}: check mode requires an existing witness")]
     MissingWitness { domain: DomainKind },
-    /// The dropper/synthesis path is intentionally only typed in this pass.
-    #[error("domain {domain:?}: dropper/synthesis is not implemented in the initial pass")]
-    DropperStub { domain: DomainKind },
 }
 
 /// Top-level error for named verb compositions.

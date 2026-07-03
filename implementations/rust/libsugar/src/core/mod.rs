@@ -41,7 +41,7 @@ pub use bind::{
 pub use lift_plugin::{LiftKit, LiftPluginKit, LiftPluginKitError, LiftPluginKitSession};
 pub use path_executor::{execute_path, KitRegistry, PathExecutionChain, PathExecutionError};
 pub use primitives::{
-    address, compose, dropper, resolve, sign, verify_sig, ComposeError, SigningKey,
+    address, compose, resolve, sign, verify_sig, ComposeError, SigningKey,
 };
 pub use prove_kit::ProveKit;
 pub use stubs::{CKit, FunctionContractDomain, NoopPortfolio, RustKit};
