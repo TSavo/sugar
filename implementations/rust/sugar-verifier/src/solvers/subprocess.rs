@@ -4,14 +4,15 @@
 // `<binary> [flags...]` on stdin, read the first non-empty stdout line,
 // map it to ObligationVerdict.
 //
-// Replaces the old `solve_obligation::run` Z3-only path. The legacy
-// path is preserved as `solve_obligation::run_legacy` for back-compat.
+// Replaces the old `solve_obligation::run` Z3-only path. That legacy
+// path remains as a back-compat shim for callers that still pass a
+// single Z3 binary path.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::solvers::{SolveResult, Solver, SolverIdentity};
+use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone)]
@@ -82,29 +83,33 @@ impl Solver for SubprocessSolver {
                     "[sugar-verifier] failed to spawn solver {:?} (binary={:?}): {e}",
                     self.name, self.binary
                 );
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("spawn {}: {e}", self.binary),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::SpawnError),
+                    Some(format!("spawn {}: {e}", self.binary)),
+                    None,
+                    None,
+                    started.elapsed(),
+                    false,
+                );
             }
         };
 
         if let Some(mut stdin) = child.stdin.take() {
             if let Err(e) = stdin.write_all(smt.as_bytes()) {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("write to {} stdin: {e}", self.binary),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::StdinError),
+                    Some(format!("write to {} stdin: {e}", self.binary)),
+                    None,
+                    None,
+                    started.elapsed(),
+                    false,
+                );
             }
         }
 
@@ -135,28 +140,32 @@ impl Solver for SubprocessSolver {
                                 self.name,
                                 to.as_secs().max(1)
                             );
-                            return SolveResult {
-                                verdict: ObligationVerdict::Undecidable,
-                                solver_name: self.name.clone(),
-                                solver_version: self.version.clone(),
-                                error: format!("timeout after {}s", to.as_secs().max(1)),
-                                solver_stdout: String::new(),
-                                wall_clock: started.elapsed(),
-                                timed_out: true,
-                            };
+                            return SolveResult::with_evidence(
+                                ObligationVerdict::Undecidable,
+                                self.name.clone(),
+                                self.version.clone(),
+                                SolverExitMetadata::new(SolverExitKind::Timeout),
+                                Some(format!("timeout after {}s", to.as_secs().max(1))),
+                                None,
+                                None,
+                                started.elapsed(),
+                                true,
+                            );
                         }
                         std::thread::sleep(Duration::from_millis(20));
                     }
                     Err(e) => {
-                        return SolveResult {
-                            verdict: ObligationVerdict::Undecidable,
-                            solver_name: self.name.clone(),
-                            solver_version: self.version.clone(),
-                            error: format!("wait {}: {e}", self.binary),
-                            solver_stdout: String::new(),
-                            wall_clock: started.elapsed(),
-                            timed_out: false,
-                        };
+                        return SolveResult::with_evidence(
+                            ObligationVerdict::Undecidable,
+                            self.name.clone(),
+                            self.version.clone(),
+                            SolverExitMetadata::new(SolverExitKind::WaitError),
+                            Some(format!("wait {}: {e}", self.binary)),
+                            None,
+                            None,
+                            started.elapsed(),
+                            false,
+                        );
                     }
                 }
             }
@@ -167,19 +176,22 @@ impl Solver for SubprocessSolver {
         let output = match child.wait_with_output() {
             Ok(o) => o,
             Err(e) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("wait {}: {e}", self.binary),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::WaitError),
+                    Some(format!("wait {}: {e}", self.binary)),
+                    None,
+                    None,
+                    started.elapsed(),
                     timed_out,
-                };
+                );
             }
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let verdict_line = stdout
             .lines()
             .map(|s| s.trim_end_matches('\r'))
@@ -208,15 +220,24 @@ impl Solver for SubprocessSolver {
                 format!("unrecognized solver verdict: {other}"),
             ),
         };
-        SolveResult {
+        let exit_kind = if error.is_empty() {
+            SolverExitKind::Ok
+        } else if verdict == ObligationVerdict::Refused {
+            SolverExitKind::UnsupportedLowering
+        } else {
+            SolverExitKind::UnrecognizedVerdict
+        };
+        SolveResult::with_evidence(
             verdict,
-            solver_name: self.name.clone(),
-            solver_version: self.version.clone(),
-            error,
-            solver_stdout: stdout,
-            wall_clock: started.elapsed(),
+            self.name.clone(),
+            self.version.clone(),
+            SolverExitMetadata::new(exit_kind).with_code(output.status.code()),
+            (!error.is_empty()).then_some(error),
+            Some(stdout),
+            (!stderr.is_empty()).then_some(stderr),
+            started.elapsed(),
             timed_out,
-        }
+        )
     }
 }
 
@@ -267,12 +288,12 @@ mod refusal_tests {
             ObligationVerdict::Refused,
             "unsupported lowering must REFUSE, got {:?} (stdout: {})",
             r.verdict,
-            r.solver_stdout
+            r.solver_stdout()
         );
         assert!(
-            r.error.contains("no discharger") && r.error.contains("map_err"),
+            r.error().contains("no discharger") && r.error().contains("map_err"),
             "refusal must name the undischarjable construct, got: {}",
-            r.error
+            r.error()
         );
     }
 

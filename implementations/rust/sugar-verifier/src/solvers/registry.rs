@@ -227,8 +227,8 @@ fn vendor_pin_scheme(value: &str) -> &str {
 }
 
 /// Convenience: build a registry with a single Z3 SubprocessSolver
-/// at the given binary path. Used by the legacy `RunnerConfig.z3_path`
-/// fallback when no `.sugar/config.toml` is present.
+/// at the given binary path. Used only by the explicit legacy
+/// `RunnerConfig::legacy_z3_fallback` compatibility hatch.
 ///
 /// A 30-second per-invocation timeout is applied as defense-in-depth.
 /// Without a timeout, a Z3 invocation that reads from stdin without

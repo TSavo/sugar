@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use sugar_ir_compiler_coq::DIALECT;
 
-use crate::solvers::{SolveResult, Solver, SolverIdentity};
+use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug)]
@@ -77,28 +77,32 @@ impl Solver for CoqSubprocessSolver {
             started.elapsed().as_nanos()
         ));
         if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
-            return SolveResult {
-                verdict: ObligationVerdict::Undecidable,
-                solver_name: self.name.clone(),
-                solver_version: self.version.clone(),
-                error: format!("coq: failed to create temp dir: {e}"),
-                solver_stdout: String::new(),
-                wall_clock: started.elapsed(),
-                timed_out: false,
-            };
+            return SolveResult::with_evidence(
+                ObligationVerdict::Undecidable,
+                self.name.clone(),
+                self.version.clone(),
+                SolverExitMetadata::new(SolverExitKind::CompileError),
+                Some(format!("coq: failed to create temp dir: {e}")),
+                None,
+                None,
+                started.elapsed(),
+                false,
+            );
         }
 
         let v_file = tmp_dir.join("proof.v");
         if let Err(e) = std::fs::write(&v_file, coq_source) {
-            return SolveResult {
-                verdict: ObligationVerdict::Undecidable,
-                solver_name: self.name.clone(),
-                solver_version: self.version.clone(),
-                error: format!("coq: failed to write .v file: {e}"),
-                solver_stdout: String::new(),
-                wall_clock: started.elapsed(),
-                timed_out: false,
-            };
+            return SolveResult::with_evidence(
+                ObligationVerdict::Undecidable,
+                self.name.clone(),
+                self.version.clone(),
+                SolverExitMetadata::new(SolverExitKind::CompileError),
+                Some(format!("coq: failed to write .v file: {e}")),
+                None,
+                None,
+                started.elapsed(),
+                false,
+            );
         }
 
         // Spawn coqc
@@ -114,15 +118,17 @@ impl Solver for CoqSubprocessSolver {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("coq: spawn {}: {e}", self.binary),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::SpawnError),
+                    Some(format!("coq: spawn {}: {e}", self.binary)),
+                    None,
+                    None,
+                    started.elapsed(),
+                    false,
+                );
             }
         };
 
@@ -139,29 +145,33 @@ impl Solver for CoqSubprocessSolver {
                             let _ = child.kill();
                             let _ = child.wait();
                             let _ = std::fs::remove_dir_all(&tmp_dir);
-                            return SolveResult {
-                                verdict: ObligationVerdict::Undecidable,
-                                solver_name: self.name.clone(),
-                                solver_version: self.version.clone(),
-                                error: format!("coq: timeout after {}s", to.as_secs().max(1)),
-                                solver_stdout: String::new(),
-                                wall_clock: started.elapsed(),
-                                timed_out: true,
-                            };
+                            return SolveResult::with_evidence(
+                                ObligationVerdict::Undecidable,
+                                self.name.clone(),
+                                self.version.clone(),
+                                SolverExitMetadata::new(SolverExitKind::Timeout),
+                                Some(format!("coq: timeout after {}s", to.as_secs().max(1))),
+                                None,
+                                None,
+                                started.elapsed(),
+                                true,
+                            );
                         }
                         std::thread::sleep(Duration::from_millis(20));
                     }
                     Err(e) => {
                         let _ = std::fs::remove_dir_all(&tmp_dir);
-                        return SolveResult {
-                            verdict: ObligationVerdict::Undecidable,
-                            solver_name: self.name.clone(),
-                            solver_version: self.version.clone(),
-                            error: format!("coq: wait error: {e}"),
-                            solver_stdout: String::new(),
-                            wall_clock: started.elapsed(),
-                            timed_out: false,
-                        };
+                        return SolveResult::with_evidence(
+                            ObligationVerdict::Undecidable,
+                            self.name.clone(),
+                            self.version.clone(),
+                            SolverExitMetadata::new(SolverExitKind::WaitError),
+                            Some(format!("coq: wait error: {e}")),
+                            None,
+                            None,
+                            started.elapsed(),
+                            false,
+                        );
                     }
                 }
             };
@@ -175,38 +185,46 @@ impl Solver for CoqSubprocessSolver {
             Ok(o) => o,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&tmp_dir);
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("coq: wait error: {e}"),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::WaitError),
+                    Some(format!("coq: wait error: {e}")),
+                    None,
+                    None,
+                    started.elapsed(),
                     timed_out,
-                };
+                );
             }
         };
         let _ = std::fs::remove_dir_all(&tmp_dir);
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let verdict = if output.status.success() {
             ObligationVerdict::Discharged
         } else {
             ObligationVerdict::Undecidable
         };
 
-        SolveResult {
+        let diagnostic = (!output.status.success())
+            .then(|| format!("coqc exited with code {:?}", output.status.code()));
+        SolveResult::with_evidence(
             verdict,
-            solver_name: self.name.clone(),
-            solver_version: self.version.clone(),
-            error: if output.status.success() {
-                String::new()
+            self.name.clone(),
+            self.version.clone(),
+            SolverExitMetadata::new(if output.status.success() {
+                SolverExitKind::Ok
             } else {
-                format!("coqc exited with code {:?}", output.status.code())
-            },
-            solver_stdout: stdout,
-            wall_clock: started.elapsed(),
+                SolverExitKind::NonZeroExit
+            })
+            .with_code(output.status.code()),
+            diagnostic,
+            Some(stdout),
+            (!stderr.is_empty()).then_some(stderr),
+            started.elapsed(),
             timed_out,
-        }
+        )
     }
 }

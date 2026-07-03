@@ -17,7 +17,7 @@ use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
 use sugar_proof_envelope::cid_from_proof_stem;
 use walkdir::WalkDir;
 
-use sugar_verifier::{MementoCid, Runner, RunnerConfig};
+use sugar_verifier::{LegacyZ3Fallback, MementoCid, Runner, RunnerConfig};
 
 use crate::component_plan::{
     self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
@@ -307,7 +307,7 @@ pub(crate) fn build_prove_report_with_options(
 
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
-        z3_path: z3.to_string(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat(z3.to_string())),
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),

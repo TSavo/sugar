@@ -147,11 +147,11 @@ The current `sugar-verifier`/`sugar-cli` source defines pipeline v1 with the fol
 - `enumerate_callsites` (`enumerate_callsites.rs`)
 - `resolve_target` (`resolve_target.rs`)
 - `instantiate` (`instantiate.rs`)
-- `smt_emitter` (`smt_emitter.rs`)
+- `smt_emit` (`smt_emitter.rs`)
 - `solve_obligation` (`solve_obligation.rs`)
 - `report` (`report.rs`)
 
-Those names are pipeline v1's reference vocabulary, NOT spec-level constraints. Future pipelines may add, split, or reorder stages by minting a new `VerifierPipelineMemento` and citing it via `verifier_pipeline_cid`. ProofRunMementos minted under different pipelines remain individually replayable against their declared pipeline.
+Those names are pipeline v1's reference vocabulary, NOT spec-level constraints. The stage label is `smt_emit`; the source module remains `smt_emitter.rs`. Older sealed receipts that carried the legacy label `smt_emitter` remain replayable as extension/legacy `tstr` stage labels, but new Rust verifier pipeline-v1 receipts use `smt_emit`. Future pipelines may add, split, or reorder stages by minting a new `VerifierPipelineMemento` and citing it via `verifier_pipeline_cid`. ProofRunMementos minted under different pipelines remain individually replayable against their declared pipeline.
 
 ## §2. Field Semantics
 
@@ -210,7 +210,7 @@ The canonical labels are the current Rust verifier module labels. They are inten
 | 2 | `enumerate_callsites` | `implementations/rust/sugar-verifier/src/enumerate_callsites.rs:3` | Loaded contract and bridge memento CIDs | Deterministic callsite-set memento CIDs |
 | 3 | `resolve_target` | `implementations/rust/sugar-verifier/src/resolve_target.rs:3` | Callsite-set CIDs, bridge target CIDs, `LinkBundle` membership facts | Resolved-property-set memento CIDs, forward-pin refusal CIDs |
 | 4 | `instantiate` | `implementations/rust/sugar-verifier/src/instantiate.rs:3` | Resolved-property CIDs and call argument term CIDs or their enclosing callsite-set CID | Obligation memento CIDs. The implication-handshake path in `runner.rs` and `handshake.rs` is part of this discharge-preparation stage unless a future extension splits it. |
-| 5 | `smt_emitter` | `implementations/rust/sugar-verifier/src/smt_emitter.rs:3` | Obligation memento CIDs or implication-obligation CIDs | SMT artifact CIDs or compiler refusal CIDs |
+| 5 | `smt_emit` | `implementations/rust/sugar-verifier/src/smt_emitter.rs:3` | Obligation memento CIDs or implication-obligation CIDs | SMT artifact CIDs or compiler refusal CIDs |
 | 6 | `solve_obligation` | `implementations/rust/sugar-verifier/src/solve_obligation.rs:3` | SMT artifact CIDs, solver-plan plugin CIDs from the sealed registry | Discharge receipt CIDs, implication memento CIDs, solver refusal CIDs |
 | 7 | `report` | `implementations/rust/sugar-verifier/src/report.rs:3` | Prior stage receipt CIDs, callsite verdict CIDs, load-error CIDs | Final report memento CIDs and terminal diagnostics |
 

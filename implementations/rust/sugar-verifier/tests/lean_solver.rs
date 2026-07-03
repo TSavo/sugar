@@ -87,9 +87,9 @@ ir_compiler = "lean"
     let result = solver.solve("theorem sugar_obligation : True := by trivial\n");
     assert_eq!(result.verdict, ObligationVerdict::Undecidable);
     assert!(
-        result.error.contains("spawn") && !result.error.contains("IR-JSON"),
+        result.error().contains("spawn") && !result.error().contains("IR-JSON"),
         "Lean solver should consume compiled Lean text, got: {}",
-        result.error
+        result.error()
     );
 }
 
@@ -115,7 +115,7 @@ ir_compiler = "lean"
     let (verdict, _reason, invocations) =
         run_plan_with_compilers(&plan, &registry, &compilers, &input);
     assert_eq!(verdict, ObligationVerdict::Undecidable);
-    let error = &invocations[0].result.error;
+    let error = &invocations[0].result.error();
     assert!(
         error.contains("spawn")
             && !error.contains("parse IR-JSON")
@@ -174,5 +174,5 @@ fn lean_solver_discharges_reflexivity_with_local_mathlib() {
     });
     let result = solver.solve(&ir.to_string());
     assert_eq!(result.verdict, ObligationVerdict::Discharged);
-    assert!(!result.solver_stdout.contains("sorryAx"));
+    assert!(!result.solver_stdout().contains("sorryAx"));
 }

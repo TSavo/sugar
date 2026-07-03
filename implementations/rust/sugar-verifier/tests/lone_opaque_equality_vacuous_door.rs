@@ -34,7 +34,9 @@ use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody, ContractMemento,
     Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
-use sugar_verifier::{load_all_proofs::ProofBytes, ObligationVerdict, Runner, RunnerConfig};
+use sugar_verifier::{
+    load_all_proofs::ProofBytes, LegacyZ3Fallback, ObligationVerdict, Runner, RunnerConfig,
+};
 
 // ─── IR formula builder helpers ──────────────────────────────────────────────
 
@@ -213,7 +215,7 @@ fn run_with_bundle(literal: &str) -> Vec<(String, ObligationVerdict)> {
 
     let runner = Runner::new(RunnerConfig {
         project_root: tmp,
-        z3_path: "z3".into(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         extra_proofs: vec![bundle],
         ..Default::default()
     });

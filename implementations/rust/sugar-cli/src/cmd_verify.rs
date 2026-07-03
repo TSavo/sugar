@@ -63,8 +63,8 @@ use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, resolve_target,
-    run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool, ObligationVerdict, Runner,
-    RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
+    run_plan_with_compilers, DispatchConfig, FormulaTheory, LegacyZ3Fallback, MementoPool,
+    ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolverSeat, SolversConfig,
 };
 use tracing::{debug, info};
 
@@ -604,7 +604,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
 
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
-        z3_path: args.z3.clone(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat(args.z3.clone())),
         extra_projects,
         extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),

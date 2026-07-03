@@ -185,17 +185,17 @@ fn binary_dependent_maude_and_ceta_gate_smoke() {
         result.verdict,
         ObligationVerdict::Discharged,
         "Maude should discharge the Nat reflexivity obligation, error: {}, stdout: {}",
-        result.error,
-        result.solver_stdout
+        result.error(),
+        result.solver_stdout()
     );
     assert!(
-        result.solver_stdout.contains("\"ceta_gate\""),
+        result.solver_stdout().contains("\"ceta_gate\""),
         "expected a CeTA gate receipt, got: {}",
-        result.solver_stdout
+        result.solver_stdout()
     );
     assert!(
-        !result.solver_stdout.contains("\"bypassed\":true"),
+        !result.solver_stdout().contains("\"bypassed\":true"),
         "expected the CeTA gate to run on a nonempty TRS, got: {}",
-        result.solver_stdout
+        result.solver_stdout()
     );
 }

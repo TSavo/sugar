@@ -236,12 +236,12 @@ fn coq_solver_invokes_coqc_and_returns_a_verdict() {
         ),
         "Coq solver should return Discharged or Undecidable, got: {:?} (error: {})",
         result.verdict,
-        result.error
+        result.error()
     );
     assert!(
-        !result.error.contains("spawn") && !result.error.contains("not found"),
+        !result.error().contains("spawn") && !result.error().contains("not found"),
         "Coq solver should have spawned coqc; got error: {}",
-        result.error
+        result.error()
     );
 }
 
@@ -267,7 +267,7 @@ fn z3_solver_discharges_trivial_forall() {
         matches!(result.verdict, ObligationVerdict::Discharged),
         "Z3 should discharge reflexivity (unsat = no counterexample), got: {:?} (error: {})",
         result.verdict,
-        result.error
+        result.error()
     );
 }
 
@@ -324,7 +324,7 @@ fn z3_and_coq_real_binaries_return_verdicts() {
         ObligationVerdict::Discharged,
         "Z3 verdict: {:?}, error: {}",
         z3_result.verdict,
-        z3_result.error
+        z3_result.error()
     );
     // Coq returns Discharged once the IR-compiler emits real
     // tactics; until then Undecidable is the expected shape and
@@ -336,7 +336,7 @@ fn z3_and_coq_real_binaries_return_verdicts() {
         ),
         "Coq verdict: {:?}, error: {}",
         coq_result.verdict,
-        coq_result.error
+        coq_result.error()
     );
 
     println!(
@@ -392,8 +392,8 @@ ir_compiler = "coq"
     let res = coq.solve("Theorem sugar_obligation : True.\nProof. exact I. Qed.\n");
     assert_eq!(res.verdict, ObligationVerdict::Undecidable);
     assert!(
-        res.error.contains("spawn") && !res.error.contains("IR-JSON"),
+        res.error().contains("spawn") && !res.error().contains("IR-JSON"),
         "expected Coq subprocess spawn error after compiled input, got: {}",
-        res.error
+        res.error()
     );
 }

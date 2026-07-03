@@ -187,7 +187,7 @@ fn registry_handles_subprocess_solver_with_missing_binary_gracefully() {
     let (verdict, _reason, invs) = run_plan(&plan, &reg, "(check-sat)", None);
     assert_eq!(verdict, ObligationVerdict::Undecidable);
     assert_eq!(invs.len(), 1);
-    assert!(!invs[0].result.error.is_empty());
+    assert!(!invs[0].result.error().is_empty());
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn runner_aggregates_per_solver_telemetry() {
     std::fs::create_dir_all(&tmp).unwrap();
     let cfg = RunnerConfig {
         project_root: tmp.clone(),
-        z3_path: "stub".into(),
+        legacy_z3_fallback: None,
         cache_dir: None,
         mint_seed: None,
         mint_producer_id: None,

@@ -47,10 +47,12 @@ pub const VERIFIER_STAGE_VOCABULARY: &[&str] = &[
     "enumerate_callsites",
     "resolve_target",
     "instantiate",
-    "smt_emit",
+    STAGE_SMT_EMIT,
     "solve_obligation",
     "report",
 ];
+
+pub const STAGE_SMT_EMIT: &str = "smt_emit";
 
 const RUN_SIGNER_SEED: [u8; 32] = [0x72; 32];
 
@@ -75,10 +77,10 @@ pub enum ProofRunArtifactError {
 #[derive(Debug, Clone, Default)]
 pub struct RunnerConfig {
     pub project_root: PathBuf,
-    /// Legacy: path to z3 binary. Used as a fallback when no
-    /// `.sugar/config.toml` `[solvers]` table is found. Existing
-    /// examples and tests pass this directly.
-    pub z3_path: String,
+    /// Legacy single-Z3 compatibility fallback. The typed solver plan remains
+    /// the long-term interface; command surfaces that still accept `--z3` must
+    /// opt into this compat hatch explicitly.
+    pub legacy_z3_fallback: Option<LegacyZ3Fallback>,
     /// Per-project implication-memento cache directory.
     pub cache_dir: Option<PathBuf>,
     /// Ed25519 seed used to sign minted implication mementos.
@@ -103,6 +105,23 @@ pub struct RunnerConfig {
     /// Additional proof catalogs carried over kit RPC. Package managers and
     /// archive layouts stay kit-owned; the verifier consumes bytes only.
     pub extra_proofs: Vec<ProofBytes>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyZ3Fallback {
+    pub binary: String,
+}
+
+impl LegacyZ3Fallback {
+    pub fn compat(binary: impl Into<String>) -> Self {
+        let binary = binary.into();
+        let binary = if binary.trim().is_empty() {
+            "z3".to_string()
+        } else {
+            binary
+        };
+        Self { binary }
+    }
 }
 
 /// Per-solver telemetry, surfaced in the report alongside the legacy
@@ -170,7 +189,7 @@ impl Runner {
         // Resolve solver config. Precedence:
         //   1. cfg.solvers_config (test/demo override)
         //   2. .sugar/config.toml under project_root
-        //   3. fallback: single Z3 at cfg.z3_path
+        //   3. explicit legacy single-Z3 compat fallback
         if cfg.trusted_implication_signers.is_empty() {
             cfg.trusted_implication_signers =
                 match load_trusted_implication_signers(&cfg.project_root) {
@@ -336,7 +355,7 @@ impl Runner {
         for stage_name in [
             "resolve_target",
             "instantiate",
-            "smt_emit",
+            STAGE_SMT_EMIT,
             "solve_obligation",
         ] {
             stages.push(make_stage_receipt(
@@ -1196,16 +1215,14 @@ fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<SolverSea
     if let Ok(Some(sc)) = SolversConfig::load(&cfg.project_root) {
         return (SolverPlan::from_config(&sc), registry::build(&sc));
     }
-    // Fallback: legacy single-Z3 plan.
-    let z3 = if cfg.z3_path.is_empty() {
-        "z3".to_string()
-    } else {
-        cfg.z3_path.clone()
-    };
-    (
-        SolverPlan::Single(SolverSeat::Z3),
-        registry::build_default_z3(&z3),
-    )
+    // Fallback: explicit legacy single-Z3 compat plan. Absence is loud at the
+    // solver layer (empty registry -> solver not found), never a silent skip.
+    let registry = cfg
+        .legacy_z3_fallback
+        .as_ref()
+        .map(|fallback| registry::build_default_z3(&fallback.binary))
+        .unwrap_or_default();
+    (SolverPlan::Single(SolverSeat::Z3), registry)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2567,5 +2584,44 @@ mod consistency_owned_callsite_tests {
         );
 
         let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn legacy_z3_path_is_explicit_compat_fallback_not_runner_config_string() {
+        let cfg = RunnerConfig {
+            legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+            ..RunnerConfig::default()
+        };
+
+        let (plan, registry) = build_plan_and_registry(&cfg);
+
+        assert!(matches!(plan, SolverPlan::Single(SolverSeat::Z3)));
+        assert!(
+            registry.contains_key(&SolverSeat::Z3),
+            "compat fallback should still build the legacy z3 registry when explicitly requested"
+        );
+    }
+
+    #[test]
+    fn smt_emit_stage_vocabulary_is_single_sourced_and_legacy_receipts_replay() {
+        assert_eq!(STAGE_SMT_EMIT, "smt_emit");
+        assert!(VERIFIER_STAGE_VOCABULARY.contains(&STAGE_SMT_EMIT));
+        assert!(
+            !VERIFIER_STAGE_VOCABULARY.contains(&"smt_emitter"),
+            "pipeline v1 uses the current wire label, while old receipt labels remain replayable"
+        );
+
+        let legacy = make_stage_receipt(
+            "smt_emitter",
+            vec![cid_string("legacy-input")],
+            vec![cid_string("legacy-output")],
+            Vec::new(),
+            Vec::new(),
+            "2026-07-02T00:00:00Z".to_string(),
+            "2026-07-02T00:00:01Z".to_string(),
+            sugar_ir_types::StageVerdict::Ok,
+        )
+        .expect("legacy stage receipt labels remain tstr replay data");
+        assert_eq!(legacy.header.stage_name, "smt_emitter");
     }
 }

@@ -101,7 +101,8 @@ If any prover, checker, certificate write, CeTA check, or timeout fails, the `re
 
 ## 7. Receipt Shape
 
-The Maude adapter records a two-part receipt in `solver_stdout`:
+The Maude adapter records a two-part receipt in the `SolveResult`
+stdout evidence sidecar:
 
 ```json
 {

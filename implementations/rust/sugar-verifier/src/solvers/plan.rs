@@ -11,12 +11,14 @@ use std::sync::Mutex;
 
 use rayon::prelude::*;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::CompileError;
 use sugar_ir_compiler::CompiledFormula;
 use sugar_ir_compiler::CompilerInput;
+use sugar_ir_compiler::FrontendErrorPayload;
 
 use crate::solvers::{
-    dispatch_for_formula, DispatchConfig, PortfolioMode, SolveResult, Solver, SolverHandle,
-    SolverIdentity, SolverPlan, SolverSeat,
+    dispatch_for_formula, DispatchConfig, PortfolioMode, SolveResult, Solver, SolverExitKind,
+    SolverExitMetadata, SolverHandle, SolverIdentity, SolverPlan, SolverSeat,
 };
 use crate::types::ObligationVerdict;
 
@@ -46,6 +48,26 @@ enum InputSource<'a> {
 enum PreparedInput {
     Text(String),
     Compiled(CompiledFormula),
+}
+
+enum SolverInputError {
+    Message(String),
+    FrontendDecode {
+        compiler: String,
+        payload: FrontendErrorPayload,
+    },
+}
+
+impl SolverInputError {
+    fn from_compile(compiler: &str, error: CompileError) -> Self {
+        match error {
+            CompileError::Frontend(payload) => SolverInputError::FrontendDecode {
+                compiler: compiler.to_string(),
+                payload,
+            },
+            other => SolverInputError::Message(format!("ir compiler `{compiler}`: {other}")),
+        }
+    }
 }
 
 /// Executor entry point. Returns the chosen verdict + a vec of
@@ -362,8 +384,8 @@ fn portfolio(
 }
 
 fn reason_for(r: &SolveResult) -> String {
-    if !r.error.is_empty() {
-        r.error.clone()
+    if !r.error().is_empty() {
+        r.error().to_string()
     } else {
         match r.verdict {
             ObligationVerdict::Discharged => format!(
@@ -405,30 +427,30 @@ fn solver_input(
     solver: &dyn Solver,
     source: InputSource<'_>,
     formula: Option<&CompilerInput>,
-) -> Result<PreparedInput, String> {
+) -> Result<PreparedInput, SolverInputError> {
     match source {
         InputSource::Precompiled(smt) => {
             if solver.ir_compiler() == "smt-lib-v2.6" {
                 Ok(PreparedInput::Text(smt.to_string()))
             } else {
-                Err(format!(
+                Err(SolverInputError::Message(format!(
                     "precompiled solver input is SMT-LIB text, but solver '{}' expects compiler `{}`; route typed ProofIR through run_plan_with_compilers instead",
                     solver.name(),
                     solver.ir_compiler()
-                ))
+                )))
             }
         }
         InputSource::Compilers(compilers) => {
             let formula = formula.ok_or_else(|| {
-                format!(
+                SolverInputError::Message(format!(
                     "no typed ProofIR compiler input available for compiler `{}`",
                     solver.ir_compiler()
-                )
+                ))
             })?;
             compilers
                 .compile(formula, solver.ir_compiler())
                 .map(PreparedInput::Compiled)
-                .map_err(|e| format!("ir compiler `{}`: {e}", solver.ir_compiler()))
+                .map_err(|e| SolverInputError::from_compile(solver.ir_compiler(), e))
         }
     }
 }
@@ -446,15 +468,36 @@ fn dispatch_for_compiler_input(
     }
 }
 
-fn compile_error_result(solver: &dyn Solver, error: String) -> SolveResult {
-    SolveResult {
-        verdict: ObligationVerdict::Undecidable,
-        solver_name: solver.name().to_string(),
-        solver_version: solver.version().to_string(),
-        error,
-        solver_stdout: String::new(),
-        wall_clock: std::time::Duration::ZERO,
-        timed_out: false,
+fn compile_error_result(solver: &dyn Solver, error: SolverInputError) -> SolveResult {
+    match error {
+        SolverInputError::Message(error) => SolveResult::with_evidence(
+            ObligationVerdict::Undecidable,
+            solver.name().to_string(),
+            solver.version().to_string(),
+            SolverExitMetadata::new(SolverExitKind::CompileError),
+            Some(error),
+            None,
+            None,
+            std::time::Duration::ZERO,
+            false,
+        ),
+        SolverInputError::FrontendDecode { compiler, payload } => {
+            let mut result = SolveResult::frontend_decode_error(
+                solver.name().to_string(),
+                solver.version(),
+                payload,
+            );
+            if let Some(diagnostic) = &mut result.evidence.diagnostic {
+                let with_compiler = format!("ir compiler `{compiler}`: {}", diagnostic.text());
+                if let Some(replacement) =
+                    crate::solvers::SolverEvidenceSidecar::from_text(with_compiler)
+                {
+                    result.exit.diagnostic_cid = Some(replacement.cid.clone());
+                    result.evidence.diagnostic = Some(replacement);
+                }
+            }
+            result
+        }
     }
 }
 
@@ -468,6 +511,10 @@ mod tests {
     use super::*;
     use crate::solvers::StubSolver;
     use std::time::Duration;
+    use sugar_ir_compiler::{
+        Capabilities, CompileError, CompiledFormula, CompilerInput, FrontendErrorKind,
+        FrontendErrorPayload, IrCompiler, PROTOCOL_VERSION,
+    };
 
     fn registry() -> Registry {
         let mut r: Registry = HashMap::new();
@@ -488,6 +535,55 @@ mod tests {
 
     fn compiler_input(value: serde_json::Value) -> CompilerInput {
         CompilerInput::decode_json(value).expect("solver plan test fixture decodes")
+    }
+
+    #[derive(Debug)]
+    struct DialectOnlySolver {
+        name: &'static str,
+        compiler: &'static str,
+    }
+
+    impl Solver for DialectOnlySolver {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn version(&self) -> &str {
+            "test-solver-0"
+        }
+
+        fn ir_compiler(&self) -> &str {
+            self.compiler
+        }
+
+        fn solve(&self, _input: &str) -> SolveResult {
+            panic!("frontend decode failures must stop before solver execution")
+        }
+    }
+
+    struct FrontendFailingCompiler {
+        payload: FrontendErrorPayload,
+    }
+
+    impl IrCompiler for FrontendFailingCompiler {
+        fn compile_typed(
+            &self,
+            _ir: &CompilerInput,
+            _dialect: &str,
+        ) -> Result<CompiledFormula, CompileError> {
+            Err(CompileError::Frontend(self.payload.clone()))
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                name: "frontend-failing-compiler".into(),
+                version: "test-0".into(),
+                protocol_version: PROTOCOL_VERSION.into(),
+                dialects: vec!["frontend-fail".into()],
+                supported_sorts: Vec::new(),
+                supported_predicates: Vec::new(),
+            }
+        }
     }
 
     #[test]
@@ -626,5 +722,52 @@ mod tests {
         let plan = SolverPlan::Single(SolverSeat::Bitwuzla);
         let (v, _, _) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Undecidable);
+    }
+
+    #[test]
+    fn frontend_payload_survives_solver_plan_telemetry() {
+        let payload = FrontendErrorPayload {
+            kind: FrontendErrorKind::MalformedTransport,
+            frontend: "json-rpc".into(),
+            input_format: "proofir-json-v1".into(),
+            path: "$.kind".into(),
+            detail: "missing kind".into(),
+            retirement: "typed frontend transport".into(),
+        };
+        let mut compilers = CompilerRegistry::new();
+        compilers.register_dialect(
+            "frontend-fail",
+            Arc::new(FrontendFailingCompiler {
+                payload: payload.clone(),
+            }),
+        );
+        let mut registry: Registry = HashMap::new();
+        registry.insert(
+            SolverSeat::Z3,
+            Arc::new(DialectOnlySolver {
+                name: "z3",
+                compiler: "frontend-fail",
+            }) as SolverHandle,
+        );
+        let formula = compiler_input(serde_json::json!({"kind":"atomic","name":"p","args":[]}));
+
+        let (verdict, reason, invocations) = run_plan_with_compilers(
+            &SolverPlan::Single(SolverSeat::Z3),
+            &registry,
+            &compilers,
+            &formula,
+        );
+
+        assert_eq!(verdict, ObligationVerdict::Undecidable);
+        assert!(reason.contains("frontend decode"));
+        assert_eq!(invocations.len(), 1);
+        let result = &invocations[0].result;
+        assert_eq!(result.exit.kind, SolverExitKind::FrontendDecodeError);
+        assert_eq!(result.exit.frontend_error.as_ref(), Some(&payload));
+        assert!(
+            result.exit.diagnostic_cid.is_some(),
+            "frontend diagnostics must be pinned by sidecar CID"
+        );
+        assert!(result.error().contains("ir compiler `frontend-fail`"));
     }
 }

@@ -10,7 +10,7 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler_lean::{DIALECT, THEOREM_NAME};
 
-use crate::solvers::{SolveResult, Solver, SolverIdentity};
+use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug)]
@@ -185,30 +185,34 @@ impl Solver for LeanSubprocessSolver {
             started.elapsed().as_nanos()
         ));
         if let Err(error) = std::fs::create_dir_all(&tmp_dir) {
-            return SolveResult {
-                verdict: ObligationVerdict::Undecidable,
-                solver_name: self.name.clone(),
-                solver_version: self.version.clone(),
-                error: format!("lean: failed to create temp dir: {error}"),
-                solver_stdout: String::new(),
-                wall_clock: started.elapsed(),
-                timed_out: false,
-            };
+            return SolveResult::with_evidence(
+                ObligationVerdict::Undecidable,
+                self.name.clone(),
+                self.version.clone(),
+                SolverExitMetadata::new(SolverExitKind::CompileError),
+                Some(format!("lean: failed to create temp dir: {error}")),
+                None,
+                None,
+                started.elapsed(),
+                false,
+            );
         }
 
         let lean_file = tmp_dir.join("proof.lean");
         let file_cid = Self::lean_file_cid(source);
         if let Err(error) = std::fs::write(&lean_file, source) {
             let _ = std::fs::remove_dir_all(&tmp_dir);
-            return SolveResult {
-                verdict: ObligationVerdict::Undecidable,
-                solver_name: self.name.clone(),
-                solver_version: self.version.clone(),
-                error: format!("lean: failed to write .lean file: {error}"),
-                solver_stdout: String::new(),
-                wall_clock: started.elapsed(),
-                timed_out: false,
-            };
+            return SolveResult::with_evidence(
+                ObligationVerdict::Undecidable,
+                self.name.clone(),
+                self.version.clone(),
+                SolverExitMetadata::new(SolverExitKind::CompileError),
+                Some(format!("lean: failed to write .lean file: {error}")),
+                None,
+                None,
+                started.elapsed(),
+                false,
+            );
         }
 
         let project_dir = self.project_dir(&tmp_dir);
@@ -223,18 +227,20 @@ impl Solver for LeanSubprocessSolver {
         // without crashing or emitting a confusing error.
         if !project_dir.exists() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
-            return SolveResult {
-                verdict: ObligationVerdict::Undecidable,
-                solver_name: self.name.clone(),
-                solver_version: self.version.clone(),
-                error: format!(
+            return SolveResult::with_evidence(
+                ObligationVerdict::Undecidable,
+                self.name.clone(),
+                self.version.clone(),
+                SolverExitMetadata::new(SolverExitKind::CompileError),
+                Some(format!(
                     "lean: lake project {} is not provisioned (run `lake exe cache get` there, or unset lake_project to run lean standalone)",
                     project_dir.display()
-                ),
-                solver_stdout: String::new(),
-                wall_clock: started.elapsed(),
-                timed_out: false,
-            };
+                )),
+                None,
+                None,
+                started.elapsed(),
+                false,
+            );
         }
 
         let lean_version = self.lean_version(&project_dir);
@@ -253,15 +259,17 @@ impl Solver for LeanSubprocessSolver {
             Ok(child) => child,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&tmp_dir);
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("lean: spawn {}: {error}", self.binary),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::SpawnError),
+                    Some(format!("lean: spawn {}: {error}", self.binary)),
+                    None,
+                    None,
+                    started.elapsed(),
+                    false,
+                );
             }
         };
 
@@ -269,15 +277,17 @@ impl Solver for LeanSubprocessSolver {
             Ok(result) => result,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&tmp_dir);
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error,
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: true,
-                };
+                return SolveResult::with_evidence(
+                    ObligationVerdict::Undecidable,
+                    self.name.clone(),
+                    self.version.clone(),
+                    SolverExitMetadata::new(SolverExitKind::Timeout),
+                    Some(error),
+                    None,
+                    None,
+                    started.elapsed(),
+                    true,
+                );
             }
         };
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -307,23 +317,34 @@ impl Solver for LeanSubprocessSolver {
         let solver_stdout = serde_json::to_string_pretty(&receipt)
             .unwrap_or_else(|error| format!("{{\"receiptError\":\"{error}\"}}"));
 
-        SolveResult {
+        let diagnostic = if discharged {
+            None
+        } else if uses_sorry {
+            Some("lean: proof uses sorry or sorryAx".to_string())
+        } else if has_error {
+            Some("lean: output contains errors".to_string())
+        } else {
+            Some(format!(
+                "lake env lean exited with code {:?}",
+                output.status.code()
+            ))
+        };
+        SolveResult::with_evidence(
             verdict,
-            solver_name: self.name.clone(),
-            solver_version: self.version.clone(),
-            error: if discharged {
-                String::new()
-            } else if uses_sorry {
-                "lean: proof uses sorry or sorryAx".to_string()
-            } else if has_error {
-                "lean: output contains errors".to_string()
+            self.name.clone(),
+            self.version.clone(),
+            SolverExitMetadata::new(if discharged {
+                SolverExitKind::Ok
             } else {
-                format!("lake env lean exited with code {:?}", output.status.code())
-            },
-            solver_stdout,
-            wall_clock: started.elapsed(),
+                SolverExitKind::NonZeroExit
+            })
+            .with_code(output.status.code()),
+            diagnostic,
+            Some(solver_stdout),
+            None,
+            started.elapsed(),
             timed_out,
-        }
+        )
     }
 }
 

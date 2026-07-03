@@ -10,7 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::solvers::{SolveResult, Solver, SolverIdentity};
+use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone)]
@@ -102,27 +102,30 @@ impl Solver for StubSolver {
         if !self.delay.is_zero() {
             std::thread::sleep(self.delay);
         }
-        SolveResult {
-            verdict: self.verdict,
-            solver_name: self.name.clone(),
-            solver_version: self.version.clone(),
-            error: if self.timed_out {
-                "stub: timeout".into()
+        let stdout = format!(
+            "{}\n",
+            match self.verdict {
+                ObligationVerdict::Discharged => "unsat",
+                ObligationVerdict::Unsatisfied => "sat",
+                ObligationVerdict::Undecidable => "unknown",
+                ObligationVerdict::Disagreement => "disagreement",
+                ObligationVerdict::Refused => "refused",
+            }
+        );
+        SolveResult::with_evidence(
+            self.verdict,
+            self.name.clone(),
+            self.version.clone(),
+            SolverExitMetadata::new(if self.timed_out {
+                SolverExitKind::Timeout
             } else {
-                String::new()
-            },
-            solver_stdout: format!(
-                "{}\n",
-                match self.verdict {
-                    ObligationVerdict::Discharged => "unsat",
-                    ObligationVerdict::Unsatisfied => "sat",
-                    ObligationVerdict::Undecidable => "unknown",
-                    ObligationVerdict::Disagreement => "disagreement",
-                    ObligationVerdict::Refused => "refused",
-                }
-            ),
-            wall_clock: started.elapsed(),
-            timed_out: self.timed_out,
-        }
+                SolverExitKind::Stub
+            }),
+            self.timed_out.then(|| "stub: timeout".to_string()),
+            Some(stdout),
+            None,
+            started.elapsed(),
+            self.timed_out,
+        )
     }
 }
