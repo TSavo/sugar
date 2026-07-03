@@ -1083,11 +1083,13 @@ fn attribute_macro_args(attr: &syn::Attribute) -> Vec<JsonValue> {
 }
 
 fn expr_arg_term(expr: &Expr) -> JsonValue {
-    match expr {
-        Expr::Path(path) => json!({"kind": "symbol", "name": rust_path_surface(&path.path)}),
-        Expr::Lit(lit) => literal_arg_term(&lit.lit),
-        _ => token_stream_term(normalize_attr_tokens(expr.to_token_stream().to_string())),
+    if let Expr::Path(path) = expr {
+        return json!({"kind": "symbol", "name": rust_path_surface(&path.path)});
     }
+    if let Expr::Lit(lit) = expr {
+        return literal_arg_term(&lit.lit);
+    }
+    token_stream_term(normalize_attr_tokens(expr.to_token_stream().to_string()))
 }
 
 fn literal_arg_term(lit: &Lit) -> JsonValue {
@@ -1375,61 +1377,77 @@ fn lower_tail_if_expr_to_stmt(
 }
 
 fn lower_expr_to_stmt(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
-    match expr {
-        Expr::Return(ret) => {
-            let value = match &ret.expr {
-                Some(value) => lower_return_expr_to_value_term(value, ctx)?,
-                None if ctx.return_shape.sort() == Some(ExprSort::Unit) => AlgebraTerm::Unit,
-                None => {
-                    return Err("bare return in non-unit function".to_string());
-                }
-            };
-            Ok(AlgebraTerm::op("return", vec![value]))
-        }
-        Expr::If(if_expr) => {
-            let cond = lower_expr_to_bool_term(&if_expr.cond, ctx)?;
-            let then_branch = lower_stmts_to_stmt(&if_expr.then_branch.stmts, ctx)?;
-            let else_branch = match &if_expr.else_branch {
-                Some((_, else_expr)) => lower_expr_to_stmt(else_expr, ctx)?,
-                None => AlgebraTerm::skip(),
-            };
-            Ok(AlgebraTerm::op("if", vec![cond, then_branch, else_branch]))
-        }
-        Expr::Assign(assign) => lower_assign_expr_to_stmt(assign, ctx),
-        Expr::Block(block) => lower_stmts_to_stmt(&block.block.stmts, ctx),
-        Expr::ForLoop(for_loop) => lower_for_loop_to_stmt(for_loop, ctx),
-        Expr::Match(match_expr) => lower_match_to_stmt(match_expr, ctx),
-        Expr::Unsafe(unsafe_expr) => lower_stmts_to_stmt(&unsafe_expr.block.stmts, ctx),
-        Expr::MethodCall(method) => {
-            if method.turbofish.is_some() {
-                return Err(
-                    "unsupported statement-position method call with explicit turbofish"
-                        .to_string(),
-                );
-            }
-            lower_method_call_expr_to_value_term(method, ctx)
-        }
-        Expr::Call(call) => lower_call_expr_to_value_term(call, ctx),
-        Expr::Macro(mac) => lower_macro_to_value_term(&mac.mac, ctx),
-        Expr::Try(try_expr) => lower_try_expr_to_stmt(try_expr, ctx),
-        Expr::Index(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
-        Expr::Field(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
-        Expr::Tuple(tuple) => {
-            if tuple.elems.is_empty() {
-                Ok(AlgebraTerm::skip())
-            } else {
-                lower_discarded_value_expr_to_stmt(expr, ctx)
-            }
-        }
-        Expr::Array(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
-        Expr::Reference(_) => lower_discarded_value_expr_to_stmt(expr, ctx),
-        Expr::Path(_) => Ok(AlgebraTerm::skip()),
-        Expr::Lit(_) => Ok(AlgebraTerm::skip()),
-        _ => Err(format!(
-            "unsupported expression statement {}",
-            expr_kind(expr)
-        )),
+    if let Expr::Return(ret) = expr {
+        let value = if let Some(value) = &ret.expr {
+            lower_return_expr_to_value_term(value, ctx)?
+        } else if ctx.return_shape.sort() == Some(ExprSort::Unit) {
+            AlgebraTerm::Unit
+        } else {
+            return Err("bare return in non-unit function".to_string());
+        };
+        return Ok(AlgebraTerm::op("return", vec![value]));
     }
+    if let Expr::If(if_expr) = expr {
+        let cond = lower_expr_to_bool_term(&if_expr.cond, ctx)?;
+        let then_branch = lower_stmts_to_stmt(&if_expr.then_branch.stmts, ctx)?;
+        let else_branch = if let Some((_, else_expr)) = &if_expr.else_branch {
+            lower_expr_to_stmt(else_expr, ctx)?
+        } else {
+            AlgebraTerm::skip()
+        };
+        return Ok(AlgebraTerm::op("if", vec![cond, then_branch, else_branch]));
+    }
+    if let Expr::Assign(assign) = expr {
+        return lower_assign_expr_to_stmt(assign, ctx);
+    }
+    if let Expr::Block(block) = expr {
+        return lower_stmts_to_stmt(&block.block.stmts, ctx);
+    }
+    if let Expr::ForLoop(for_loop) = expr {
+        return lower_for_loop_to_stmt(for_loop, ctx);
+    }
+    if let Expr::Match(match_expr) = expr {
+        return lower_match_to_stmt(match_expr, ctx);
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        return lower_stmts_to_stmt(&unsafe_expr.block.stmts, ctx);
+    }
+    if let Expr::MethodCall(method) = expr {
+        if method.turbofish.is_some() {
+            return Err(
+                "unsupported statement-position method call with explicit turbofish".to_string(),
+            );
+        }
+        return lower_method_call_expr_to_value_term(method, ctx);
+    }
+    if let Expr::Call(call) = expr {
+        return lower_call_expr_to_value_term(call, ctx);
+    }
+    if let Expr::Macro(mac) = expr {
+        return lower_macro_to_value_term(&mac.mac, ctx);
+    }
+    if let Expr::Try(try_expr) = expr {
+        return lower_try_expr_to_stmt(try_expr, ctx);
+    }
+    if matches!(expr, Expr::Index(_) | Expr::Field(_)) {
+        return lower_discarded_value_expr_to_stmt(expr, ctx);
+    }
+    if let Expr::Tuple(tuple) = expr {
+        if tuple.elems.is_empty() {
+            return Ok(AlgebraTerm::skip());
+        }
+        return lower_discarded_value_expr_to_stmt(expr, ctx);
+    }
+    if matches!(expr, Expr::Array(_) | Expr::Reference(_)) {
+        return lower_discarded_value_expr_to_stmt(expr, ctx);
+    }
+    if matches!(expr, Expr::Path(_) | Expr::Lit(_)) {
+        return Ok(AlgebraTerm::skip());
+    }
+    Err(format!(
+        "unsupported expression statement {}",
+        expr_kind(expr)
+    ))
 }
 
 fn lower_method_call_statement_to_stmt(
@@ -1668,107 +1686,118 @@ fn lower_return_expr_to_value_term(
     expr: &Expr,
     ctx: &LoweringContext,
 ) -> Result<AlgebraTerm, String> {
-    match &ctx.return_shape {
-        ReturnShape::Full(ExprSort::Bool) => {
+    if let ReturnShape::Full(sort) = &ctx.return_shape {
+        if *sort == ExprSort::Bool {
             if matches!(expr, Expr::Call(_) | Expr::MethodCall(_) | Expr::Unsafe(_)) {
-                lower_expr_to_value_term(expr, ctx)
-            } else {
-                lower_expr_to_bool_term(expr, ctx)
+                return lower_expr_to_value_term(expr, ctx);
             }
+            return lower_expr_to_bool_term(expr, ctx);
         }
-        ReturnShape::Full(ExprSort::Int) => {
+        if *sort == ExprSort::Int {
             if matches!(expr, Expr::Call(_) | Expr::MethodCall(_) | Expr::Unsafe(_)) {
-                lower_expr_to_value_term(expr, ctx)
-            } else {
-                lower_expr_to_int_term(expr, ctx)
+                return lower_expr_to_value_term(expr, ctx);
             }
+            return lower_expr_to_int_term(expr, ctx);
         }
-        ReturnShape::Full(ExprSort::Unit) => lower_expr_to_unit_term(expr, ctx),
-        ReturnShape::Partial { .. } | ReturnShape::SortOnly(_) => {
-            lower_expr_to_value_term(expr, ctx)
-        }
-        ReturnShape::Unsupported => {
-            Err("unsupported function return type for term emission".to_string())
-        }
+        return lower_expr_to_unit_term(expr, ctx);
     }
+    if matches!(
+        ctx.return_shape,
+        ReturnShape::Partial { .. } | ReturnShape::SortOnly(_)
+    ) {
+        return lower_expr_to_value_term(expr, ctx);
+    }
+    Err("unsupported function return type for term emission".to_string())
 }
 
 fn lower_expr_to_bool_term(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
-    match expr {
-        Expr::Binary(binary) => {
-            if let Some(op) = comparison_op(&binary.op) {
-                return Ok(AlgebraTerm::op(
-                    op,
-                    vec![
-                        lower_expr_to_int_term(&binary.left, ctx)?,
-                        lower_expr_to_int_term(&binary.right, ctx)?,
-                    ],
-                ));
-            }
-            if let Some(op) = logical_binary_op(&binary.op) {
-                return Ok(AlgebraTerm::op(
-                    op,
-                    vec![
-                        lower_expr_to_bool_term(&binary.left, ctx)?,
-                        lower_expr_to_bool_term(&binary.right, ctx)?,
-                    ],
-                ));
-            }
-            Err(format!("unsupported boolean operator: {:?}", binary.op))
+    if let Expr::Binary(binary) = expr {
+        if let Some(op) = comparison_op(&binary.op) {
+            return Ok(AlgebraTerm::op(
+                op,
+                vec![
+                    lower_expr_to_int_term(&binary.left, ctx)?,
+                    lower_expr_to_int_term(&binary.right, ctx)?,
+                ],
+            ));
         }
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => Ok(AlgebraTerm::op(
-            "not",
-            vec![lower_expr_to_bool_term(&unary.expr, ctx)?],
-        )),
-        Expr::Field(_) => {
-            ctx.add_loss("type-inference-assumed-bool", expr_kind(expr));
-            lower_expr_to_value_term(expr, ctx)
+        if let Some(op) = logical_binary_op(&binary.op) {
+            return Ok(AlgebraTerm::op(
+                op,
+                vec![
+                    lower_expr_to_bool_term(&binary.left, ctx)?,
+                    lower_expr_to_bool_term(&binary.right, ctx)?,
+                ],
+            ));
         }
-        Expr::Let(let_expr) => lower_let_expr_to_bool_term(let_expr, ctx),
-        Expr::Macro(mac) => lower_macro_to_value_term(&mac.mac, ctx),
-        Expr::Match(match_expr) => lower_match_to_bool_term(match_expr, ctx),
-        Expr::Paren(paren) => lower_expr_to_bool_term(&paren.expr, ctx),
-        Expr::Block(block) => {
-            let Some(tail) = block_single_tail_expr(&block.block) else {
-                return Err("block expression has no single tail expression".to_string());
-            };
-            lower_expr_to_bool_term(tail, ctx)
-        }
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Bool(value) => Ok(AlgebraTerm::ConstBool(value.value)),
-            _ => Err("non-bool literal in boolean term".to_string()),
-        },
-        Expr::Path(path) => {
-            let term = path_term_for_expr(path, ctx)
-                .ok_or_else(|| "empty path in boolean term".to_string())?;
-            match &term {
-                AlgebraTerm::Var(name) => match ctx.vars.get(name).copied() {
-                    Some(ExprSort::Bool) => Ok(term),
-                    Some(sort) => Err(format!(
-                        "expected Bool path in boolean term, found {} for `{name}`",
-                        sort.name()
-                    )),
-                    None => {
-                        ctx.add_loss("type-inference-assumed-bool", name.clone());
-                        Ok(term)
-                    }
-                },
-                AlgebraTerm::FullyQualifiedPath(path) => {
-                    ctx.add_loss("type-inference-assumed-bool", path.clone());
-                    Ok(term)
-                }
-                _ => unreachable!("path term must be a var or fully qualified path"),
-            }
-        }
-        Expr::Call(_) | Expr::MethodCall(_) => {
-            ctx.add_loss("type-inference-assumed-bool", expr_kind(expr));
-            lower_expr_to_value_term(expr, ctx)
-        }
-        _ => Err(format!(
-            "unsupported boolean expression {}",
-            expr_kind(expr)
-        )),
+        return Err(format!("unsupported boolean operator: {:?}", binary.op));
     }
+    if let Expr::Unary(unary) = expr {
+        if matches!(unary.op, UnOp::Not(_)) {
+            return Ok(AlgebraTerm::op(
+                "not",
+                vec![lower_expr_to_bool_term(&unary.expr, ctx)?],
+            ));
+        }
+    }
+    if matches!(expr, Expr::Field(_)) {
+        ctx.add_loss("type-inference-assumed-bool", expr_kind(expr));
+        return lower_expr_to_value_term(expr, ctx);
+    }
+    if let Expr::Let(let_expr) = expr {
+        return lower_let_expr_to_bool_term(let_expr, ctx);
+    }
+    if let Expr::Macro(mac) = expr {
+        return lower_macro_to_value_term(&mac.mac, ctx);
+    }
+    if let Expr::Match(match_expr) = expr {
+        return lower_match_to_bool_term(match_expr, ctx);
+    }
+    if let Expr::Paren(paren) = expr {
+        return lower_expr_to_bool_term(&paren.expr, ctx);
+    }
+    if let Expr::Block(block) = expr {
+        let Some(tail) = block_single_tail_expr(&block.block) else {
+            return Err("block expression has no single tail expression".to_string());
+        };
+        return lower_expr_to_bool_term(tail, ctx);
+    }
+    if let Expr::Lit(lit) = expr {
+        if let Lit::Bool(value) = &lit.lit {
+            return Ok(AlgebraTerm::ConstBool(value.value));
+        }
+        return Err("non-bool literal in boolean term".to_string());
+    }
+    if let Expr::Path(path) = expr {
+        let term = path_term_for_expr(path, ctx)
+            .ok_or_else(|| "empty path in boolean term".to_string())?;
+        if let AlgebraTerm::Var(name) = &term {
+            if let Some(sort) = ctx.vars.get(name).copied() {
+                if sort == ExprSort::Bool {
+                    return Ok(term);
+                }
+                return Err(format!(
+                    "expected Bool path in boolean term, found {} for `{name}`",
+                    sort.name()
+                ));
+            }
+            ctx.add_loss("type-inference-assumed-bool", name.clone());
+            return Ok(term);
+        }
+        if let AlgebraTerm::FullyQualifiedPath(path) = &term {
+            ctx.add_loss("type-inference-assumed-bool", path.clone());
+            return Ok(term);
+        }
+        unreachable!("path term must be a var or fully qualified path");
+    }
+    if matches!(expr, Expr::Call(_) | Expr::MethodCall(_)) {
+        ctx.add_loss("type-inference-assumed-bool", expr_kind(expr));
+        return lower_expr_to_value_term(expr, ctx);
+    }
+    Err(format!(
+        "unsupported boolean expression {}",
+        expr_kind(expr)
+    ))
 }
 
 fn lower_expr_to_int_term(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
@@ -1818,217 +1847,245 @@ fn lower_let_expr_to_bool_term(
 }
 
 fn lower_expr_to_unit_term(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
-    match expr {
-        Expr::Tuple(tuple) if tuple.elems.is_empty() => Ok(AlgebraTerm::Unit),
-        Expr::Block(block) if block.block.stmts.is_empty() => Ok(AlgebraTerm::Unit),
-        Expr::Unsafe(unsafe_expr) => lower_stmts_to_stmt(&unsafe_expr.block.stmts, ctx),
-        Expr::ForLoop(_) | Expr::If(_) | Expr::Match(_) => lower_expr_to_stmt(expr, ctx),
-        _ => Err(format!("unsupported unit expression {}", expr_kind(expr))),
+    if let Expr::Tuple(tuple) = expr {
+        if tuple.elems.is_empty() {
+            return Ok(AlgebraTerm::Unit);
+        }
     }
+    if let Expr::Block(block) = expr {
+        if block.block.stmts.is_empty() {
+            return Ok(AlgebraTerm::Unit);
+        }
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        return lower_stmts_to_stmt(&unsafe_expr.block.stmts, ctx);
+    }
+    if matches!(expr, Expr::ForLoop(_) | Expr::If(_) | Expr::Match(_)) {
+        return lower_expr_to_stmt(expr, ctx);
+    }
+    Err(format!("unsupported unit expression {}", expr_kind(expr)))
 }
 
 fn lower_expr_to_value_term(expr: &Expr, ctx: &LoweringContext) -> Result<AlgebraTerm, String> {
-    match expr {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Int(value) => value
+    if let Expr::Lit(lit) = expr {
+        if let Lit::Int(value) = &lit.lit {
+            return value
                 .base10_parse::<i64>()
                 .map(AlgebraTerm::ConstInt)
-                .map_err(|err| format!("integer literal does not fit i64: {err}")),
-            Lit::Bool(value) => Ok(AlgebraTerm::ConstBool(value.value)),
-            _ => Err("unsupported literal expression".to_string()),
-        },
-        Expr::Path(path) => {
-            path_term_for_expr(path, ctx).ok_or_else(|| "empty path expression".to_string())
+                .map_err(|err| format!("integer literal does not fit i64: {err}"));
         }
-        Expr::Paren(paren) => lower_expr_to_value_term(&paren.expr, ctx),
-        Expr::Group(group) => lower_expr_to_value_term(&group.expr, ctx),
-        Expr::Block(block) => {
-            let Some(tail) = block_single_tail_expr(&block.block) else {
-                return Err("block expression has no single tail expression".to_string());
-            };
-            lower_expr_to_value_term(tail, ctx)
+        if let Lit::Bool(value) = &lit.lit {
+            return Ok(AlgebraTerm::ConstBool(value.value));
         }
-        Expr::Unsafe(unsafe_expr) => {
-            let Some(tail) = block_single_tail_expr(&unsafe_expr.block) else {
-                return Err("unsafe block expression has no single tail expression".to_string());
-            };
-            lower_expr_to_value_term(tail, ctx)
-        }
-        Expr::Unary(unary) => {
-            let op = match &unary.op {
-                UnOp::Neg(_) => "neg",
-                UnOp::Not(_) => match expr_sort(&unary.expr, ctx) {
-                    Some(ExprSort::Int) => "bit_not",
-                    Some(ExprSort::Bool) => {
-                        return Err("logical ! used in value position".to_string());
-                    }
-                    Some(ExprSort::Unit) => {
-                        return Err("unary ! is unsupported for Unit".to_string());
-                    }
-                    None => {
-                        return Err(
-                            "cannot determine whether unary ! is Bool or Int; skipping term"
-                                .to_string(),
-                        );
-                    }
-                },
-                UnOp::Deref(_) => "deref",
-                _ => return Err(format!("unsupported unary operator: {:?}", unary.op)),
-            };
-            Ok(AlgebraTerm::op(
-                op,
-                vec![lower_expr_to_value_term(&unary.expr, ctx)?],
-            ))
-        }
-        Expr::Binary(binary) => {
-            let op = arithmetic_binary_op(&binary.op)
-                .or_else(|| bitwise_binary_op(&binary.op))
-                .or_else(|| comparison_op(&binary.op));
-            let Some(op) = op else {
-                return Err(format!("unsupported value operator: {:?}", binary.op));
-            };
-            Ok(AlgebraTerm::op(
-                op,
-                vec![
-                    lower_expr_to_int_term(&binary.left, ctx)?,
-                    lower_expr_to_int_term(&binary.right, ctx)?,
-                ],
-            ))
-        }
-        Expr::Call(call) => lower_call_expr_to_value_term(call, ctx),
-        Expr::MethodCall(method) => lower_method_call_expr_to_value_term(method, ctx),
-        Expr::Closure(closure) => {
-            if closure.asyncness.is_some() {
-                return Err("unsupported async closure in value position".to_string());
+        return Err("unsupported literal expression".to_string());
+    }
+    if let Expr::Path(path) = expr {
+        return path_term_for_expr(path, ctx).ok_or_else(|| "empty path expression".to_string());
+    }
+    if let Expr::Paren(paren) = expr {
+        return lower_expr_to_value_term(&paren.expr, ctx);
+    }
+    if let Expr::Group(group) = expr {
+        return lower_expr_to_value_term(&group.expr, ctx);
+    }
+    if let Expr::Block(block) = expr {
+        let Some(tail) = block_single_tail_expr(&block.block) else {
+            return Err("block expression has no single tail expression".to_string());
+        };
+        return lower_expr_to_value_term(tail, ctx);
+    }
+    if let Expr::Unsafe(unsafe_expr) = expr {
+        let Some(tail) = block_single_tail_expr(&unsafe_expr.block) else {
+            return Err("unsafe block expression has no single tail expression".to_string());
+        };
+        return lower_expr_to_value_term(tail, ctx);
+    }
+    if let Expr::Unary(unary) = expr {
+        let op = if matches!(unary.op, UnOp::Neg(_)) {
+            "neg"
+        } else if matches!(unary.op, UnOp::Not(_)) {
+            let sort = expr_sort(&unary.expr, ctx);
+            if sort == Some(ExprSort::Int) {
+                "bit_not"
+            } else if sort == Some(ExprSort::Bool) {
+                return Err("logical ! used in value position".to_string());
+            } else if sort == Some(ExprSort::Unit) {
+                return Err("unary ! is unsupported for Unit".to_string());
+            } else {
+                return Err(
+                    "cannot determine whether unary ! is Bool or Int; skipping term".to_string(),
+                );
             }
-            if closure.capture.is_some() {
-                return Err("unsupported move closure in value position".to_string());
-            }
-            let mut params = Vec::new();
-            let mut closure_ctx = ctx.clone();
-            for input in &closure.inputs {
-                let mut bindings = match input {
-                    syn::Pat::Ident(ident) => vec![(ident.ident.to_string(), None)],
-                    syn::Pat::Type(pat_type) => match &*pat_type.pat {
-                        syn::Pat::Ident(ident) => {
-                            vec![(ident.ident.to_string(), sort_from_type(&pat_type.ty))]
-                        }
-                        _ => {
-                            return Err(
-                                "unsupported closure parameter destructuring pattern".to_string()
-                            );
-                        }
-                    },
-                    syn::Pat::Tuple(tuple) if closure.inputs.len() == 1 => {
-                        let mut tuple_bindings = Vec::new();
-                        for elem in &tuple.elems {
-                            match elem {
-                                syn::Pat::Ident(ident) => {
-                                    tuple_bindings.push((ident.ident.to_string(), None))
-                                }
-                                syn::Pat::Type(pat_type) => {
-                                    let syn::Pat::Ident(ident) = &*pat_type.pat else {
-                                        return Err(
-                                            "unsupported closure parameter destructuring pattern"
-                                                .to_string(),
-                                        );
-                                    };
-                                    tuple_bindings.push((
-                                        ident.ident.to_string(),
-                                        sort_from_type(&pat_type.ty),
-                                    ));
-                                }
-                                _ => {
-                                    return Err(
-                                        "unsupported closure parameter destructuring pattern"
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        tuple_bindings
-                    }
-                    _ => {
-                        return Err(
-                            "unsupported closure parameter destructuring pattern".to_string()
-                        );
-                    }
-                };
-                for (name, sort) in bindings.drain(..) {
-                    closure_ctx = closure_ctx.with_var(name.clone(), sort);
-                    params.push(AlgebraTerm::Symbol(name));
-                }
-            }
-            ctx.add_loss(
-                "closure-captures-environment",
-                closure.to_token_stream().to_string(),
-            );
-            Ok(AlgebraTerm::op(
-                "closure",
-                vec![
-                    AlgebraTerm::List(params),
-                    lower_expr_to_value_term(&closure.body, &closure_ctx)?,
-                ],
-            ))
+        } else if matches!(unary.op, UnOp::Deref(_)) {
+            "deref"
+        } else {
+            return Err(format!("unsupported unary operator: {:?}", unary.op));
+        };
+        return Ok(AlgebraTerm::op(
+            op,
+            vec![lower_expr_to_value_term(&unary.expr, ctx)?],
+        ));
+    }
+    if let Expr::Binary(binary) = expr {
+        let op = arithmetic_binary_op(&binary.op)
+            .or_else(|| bitwise_binary_op(&binary.op))
+            .or_else(|| comparison_op(&binary.op));
+        let Some(op) = op else {
+            return Err(format!("unsupported value operator: {:?}", binary.op));
+        };
+        return Ok(AlgebraTerm::op(
+            op,
+            vec![
+                lower_expr_to_int_term(&binary.left, ctx)?,
+                lower_expr_to_int_term(&binary.right, ctx)?,
+            ],
+        ));
+    }
+    if let Expr::Call(call) = expr {
+        return lower_call_expr_to_value_term(call, ctx);
+    }
+    if let Expr::MethodCall(method) = expr {
+        return lower_method_call_expr_to_value_term(method, ctx);
+    }
+    if let Expr::Closure(closure) = expr {
+        if closure.asyncness.is_some() {
+            return Err("unsupported async closure in value position".to_string());
         }
-        Expr::Array(array) => {
-            let items = array
-                .elems
-                .iter()
-                .map(|expr| lower_expr_to_value_term(expr, ctx))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(AlgebraTerm::op("array", vec![AlgebraTerm::List(items)]))
+        if closure.capture.is_some() {
+            return Err("unsupported move closure in value position".to_string());
         }
-        Expr::Repeat(repeat) => Ok(AlgebraTerm::op(
+        let mut params = Vec::new();
+        let mut closure_ctx = ctx.clone();
+        for input in &closure.inputs {
+            let bindings = closure_param_bindings(input, closure.inputs.len() == 1)?;
+            for (name, sort) in bindings {
+                closure_ctx = closure_ctx.with_var(name.clone(), sort);
+                params.push(AlgebraTerm::Symbol(name));
+            }
+        }
+        ctx.add_loss(
+            "closure-captures-environment",
+            closure.to_token_stream().to_string(),
+        );
+        return Ok(AlgebraTerm::op(
+            "closure",
+            vec![
+                AlgebraTerm::List(params),
+                lower_expr_to_value_term(&closure.body, &closure_ctx)?,
+            ],
+        ));
+    }
+    if let Expr::Array(array) = expr {
+        let items = array
+            .elems
+            .iter()
+            .map(|expr| lower_expr_to_value_term(expr, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AlgebraTerm::op("array", vec![AlgebraTerm::List(items)]));
+    }
+    if let Expr::Repeat(repeat) = expr {
+        return Ok(AlgebraTerm::op(
             "array_repeat",
             vec![
                 lower_expr_to_value_term(&repeat.expr, ctx)?,
                 lower_expr_to_int_term(&repeat.len, ctx)?,
             ],
-        )),
-        Expr::Tuple(tuple) => {
-            if tuple.elems.is_empty() {
-                return Ok(AlgebraTerm::Unit);
-            }
-            let items = tuple
-                .elems
-                .iter()
-                .map(|expr| lower_expr_to_value_term(expr, ctx))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(AlgebraTerm::op("tuple", vec![AlgebraTerm::List(items)]))
+        ));
+    }
+    if let Expr::Tuple(tuple) = expr {
+        if tuple.elems.is_empty() {
+            return Ok(AlgebraTerm::Unit);
         }
-        Expr::Struct(strukt) => lower_struct_expr_to_value_term(strukt, ctx),
-        Expr::Field(field) => Ok(AlgebraTerm::op(
+        let items = tuple
+            .elems
+            .iter()
+            .map(|expr| lower_expr_to_value_term(expr, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(AlgebraTerm::op("tuple", vec![AlgebraTerm::List(items)]));
+    }
+    if let Expr::Struct(strukt) = expr {
+        return lower_struct_expr_to_value_term(strukt, ctx);
+    }
+    if let Expr::Field(field) = expr {
+        return Ok(AlgebraTerm::op(
             "field",
             vec![
                 lower_expr_to_value_term(&field.base, ctx)?,
                 AlgebraTerm::Symbol(field.member.to_token_stream().to_string()),
             ],
-        )),
-        Expr::Index(index) => Ok(AlgebraTerm::op(
+        ));
+    }
+    if let Expr::Index(index) = expr {
+        return Ok(AlgebraTerm::op(
             "index",
             vec![
                 lower_expr_to_value_term(&index.expr, ctx)?,
                 lower_expr_to_int_term(&index.index, ctx)?,
             ],
-        )),
-        Expr::Try(try_expr) => lower_try_expr_to_value_term(try_expr, ctx),
-        Expr::Macro(mac) => lower_macro_to_value_term(&mac.mac, ctx),
-        Expr::Match(match_expr) => lower_match_to_value_term(match_expr, ctx),
-        Expr::Reference(reference) => {
-            let op = if reference.mutability.is_some() {
-                "borrow_mut"
-            } else {
-                "borrow"
-            };
-            Ok(AlgebraTerm::op(
-                op,
-                vec![lower_expr_to_value_term(&reference.expr, ctx)?],
-            ))
-        }
-        Expr::Cast(_) => Err("unsupported value expression Expr::Cast".to_string()),
-        _ => Err(format!("unsupported value expression {}", expr_kind(expr))),
+        ));
     }
+    if let Expr::Try(try_expr) = expr {
+        return lower_try_expr_to_value_term(try_expr, ctx);
+    }
+    if let Expr::Macro(mac) = expr {
+        return lower_macro_to_value_term(&mac.mac, ctx);
+    }
+    if let Expr::Match(match_expr) = expr {
+        return lower_match_to_value_term(match_expr, ctx);
+    }
+    if let Expr::Reference(reference) = expr {
+        let op = if reference.mutability.is_some() {
+            "borrow_mut"
+        } else {
+            "borrow"
+        };
+        return Ok(AlgebraTerm::op(
+            op,
+            vec![lower_expr_to_value_term(&reference.expr, ctx)?],
+        ));
+    }
+    if matches!(expr, Expr::Cast(_)) {
+        return Err("unsupported value expression Expr::Cast".to_string());
+    }
+    Err(format!("unsupported value expression {}", expr_kind(expr)))
+}
+
+fn closure_param_bindings(
+    input: &syn::Pat,
+    single_input: bool,
+) -> Result<Vec<(String, Option<ExprSort>)>, String> {
+    if let syn::Pat::Ident(ident) = input {
+        return Ok(vec![(ident.ident.to_string(), None)]);
+    }
+    if let syn::Pat::Type(pat_type) = input {
+        return typed_closure_param_binding(pat_type).map(|binding| vec![binding]);
+    }
+    if let syn::Pat::Tuple(tuple) = input {
+        if !single_input {
+            return Err("unsupported closure parameter destructuring pattern".to_string());
+        }
+        let mut tuple_bindings = Vec::new();
+        for elem in &tuple.elems {
+            if let syn::Pat::Ident(ident) = elem {
+                tuple_bindings.push((ident.ident.to_string(), None));
+            } else if let syn::Pat::Type(pat_type) = elem {
+                tuple_bindings.push(typed_closure_param_binding(pat_type)?);
+            } else {
+                return Err("unsupported closure parameter destructuring pattern".to_string());
+            }
+        }
+        return Ok(tuple_bindings);
+    }
+    Err("unsupported closure parameter destructuring pattern".to_string())
+}
+
+fn typed_closure_param_binding(
+    pat_type: &syn::PatType,
+) -> Result<(String, Option<ExprSort>), String> {
+    let syn::Pat::Ident(ident) = &*pat_type.pat else {
+        return Err("unsupported closure parameter destructuring pattern".to_string());
+    };
+    Ok((ident.ident.to_string(), sort_from_type(&pat_type.ty)))
 }
 
 fn lower_match_to_value_term(
@@ -2262,93 +2319,118 @@ fn lower_vec_macro_to_value_term(
 }
 
 fn expr_sort(expr: &Expr, ctx: &LoweringContext) -> Option<ExprSort> {
-    match expr {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Bool(_) => Some(ExprSort::Bool),
-            Lit::Int(_) => Some(ExprSort::Int),
-            Lit::Byte(_) | Lit::Char(_) => Some(ExprSort::Int),
-            Lit::Float(_) | Lit::Str(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_) => {
-                // #3017 item 2 owns richer scalar floors; ExprSort only proves
-                // the current Unit/Bool/Int subset.
-                None
-            }
-            _ => panic!("sugar-walk emit expr_sort refused unknown syn::Lit variant"),
-        },
-        Expr::Path(path) => {
-            local_path_name_for_expr(path, ctx).and_then(|name| ctx.vars.get(&name).copied())
-        }
-        Expr::Paren(paren) => expr_sort(&paren.expr, ctx),
-        Expr::Group(group) => expr_sort(&group.expr, ctx),
-        Expr::Block(block) => {
-            block_single_tail_expr(&block.block).and_then(|expr| expr_sort(expr, ctx))
-        }
-        Expr::Unary(unary) => match &unary.op {
-            UnOp::Neg(_) => {
-                (expr_sort(&unary.expr, ctx) == Some(ExprSort::Int)).then_some(ExprSort::Int)
-            }
-            UnOp::Not(_) => match expr_sort(&unary.expr, ctx) {
-                Some(ExprSort::Bool) => Some(ExprSort::Bool),
-                Some(ExprSort::Int) => Some(ExprSort::Int),
-                Some(ExprSort::Unit) | None => {
-                    // #3017 item 8 owns the predicate-vs-raw-term split that
-                    // would let unknown `!x` classify without guessing.
-                    None
-                }
-            },
-            UnOp::Deref(_) => expr_sort(&unary.expr, ctx),
-            _ => panic!("sugar-walk emit expr_sort refused unknown syn::UnOp variant"),
-        },
-        Expr::Binary(binary) => {
-            if arithmetic_binary_op(&binary.op).is_some() || bitwise_binary_op(&binary.op).is_some()
-            {
-                return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Int)
-                    .then_some(ExprSort::Int);
-            }
-            if comparison_op(&binary.op).is_some() {
-                return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Int)
-                    .then_some(ExprSort::Bool);
-            }
-            if logical_binary_op(&binary.op).is_some() {
-                return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Bool)
-                    .then_some(ExprSort::Bool);
-            }
-            None
-        }
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unsafe(_)
-        | Expr::Verbatim(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        _ => panic!("sugar-walk emit expr_sort refused unknown syn::Expr variant"),
+    if let Expr::Lit(lit) = expr {
+        return lit_expr_sort(&lit.lit);
     }
+    if let Expr::Path(path) = expr {
+        return local_path_name_for_expr(path, ctx).and_then(|name| ctx.vars.get(&name).copied());
+    }
+    if let Expr::Paren(paren) = expr {
+        return expr_sort(&paren.expr, ctx);
+    }
+    if let Expr::Group(group) = expr {
+        return expr_sort(&group.expr, ctx);
+    }
+    if let Expr::Block(block) = expr {
+        return block_single_tail_expr(&block.block).and_then(|expr| expr_sort(expr, ctx));
+    }
+    if let Expr::Unary(unary) = expr {
+        if matches!(unary.op, UnOp::Neg(_)) {
+            return (expr_sort(&unary.expr, ctx) == Some(ExprSort::Int)).then_some(ExprSort::Int);
+        }
+        if matches!(unary.op, UnOp::Not(_)) {
+            let sort = expr_sort(&unary.expr, ctx);
+            if sort == Some(ExprSort::Bool) {
+                return Some(ExprSort::Bool);
+            }
+            if sort == Some(ExprSort::Int) {
+                return Some(ExprSort::Int);
+            }
+            // #3017 item 8 owns the predicate-vs-raw-term split that would let
+            // unknown `!x` classify without guessing.
+            return None;
+        }
+        if matches!(unary.op, UnOp::Deref(_)) {
+            return expr_sort(&unary.expr, ctx);
+        }
+        panic!("sugar-walk emit expr_sort refused unknown syn::UnOp variant");
+    }
+    if let Expr::Binary(binary) = expr {
+        if arithmetic_binary_op(&binary.op).is_some() || bitwise_binary_op(&binary.op).is_some() {
+            return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Int)
+                .then_some(ExprSort::Int);
+        }
+        if comparison_op(&binary.op).is_some() {
+            return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Int)
+                .then_some(ExprSort::Bool);
+        }
+        if logical_binary_op(&binary.op).is_some() {
+            return operands_have_sort(&binary.left, &binary.right, ctx, ExprSort::Bool)
+                .then_some(ExprSort::Bool);
+        }
+        return None;
+    }
+    if known_unsorted_expr(expr) {
+        return None;
+    }
+    panic!("sugar-walk emit expr_sort refused unknown syn::Expr variant")
+}
+
+fn lit_expr_sort(lit: &Lit) -> Option<ExprSort> {
+    if matches!(lit, Lit::Bool(_)) {
+        return Some(ExprSort::Bool);
+    }
+    if matches!(lit, Lit::Int(_) | Lit::Byte(_) | Lit::Char(_)) {
+        return Some(ExprSort::Int);
+    }
+    if matches!(
+        lit,
+        Lit::Float(_) | Lit::Str(_) | Lit::ByteStr(_) | Lit::CStr(_) | Lit::Verbatim(_)
+    ) {
+        // #3017 item 2 owns richer scalar floors; ExprSort only proves the
+        // current Unit/Bool/Int subset.
+        return None;
+    }
+    panic!("sugar-walk emit expr_sort refused unknown syn::Lit variant")
+}
+
+fn known_unsorted_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unsafe(_)
+            | Expr::Verbatim(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn operands_have_sort(left: &Expr, right: &Expr, ctx: &LoweringContext, sort: ExprSort) -> bool {
@@ -2850,48 +2932,124 @@ fn compact_rust_token_surface(surface: String) -> String {
 }
 
 fn expr_kind(expr: &Expr) -> &'static str {
-    match expr {
-        Expr::Array(_) => "Expr::Array",
-        Expr::Assign(_) => "Expr::Assign",
-        Expr::Async(_) => "Expr::Async",
-        Expr::Await(_) => "Expr::Await",
-        Expr::Binary(_) => "Expr::Binary",
-        Expr::Block(_) => "Expr::Block",
-        Expr::Break(_) => "Expr::Break",
-        Expr::Call(_) => "Expr::Call",
-        Expr::Cast(_) => "Expr::Cast",
-        Expr::Closure(_) => "Expr::Closure",
-        Expr::Const(_) => "Expr::Const",
-        Expr::Continue(_) => "Expr::Continue",
-        Expr::Field(_) => "Expr::Field",
-        Expr::ForLoop(_) => "Expr::ForLoop",
-        Expr::Group(_) => "Expr::Group",
-        Expr::If(_) => "Expr::If",
-        Expr::Index(_) => "Expr::Index",
-        Expr::Infer(_) => "Expr::Infer",
-        Expr::Let(_) => "Expr::Let",
-        Expr::Lit(_) => "Expr::Lit",
-        Expr::Loop(_) => "Expr::Loop",
-        Expr::Macro(_) => "Expr::Macro",
-        Expr::Match(_) => "Expr::Match",
-        Expr::MethodCall(_) => "Expr::MethodCall",
-        Expr::Paren(_) => "Expr::Paren",
-        Expr::Path(_) => "Expr::Path",
-        Expr::Range(_) => "Expr::Range",
-        Expr::Reference(_) => "Expr::Reference",
-        Expr::Repeat(_) => "Expr::Repeat",
-        Expr::Return(_) => "Expr::Return",
-        Expr::Struct(_) => "Expr::Struct",
-        Expr::Try(_) => "Expr::Try",
-        Expr::TryBlock(_) => "Expr::TryBlock",
-        Expr::Tuple(_) => "Expr::Tuple",
-        Expr::Unary(_) => "Expr::Unary",
-        Expr::Unsafe(_) => "Expr::Unsafe",
-        Expr::Verbatim(_) => "Expr::Verbatim",
-        Expr::While(_) => "Expr::While",
-        Expr::Yield(_) => "Expr::Yield",
-        _ => "Expr::<unknown>",
+    if matches!(expr, Expr::Array(_)) {
+        return "Expr::Array";
     }
+    if matches!(expr, Expr::Assign(_)) {
+        return "Expr::Assign";
+    }
+    if matches!(expr, Expr::Async(_)) {
+        return "Expr::Async";
+    }
+    if matches!(expr, Expr::Await(_)) {
+        return "Expr::Await";
+    }
+    if matches!(expr, Expr::Binary(_)) {
+        return "Expr::Binary";
+    }
+    if matches!(expr, Expr::Block(_)) {
+        return "Expr::Block";
+    }
+    if matches!(expr, Expr::Break(_)) {
+        return "Expr::Break";
+    }
+    if matches!(expr, Expr::Call(_)) {
+        return "Expr::Call";
+    }
+    if matches!(expr, Expr::Cast(_)) {
+        return "Expr::Cast";
+    }
+    if matches!(expr, Expr::Closure(_)) {
+        return "Expr::Closure";
+    }
+    if matches!(expr, Expr::Const(_)) {
+        return "Expr::Const";
+    }
+    if matches!(expr, Expr::Continue(_)) {
+        return "Expr::Continue";
+    }
+    if matches!(expr, Expr::Field(_)) {
+        return "Expr::Field";
+    }
+    if matches!(expr, Expr::ForLoop(_)) {
+        return "Expr::ForLoop";
+    }
+    if matches!(expr, Expr::Group(_)) {
+        return "Expr::Group";
+    }
+    if matches!(expr, Expr::If(_)) {
+        return "Expr::If";
+    }
+    if matches!(expr, Expr::Index(_)) {
+        return "Expr::Index";
+    }
+    if matches!(expr, Expr::Infer(_)) {
+        return "Expr::Infer";
+    }
+    if matches!(expr, Expr::Let(_)) {
+        return "Expr::Let";
+    }
+    if matches!(expr, Expr::Lit(_)) {
+        return "Expr::Lit";
+    }
+    if matches!(expr, Expr::Loop(_)) {
+        return "Expr::Loop";
+    }
+    if matches!(expr, Expr::Macro(_)) {
+        return "Expr::Macro";
+    }
+    if matches!(expr, Expr::Match(_)) {
+        return "Expr::Match";
+    }
+    if matches!(expr, Expr::MethodCall(_)) {
+        return "Expr::MethodCall";
+    }
+    if matches!(expr, Expr::Paren(_)) {
+        return "Expr::Paren";
+    }
+    if matches!(expr, Expr::Path(_)) {
+        return "Expr::Path";
+    }
+    if matches!(expr, Expr::Range(_)) {
+        return "Expr::Range";
+    }
+    if matches!(expr, Expr::Reference(_)) {
+        return "Expr::Reference";
+    }
+    if matches!(expr, Expr::Repeat(_)) {
+        return "Expr::Repeat";
+    }
+    if matches!(expr, Expr::Return(_)) {
+        return "Expr::Return";
+    }
+    if matches!(expr, Expr::Struct(_)) {
+        return "Expr::Struct";
+    }
+    if matches!(expr, Expr::Try(_)) {
+        return "Expr::Try";
+    }
+    if matches!(expr, Expr::TryBlock(_)) {
+        return "Expr::TryBlock";
+    }
+    if matches!(expr, Expr::Tuple(_)) {
+        return "Expr::Tuple";
+    }
+    if matches!(expr, Expr::Unary(_)) {
+        return "Expr::Unary";
+    }
+    if matches!(expr, Expr::Unsafe(_)) {
+        return "Expr::Unsafe";
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        return "Expr::Verbatim";
+    }
+    if matches!(expr, Expr::While(_)) {
+        return "Expr::While";
+    }
+    if matches!(expr, Expr::Yield(_)) {
+        return "Expr::Yield";
+    }
+    "Expr::<unknown>"
 }
 
 fn block_single_tail_expr(block: &syn::Block) -> Option<&Expr> {

@@ -45,7 +45,8 @@ use syn::{
 use tracing::debug;
 
 use crate::term_boundary::{
-    lower_ir, lower_ir_formula, raise_guarded_return_ir, raise_ir, raise_ir_formula,
+    formula_to_legacy_guard_term, lower_ir, lower_ir_formula, raise_guarded_return_ir, raise_ir,
+    raise_ir_formula,
 };
 use crate::wp::{free_vars_formula, free_vars_term, Wp};
 
@@ -569,7 +570,7 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // boolean condition no longer collapses the whole `ite`. The cond term
     // is uninterpreted; the `ite` still discharges reflexively.
     let cond_formula = lift_predicate_inner(&if_expr.cond, ctx);
-    let cond_term = match cond_formula.clone().and_then(formula_to_term) {
+    let cond_term = match cond_formula.clone().and_then(formula_to_legacy_guard_term) {
         Some(t) => t,
         None => lift_expr_to_term_inner(&if_expr.cond, ctx)?,
     };
@@ -868,72 +869,16 @@ fn opaque_token_hash<T: quote::ToTokens>(node: &T) -> String {
     hex.chars().take(16).collect()
 }
 
-/// Map an SMT builtin predicate/connective head to a `cf_`-prefixed
-/// UNINTERPRETED head. `formula_to_term` is used to fold a control-flow
-/// CONDITION into a value term (the guard arg of `cf_ite`). A builtin
-/// like `<` or `and` there would be applied as a Bool-typed term inside
-/// an uninterpreted Int-sorted context, raising an SMT sort mismatch. As
-/// `cf_lt`/`cf_and` it is uninterpreted and discharges by congruence. A
-/// non-builtin head (`is_some`, a method) is already uninterpreted and
-/// passes through unchanged.
-fn cf_head(name: &str) -> String {
-    match name {
-        "=" | "eq" => "cf_eq",
-        "≠" | "ne" | "neq" => "cf_ne",
-        "<" | "lt" => "cf_lt",
-        "≤" | "le" | "lte" => "cf_le",
-        ">" | "gt" => "cf_gt",
-        "≥" | "ge" | "gte" => "cf_ge",
-        "and" => "cf_and",
-        "or" => "cf_or",
-        "not" => "cf_not",
-        "implies" => "cf_implies",
-        other => return other.to_string(),
-    }
-    .to_string()
-}
-
-fn formula_to_term(formula: IrFormula) -> Option<IrTerm> {
-    match formula {
-        IrFormula::Atomic { name, args } => Some(IrTerm::Ctor {
-            name: cf_head(&name),
-            args,
-        }),
-        IrFormula::And { operands } => formula_operands_to_term("cf_and", operands),
-        IrFormula::Or { operands } => formula_operands_to_term("cf_or", operands),
-        IrFormula::Not { operands } => formula_operands_to_term("cf_not", operands),
-        IrFormula::Implies { operands } => formula_operands_to_term("cf_implies", operands),
-        IrFormula::Forall { .. } | IrFormula::Exists { .. } | IrFormula::Choice { .. } => None,
-        // Substitute and Apply are meta-level; not reducible to a term here.
-        IrFormula::Substitute { .. }
-        | IrFormula::Apply { .. }
-        | IrFormula::DivergenceBetween { .. } => None,
-    }
-}
-
-fn formula_operands_to_term(name: &str, operands: Vec<IrFormula>) -> Option<IrTerm> {
-    let args = operands
-        .into_iter()
-        .map(formula_to_term)
-        .collect::<Option<Vec<_>>>()?;
-    Some(IrTerm::Ctor {
-        name: name.to_string(),
-        args,
-    })
-}
-
 /// The block's value expression: its trailing expr-statement (no
 /// semicolon). Unlike `block_single_tail_expr` this tolerates LEADING
 /// statements (`let x = ...; x`), because they do not change the value
 /// the block evaluates to. Returns `None` for a block whose last
 /// statement is not a tail expression (e.g. ends in a `;` -> unit value).
 fn block_tail_expr(block: &syn::Block) -> Option<&Expr> {
-    match block.stmts.last() {
-        Some(Stmt::Expr(expr, None)) => Some(expr),
-        Some(Stmt::Expr(_, Some(_)) | Stmt::Local(_) | Stmt::Item(_) | Stmt::Macro(_)) | None => {
-            None
-        }
-    }
+    let Some(Stmt::Expr(expr, None)) = block.stmts.last() else {
+        return None;
+    };
+    Some(expr)
 }
 
 /// Collect all names bound by `let` patterns at the top level of a statement.
@@ -1654,68 +1599,88 @@ fn infer_indexed_json_value_kind(index: &syn::ExprIndex, ctx: &LiftCtx) -> Value
 }
 
 fn expr_string_literal(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Str(s) => Some(s.value()),
-            Lit::Bool(_)
+    if let Expr::Lit(lit) = expr {
+        return lit_string_literal(&lit.lit);
+    }
+    if let Expr::Paren(paren) = expr {
+        return expr_string_literal(&paren.expr);
+    }
+    if let Expr::Group(group) = expr {
+        return expr_string_literal(&group.expr);
+    }
+    if matches!(expr, Expr::Verbatim(_)) {
+        panic!("sugar-walk string literal classifier refused uninterpreted verbatim expression");
+    }
+    if known_non_string_literal_expr(expr) {
+        return None;
+    }
+    panic!("sugar-walk string literal classifier refused unknown syn::Expr variant")
+}
+
+fn lit_string_literal(lit: &Lit) -> Option<String> {
+    if let Lit::Str(s) = lit {
+        return Some(s.value());
+    }
+    if known_non_string_lit(lit) {
+        return None;
+    }
+    panic!("sugar-walk string literal classifier refused unknown syn::Lit variant")
+}
+
+fn known_non_string_lit(lit: &Lit) -> bool {
+    matches!(
+        lit,
+        Lit::Bool(_)
             | Lit::Byte(_)
             | Lit::ByteStr(_)
             | Lit::CStr(_)
             | Lit::Char(_)
             | Lit::Float(_)
             | Lit::Int(_)
-            | Lit::Verbatim(_) => None,
-            other => {
-                let _ = other;
-                panic!("sugar-walk string literal classifier refused unknown syn::Lit variant")
-            }
-        },
-        Expr::Paren(paren) => expr_string_literal(&paren.expr),
-        Expr::Group(group) => expr_string_literal(&group.expr),
+            | Lit::Verbatim(_)
+    )
+}
+
+fn known_non_string_literal_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
         Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Call(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::MethodCall(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Reference(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!("sugar-walk string literal classifier refused uninterpreted verbatim expression")
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk string literal classifier refused unknown syn::Expr variant")
-        }
-    }
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Call(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::MethodCall(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Reference(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn infer_macro_value_kind(mac: &Macro, ctx: &LiftCtx) -> ValueKind {
@@ -1798,25 +1763,10 @@ fn token_string_literal(token: &TokenTree) -> Option<String> {
     let TokenTree::Literal(lit) = token else {
         return None;
     };
-    let parsed = match syn::parse_str::<Lit>(&lit.to_string()) {
-        Ok(lit) => lit,
-        Err(_) => return None,
+    let Ok(parsed) = syn::parse_str::<Lit>(&lit.to_string()) else {
+        return None;
     };
-    match parsed {
-        Lit::Str(s) => Some(s.value()),
-        Lit::Bool(_)
-        | Lit::Byte(_)
-        | Lit::ByteStr(_)
-        | Lit::CStr(_)
-        | Lit::Char(_)
-        | Lit::Float(_)
-        | Lit::Int(_)
-        | Lit::Verbatim(_) => None,
-        other => {
-            let _ = other;
-            panic!("sugar-walk token string literal classifier refused unknown syn::Lit variant")
-        }
-    }
+    lit_string_literal(&parsed)
 }
 
 fn is_comma(token: &TokenTree) -> bool {
@@ -3728,67 +3678,75 @@ fn is_panic_leaf_method_lift(leaf: &str) -> bool {
 }
 
 fn receiver_producer_callsite_lift(receiver: &Expr) -> Option<(String, usize, usize)> {
-    match receiver {
-        Expr::MethodCall(method) => {
-            let start = method.method.span().start();
-            Some((
-                format!("method:{}", method.method),
-                start.line,
-                start.column,
-            ))
-        }
-        Expr::Call(call) => {
-            let callee = associated_call_path_leaf_lift(&call.func)?;
-            let start = call.func.span().start();
-            Some((callee, start.line, start.column))
-        }
-        Expr::Paren(paren) => receiver_producer_callsite_lift(&paren.expr),
-        Expr::Group(group) => receiver_producer_callsite_lift(&group.expr),
-        Expr::Reference(reference) => receiver_producer_callsite_lift(&reference.expr),
-        Expr::Array(_)
-        | Expr::Assign(_)
-        | Expr::Async(_)
-        | Expr::Await(_)
-        | Expr::Binary(_)
-        | Expr::Block(_)
-        | Expr::Break(_)
-        | Expr::Cast(_)
-        | Expr::Closure(_)
-        | Expr::Const(_)
-        | Expr::Continue(_)
-        | Expr::Field(_)
-        | Expr::ForLoop(_)
-        | Expr::If(_)
-        | Expr::Index(_)
-        | Expr::Infer(_)
-        | Expr::Let(_)
-        | Expr::Lit(_)
-        | Expr::Loop(_)
-        | Expr::Macro(_)
-        | Expr::Match(_)
-        | Expr::Path(_)
-        | Expr::Range(_)
-        | Expr::RawAddr(_)
-        | Expr::Repeat(_)
-        | Expr::Return(_)
-        | Expr::Struct(_)
-        | Expr::Try(_)
-        | Expr::TryBlock(_)
-        | Expr::Tuple(_)
-        | Expr::Unary(_)
-        | Expr::Unsafe(_)
-        | Expr::While(_)
-        | Expr::Yield(_) => None,
-        Expr::Verbatim(_) => {
-            panic!(
-                "sugar-walk receiver producer classifier refused uninterpreted verbatim expression"
-            )
-        }
-        other => {
-            let _ = other;
-            panic!("sugar-walk receiver producer classifier refused unknown syn::Expr variant")
-        }
+    if let Expr::MethodCall(method) = receiver {
+        let start = method.method.span().start();
+        return Some((
+            format!("method:{}", method.method),
+            start.line,
+            start.column,
+        ));
     }
+    if let Expr::Call(call) = receiver {
+        let callee = associated_call_path_leaf_lift(&call.func)?;
+        let start = call.func.span().start();
+        return Some((callee, start.line, start.column));
+    }
+    if let Expr::Paren(paren) = receiver {
+        return receiver_producer_callsite_lift(&paren.expr);
+    }
+    if let Expr::Group(group) = receiver {
+        return receiver_producer_callsite_lift(&group.expr);
+    }
+    if let Expr::Reference(reference) = receiver {
+        return receiver_producer_callsite_lift(&reference.expr);
+    }
+    if matches!(receiver, Expr::Verbatim(_)) {
+        panic!("sugar-walk receiver producer classifier refused uninterpreted verbatim expression");
+    }
+    if known_non_receiver_producer_expr(receiver) {
+        return None;
+    }
+    panic!("sugar-walk receiver producer classifier refused unknown syn::Expr variant")
+}
+
+fn known_non_receiver_producer_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Array(_)
+            | Expr::Assign(_)
+            | Expr::Async(_)
+            | Expr::Await(_)
+            | Expr::Binary(_)
+            | Expr::Block(_)
+            | Expr::Break(_)
+            | Expr::Cast(_)
+            | Expr::Closure(_)
+            | Expr::Const(_)
+            | Expr::Continue(_)
+            | Expr::Field(_)
+            | Expr::ForLoop(_)
+            | Expr::If(_)
+            | Expr::Index(_)
+            | Expr::Infer(_)
+            | Expr::Let(_)
+            | Expr::Lit(_)
+            | Expr::Loop(_)
+            | Expr::Macro(_)
+            | Expr::Match(_)
+            | Expr::Path(_)
+            | Expr::Range(_)
+            | Expr::RawAddr(_)
+            | Expr::Repeat(_)
+            | Expr::Return(_)
+            | Expr::Struct(_)
+            | Expr::Try(_)
+            | Expr::TryBlock(_)
+            | Expr::Tuple(_)
+            | Expr::Unary(_)
+            | Expr::Unsafe(_)
+            | Expr::While(_)
+            | Expr::Yield(_)
+    )
 }
 
 fn associated_call_path_leaf_lift(expr: &Expr) -> Option<String> {
