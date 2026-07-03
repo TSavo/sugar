@@ -14,7 +14,10 @@ use serde_json::{json, Value as Json};
 use sugar_proof_envelope::MementoCid;
 
 use crate::kit_dispatch::{dispatch_emit, dispatch_emit_check, dispatch_emit_witness};
-use crate::report_witness::{mint_json_witness_with_options, JsonWitnessOptions};
+use crate::report_witness::{
+    mint_witness_bundle, WitnessBundle, WitnessClaimKind, WitnessMintOptions, WitnessSource,
+    WitnessToolchainScope,
+};
 use crate::{OutputFlags, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 const DEFAULT_WITNESS_PRODUCED_AT: &str = "2026-05-08T00:00:00Z";
@@ -442,24 +445,23 @@ fn mint_witness_proof(
     metadata.insert("sugar.emit.mode".into(), "witness".into());
     metadata.insert("sugar.emit.surface".into(), surface.to_string());
     metadata.insert("sugar.emit.claimKind".into(), claim_kind.clone());
-    let minted = mint_json_witness_with_options(
-        &format!("emit-witness-{surface}-{claim_kind}"),
-        &claim_kind,
-        claim_body,
-        evidence,
-        out_dir,
-        JsonWitnessOptions {
-            produced_by: Some(produced_by),
-            produced_at: Some(produced_at),
-            verifier_cid: Some(verifier_cid),
-            policy_cid: Some(policy_cid),
-            extra_input_cids: input_cids,
-            proof_metadata: metadata,
-            plan_cid: None,
-            actual_output_cids: Vec::new(),
-        },
-    )
-    .map_err(|e| format!("mint emit witness memento: {e}"))?;
+    let options = WitnessMintOptions::default()
+        .with_produced_by(produced_by)
+        .with_produced_at(produced_at)
+        .with_verifier_cid(verifier_cid)?
+        .with_policy_cid(policy_cid)?
+        .with_extra_input_cids(input_cids)?
+        .with_toolchain_scope(WitnessToolchainScope::try_new(None, Vec::new())?)
+        .with_proof_metadata(metadata);
+    let source = WitnessSource::json_claim(
+        format!("emit-witness-{surface}-{claim_kind}"),
+        WitnessClaimKind::new(claim_kind)?,
+        claim_body.clone(),
+        evidence.clone(),
+    )?;
+    let bundle = WitnessBundle::from_source(source, options)?;
+    let minted = mint_witness_bundle(bundle, out_dir)
+        .map_err(|e| format!("mint emit witness memento: {e}"))?;
 
     Ok(EmitWitnessProof {
         filename_cid: minted.proof_cid,

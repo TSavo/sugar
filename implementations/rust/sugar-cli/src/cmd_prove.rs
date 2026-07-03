@@ -26,6 +26,9 @@ use crate::component_plan::{
 };
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
+use crate::report_witness::{
+    mint_witness_bundle, WitnessBundle, WitnessMintOptions, WitnessSource,
+};
 use crate::ProveArgs;
 
 // The witness-discharge path loads the lift surface manifest at
@@ -330,62 +333,61 @@ fn emit_configured_witnesses(
     let cfg = read_project_config(project_root);
     let replay_pins = build_replay_pins(project_root, report_json, out_dir, &cfg, plan_artifact)?;
     if cfg.witnesses.is_empty() {
-        out.push(crate::report_witness::mint_report_witness(
-            project_root,
-            report_json,
-            &replay_pins,
+        out.push(mint_witness_bundle(
+            WitnessBundle::from_source(
+                WitnessSource::report(project_root, report_json.clone(), replay_pins.clone()),
+                WitnessMintOptions::default(),
+            )?,
             out_dir,
         )?);
         return Ok(out);
     }
     for witness in cfg.witnesses {
         if witness.kind.eq_ignore_ascii_case("report") {
-            out.push(crate::report_witness::mint_report_witness(
-                project_root,
-                report_json,
-                &replay_pins,
+            out.push(mint_witness_bundle(
+                WitnessBundle::from_source(
+                    WitnessSource::report(project_root, report_json.clone(), replay_pins.clone()),
+                    WitnessMintOptions::default(),
+                )?,
                 out_dir,
             )?);
             continue;
         }
         if witness.kind.eq_ignore_ascii_case("command") {
             let evidence = run_command_witness(project_root, &witness)?;
-            let claim_body = json!({
-                "kind": "sugar-command-witness",
-                "schemaVersion": "1",
-                "name": &witness.name,
-                "command": &witness.command,
-                "project": project_root.display().to_string(),
-            });
-            out.push(crate::report_witness::mint_json_witness(
-                &witness.name,
-                "sugar-command-witness",
-                &claim_body,
-                &evidence,
+            out.push(mint_witness_bundle(
+                WitnessBundle::from_source(
+                    WitnessSource::command(
+                        project_root,
+                        witness.name.clone(),
+                        witness.command.clone(),
+                        evidence,
+                    )?,
+                    WitnessMintOptions::default(),
+                )?,
                 out_dir,
             )?);
             continue;
         }
         if witness.kind.eq_ignore_ascii_case("file") {
             let evidence = read_file_witness(project_root, &witness)?;
-            let claim_body = json!({
-                "kind": "sugar-file-witness",
-                "schemaVersion": "1",
-                "name": &witness.name,
-                "path": &witness.path,
-                "project": project_root.display().to_string(),
-            });
-            out.push(crate::report_witness::mint_json_witness(
-                &witness.name,
-                "sugar-file-witness",
-                &claim_body,
-                &evidence,
+            let path = witness.path.clone().ok_or_else(|| {
+                format!(
+                    "crime: file witness without path; owner: sugar-cli::cmd_prove; illegal shape: witness `{}` has kind=file with no path; replacement: set path before constructing WitnessSource::File",
+                    witness.name
+                )
+            })?;
+            out.push(mint_witness_bundle(
+                WitnessBundle::from_source(
+                    WitnessSource::file(project_root, witness.name.clone(), path, evidence)?,
+                    WitnessMintOptions::default(),
+                )?,
                 out_dir,
             )?);
             continue;
         }
         return Err(format!(
-            "unsupported witness kind `{}` for `{}`",
+            "crime: unsupported witness source kind; owner: sugar-cli::cmd_prove; illegal shape: witness `{}` for `{}` is not report/command/file; replacement: configure kind = \"report\", \"command\", or \"file\" so cmd_prove can construct WitnessSource before minting",
             witness.kind, witness.name
         ));
     }
@@ -651,7 +653,10 @@ fn path_for_report(root: &Path, path: &Path) -> String {
 
 fn run_command_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Value, String> {
     if witness.command.is_empty() {
-        return Err(format!("witness `{}` has empty command", witness.name));
+        return Err(format!(
+            "crime: command witness without argv; owner: sugar-cli::cmd_prove; illegal shape: witness `{}` has empty command; replacement: configure command before constructing WitnessSource::Command",
+            witness.name
+        ));
     }
     let working_dir = witness
         .working_dir
@@ -688,7 +693,12 @@ fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Valu
     let path = witness
         .path
         .as_ref()
-        .ok_or_else(|| format!("file witness `{}` missing path", witness.name))?;
+        .ok_or_else(|| {
+            format!(
+                "crime: file witness without path; owner: sugar-cli::cmd_prove; illegal shape: witness `{}` has kind=file with no path; replacement: set path before constructing WitnessSource::File",
+                witness.name
+            )
+        })?;
     let path = PathBuf::from(path);
     let full = if path.is_absolute() {
         path

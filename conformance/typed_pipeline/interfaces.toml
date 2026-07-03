@@ -221,6 +221,17 @@ ignored_items = [
 ]
 
 [[interface_sources]]
+path = "implementations/rust/sugar-cli/src/report_witness.rs"
+ignored_items = [
+  { name = "WitnessRef", reason = "nested verifier/policy reference helper inside WitnessMintOptions" },
+  { name = "ReportWitnessSource", reason = "private payload variant behind the declared WitnessSource enum" },
+  { name = "CommandWitnessSource", reason = "private payload variant behind the declared WitnessSource enum" },
+  { name = "FileWitnessSource", reason = "private payload variant behind the declared WitnessSource enum" },
+  { name = "JsonWitnessSource", reason = "private payload variant behind the declared WitnessSource enum" },
+  { name = "PreparedWitness", reason = "private lowering product consumed before the declared ReportWitnessProof boundary" },
+]
+
+[[interface_sources]]
 path = "implementations/rust/sugar-cli/src/lift_plugin.rs"
 ignored_items = [
   { name = "LiftPluginOptions", reason = "input carrier declared by the lift-plugin-session boundary; not a separate S1 escape-hatch row" },
@@ -688,11 +699,12 @@ source = { path = "implementations/rust/sugar-verifier/src/types.rs", item = "Me
 [[interfaces]]
 id = "report-witness-proof"
 owner = "sugar-cli::report_witness"
-input_type = "report JSON + replay pins + witness output directory"
+input_type = "WitnessBundle + witness output directory"
 output_type = "ReportWitnessProof"
 addressing_rule = "proof_cid, witness_cid, and evidence_cid address the emitted witness artifacts"
 failure_type = "String diagnostic at witness minting boundary"
 replay_inputs = [
+  "WitnessBundle",
   "report CID",
   "replay pins CID",
   "proof file",
@@ -701,20 +713,75 @@ replay_inputs = [
 source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "ReportWitnessProof", kind = "struct" }
 
 [[interfaces]]
-id = "json-witness-options"
+id = "witness-claim-kind"
 owner = "sugar-cli::report_witness"
-input_type = "witness minting options"
-output_type = "JsonWitnessOptions"
-addressing_rule = "planCid and actualOutputCids pin replay scope when present"
-failure_type = "String diagnostic if actualOutputCids appear without planCid"
+input_type = "protocol claim kind string"
+output_type = "WitnessClaimKind"
+addressing_rule = "non-empty claim kind selects the witness verifier and policy defaults"
+failure_type = "String diagnostic naming the empty claim-kind shape"
 replay_inputs = [
-  "verifier CID",
-  "policy CID",
-  "extra input CIDs",
+  "claimKind",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "WitnessClaimKind", kind = "struct" }
+
+[[interfaces]]
+id = "witness-toolchain-scope"
+owner = "sugar-cli::report_witness"
+input_type = "planCid plus actualOutputCids"
+output_type = "WitnessToolchainScope"
+addressing_rule = "actualOutputCids require planCid; every CID is parsed before minting"
+failure_type = "String diagnostic naming crime/owner/illegal shape/replacement"
+replay_inputs = [
   "plan CID",
   "actual output CIDs",
 ]
-source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "JsonWitnessOptions", kind = "struct" }
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "WitnessToolchainScope", kind = "struct" }
+
+[[interfaces]]
+id = "witness-mint-options"
+owner = "sugar-cli::report_witness"
+input_type = "typed witness minting options"
+output_type = "WitnessMintOptions"
+addressing_rule = "verifier/policy references, extra input CIDs, proof metadata, and toolchain scope are typed before minting"
+failure_type = "String diagnostic naming crime/owner/illegal shape/replacement"
+replay_inputs = [
+  "verifier CID or builtin ref",
+  "policy CID or builtin ref",
+  "extra input CIDs",
+  "toolchain scope",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "WitnessMintOptions", kind = "struct" }
+
+[[interfaces]]
+id = "witness-source"
+owner = "sugar-cli::report_witness"
+input_type = "report, command, file, or json-claim witness source"
+output_type = "WitnessSource"
+addressing_rule = "source selection is a closed enum before claim body/evidence lowering"
+failure_type = "String diagnostic naming empty names, empty commands, or empty paths"
+replay_inputs = [
+  "report JSON",
+  "replay pins",
+  "command argv",
+  "file path",
+  "claim kind",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "WitnessSource", kind = "enum" }
+
+[[interfaces]]
+id = "witness-bundle"
+owner = "sugar-cli::report_witness"
+input_type = "WitnessSource + WitnessMintOptions"
+output_type = "WitnessBundle"
+addressing_rule = "claim body CID, evidence root CID, source refs, and scope are fixed before the proof member is minted"
+failure_type = "String diagnostic naming crime/owner/illegal shape/replacement"
+replay_inputs = [
+  "WitnessSource",
+  "WitnessMintOptions",
+  "claim body CID",
+  "evidence root CID",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "WitnessBundle", kind = "struct" }
 
 [[interfaces]]
 id = "ir-compiler-compiled-formula"
