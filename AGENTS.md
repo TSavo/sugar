@@ -353,6 +353,39 @@ existence: a sugar in the catalog testifies or reds; a sugar that cannot
 testify does not compile. When reviewing or building anything in this repo,
 measure it against this sentence.
 
+### The tower sentence (T Savo, 2026-07-03)
+
+**"We read the code out loud, the Sugar lines up to build the tower, and we
+slam whatever is at the top to the floor, through the tower, and whatever
+remains is either literally transformed by the tower, or the tower effects."**
+
+This is the lift mechanism in one sentence, and every clause is a law:
+
+- *Read the code out loud* — the walk recites source as it stands: no
+  scanning, no inference, no second representation.
+- *The Sugar lines up to build the tower* — the factory's ordered claim
+  selection. `comes_before` is architecture: the tower is the ordered stack
+  of every sugar that owns a piece of the site, assembled per site, one door.
+- *Slam the top to the floor, through the tower* — double dispatch as
+  gravity. The value falls through every layer, each sugar takes exactly its
+  bite, and the floor rises to meet what arrives. Nobody inspects the
+  receiver; the dispatch is the design.
+- *Whatever remains is either literally transformed, or the tower effects* —
+  the completeness law: exactly TWO outputs exist. Reduced meaning (the
+  ground value, the identity, the count, the guard-implication — the
+  spelling reduced to what the vendor meant) or a typed effect (the raise,
+  the refusal, the gap — loud, named, routed). There is no third output.
+  A silent drop, an unreduced spelling, a fabricated fact — each is
+  something pretending to be a third kind of output, and the backstop,
+  the emission law, and the witness twins exist to make the third kind
+  unrepresentable.
+
+Downstream of the tower, the solver is a referee, not a student: it receives
+testimony (reduced facts, identities, effects), never homework (theories,
+special sorts, unreduced syntax). Sugar is spelling; floors are meaning;
+emission is the act of reducing every spelling to its meaning before anyone
+downstream is allowed to see it.
+
 ### The error-message corollary (2026-07-03)
 
 **"You can't make every agent smart, but you can make every error message
