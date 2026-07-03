@@ -5,6 +5,9 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
 ambient_testimony_sites = 1
+transport_json_backend_ingress = 6
+backend_frontend_decode_calls = 8
+frontend_provenance_unadmitted = 0
 
 [[pipeline_seams]]
 root = "implementations/rust/sugar-cli/src"
@@ -22,6 +25,31 @@ file_prefixes = [
   "solvers/mod",
   "runner",
 ]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-ir-compiler/src"
+file_prefixes = [
+  "lib",
+  "registry",
+  "server",
+  "subprocess",
+]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-ir-compiler-smt-lib/src"
+file_prefixes = ["lib"]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-ir-compiler-lean/src"
+file_prefixes = ["lib"]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-ir-compiler-coq/src"
+file_prefixes = ["lib"]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-ir-compiler-maude/src"
+file_prefixes = ["lib"]
 
 [[interface_sources]]
 path = "implementations/rust/sugar-cli/src/component_plan.rs"
@@ -84,6 +112,77 @@ ignored_items = [
 
 [[interface_sources]]
 path = "implementations/rust/sugar-cli/src/report_witness.rs"
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/lib.rs"
+ignored_items = [
+  { name = "OpacityManifest", reason = "nested compiler-product side-table inside CompiledFormula" },
+  { name = "OpacityEntry", reason = "nested compiler-product side-table inside CompiledFormula" },
+  { name = "FreeVar", reason = "nested compiler-product field inside CompiledFormula" },
+  { name = "PROTOCOL_VERSION", reason = "protocol constant, not a pipeline boundary object" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/registry.rs"
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/server.rs"
+ignored_items = [
+  { name = "COMPONENT_PLAN_RPC_METHOD", reason = "compat method string, not a typed ProofIR frontend boundary object" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs"
+ignored_items = [
+  { name = "ChildIo", reason = "private subprocess transport state, not a typed ProofIR boundary object" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs"
+ignored_items = [
+  { name = "DIALECT", reason = "dialect constant represented by compiler capabilities" },
+  { name = "COMPILER_NAME", reason = "compiler identity represented by compiler capabilities" },
+  { name = "COMPILER_VERSION", reason = "compiler identity represented by compiler capabilities" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs"
+ignored_items = [
+  { name = "DIALECT", reason = "dialect constant represented by compiler capabilities" },
+  { name = "COMPILER_NAME", reason = "compiler identity represented by compiler capabilities" },
+  { name = "COMPILER_VERSION", reason = "compiler identity represented by compiler capabilities" },
+  { name = "THEOREM_NAME", reason = "backend-local emitted theorem name, not a frontend/backend boundary object" },
+  { name = "LeanSignature", reason = "backend-local lowering helper, not a frontend/backend boundary object" },
+  { name = "EmitContext", reason = "backend-local lowering helper, not a frontend/backend boundary object" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs"
+ignored_items = [
+  { name = "DIALECT", reason = "dialect constant represented by compiler capabilities" },
+  { name = "COMPILER_NAME", reason = "compiler identity represented by compiler capabilities" },
+  { name = "COMPILER_VERSION", reason = "compiler identity represented by compiler capabilities" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs"
+ignored_items = [
+  { name = "DIALECT", reason = "dialect constant represented by compiler capabilities" },
+  { name = "COMPILER_NAME", reason = "compiler identity represented by compiler capabilities" },
+  { name = "COMPILER_VERSION", reason = "compiler identity represented by compiler capabilities" },
+  { name = "MaudeQueries", reason = "backend-local metadata side-table carried by CompiledMaude/CompiledFormula.metadata" },
+  { name = "TrsRule", reason = "backend-local metadata side-table carried by CompiledMaude/CompiledFormula.metadata" },
+  { name = "TrsOperator", reason = "backend-local metadata side-table carried by CompiledMaude/CompiledFormula.metadata" },
+  { name = "TrsSpec", reason = "backend-local metadata side-table carried by CompiledMaude/CompiledFormula.metadata" },
+  { name = "CompiledMaude", reason = "backend-local artifact wrapper; CompiledFormula is the cross-boundary compiler product" },
+  { name = "RawObligation", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "RawTheory", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "RawSubsort", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "RawOperator", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "RawVariable", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "RawEquation", reason = "current raw transport decode helper measured by Instrument B, not a declared typed boundary" },
+  { name = "OperatorInfo", reason = "backend-local lowering helper, not a frontend/backend boundary object" },
+]
 
 [[interfaces]]
 id = "component-plan"
@@ -410,6 +509,163 @@ replay_inputs = [
 ]
 source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "JsonWitnessOptions", kind = "struct" }
 
+[[interfaces]]
+id = "ir-compiler-compiled-formula"
+owner = "sugar-ir-compiler"
+input_type = "typed ProofIR compiler backend output"
+output_type = "CompiledFormula"
+addressing_rule = "compiler dialect plus obligation CID select the emitted preamble/body/free_vars/opacity/metadata product"
+failure_type = "CompileError from the compiler backend or typed frontend adapter"
+replay_inputs = [
+  "compiler identity",
+  "target dialect",
+  "typed ProofIR obligation",
+  "frontend provenance policy",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "CompiledFormula", kind = "struct" }
+
+[[interfaces.escape_hatches]]
+shape = "serde-json-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "replace CompiledFormula.metadata with typed per-dialect metadata enums if a second consumer appears; until then it remains declared compiler side-table metadata"
+baseline = false
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "CompiledFormula", needles = ["pub metadata: Json"] }
+
+[[interfaces]]
+id = "ir-compiler-capabilities"
+owner = "sugar-ir-compiler"
+input_type = "compiler implementation identity and supported dialect facts"
+output_type = "Capabilities"
+addressing_rule = "compiler name/version/protocol_version and dialect list identify a compiler route"
+failure_type = "manifest/RPC handshake diagnostics"
+replay_inputs = [
+  "compiler manifest",
+  "handshake response",
+  "protocol version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "Capabilities", kind = "struct" }
+
+[[interfaces]]
+id = "ir-compiler-trait"
+owner = "sugar-ir-compiler"
+input_type = "compiler input obligation plus target dialect"
+output_type = "CompiledFormula"
+addressing_rule = "IrCompiler implementation capabilities select the backend for a dialect"
+failure_type = "CompileError"
+replay_inputs = [
+  "typed ProofIR obligation",
+  "target dialect",
+  "compiler capabilities",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "IrCompiler", kind = "trait" }
+
+[[interfaces.escape_hatches]]
+shape = "serde-json-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S2 introduces compile_typed(&CompilerInput); S7 deletes the compatibility compile(&Json) method and makes this hatch unrepresentable"
+baseline = false
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "IrCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[interfaces]]
+id = "ir-compiler-registry"
+owner = "sugar-ir-compiler::registry"
+input_type = "compiler registry plus target dialect and obligation"
+output_type = "CompiledFormula"
+addressing_rule = "dialect key selects an Arc<dyn IrCompiler>"
+failure_type = "CompileError::UnsupportedDialect or backend CompileError"
+replay_inputs = [
+  "registered compiler capabilities",
+  "target dialect",
+  "typed ProofIR obligation",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/registry.rs", item = "Registry", kind = "struct" }
+
+[[interfaces]]
+id = "json-rpc-ir-compiler"
+owner = "sugar-ir-compiler::subprocess"
+input_type = "compiler subprocess command plus JSON-RPC compile request"
+output_type = "CompiledFormula"
+addressing_rule = "subprocess command and compiler capabilities select the transport frontend"
+failure_type = "CompileError::Transport or backend CompileError encoded by JSON-RPC"
+replay_inputs = [
+  "compiler command",
+  "working directory",
+  "JSON-RPC request payload",
+  "target dialect",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "lazy-json-rpc-ir-compiler"
+owner = "sugar-ir-compiler::subprocess"
+input_type = "lazy compiler manifest entry plus JSON-RPC compile request"
+output_type = "CompiledFormula"
+addressing_rule = "lazy compiler id plus manifest capabilities select the per-worker subprocess"
+failure_type = "CompileError::Transport or backend CompileError encoded by JSON-RPC"
+replay_inputs = [
+  "compiler manifest capabilities",
+  "compiler command",
+  "working directory",
+  "JSON-RPC request payload",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "LazyJsonRpcCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "smt-lib-ir-compiler"
+owner = "sugar-ir-compiler-smt-lib"
+input_type = "typed ProofIR formula or legacy term plus target dialect"
+output_type = "CompiledFormula"
+addressing_rule = "smt-lib-v2.6 dialect routes to SmtLibCompiler"
+failure_type = "CompileError"
+replay_inputs = [
+  "typed ProofIR obligation",
+  "target dialect",
+  "SMT-LIB compiler version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "SmtLibCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "lean-ir-compiler"
+owner = "sugar-ir-compiler-lean"
+input_type = "typed ProofIR formula or legacy term plus target dialect"
+output_type = "CompiledFormula"
+addressing_rule = "lean dialect routes to LeanCompiler"
+failure_type = "CompileError"
+replay_inputs = [
+  "typed ProofIR obligation",
+  "target dialect",
+  "Lean compiler version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "LeanCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "coq-ir-compiler"
+owner = "sugar-ir-compiler-coq"
+input_type = "typed ProofIR formula or legacy term plus target dialect"
+output_type = "CompiledFormula"
+addressing_rule = "coq dialect routes to CoqCompiler"
+failure_type = "CompileError"
+replay_inputs = [
+  "typed ProofIR obligation",
+  "target dialect",
+  "Coq compiler version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "CoqCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "maude-ir-compiler"
+owner = "sugar-ir-compiler-maude"
+input_type = "typed equational-theory compiler input plus target dialect"
+output_type = "CompiledFormula"
+addressing_rule = "maude dialect routes to MaudeCompiler"
+failure_type = "CompileError"
+replay_inputs = [
+  "typed equational-theory obligation",
+  "target dialect",
+  "Maude compiler version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "MaudeCompiler", kind = "struct" }
+
 [[ambient_testimony_sites]]
 id = "issue-3313-ambient-ground-callsite-self-witness"
 shape = "ambient-ground-callsite-self-witness"
@@ -417,3 +673,152 @@ owner = "rust verifier consistency seam"
 retirement = "split obligation and witness at the ambient ground-callsite boundary so the exact stated row cannot be conjoined as its own evidence (#3313)"
 baseline = true
 source = { path = "implementations/rust/sugar-verifier/src/consistency.rs", item = "ambient-ground-callsite-self-witness", needles = ["collect_ambient_ground_callsite_facts", "with_ambient_ground_callsite_facts"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "smt-lib-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "SmtLibCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "lean-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "LeanCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "coq-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "CoqCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "maude-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "MaudeCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "lazy-json-rpc-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "LazyJsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_transport_json_ingress]]
+id = "json-rpc-ircompiler-json-ingress"
+shape = "transport-json-ircompiler-impl-ingress"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[frontend_boundary_decode_calls]]
+id = "smt-lib-emit-term-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3a moves legacy term decode into CompilerInput::decode_json so emit receives typed Term"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "emit", needles = ["serde_json::from_value(ir_formula.clone())"] }
+
+[[frontend_boundary_decode_calls]]
+id = "smt-lib-compile-to-parts-formula-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3a moves formula decode into CompilerInput::decode_json so compile_to_parts receives typed Formula"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_to_parts", needles = ["serde_json::from_value(ir_formula.clone())"] }
+
+[[frontend_boundary_decode_calls]]
+id = "smt-lib-compile-asserted-to-parts-formula-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3a moves asserted formula decode into CompilerInput::decode_json so compile_asserted_to_parts receives typed Formula"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_asserted_to_parts", needles = ["serde_json::from_value(ir_formula.clone())"] }
+
+[[frontend_boundary_decode_calls]]
+id = "lean-compile-to-parts-term-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3a moves legacy term decode into CompilerInput::decode_json so Lean compile_to_parts receives typed Term"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "compile_to_parts", needles = ["let term: Term = serde_json::from_value"] }
+
+[[frontend_boundary_decode_calls]]
+id = "lean-compile-to-parts-formula-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3a moves formula decode into CompilerInput::decode_json so Lean compile_to_parts receives typed Formula"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "compile_to_parts", needles = ["serde_json::from_value(ir.clone()).map_err"] }
+
+[[frontend_boundary_decode_calls]]
+id = "coq-compile-inner-term-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3b moves legacy term decode into CompilerInput::decode_json so Coq compile_inner receives typed Term"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "compile_inner", needles = ["let term: sugar_ir_types::Term = serde_json::from_value"] }
+
+[[frontend_boundary_decode_calls]]
+id = "coq-compile-inner-formula-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3b moves formula decode into CompilerInput::decode_json so Coq compile_inner receives typed Formula"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "compile_inner", needles = ["let formula: sugar_ir_types::Formula = serde_json::from_value"] }
+
+[[frontend_boundary_decode_calls]]
+id = "maude-compile-artifact-raw-obligation-from-value"
+shape = "backend-obligation-from-value"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S3b moves RawObligation decode into CompilerInput::EquationalTheory so Maude compile_artifact receives typed equational theory"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "compile_artifact", needles = ["serde_json::from_value(ir.clone()).map_err"] }
+
+[[frontend_boundary_allowlist_hatches]]
+id = "compiled-formula-metadata-json"
+shape = "compiled-formula-metadata-json"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "replace CompiledFormula.metadata with typed per-dialect metadata enums if a second consumer appears; until then it remains declared compiler side-table metadata"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "CompiledFormula", needles = ["pub metadata: Json"] }
+
+[[frontend_boundary_allowlist_hatches]]
+id = "irterm-const-literal-json"
+shape = "irterm-const-literal-json"
+owner = "sugar-ir-types"
+retirement = "replace IrTerm::Const.value with a typed literal union if the sorts campaign demands it; this campaign does not drain typed-IR literal payloads"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "IrTerm::Const", needles = ["value: serde_json::Value"] }
+
+[[frontend_boundary_vocabulary]]
+id = "frontend-error-kind"
+owner = "sugar-ir-compiler frontend adapter"
+declaration = "FrontendErrorKind { MalformedTransport, UnknownInputKind, InvalidTypedIr, UnsupportedLegacyVariant }"
+retirement = "S5 consumes this vocabulary in JSON-RPC error data; delete only if frontend decode failures become compile-time impossible"
+baseline = true
+
+[[frontend_boundary_vocabulary]]
+id = "frontend-error-payload"
+owner = "sugar-ir-compiler frontend adapter"
+declaration = "FrontendErrorPayload { kind, frontend, input_format, path, detail, retirement }"
+retirement = "S5 consumes this payload at the RPC frontend boundary so decode failures never collapse into Failed(String)"
+baseline = true
+
+[[frontend_boundary_vocabulary]]
+id = "frontend-provenance-policy"
+owner = "sugar-ir-compiler frontend equivalence instrument"
+declaration = "FrontendProvenancePolicy { owner, allowed_fields: Vec<CompiledFormulaFieldPath>, reason, retirement }"
+retirement = "S6 consumes this policy; default remains empty and every non-empty allowance must name owner/reason/retirement"
+baseline = true
