@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn, cast
+from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
@@ -23,15 +23,11 @@ from sugar_lift_py_tests.ir import (
     _Quantifier,
     _Var,
     _json_like_to_value,
-    ctor,
     eq,
     formula_to_value,
-    forall,
-    implies,
     make_var,
     num,
 )
-from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.outcome import Incomplete
 
 
@@ -163,230 +159,6 @@ class ProofIRNode(ABC):
 
 
 _INT_SORT = Int()
-
-
-@dataclass(frozen=True)
-class Formal:
-    name: str
-    sort: Sort
-
-
-@dataclass(frozen=True)
-class FunctionContract(ProofIRNode):
-    node_class: ClassVar[str] = "FunctionContract"
-
-    symbol: str
-    formals: tuple[Formal, ...]
-    post: Formula
-    warrants: tuple[Provenance, ...]
-    out_binding: str = "out"
-    out_sort: Sort = _INT_SORT
-    pre: Formula | None = None
-
-    def __post_init__(self) -> None:
-        if not self.symbol:
-            _proofir_gap(
-                owner=self.node_class,
-                observed="empty symbol",
-                requested="callable symbol",
-                fix="construct FunctionContract with the callable symbol",
-            )
-        if self.out_binding != "out":
-            _proofir_gap(
-                owner=self.node_class,
-                observed=f"out binding {self.out_binding!r}",
-                requested="out binding named 'out'",
-                fix="use the verifier-visible output binding `out`",
-            )
-        if not self.warrants:
-            _proofir_gap(
-                owner=self.node_class,
-                observed="no warrants",
-                requested="at least one construction provenance",
-                fix="add a provenance warrant before build()",
-            )
-        for warrant in self.warrants:
-            _require_provenance(warrant, owner=self.node_class)
-        if not _is_formula(self.post):
-            _proofir_gap(
-                owner=self.node_class,
-                observed=type(self.post).__name__,
-                requested="typed Formula post",
-                fix="hand FunctionContract a typed ir.Formula, never a dict",
-            )
-        if self.pre is not None and not _is_formula(self.pre):
-            _proofir_gap(
-                owner=self.node_class,
-                observed=type(self.pre).__name__,
-                requested="typed Formula pre",
-                fix="hand FunctionContract a typed ir.Formula, never a dict",
-            )
-        if not _formula_mentions_var(self.post, self.out_binding):
-            _proofir_gap(
-                owner=self.node_class,
-                observed="post without out binding",
-                requested=f"post mentioning {self.out_binding!r}",
-                fix="construct the post over the verifier-visible out binding",
-            )
-        seen: set[str] = set()
-        for formal in self.formals:
-            if not formal.name:
-                _proofir_gap(
-                    owner=self.node_class,
-                    observed="empty formal name",
-                    requested="named formal with declared sort",
-                    fix="declare every formal before build()",
-                )
-            if formal.name in seen:
-                _proofir_gap(
-                    owner=self.node_class,
-                    observed=f"duplicate formal {formal.name!r}",
-                    requested="unique formal names",
-                    fix="deduplicate formals before build()",
-                )
-            seen.add(formal.name)
-
-    @classmethod
-    def builder(
-        cls,
-        *,
-        symbol: str,
-        out_binding: str,
-        out_sort: Sort,
-        provenance: Provenance,
-    ) -> "FunctionContractBuilder":
-        return FunctionContractBuilder(
-            symbol=symbol,
-            out_binding=out_binding,
-            out_sort=out_sort,
-            provenance=provenance,
-        )
-
-    def denotation(self) -> Formula:
-        body = self.post if self.pre is None else implies(self.pre, self.post)
-        for formal in reversed(self.formals):
-            body = forall(formal.name, formal.sort, body)
-        return body
-
-    def provenance(self) -> Provenance:
-        return self.warrants[0]
-
-    def to_declaration(self) -> dict[str, Any]:
-        return BodyUniverseDto(
-            name=self.symbol,
-            out_binding=self.out_binding,
-            pre=_formula_to_rpc(self.pre) if self.pre is not None else None,
-            post=_formula_to_rpc(self.post),
-            source_warrants=[warrant.warrant_memento() for warrant in self.warrants],
-            formals=[formal.name for formal in self.formals],
-            kind="function-contract",
-        ).to_rpc()
-
-    @classmethod
-    def verdict_witnesses(cls) -> VerdictWitnessPair:
-        truthful_contract = (
-            cls.builder(
-                symbol="module::truthful::callable",
-                out_binding="out",
-                out_sort=_INT_SORT,
-                provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
-            )
-            .post(eq(make_var("out"), num(0)))
-            .build()
-        )
-        lying_contract = (
-            cls.builder(
-                symbol="module::lying::callable",
-                out_binding="out",
-                out_sort=_INT_SORT,
-                provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
-            )
-            .post(eq(make_var("out"), num(1)))
-            .build()
-        )
-        floor = eq(make_var("out"), num(0))
-        return VerdictWitnessPair(
-            truthful=VerdictWitnessCase(
-                name="function-contract-floor-models-post",
-                expected="sat",
-                formulas=(truthful_contract.denotation(), floor),
-                declarations={"out": _INT_SORT},
-                source=_truthful_source(),
-                node_class=cls.node_class,
-                expected_sugar="python.literal-call-sugar",
-            ),
-            lying=VerdictWitnessCase(
-                name="function-contract-floor-contradicts-post",
-                expected="unsat",
-                formulas=(lying_contract.denotation(), floor),
-                declarations={"out": _INT_SORT},
-                source=_lying_source(),
-                node_class=cls.node_class,
-                expected_sugar="python.literal-call-sugar",
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class FunctionContractBuilder:
-    symbol: str
-    out_binding: str
-    out_sort: Sort
-    provenance: Provenance
-    _formals: tuple[Formal, ...] = ()
-    _pre: Formula | None = None
-    _post: object | None = None
-
-    def formal(self, name: str, sort: Sort) -> "FunctionContractBuilder":
-        return FunctionContractBuilder(
-            symbol=self.symbol,
-            out_binding=self.out_binding,
-            out_sort=self.out_sort,
-            provenance=self.provenance,
-            _formals=(*self._formals, Formal(name=name, sort=sort)),
-            _pre=self._pre,
-            _post=self._post,
-        )
-
-    def pre(self, formula: Formula) -> "FunctionContractBuilder":
-        return FunctionContractBuilder(
-            symbol=self.symbol,
-            out_binding=self.out_binding,
-            out_sort=self.out_sort,
-            provenance=self.provenance,
-            _formals=self._formals,
-            _pre=formula,
-            _post=self._post,
-        )
-
-    def post(self, formula: object) -> "FunctionContractBuilder":
-        return FunctionContractBuilder(
-            symbol=self.symbol,
-            out_binding=self.out_binding,
-            out_sort=self.out_sort,
-            provenance=self.provenance,
-            _formals=self._formals,
-            _pre=self._pre,
-            _post=formula,
-        )
-
-    def build(self) -> FunctionContract:
-        if self._post is None:
-            _proofir_gap(
-                owner="FunctionContract",
-                observed="builder without post",
-                requested="post formula",
-                fix="call .post(typed_formula) before build()",
-            )
-        return FunctionContract(
-            symbol=self.symbol,
-            formals=self._formals,
-            pre=self._pre,
-            post=cast(Formula, self._post),
-            warrants=(self.provenance,),
-            out_binding=self.out_binding,
-            out_sort=self.out_sort,
-        )
 
 
 @dataclass(frozen=True, init=False)
@@ -708,6 +480,11 @@ from .equality_fact import (  # noqa: E402
     EqualityFact,
     canonical_euf_callsite_name,
     merge_equality_facts,
+)
+from .function_contract import (  # noqa: E402
+    Formal,
+    FunctionContract,
+    FunctionContractBuilder,
 )
 
 

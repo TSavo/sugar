@@ -30,6 +30,25 @@ class Sort:
         return self == other
 
 
+@dataclass(frozen=True, eq=False)
+class UnknownSort(Sort):
+    reason: str
+
+    def __init__(self, *, reason: str) -> None:
+        if not reason:
+            proofir_construction_gap(
+                owner="proofir.sorts.UnknownSort",
+                observed="empty unknown-sort reason",
+                requested="explicit unknown-sort policy reason",
+                fix="name why the callee return sort is unavailable at this seat",
+            )
+        super().__init__(name="Unknown", ir_sort=PrimitiveSort("Unknown"))
+        object.__setattr__(self, "reason", reason)
+
+    def is_explicitly_coercible_to(self, other: Sort) -> bool:
+        return True
+
+
 class IntSort(Sort):
     def __init__(self) -> None:
         super().__init__(name="Int", ir_sort=Int())
@@ -97,5 +116,6 @@ __all__ = [
     "RealSort",
     "Sort",
     "StringSort",
+    "UnknownSort",
     "sort_from_ir",
 ]

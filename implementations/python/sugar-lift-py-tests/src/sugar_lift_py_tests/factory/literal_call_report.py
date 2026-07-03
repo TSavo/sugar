@@ -17,8 +17,14 @@ from sugar_lift_py_tests.ir import (
     Formula,
     Term,
     _Atomic,
+    _ConstBool,
+    _ConstInt,
+    _ConstReal,
+    _ConstStr,
     _Connective,
+    _Ctor,
     _Quantifier,
+    _Var,
     and_,
     ctor,
     eq,
@@ -37,10 +43,17 @@ from sugar_lift_py_tests.proofir import (
     ConstructionSite,
     Derived,
     EqualityFact,
+    FunctionContract,
+    IntSort,
+    PostCondition,
     Provenance,
     Stated,
+    UnknownSort,
+    formula_from_ir,
     merge_equality_facts,
 )
+from sugar_lift_py_tests.proofir.formulas import formula_to_rpc as proofir_formula_to_rpc
+from sugar_lift_py_tests.proofir.sorts import Sort as ProofSort, sort_from_ir
 
 from .dig_refusal import DigRefusal
 from .floor_contract_agreement import (
@@ -136,17 +149,104 @@ def _resolver_nodes(
     }
 
 
-def _is_free_var_definition(formula_value: dict[str, Any], bound: set[str]) -> bool:
+def _is_free_var_definition(formula: Formula, bound: set[str]) -> bool:
     """An `eq(var, _)` whose var is neither a formal nor `out` -- a free-variable
     definition that would leave an exported universe post OPEN, so the verifier's
     `linked_ambient_post_instances_for_inv` skips it. The str.eq-bv-blocks relation
     carries the alphabet as a constant payload, so dropping the definition is safe."""
-    if not isinstance(formula_value, dict) or formula_value.get("name") != "=":
+    if not isinstance(formula, _Atomic) or formula.name != "=":
         return False
-    args = formula_value.get("args")
-    if not isinstance(args, list) or len(args) != 2 or not isinstance(args[0], dict):
+    if len(formula.args) != 2:
         return False
-    return args[0].get("kind") == "var" and args[0].get("name") not in bound
+    left = formula.args[0]
+    return isinstance(left, _Var) and left.name not in bound
+
+
+def _contract_scope_sorts(
+    formulas: list[Formula],
+    *,
+    formal_names: tuple[str, ...],
+    out_binding: str = "out",
+) -> dict[str, ProofSort]:
+    sorts: dict[str, ProofSort] = {
+        name: UnknownSort(reason=f"no declared sort for formal {name!r}")
+        for name in formal_names
+    }
+    sorts[out_binding] = UnknownSort(
+        reason=f"no declared return sort for {out_binding!r}"
+    )
+    for formula in formulas:
+        _infer_formula_sorts(formula, sorts)
+    return sorts
+
+
+def _infer_formula_sorts(formula: Formula, sorts: dict[str, ProofSort]) -> None:
+    if isinstance(formula, _Atomic):
+        if formula.name in {">", "≥", "<", "≤"}:
+            for term in formula.args:
+                _mark_numeric_term(term, sorts)
+            return
+        if formula.name == "=" and len(formula.args) == 2:
+            left, right = formula.args
+            left_sort = _known_term_sort(left)
+            right_sort = _known_term_sort(right)
+            if left_sort is not None:
+                _mark_term_sort(right, left_sort, sorts)
+            if right_sort is not None:
+                _mark_term_sort(left, right_sort, sorts)
+        return
+    if isinstance(formula, _Connective):
+        for operand in formula.operands:
+            _infer_formula_sorts(operand, sorts)
+        return
+    if isinstance(formula, _Quantifier):
+        _infer_formula_sorts(formula.body, sorts)
+
+
+def _known_term_sort(term: Term) -> ProofSort | None:
+    if isinstance(term, (_ConstInt, _ConstStr, _ConstBool, _ConstReal)):
+        return sort_from_ir(term.sort)
+    if isinstance(term, _Ctor) and term.name in {"+", "-", "*"}:
+        return IntSort()
+    return None
+
+
+def _mark_numeric_term(term: Term, sorts: dict[str, ProofSort]) -> None:
+    _mark_term_sort(term, IntSort(), sorts)
+
+
+def _mark_term_sort(term: Term, sort: ProofSort, sorts: dict[str, ProofSort]) -> None:
+    if isinstance(term, _Var):
+        existing = sorts.get(term.name)
+        if existing is None or isinstance(existing, UnknownSort):
+            sorts[term.name] = sort
+        return
+    if isinstance(term, _Ctor):
+        if term.name in {"+", "-", "*"}:
+            sort = IntSort()
+        for arg in term.args:
+            _mark_term_sort(arg, sort, sorts)
+
+
+def _typed_formula_to_rpc(formula: Formula, scope_sorts: dict[str, ProofSort]) -> dict[str, Any]:
+    return proofir_formula_to_rpc(formula_from_ir(formula, var_sorts=scope_sorts))
+
+
+def _post_condition_from_ir(
+    formula: Formula,
+    *,
+    scope_sorts: dict[str, ProofSort],
+    formal_names: tuple[str, ...],
+    out_binding: str = "out",
+) -> PostCondition:
+    formal_sorts = {name: scope_sorts[name] for name in formal_names}
+    out_sort = scope_sorts[out_binding]
+    return PostCondition(
+        formula_from_ir(formula, var_sorts={**formal_sorts, out_binding: out_sort}),
+        formals=formal_sorts,
+        out_binding=out_binding,
+        out_sort=out_sort,
+    )
 
 
 def build_literal_call_report(
@@ -794,6 +894,7 @@ def _emit_euf_fact(
     memento_file: str,
     source_lines: list[str],
     warrant: Stated | Derived,
+    call_return_sort: ProofSort | None = None,
 ) -> LiftResult:
     """Emit one `<callee>#euf#<args>::assertion` fact: `eq(call:callee(args), value)`.
 
@@ -802,17 +903,16 @@ def _emit_euf_fact(
     Both land under the same #euf# key, so they conjoin -- agreement discharges, disagreement
     is UNSAT. One emitter means the key is spelled once: a vendor lie and a Python truth meet
     on the same name or they never meet at all."""
-    from sugar_lift_py_tests.proofir import (
-        CallTerm,
-        canonical_euf_callsite_name,
-        term_from_ir,
-    )
+    from sugar_lift_py_tests.proofir import CallTerm, canonical_euf_callsite_name, term_from_ir
 
     rhs_term = term_from_ir(value_term)
+    call_sort = call_return_sort or UnknownSort(
+        reason=f"no function-contract return sort available for call:{callee_name}"
+    )
     call_term = CallTerm(
         callee_name,
         tuple(term_from_ir(arg_term) for arg_term in arg_terms),
-        sort=rhs_term.sort,
+        sort=call_sort,
     )
     contract_name = canonical_euf_callsite_name(call_term, suffix="::assertion")
     memento = _statement_source_memento(
@@ -1010,6 +1110,9 @@ def _materialize_contract_rows(rows: list[Any]) -> list[BodyUniverseDto]:
         if isinstance(row, BodyUniverseDto):
             materialized.append(row)
             continue
+        if isinstance(row, FunctionContract):
+            materialized.append(row.to_body_universe())
+            continue
         node = _require_proofir_emission_node(
             row,
             construction_site=f"{type(row).__name__}.to_declaration",
@@ -1129,7 +1232,7 @@ def _construct_callsite_from_factory_term(
     reduce_ctx = ReduceContext.root(
         owner="literal_call_report.callsite_floor", dig_sink=sink
     )
-    callable_contracts: dict[str, BodyUniverseDto] = {}
+    callable_contracts: dict[str, FunctionContract] = {}
     facts: list[LiftResult] = []
     universes_seen: set[str] = set()
     callsites_seen: set[str] = set()
@@ -1157,7 +1260,7 @@ def _construct_callsite_from_factory_term(
         facts.append(uni)
         for contract in uni[0]:
             if (
-                contract.kind == "function-contract"
+                isinstance(contract, FunctionContract)
                 and contract.bridge_source_symbol is not None
             ):
                 callable_contracts[contract.bridge_source_symbol] = contract
@@ -1181,8 +1284,8 @@ def _construct_callsite_from_factory_term(
         if fact_key in facts_seen:
             return False
         facts_seen.add(fact_key)
+        callable_contract = callable_contracts.get(f"call:{call_value.target_name}")
         if check_agreement:
-            callable_contract = callable_contracts.get(f"call:{call_value.target_name}")
             if callable_contract is not None:
                 agreement_violations.extend(
                     floor_contract_agreement_violations_for_fact(
@@ -1193,6 +1296,9 @@ def _construct_callsite_from_factory_term(
                         callsite_contract=contract_name,
                     )
                 )
+        call_return_sort = (
+            callable_contract.out_sort if callable_contract is not None else None
+        )
         facts.append(
             _emit_euf_fact(
                 stmt,
@@ -1209,6 +1315,7 @@ def _construct_callsite_from_factory_term(
                         call_value.target_name,
                     )
                 ),
+                call_return_sort=call_return_sort,
             )
         )
         return True
@@ -1486,23 +1593,29 @@ def _function_universe(
     if _imported_source is not None:
         source_lines = _imported_source.splitlines(keepends=True)
         memento_file = getattr(callee.node, "_sugar_file", memento_file)
-    body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
+    formal_names = tuple(callee.function_params())
+    scope_sorts = _contract_scope_sorts(body_formulas, formal_names=formal_names)
+    body_formula_values = [
+        _typed_formula_to_rpc(formula, scope_sorts) for formula in body_formulas
+    ]
     body_step_formula_values = [
-        _formula_to_rpc(formula) if formula is not None else None
+        _typed_formula_to_rpc(formula, scope_sorts) if formula is not None else None
         for formula in body_step_formulas
     ]
-    _universe_bound = set(callee.function_params()) | {"out"}
+    _universe_bound = set(formal_names) | {"out"}
     _universe_formulas = [
         f
-        for f, fv in zip(body_formulas, body_formula_values)
-        if not _is_free_var_definition(fv, _universe_bound)
+        for f in body_formulas
+        if not _is_free_var_definition(f, _universe_bound)
     ]
     if not _universe_formulas:
         return None
-    function_post = (
-        _formula_to_rpc(_universe_formulas[0])
+    function_post = _post_condition_from_ir(
+        _universe_formulas[0]
         if len(_universe_formulas) == 1
-        else _formula_to_rpc(and_(_universe_formulas))
+        else and_(_universe_formulas),
+        scope_sorts=scope_sorts,
+        formal_names=formal_names,
     )
     function_contract_name = (
         f"{Path(memento_file).stem}::{callee.function_name()}::callable"
@@ -1526,13 +1639,27 @@ def _function_universe(
         for _, _, step_stmt, _ in body_steps
     ]
     return_stmt_frag = SourceFragment.from_node(body_steps[-1][2], memento_file)
-    function_contract = BodyUniverseDto(
-        name=function_contract_name,
-        out_binding="out",
+    function_contract = FunctionContract(
+        symbol=function_contract_name,
+        formals=tuple(
+            FunctionContract.formal(name, scope_sorts[name]) for name in formal_names
+        ),
         post=function_post,
+        warrants=(
+            Provenance(
+                node_class=FunctionContract.node_class,
+                construction_site=_proofir_construction_site(
+                    return_stmt_frag,
+                    memento_file,
+                ),
+                warrant=Stated(
+                    locus=_proofir_construction_site(return_stmt_frag, memento_file)
+                ),
+            ),
+        ),
+        out_binding="out",
+        out_sort=function_post.out_sort,
         source_warrants=[function_memento],
-        formals=callee.function_params(),
-        kind="function-contract",
         bridge_source_symbol=f"call:{callee_name}",
     )
     audit = _source_audit(
@@ -1643,9 +1770,13 @@ def _dig_universe(
             requested="NumericBodyConstraint",
             fix=f"add the numeric simple-body dig (out == <return expr over the formal>): {exc}",
         )
-    body_formula_values = [_formula_to_rpc(formula) for formula in body_formulas]
+    formal_names = tuple(target_fn.function_params())
+    scope_sorts = _contract_scope_sorts(body_formulas, formal_names=formal_names)
+    body_formula_values = [
+        _typed_formula_to_rpc(formula, scope_sorts) for formula in body_formulas
+    ]
     body_step_formula_values = [
-        _formula_to_rpc(formula) if formula is not None else None
+        _typed_formula_to_rpc(formula, scope_sorts) if formula is not None else None
         for formula in body_step_formulas
     ]
     # The exported universe keeps `out` as its out-binding: the verifier substitutes
@@ -1654,16 +1785,18 @@ def _dig_universe(
     # It must be CLOSED after those substitutions or the verifier skips it as "open", so
     # drop free-var DEFINITIONS (`eq(alphabet, "..")` whose var is neither a formal nor
     # `out`); the str.eq-bv-blocks payload already carries the alphabet constant.
-    _universe_bound = set(target_fn.function_params()) | {"out"}
+    _universe_bound = set(formal_names) | {"out"}
     _universe_formulas = [
         f
-        for f, fv in zip(body_formulas, body_formula_values)
-        if not _is_free_var_definition(fv, _universe_bound)
+        for f in body_formulas
+        if not _is_free_var_definition(f, _universe_bound)
     ]
-    function_post = (
-        _formula_to_rpc(_universe_formulas[0])
+    function_post = _post_condition_from_ir(
+        _universe_formulas[0]
         if len(_universe_formulas) == 1
-        else _formula_to_rpc(and_(_universe_formulas))
+        else and_(_universe_formulas),
+        scope_sorts=scope_sorts,
+        formal_names=formal_names,
     )
     function_contract_name = (
         f"{Path(memento_file).stem}::{target_fn.function_name()}::callable"
@@ -1689,13 +1822,27 @@ def _dig_universe(
     return_memento = body_mementos[-1]
     return_stmt_raw = body_steps[-1][2]
     return_stmt_frag = SourceFragment.from_node(return_stmt_raw, memento_file)
-    function_contract = BodyUniverseDto(
-        name=function_contract_name,
-        out_binding="out",
+    function_contract = FunctionContract(
+        symbol=function_contract_name,
+        formals=tuple(
+            FunctionContract.formal(name, scope_sorts[name]) for name in formal_names
+        ),
         post=function_post,
+        warrants=(
+            Provenance(
+                node_class=FunctionContract.node_class,
+                construction_site=_proofir_construction_site(
+                    return_stmt_frag,
+                    memento_file,
+                ),
+                warrant=Stated(
+                    locus=_proofir_construction_site(return_stmt_frag, memento_file)
+                ),
+            ),
+        ),
+        out_binding="out",
+        out_sort=function_post.out_sort,
         source_warrants=[function_memento],
-        formals=target_fn.function_params(),
-        kind="function-contract",
         # Must equal the callsite ctor head the fact emits (`call:<callee>`), which the
         # verifier matches via `post.source_symbol == callsite.name`.
         bridge_source_symbol=f"call:{call_sugar.target_name}",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .formulas import And, Eq, Formula
+from .formulas import And, Eq, Formula, formula_from_ir
 from .nodes import (
     ConstructionSite,
     Derived,
@@ -18,8 +18,8 @@ from .nodes import (
     merge_equality_facts,
     registered_verdict_witnesses,
 )
-from .scope import ClosedFormula
-from .sorts import BoolSort, FunctionSort, IntSort, RealSort, Sort, StringSort
+from .scope import ClosedFormula, PostCondition, PreCondition
+from .sorts import BoolSort, FunctionSort, IntSort, RealSort, Sort, StringSort, UnknownSort
 from .terms import CallTerm, ConstTerm, Term, VarTerm, WrappedTerm, term_from_ir
 
 __all__ = [
@@ -37,6 +37,8 @@ __all__ = [
     "FunctionContract",
     "FunctionContractBuilder",
     "IntSort",
+    "PostCondition",
+    "PreCondition",
     "ProofIRNode",
     "Provenance",
     "REGISTERED_PROOFIR_NODE_CLASSES",
@@ -46,11 +48,13 @@ __all__ = [
     "Stated",
     "StringSort",
     "Term",
+    "UnknownSort",
     "VarTerm",
     "VerdictWitnessCase",
     "VerdictWitnessPair",
     "WrappedTerm",
     "canonical_euf_callsite_name",
+    "formula_from_ir",
     "merge_equality_facts",
     "registered_verdict_witnesses",
     "term_from_ir",
