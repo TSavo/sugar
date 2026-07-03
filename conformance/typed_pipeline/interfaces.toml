@@ -5,8 +5,8 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
 ambient_testimony_sites = 1
-transport_json_backend_ingress = 4
-backend_frontend_decode_calls = 3
+transport_json_backend_ingress = 2
+backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
 
 [[pipeline_seams]]
@@ -763,22 +763,6 @@ path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
 frontend_adapter = true
 
 [[frontend_boundary_transport_json_ingress]]
-id = "coq-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "CoqCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_transport_json_ingress]]
-id = "maude-ircompiler-json-ingress"
-shape = "transport-json-ircompiler-impl-ingress"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S2's compile_typed(&CompilerInput) trait makes this backend &Json ingress unrepresentable; delete compile(&Json) by S7"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "MaudeCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_transport_json_ingress]]
 id = "lazy-json-rpc-ircompiler-json-ingress"
 shape = "transport-json-ircompiler-impl-ingress"
 owner = "typed ProofIR frontend-boundary campaign"
@@ -793,30 +777,6 @@ owner = "typed ProofIR frontend-boundary campaign"
 retirement = "S5 reclassifies this wrapper as JSON-RPC transport frontend glue; S7 deletes backend compile(&Json)"
 baseline = true
 source = { path = "implementations/rust/sugar-ir-compiler/src/subprocess.rs", item = "JsonRpcCompiler", needles = ["fn compile(&self, ir: &Json"] }
-
-[[frontend_boundary_decode_calls]]
-id = "coq-compile-inner-term-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3b moves legacy term decode into CompilerInput::decode_json so Coq compile_inner receives typed Term"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "compile_inner", needles = ["let term: sugar_ir_types::Term = serde_json::from_value"] }
-
-[[frontend_boundary_decode_calls]]
-id = "coq-compile-inner-formula-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3b moves formula decode into CompilerInput::decode_json so Coq compile_inner receives typed Formula"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-coq/src/lib.rs", item = "compile_inner", needles = ["let formula: sugar_ir_types::Formula = serde_json::from_value"] }
-
-[[frontend_boundary_decode_calls]]
-id = "maude-compile-artifact-raw-obligation-from-value"
-shape = "backend-obligation-from-value"
-owner = "typed ProofIR frontend-boundary campaign"
-retirement = "S3b moves RawObligation decode into CompilerInput::EquationalTheory so Maude compile_artifact receives typed equational theory"
-baseline = true
-source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "compile_artifact", needles = ["serde_json::from_value(ir.clone()).map_err"] }
 
 [[frontend_boundary_allowlist_hatches]]
 id = "compiled-formula-metadata-json"
