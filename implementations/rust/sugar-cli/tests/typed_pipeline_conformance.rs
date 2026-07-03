@@ -16,6 +16,7 @@ const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 6;
 const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
 const BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN: usize = 0;
+const BASELINE_RUST_NAKED_FORMULA_CROSSINGS_OPEN: usize = 15;
 
 #[derive(Debug, Deserialize)]
 struct InterfaceManifest {
@@ -40,6 +41,10 @@ struct InterfaceManifest {
     verifier_obligation_sources: Vec<VerifierObligationSource>,
     #[serde(default)]
     verifier_untyped_obligation_paths: Vec<FrontendBoundaryDeclaration>,
+    #[serde(default)]
+    proofir_membership_sources: Vec<VerifierObligationSource>,
+    #[serde(default)]
+    rust_naked_formula_crossings: Vec<FrontendBoundaryDeclaration>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -56,6 +61,8 @@ struct Ratchet {
     frontend_provenance_unadmitted: usize,
     #[serde(default)]
     untyped_verifier_obligation_paths: usize,
+    #[serde(default)]
+    rust_naked_formula_crossings: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -932,6 +939,77 @@ path = "{}"
     );
 }
 
+#[test]
+fn proofir_membership_naked_formula_planted_offender_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("membership_like.rs");
+    std::fs::write(
+        &source,
+        r#"
+use sugar_ir_types::{Formula, IrFormula};
+use sugar_ir_types::membership::ClaimFormula;
+
+pub fn install_claim(formula: Formula) {}
+
+pub struct WireOnlyNearMiss {
+    claim: ClaimFormula,
+}
+
+pub fn legacy_contract_slot(inv: Option<IrFormula>) {}
+"#,
+    )
+    .expect("write planted proofir membership source");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+frontend_provenance_unadmitted = 0
+untyped_verifier_obligation_paths = 0
+rust_naked_formula_crossings = 0
+
+[[proofir_membership_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "rust naked-formula planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "rust-naked-formula-crossings"
+                && finding.item == "install_claim"
+                && finding.message.contains("formula-typed-claim-boundary")
+        }),
+        "planted raw Formula claim boundary must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "rust-naked-formula-crossings"
+                && finding.item == "legacy_contract_slot"
+                && finding.message.contains("formula-typed-claim-boundary")
+        }),
+        "planted IrFormula contract slot must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.item != "WireOnlyNearMiss"),
+        "ClaimFormula near miss must stay green; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
 fn manifest_from_str(text: &str) -> InterfaceManifest {
     toml::from_str(text).expect("fixture manifest parses")
 }
@@ -1120,6 +1198,10 @@ fn audit_manifest_with_mode(
         validate_frontend_boundary_declaration(row, &mut findings);
         validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
     }
+    for row in &manifest.rust_naked_formula_crossings {
+        validate_frontend_boundary_declaration(row, &mut findings);
+        validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
+    }
 
     for finding in discover_untyped_verifier_obligation_paths(root, manifest) {
         if !frontend_boundary_finding_is_declared(
@@ -1141,11 +1223,32 @@ fn audit_manifest_with_mode(
             });
         }
     }
+    for finding in discover_rust_naked_formula_crossings(root, manifest) {
+        if !frontend_boundary_finding_is_declared(
+            root,
+            &manifest.rust_naked_formula_crossings,
+            &finding,
+        ) {
+            findings.push(Finding {
+                axis: "rust-naked-formula-crossings",
+                path: finding.path,
+                line: finding.line,
+                item: finding.item,
+                message: format!(
+                    "undeclared {} in ProofIR claim-construction boundary: `{}`",
+                    finding.shape, finding.text
+                ),
+                replacement: "route Formula through OpenFormula -> ScopedFormula -> ClosedFormula -> ProvenancedFormula -> ClaimFormula before it crosses the claim/compiler boundary"
+                    .to_string(),
+            });
+        }
+    }
 
     let baseline = manifest_declared_baseline_count(manifest);
     let ambient_baseline = manifest_declared_ambient_count(manifest);
     let verifier_obligation_baseline =
         manifest_declared_untyped_verifier_obligation_count(manifest);
+    let rust_naked_formula_baseline = manifest_declared_rust_naked_formula_count(manifest);
     if enforce_live_ratchet && manifest.ratchet.interfaces_without_declaration != 0 {
         findings.push(Finding {
             axis: "ratchet-vector",
@@ -1286,6 +1389,40 @@ fn audit_manifest_with_mode(
             ),
             replacement: "keep S4's verifier-obligation rows synchronized with the live registry/plan census"
                 .to_string(),
+        });
+    }
+    if enforce_live_ratchet
+        && manifest.ratchet.rust_naked_formula_crossings
+            != BASELINE_RUST_NAKED_FORMULA_CROSSINGS_OPEN
+    {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.rust_naked_formula_crossings".to_string(),
+            message: format!(
+                "ratchet pins rust_naked_formula_crossings at {}, expected {BASELINE_RUST_NAKED_FORMULA_CROSSINGS_OPEN}",
+                manifest.ratchet.rust_naked_formula_crossings
+            ),
+            replacement: "S10 pins the Rust naked-Formula crossing baseline; future drains retire rows by making the wrapper path structural"
+                .to_string(),
+        });
+    }
+    if enforce_live_ratchet
+        && rust_naked_formula_baseline != manifest.ratchet.rust_naked_formula_crossings
+    {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.rust_naked_formula_crossings".to_string(),
+            message: format!(
+                "manifest has {rust_naked_formula_baseline} baseline Rust naked-Formula rows, ratchet pins {}",
+                manifest.ratchet.rust_naked_formula_crossings
+            ),
+            replacement:
+                "keep S10's Rust naked-Formula crossing rows synchronized with the live census"
+                    .to_string(),
         });
     }
 
@@ -2094,6 +2231,95 @@ fn discover_untyped_verifier_obligation_paths(
     out
 }
 
+fn discover_rust_naked_formula_crossings(
+    root: &Path,
+    manifest: &InterfaceManifest,
+) -> Vec<FrontendBoundaryFinding> {
+    let mut out = Vec::new();
+    let mut sources = BTreeSet::new();
+    for source in &manifest.proofir_membership_sources {
+        sources.insert(normalize_manifest_path(root, &source.path));
+    }
+    for row in &manifest.rust_naked_formula_crossings {
+        sources.insert(normalize_manifest_path(root, &row.source.path));
+    }
+    for rel in sources {
+        let path = resolve_manifest_path(root, &rel);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if !is_naked_formula_crossing_line(&lines, idx) {
+                continue;
+            }
+            out.push(FrontendBoundaryFinding {
+                path: rel.clone(),
+                item: enclosing_function_or_item_name(&lines, idx)
+                    .unwrap_or_else(|| "rust-naked-formula-crossing".to_string()),
+                line: idx + 1,
+                shape: "formula-typed-claim-boundary".to_string(),
+                text: trimmed.to_string(),
+            });
+        }
+    }
+    out.sort();
+    out
+}
+
+fn is_naked_formula_crossing_line(lines: &[&str], idx: usize) -> bool {
+    let trimmed = lines[idx].trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("#[")
+        || trimmed.starts_with("use ")
+        || trimmed.starts_with("pub type ")
+        || trimmed.starts_with("pub fn not_")
+        || trimmed.starts_with("pub fn implies")
+    {
+        return false;
+    }
+    if !trimmed.starts_with("pub ") && !is_public_signature_continuation(lines, idx) {
+        return false;
+    }
+    if trimmed.contains("ClaimFormula")
+        || trimmed.contains("OpenFormula")
+        || trimmed.contains("ScopedFormula")
+        || trimmed.contains("ClosedFormula")
+        || trimmed.contains("ProvenancedFormula")
+        || trimmed.contains("FormulaProvenance")
+    {
+        return false;
+    }
+    let compact = trimmed.replace([' ', '\t'], "");
+    compact.contains(":Formula")
+        || compact.contains(":&Formula")
+        || compact.contains(":Option<Formula")
+        || compact.contains(":Rc<Formula")
+        || compact.contains(":Option<Rc<Formula")
+        || compact.contains(":IrFormula")
+        || compact.contains(":&IrFormula")
+        || compact.contains(":Option<IrFormula")
+        || compact.contains("Formula(Formula")
+        || compact.contains("Formula(IrFormula")
+        || compact.contains("->Formula")
+        || compact.contains("->IrFormula")
+}
+
+fn is_public_signature_continuation(lines: &[&str], idx: usize) -> bool {
+    for line in lines[..=idx].iter().rev().take(8) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("pub fn ") {
+            return true;
+        }
+        if trimmed.ends_with('{') || trimmed.ends_with(';') {
+            return false;
+        }
+    }
+    false
+}
+
 fn function_signature_has_untyped_obligation(
     lines: &[&str],
     idx: usize,
@@ -2140,6 +2366,18 @@ fn enclosing_function_name(lines: &[&str], idx: usize) -> Option<String> {
     None
 }
 
+fn enclosing_function_or_item_name(lines: &[&str], idx: usize) -> Option<String> {
+    for line in lines[..=idx].iter().rev() {
+        if let Some(name) = parse_rust_function_name(line) {
+            return Some(name);
+        }
+        if let Some((_kind, name)) = parse_rust_item(line) {
+            return Some(name);
+        }
+    }
+    None
+}
+
 fn manifest_declared_baseline_count(manifest: &InterfaceManifest) -> usize {
     manifest
         .interfaces
@@ -2160,6 +2398,14 @@ fn manifest_declared_ambient_count(manifest: &InterfaceManifest) -> usize {
 fn manifest_declared_untyped_verifier_obligation_count(manifest: &InterfaceManifest) -> usize {
     manifest
         .verifier_untyped_obligation_paths
+        .iter()
+        .filter(|row| row.baseline)
+        .count()
+}
+
+fn manifest_declared_rust_naked_formula_count(manifest: &InterfaceManifest) -> usize {
+    manifest
+        .rust_naked_formula_crossings
         .iter()
         .filter(|row| row.baseline)
         .count()
@@ -2186,16 +2432,21 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
         .iter()
         .filter(|finding| finding.axis == "untyped-verifier-obligation-paths")
         .count();
+    let rust_naked_formula_crossings = findings
+        .iter()
+        .filter(|finding| finding.axis == "rust-naked-formula-crossings")
+        .count();
     let mut out = format!(
         "R.interfaces_without_declaration = {interfaces_without_declaration}\n\
          R.undeclared_escape_hatches = {undeclared_escape_hatches}\n\
          R.ambient_testimony_sites = {ambient_testimony_sites}\n\
          R.frontend_provenance_unadmitted = {frontend_provenance_unadmitted}\n\
          R.untyped_verifier_obligation_paths = {untyped_verifier_obligation_paths}\n\
+         R.rust_naked_formula_crossings = {rust_naked_formula_crossings}\n\
          R.declared_escape_hatch_rows_open = {declared_baseline} \
          (baseline {BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN})\n\
          Delta R: compare this run to the previous typed-pipeline conformance receipt\n\
-         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, frontend_provenance_unadmitted=0, untyped_verifier_obligation_paths=0\n"
+         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, frontend_provenance_unadmitted=0, untyped_verifier_obligation_paths=0, rust_naked_formula_crossings=0\n"
     );
     for finding in findings {
         out.push_str(&format!(

@@ -114,7 +114,7 @@ fn decode_json_routes_formula_term_and_equational_theory() {
         CompilerInput::Formula(formula) => {
             let expected: sugar_ir_types::Formula =
                 serde_json::from_value(formula_fixture()).expect("formula fixture");
-            assert_eq!(formula, expected);
+            assert_eq!(formula.formula(), &expected);
         }
         other => panic!("formula fixture decoded as {other:?}"),
     }

@@ -307,7 +307,10 @@ mod tests {
         assert_eq!(data["input_format"], "proofir-json");
         assert_eq!(data["path"], "$");
         assert!(data["detail"].as_str().unwrap().contains("JSON object"));
-        assert!(data["retirement"].as_str().unwrap().contains("S7 deletes"));
+        assert!(data["retirement"]
+            .as_str()
+            .unwrap()
+            .contains("backends receive CompilerInput"));
         assert_eq!(compiler.compile_typed_calls.load(Ordering::SeqCst), 0);
     }
 }

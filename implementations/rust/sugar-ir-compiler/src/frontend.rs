@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as Json};
-use sugar_ir_types::{Formula, IrTerm, Term};
+use sugar_ir_types::{membership::ClaimFormula, Formula, IrTerm, Term};
 
 const BINARY_FRONTEND_ID: &str = "sugar-ir-compiler::frontend::BinaryProofIrFrontend::decode";
 const BINARY_INPUT_FORMAT: &str = "proofir-cbor-v1";
@@ -16,7 +16,7 @@ const BINARY_MAGIC: &[u8] = b"sugar-proofir-cbor-v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompilerInput {
-    Formula(Formula),
+    Formula(ClaimFormula),
     Term(Term),
     EquationalTheory(EquationalTheoryObligation),
 }
@@ -60,8 +60,21 @@ impl CompilerInput {
 
         if is_formula_kind(kind) {
             return serde_json::from_value::<Formula>(ir)
-                .map(CompilerInput::Formula)
-                .map_err(invalid_typed_ir);
+                .map_err(invalid_typed_ir)
+                .and_then(|formula| {
+                    ClaimFormula::from_frontend_transport(
+                        formula,
+                        "sugar-ir-compiler::frontend::CompilerInput::decode_json",
+                    )
+                    .map(CompilerInput::Formula)
+                    .map_err(|error| {
+                        frontend_error(
+                            FrontendErrorKind::InvalidTypedIr,
+                            "$",
+                            format!("failed to construct ProofIR claim formula: {error}"),
+                        )
+                    })
+                });
         }
 
         Err(frontend_error(
@@ -84,6 +97,10 @@ impl CompilerInput {
                 format!("failed to serialize typed CompilerInput: {error}"),
             )
         })
+    }
+
+    pub fn from_claim_formula(claim: ClaimFormula) -> Self {
+        CompilerInput::Formula(claim)
     }
 }
 

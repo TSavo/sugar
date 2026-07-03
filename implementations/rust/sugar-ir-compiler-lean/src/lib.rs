@@ -83,7 +83,7 @@ impl IrCompiler for LeanCompiler {
 
 fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
     match input {
-        CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
+        CompilerInput::Formula(formula) => compile_formula_to_parts(formula.formula()),
         CompilerInput::Term(term) => compile_term_to_parts(term),
         CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
             "equational_theory".to_string(),
