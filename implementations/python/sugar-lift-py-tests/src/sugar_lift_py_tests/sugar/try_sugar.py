@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Never, NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
+from sugar_lift_py_tests.effect import CoverageGapEffect, RaiseEffect, RuntimeEffect
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.operations import (
     FinallyFallthroughOperation,
@@ -180,13 +181,25 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         return Complete(block)
 
     def _route_incomplete(self, outcome: Incomplete, ctx) -> Outcome:
-        effect = outcome.effect
-        if not isinstance(effect, RaiseEffect):
-            return outcome
-        for handler in self.handlers:
+        return _route_incomplete_effect(outcome, handlers=self.handlers, ctx=ctx)
+
+
+def _route_incomplete_effect(outcome: Incomplete, *, handlers: tuple, ctx) -> Outcome:
+    effect = outcome.effect
+    if isinstance(effect, RaiseEffect):
+        for handler in handlers:
             if handler.matches(effect):
                 return handler.reduce(ctx, effect)
         return outcome
+    if isinstance(effect, RuntimeEffect):
+        return outcome
+    if isinstance(effect, CoverageGapEffect):
+        return outcome
+    return _unhandled_effect(effect)
+
+
+def _unhandled_effect(effect: Never) -> NoReturn:
+    raise TypeError(f"unhandled Effect arm: {type(effect).__name__}")
 
 
 def _build_optional(site, ctx) -> SugarBody | None:

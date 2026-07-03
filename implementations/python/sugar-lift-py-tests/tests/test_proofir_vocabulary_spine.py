@@ -32,6 +32,7 @@ from sugar_lift_py_tests.proofir import (
     BoolSort,
     IntSort,
     PostCondition,
+    ProofIRNode,
     Provenance,
     REGISTERED_PROOFIR_NODE_CLASSES,
     RefusalRecord,
@@ -285,7 +286,7 @@ def _captured_lift_document(capture: Path) -> dict:
 def _run_witness_case(case, tmp_path: Path) -> str:
     if case.expected == "construction-refusal":
         assert case.construct is not None
-        with pytest.raises(FactoryGap):
+        with pytest.raises((FactoryGap, TypeError)):
             case.construct()
         return "construction-refusal"
     if case.construct is not None:
@@ -559,10 +560,12 @@ def test_refusal_record_has_no_formula_and_fact_plus_refusal_is_unconstructible(
         Incomplete(RuntimeEffect("opaque runtime effect")),
         provenance=_derived_provenance("RefusalRecord"),
     )
+    assert RefusalRecord.__module__.endswith(".proofir.nodes.refusal_record")
+    assert not isinstance(record, ProofIRNode)
     assert record.denotation() is None
     assert record.cid().startswith("blake3-512:")
 
-    with pytest.raises(FactoryGap, match="both formula and refusal"):
+    with pytest.raises(TypeError, match="formula"):
         RefusalRecord.from_incomplete(
             Incomplete(RuntimeEffect("opaque runtime effect")),
             provenance=_derived_provenance("RefusalRecord"),

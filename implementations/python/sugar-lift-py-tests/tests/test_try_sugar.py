@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from factory_reduce import compose_block
 
+from sugar_lift_py_tests.effect import CoverageGapEffect, RaiseEffect, RuntimeEffect
 from sugar_lift_py_tests.floor import (
     BlockValue,
     GuardedReturn,
@@ -12,6 +15,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import ctor, gt, make_var, not_, num
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.sugar.try_sugar import _route_incomplete_effect
 from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
 
@@ -46,6 +50,44 @@ def test_try_except_turns_matching_raise_back_into_complete_block() -> None:
         "    except ValueError:\n"
         "        return 5\n"
     ) == _returns(5)
+
+
+def test_typed_effect_union_routes_each_three_exit_member() -> None:
+    class Handler:
+        def matches(self, effect: RaiseEffect) -> bool:
+            return effect.exception_name == "ValueError"
+
+        def reduce(self, ctx, effect: RaiseEffect):
+            return Complete(_returns(7))
+
+    raise_outcome = _route_incomplete_effect(
+        Incomplete(RaiseEffect("ValueError", "tests/test_try_sugar.py:1")),
+        handlers=(Handler(),),
+        ctx=None,
+    )
+    assert raise_outcome == Complete(_returns(7))
+
+    runtime = Incomplete(RuntimeEffect("runtime boundary"))
+    assert _route_incomplete_effect(runtime, handlers=(Handler(),), ctx=None) is runtime
+
+    coverage = Incomplete(
+        CoverageGapEffect(
+            boundary="floor-dispatch",
+            reason="no owning arm reached this floor",
+        )
+    )
+    assert _route_incomplete_effect(coverage, handlers=(Handler(),), ctx=None) is coverage
+
+
+def test_unhandled_effect_kind_without_dispatch_arm_is_loud() -> None:
+    class FutureEffect:
+        reason = "new effect shape"
+
+    forged = object.__new__(Incomplete)
+    object.__setattr__(forged, "effect", FutureEffect())
+
+    with pytest.raises(TypeError, match="unhandled Effect"):
+        _route_incomplete_effect(forged, handlers=(), ctx=None)
 
 
 def test_try_except_exception_catches_named_raise() -> None:
