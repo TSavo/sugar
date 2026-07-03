@@ -130,32 +130,6 @@ pub trait AdapterLifter {
 
 ---
 
-### sugar-lifter — Annotation Macros
-
-**Crate:** `sugar-lifter` (proc-macro library)  
-**Public Proc Macros:**
-- `#[sugar]` — marks source code as a concept materialization
-- `#[boundary]` — marks cross-library boundary callsite
-- `#[refuse]` — declines a surface as out-of-scope
-
-**Usage in Source:**
-```rust
-#[sugar(concept = "hash", library = "blake3")]
-pub fn blake3_digest(data: &[u8]) -> Hash { ... }
-
-#[boundary(concept = "hash", library = "blake3", api = "blake3_digest")]
-fn call_blake3(data: &[u8]) { ... }
-
-#[refuse(surface = "blake3::Hasher::finalize_xof", concept = "streaming_hash", reason = "XOF not in scope")]
-pub fn finalize_xof(&self) { ... }
-```
-
-**Audience:** Contributors (annotation-driven lifters)  
-**Priority:** P1  
-**Summary:** Proc-macro attributes for lifting. No-op at compile time; the lift kit pattern-matches the attribute paths during AST walks to mark declarations, boundaries, and refusals.
-
----
-
 ### sugar-lift — Rust Workspace Lifter & Minting
 
 **Crate:** `sugar-lift`  

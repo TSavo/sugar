@@ -271,7 +271,6 @@ version = "0.4.0"
 | `SUGAR_RESOLVE_ORACLE` | Selects AST-resolution oracle: `"rust-analyzer"` or empty (none). Default: none (fast path). | `SUGAR_RESOLVE_ORACLE=rust-analyzer` enables full-source symbol resolution for Rust code |
 | `SUGAR_RUST_ANALYZER` | Explicit path to rust-analyzer binary (overrides `rustup which`) | `SUGAR_RUST_ANALYZER=/path/to/ra` |
 | `SUGAR_ORACLE_READY_TIMEOUT_MS` | How long to wait for oracle readiness (ms) | Default: ~1000ms |
-| `CHARON_BIN` | Path to Charon LLBC compiler (for Rust MIR lifts) | `CHARON_BIN=/home/user/charon/target/release/charon` |
 | `SUGAR_CAPTURE_REQUEST` | Capture JSON-RPC request for debugging | Set to any value to enable |
 | `SUGAR_PLUGIN_STDERR` | Redirect plugin stderr to file | `SUGAR_PLUGIN_STDERR=/tmp/plugin.log` |
 | `SUGAR_IR_COMPILER_TIMEOUT_SECS` | Timeout for IR compiler invocation (seconds) | Default: per-solver config (e.g., 30s for z3) |

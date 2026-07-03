@@ -128,7 +128,6 @@ fn collect_silent_drop_frontier(root: &Path) -> Result<Report, String> {
         root.join("implementations/rust/sugar-walk/src"),
         root.join("implementations/rust/sugar-lift/src"),
         root.join("implementations/rust/sugar-lift-contracts/src"),
-        root.join("implementations/rust/sugar-lifter/src"),
     ];
     let mut offenders = Vec::new();
     for source_root in source_roots {

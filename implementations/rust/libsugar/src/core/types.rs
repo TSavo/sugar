@@ -779,7 +779,7 @@ pub enum DomainKind {
 pub enum Dialect {
     /// C source or C-family AST.
     C,
-    /// Rust source or Rust MIR/LLBC-derived input.
+    /// Rust source input.
     Rust,
     /// x86-64 assembly or machine-code view.
     X86_64,

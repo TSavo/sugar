@@ -1053,10 +1053,9 @@ fn collect_recognizer_proof_files(root: &Path, proof_paths: &mut BTreeSet<PathBu
 //
 // The substrate has three lift surfaces:
 //
-//   1. The sugar lifter (rust-bind, above) walks #[sugar::sugar] /
-//      #[sugar::boundary] annotations and emits bind-IR entries plus
-//      identity-ctor sibling contracts at the sugar definitions. That
-//      surface NAMES the vendor contract.
+//   1. The Rust source lifter (rust-bind, above) walks native Rust source and
+//      emits bind-IR entries plus source mementos. That surface names the
+//      vendor binding from Cargo/package context and function identity.
 //
 //   2. The test lifter (sugar-lift-rust-tests) walks #[test] / panic /
 //      early-return shapes and emits one contract per asserted callsite,
@@ -6919,15 +6918,14 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
     let mut entries: Vec<Value> = Vec::new();
     let mut diagnostics: Vec<Value> = Vec::new();
     // Derive-from-source: in the `library-bindings` layer, EVERY module-level
-    // `pub fn` that carries NO `#[sugar::sugar]` attribute is ALSO sugar —
-    // the tag is gone, the binding is DERIVED from the crate name + fn name
+    // function is sugar. The old proc-macro tag is gone; the binding is
+    // DERIVED from the crate name + fn name
     // (`<crate>::f` -> tag=`<crate>`, symbol=`<crate>.f`). This is the rust
     // mirror of python's universal lift (`_library_binding_entry_for_function`,
     // `binding_origin: "derived"`): write a function, it's sugar — zero code
-    // changes, no `#[sugar::sugar]` required. Gated to `library-bindings`
+    // changes, no attribute surface required. Gated to `library-bindings`
     // exactly like python (`layer == "library-bindings"`) so the general
-    // contract path (`all`) is untouched and not flooded. The explicit-tag
-    // path below stays unconditional (it already works).
+    // contract path (`all`) is untouched and not flooded.
     let derive_library_bindings = params
         .get("options")
         .and_then(|options| options.get("layer"))
@@ -7034,7 +7032,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 None => Vec::new(),
             };
 
-            let doc_lines = sugar_doc_lines(item_fn);
+            let doc_lines = rust_doc_lines(item_fn);
             // #1075/A9 federation invariant: the bind-lift-entry is a
             // CID-bearing surface (it is embedded verbatim as arg[0] of the
             // federated `concept:bind-result` payload and feeds NamedTerm via
@@ -7067,194 +7065,20 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
             entries.push(entry);
         }
 
-        for sugar_target in collect_sugar_targets(&file, &src) {
-            let SugarTarget {
-                op,
-                library,
-                version,
-                loss,
-                observed_dimension,
-                item_fn,
-                totality_result_ok,
-            } = sugar_target;
-            let op_cid = canonical_local_op_cid(&op)
-                .map_err(|e| format!("derive op cid for sugar binding `{op}`: {e}"))?;
-            let param_names = fn_param_names(&item_fn);
-            let param_types = sugar_param_types(&item_fn);
-            let original_param_types = sugar_original_param_types(&item_fn);
-            let generic_params = sugar_generic_params(&item_fn);
-            let return_type = sugar_return_type(&item_fn);
-            let term_shape = term_shape_for_fn(&item_fn);
-            let term_shape_cid = blake3_512_of(encode_jcs(&term_shape).as_bytes());
-            let operand_bindings = operand_bindings_for_fn(&item_fn);
-            let sig_shape = CValue::object([
-                (
-                    "param_names",
-                    CValue::array(
-                        param_names
-                            .iter()
-                            .map(|name| CValue::string(name.clone()))
-                            .collect(),
-                    ),
-                ),
-                (
-                    "param_types",
-                    CValue::array(
-                        param_types
-                            .iter()
-                            .map(|param_type| CValue::string(param_type.clone()))
-                            .collect(),
-                    ),
-                ),
-                ("return_type", CValue::string(return_type.clone())),
-            ]);
-            let signature_shape_cid = blake3_512_of(encode_jcs(&sig_shape).as_bytes());
-
-            // #1361 chunk 2 part B / #1355: emit concept-hub sort CIDs for
-            // each parameter type. The rust kit's @sugar lift translates
-            // its source syntax to substrate-canonical sort identities AT
-            // the kit/substrate boundary. Parallel to other source-lifter
-            // boundary emissions.
-            // Kit-internal sort labels (rust:Int, rust:Str, ...) stay inside
-            // the rust kit; only concept-hub CIDs cross to substrate. Empty
-            // string in a slot signals "kit has no morphism for this type" —
-            // substrate-honest gap signal for downstream refusal.
-            let mut parametric_sort_expansions: Vec<
-                libsugar::core::source_aliases::ParametricSortExpansion,
-            > = Vec::new();
-            let param_sort_cids: Vec<String> = param_types
-                .iter()
-                .map(|t| {
-                    match rust_source_type_to_concept_hub_sort_cid(
-                        t,
-                        &mut parametric_sort_expansions,
-                    ) {
-                        Some(cid) => cid,
-                        None => String::new(),
-                    }
-                })
-                .collect();
-            let return_sort_cid = match rust_source_type_to_concept_hub_sort_cid(
-                &return_type,
-                &mut parametric_sort_expansions,
-            ) {
-                Some(cid) => cid,
-                None => String::new(),
-            };
-            let doc_lines_sb = sugar_doc_lines(&item_fn);
-            let mut entry = json!({
-                "kind": "library-sugar-binding-entry",
-                "target_language": "rust",
-                "target_library_tag": library,
-                "op_cid": op_cid,
-                "source_function_name": item_fn.sig.ident.to_string(),
-                "visibility": match &item_fn.vis {
-                    syn::Visibility::Public(_) => "pub",
-                    syn::Visibility::Restricted(_) => "pub(crate)",
-                    syn::Visibility::Inherited => "",
-                },
-                "generic_params": generic_params,
-                "original_param_types": original_param_types,
-                "param_names": param_names,
-                "param_types": param_types,
-                "param_sort_cids": param_sort_cids,
-                "return_type": return_type,
-                "return_sort_cid": return_sort_cid,
-                "term_shape": cvalue_to_json(&term_shape),
-                "term_shape_cid": term_shape_cid,
-                "operand_bindings": operand_bindings,
-                "signature_shape_cid": signature_shape_cid,
-                "loss_record_contribution": {
-                    "form": "literal",
-                    "value": { "entries": loss },
-                },
-                "body_source": sugar_body_source(&rel, &src, &item_fn),
-                "doc_lines": doc_lines_sb,
-            });
-            // #1369: parametric content-addressing — emit expansions for any
-            // composite CIDs the signature contains. Realize plugin reads
-            // these to decompose composite CIDs into (constructor, args)
-            // for parameterized morphism dispatch.
-            if !parametric_sort_expansions.is_empty() {
-                entry["parametric_sort_expansions"] =
-                    serde_json::to_value(&parametric_sort_expansions).unwrap_or_else(|_| json!([]));
-            }
-            if let Some(observed) = observed_dimension {
-                entry["observed_dimension"] = json!(observed);
-            }
-            // #1357: surface the optional version pin on the
-            // binding entry so downstream materialize dispatch (#1359) can
-            // narrow by them. Absent on the annotation → absent in the
-            // emitted JSON (NOT empty strings — null/missing is the substrate
-            // signal for "this axis floats").
-            if let Some(v) = version {
-                entry["library_version"] = json!(v);
-            }
-            entries.push(entry);
-
-            // #1580: emit a SIBLING `contract` decl per
-            // `#[sugar::sugar(...)]` annotation. cmd_mint mints
-            // this as a regular (non-body-bearing) contract memento.
-            // The post is normally the trivial identity ctor —
-            // `function_name(<vars>)` — which makes the verifier's
-            // enumerate_callsites find a callsite at this ctor name.
-            //
-            // TOTALITY EXCEPTION (Phase-2 Tier D-lib): when the sugar
-            // annotation carries `totality = "result_ok"` and the
-            // return type is Result, the post is the AXIOM `is_ok(result)`.
-            // This is one exact singleton shape callee_post_guard_fact accepts.
-            // With this post, bridges emitted by the recognize lane discharge
-            // the downstream `.unwrap()` as panic-safe. Sound: only functions
-            // explicitly marked totality get this post; inference from arg
-            // types is rejected (refuse-floor).
-            let fn_name = item_fn.sig.ident.to_string();
-            let post = if totality_result_ok {
-                // Singleton totality post: is_ok(result).
-                // Shape: {"kind":"atomic","name":"is_ok","args":[{"kind":"var","name":"result"}]}
-                json!({
-                    "kind": "atomic",
-                    "name": panic_freedom::IS_OK,
-                    "args": [{ "kind": "var", "name": "result" }],
-                })
-            } else {
-                let arg_terms: Vec<Value> = param_names
-                    .iter()
-                    .map(|name| json!({ "kind": "var", "name": name }))
-                    .collect();
-                json!({
-                    "kind": "atomic",
-                    "args": [{
-                        "kind": "ctor",
-                        "name": fn_name,
-                        "args": arg_terms,
-                    }],
-                })
-            };
-            entries.push(json!({
-                "kind": "contract",
-                "name": fn_name,
-                "post": post,
-                "outBinding": "out",
-            }));
-        }
-
         // Derive-from-source lane (mirrors python's universal lift). Anything is
         // liftable sugar: when the `library-bindings` layer is active and the
         // crate has a readable `[package].name`, every MODULE-LEVEL `fn` (ANY
-        // visibility) with NO `#[sugar::sugar]` and NO `#[sugar::boundary]`
-        // attribute ALSO emits a `library-sugar-binding-entry` —
+        // visibility) emits a `library-sugar-binding-entry` —
         // `binding_origin: "derived"`, `target_library_tag = <crate>`,
         // `symbol = <crate>.<fn>`, carrying the SAME SourceMemento
-        // (`sugar_body_source`) the tagged path emits. The body source CIDs are
+        // (`sugar_body_source`). The body source CIDs are
         // byte-identical to the tagged path for the same fn (same locus, same
         // hashing), so the Source Oracle resolves a derived binding exactly as it
-        // does a tagged one. We reuse the tagged path's entry builder; only the
-        // symbol/tag/origin provenance differs (path-derived vs attribute-
-        // derived). Visibility is NOT a gate. Only structural skips remain: a
-        // still-tagged fn (emitted above), a `#[sugar::boundary]` consumer
-        // stub, and test fns. Impl methods + nested-module fns are the next
-        // increment of "anything" (a structural walk, not an access rule). No
-        // no name-keyed identity is emitted, so `recognize` (which requires a
+        // does an explicitly minted one. Visibility is NOT a gate. Only test
+        // fns are skipped; boundary stubs are a separate consumer surface. Impl
+        // methods + nested-module fns are the next increment of "anything" (a
+        // structural walk, not an access rule). No name-keyed identity is
+        // emitted, so `recognize` (which requires a
         // pinned op CID) keeps the
         // project's own functions out of its published match-template set; the
         // derived binding is materialize-only, exactly like python's derived
@@ -7268,12 +7092,6 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                 // crate-private fn is as derivable as a `pub` one — its body is
                 // real source the oracle resolves and CID-verifies just the
                 // same. The only skips below are structural, not access-level.
-                // The tag is OPTIONAL, not removed: a fn that still carries
-                // `#[sugar::sugar]` is emitted by the tagged path above —
-                // skip it here so we never double-emit.
-                if extract_sugar_attr(item_fn).is_some() {
-                    continue;
-                }
                 // Tests are not a vendored surface.
                 if is_rust_test_fn(item_fn) {
                     continue;
@@ -7335,7 +7153,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
                     Some(cid) => cid,
                     None => String::new(),
                 };
-                let doc_lines = sugar_doc_lines(item_fn);
+                let doc_lines = rust_doc_lines(item_fn);
                 let mut entry = json!({
                     "kind": "library-sugar-binding-entry",
                     "target_language": "rust",
@@ -7615,54 +7433,26 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
         );
 
         for target in collect_function_contract_targets(&file) {
-            // Phase-2 Tier D-lib: when a sugar function carries `totality =
-            // "result_ok"`, the minted post is the AXIOM `is_ok(result)`
-            // rather than the body-derived reflexive post. The axiom flows
-            // into canonical_bytes and CID via the override path so the
-            // contract is self-consistent. This is the ONLY totality
-            // mechanism; inference from types is unsound (a non-Value Result
-            // may be fallible). The gate is explicit opt-in in the attribute.
-            // Singleton totality post: is_ok(result).
-            // Shape: {"kind":"atomic","name":"is_ok","args":[{"kind":"var","name":"result"}]}
-            // Matches the exact shape callee_post_guard_fact requires (body_discharge.rs).
-            let post_formula = if target.totality_result_ok {
-                IrFormula::Atomic {
-                    name: panic_freedom::IS_OK.to_string(),
-                    args: vec![IrTerm::Var {
-                        name: "result".to_string(),
-                    }],
-                }
-            } else {
-                lift_function_postcondition_with_return_facts_and_pure_free_guards(
-                    &target.item_fn,
-                    &return_facts,
-                    &pure_free_guard_rules,
-                )
-                .into_formula()
-            };
-            if !target.totality_result_ok {
-                factory_walk.extend(function_contract_body_factory_walk_rows(
-                    rel.as_str(),
-                    &src,
-                    &target,
-                    &post_formula,
-                ));
-            }
+            let post_formula = lift_function_postcondition_with_return_facts_and_pure_free_guards(
+                &target.item_fn,
+                &return_facts,
+                &pure_free_guard_rules,
+            )
+            .into_formula();
+            factory_walk.extend(function_contract_body_factory_walk_rows(
+                rel.as_str(),
+                &src,
+                &target,
+                &post_formula,
+            ));
             let contract = build_function_contract_with_file_and_post_override(
                 &target.item_fn,
                 None,
                 Some(rel.as_str()),
                 Some(post_formula),
             );
-            // Totality-axiom contracts are body-discharge-INELIGIBLE (no
-            // result equation, by design: the post is an axiom, not derived
-            // from the body). Mark with a distinct reason so the loud
-            // diagnostic does not fire for expected ineligibility.
-            let (body_discharge_eligible, refusal_reason) = if target.totality_result_ok {
-                (false, Some("totality-axiom".to_string()))
-            } else {
-                body_discharge_eligibility(&contract.post, &contract.formals)
-            };
+            let (body_discharge_eligible, refusal_reason) =
+                body_discharge_eligibility(&contract.post, &contract.formals);
             let mut entry: Value =
                 serde_json::from_slice(&contract.canonical_bytes).map_err(|e| e.to_string())?;
             entry["name"] = json!(target.fn_name.clone());
@@ -7672,16 +7462,12 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
             entry["bodyDischargeEligible"] = json!(body_discharge_eligible);
             if let Some(reason) = refusal_reason {
                 entry["bodyDischargeRefusalReason"] = json!(reason.clone());
-                // Suppress the loud body-discharge-gap diagnostic for the
-                // totality-axiom case: ineligibility is expected and sound.
-                if !target.totality_result_ok {
-                    diagnostics.push(json!({
-                        "kind": "body-discharge-gap",
-                        "reason": reason,
-                        "function": target.fn_name,
-                        "file": rel,
-                    }));
-                }
+                diagnostics.push(json!({
+                    "kind": "body-discharge-gap",
+                    "reason": reason,
+                    "function": target.fn_name,
+                    "file": rel,
+                }));
             }
             if !current_crate.is_empty() {
                 entry["library"] = json!(current_crate.clone());
@@ -8337,27 +8123,6 @@ struct FunctionContractLiftTarget {
     fn_name: String,
     source_name: String,
     item_fn: syn::ItemFn,
-    /// True when the function carries `#[sugar::sugar(totality = "result_ok", ...)]`.
-    /// When set, the minted post is the AXIOM `is_ok(result)` (NOT body-derived).
-    /// Sound only for wrapper functions whose return type is always Ok by type invariants
-    /// (e.g. serde_json::to_string(&Value) is total). Gate: explicit opt-in only.
-    totality_result_ok: bool,
-}
-
-#[derive(Debug, Clone)]
-struct SugarTarget {
-    op: String,
-    library: String,
-    /// #1357: per-#1355, the @sugar annotation may carry a `version`
-    /// pin (e.g. "0.39.0"). It floats when absent.
-    version: Option<String>,
-    loss: Vec<String>,
-    observed_dimension: Option<String>,
-    item_fn: syn::ItemFn,
-    /// Phase-2 Tier D-lib: when `totality = "result_ok"` in the sugar attr
-    /// AND the return type is Result, the emitted sibling `kind=contract`
-    /// carries post = `is_ok(result)` instead of the identity ctor post.
-    totality_result_ok: bool,
 }
 
 fn collect_bind_lift_targets_with_source(file: &syn::File, source: &str) -> Vec<BindLiftTarget> {
@@ -8419,12 +8184,10 @@ fn collect_function_contract_targets_in_items(
                     continue;
                 }
                 let fn_name = item_fn.sig.ident.to_string();
-                let totality_result_ok = sugar_declares_totality_result_ok(item_fn);
                 targets.push(FunctionContractLiftTarget {
                     source_name: fn_name.clone(),
                     fn_name,
                     item_fn: item_fn.clone(),
-                    totality_result_ok,
                 });
             }
             syn::Item::Impl(impl_block) => {
@@ -8443,12 +8206,10 @@ fn collect_function_contract_targets_in_items(
                         continue;
                     }
                     let source_name = method.sig.ident.to_string();
-                    let totality_result_ok = sugar_declares_totality_result_ok(&item_fn);
                     targets.push(FunctionContractLiftTarget {
                         fn_name: format!("{qualifier}::{source_name}"),
                         source_name,
                         item_fn,
-                        totality_result_ok,
                     });
                 }
             }
@@ -8538,206 +8299,6 @@ fn collect_bind_lift_targets_in_items(
             // sugar-audit: not-mine(bind lift targets are functions, liftable methods, and inline modules)
             _ => {}
         }
-    }
-}
-
-fn collect_sugar_targets(file: &syn::File, _src: &str) -> Vec<SugarTarget> {
-    let mut targets = Vec::new();
-    collect_sugar_targets_in_items(&file.items, &mut targets);
-    targets
-}
-
-fn collect_sugar_targets_in_items(items: &[syn::Item], targets: &mut Vec<SugarTarget>) {
-    for item in items {
-        match item {
-            syn::Item::Fn(item_fn) => {
-                if let Some(parsed) = extract_sugar_attr(item_fn) {
-                    let totality_result_ok = parsed.totality.as_deref() == Some("result_ok")
-                        && is_result_type_fn(item_fn);
-                    targets.push(SugarTarget {
-                        op: parsed.op,
-                        library: parsed.library,
-                        version: parsed.version,
-                        loss: parsed.loss,
-                        observed_dimension: parsed.observed_dimension,
-                        item_fn: item_fn.clone(),
-                        totality_result_ok,
-                    });
-                }
-            }
-            syn::Item::Mod(module) => {
-                if let Some((_, nested_items)) = &module.content {
-                    collect_sugar_targets_in_items(nested_items, targets);
-                }
-            }
-            // sugar-audit: not-mine(sugar targets are annotated functions inside inline modules)
-            _ => {}
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct SugarAttrParsed {
-    op: String,
-    library: String,
-    /// #1357: optional `version` named arg (e.g. "0.39.0"). Absent ↔ floating.
-    version: Option<String>,
-    loss: Vec<String>,
-    observed_dimension: Option<String>,
-    /// Phase-2 Tier D-lib: when `totality = "result_ok"`, the minted contract
-    /// post is the AXIOM `is_ok(result)` rather than the body-derived reflexive
-    /// post. Only valid on functions whose return type is always Ok by type
-    /// invariants (e.g. serde_json::to_string(&Value)). Must be explicitly set;
-    /// never inferred.
-    totality: Option<String>,
-}
-
-/// True iff the function carries `#[sugar::sugar(totality = "result_ok", ...)]`.
-///
-/// This is the ONLY gate for the totality post override: the attribute must be
-/// present AND the return type must be Result. Never infer from the type alone;
-/// explicit opt-in is required to prevent inadvertent totality labels on
-/// fallible functions that happen to take `&Value` arguments.
-fn sugar_declares_totality_result_ok(item_fn: &syn::ItemFn) -> bool {
-    let Some(parsed) = extract_sugar_attr(item_fn) else {
-        return false;
-    };
-    // Require explicit totality = "result_ok" in the attribute.
-    if parsed.totality.as_deref() != Some("result_ok") {
-        return false;
-    }
-    // Require a Result return type. A totality label on a non-Result return
-    // makes no sense and is rejected loudly here rather than silently mislabeling.
-    is_result_type_fn(item_fn)
-}
-
-/// True iff a syn Type is `Result<...>` (bare or path-qualified).
-fn is_result_type(ty: &syn::Type) -> bool {
-    let syn::Type::Path(tp) = ty else {
-        return false;
-    };
-    match tp.path.segments.last() {
-        Some(seg) => seg.ident == "Result",
-        None => false,
-    }
-}
-
-/// True iff an ItemFn has a `Result<...>` return type.
-fn is_result_type_fn(item_fn: &syn::ItemFn) -> bool {
-    matches!(
-        &item_fn.sig.output,
-        syn::ReturnType::Type(_, ty) if is_result_type(ty)
-    )
-}
-
-fn extract_sugar_attr(item_fn: &syn::ItemFn) -> Option<SugarAttrParsed> {
-    for attr in &item_fn.attrs {
-        let path = attr.path();
-        let segments: Vec<_> = path.segments.iter().collect();
-        if segments.len() == 2 && segments[0].ident == "sugar" && segments[1].ident == "sugar" {
-            if let Ok(meta_list) = attr.meta.require_list() {
-                let args = parse_attr_named_args(&meta_list.tokens);
-                let Some(op) = args.string("op") else {
-                    continue;
-                };
-                let Some(library) = args.string("library") else {
-                    continue;
-                };
-                if !op.is_empty() && !library.is_empty() {
-                    return Some(SugarAttrParsed {
-                        op,
-                        library,
-                        version: args.string("version"),
-                        loss: args.string_array("loss"),
-                        observed_dimension: args.string("observed_dimension"),
-                        totality: args.string("totality"),
-                    });
-                }
-            }
-        }
-    }
-    None
-}
-
-#[derive(Debug, Default)]
-struct ParsedAttrArgs {
-    strings: std::collections::BTreeMap<String, String>,
-    string_arrays: std::collections::BTreeMap<String, Vec<String>>,
-}
-
-impl ParsedAttrArgs {
-    fn string(&self, key: &str) -> Option<String> {
-        self.strings.get(key).cloned()
-    }
-
-    fn string_array(&self, key: &str) -> Vec<String> {
-        match self.string_arrays.get(key) {
-            Some(values) => values.clone(),
-            None => Vec::new(),
-        }
-    }
-}
-
-fn parse_attr_named_args(tokens: &proc_macro2::TokenStream) -> ParsedAttrArgs {
-    let mut out = ParsedAttrArgs::default();
-    let tokens: Vec<_> = tokens.clone().into_iter().collect();
-    let mut i = 0;
-    while i < tokens.len() {
-        let key = match &tokens[i] {
-            proc_macro2::TokenTree::Ident(ident) => ident.to_string(),
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        let is_eq = matches!(tokens.get(i + 1), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '=');
-        if !is_eq {
-            i += 1;
-            continue;
-        }
-        match tokens.get(i + 2) {
-            Some(proc_macro2::TokenTree::Literal(lit)) => {
-                if let Some(unquoted) = unquote_string_literal(&lit.to_string()) {
-                    out.strings.insert(key, unquoted);
-                }
-                i += 3;
-            }
-            Some(proc_macro2::TokenTree::Group(group))
-                if group.delimiter() == proc_macro2::Delimiter::Bracket =>
-            {
-                let entries: Vec<String> = group
-                    .stream()
-                    .into_iter()
-                    .filter_map(|tt| match tt {
-                        proc_macro2::TokenTree::Literal(lit) => {
-                            unquote_string_literal(&lit.to_string())
-                        }
-                        // sugar-audit: not-mine(named attr string arrays only collect literal entries)
-                        _ => None,
-                    })
-                    .collect();
-                out.string_arrays.insert(key, entries);
-                i += 3;
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
-        }
-        if let Some(proc_macro2::TokenTree::Punct(p)) = tokens.get(i) {
-            if p.as_char() == ',' {
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-fn unquote_string_literal(raw: &str) -> Option<String> {
-    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-        Some(raw[1..raw.len() - 1].to_string())
-    } else {
-        None
     }
 }
 
@@ -9252,35 +8813,14 @@ fn sugar_generic_params(item_fn: &syn::ItemFn) -> String {
     }
 }
 
-/// #1391 follow-on: extract the `///` doc-comment lines that appear
-/// AFTER the `#[sugar::sugar(...)]` attribute on a fn (syn surfaces
-/// these as `#[doc = "..."]` attributes interleaved with sugar). Doc
-/// comments BEFORE the sugar attribute belong to the rust source-level
-/// concept declaration block (a different surface that measure_fn skips)
-/// and are NOT round-tripped through the cycle's body channel.
-///
-/// Returns the doc body lines (without the `/// ` prefix and without
-/// `\n`), preserving source order. Empty when the function has no
-/// post-sugar docs.
-fn sugar_doc_lines(item_fn: &syn::ItemFn) -> Vec<String> {
+/// Extract the function's `///` doc-comment lines. Concept declarations live in
+/// `concept_annotation_for_fn`; this body channel carries only Rust docs that
+/// belong to the native function surface.
+fn rust_doc_lines(item_fn: &syn::ItemFn) -> Vec<String> {
     let mut out = Vec::new();
-    let mut seen_sugar = false;
     for attr in &item_fn.attrs {
         let path = attr.path();
-        // Detect the `#[sugar::sugar(...)]` attribute by its two-segment
-        // path.
-        let segs: Vec<_> = path.segments.iter().collect();
-        if segs.len() == 2 && segs[0].ident == "sugar" && segs[1].ident == "sugar" {
-            seen_sugar = true;
-            continue;
-        }
         if !path.is_ident("doc") {
-            continue;
-        }
-        if !seen_sugar {
-            // Doc BEFORE sugar — belongs to the rust-source concept block;
-            // skip for the cycle's emit (the block precedes the cycle's
-            // function-level surface).
             continue;
         }
         if let syn::Meta::NameValue(nv) = &attr.meta {
@@ -11068,7 +10608,7 @@ mod tests {
     #[test]
     fn source_oracle_resolves_matching_source_to_body() {
         let dir = unique_tmp("match");
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
         // Clean disk == the pin: the oracle returns the body.
         let resolved = resolve_source_memento(&dir, &memento).expect("clean resolve");
@@ -11129,10 +10669,10 @@ mod tests {
     #[test]
     fn source_oracle_refuses_on_body_drift() {
         let dir = unique_tmp("drift");
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
         // Tamper the body AFTER minting the pin: same behavior, different bytes.
-        let tampered = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    let v: Vec<char> = s.chars().rev().collect();\n    v.into_iter().collect()\n}\n";
+        let tampered = "pub fn rev(s: &str) -> String {\n    let v: Vec<char> = s.chars().rev().collect();\n    v.into_iter().collect()\n}\n";
         fs::write(dir.join("src/lib.rs"), tampered).unwrap();
         let err = resolve_source_memento(&dir, &memento).expect_err("drift must refuse");
         assert!(
@@ -11153,11 +10693,11 @@ mod tests {
         // on the source_cid axis, demonstrating the producer's canonicalization
         // is exactly what the oracle recomputes.
         let dir = unique_tmp("rename");
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
 
         // Re-mint a memento from the param-renamed body to read its pins.
-        let renamed = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(input: &str) -> String {\n    input.chars().rev().collect()\n}\n";
+        let renamed = "pub fn rev(input: &str) -> String {\n    input.chars().rev().collect()\n}\n";
         let dir2 = unique_tmp("rename2");
         let renamed_memento = mint_memento_for(&dir2, "rev", renamed);
         // template_cid is STABLE across the param rename (alpha-equivalence).
@@ -11188,7 +10728,7 @@ mod tests {
     #[test]
     fn source_oracle_same_locus_replacement_reports_name_and_source_drift() {
         let dir = unique_tmp("replacement");
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
         // Same locus, different function. That is a name axis change plus source
         // drift, not "gone": the oracle can still see the replacement.
@@ -11211,7 +10751,7 @@ mod tests {
     #[test]
     fn source_oracle_refuses_when_function_absent() {
         let dir = unique_tmp("absent");
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let memento = mint_memento_for(&dir, "rev", src);
         // Gone means no function exists at the pinned name or locus.
         fs::write(dir.join("src/lib.rs"), "pub struct Other;\n").unwrap();
@@ -11223,7 +10763,7 @@ mod tests {
 
     #[test]
     fn sugar_body_source_is_one_shape_without_inline_body_or_template() {
-        let src = "#[sugar::sugar(op = \"c\", library = \"l\")]\npub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
+        let src = "pub fn rev(s: &str) -> String {\n    s.chars().rev().collect()\n}\n";
         let parsed = syn::parse_file(src).unwrap();
         let item_fn = parsed
             .items
@@ -11538,82 +11078,9 @@ pub fn wrap_positive(amount: usize) -> Option<usize> {
     }
 
     #[test]
-    fn sugar_attr_annotated_fn_emits_library_sugar_binding_entry() {
-        let root = temp_workspace("sugar_positive");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(op = "http-request", library = "reqwest")]
-async fn fetch_status(url: String) -> i64 {
-    0
-}
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(
-            sugar.len(),
-            1,
-            "expected exactly one sugar entry, got: {sugar:?}"
-        );
-        let e = &sugar[0];
-        assert_eq!(e["kind"], "library-sugar-binding-entry");
-        assert_eq!(e["target_language"], "rust");
-        assert_eq!(e["target_library_tag"], "reqwest");
-        assert_eq!(
-            e["op_cid"],
-            local_op_cid("http-request").expect("http-request op cid")
-        );
-        assert_eq!(e["source_function_name"], "fetch_status");
-        assert!(
-            e["signature_shape_cid"]
-                .as_str()
-                .expect("signature cid")
-                .starts_with("blake3-512:"),
-            "bad sig cid"
-        );
-        assert!(
-            e["body_source"]["source_cid"]
-                .as_str()
-                .expect("source cid")
-                .starts_with("blake3-512:"),
-            "bad source cid"
-        );
-        // The body-source span is attribute-inclusive: it starts at the function's
-        // first attribute line, not the `fn`/`async fn` line. Here the leading `\n`
-        // is line 1, the attribute is line 2, the `async fn` is line 3 -- so the
-        // surface starts at line 2. Pinning the attribute in the source fragment is
-        // deliberate: a rust attribute edit that changes behavior (cfg/repr/derive/
-        // inline/...) also moves source_cid, so it is caught as source drift rather
-        // than left dark. source_oracle.rs's `source_memento_of_named_item_fn` test
-        // pins the same attribute-inclusive semantics.
-        assert_eq!(e["body_source"]["span"]["start_line"], 2);
-        assert_eq!(e["loss_record_contribution"]["form"], "literal");
-        assert_eq!(e["loss_record_contribution"]["value"]["entries"], json!([]));
-        assert!(
-            e.get("signature_shape").is_none(),
-            "must not emit full signature_shape doc"
-        );
-        assert!(
-            e["body_source"].get("locator").is_none(),
-            "must use span not locator"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn untagged_pub_fn_derives_library_sugar_binding_entry_in_library_bindings_layer() {
-        // The relapse-killer: a PLAIN `pub fn` with NO `#[sugar::sugar]`
-        // attribute must ALSO emit a `library-sugar-binding-entry` when the
+        // The relapse-killer: a plain `pub fn` must emit a
+        // `library-sugar-binding-entry` when the
         // `library-bindings` layer is active — the tag is gone; the binding is
         // DERIVED from the crate name + fn name. Mirror of python's universal
         // lift. The `target_library_tag` is the RAW crate name (hyphens intact)
@@ -11708,7 +11175,6 @@ async fn fetch_status(url: String) -> i64 {
     #[test]
     fn sugar_body_source_uses_rust_block_span_for_source_cid_without_storing_body() {
         let src = r####"
-#[sugar::sugar(op = "http-request", library = "reqwest")]
 async fn render(url: String) -> String {
     let normal = "}";
     let raw = r###"raw } braces { stay"###;
@@ -11750,7 +11216,6 @@ async fn render(url: String) -> String {
     #[test]
     fn sugar_body_source_uses_byte_offsets_for_unicode_source_cid_without_storing_body() {
         let src = r#"
-#[sugar::sugar(op = "unicode", library = "unicode-lib")]
 pub fn snowman() -> &'static str { "☃ } still body" }
 "#;
         let entry = single_sugar_entry_for_source("sugar_body_unicode_byte_offsets", src);
@@ -11766,7 +11231,6 @@ pub fn snowman() -> &'static str { "☃ } still body" }
     #[test]
     fn sugar_body_source_canonicalizes_trimmed_body_for_source_cid_without_storing_body() {
         let src_a = r#"
-#[sugar::sugar(op = "canonical-body", library = "test-lib")]
 pub fn canonical_body() -> i64 {
 
     41 + 1
@@ -11774,7 +11238,6 @@ pub fn canonical_body() -> i64 {
 }
 "#;
         let src_b = r#"
-#[sugar::sugar(op = "canonical-body", library = "test-lib")]
 pub fn canonical_body() -> i64 {    41 + 1    }
 "#;
 
@@ -11802,7 +11265,6 @@ pub fn canonical_body() -> i64 {    41 + 1    }
     #[test]
     fn sugar_body_source_emits_template_cid_without_storing_template() {
         let src = r##"
-#[sugar::sugar(op = "json-parse", library = "serde_json")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
@@ -11844,7 +11306,6 @@ pub fn json_parse(s: &str) -> i64 {
     #[test]
     fn sugar_body_template_canonicalizes_multiple_params_positionally() {
         let src = r##"
-#[sugar::sugar(op = "sql-execute", library = "rusqlite")]
 pub fn execute(conn: &i64, sql: &str, args: &i64) -> i64 {
     conn.execute(sql, args)
 }
@@ -11888,13 +11349,11 @@ pub fn execute(conn: &i64, sql: &str, args: &i64) -> i64 {
         // Canonical templates with $1/$2 must be byte-identical for two
         // sugar functions that differ only in their parameter names.
         let src_a = r##"
-#[sugar::sugar(op = "noop", library = "ka")]
 pub fn op(x: &i64, y: &i64) -> i64 {
     x.add(y)
 }
 "##;
         let src_b = r##"
-#[sugar::sugar(op = "noop", library = "kb")]
 pub fn op(alpha: &i64, beta: &i64) -> i64 {
     alpha.add(beta)
 }
@@ -11926,7 +11385,6 @@ pub fn op(alpha: &i64, beta: &i64) -> i64 {
     fn recognize_emits_exact_tag_for_alpha_equivalent_user_function() {
         // The shim's sugar (what would land in the .proof envelope):
         let sugar_src = r##"
-#[sugar::sugar(op = "json-parse", library = "sugar-shim-serde-json-rust")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
@@ -11962,11 +11420,8 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
         let tags = resp["tags"].as_array().expect("tags array");
         assert_eq!(tags.len(), 1, "alpha-equivalent body must match: {tags:?}");
         let tag = &tags[0];
-        assert_eq!(
-            tag["op_cid"],
-            local_op_cid("json-parse").expect("json op cid")
-        );
-        assert_eq!(tag["library_tag"], "sugar-shim-serde-json-rust");
+        assert_eq!(tag["op_cid"], sugar_entry["op_cid"]);
+        assert_eq!(tag["library_tag"], sugar_entry["target_library_tag"]);
         assert_eq!(tag["match_tier"], "exact");
         assert_eq!(tag["file"], user_rel);
         // param_bindings reflects the USER's spelling (input), not the sugar's (s).
@@ -11981,12 +11436,13 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
     #[test]
     fn recognize_loads_binding_templates_from_imported_proofs() {
         let sugar_src = r##"
-#[sugar::sugar(op = "json-parse", library = "sugar-shim-serde-json-rust")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
 "##;
         let sugar_entry = single_sugar_entry_for_source("recognize_imported_sugar", sugar_src);
+        let expected_op_cid = sugar_entry["op_cid"].clone();
+        let expected_library_tag = sugar_entry["target_library_tag"].clone();
         let contract_cid = "blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
         let user_src = r##"
@@ -12020,11 +11476,8 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
             "Rust recognizer must self-resolve imported sugar binding proofs without CLI binding_templates: {tags:?}"
         );
         let tag = &tags[0];
-        assert_eq!(
-            tag["op_cid"],
-            local_op_cid("json-parse").expect("json op cid")
-        );
-        assert_eq!(tag["library_tag"], "sugar-shim-serde-json-rust");
+        assert_eq!(tag["op_cid"], expected_op_cid);
+        assert_eq!(tag["library_tag"], expected_library_tag);
         assert_eq!(tag["contract_cid"], contract_cid);
         assert_eq!(tag["target_proof_cid"], proof_cid);
 
@@ -12034,13 +11487,14 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
     #[test]
     fn recognize_matches_template_cid_only_imported_proof() {
         let sugar_src = r##"
-#[sugar::sugar(op = "json-parse", library = "sugar-shim-serde-json-rust")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
 "##;
         let mut sugar_entry =
             single_sugar_entry_for_source("recognize_template_cid_only_sugar", sugar_src);
+        let expected_op_cid = sugar_entry["op_cid"].clone();
+        let expected_library_tag = sugar_entry["target_library_tag"].clone();
         let contract_cid = "blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
         let body_source = sugar_entry["body_source"]
             .as_object_mut()
@@ -12080,11 +11534,8 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
             "Rust recognizer must match imported sugar proofs by pinned template_cid alone: {tags:?}"
         );
         let tag = &tags[0];
-        assert_eq!(
-            tag["op_cid"],
-            local_op_cid("json-parse").expect("json op cid")
-        );
-        assert_eq!(tag["library_tag"], "sugar-shim-serde-json-rust");
+        assert_eq!(tag["op_cid"], expected_op_cid);
+        assert_eq!(tag["library_tag"], expected_library_tag);
         assert_eq!(tag["contract_cid"], contract_cid);
         assert_eq!(tag["target_proof_cid"], proof_cid);
 
@@ -12094,12 +11545,12 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
     #[test]
     fn recognize_loads_binding_templates_from_cargo_dependency_proofs() {
         let sugar_src = r##"
-#[sugar::sugar(op = "json-parse", library = "sugar-shim-serde-json-rust")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
 "##;
         let sugar_entry = single_sugar_entry_for_source("recognize_cargo_sugar", sugar_src);
+        let expected_op_cid = sugar_entry["op_cid"].clone();
         let contract_cid = "blake3-512:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
         let root = temp_workspace("recognize_cargo_dependency");
@@ -12159,10 +11610,7 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
             "Rust recognizer must resolve package proof templates through Cargo metadata: {tags:?}"
         );
         let tag = &tags[0];
-        assert_eq!(
-            tag["op_cid"],
-            local_op_cid("json-parse").expect("json op cid")
-        );
+        assert_eq!(tag["op_cid"], expected_op_cid);
         assert_eq!(tag["contract_cid"], contract_cid);
         assert_eq!(tag["target_proof_cid"], proof_cid);
 
@@ -12172,7 +11620,6 @@ pub fn json_parse(input: &str) -> Result<serde_json::Value, String> {
     #[test]
     fn recognize_returns_empty_tags_for_non_matching_source() {
         let sugar_src = r##"
-#[sugar::sugar(op = "json-parse", library = "sugar-shim-serde-json-rust")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
@@ -12218,13 +11665,11 @@ pub fn json_parse(s: &str) -> i64 {
         // Two binding templates (json + sql shapes). User source contains
         // one match for each. Recognize emits two tags.
         let json_sugar = r##"
-#[sugar::sugar(op = "json-parse", library = "json-lib")]
 pub fn json_parse(s: &str) -> i64 {
     serde_json::from_str(s)
 }
 "##;
         let sql_sugar = r##"
-#[sugar::sugar(op = "sql-execute", library = "sql-lib")]
 pub fn sql_execute(conn: &i64, sql: &str, args: &i64) -> i64 {
     conn.execute(sql, args)
 }
@@ -12271,8 +11716,8 @@ pub fn sql_execute(c: &i64, q: &str, p: &i64) -> i64 {
         let tags = resp["tags"].as_array().expect("tags array");
         assert_eq!(tags.len(), 2, "expected 2 tags (json + sql): {tags:?}");
         let op_cids: Vec<&str> = tags.iter().filter_map(|t| t["op_cid"].as_str()).collect();
-        assert!(op_cids.contains(&local_op_cid("json-parse").expect("json op cid")));
-        assert!(op_cids.contains(&local_op_cid("sql-execute").expect("sql op cid")));
+        assert!(op_cids.contains(&json_entry["op_cid"].as_str().expect("json op cid")));
+        assert!(op_cids.contains(&sql_entry["op_cid"].as_str().expect("sql op cid")));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -12283,7 +11728,6 @@ pub fn sql_execute(c: &i64, q: &str, p: &i64) -> i64 {
         // template's $N markers back to the user's actual variables at
         // tag emission time. The lifter exposes them as a separate field.
         let src = r##"
-#[sugar::sugar(op = "sql-query-row", library = "rusqlite")]
 pub fn query_row(conn: &i64, sql: &str, params: &i64, mapper: &i64) -> i64 {
     conn.query_row(sql, params, mapper)
 }
@@ -12297,78 +11741,6 @@ pub fn query_row(conn: &i64, sql: &str, params: &i64, mapper: &i64) -> i64 {
         assert_eq!(names[1], "sql");
         assert_eq!(names[2], "params");
         assert_eq!(names[3], "mapper");
-    }
-
-    // ---------------------------------------------------------------------
-    // #1357 / #1355: version axis on @sugar / @boundary annotations
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn sugar_attr_with_family_and_version_emits_into_binding_entry() {
-        let root = temp_workspace("sugar_family_version");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(
-    op = "sql-query",
-    library = "rusqlite",
-    version = "0.39.0",
-)]
-pub fn query(conn: &i64, sql: &str) -> i64 {
-    0
-}
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(sugar.len(), 1, "expected one sugar entry, got: {sugar:?}");
-        let e = &sugar[0];
-        assert_eq!(e["target_library_tag"], "rusqlite");
-        assert_eq!(e["library_version"], "0.39.0");
-        assert_eq!(
-            e["op_cid"],
-            local_op_cid("sql-query").expect("sql-query op cid")
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn sugar_attr_without_family_or_version_omits_those_fields() {
-        // Back-compat: existing shims without version annotations must
-        // still mint, with the new fields simply absent (NOT empty strings).
-        let root = temp_workspace("sugar_no_family_version");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(op = "http-request", library = "reqwest")]
-async fn fetch_status(url: String) -> i64 {
-    0
-}
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let e = ir
-            .iter()
-            .find(|e| e["kind"] == "library-sugar-binding-entry")
-            .expect("sugar entry");
-        assert!(
-            e.get("library_version").is_none() || e["library_version"].is_null(),
-            "library_version must not be emitted when absent on annotation"
-        );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -12405,104 +11777,6 @@ fn plain_fn(x: i64) -> i64 {
             bind.len(),
             1,
             "regular bind-lift-entry must still be emitted"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn two_sugar_annotated_fns_produce_two_entries() {
-        let root = temp_workspace("sugar_multi");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(op = "http-request", library = "reqwest")]
-fn fetch_one(url: String) -> i64 {
-    0
-}
-
-#[sugar::sugar(op = "sql-query", library = "rusqlite")]
-fn query_db(sql: String) -> String {
-    String::new()
-}
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(
-            sugar.len(),
-            2,
-            "two annotated fns must produce two sugar entries"
-        );
-        let op_cids: Vec<_> = sugar
-            .iter()
-            .map(|e| e["op_cid"].as_str().expect("op cid"))
-            .collect();
-        assert!(
-            op_cids.contains(&local_op_cid("http-request").expect("http op cid")),
-            "{op_cids:?}"
-        );
-        assert!(
-            op_cids.contains(&local_op_cid("sql-query").expect("sql op cid")),
-            "{op_cids:?}"
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn malformed_sugar_attr_missing_concept_or_library_produces_zero_entries() {
-        let root = temp_workspace("sugar_malformed");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src_missing_lib = r#"
-#[sugar::sugar(op = "http-request")]
-fn missing_lib(url: String) -> i64 { 0 }
-"#;
-        fs::write(src_dir.join("lib.rs"), src_missing_lib).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(
-            sugar.len(),
-            0,
-            "missing library must produce zero sugar entries"
-        );
-
-        let src_missing_concept = r#"
-#[sugar::sugar(library = "reqwest")]
-fn missing_concept(url: String) -> i64 { 0 }
-"#;
-        fs::write(src_dir.join("lib.rs"), src_missing_concept).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(
-            sugar.len(),
-            0,
-            "missing concept must produce zero sugar entries"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -13918,11 +13192,13 @@ reason = "scope discipline probe"
         let root = temp_workspace(name);
         let src_dir = root.join("src");
         fs::create_dir_all(&src_dir).expect("create src dir");
+        write_cargo_package(&root, name);
         fs::write(src_dir.join("lib.rs"), source).expect("write source");
 
         let out = bind_lift(&json!({
             "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."]
+            "source_paths": ["."],
+            "options": { "layer": "library-bindings" },
         }))
         .expect("bind lift should succeed");
         let entry = out["ir"]
@@ -13967,100 +13243,6 @@ reason = "scope discipline probe"
         std::fs::create_dir_all(dir.join("src")).expect("create src");
         std::fs::write(dir.join("src/lib.rs"), "fn broken(").expect("write source");
         dir
-    }
-
-    // ---- substrate-honest precursor wire tests (loss, observed_dimension, refusal-memento) ----
-
-    #[test]
-    fn sugar_attr_loss_array_populates_loss_record_entries() {
-        let root = temp_workspace("sugar_loss_array");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(
-    op = "sql-query",
-    library = "rusqlite",
-    loss = ["sync-vs-async", "row-cardinality"],
-)]
-fn query(conn: String, sql: String) -> i64 { 0 }
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(sugar.len(), 1, "expected one sugar entry");
-        assert_eq!(
-            sugar[0]["loss_record_contribution"]["value"]["entries"],
-            json!(["sync-vs-async", "row-cardinality"])
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn sugar_attr_without_loss_still_emits_empty_entries() {
-        let root = temp_workspace("sugar_no_loss");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(op = "sql-query", library = "rusqlite")]
-fn query(conn: String, sql: String) -> i64 { 0 }
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(sugar.len(), 1);
-        assert_eq!(
-            sugar[0]["loss_record_contribution"]["value"]["entries"],
-            json!([])
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn sugar_attr_observed_dimension_propagates_to_entry() {
-        let root = temp_workspace("sugar_observed_dim");
-        let src_dir = root.join("src");
-        fs::create_dir_all(&src_dir).expect("create src dir");
-        let src = r#"
-#[sugar::sugar(
-    op = "contract-observation",
-    library = "rusqlite",
-    observed_dimension = "autocommit-mode",
-)]
-fn is_autocommit(conn: String) -> bool { false }
-"#;
-        fs::write(src_dir.join("lib.rs"), src).expect("write source");
-        let out = bind_lift(&json!({
-            "workspace_root": root.to_string_lossy(),
-            "source_paths": ["."],
-        }))
-        .expect("bind lift should succeed");
-        let ir = out["ir"].as_array().expect("ir array");
-        let sugar: Vec<_> = ir
-            .iter()
-            .filter(|e| e["kind"] == "library-sugar-binding-entry")
-            .collect();
-        assert_eq!(sugar.len(), 1);
-        assert_eq!(sugar[0]["observed_dimension"], "autocommit-mode");
-
-        let _ = fs::remove_dir_all(root);
     }
 
     // -----------------------------------------------------------------

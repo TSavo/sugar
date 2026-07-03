@@ -165,7 +165,6 @@ fn collect_report(root: &Path) -> Report {
         "implementations/rust/sugar-walk/src/lift.rs",
         "implementations/rust/sugar-walk/src/term_boundary.rs",
         "implementations/rust/sugar-walk/src/walk.rs",
-        "implementations/rust/sugar-walk/src/llbc_lift.rs",
     ] {
         let source = read_source(root, rel);
         let parsed = syn::parse_file(&source).unwrap_or_else(|err| panic!("parse {rel}: {err}"));
@@ -203,7 +202,6 @@ impl StructuralPatternCollector {
             || ALLOWED_STRUCTURAL_PATTERN_FNS
                 .iter()
                 .any(|(symbol, _reason)| *symbol == enclosing_fn)
-            || self.file.ends_with("llbc_lift.rs")
     }
 
     fn push_unexpected(&mut self, line: usize, observed: String) {
