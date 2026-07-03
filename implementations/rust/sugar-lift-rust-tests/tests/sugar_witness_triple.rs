@@ -2,15 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value as Json};
-use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use sugar_lift_rust_tests::sugar::catalog::catalog_claims;
 use sugar_lift_rust_tests::{
-    emit_value_contract, lift_file, warrant_conjoined_with_vendor_terms, AdapterOutput,
-    AssertionFactEmission, AssertionFactKind,
+    emit_value_contract, lift_file, AdapterOutput, AssertionFactEmission, AssertionFactKind,
 };
 
 // This harness verifies Rust sugar SOURCE-witness pairs: minimal source snippets
@@ -562,28 +559,77 @@ fn mint_and_prove_project(project: &Path, z3: &str) -> Result<Vec<ProveRow>, Str
         .collect())
 }
 
-fn production_verdict_for_label(
-    rows: &[ProveRow],
-    label: &str,
-) -> Result<ProductionVerdict, String> {
+fn production_statuses_for_label(rows: &[ProveRow], label: &str) -> Result<Vec<String>, String> {
     let needle = format!("tests/{label}.rs");
     let statuses = rows
         .iter()
         .filter(|row| row.property.contains(&needle) && !row.property.contains("#panic_callsite#"))
-        .map(|row| row.status.as_str())
+        .map(|row| row.status.clone())
         .collect::<Vec<_>>();
     if statuses.is_empty() {
-        return Err(format!("production prove emitted no row for {needle}"));
-    }
-    if statuses.iter().any(|status| *status == "unsatisfied") {
-        Ok(ProductionVerdict::Unsat)
-    } else if statuses.iter().all(|status| *status == "discharged") {
-        Ok(ProductionVerdict::Sat)
+        Err(format!("production prove emitted no row for {needle}"))
     } else {
-        Err(format!(
-            "production prove emitted no SAT/UNSAT verdict for {needle}; statuses={statuses:?}"
-        ))
+        Ok(statuses)
     }
+}
+
+fn production_case_failure(
+    rows: &[ProveRow],
+    label: &str,
+    expected: ProductionVerdict,
+) -> Option<String> {
+    let statuses = match production_statuses_for_label(rows, label) {
+        Ok(statuses) => statuses,
+        Err(err) => return Some(format!("{label}: expected {expected:?}; {err}")),
+    };
+    match expected {
+        ProductionVerdict::Sat if statuses.iter().all(|status| status == "discharged") => None,
+        ProductionVerdict::Sat => Some(format!(
+            "{label}: truthful source must discharge through production CLI; statuses={statuses:?}"
+        )),
+        ProductionVerdict::Unsat if statuses.iter().any(|status| status == "discharged") => {
+            Some(format!(
+                "{label}: HIDDEN LIE; lying source discharged through production CLI; statuses={statuses:?}"
+            ))
+        }
+        ProductionVerdict::Unsat => None,
+    }
+}
+
+fn assert_production_cli_cases(test_name: &str, cases: &[(&str, &'static str, ProductionVerdict)]) {
+    assert_production_cli_cases_with_residuals(test_name, cases, &[]);
+}
+
+fn assert_production_cli_cases_with_residuals(
+    test_name: &str,
+    cases: &[(&str, &'static str, ProductionVerdict)],
+    expected_failures: &[&str],
+) {
+    let z3 = z3_path_or_panic();
+    let project = unique_cli_project(test_name);
+    let sources = cases
+        .iter()
+        .map(|(label, src, _)| ((*label).to_string(), *src))
+        .collect::<Vec<_>>();
+    write_rust_test_assertion_project(&project, &sources);
+    let rows = mint_and_prove_project(&project, &z3).unwrap_or_else(|err| {
+        panic!(
+            "production sugar mint/prove must decide {test_name} witness cases\nproject={}\n{err}",
+            project.display()
+        )
+    });
+    let failures = cases
+        .iter()
+        .filter_map(|(label, _, expected)| production_case_failure(&rows, label, *expected))
+        .collect::<Vec<_>>();
+    let expected_failures = expected_failures
+        .iter()
+        .map(|failure| (*failure).to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        failures, expected_failures,
+        "{test_name}: source -> sugar CLI -> verdict residuals changed"
+    );
 }
 
 fn selected_claims(out: &AdapterOutput) -> BTreeSet<&'static str> {
@@ -615,8 +661,24 @@ fn z3_absence_is_a_loud_harness_error() {
 }
 
 #[test]
+fn fast_smt_smoke_is_not_a_witness_verdict_authority() {
+    let source = include_str!("sugar_witness_triple.rs");
+    let expected_token = ["expected", "_sat"].concat();
+    let got_token = ["got", "_sat"].concat();
+    let forbidden = source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(&expected_token) || line.contains(&got_token))
+        .map(|(idx, line)| format!("{}: {}", idx + 1, line.trim()))
+        .collect::<Vec<_>>();
+    assert!(
+        forbidden.is_empty(),
+        "witness verdicts must come from source -> sugar CLI -> production verdict, not fast SMT smoke: {forbidden:#?}"
+    );
+}
+
+#[test]
 fn phase2_question_mark_ok_path_has_solver_bad_twin() {
-    let z3 = z3_path_or_panic();
     let truthful = r#"
         #[test]
         fn t_question_mark_ok_good() -> Result<(), i32> {
@@ -633,25 +695,21 @@ fn phase2_question_mark_ok_path_has_solver_bad_twin() {
             Ok(())
         }
     "#;
-    let mut verdict_receipt = Vec::new();
-
-    for (label, src, expected_sat) in [
-        ("phase2_question_mark_ok_good", truthful, true),
-        ("phase2_question_mark_ok_bad", lying, false),
-    ] {
-        let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
-        let decl = single_warranted_decl(&out);
-        let got_sat = fast_smt_smoke_verdict(&assertion_formula_json(decl), label, &z3);
-        verdict_receipt.push(format!("{label}={}", if got_sat { "SAT" } else { "UNSAT" }));
-        assert_eq!(
-            got_sat, expected_sat,
-            "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}",
-            out.skip_reasons
-        );
-    }
-    println!(
-        "phase2 TrySugar acceptance via lift_file -> assertion_formula_json -> fast_smt_smoke_verdict: {}",
-        verdict_receipt.join(", ")
+    assert_production_cli_cases_with_residuals(
+        "phase2-question-mark-ok",
+        &[
+            (
+                "phase2_question_mark_ok_good",
+                truthful,
+                ProductionVerdict::Sat,
+            ),
+            (
+                "phase2_question_mark_ok_bad",
+                lying,
+                ProductionVerdict::Unsat,
+            ),
+        ],
+        &["phase2_question_mark_ok_good: truthful source must discharge through production CLI; statuses=[\"refused\"]"],
     );
 }
 
@@ -683,7 +741,6 @@ fn phase2_question_mark_err_path_remains_uncaught_boundary() {
 
 #[test]
 fn s6_result_and_then_composes_with_phase2_question_mark_router() {
-    let z3 = z3_path_or_panic();
     let truthful = r#"
         #[test]
         fn t_result_and_then_question_mark_good() -> Result<(), i32> {
@@ -700,85 +757,61 @@ fn s6_result_and_then_composes_with_phase2_question_mark_router() {
             Ok(())
         }
     "#;
-    let mut verdict_receipt = Vec::new();
-
-    for (label, src, expected_sat) in [
-        ("s6_result_and_then_question_mark_good", truthful, true),
-        ("s6_result_and_then_question_mark_bad", lying, false),
+    for (label, src) in [
+        ("s6_result_and_then_question_mark_good", truthful),
+        ("s6_result_and_then_question_mark_bad", lying),
     ] {
         let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
         assert_witness_dispatches_to_owner("result_and_then", &out)
             .unwrap_or_else(|err| panic!("{label}: {err}; skips={:?}", out.skip_reasons));
-        let decl = single_warranted_decl(&out);
-        let got_sat = fast_smt_smoke_verdict(&assertion_formula_json(decl), label, &z3);
-        verdict_receipt.push(format!("{label}={}", if got_sat { "SAT" } else { "UNSAT" }));
-        assert_eq!(
-            got_sat, expected_sat,
-            "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}",
-            out.skip_reasons
-        );
     }
-    println!(
-        "s6 Result::and_then floor composes into Phase 2 ? router: {}",
-        verdict_receipt.join(", ")
+    assert_production_cli_cases_with_residuals(
+        "s6-result-and-then-question-mark",
+        &[
+            (
+                "s6_result_and_then_question_mark_good",
+                truthful,
+                ProductionVerdict::Sat,
+            ),
+            (
+                "s6_result_and_then_question_mark_bad",
+                lying,
+                ProductionVerdict::Unsat,
+            ),
+        ],
+        &["s6_result_and_then_question_mark_good: truthful source must discharge through production CLI; statuses=[\"refused\"]"],
     );
 }
 
 #[test]
 fn phase2_early_return_branch_has_solver_bad_twin() {
-    let z3 = z3_path_or_panic();
-    let function: syn::ItemFn = syn::parse_str(
-        r#"
+    let prefix = r#"
         fn pick(flag: bool) -> i32 {
             if flag {
                 return 5;
             }
             7
         }
-    "#,
-    )
-    .expect("early-return source parses");
-    let decl = emit_value_contract("pick", &function.block)
-        .expect("early-return source contract emits through the route spine");
-    let flag_true = bool_term(true);
-
-    for (label, expected_out, expected_sat) in [
-        ("phase2_early_return_good", 5, true),
-        ("phase2_early_return_bad", 6, false),
-    ] {
-        let conjoined = warrant_conjoined_with_vendor_terms(
-            &decl,
-            &[("flag", Rc::clone(&flag_true))],
-            num(expected_out),
-        );
-        let got_sat = fast_smt_smoke_verdict(&assertion_formula_json(&conjoined), label, &z3);
-        assert_eq!(
-            got_sat, expected_sat,
-            "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
-        );
-    }
-}
-
-fn return_sugar_value_contract_verdict(
-    src: &str,
-    expected_out: i128,
-    label: &str,
-    z3: &str,
-) -> bool {
-    let parsed = parse(src);
-    let function = parsed
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == "pick" => Some(function),
-            _ => None,
-        })
-        .expect("return_sugar witness must define pick");
-    let decl = emit_value_contract("pick", &function.block)
-        .expect("return_sugar witness must emit through the value-contract route spine");
-    let conjoined =
-        warrant_conjoined_with_vendor_terms(&decl, &[("flag", bool_term(true))], num(expected_out));
-    fast_smt_smoke_verdict(&assertion_formula_json(&conjoined), label, z3)
+    "#;
+    let truthful = Box::leak(
+        format!(
+            "{prefix}\n#[test]\nfn phase2_early_return_good() {{ assert_eq!(pick(true), 5); }}\n"
+        )
+        .into_boxed_str(),
+    );
+    let lying = Box::leak(
+        format!(
+            "{prefix}\n#[test]\nfn phase2_early_return_bad() {{ assert_eq!(pick(true), 6); }}\n"
+        )
+        .into_boxed_str(),
+    );
+    assert_production_cli_cases(
+        "phase2-early-return",
+        &[
+            ("phase2_early_return_good", truthful, ProductionVerdict::Sat),
+            ("phase2_early_return_bad", lying, ProductionVerdict::Unsat),
+        ],
+    );
 }
 
 fn run_rust_test_source(claim: &str, kind: &str, src: &str) -> bool {
@@ -820,37 +853,37 @@ fn run_rust_test_source(claim: &str, kind: &str, src: &str) -> bool {
 
 #[test]
 fn phase2_guarded_panic_branch_has_solver_bad_twin() {
-    let z3 = z3_path_or_panic();
-    let function: syn::ItemFn = syn::parse_str(
-        r#"
+    let prefix = r#"
         fn guarded(flag: bool) -> i32 {
             if flag {
                 panic!()
             }
             7
         }
-    "#,
-    )
-    .expect("guarded panic source parses");
-    let decl = emit_value_contract("guarded", &function.block)
-        .expect("guarded panic source contract emits through the route spine");
-    let flag_false = bool_term(false);
-
-    for (label, expected_out, expected_sat) in [
-        ("phase2_guarded_panic_good", 7, true),
-        ("phase2_guarded_panic_bad", 8, false),
-    ] {
-        let conjoined = warrant_conjoined_with_vendor_terms(
-            &decl,
-            &[("flag", Rc::clone(&flag_false))],
-            num(expected_out),
-        );
-        let got_sat = fast_smt_smoke_verdict(&assertion_formula_json(&conjoined), label, &z3);
-        assert_eq!(
-            got_sat, expected_sat,
-            "{label}: expected SAT={expected_sat} got SAT={got_sat}; decl={conjoined:?}"
-        );
-    }
+    "#;
+    let truthful = Box::leak(
+        format!(
+            "{prefix}\n#[test]\nfn phase2_guarded_panic_good() {{ assert_eq!(guarded(false), 7); }}\n"
+        )
+        .into_boxed_str(),
+    );
+    let lying = Box::leak(
+        format!(
+            "{prefix}\n#[test]\nfn phase2_guarded_panic_bad() {{ assert_eq!(guarded(false), 8); }}\n"
+        )
+        .into_boxed_str(),
+    );
+    assert_production_cli_cases(
+        "phase2-guarded-panic",
+        &[
+            (
+                "phase2_guarded_panic_good",
+                truthful,
+                ProductionVerdict::Sat,
+            ),
+            ("phase2_guarded_panic_bad", lying, ProductionVerdict::Unsat),
+        ],
+    );
 }
 
 #[test]
@@ -909,13 +942,6 @@ fn phase2_noop_drop_does_not_perturb_assertion_emission() {
         with_drop.assertion_facts,
         with_drop.skip_reasons
     );
-}
-
-fn bool_term(value: bool) -> Rc<Term> {
-    Rc::new(Term::Const {
-        value: ConstValue::Bool(value),
-        sort: Sort::bool(),
-    })
 }
 
 const S7_SEED_PAIR_CLAIMS: &[&str] = &[
@@ -1058,13 +1084,10 @@ const S6_OPTION_RESULT_PAIR_CLAIMS: &[&str] = &[
     "result_err",
 ];
 
-const EXPECTED_PRODUCTION_VERDICT_RESIDUALS: usize = 238;
-const EXPECTED_PRODUCTION_VERDICT_PASSES: &[&str] = &[
-    "map_lying",
-    "map_truthful",
-    "return_sugar_lying",
-    "return_sugar_truthful",
-];
+const EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS: usize = 119;
+const EXPECTED_PRODUCTION_HIDDEN_LIES: usize = 0;
+const EXPECTED_PRODUCTION_LYING_NO_ROW_RESIDUALS: usize = 3;
+const EXPECTED_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &["map_truthful", "return_sugar_truthful"];
 
 fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
     [
@@ -1219,33 +1242,69 @@ fn seed_witnesses_satisfy_the_triple() {
         )
     });
 
-    let mut production_passes = Vec::new();
-    let mut failures = Vec::new();
+    let mut discharged_truths = Vec::new();
+    let mut truthful_residuals = Vec::new();
+    let mut hidden_lies = Vec::new();
+    let mut lying_no_rows = Vec::new();
+    let mut non_green_lies = 0usize;
     for (label, _, expected) in &cases {
-        match production_verdict_for_label(&rows, label) {
-            Ok(got) if got == *expected => production_passes.push(label.clone()),
-            Ok(got) => failures.push(format!("{label}: expected {expected:?} got {got:?}")),
-            Err(err) => failures.push(format!("{label}: expected {expected:?}; {err}")),
+        match (*expected, production_statuses_for_label(&rows, label)) {
+            (ProductionVerdict::Sat, Ok(statuses))
+                if statuses.iter().all(|status| status == "discharged") =>
+            {
+                discharged_truths.push(label.clone());
+            }
+            (ProductionVerdict::Sat, Ok(statuses)) => truthful_residuals.push(format!(
+                "{label}: truthful source must discharge through production CLI; statuses={statuses:?}"
+            )),
+            (ProductionVerdict::Sat, Err(err)) => {
+                truthful_residuals.push(format!("{label}: truthful source produced no verdict; {err}"))
+            }
+            (ProductionVerdict::Unsat, Ok(statuses))
+                if statuses.iter().any(|status| status == "discharged") =>
+            {
+                hidden_lies.push(format!(
+                    "{label}: lying source discharged through production CLI; statuses={statuses:?}"
+                ));
+            }
+            (ProductionVerdict::Unsat, Ok(_)) => {
+                non_green_lies += 1;
+            }
+            (ProductionVerdict::Unsat, Err(err)) => {
+                lying_no_rows.push(format!("{label}: lying source produced no verdict; {err}"));
+            }
         }
     }
-    production_passes.sort();
+    discharged_truths.sort();
     println!(
-        "R(rust-witness-production-verdict-residuals)={} authority=production-cli rows={} production_passes={production_passes:?}",
-        failures.len(),
+        "R(rust-witness-production-truthful-residuals)={} R(rust-witness-production-hidden-lies)={} R(rust-witness-production-lying-no-row-residuals)={} authority=source-to-sugar-cli rows={} discharged_truths={discharged_truths:?} non_green_lies={non_green_lies}",
+        truthful_residuals.len(),
+        hidden_lies.len(),
+        lying_no_rows.len(),
         rows.len()
     );
     assert_eq!(
-        failures.len(),
-        EXPECTED_PRODUCTION_VERDICT_RESIDUALS,
-        "production CLI verdict frontier changed; repin the exact residual set after investigating:\n{failures:#?}"
+        truthful_residuals.len(),
+        EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS,
+        "production CLI truthful frontier changed; every truthful residual is a coverage gap to investigate:\n{truthful_residuals:#?}"
     );
-    let expected_passes = EXPECTED_PRODUCTION_VERDICT_PASSES
+    assert_eq!(
+        hidden_lies.len(),
+        EXPECTED_PRODUCTION_HIDDEN_LIES,
+        "production CLI discharged lying witnesses; these are hidden lies:\n{hidden_lies:#?}"
+    );
+    assert_eq!(
+        lying_no_rows.len(),
+        EXPECTED_PRODUCTION_LYING_NO_ROW_RESIDUALS,
+        "production CLI produced no row for lying witnesses; distinguish from refused/undecidable non-green:\n{lying_no_rows:#?}"
+    );
+    let expected_passes = EXPECTED_PRODUCTION_DISCHARGED_TRUTHS
         .iter()
         .map(|label| (*label).to_string())
         .collect::<Vec<_>>();
     assert_eq!(
-        production_passes, expected_passes,
-        "production-backed witness set changed; review each new pass/residual as a real drain before repinning"
+        discharged_truths, expected_passes,
+        "production-backed truthful witness set changed; review each new discharge/residual as a real drain before repinning"
     );
 }
 
@@ -1273,28 +1332,18 @@ fn production_cli_verdict_fails_loudly_when_z3_is_absent() {
 #[test]
 fn seed_witnesses_match_fast_smt_smoke() {
     let z3 = z3_path_or_panic();
-    let mut failures = Vec::new();
     let mut owner_mismatches = Vec::new();
+    let mut smoke_rows = 0usize;
     for witness in seed_witnesses() {
         if witness.claim == "return_sugar" {
-            for (kind, src, expected_out, expected_sat) in [
-                ("truthful", witness.truthful, 5, true),
-                ("lying", witness.lying, 6, false),
-            ] {
-                let label = format!("{}_{}", witness.claim, kind);
-                let got_sat = return_sugar_value_contract_verdict(src, expected_out, &label, &z3);
-                if got_sat != expected_sat {
-                    failures.push(format!(
-                        "{label}: expected SAT={expected_sat} got SAT={got_sat}"
-                    ));
-                }
-            }
+            // This smoke path checks assertion-formula well-sortedness only.
+            // ReturnSugar's source witness is a value-contract route; its
+            // production verdict is covered by the CLI authority above, and
+            // the old in-process value-contract conjoin is not a verdict
+            // authority.
             continue;
         }
-        for (kind, src, expected_sat) in [
-            ("truthful", witness.truthful, true),
-            ("lying", witness.lying, false),
-        ] {
+        for (kind, src) in [("truthful", witness.truthful), ("lying", witness.lying)] {
             let label = format!("{}_{}", witness.claim, kind);
             let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
             if let Err(err) = assert_witness_dispatches_to_owner(witness.claim, &out) {
@@ -1302,21 +1351,15 @@ fn seed_witnesses_match_fast_smt_smoke() {
                 continue;
             }
             let decl = single_warranted_decl(&out);
-            let got_sat = fast_smt_smoke_verdict(&assertion_formula_json(decl), &label, &z3);
-            if got_sat != expected_sat {
-                failures.push(format!(
-                    "{label}: expected SAT={expected_sat} got SAT={got_sat}"
-                ));
-            }
+            let _ = fast_smt_smoke_verdict(&assertion_formula_json(decl), &label, &z3);
+            smoke_rows += 1;
         }
     }
     println!(
-        "R(witness-triples-failing)={} R(witnesses-not-dispatching-to-owner)={}",
-        failures.len(),
+        "R(witness-fast-smt-smoke-owner-mismatches)={} smoke_rows={smoke_rows} authority=none",
         owner_mismatches.len()
     );
     assert!(owner_mismatches.is_empty(), "{owner_mismatches:#?}");
-    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]
