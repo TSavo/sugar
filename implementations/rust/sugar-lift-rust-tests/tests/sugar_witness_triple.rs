@@ -1108,6 +1108,8 @@ const S6_OPTION_RESULT_PAIR_CLAIMS: &[&str] = &[
 const EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS: usize = 119;
 const EXPECTED_PRODUCTION_HIDDEN_LIES: usize = 0;
 const EXPECTED_PRODUCTION_LYING_NO_ROW_RESIDUALS: usize = 3;
+const EXPECTED_PRODUCTION_ACTIVE_DISAGREEMENTS: usize = 0;
+const EXPECTED_PRODUCTION_COVERAGE_GAPS: usize = 238;
 const EXPECTED_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &["map_truthful", "return_sugar_truthful"];
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DIRECTIONAL_AGREEMENTS: usize = 2;
 const EXPECTED_WITNESS_SMOKE_PRODUCTION_DISAGREEMENTS: usize = 0;
@@ -1271,6 +1273,7 @@ fn seed_witnesses_satisfy_the_triple() {
     let mut truthful_residuals = Vec::new();
     let mut hidden_lies = Vec::new();
     let mut lying_no_rows = Vec::new();
+    let mut coverage_gaps = Vec::new();
     let mut non_green_lies = 0usize;
     for (label, _, expected) in &cases {
         match (*expected, production_statuses_for_label(&rows, label)) {
@@ -1279,11 +1282,17 @@ fn seed_witnesses_satisfy_the_triple() {
             {
                 discharged_truths.push(label.clone());
             }
-            (ProductionVerdict::Sat, Ok(statuses)) => truthful_residuals.push(format!(
-                "{label}: truthful source must discharge through production CLI; statuses={statuses:?}"
-            )),
+            (ProductionVerdict::Sat, Ok(statuses)) => {
+                let residual = format!(
+                    "{label}: truthful source must discharge through production CLI; statuses={statuses:?}"
+                );
+                truthful_residuals.push(residual.clone());
+                coverage_gaps.push(residual);
+            }
             (ProductionVerdict::Sat, Err(err)) => {
-                truthful_residuals.push(format!("{label}: truthful source produced no verdict; {err}"))
+                let residual = format!("{label}: truthful source produced no verdict; {err}");
+                truthful_residuals.push(residual.clone());
+                coverage_gaps.push(residual);
             }
             (ProductionVerdict::Unsat, Ok(statuses))
                 if statuses.iter().any(|status| status == "discharged") =>
@@ -1292,21 +1301,43 @@ fn seed_witnesses_satisfy_the_triple() {
                     "{label}: lying source discharged through production CLI; statuses={statuses:?}"
                 ));
             }
-            (ProductionVerdict::Unsat, Ok(_)) => {
+            (ProductionVerdict::Unsat, Ok(statuses))
+                if statuses.iter().any(|status| status == "unsatisfied") =>
+            {
                 non_green_lies += 1;
             }
+            (ProductionVerdict::Unsat, Ok(_)) => {
+                non_green_lies += 1;
+                coverage_gaps.push(format!(
+                    "{label}: lying source produced no contradicting verdict"
+                ));
+            }
             (ProductionVerdict::Unsat, Err(err)) => {
-                lying_no_rows.push(format!("{label}: lying source produced no verdict; {err}"));
+                let residual = format!("{label}: lying source produced no verdict; {err}");
+                lying_no_rows.push(residual.clone());
+                coverage_gaps.push(residual);
             }
         }
     }
     discharged_truths.sort();
     println!(
-        "R(rust-witness-production-truthful-residuals)={} R(rust-witness-production-hidden-lies)={} R(rust-witness-production-lying-no-row-residuals)={} authority=source-to-sugar-cli rows={} discharged_truths={discharged_truths:?} non_green_lies={non_green_lies}",
+        "R(rust-witness-production-active-disagreements)={} R(rust-witness-production-coverage-gaps)={} R(rust-witness-production-truthful-residuals)={} R(rust-witness-production-hidden-lies)={} R(rust-witness-production-lying-no-row-residuals)={} authority=source-to-sugar-cli rows={} discharged_truths={discharged_truths:?} non_green_lies={non_green_lies}",
+        hidden_lies.len(),
+        coverage_gaps.len(),
         truthful_residuals.len(),
         hidden_lies.len(),
         lying_no_rows.len(),
         rows.len()
+    );
+    assert_eq!(
+        hidden_lies.len(),
+        EXPECTED_PRODUCTION_ACTIVE_DISAGREEMENTS,
+        "production CLI active-disagreement frontier changed; each row is a soundness finding:\n{hidden_lies:#?}"
+    );
+    assert_eq!(
+        coverage_gaps.len(),
+        EXPECTED_PRODUCTION_COVERAGE_GAPS,
+        "production CLI coverage-gap frontier changed; classify every new/resolved gap before repinning:\n{coverage_gaps:#?}"
     );
     assert_eq!(
         truthful_residuals.len(),
