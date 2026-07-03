@@ -109,6 +109,27 @@ load-bearing statements, quoted:
    a new literal → every floor it stands on demands its embedding arm — rustc hands
    you the todo list.
 
+7a. **The doorway choice is a soundness decision — map over a callsite is a CURRY**
+   (T, 2026-07-03: *"What's the temporal floor of map over a callsite? It's a
+   curry..."*). `xs.map(f)`: `f` is resolved ONCE at the map boundary — captured,
+   frozen, curried into the composition; no later rebinding touches the in-flight
+   map. The temporal floor does NOT occurrence-split the callee; it splits the
+   APPLICATION side: `call:f(x_1)`, `call:f(x_2)` — ticks are argument occurrences
+   under one frozen symbol. **Curry is what preserves EUF congruence across time**:
+   splitting the callee (`f_1(), f_2()`) would shatter the single uninterpreted
+   function the solver's congruence reasoning needs; the stated-anchor doctrine
+   (`call:f(args) == literal`) depends on the callee's unity across occurrences.
+   The three doorways are three answers to "what splits when time passes":
+   **bind** — nothing splits, a fresh name enters; **rewrite** — the NAME splits
+   (`mut`/shadowing: the referent changed; one name would lie); **curry** — the
+   name FREEZES and the applications split. Splitting the wrong side is a different
+   theory, not a smaller emission: rewrite-where-curry-belonged destroys
+   congruence (a lie can slip through); curry-where-rewrite-belonged merges two
+   referents and manufactures a false contradiction. THE DISCRIMINATION TEST for
+   the floor (mandatory in S3's witness pair): the truthful map-over-callsite twin
+   must reach SAT *via congruence across ticks*; the lying twin is the wrong
+   doorway — assert both directions.
+
 7. **Fold's wrinkle — the accumulator threads:** occurrence-renames CHAIN. `acc_2`
    is defined in terms of `acc_1`; the temporal rewrite emits the recurrence as EUF
    facts (`acc_1 == f(acc_0, x_1)`, `acc_2 == f(acc_1, x_2)`, …). The chain is the
