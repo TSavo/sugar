@@ -2,15 +2,15 @@
 //
 // Phase 2 effect-router frontier auditor (#3292).
 //
-// This is the measuring instrument only: it names the current control-flow
-// constructs that have not yet been routed through RouteRaisesOperation. Later
-// slices drain rows; this test keeps the current R vector pinned while they do.
+// This is now an armed stable-zero gate: a new algebra-side control-flow
+// construct that bypasses RouteRaisesOperation must fail CI loudly.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct ExpectedUnroutedConstruct {
@@ -31,6 +31,29 @@ struct ObservedUnroutedConstruct {
     evidence: String,
     owner: String,
     replacement: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct StructuralGrepHit {
+    pattern: &'static str,
+    file: String,
+    line: usize,
+    text: String,
+    owner: &'static str,
+    reason: &'static str,
+}
+
+impl StructuralGrepHit {
+    fn to_json(&self) -> Value {
+        json!({
+            "pattern": self.pattern,
+            "file": self.file,
+            "line": self.line,
+            "text": self.text,
+            "owner": self.owner,
+            "reason": self.reason,
+        })
+    }
 }
 
 impl ObservedUnroutedConstruct {
@@ -251,6 +274,98 @@ fn coordinated_floor_projection_rows(root: &Path) -> Value {
     })
 }
 
+fn is_ignored_walkdir_entry(entry: &DirEntry) -> bool {
+    let name = entry.file_name().to_string_lossy();
+    entry.file_type().is_dir()
+        && matches!(
+            name.as_ref(),
+            ".git" | ".jj" | ".worktrees" | "target" | "node_modules" | "__pycache__"
+        )
+}
+
+fn structural_hit_classification(
+    file: &str,
+    pattern: &'static str,
+) -> Option<(&'static str, &'static str)> {
+    if file == "implementations/rust/sugar-lift-rust-tests/tests/effect_routing_frontier.rs" {
+        return Some((
+            "Phase2-S7",
+            "self-instrumentation for this structural grep classifier; not routing code",
+        ));
+    }
+    if file.starts_with("docs/superpowers/plans/") {
+        return Some((
+            "documentation",
+            "campaign plan/reference prose; not executable routing code",
+        ));
+    }
+    if file
+        == "implementations/rust/sugar-lift-rust-tests/src/sugar/control_flow_guard_operation.rs"
+        && pattern == "wrap_branch_guard"
+    {
+        return Some((
+            "#3017/#3193",
+            "module comment documenting the already-drained IrTerm branch-guard seam",
+        ));
+    }
+    if file == "implementations/rust/sugar-verifier/src/enumerate_callsites.rs"
+        && pattern == "wrap_branch_guard"
+    {
+        return Some((
+            "#3196/#3198",
+            "verifier comment describing kit-resolved guard-head complements; no routing code",
+        ));
+    }
+    None
+}
+
+fn collect_structural_grep_hits(root: &Path) -> (Vec<StructuralGrepHit>, Vec<Value>) {
+    let mut classified = Vec::new();
+    let mut unclassified = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| !is_ignored_walkdir_entry(entry))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let path = entry.path();
+        let Ok(source) = fs::read_to_string(path) else {
+            continue;
+        };
+        let file = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+        for (line_idx, line) in source.lines().enumerate() {
+            for pattern in ["op(\"try\"", "wrap_branch_guard"] {
+                if !line.contains(pattern) {
+                    continue;
+                }
+                match structural_hit_classification(&file, pattern) {
+                    Some((owner, reason)) => classified.push(StructuralGrepHit {
+                        pattern,
+                        file: file.to_string(),
+                        line: line_idx + 1,
+                        text: line.trim().to_string(),
+                        owner,
+                        reason,
+                    }),
+                    None => unclassified.push(json!({
+                        "pattern": pattern,
+                        "file": file.to_string(),
+                        "line": line_idx + 1,
+                        "text": line.trim(),
+                    })),
+                }
+            }
+        }
+    }
+    classified.sort_by(|a, b| {
+        a.file
+            .cmp(&b.file)
+            .then(a.line.cmp(&b.line))
+            .then(a.pattern.cmp(b.pattern))
+    });
+    (classified, unclassified)
+}
+
 fn report_json(
     root: &Path,
     observed: &[ObservedUnroutedConstruct],
@@ -328,7 +443,6 @@ fn effect_routing_frontier_matches_expected_multiset() {
 }
 
 #[test]
-#[ignore = "red-by-design: Phase 2 drains this frontier in later slices"]
 fn effect_routing_frontier_is_zero() {
     let root = repo_root();
     let observed = collect_unrouted_constructs(&root);
@@ -338,6 +452,27 @@ fn effect_routing_frontier_is_zero() {
         observed.len(),
         serde_json::to_string_pretty(&report_json(&root, &observed, &observed, &[], &[]))
             .expect("effect-routing report serializes")
+    );
+}
+
+#[test]
+fn structural_grep_try_and_wrap_branch_guard_hits_are_classified() {
+    let root = repo_root();
+    let (classified, unclassified) = collect_structural_grep_hits(&root);
+    println!(
+        "phase2 structural grep classified hits: {}",
+        serde_json::to_string_pretty(
+            &classified
+                .iter()
+                .map(StructuralGrepHit::to_json)
+                .collect::<Vec<_>>()
+        )
+        .expect("structural grep report serializes")
+    );
+    assert!(
+        unclassified.is_empty(),
+        "unclassified op(\"try\")/wrap_branch_guard hit(s): {}",
+        serde_json::to_string_pretty(&unclassified).expect("unclassified hits serialize")
     );
 }
 
