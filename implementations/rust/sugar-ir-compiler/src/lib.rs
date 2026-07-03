@@ -8,6 +8,7 @@
 // Spec: protocol/specs/2026-04-30-ir-compiler-protocol.md.
 
 pub mod error;
+pub mod frontend;
 pub mod manifest;
 pub mod registry;
 pub mod server;
@@ -17,6 +18,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 pub use error::CompileError;
+pub use frontend::{
+    CompilerInput, EquationalEquation, EquationalOperator, EquationalSubsort, EquationalTheory,
+    EquationalTheoryObligation, EquationalVariable, FrontendError, FrontendErrorKind,
+    FrontendErrorPayload,
+};
 
 /// Result of compiling one canonical IR-JSON formula to a target
 /// dialect. Wire-equivalent to the JSON returned by
@@ -95,11 +101,36 @@ pub struct Capabilities {
 /// Canonical protocol identifier, used in handshake and manifests.
 pub const PROTOCOL_VERSION: &str = "sugar-ir-compiler/1";
 
+impl From<FrontendError> for CompileError {
+    fn from(error: FrontendError) -> Self {
+        CompileError::Frontend(error.payload)
+    }
+}
+
+pub fn compile_json_adapter<C: IrCompiler + ?Sized>(
+    compiler: &C,
+    ir: &Json,
+    dialect: &str,
+) -> Result<CompiledFormula, CompileError> {
+    let typed = CompilerInput::decode_json(ir.clone())?;
+    compiler.compile_typed(&typed, dialect)
+}
+
 /// The trait every IR compiler implements, whether it lives in-process
 /// or speaks JSON-RPC over a subprocess pipe.
 pub trait IrCompiler: Send + Sync {
-    /// Translate one IR-JSON formula to the target dialect's surface syntax.
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError>;
+    /// Translate one typed ProofIR compiler input to the target dialect.
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError>;
+
+    /// Compatibility adapter for legacy IR-JSON callers. It is declared as an
+    /// S2 escape hatch and retires when S7 deletes the transport JSON entrypoint.
+    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
+        compile_json_adapter(self, ir, dialect)
+    }
 
     /// Capability descriptor: dialects served, sorts and predicates
     /// supported. Cached by the registry on insert.

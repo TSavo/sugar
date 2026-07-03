@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
-use crate::{Capabilities, CompileError, CompiledFormula, IrCompiler, PROTOCOL_VERSION};
+use crate::{
+    Capabilities, CompileError, CompiledFormula, CompilerInput, IrCompiler, PROTOCOL_VERSION,
+};
 
 /// JSON-RPC subprocess wrapper. The child is spawned on construction,
 /// the handshake is performed once, capabilities are cached. Subsequent
@@ -184,6 +186,15 @@ impl LazyJsonRpcCompiler {
 }
 
 impl IrCompiler for LazyJsonRpcCompiler {
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        let ir = ir.to_json_value()?;
+        self.compile(&ir, dialect)
+    }
+
     fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
         THREAD_LOCAL_COMPILERS.with(|cell| {
             let mut map = cell.borrow_mut();
@@ -225,6 +236,15 @@ impl IrCompiler for LazyJsonRpcCompiler {
 }
 
 impl IrCompiler for JsonRpcCompiler {
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        let ir = ir.to_json_value()?;
+        self.compile(&ir, dialect)
+    }
+
     fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
         let id = {
             let mut g = self.next_id.lock().unwrap();

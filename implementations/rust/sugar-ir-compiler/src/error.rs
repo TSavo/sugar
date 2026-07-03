@@ -5,6 +5,8 @@
 
 use thiserror::Error;
 
+use crate::frontend::FrontendErrorPayload;
+
 /// Errors a compiler may raise. Numeric codes correspond to the table
 /// in protocol/specs/2026-04-30-ir-compiler-protocol.md.
 #[derive(Debug, Error)]
@@ -25,6 +27,10 @@ pub enum CompileError {
     #[error("malformed IR: {0}")]
     MalformedIr(String),
 
+    /// The typed frontend adapter rejected a legacy transport input.
+    #[error("frontend decode error: {0}")]
+    Frontend(FrontendErrorPayload),
+
     /// Compiler bug; recoverable only by switching compilers.
     #[error("internal compiler error: {0}")]
     Internal(String),
@@ -42,6 +48,7 @@ impl CompileError {
             CompileError::UnsupportedSort(_) => 2001,
             CompileError::UnsupportedPredicate(_) => 2002,
             CompileError::MalformedIr(_) => 2003,
+            CompileError::Frontend(_) => 2003,
             CompileError::Internal(_) => 2004,
             CompileError::Transport(_) => -32603,
         }
@@ -54,6 +61,7 @@ impl CompileError {
             CompileError::UnsupportedSort(_) => "compile_error.unsupported_sort",
             CompileError::UnsupportedPredicate(_) => "compile_error.unsupported_predicate",
             CompileError::MalformedIr(_) => "compile_error.malformed_ir",
+            CompileError::Frontend(_) => "compile_error.frontend_decode",
             CompileError::Internal(_) => "compile_error.internal",
             CompileError::Transport(_) => "transport_error",
         }
