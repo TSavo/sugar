@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import AttributeMutationOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -22,6 +23,17 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         targets = site.assign_targets()
         return len(targets) == 1 and targets[0].observed == "Attribute"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason=(
+                "attribute mutation is stateful support until object-field "
+                "updates carry a solver verdict"
+            ),
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "AttributeAssignSugar":

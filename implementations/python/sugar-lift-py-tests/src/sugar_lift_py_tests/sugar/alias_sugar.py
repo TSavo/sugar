@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ImportAliasValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,14 @@ class AliasSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "alias"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="ImportAliasValue",
+            reason="import aliases record name-binding support, not a FOL claim",
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "AliasSugar":

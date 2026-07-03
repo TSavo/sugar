@@ -17,11 +17,14 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     non_fol_opt_out_audit,
     render_text,
     seeds_from_catalog_witnesses,
+    temporal_opt_outs,
     unenrolled_sugars,
 )
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import ImportAliasValue, SupportValue
-from sugar_lift_py_tests.sugar.witnesses import PendingWitnesses
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.witness_harness import (
     WitnessPipelineError,
     prove_verdict,
@@ -118,6 +121,12 @@ EXPECTED_OPT_OUT_SUGARS = {
     "SubscriptAssignSugar",
     "SubscriptDeleteSugar",
 }
+EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
+    "AttributeAssignSugar",
+    "AttributeDeleteSugar",
+    "BitwiseOpSugar",
+    "OrdByteSugar",
+}
 
 
 @pytest.fixture(scope="module")
@@ -145,6 +154,22 @@ def test_sugar_witness_enrollment_auditor_pins_catalog_baseline() -> None:
     assert "ProjectedEqualityAssertionSugar" not in by_name
     assert "TupleUnpackAssignSugar" not in by_name
     assert not (EXPECTED_OPT_OUT_SUGARS & set(by_name))
+
+
+def test_role_gate_rejects_unenrolled_sugar_at_class_definition() -> None:
+    with pytest.raises(TypeError, match="UnenrolledPlantedSugar.*witnesses"):
+
+        class UnenrolledPlantedSugar(Sugar, role=SugarRole.TERM):
+            @classmethod
+            def owns(cls, fragment) -> bool:
+                return False
+
+            @classmethod
+            def build(cls, fragment, ctx):
+                raise AssertionError("synthetic sugar must not build")
+
+            def desugar(self, ctx):
+                raise AssertionError("synthetic sugar must not desugar")
 
 
 def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
@@ -180,6 +205,18 @@ def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     )
 
 
+def test_non_fol_opt_outs_are_owned_by_registered_sugars() -> None:
+    claims = {claim.name: claim for claim in default_catalog().claims}
+
+    for expected in EXPECTED_NON_FOL_OPT_OUTS:
+        witness = claims[expected.sugar_name].witnesses()
+        assert witness == NotVerdictBearing(
+            sugar_name=expected.sugar_name,
+            floor_name=expected.floor_name,
+            reason=expected.reason,
+        )
+
+
 def test_non_fol_opt_out_audit_bad_twins() -> None:
     missing_support_pin = tuple(
         row for row in EXPECTED_NON_FOL_OPT_OUTS if row.floor_name != "SupportValue"
@@ -209,13 +246,27 @@ def test_sugar_declared_social_opt_out_is_not_a_mechanism() -> None:
         role=SugarRole.TERM,
         owns=SocialOptOutOwner.owns,
         build=SocialOptOutOwner.build,
-        witnesses=lambda: PendingWitnesses(
+        witnesses=lambda: NotVerdictBearing(
             sugar_name="SocialOptOutSugar",
-            module=__name__,
+            floor_name="SupportValue",
+            reason="social opt-out flag is not a typed floor-backed pin",
         ),
     )
 
     assert claim_has_witness_or_opt_out(claim) is False
+
+
+def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
+    rows = temporal_opt_outs()
+
+    assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
+    assert len(rows) == 4
+    assert all(row.retirement_condition for row in rows)
+    assert {
+        row.sugar_name
+        for row in EXPECTED_NON_FOL_OPT_OUTS
+        if row.retirement_condition is None
+    } == EXPECTED_OPT_OUT_SUGARS - EXPECTED_TEMPORAL_OPT_OUT_SUGARS
 
 
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
@@ -482,14 +533,19 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "witness_triples_failing": EXPECTED_TRIPLE_FAILURES,
         "witnesses_not_dispatching_to_owner": 0,
         "non_fol_opt_out_drift": 0,
-        "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
+        "temporal_opt_outs": len(EXPECTED_TEMPORAL_OPT_OUT_SUGARS),
+        "total": EXPECTED_UNENROLLED_SUGARS
+        + EXPECTED_TRIPLE_FAILURES
+        + len(EXPECTED_TEMPORAL_OPT_OUT_SUGARS),
     }
     assert "R(unenrolled-sugars): 0" in text
     assert "R(witness-triples-failing): 13" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
+    assert "R(temporal-opt-outs): 4" in text
     assert "seed coverage: 53 seed cases, 41/53 catalog sugars" in text
     assert "unenrolled sugars:" not in text
+    assert "temporal opt-outs:" in text
 
 
 def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
@@ -507,6 +563,7 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 13" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
+    assert "R(temporal-opt-outs): 4" in stdout
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:

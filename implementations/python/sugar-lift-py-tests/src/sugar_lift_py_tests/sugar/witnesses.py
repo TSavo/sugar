@@ -24,18 +24,6 @@ class SugarWitnessPair:
     lying: WitnessSource
 
 
-SugarWitnesses = SugarWitnessPair | tuple[SugarWitnessPair, ...]
-
-
-@dataclass(frozen=True)
-class PendingWitnesses:
-    """Typed staging marker for a registrable sugar awaiting witness enrollment."""
-
-    sugar_name: str
-    module: str
-    reason: str = "witness enrollment pending"
-
-
 @dataclass(frozen=True)
 class NotVerdictBearing:
     """A non-FOL opt-out must be justified by a marked floor type."""
@@ -43,3 +31,6 @@ class NotVerdictBearing:
     sugar_name: str
     floor_name: str
     reason: str
+
+
+SugarWitnesses = SugarWitnessPair | tuple[SugarWitnessPair, ...] | NotVerdictBearing

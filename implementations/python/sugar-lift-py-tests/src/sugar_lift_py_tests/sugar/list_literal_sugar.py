@@ -11,6 +11,7 @@ from sugar_lift_py_tests.operations.sequence_construction_operation import (
 )
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -26,6 +27,17 @@ class ListLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "List"
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SupportValue",
+            reason=(
+                "default-catalog list literals are verdict-bearing through "
+                "ArrayLiteralSugar; this fallback constructor is shadowed support"
+            ),
+        )
 
     @classmethod
     def build(cls, site, ctx) -> "ListLiteralSugar":
