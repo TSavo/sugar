@@ -236,6 +236,43 @@ remove_remote_dir() {
   run_ssh "rm -rf $(quote_sh "$remote_path")"
 }
 
+file_description() {
+  local path="$1"
+  if ! command -v file >/dev/null 2>&1; then
+    return 1
+  fi
+  file -b "$path" 2>/dev/null || return 1
+}
+
+is_foreign_synced_binary() {
+  local path="$1"
+  local host_os
+  host_os="$(uname -s 2>/dev/null || true)"
+  if [[ "$host_os" == "Linux" ]]; then
+    return 1
+  fi
+  local desc
+  desc="$(file_description "$path" || true)"
+  [[ "$desc" == *"ELF"* ]]
+}
+
+remove_stale_foreign_binary_if_present() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  if is_foreign_synced_binary "$path"; then
+    rm -f "$path"
+  fi
+}
+
+warn_foreign_synced_binary() {
+  local local_bin="$1"
+  local tmp_bin="$2"
+  local desc
+  desc="$(file_description "$tmp_bin" || true)"
+  desc="${desc:-unknown binary format}"
+  echo "bcargo: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/bcargo shape=$desc path=$local_bin replacement=run the binary on $remote_host through bcargo, or cargo clean and rebuild locally with RUSTC_WRAPPER='' before local verdict checks" >&2
+}
+
 sync_file Cargo.toml
 sync_file Cargo.lock
 sync_file Makefile
@@ -382,7 +419,15 @@ if ((${#sync_bins[@]} > 0)); then
     remote_bin="$remote_target_dir/$profile/$bin"
     local_bin="$local_target_dir/$profile/$bin"
     mkdir -p "$(dirname "$local_bin")"
-    "$rsync_bin" -az "$remote_host:$remote_bin" "$local_bin"
+    tmp_local_bin="$(mktemp "${local_bin}.bcargo-sync.XXXXXX")"
+    "$rsync_bin" -az "$remote_host:$remote_bin" "$tmp_local_bin"
+    if is_foreign_synced_binary "$tmp_local_bin"; then
+      warn_foreign_synced_binary "$local_bin" "$tmp_local_bin"
+      rm -f "$tmp_local_bin"
+      remove_stale_foreign_binary_if_present "$local_bin"
+      continue
+    fi
+    mv -f "$tmp_local_bin" "$local_bin"
   done
 fi
 
