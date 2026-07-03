@@ -56,10 +56,10 @@ const REQUIRED_ITER_MEMBERS: &[&str] = &[
 ];
 
 const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
-    "aggregate_decomp.rs:277",
-    "aggregate_decomp.rs:310",
-    "aggregate_decomp.rs:312",
-    "aggregate_decomp.rs:317",
+    "aggregate_decomp.rs:283",
+    "aggregate_decomp.rs:316",
+    "aggregate_decomp.rs:318",
+    "aggregate_decomp.rs:323",
     "assign_op.rs:1684",
     "assign_op.rs:2084",
     "assign_op.rs:2123",
