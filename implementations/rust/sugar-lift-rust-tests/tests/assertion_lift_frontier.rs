@@ -230,9 +230,77 @@ const CLASS_DISPOSITIONS: &[(&str, ClassDisposition)] = &[
             note: "closure adaptor rows need the temporal-floor counted/curry path; S3 fixed nested map but not these adapters",
         },
     ),
+    (
+        "ladder-demolition:tail-expr-ite",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S2",
+            follow_up: "tail-position lowering through catalog/algebra boundary",
+            note: "future assertion_lift reds from tail-expression ladders must route through build_term/build_expr_role, not ad hoc IrTerm construction",
+        },
+    ),
+    (
+        "ladder-demolition:predicates",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S3",
+            follow_up: "predicate lifting through PredicateValue/catalog claims",
+            note: "future assertion_lift reds from predicate ladders belong to the PredicateValue route, not structural re-sniffing",
+        },
+    ),
+    (
+        "ladder-demolition:guard-assertion-facts",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S4",
+            follow_up: "guard/assertion fact extraction through algebra guard operations",
+            note: "future guard-fact reds enter the ladder campaign with ControlFlowGuardOperation as the replacement path",
+        },
+    ),
+    (
+        "ladder-demolition:value-kind-macros",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S5",
+            follow_up: "value classification and macro lowering through catalog recognizers",
+            note: "future value-kind or macro reds must be classified by catalog claims instead of local match ladders",
+        },
+    ),
+    (
+        "ladder-demolition:wp-contract-seeds",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S6",
+            follow_up: "contract-surface lifting through typed vocabulary/catalog claims",
+            note: "future contract/seed reds belong to the typed vocabulary route, not local contract-surface walkers",
+        },
+    ),
+    (
+        "ladder-demolition:panic-loop-effects",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S7",
+            follow_up: "panic/loop effects through Phase 2 routers",
+            note: "future panic or loop-effect reds route through the effect algebra rather than shape-specific walkers",
+        },
+    ),
+    (
+        "ladder-demolition:patterns-types-call-edges",
+        ClassDisposition {
+            bucket: "ladder-demolition",
+            owner: "#3027 S7",
+            follow_up: "patterns, types, and call edges through catalog claims",
+            note: "future pattern/type/call-edge reds route through catalog claims instead of syntactic projection ladders",
+        },
+    ),
 ];
 
 const ZERO_BUCKETS: &[(&str, &str, &str)] = &[
+    (
+        "ladder-demolition",
+        "#3027",
+        "no current assertion_lift row is classed directly as ladder-demolition; future rows have typed dispositions for S2-S7 families",
+    ),
     (
         "missing-derived-testimony",
         "#3407",
