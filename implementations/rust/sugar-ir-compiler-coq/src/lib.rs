@@ -29,8 +29,8 @@
 use serde_json::Value as Json;
 
 use sugar_ir_compiler::{
-    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
-    IrCompiler, PROTOCOL_VERSION,
+    Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar, IrCompiler,
+    PROTOCOL_VERSION,
 };
 
 mod emitter;
@@ -45,31 +45,40 @@ pub fn uninterpreted_allowlist_entries() -> Vec<(&'static str, &'static str)> {
 
 pub struct CoqCompiler;
 
-fn is_term_kind(kind: &str) -> bool {
-    matches!(kind, "var" | "const" | "ctor" | "lambda" | "let")
-}
-
 impl CoqCompiler {
     pub fn new() -> Self {
         Self
     }
 
-    fn compile_inner(&self, ir: &Json) -> Result<(String, String, Vec<FreeVar>), CompileError> {
-        let kind = ir.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        if is_term_kind(kind) {
-            let term: sugar_ir_types::Term = serde_json::from_value(ir.clone())
-                .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            let term_str = emitter::emit_term(&term)?;
-            let preamble =
-                "Require Import ZArith String List.\nOpen Scope Z.\nOpen Scope string.\n\n"
-                    .to_string();
-            let body = format!("Goal {}.\nProof.\n  admit.\nQed.\n", term_str);
-            Ok((preamble, body, vec![]))
-        } else {
-            let formula: sugar_ir_types::Formula = serde_json::from_value(ir.clone())
-                .map_err(|e| CompileError::MalformedIr(format!("{e}")))?;
-            emitter::compile_formula(&formula)
+    fn compile_input_inner(
+        &self,
+        ir: &CompilerInput,
+    ) -> Result<(String, String, Vec<FreeVar>), CompileError> {
+        match ir {
+            CompilerInput::Formula(formula) => self.compile_formula_inner(formula),
+            CompilerInput::Term(term) => self.compile_term_inner(term),
+            CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
+                "equational_theory".to_string(),
+            )),
         }
+    }
+
+    fn compile_term_inner(
+        &self,
+        term: &sugar_ir_types::Term,
+    ) -> Result<(String, String, Vec<FreeVar>), CompileError> {
+        let term_str = emitter::emit_term(term)?;
+        let preamble =
+            "Require Import ZArith String List.\nOpen Scope Z.\nOpen Scope string.\n\n".to_string();
+        let body = format!("Goal {}.\nProof.\n  admit.\nQed.\n", term_str);
+        Ok((preamble, body, vec![]))
+    }
+
+    fn compile_formula_inner(
+        &self,
+        formula: &sugar_ir_types::Formula,
+    ) -> Result<(String, String, Vec<FreeVar>), CompileError> {
+        emitter::compile_formula(formula)
     }
 }
 
@@ -80,13 +89,6 @@ impl Default for CoqCompiler {
 }
 
 impl IrCompiler for CoqCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        if dialect != DIALECT {
-            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
-        }
-        compile_json_adapter(self, ir, dialect)
-    }
-
     fn compile_typed(
         &self,
         ir: &CompilerInput,
@@ -95,8 +97,7 @@ impl IrCompiler for CoqCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        let ir = ir.to_json_value()?;
-        let (preamble, body, free_vars) = self.compile_inner(&ir)?;
+        let (preamble, body, free_vars) = self.compile_input_inner(ir)?;
         Ok(CompiledFormula {
             preamble,
             body,

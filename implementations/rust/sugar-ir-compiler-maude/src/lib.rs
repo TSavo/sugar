@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 use sugar_ir_compiler::{
-    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
-    IrCompiler, OpacityManifest, PROTOCOL_VERSION,
+    Capabilities, CompileError, CompiledFormula, CompilerInput, EquationalOperator,
+    EquationalTheory, EquationalTheoryObligation, FreeVar, IrCompiler, OpacityManifest,
+    PROTOCOL_VERSION,
 };
 use sugar_ir_types::{IrTerm, Sort};
 
@@ -53,61 +54,6 @@ pub struct CompiledMaude {
     pub trs: TrsSpec,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct RawObligation {
-    kind: String,
-    name: Option<String>,
-    theory: RawTheory,
-    obligation: RawEquation,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawTheory {
-    name: String,
-    #[serde(default)]
-    sorts: Vec<String>,
-    #[serde(default)]
-    subsorts: Vec<RawSubsort>,
-    #[serde(default)]
-    operators: Vec<RawOperator>,
-    #[serde(default)]
-    variables: Vec<RawVariable>,
-    #[serde(default)]
-    equations: Vec<RawEquation>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawSubsort {
-    subsort: String,
-    supersort: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawOperator {
-    name: String,
-    #[serde(default)]
-    maude: Option<String>,
-    #[serde(default)]
-    arity: Vec<String>,
-    result: String,
-    #[serde(default)]
-    attrs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawVariable {
-    name: String,
-    sort: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawEquation {
-    #[serde(default)]
-    label: Option<String>,
-    lhs: IrTerm,
-    rhs: IrTerm,
-}
-
 #[derive(Debug, Clone)]
 struct OperatorInfo {
     source_name: String,
@@ -132,13 +78,6 @@ impl Default for MaudeCompiler {
 }
 
 impl IrCompiler for MaudeCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        if dialect != DIALECT {
-            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
-        }
-        compile_json_adapter(self, ir, dialect)
-    }
-
     fn compile_typed(
         &self,
         ir: &CompilerInput,
@@ -147,8 +86,12 @@ impl IrCompiler for MaudeCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        let ir = ir.to_json_value()?;
-        Ok(compile_artifact(&ir)?.compiled)
+        let CompilerInput::EquationalTheory(obligation) = ir else {
+            return Err(CompileError::UnsupportedPredicate(
+                "non-equational_theory compiler input".to_string(),
+            ));
+        };
+        Ok(compile_equational_theory_artifact(obligation)?.compiled)
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -172,9 +115,19 @@ pub fn emit(ir: &Json) -> Result<String, String> {
 }
 
 pub fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
-    let raw: RawObligation =
-        serde_json::from_value(ir.clone()).map_err(|e| CompileError::MalformedIr(e.to_string()))?;
-    validate_root(&raw)?;
+    let input = CompilerInput::decode_json(ir.clone())?;
+    let CompilerInput::EquationalTheory(obligation) = input else {
+        return Err(CompileError::UnsupportedPredicate(
+            "non-equational_theory compiler input".to_string(),
+        ));
+    };
+    compile_equational_theory_artifact(&obligation)
+}
+
+pub fn compile_equational_theory_artifact(
+    raw: &EquationalTheoryObligation,
+) -> Result<CompiledMaude, CompileError> {
+    validate_root(raw)?;
 
     let module_name = module_name(&raw.theory.name)?;
     let operators = operators_by_name(&raw.theory.operators)?;
@@ -235,7 +188,7 @@ pub fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
     })
 }
 
-fn validate_root(raw: &RawObligation) -> Result<(), CompileError> {
+fn validate_root(raw: &EquationalTheoryObligation) -> Result<(), CompileError> {
     let accepted =
         raw.kind == "equational_theory" || raw.name.as_deref() == Some("equational_theory");
     if !accepted {
@@ -246,7 +199,9 @@ fn validate_root(raw: &RawObligation) -> Result<(), CompileError> {
     Ok(())
 }
 
-fn operators_by_name(ops: &[RawOperator]) -> Result<BTreeMap<String, OperatorInfo>, CompileError> {
+fn operators_by_name(
+    ops: &[EquationalOperator],
+) -> Result<BTreeMap<String, OperatorInfo>, CompileError> {
     let mut out = BTreeMap::new();
     for op in ops {
         validate_token(&op.name, "operator name")?;
@@ -301,7 +256,7 @@ fn module_name(name: &str) -> Result<String, CompileError> {
 
 fn render_module(
     module_name: &str,
-    theory: &RawTheory,
+    theory: &EquationalTheory,
     operators: &BTreeMap<String, OperatorInfo>,
 ) -> Result<String, CompileError> {
     let mut out = String::new();
@@ -367,7 +322,7 @@ fn render_module(
 
 fn trs_spec(
     module_name: &str,
-    theory: &RawTheory,
+    theory: &EquationalTheory,
     operators: &BTreeMap<String, OperatorInfo>,
 ) -> Result<TrsSpec, CompileError> {
     let mut trs_ops = Vec::new();
@@ -586,6 +541,13 @@ mod tests {
             }
         });
         let err = compile_artifact(&ir).unwrap_err();
-        assert!(matches!(err, CompileError::UnsupportedPredicate(_)));
+        assert!(
+            matches!(
+                err,
+                CompileError::Frontend(payload)
+                    if payload.kind == sugar_ir_compiler::FrontendErrorKind::InvalidTypedIr
+            ),
+            "mis-tagged JSON documents should fail at the typed frontend"
+        );
     }
 }
