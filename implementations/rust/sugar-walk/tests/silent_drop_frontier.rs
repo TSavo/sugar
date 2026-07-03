@@ -1187,13 +1187,24 @@ fn sugar_audit_sanctions_match_typed_table() {
 }
 
 #[test]
-fn collector_names_planted_silent_drop_fallthrough() {
+fn collector_names_planted_offender_classifier_shapes() {
     let source = r#"
-        fn planted(value: Option<i32>) {
+        fn planted_empty_block(value: Option<i32>) {
             match value {
                 Some(_) => {}
                 _ => {}
             }
+        }
+
+        fn planted_none(value: Option<i32>) -> Option<i32> {
+            match value {
+                Some(inner) => Some(inner),
+                _ => None,
+            }
+        }
+
+        fn planted_unwrap_or(value: Option<i32>) -> i32 {
+            value.unwrap_or(0)
         }
     "#;
     let offenders = collect_silent_drop_frontier_from_source(
@@ -1203,10 +1214,28 @@ fn collector_names_planted_silent_drop_fallthrough() {
     .expect("collect planted silent drop");
 
     assert!(
-        offenders
-            .iter()
-            .any(|site| site.kind == "wildcard_empty_block" && site.key.enclosing_fn == "planted"),
-        "planted wildcard fall-through must red the stable-zero floor; offenders={offenders:#?}"
+        offenders.iter().any(|site| {
+            site.kind == "wildcard_empty_block"
+                && site.key.enclosing_fn == "planted_empty_block"
+                && site.key.observed == "_ => {}"
+        }),
+        "planted wildcard empty block must red the stable-zero floor; offenders={offenders:#?}"
+    );
+    assert!(
+        offenders.iter().any(|site| {
+            site.kind == "wildcard_none"
+                && site.key.enclosing_fn == "planted_none"
+                && site.key.observed == "_ => None"
+        }),
+        "planted wildcard None must red the stable-zero floor; offenders={offenders:#?}"
+    );
+    assert!(
+        offenders.iter().any(|site| {
+            site.kind == "unwrap_or"
+                && site.key.enclosing_fn == "planted_unwrap_or"
+                && site.key.observed == "unwrap_or"
+        }),
+        "planted unwrap_or must red the stable-zero floor; offenders={offenders:#?}"
     );
 }
 
