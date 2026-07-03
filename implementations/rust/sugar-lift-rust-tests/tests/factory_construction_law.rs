@@ -98,7 +98,7 @@ const TARGET_TYPED_METHOD_SPECIALIZATIONS: &[TargetTypedMethodSpecialization] =
         claim: "into::EXPR_SUGAR",
         sugar: "IntoSugar",
         fallback_claim: "method::EXPR_SUGAR",
-        required_ordering: "ExprSugarClaim::term_before(\"into\", &[\"method\"], recognize)",
+        required_ordering: "ExprSugarClaim::term_before(\n    \"into\",\n    &[\"method\"],\n    crate::sugar::claim::SugarWitnesses::pair(",
         required_decline: "fcx.expected_type()?",
         replacement: "target-typed `.into()` sugar owns only typed primitive conversions; \
                       untyped `.into()` belongs to generic MethodSugar via catalog fallthrough",
