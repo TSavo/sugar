@@ -1690,6 +1690,7 @@ dependencies = [
  "serde_json",
  "sugar-canonicalizer",
  "sugar-floor-algebra",
+ "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-symbolic",
  "sugar-proof-envelope",
@@ -1713,6 +1714,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sugar-canonicalizer",
+ "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-verifier",
 ]
