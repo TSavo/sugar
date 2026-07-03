@@ -741,7 +741,14 @@ fn run_inspect(args: PackageInspectArgs) -> u8 {
         args.out.quiet,
     ) {
         Ok(session) => {
-            let response = session.response();
+            let projection = session.response_projection();
+            let response = match projection.response_value() {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_VERIFY_FAIL;
+                }
+            };
             let kind = response
                 .get("kind")
                 .and_then(|value| value.as_str())
@@ -779,7 +786,7 @@ fn run_inspect(args: PackageInspectArgs) -> u8 {
             );
             EXIT_VERIFY_FAIL
         }
-        Err(LiftPluginError::Failed(error)) => {
+        Err(LiftPluginError::Diagnostic(error)) => {
             eprintln!("{}: {error}", "error".red().bold());
             EXIT_VERIFY_FAIL
         }

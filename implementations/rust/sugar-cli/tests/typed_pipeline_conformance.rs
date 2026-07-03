@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
-const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 3;
+const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 1;
 const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
 const BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN: usize = 0;
@@ -1440,8 +1440,9 @@ fn audit_manifest_with_mode(
                 "ratchet pins declared_escape_hatch_rows_open at {}, expected {BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN}",
                 manifest.ratchet.declared_escape_hatch_rows_open
             ),
-            replacement: "S1 baseline is exactly the six campaign census rows; drains own retirement"
-                .to_string(),
+            replacement:
+                "keep declared_escape_hatch_rows_open synchronized with the live declared baseline rows; drains retire rows by deleting the declaration and source hatch together"
+                    .to_string(),
         });
     }
     if enforce_live_ratchet && baseline != manifest.ratchet.declared_escape_hatch_rows_open {
@@ -1455,7 +1456,7 @@ fn audit_manifest_with_mode(
                 manifest.ratchet.declared_escape_hatch_rows_open
             ),
             replacement:
-                "keep the manifest baseline count synchronized with the six declared S1 rows"
+                "keep the manifest baseline count synchronized with live declared escape-hatch rows"
                     .to_string(),
         });
     }

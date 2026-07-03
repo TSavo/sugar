@@ -3,7 +3,7 @@ version = 1
 [ratchet]
 interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 3
+declared_escape_hatch_rows_open = 1
 ambient_testimony_sites = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
@@ -224,6 +224,9 @@ ignored_items = [
 path = "implementations/rust/sugar-cli/src/lift_plugin.rs"
 ignored_items = [
   { name = "LiftPluginOptions", reason = "input carrier declared by the lift-plugin-session boundary; not a separate S1 escape-hatch row" },
+  { name = "LiftResponseProjection", reason = "borrowed compatibility view over LiftPluginSession's DomainClaim payload; the session boundary owns replay and retirement" },
+  { name = "LiftPluginDiagnosticKind", reason = "nested diagnostic vocabulary named by the LiftPluginError failure_type" },
+  { name = "LiftPluginDiagnosticPayload", reason = "structured diagnostic payload named by the LiftPluginError failure_type" },
 ]
 
 [[interface_sources]]
@@ -476,7 +479,7 @@ id = "lift-plugin-session"
 owner = "sugar-cli::lift_plugin"
 input_type = "LiftPluginManifest + LiftPluginOptions + project root"
 output_type = "LiftPluginSession"
-addressing_rule = "DomainClaim carries typed claim identity; legacy_response remains a compatibility projection"
+addressing_rule = "DomainClaim carries typed claim identity; response compatibility projection is derived from the claim payload"
 failure_type = "LiftPluginError"
 replay_inputs = [
   "project root",
@@ -487,19 +490,12 @@ replay_inputs = [
 ]
 source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginSession", kind = "struct" }
 
-[[interfaces.escape_hatches]]
-shape = "serde-json-value"
-owner = "lift-plugin seam"
-retirement = "replace legacy_response consumers with typed DomainClaim/LiftResponseProjection claim projections, then delete the Value field (S3/#3316)"
-baseline = true
-source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginSession", needles = ["legacy_response: Value"] }
-
 [[interfaces]]
 id = "lift-plugin-error"
 owner = "sugar-cli::lift_plugin"
 input_type = "lift plugin execution failures"
 output_type = "LiftPluginError"
-addressing_rule = "error variant names the missing binary, refusal memento, or legacy failed text"
+addressing_rule = "error variant names the missing binary, refusal memento, or structured diagnostic payload"
 failure_type = "LiftPluginError"
 replay_inputs = [
   "plugin command",
@@ -507,13 +503,6 @@ replay_inputs = [
   "composition refusal memento",
 ]
 source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginError", kind = "enum" }
-
-[[interfaces.escape_hatches]]
-shape = "free-text-machine-error"
-owner = "lift-plugin seam"
-retirement = "replace Failed(String) across machine boundaries with a structured diagnostic/refusal memento (S3/#3316)"
-baseline = true
-source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginError", needles = ["Failed(String)"] }
 
 [[interfaces]]
 id = "prove-local-plugin-manifest"
