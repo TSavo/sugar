@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde_json::json;
-use sugar_ir_compiler::IrCompiler;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
 
 #[test]
@@ -25,8 +25,13 @@ fn repeated_compiles_are_byte_identical() {
     });
 
     let compiler = LeanCompiler::new();
-    let first = compiler.compile(&ir, DIALECT).expect("first compile");
-    let second = compiler.compile(&ir, DIALECT).expect("second compile");
+    let input = CompilerInput::decode_json(ir).expect("fixture decodes");
+    let first = compiler
+        .compile_typed(&input, DIALECT)
+        .expect("first compile");
+    let second = compiler
+        .compile_typed(&input, DIALECT)
+        .expect("second compile");
     assert_eq!(first, second);
     assert_eq!(
         format!("{}{}", first.preamble, first.body),

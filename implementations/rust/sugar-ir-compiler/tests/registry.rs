@@ -27,10 +27,6 @@ struct FakeCompiler {
 }
 
 impl IrCompiler for FakeCompiler {
-    fn compile(&self, _ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        self.compile_typed(&reflexive_input(), dialect)
-    }
-
     fn compile_typed(
         &self,
         _ir: &CompilerInput,

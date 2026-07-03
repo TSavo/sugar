@@ -67,10 +67,23 @@ enum Z3 {
 /// out to `unknown` and is bucketed UNCHECKABLE.
 const Z3_TIMEOUT_MS: u32 = 5000;
 
+fn compile_asserted_json_to_parts(
+    formula: &Value,
+) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
+    match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
+        sugar_ir_compiler::CompilerInput::Formula(formula) => {
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+        }
+        _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
+            "asserted SMT-LIB compile expects a formula input".to_string(),
+        )),
+    }
+}
+
 /// Compile a formula to SMT-LIB and ask z3 for satisfiability, bounded by a
 /// per-query timeout.
 fn z3_run(formula: &Value, z3_path: &str, label: &str) -> Z3 {
-    let parts = match sugar_ir_compiler_smt_lib::compile_asserted_to_parts(formula) {
+    let parts = match compile_asserted_json_to_parts(formula) {
         Ok(p) => p,
         Err(e) => return Z3::Error(format!("compile: {e}")),
     };

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde_json::json;
-use sugar_ir_compiler::{subprocess::JsonRpcCompiler, IrCompiler};
+use sugar_ir_compiler::{
+    subprocess::JsonRpcCompiler, CompileError, CompiledFormula, CompilerInput, IrCompiler,
+};
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
 
 fn reflexivity_ir() -> serde_json::Value {
@@ -20,12 +22,18 @@ fn reflexivity_ir() -> serde_json::Value {
     })
 }
 
+fn compile_json(
+    compiler: &dyn IrCompiler,
+    ir: serde_json::Value,
+) -> Result<CompiledFormula, CompileError> {
+    let input = CompilerInput::decode_json(ir)?;
+    compiler.compile_typed(&input, DIALECT)
+}
+
 #[test]
 fn lowers_reflexivity_fixture_byte_for_byte() {
     let compiler = LeanCompiler::new();
-    let out = compiler
-        .compile(&reflexivity_ir(), DIALECT)
-        .expect("compile");
+    let out = compile_json(&compiler, reflexivity_ir()).expect("compile");
     let source = format!("{}{}", out.preamble, out.body);
     assert_eq!(
         source,
@@ -50,7 +58,7 @@ fn declares_dependent_and_categorical_coverage() {
 fn false_obligation_gets_checked_by_automation_without_sorry() {
     let compiler = LeanCompiler::new();
     let ir = json!({"kind": "atomic", "name": "false", "args": []});
-    let out = compiler.compile(&ir, DIALECT).expect("compile");
+    let out = compile_json(&compiler, ir).expect("compile");
     let source = format!("{}{}", out.preamble, out.body);
     assert!(source.contains("theorem sugar_obligation : False := by"));
     assert!(!source.contains("sorry"));
@@ -63,8 +71,6 @@ fn binary_serves_lean_source_over_json_rpc() {
         return;
     };
     let compiler = JsonRpcCompiler::spawn(bin).expect("spawn sugar-ir-lean");
-    let compiled = compiler
-        .compile(&reflexivity_ir(), DIALECT)
-        .expect("compile");
+    let compiled = compile_json(&compiler, reflexivity_ir()).expect("compile");
     assert_eq!(compiled.script(), include_str!("fixtures/reflexivity.lean"));
 }

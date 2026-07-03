@@ -199,12 +199,13 @@ Extension point for writing new formal-logic backends (SMT, Lean, Coq, Maude, et
 **Public Trait:**
 ```rust
 pub trait IrCompiler: Send + Sync {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError>;
+    fn compile_typed(&self, ir: &CompilerInput, dialect: &str) -> Result<CompiledFormula, CompileError>;
     fn capabilities(&self) -> Capabilities;
 }
 ```
 
 **Public Structs:**
+- `CompilerInput` — typed frontend output: `Formula`, `Term`, or `EquationalTheory`
 - `CompiledFormula` — { preamble, body, free_vars, opacity_manifest, metadata }
 - `Capabilities` — { name, version, protocol_version, dialects, supported_sorts, supported_predicates }
 - `FreeVar` — { name, sort }

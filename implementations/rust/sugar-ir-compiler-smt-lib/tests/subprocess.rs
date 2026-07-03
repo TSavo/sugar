@@ -15,7 +15,7 @@ use sugar_ir_compiler::{
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
 
 fn compile_to_parts(ir: &serde_json::Value) -> Result<CompiledFormula, CompileError> {
-    let input = CompilerInput::decode_json(ir.clone())?;
+    let input = CompilerInput::decode_json(ir.clone()).expect("fixture decodes");
     SmtLibCompiler::new().compile_typed(&input, DIALECT)
 }
 
@@ -61,7 +61,8 @@ fn subprocess_compile_matches_in_process_byte_for_byte() {
             ]
         }
     });
-    let via_subprocess = c.compile(&ir, DIALECT).expect("compile");
+    let input = CompilerInput::decode_json(ir.clone()).expect("fixture decodes");
+    let via_subprocess = c.compile_typed(&input, DIALECT).expect("compile");
     let via_in_process = compile_to_parts(&ir).expect("compile_to_parts");
     assert_eq!(via_subprocess, via_in_process);
 }

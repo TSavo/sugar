@@ -2,10 +2,19 @@
 //
 // Coq compiler tests for new IR constructs (lambda, let, choice).
 
-use serde_json::json;
+use serde_json::{json, Value as Json};
 
-use sugar_ir_compiler::IrCompiler;
+use sugar_ir_compiler::{CompileError, CompiledFormula, CompilerInput, IrCompiler};
 use sugar_ir_compiler_coq::{CoqCompiler, DIALECT};
+
+fn compile_json(
+    compiler: &CoqCompiler,
+    ir: &Json,
+    dialect: &str,
+) -> Result<CompiledFormula, CompileError> {
+    let input = CompilerInput::decode_json(ir.clone())?;
+    compiler.compile_typed(&input, dialect)
+}
 
 #[test]
 fn lambda_emits_coq_fun() {
@@ -16,7 +25,7 @@ fn lambda_emits_coq_fun() {
         "body": {"kind": "const", "value": 42, "sort": {"kind": "primitive", "name": "Int"}}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok(), "compile failed: {:?}", result.err());
     let compiled = result.unwrap();
     let coq_code = compiled.body;
@@ -37,7 +46,7 @@ fn let_emits_coq_let_in() {
         "body": {"kind": "var", "name": "x"}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok(), "compile failed: {:?}", result.err());
     let compiled = result.unwrap();
     let coq_code = compiled.body;
@@ -54,7 +63,7 @@ fn choice_emits_coq_sig() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok(), "compile failed: {:?}", result.err());
     let compiled = result.unwrap();
     let coq_code = compiled.body;
@@ -71,7 +80,7 @@ fn lambda_produces_valid_coq_syntax() {
         "body": {"kind": "const", "value": "hello", "sort": {"kind": "primitive", "name": "String"}}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok());
     let compiled = result.unwrap();
     let coq_code = compiled.body;
@@ -107,7 +116,7 @@ fn function_sort_in_forall_emits_coq_arrow() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok(), "compile failed: {:?}", result.err());
     let coq_code = result.unwrap().body;
     assert!(
@@ -134,7 +143,7 @@ fn function_sort_multi_arg_curries_left_to_right() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("forall g : Z -> Z -> bool"),
         "Expected curried multi-arg arrow, got:\n{}",
@@ -163,7 +172,7 @@ fn function_sort_higher_order_arg_is_parenthesized() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("forall hof : (Z -> Z) -> bool"),
         "Higher-order arg must be parenthesized for soundness, got:\n{}",
@@ -189,7 +198,7 @@ fn lambda_over_function_sort_emits_coq_fun() {
         "body": {"kind": "var", "name": "f"}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("fun (f : Z -> Z)"),
         "Expected Coq fun over function sort, got:\n{}",
@@ -212,7 +221,7 @@ fn dependent_sort_emits_coq_pi_type() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("forall n : Z, Vec n"),
         "Expected Coq Π-type with instantiated index, got:\n{}",
@@ -234,7 +243,7 @@ fn dependent_sort_in_lambda_param_position() {
         "body": {"kind": "var", "name": "v"}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("fun (v : forall n : Z, Vec n)"),
         "Expected lambda binder over Π-type, got:\n{}",
@@ -265,7 +274,7 @@ fn dependent_sort_in_function_arg_position_is_parenthesized() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let coq_code = compiler.compile(&ir, DIALECT).unwrap().body;
+    let coq_code = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert!(
         coq_code.contains("(forall n : Z, Vec n) -> bool"),
         "Expected parenthesized Π-type in arg position, got:\n{}",
@@ -343,8 +352,8 @@ fn coq_emission_is_deterministic_for_new_sorts() {
         "body": {"kind": "atomic", "name": "true", "args": []}
     });
     let compiler = CoqCompiler::new();
-    let a = compiler.compile(&ir, DIALECT).unwrap().body;
-    let b = compiler.compile(&ir, DIALECT).unwrap().body;
+    let a = compile_json(&compiler, &ir, DIALECT).unwrap().body;
+    let b = compile_json(&compiler, &ir, DIALECT).unwrap().body;
     assert_eq!(a, b, "Coq emission must be byte-deterministic");
 }
 
@@ -359,7 +368,7 @@ fn let_with_multiple_bindings() {
         "body": {"kind": "var", "name": "y"}
     });
     let compiler = CoqCompiler::new();
-    let result = compiler.compile(&ir, DIALECT);
+    let result = compile_json(&compiler, &ir, DIALECT);
     assert!(result.is_ok(), "compile failed: {:?}", result.err());
     let compiled = result.unwrap();
     let coq_code = compiled.body;
@@ -381,7 +390,7 @@ fn unknown_atom_refuses_loudly() {
     });
     let compiler = CoqCompiler::new();
 
-    match compiler.compile(&ir, DIALECT) {
+    match compile_json(&compiler, &ir, DIALECT) {
         Ok(compiled) => panic!(
             "unknown atom must refuse instead of weakening; before-output was:\n{}{}",
             compiled.preamble, compiled.body
@@ -404,9 +413,8 @@ fn allowlisted_atom_emits_uninterpreted() {
     });
     let compiler = CoqCompiler::new();
 
-    let compiled = compiler
-        .compile(&ir, DIALECT)
-        .expect("roundTrips is deliberately opaque in Coq");
+    let compiled =
+        compile_json(&compiler, &ir, DIALECT).expect("roundTrips is deliberately opaque in Coq");
 
     assert!(
         compiled.body.contains("Parameter s : Z."),
@@ -432,7 +440,7 @@ fn unmapped_binop_refuses() {
     });
     let compiler = CoqCompiler::new();
 
-    match compiler.compile(&ir, DIALECT) {
+    match compile_json(&compiler, &ir, DIALECT) {
         Ok(compiled) => panic!(
             "unmapped Coq binop must refuse instead of weakening; before-output was:\n{}{}",
             compiled.preamble, compiled.body

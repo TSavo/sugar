@@ -522,13 +522,10 @@ mod tests {
                 "rhs": {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
             }
         });
-        let err = MaudeCompiler::new().compile(&ir, DIALECT).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                CompileError::Frontend(payload)
-                    if payload.kind == sugar_ir_compiler::FrontendErrorKind::InvalidTypedIr
-            ),
+        let err = CompilerInput::decode_json(ir).unwrap_err();
+        assert_eq!(
+            err.payload.kind,
+            sugar_ir_compiler::FrontendErrorKind::InvalidTypedIr,
             "mis-tagged JSON documents should fail at the typed frontend"
         );
     }

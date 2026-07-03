@@ -164,7 +164,8 @@ search in SUGAR-AC : (((a + b) + c) + d) =>* (a + (b + (c + d))) .
 fn trait_output_preamble_plus_body_equals_emit() {
     let compiler = MaudeCompiler::new();
     for ir in [nat_obligation(), ac_obligation()] {
-        let parts = compiler.compile(&ir, DIALECT).unwrap();
+        let input = CompilerInput::decode_json(ir.clone()).expect("fixture decodes");
+        let parts = compiler.compile_typed(&input, DIALECT).unwrap();
         let combined = format!("{}{}", parts.preamble, parts.body);
         assert_eq!(combined, emit(&ir).unwrap());
     }

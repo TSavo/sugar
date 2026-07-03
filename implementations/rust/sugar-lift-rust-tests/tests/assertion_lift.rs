@@ -9,6 +9,19 @@ fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("fixture parses")
 }
 
+fn compile_asserted_json_to_parts(
+    formula: &serde_json::Value,
+) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
+    match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
+        sugar_ir_compiler::CompilerInput::Formula(formula) => {
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+        }
+        _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
+            "asserted SMT-LIB compile expects a formula input".to_string(),
+        )),
+    }
+}
+
 fn inv_operands(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<std::rc::Rc<Formula>> {
     match decl.inv.as_deref() {
         Some(Formula::Connective { kind, operands }) if kind == "and" => operands
@@ -14751,7 +14764,7 @@ fn emit_value_contract_char_class_composes_through_compiler() {
     let inv = parsed[0]["inv"].clone();
 
     // 1) it compiles to SMT-LIB (composes), not a vacuous/ill-sorted classify.
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+    let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted char-class inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
@@ -14818,7 +14831,7 @@ fn emit_value_contract_string_matches_composes_through_compiler() {
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
 
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+    let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted string-membership inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
@@ -14897,7 +14910,7 @@ fn emit_value_contract_guarded_matches_composes_through_compiler() {
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
 
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+    let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted guarded-matches inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
@@ -14986,7 +14999,7 @@ fn emit_value_contract_unguarded_enum_variant_composes_through_compiler() {
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
 
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+    let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted enum-variant inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
@@ -15038,8 +15051,8 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("char-cast inv must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("char-cast inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -15097,8 +15110,8 @@ fn emit_value_contract_guard_return_warrants_and_composes() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("guard-clause inv must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("guard-clause inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -15170,8 +15183,8 @@ fn emit_value_contract_slice_pattern_matches_warrants_and_composes() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("slice-pattern inv must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("slice-pattern inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -15235,8 +15248,8 @@ fn emit_value_contract_const_block_warrants_and_composes() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("const-block inv must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("const-block inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -15265,8 +15278,7 @@ fn emit_value_contract_const_block_warrants_and_composes() {
 // answer -> refuse. The interior is an unopened EUF box; order/effects never enter.
 fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     // Some(true) = SAT, Some(false) = UNSAT, None = z3 absent.
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(inv)
-        .expect("conjoined inv must compile to SMT-LIB");
+    let parts = compile_asserted_json_to_parts(inv).expect("conjoined inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = std::env::var("Z3").ok().or_else(|| {
         ["/usr/local/bin/z3", "/usr/bin/z3", "z3"]
@@ -15994,8 +16006,8 @@ fn broad_functional_warrant_composes_through_compiler() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("functional warrant must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("functional warrant must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -16079,7 +16091,7 @@ fn emit_value_contract_value_term_composes_through_compiler() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+    let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted value-term inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
@@ -16142,7 +16154,7 @@ fn clamp_universe_refutes_out_of_bound_bad_twin() {
     };
     let verdict = |val: i64| -> String {
         let conj = serde_json::json!({"kind":"and","operands":[universe.clone(), eq_out(val)]});
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&conj).expect("compile");
+        let parts = compile_asserted_json_to_parts(&conj).expect("compile");
         let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
         let path = std::env::temp_dir().join(format!("sugar_clamp_{val}.smt2"));
         std::fs::write(&path, &script).unwrap();
@@ -16171,8 +16183,7 @@ fn euf_call_value_composes_through_compiler() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("EUF call inv must compile to SMT-LIB");
+    let parts = compile_asserted_json_to_parts(&inv).expect("EUF call inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if std::path::Path::new(z3).exists() {
@@ -16216,7 +16227,7 @@ fn euf_value_decls_compose_across_diverse_shapes() {
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let inv = parsed[0]["inv"].clone();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile to SMT-LIB: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16250,7 +16261,7 @@ fn emit_value_contract_let_prefix_warrants_and_composes() {
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let inv = parsed[0]["inv"].clone();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16300,7 +16311,7 @@ fn emit_value_contract_if_else_warrants_and_composes() {
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let inv = parsed[0]["inv"].clone();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16352,7 +16363,7 @@ fn emit_value_contract_bool_predicate_body_warrants_and_composes() {
         assert!(inv.contains("out"), "out related: {src}");
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16384,7 +16395,7 @@ fn emit_value_contract_scalar_match_warrants_and_composes() {
             .unwrap_or_else(|| panic!("scalar match must warrant: {src}"));
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16431,7 +16442,7 @@ fn emit_value_contract_multifield_enum_match_warrants_and_composes() {
             .unwrap_or_else(|| panic!("multi-field enum match must warrant: {src}"));
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16468,7 +16479,7 @@ fn emit_value_contract_enum_match_warrants_and_composes() {
         );
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16501,7 +16512,7 @@ fn emit_value_contract_let_prefix_with_control_flow_tail() {
             .unwrap_or_else(|| panic!("let-prefix + control-flow tail must warrant: {src}"));
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -16536,7 +16547,7 @@ fn emit_value_contract_unsafe_and_block_are_value_transparent() {
         // no new shape -- it must inherit a composing inv).
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         let z3 = "/usr/local/bin/z3";
         if std::path::Path::new(z3).exists() {
@@ -16570,7 +16581,7 @@ fn emit_value_contract_tuple_destructuring_let() {
             .unwrap_or_else(|| panic!("tuple-destructuring let must warrant: {src}"));
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         let _ = z3;
     }
@@ -16595,7 +16606,7 @@ fn emit_value_contract_if_with_call_condition() {
             .unwrap_or_else(|| panic!("if with call cond must warrant: {src}"));
         let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+        let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
         if std::path::Path::new(z3).exists() {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
@@ -22043,8 +22054,8 @@ fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
     if !std::path::Path::new(z3).exists() {
         return None;
     }
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("format equality must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("format equality must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let path = std::env::temp_dir().join(format!("sugar_fmt_teeth_{label}.smt2"));
     std::fs::write(&path, &script).unwrap();
@@ -24162,8 +24173,8 @@ fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bo
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
-        .expect("expanded macro inv must compile to SMT-LIB");
+    let parts =
+        compile_asserted_json_to_parts(&inv).expect("expanded macro inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let path = std::env::temp_dir().join(format!("sugar_macro_term_{tag}.smt2"));
     std::fs::write(&path, &script).expect("write smt2");

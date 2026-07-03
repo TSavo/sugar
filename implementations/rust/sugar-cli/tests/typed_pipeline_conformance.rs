@@ -14,8 +14,6 @@ use serde::Deserialize;
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
 const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 6;
 const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 0;
-const BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN: usize = 0;
-const BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
 const BASELINE_UNTYPED_VERIFIER_OBLIGATION_PATHS_OPEN: usize = 0;
 
@@ -34,12 +32,6 @@ struct InterfaceManifest {
     interfaces: Vec<InterfaceDeclaration>,
     #[serde(default)]
     ambient_testimony_sites: Vec<AmbientTestimonySite>,
-    #[serde(default)]
-    frontend_boundary_sources: Vec<FrontendBoundarySource>,
-    #[serde(default)]
-    frontend_boundary_transport_json_ingress: Vec<FrontendBoundaryDeclaration>,
-    #[serde(default)]
-    frontend_boundary_decode_calls: Vec<FrontendBoundaryDeclaration>,
     #[serde(default)]
     frontend_boundary_allowlist_hatches: Vec<FrontendBoundaryDeclaration>,
     #[serde(default)]
@@ -60,10 +52,6 @@ struct Ratchet {
     declared_escape_hatch_rows_open: usize,
     #[serde(default)]
     ambient_testimony_sites: usize,
-    #[serde(default)]
-    transport_json_backend_ingress: usize,
-    #[serde(default)]
-    backend_frontend_decode_calls: usize,
     #[serde(default)]
     frontend_provenance_unadmitted: usize,
     #[serde(default)]
@@ -152,13 +140,6 @@ struct AmbientSiteSource {
     item: String,
     #[serde(default)]
     needles: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FrontendBoundarySource {
-    path: String,
-    #[serde(default)]
-    frontend_adapter: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -787,152 +768,6 @@ path = "{}"
 }
 
 #[test]
-fn frontend_boundary_transport_json_ingress_planted_offender_turns_red() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let source = temp.path().join("planted_backend.rs");
-    std::fs::write(
-        &source,
-        r#"
-use serde_json::Value as Json;
-
-pub struct PlantedCompiler;
-
-impl IrCompiler for PlantedCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        todo!()
-    }
-}
-"#,
-    )
-    .expect("write planted compiler ingress");
-    let manifest = manifest_from_str(&format!(
-        r#"
-version = 1
-
-[ratchet]
-interfaces_without_declaration = 0
-undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 0
-ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
-frontend_provenance_unadmitted = 0
-
-[[frontend_boundary_sources]]
-path = "{}"
-"#,
-        source.display()
-    ));
-
-    let findings = audit_fixture_manifest(temp.path(), &manifest);
-    println!(
-        "transport-json ingress planted-control receipt:\n{}",
-        render_findings(&findings, 0)
-    );
-    assert!(
-        findings.iter().any(|finding| {
-            finding.axis == "transport-json-backend-ingress" && finding.item == "PlantedCompiler"
-        }),
-        "planted IrCompiler &Json ingress must red; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-}
-
-#[test]
-fn frontend_boundary_backend_decode_planted_offender_turns_red() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let source = temp.path().join("planted_decode.rs");
-    std::fs::write(
-        &source,
-        r#"
-use serde_json::Value as Json;
-
-pub fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
-    let formula: sugar_ir_types::Formula = serde_json::from_value(ir.clone()).unwrap();
-    todo!()
-}
-"#,
-    )
-    .expect("write planted backend decode");
-    let manifest = manifest_from_str(&format!(
-        r#"
-version = 1
-
-[ratchet]
-interfaces_without_declaration = 0
-undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 0
-ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
-frontend_provenance_unadmitted = 0
-
-[[frontend_boundary_sources]]
-path = "{}"
-"#,
-        source.display()
-    ));
-
-    let findings = audit_fixture_manifest(temp.path(), &manifest);
-    println!(
-        "backend-decode planted-control receipt:\n{}",
-        render_findings(&findings, 0)
-    );
-    assert!(
-        findings.iter().any(|finding| {
-            finding.axis == "backend-frontend-decode-calls" && finding.item == "compile_to_parts"
-        }),
-        "planted backend serde_json::from_value ingress must red; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-}
-
-#[test]
-fn frontend_boundary_frontend_adapter_decode_is_legal_near_miss() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let source = temp.path().join("frontend.rs");
-    std::fs::write(
-        &source,
-        r#"
-use serde_json::Value as Json;
-
-pub fn decode_json(ir: Json) -> Result<CompilerInput, FrontendError> {
-    serde_json::from_value(ir).map_err(|_| FrontendError)
-}
-"#,
-    )
-    .expect("write legal frontend adapter");
-    let manifest = manifest_from_str(&format!(
-        r#"
-version = 1
-
-[ratchet]
-interfaces_without_declaration = 0
-undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 0
-ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
-frontend_provenance_unadmitted = 0
-
-[[frontend_boundary_sources]]
-path = "{}"
-frontend_adapter = true
-"#,
-        source.display()
-    ));
-
-    let findings = audit_fixture_manifest(temp.path(), &manifest);
-    assert!(
-        findings
-            .iter()
-            .all(|finding| finding.axis != "backend-frontend-decode-calls"),
-        "frontend adapter decode_json is the legal decode boundary; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-}
-
-#[test]
 fn frontend_boundary_string_sludge_error_path_planted_offender_turns_red() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("planted_rpc_error.rs");
@@ -954,8 +789,6 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 0
 ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
 
 [[interface_sources]]
@@ -992,54 +825,6 @@ source = {{ path = "{}", item = "RpcFrontendFailure", kind = "enum" }}
 }
 
 #[test]
-fn dropped_frontend_boundary_baseline_row_turns_red() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let source = temp.path().join("declared_backend.rs");
-    std::fs::write(
-        &source,
-        r#"
-use serde_json::Value as Json;
-
-pub struct DeclaredCompiler;
-
-impl IrCompiler for DeclaredCompiler {
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        todo!()
-    }
-}
-"#,
-    )
-    .expect("write declared compiler ingress");
-    let manifest = manifest_from_str(&format!(
-        r#"
-version = 1
-
-[ratchet]
-interfaces_without_declaration = 0
-undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 0
-ambient_testimony_sites = 0
-transport_json_backend_ingress = 1
-backend_frontend_decode_calls = 0
-frontend_provenance_unadmitted = 0
-
-[[frontend_boundary_sources]]
-path = "{}"
-"#,
-        source.display()
-    ));
-
-    let findings = audit_fixture_manifest(temp.path(), &manifest);
-    assert!(
-        findings.iter().any(|finding| {
-            finding.axis == "transport-json-backend-ingress" && finding.item == "DeclaredCompiler"
-        }),
-        "dropping a frontend-boundary baseline row must red; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-}
-
-#[test]
 fn frontend_boundary_untyped_verifier_obligation_planted_offender_turns_red() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("plan_like.rs");
@@ -1065,8 +850,6 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 0
 ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
 
@@ -1130,8 +913,6 @@ interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 0
 ambient_testimony_sites = 0
-transport_json_backend_ingress = 0
-backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
 
@@ -1328,14 +1109,6 @@ fn audit_manifest_with_mode(
         }
     }
 
-    for row in &manifest.frontend_boundary_transport_json_ingress {
-        validate_frontend_boundary_declaration(row, &mut findings);
-        validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
-    }
-    for row in &manifest.frontend_boundary_decode_calls {
-        validate_frontend_boundary_declaration(row, &mut findings);
-        validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
-    }
     for row in &manifest.frontend_boundary_allowlist_hatches {
         validate_frontend_boundary_declaration(row, &mut findings);
         validate_frontend_boundary_allowlist(root, row, &mut findings);
@@ -1346,48 +1119,6 @@ fn audit_manifest_with_mode(
     for row in &manifest.verifier_untyped_obligation_paths {
         validate_frontend_boundary_declaration(row, &mut findings);
         validate_frontend_boundary_declared_needles_present(root, row, &mut findings);
-    }
-
-    for finding in discover_transport_json_backend_ingress(root, manifest, &mut findings) {
-        if !frontend_boundary_finding_is_declared(
-            root,
-            &manifest.frontend_boundary_transport_json_ingress,
-            &finding,
-        ) {
-            findings.push(Finding {
-                axis: "transport-json-backend-ingress",
-                path: finding.path,
-                line: finding.line,
-                item: finding.item,
-                message: format!(
-                    "undeclared transport JSON backend ingress: `{}`",
-                    finding.text
-                ),
-                replacement: "declare this S1 baseline with owner+retirement, or move the backend boundary to S2's compile_typed(&CompilerInput) trait"
-                    .to_string(),
-            });
-        }
-    }
-
-    for finding in discover_backend_frontend_decode_calls(root, manifest, &mut findings) {
-        if !frontend_boundary_finding_is_declared(
-            root,
-            &manifest.frontend_boundary_decode_calls,
-            &finding,
-        ) {
-            findings.push(Finding {
-                axis: "backend-frontend-decode-calls",
-                path: finding.path,
-                line: finding.line,
-                item: finding.item,
-                message: format!(
-                    "undeclared backend frontend-decode call on obligation payload: `{}`",
-                    finding.text
-                ),
-                replacement: "declare this S1 baseline with owner+retirement, or relocate decode to the typed frontend adapter"
-                    .to_string(),
-            });
-        }
     }
 
     for finding in discover_untyped_verifier_obligation_paths(root, manifest) {
@@ -1413,8 +1144,6 @@ fn audit_manifest_with_mode(
 
     let baseline = manifest_declared_baseline_count(manifest);
     let ambient_baseline = manifest_declared_ambient_count(manifest);
-    let transport_baseline = manifest_declared_transport_ingress_count(manifest);
-    let decode_baseline = manifest_declared_decode_call_count(manifest);
     let verifier_obligation_baseline =
         manifest_declared_untyped_verifier_obligation_count(manifest);
     if enforce_live_ratchet && manifest.ratchet.interfaces_without_declaration != 0 {
@@ -1507,69 +1236,6 @@ fn audit_manifest_with_mode(
             replacement:
                 "keep the manifest ambient baseline synchronized with the declared S2 rows"
                     .to_string(),
-        });
-    }
-    if enforce_live_ratchet
-        && manifest.ratchet.transport_json_backend_ingress
-            != BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN
-    {
-        findings.push(Finding {
-            axis: "ratchet-vector",
-            path: MANIFEST_REL.to_string(),
-            line: 0,
-            item: "R.transport_json_backend_ingress".to_string(),
-            message: format!(
-                "ratchet pins transport_json_backend_ingress at {}, expected {BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN}",
-                manifest.ratchet.transport_json_backend_ingress
-            ),
-            replacement: "S1 baseline is the declared compiler impl &Json ingress residue; S2/S7 retire it through compile_typed"
-                .to_string(),
-        });
-    }
-    if enforce_live_ratchet && transport_baseline != manifest.ratchet.transport_json_backend_ingress
-    {
-        findings.push(Finding {
-            axis: "ratchet-vector",
-            path: MANIFEST_REL.to_string(),
-            line: 0,
-            item: "R.transport_json_backend_ingress".to_string(),
-            message: format!(
-                "manifest has {transport_baseline} baseline transport-json ingress rows, ratchet pins {}",
-                manifest.ratchet.transport_json_backend_ingress
-            ),
-            replacement: "keep Instrument A's declared baseline synchronized with the live compiler ingress census"
-                .to_string(),
-        });
-    }
-    if enforce_live_ratchet
-        && manifest.ratchet.backend_frontend_decode_calls
-            != BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN
-    {
-        findings.push(Finding {
-            axis: "ratchet-vector",
-            path: MANIFEST_REL.to_string(),
-            line: 0,
-            item: "R.backend_frontend_decode_calls".to_string(),
-            message: format!(
-                "ratchet pins backend_frontend_decode_calls at {}, expected {BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN}",
-                manifest.ratchet.backend_frontend_decode_calls
-            ),
-            replacement: "S1 baseline is the declared backend serde_json::from_value ingress residue; S3/S7 retire it"
-                .to_string(),
-        });
-    }
-    if enforce_live_ratchet && decode_baseline != manifest.ratchet.backend_frontend_decode_calls {
-        findings.push(Finding {
-            axis: "ratchet-vector",
-            path: MANIFEST_REL.to_string(),
-            line: 0,
-            item: "R.backend_frontend_decode_calls".to_string(),
-            message: format!(
-                "manifest has {decode_baseline} baseline backend decode rows, ratchet pins {}",
-                manifest.ratchet.backend_frontend_decode_calls
-            ),
-            replacement: "keep Instrument B's declared baseline synchronized with the live backend decode census"
-                .to_string(),
         });
     }
     if enforce_live_ratchet
@@ -2018,37 +1684,6 @@ fn brace_delta(line: &str) -> isize {
     depth
 }
 
-fn cfg_test_module_end(lines: &[&str], idx: usize) -> Option<usize> {
-    if !lines[idx].trim_start().starts_with("#[cfg(test)]") {
-        return None;
-    }
-    let mut module_idx = idx + 1;
-    while module_idx < lines.len() {
-        let trimmed = lines[module_idx].trim();
-        if trimmed.is_empty() || trimmed.starts_with("#[") {
-            module_idx += 1;
-            continue;
-        }
-        if !trimmed.starts_with("mod tests") {
-            return None;
-        }
-        let mut depth = brace_delta(lines[module_idx]);
-        if depth <= 0 {
-            return None;
-        }
-        let mut cursor = module_idx + 1;
-        while cursor < lines.len() {
-            depth += brace_delta(lines[cursor]);
-            if depth <= 0 {
-                return Some(cursor);
-            }
-            cursor += 1;
-        }
-        return Some(lines.len().saturating_sub(1));
-    }
-    None
-}
-
 fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<HatchFinding> {
     let mut findings = Vec::new();
     let has_solver_context = block.lines.iter().any(|line| {
@@ -2319,197 +1954,6 @@ fn validate_frontend_boundary_vocabulary(
     }
 }
 
-fn discover_transport_json_backend_ingress(
-    root: &Path,
-    manifest: &InterfaceManifest,
-    findings: &mut Vec<Finding>,
-) -> Vec<FrontendBoundaryFinding> {
-    let mut out = Vec::new();
-    for source in walked_frontend_boundary_sources(root, manifest, findings) {
-        let path = resolve_manifest_path(root, &source.path);
-        let rel = normalize_manifest_path(root, &source.path);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        let mut idx = 0usize;
-        while idx < lines.len() {
-            if let Some(end) = cfg_test_module_end(&lines, idx) {
-                idx = end + 1;
-                continue;
-            }
-            let line = lines[idx];
-            if let Some(item) = parse_ircompiler_impl_item(line) {
-                let mut depth = brace_delta(line);
-                let mut saw_brace = line.contains('{');
-                let mut cursor = idx + 1;
-                while cursor < lines.len() {
-                    let body_line = lines[cursor];
-                    if body_line.contains('{') {
-                        saw_brace = true;
-                    }
-                    if is_compile_signature_with_transport_json(body_line) {
-                        let finding = FrontendBoundaryFinding {
-                            path: rel.clone(),
-                            item: item.clone(),
-                            line: cursor + 1,
-                            shape: "transport-json-ircompiler-impl-ingress".to_string(),
-                            text: body_line.trim().to_string(),
-                        };
-                        if !frontend_boundary_transport_frontend_is_declared(
-                            root, manifest, &finding,
-                        ) {
-                            out.push(finding);
-                        }
-                    }
-                    depth += brace_delta(body_line);
-                    if saw_brace && depth <= 0 {
-                        break;
-                    }
-                    cursor += 1;
-                }
-                idx = cursor;
-            }
-            idx += 1;
-        }
-    }
-    out.sort();
-    out
-}
-
-fn discover_backend_frontend_decode_calls(
-    root: &Path,
-    manifest: &InterfaceManifest,
-    findings: &mut Vec<Finding>,
-) -> Vec<FrontendBoundaryFinding> {
-    let mut out = Vec::new();
-    for source in walked_frontend_boundary_sources(root, manifest, findings) {
-        if source.frontend_adapter {
-            continue;
-        }
-        let path = resolve_manifest_path(root, &source.path);
-        let rel = normalize_manifest_path(root, &source.path);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        let mut idx = 0usize;
-        while idx < lines.len() {
-            if let Some(end) = cfg_test_module_end(&lines, idx) {
-                idx = end + 1;
-                continue;
-            }
-            let line = lines[idx];
-            if let Some(item) = parse_rust_function_name(line) {
-                if is_backend_compile_entrypoint(&item)
-                    && function_signature_has_json_arg(&lines, idx, &item)
-                {
-                    out.push(FrontendBoundaryFinding {
-                        path: rel.clone(),
-                        item: item.clone(),
-                        line: idx + 1,
-                        shape: "backend-json-helper-signature".to_string(),
-                        text: signature_text(&lines, idx),
-                    });
-                }
-                let mut depth = 0isize;
-                let mut saw_brace = false;
-                let mut cursor = idx;
-                while cursor < lines.len() {
-                    let body_line = lines[cursor];
-                    if body_line.contains('{') {
-                        saw_brace = true;
-                    }
-                    if is_backend_compile_entrypoint(&item)
-                        && body_line.contains("serde_json::from_value")
-                    {
-                        out.push(FrontendBoundaryFinding {
-                            path: rel.clone(),
-                            item: item.clone(),
-                            line: cursor + 1,
-                            shape: "backend-obligation-from-value".to_string(),
-                            text: body_line.trim().to_string(),
-                        });
-                    }
-                    depth += brace_delta(body_line);
-                    if cursor > idx && saw_brace && depth <= 0 {
-                        break;
-                    }
-                    cursor += 1;
-                }
-                idx = cursor;
-            }
-            idx += 1;
-        }
-    }
-    out.sort();
-    out
-}
-
-#[derive(Debug, Clone)]
-struct FrontendBoundarySourceSpec {
-    path: String,
-    frontend_adapter: bool,
-}
-
-fn walked_frontend_boundary_sources(
-    root: &Path,
-    manifest: &InterfaceManifest,
-    findings: &mut Vec<Finding>,
-) -> Vec<FrontendBoundarySourceSpec> {
-    let mut sources: BTreeMap<String, FrontendBoundarySourceSpec> = BTreeMap::new();
-    for source in &manifest.frontend_boundary_sources {
-        merge_frontend_boundary_source(
-            &mut sources,
-            normalize_manifest_path(root, &source.path),
-            source.frontend_adapter,
-        );
-    }
-    for row in manifest
-        .frontend_boundary_transport_json_ingress
-        .iter()
-        .chain(manifest.frontend_boundary_decode_calls.iter())
-        .chain(manifest.frontend_boundary_allowlist_hatches.iter())
-    {
-        merge_frontend_boundary_source(
-            &mut sources,
-            normalize_manifest_path(root, &row.source.path),
-            false,
-        );
-    }
-    for path in discover_pipeline_seam_files(root, manifest, findings) {
-        if path.contains("sugar-ir-compiler") || path.contains("sugar-verifier/src/solvers/plan.rs")
-        {
-            merge_frontend_boundary_source(&mut sources, path, false);
-        }
-    }
-    sources.into_values().collect()
-}
-
-fn merge_frontend_boundary_source(
-    sources: &mut BTreeMap<String, FrontendBoundarySourceSpec>,
-    path: String,
-    frontend_adapter: bool,
-) {
-    let entry = sources
-        .entry(path.clone())
-        .or_insert(FrontendBoundarySourceSpec {
-            path,
-            frontend_adapter,
-        });
-    entry.frontend_adapter |= frontend_adapter;
-}
-
-fn parse_ircompiler_impl_item(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    let rest = trimmed.strip_prefix("impl IrCompiler for ")?;
-    let name = rest
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .next()
-        .unwrap_or("");
-    (!name.is_empty()).then(|| name.to_string())
-}
-
 fn parse_rust_function_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.starts_with("//") || trimmed.starts_with("#[") {
@@ -2528,21 +1972,6 @@ fn parse_rust_function_name(line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-fn is_compile_signature_with_transport_json(line: &str) -> bool {
-    line.contains("fn compile(") && is_json_value_boundary(line.trim())
-}
-
-fn is_backend_compile_entrypoint(item: &str) -> bool {
-    matches!(
-        item,
-        "emit"
-            | "compile_to_parts"
-            | "compile_asserted_to_parts"
-            | "compile_inner"
-            | "compile_artifact"
-    )
-}
-
 fn frontend_boundary_finding_is_declared(
     root: &Path,
     rows: &[FrontendBoundaryDeclaration],
@@ -2558,28 +1987,6 @@ fn frontend_boundary_finding_is_declared(
                 .iter()
                 .all(|needle| finding.text.contains(needle))
     })
-}
-
-fn frontend_boundary_transport_frontend_is_declared(
-    root: &Path,
-    manifest: &InterfaceManifest,
-    finding: &FrontendBoundaryFinding,
-) -> bool {
-    manifest
-        .frontend_boundary_allowlist_hatches
-        .iter()
-        .any(|row| {
-            let text = std::fs::read_to_string(resolve_manifest_path(root, &row.source.path))
-                .unwrap_or_default();
-            row.shape == "json-rpc-transport-frontend"
-                && normalize_manifest_path(root, &row.source.path) == finding.path
-                && row.source.item == finding.item
-                && row
-                    .source
-                    .needles
-                    .iter()
-                    .all(|needle| text.contains(needle))
-        })
 }
 
 fn discover_untyped_verifier_obligation_paths(
@@ -2732,22 +2139,6 @@ fn manifest_declared_ambient_count(manifest: &InterfaceManifest) -> usize {
         .count()
 }
 
-fn manifest_declared_transport_ingress_count(manifest: &InterfaceManifest) -> usize {
-    manifest
-        .frontend_boundary_transport_json_ingress
-        .iter()
-        .filter(|row| row.baseline)
-        .count()
-}
-
-fn manifest_declared_decode_call_count(manifest: &InterfaceManifest) -> usize {
-    manifest
-        .frontend_boundary_decode_calls
-        .iter()
-        .filter(|row| row.baseline)
-        .count()
-}
-
 fn manifest_declared_untyped_verifier_obligation_count(manifest: &InterfaceManifest) -> usize {
     manifest
         .verifier_untyped_obligation_paths
@@ -2769,14 +2160,6 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
         .iter()
         .filter(|finding| finding.axis == "ambient-testimony-sites")
         .count();
-    let transport_json_backend_ingress = findings
-        .iter()
-        .filter(|finding| finding.axis == "transport-json-backend-ingress")
-        .count();
-    let backend_frontend_decode_calls = findings
-        .iter()
-        .filter(|finding| finding.axis == "backend-frontend-decode-calls")
-        .count();
     let frontend_provenance_unadmitted = findings
         .iter()
         .filter(|finding| finding.axis == "frontend-provenance-unadmitted")
@@ -2789,14 +2172,12 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
         "R.interfaces_without_declaration = {interfaces_without_declaration}\n\
          R.undeclared_escape_hatches = {undeclared_escape_hatches}\n\
          R.ambient_testimony_sites = {ambient_testimony_sites}\n\
-         R.transport_json_backend_ingress = {transport_json_backend_ingress}\n\
-         R.backend_frontend_decode_calls = {backend_frontend_decode_calls}\n\
          R.frontend_provenance_unadmitted = {frontend_provenance_unadmitted}\n\
          R.untyped_verifier_obligation_paths = {untyped_verifier_obligation_paths}\n\
          R.declared_escape_hatch_rows_open = {declared_baseline} \
          (baseline {BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN})\n\
          Delta R: compare this run to the previous typed-pipeline conformance receipt\n\
-         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, transport_json_backend_ingress=0, backend_frontend_decode_calls=0, frontend_provenance_unadmitted=0, untyped_verifier_obligation_paths=0\n"
+         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0, frontend_provenance_unadmitted=0, untyped_verifier_obligation_paths=0\n"
     );
     for finding in findings {
         out.push_str(&format!(

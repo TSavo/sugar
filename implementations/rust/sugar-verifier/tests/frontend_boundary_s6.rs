@@ -91,10 +91,10 @@ fn compile_via_json_and_binary(
     compiler: &dyn IrCompiler,
     dialect: &str,
     fixture: Json,
+    binary_fixture: &[u8],
 ) -> Result<(CompiledFormula, CompiledFormula), CompileError> {
     let json_input = CompilerInput::decode_json(fixture)?;
-    let binary = BinaryProofIrFrontend::encode(&json_input)?;
-    let binary_input = BinaryProofIrFrontend::decode(&binary)?;
+    let binary_input = BinaryProofIrFrontend::decode(binary_fixture)?;
     assert_eq!(binary_input, json_input);
 
     let json_output = compiler.compile_typed(&json_input, dialect)?;
@@ -176,16 +176,25 @@ fn binary_frontend_serialization_symbols_do_not_enter_backend_crates() {
 
 #[test]
 fn instrument_c_json_and_binary_frontends_are_byte_equal_through_smtlib_and_maude() {
-    let (json_output, binary_output) =
-        compile_via_json_and_binary(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture())
-            .expect("SMT-LIB JSON/binary compile");
+    let smt_binary =
+        include_bytes!("fixtures/frontend_boundary_s7_formula.proofir-cbor").as_slice();
+    let (json_output, binary_output) = compile_via_json_and_binary(
+        &SmtLibCompiler::new(),
+        SMT_DIALECT,
+        formula_fixture(),
+        smt_binary,
+    )
+    .expect("SMT-LIB JSON/binary compile");
     assert_compiled_formula_equal_under_policy(&json_output, &binary_output, &[])
         .expect("default-empty policy requires SMT-LIB byte identity");
 
+    let maude_binary =
+        include_bytes!("fixtures/frontend_boundary_s7_equational_theory.proofir-cbor").as_slice();
     let (json_output, binary_output) = compile_via_json_and_binary(
         &MaudeCompiler::new(),
         MAUDE_DIALECT,
         equational_theory_fixture(),
+        maude_binary,
     )
     .expect("Maude JSON/binary compile");
     assert_compiled_formula_equal_under_policy(&json_output, &binary_output, &[])
@@ -210,9 +219,15 @@ fn corrupted_binary_frontend_payload_is_typed() {
 
 #[test]
 fn instrument_c_reds_on_unadmitted_and_passes_on_policy_admitted_difference() {
-    let (json_output, mut drifted) =
-        compile_via_json_and_binary(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture())
-            .expect("SMT-LIB JSON/binary compile");
+    let smt_binary =
+        include_bytes!("fixtures/frontend_boundary_s7_formula.proofir-cbor").as_slice();
+    let (json_output, mut drifted) = compile_via_json_and_binary(
+        &SmtLibCompiler::new(),
+        SMT_DIALECT,
+        formula_fixture(),
+        smt_binary,
+    )
+    .expect("SMT-LIB JSON/binary compile");
     drifted.body.push_str("; planted-s6-unadmitted-drift\n");
 
     let unadmitted = assert_compiled_formula_equal_under_policy(&json_output, &drifted, &[])

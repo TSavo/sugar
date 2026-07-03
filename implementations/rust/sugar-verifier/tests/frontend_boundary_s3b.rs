@@ -130,13 +130,15 @@ fn coq_and_maude_compile_typed_do_not_reencode_or_decode_transport_json() {
 }
 
 #[test]
-fn coq_compile_typed_formula_and_term_match_legacy_bytes() {
+fn coq_compile_typed_formula_and_term_are_deterministic() {
     let coq = CoqCompiler::new();
     for ir in [formula_fixture(), term_fixture()] {
-        let typed = typed(ir.clone());
+        let typed = typed(ir);
+        let compiled = coq.compile_typed(&typed, COQ_DIALECT).expect("typed coq");
         assert_eq!(
-            coq.compile_typed(&typed, COQ_DIALECT).expect("typed coq"),
-            coq.compile(&ir, COQ_DIALECT).expect("legacy coq")
+            compiled,
+            coq.compile_typed(&typed, COQ_DIALECT)
+                .expect("typed coq repeats")
         );
     }
 }
@@ -144,14 +146,19 @@ fn coq_compile_typed_formula_and_term_match_legacy_bytes() {
 #[test]
 fn maude_compile_typed_equational_theory_matches_legacy_bytes_and_metadata() {
     let ir = equational_theory_fixture();
-    let typed = typed(ir.clone());
+    let typed = typed(ir);
     let maude = MaudeCompiler::new();
     let native = maude
         .compile_typed(&typed, MAUDE_DIALECT)
         .expect("typed maude");
-    let legacy = maude.compile(&ir, MAUDE_DIALECT).expect("legacy maude");
-    assert_eq!(native, legacy);
-    assert_eq!(native.metadata, legacy.metadata);
+    let CompilerInput::EquationalTheory(obligation) = &typed else {
+        panic!("fixture should decode as an equational theory");
+    };
+    let expected = sugar_ir_compiler_maude::compile_equational_theory_artifact(obligation)
+        .expect("typed Maude artifact")
+        .compiled;
+    assert_eq!(native, expected);
+    assert_eq!(native.metadata, expected.metadata);
 
     let maude_metadata = native
         .metadata
@@ -179,14 +186,7 @@ fn maude_malformed_theory_fails_at_frontend_decode() {
     let err = CompilerInput::decode_json(malformed.clone()).unwrap_err();
     assert_eq!(err.payload.kind, FrontendErrorKind::InvalidTypedIr);
 
-    let err = MaudeCompiler::new()
-        .compile(&malformed, MAUDE_DIALECT)
-        .expect_err("legacy adapter must surface typed frontend decode errors");
-    assert!(matches!(
-        err,
-        CompileError::Frontend(payload)
-            if payload.kind == FrontendErrorKind::InvalidTypedIr
-    ));
+    assert_eq!(err.payload.path, "$");
 }
 
 #[test]

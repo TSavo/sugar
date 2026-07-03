@@ -1,5 +1,5 @@
 use serde_json::json;
-use sugar_ir_compiler::IrCompiler;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_coq::CoqCompiler;
 
 fn main() {
@@ -22,7 +22,8 @@ fn main() {
     println!("IR: {:?}", ir);
     println!();
 
-    let result = compiler.compile(&ir, "coq").unwrap();
+    let input = CompilerInput::decode_json(ir.clone()).unwrap();
+    let result = compiler.compile_typed(&input, "coq").unwrap();
 
     println!("=== Coq Output ===\n");
     println!("{}", result.preamble);

@@ -259,16 +259,6 @@ pub fn compile_formula_to_parts(
     emitter::compile_formula(formula)
 }
 
-pub fn compile_asserted_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
-    let input = CompilerInput::decode_json(ir_formula.clone())?;
-    let CompilerInput::Formula(formula) = input else {
-        return Err(CompileError::MalformedIr(
-            "asserted SMT-LIB compile expects a formula input".to_string(),
-        ));
-    };
-    compile_asserted_formula_to_parts(&formula)
-}
-
 pub fn compile_asserted_formula_to_parts(
     formula: &sugar_ir_types::Formula,
 ) -> Result<CompiledFormula, CompileError> {

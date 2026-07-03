@@ -32,10 +32,23 @@ fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("fixture parses")
 }
 
+fn compile_asserted_json_to_parts(
+    formula: &serde_json::Value,
+) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
+    match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
+        sugar_ir_compiler::CompilerInput::Formula(formula) => {
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+        }
+        _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
+            "asserted SMT-LIB compile expects a formula input".to_string(),
+        )),
+    }
+}
+
 /// Run z3 on a compiled invariant. `Some(true)` = SAT, `Some(false)` = UNSAT,
 /// `None` = z3 absent / ill-sorted (test then degrades to a no-op).
 fn z3_sat(inv: &serde_json::Value, label: &str) -> Option<bool> {
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(inv).ok()?;
+    let parts = compile_asserted_json_to_parts(inv).ok()?;
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let z3 = "/usr/local/bin/z3";
     if !std::path::Path::new(z3).exists() {

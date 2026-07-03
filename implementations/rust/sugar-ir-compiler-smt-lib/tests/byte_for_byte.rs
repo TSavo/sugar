@@ -484,7 +484,8 @@ fn trait_compile_preamble_plus_body_equals_emit_string() {
 fn trait_dispatch_through_smtlib_impl_matches_emit() {
     let c = SmtLibCompiler::new();
     for ir in fixtures() {
-        let parts = c.compile(&ir, DIALECT).expect("compile");
+        let input = CompilerInput::decode_json(ir.clone()).expect("fixture decodes");
+        let parts = c.compile_typed(&input, DIALECT).expect("compile");
         let combined = format!("{}{}", parts.preamble, parts.body);
         let single = emit(&ir).expect("emit");
         assert_eq!(combined, single);
@@ -497,7 +498,8 @@ fn trait_compile_rejects_wrong_dialect() {
     let ir = json!({"kind": "atomic", "name": "=", "args": [
         {"kind": "var", "name": "x"}, {"kind": "var", "name": "x"}
     ]});
-    let r = c.compile(&ir, "tptp-fof");
+    let input = CompilerInput::decode_json(ir).expect("fixture decodes");
+    let r = c.compile_typed(&input, "tptp-fof");
     assert!(matches!(
         r,
         Err(sugar_ir_compiler::CompileError::UnsupportedDialect(_))
