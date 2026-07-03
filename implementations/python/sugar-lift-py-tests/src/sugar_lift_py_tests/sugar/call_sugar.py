@@ -110,7 +110,7 @@ class BridgeStrategy:
         if not any(
             isinstance(arg, (SymbolicValue, CallSiteValue)) for arg in arg_values
         ):
-            sink = getattr(ctx, "dig_sink", None)
+            sink = ctx.dig_sink
             if sink is not None:
                 sink.append(call_value)
         return Complete(call_value)
@@ -202,7 +202,7 @@ class ExternalBridgeStrategy:
                     [floor_to_term(value, owner=f"external bridge keyword {name}")],
                 )
             )
-        sink = getattr(ctx, "external_bridge_sink", None)
+        sink = ctx.external_bridge_sink
         if sink is not None:
             sink.append(
                 {
@@ -488,14 +488,14 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
         import_target = fragment.call_import_target_name(
-            getattr(ctx, "import_aliases", {}) or {},
-            getattr(ctx, "from_imports", {}) or {},
+            ctx.import_aliases or {},
+            ctx.from_imports or {},
         )
         bare_target = fragment.call_target_name()
         target = import_target or bare_target
-        resolver = getattr(ctx, "name_resolver", None) or {}
+        resolver = ctx.name_resolver or {}
         function_node = resolver.get(target)
-        building = getattr(ctx, "building", frozenset())
+        building = ctx.building
         if function_node is not None and target is not None:
             resolved = SourceFragment.from_node(function_node, ctx.filename)
             if resolved.observed == "ClassDef":
@@ -763,12 +763,12 @@ def _is_resolved_local_class_call(fragment, ctx) -> bool:
         return False
     target = (
         fragment.call_import_target_name(
-            getattr(ctx, "import_aliases", {}) or {},
-            getattr(ctx, "from_imports", {}) or {},
+            ctx.import_aliases or {},
+            ctx.from_imports or {},
         )
         or fragment.call_target_name()
     )
-    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolver = ctx.name_resolver or {}
     resolved_node = resolver.get(target)
     if resolved_node is None:
         return False
@@ -803,7 +803,7 @@ def _build_object_methods(class_site, ctx):
 def _resolver_has_method(ctx, method_name: str) -> bool:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolver = ctx.name_resolver or {}
     for node in resolver.values():
         site = SourceFragment.from_node(node, ctx.filename)
         if site.observed != "ClassDef":

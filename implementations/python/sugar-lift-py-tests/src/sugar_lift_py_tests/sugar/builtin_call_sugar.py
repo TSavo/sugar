@@ -268,8 +268,8 @@ def _owned_builtin_name(site, ctx) -> str | None:
 
 def _canonical_import_target(site, ctx) -> str | None:
     return site.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
+        ctx.import_aliases or {},
+        ctx.from_imports or {},
     )
 
 
@@ -280,5 +280,5 @@ def _call_is_context_bound(site, ctx) -> bool:
     import_target = _canonical_import_target(site, ctx)
     if import_target is not None:
         return True
-    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolver = ctx.name_resolver or {}
     return target in resolver

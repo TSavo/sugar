@@ -55,10 +55,10 @@ class ComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     @classmethod
     def build(cls, site, ctx) -> "ComparisonAssertionSugar":
         test = site.assert_test()
-        import_aliases = getattr(ctx, "import_aliases", {}) or {}
-        from_imports = getattr(ctx, "from_imports", {}) or {}
-        name_resolver = getattr(ctx, "name_resolver", {}) or {}
-        external_bridge_sink = getattr(ctx, "external_bridge_sink", None)
+        import_aliases = ctx.import_aliases or {}
+        from_imports = ctx.from_imports or {}
+        name_resolver = ctx.name_resolver or {}
+        external_bridge_sink = ctx.external_bridge_sink
         return cls(
             operator=test.compare_ops()[0],
             left=symbolic_term(

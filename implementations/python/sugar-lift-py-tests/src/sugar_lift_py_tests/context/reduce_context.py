@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
@@ -26,18 +27,18 @@ class ReduceContext:
         return cls(temporal=TemporalContext.empty(), dig_sink=dig_sink)
 
     @classmethod
-    def derived(cls, source, *, owner: str) -> "ReduceContext":
+    def derived(
+        cls, source: "FactoryBuildContext | ReduceContext", *, owner: str
+    ) -> "ReduceContext":
         """Front door for reduction that carries an existing temporal context."""
         return cls(
             temporal=source.temporal,
-            source_oracle=getattr(source, "source_oracle", None),
-            proof_sink=getattr(source, "proof_sink", None),
-            report_sink=getattr(source, "report_sink", None),
-            factory_audit_sink=getattr(
-                source, "factory_audit_sink", getattr(source, "audit_sink", None)
-            ),
-            operation_log=getattr(source, "operation_log", []),
-            dig_sink=getattr(source, "dig_sink", None),
+            source_oracle=source.source_oracle,
+            proof_sink=source.proof_sink,
+            report_sink=source.report_sink,
+            factory_audit_sink=source.factory_audit_sink,
+            operation_log=source.operation_log,
+            dig_sink=source.dig_sink,
         )
 
     def record_operation(

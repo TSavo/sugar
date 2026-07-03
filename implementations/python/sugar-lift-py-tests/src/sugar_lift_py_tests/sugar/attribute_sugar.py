@@ -35,10 +35,10 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             term=symbolic_term(
                 site,
                 owner="attribute sugar",
-                import_aliases=getattr(ctx, "import_aliases", {}) or {},
-                from_imports=getattr(ctx, "from_imports", {}) or {},
-                name_resolver=getattr(ctx, "name_resolver", {}) or {},
-                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+                import_aliases=ctx.import_aliases or {},
+                from_imports=ctx.from_imports or {},
+                name_resolver=ctx.name_resolver or {},
+                external_bridge_sink=ctx.external_bridge_sink,
             ),
             receiver=_projectable_receiver(site, ctx),
             receiver_name=_receiver_name(site),
@@ -98,8 +98,8 @@ def _temporal_has_binding(ctx, name: str) -> bool:
 
 
 def _temporal_binding_value(ctx, name: str):
-    temporal = getattr(ctx, "temporal", None)
-    for binding in reversed(getattr(temporal, "bindings", ())):
+    temporal = ctx.temporal
+    for binding in reversed(temporal.bindings):
         if binding.name == name:
             return binding.value
     return None
@@ -117,12 +117,12 @@ def _temporal_binding_is_external_bridge(ctx, name: str) -> bool:
 def _is_resolved_local_class_call(site, ctx) -> bool:
     target = (
         site.call_import_target_name(
-            getattr(ctx, "import_aliases", {}) or {},
-            getattr(ctx, "from_imports", {}) or {},
+            ctx.import_aliases or {},
+            ctx.from_imports or {},
         )
         or site.call_target_name()
     )
-    resolver = getattr(ctx, "name_resolver", None) or {}
+    resolver = ctx.name_resolver or {}
     resolved_node = resolver.get(target)
     if resolved_node is None:
         return False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .floor_value import FloorValue
 from .object_field import ObjectField
@@ -233,7 +234,7 @@ class ObjectValue(FloorValue):
         *,
         owner: str,
         blame: str,
-        ctx: object | None = None,
+        ctx: Any | None = None,
     ):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -281,7 +282,7 @@ class ObjectValue(FloorValue):
                 isinstance(value, (SymbolicValue, CallSiteValue))
                 for value in arg_values
             ):
-                sink = getattr(ctx, "dig_sink", None) if ctx is not None else None
+                sink = ctx.dig_sink if ctx is not None else None
                 if sink is not None:
                     sink.append(call_value)
             return Complete(call_value)
