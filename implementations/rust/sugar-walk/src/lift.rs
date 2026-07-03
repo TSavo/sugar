@@ -31,8 +31,8 @@ use std::rc::Rc;
 use libsugar::panic_freedom;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use sugar_floor_algebra::{
-    guard_exit, Desugared, GuardedReturn, PredicateValue, PredicateValueFloorAccept,
-    RequiredPredicateValueVisitor, SymbolicValue,
+    guard_exit, Desugared, PredicateValue, PredicateValueFloorAccept, RequiredPredicateValueVisitor,
+    SymbolicValue,
 };
 use sugar_ir_symbolic::Term as AlgebraTerm;
 use sugar_ir_types::{IrFormula, IrTerm, LetBinding};
@@ -44,7 +44,9 @@ use syn::{
 };
 use tracing::debug;
 
-use crate::term_boundary::{lower_ir, lower_ir_formula, raise_ir, raise_ir_formula};
+use crate::term_boundary::{
+    lower_ir, lower_ir_formula, raise_guarded_return_ir, raise_ir, raise_ir_formula,
+};
 use crate::wp::{free_vars_formula, free_vars_term, Wp};
 
 // ---- LiftCtx: scope-tracked name resolution ----
@@ -175,7 +177,7 @@ struct StatementGuardFacts {
 #[derive(Clone, Debug)]
 struct StatementResolvedGuardFact {
     receiver_key: String,
-    guard: IrTerm,
+    guard: IrFormula,
     roots: BTreeSet<String>,
 }
 
@@ -200,7 +202,7 @@ struct TrackedGuardFact {
     root: String,
     receiver_key: String,
     guard_head: String,
-    guard: IrTerm,
+    guard: IrFormula,
 }
 
 #[derive(Clone, Debug)]
@@ -566,7 +568,8 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // `method:is_absolute(path)`), so a method-call or other non-whitelist
     // boolean condition no longer collapses the whole `ite`. The cond term
     // is uninterpreted; the `ite` still discharges reflexively.
-    let cond_term = match lift_predicate_inner(&if_expr.cond, ctx).and_then(formula_to_term) {
+    let cond_formula = lift_predicate_inner(&if_expr.cond, ctx);
+    let cond_term = match cond_formula.clone().and_then(formula_to_term) {
         Some(t) => t,
         None => lift_expr_to_term_inner(&if_expr.cond, ctx)?,
     };
@@ -575,6 +578,10 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // branch may run `let x = ...; x`. Leading statements do not change
     // the returned value term.
     let then_expr = block_tail_expr(&if_expr.then_branch)?;
+    let then_len_guard = {
+        let mut guard_ctx = ctx.clone();
+        len_eq_one_branch_guard_formula(&if_expr.cond, then_expr, &mut guard_ctx)
+    };
     let then_term = lift_expr_to_term_inner(then_expr, ctx)?;
     let else_term = match if_expr.else_branch.as_ref() {
         Some((_, else_expr)) => {
@@ -602,8 +609,9 @@ fn lift_tail_if_to_ite_term(if_expr: &ExprIf, ctx: &mut LiftCtx) -> Option<IrTer
     // branch value in `cf_guarded(<resolved-predicate-term>, <value>)` so the
     // language-blind verifier can thread the already-resolved atom into its
     // path condition without recognizing a single Rust predicate name.
-    let then_term = guarded_return_for_branch(&cond_term, false, then_term);
-    let else_term = guarded_return_for_branch(&cond_term, true, else_term);
+    let then_term =
+        guarded_return_for_branch(cond_formula.as_ref(), false, then_term, then_len_guard);
+    let else_term = guarded_return_for_branch(cond_formula.as_ref(), true, else_term, None);
     Some(cf_ite_via_symbolic_value_boundary(
         cond_term, then_term, else_term,
     ))
@@ -692,30 +700,25 @@ fn branch_guard_head(cond_head: &str, else_branch: bool) -> Option<&'static str>
 /// the value unchanged when no guard applies also keeps every non-guarded
 /// `cf_ite` byte-identical to before this change (CID stability / reflexive
 /// discharge unperturbed).
-fn guarded_return_for_branch(cond_term: &IrTerm, else_branch: bool, value: IrTerm) -> IrTerm {
-    let _lowered_condition = lower_ir(cond_term);
-    let lowered_value = lower_ir(&value);
+fn guarded_return_for_branch(
+    cond_formula: Option<&IrFormula>,
+    else_branch: bool,
+    value: IrTerm,
+    prioritized_guard: Option<IrFormula>,
+) -> IrTerm {
     let mut guards = Vec::new();
-    if !else_branch {
-        if let Some(guard) = len_eq_one_branch_guard(cond_term, &value) {
-            let (name, args) = match guard {
-                IrTerm::Ctor { name, args } => (name, args),
-                other => {
-                    panic!("branch guard synthesis produced non-atomic guard term: {other:?}");
-                }
-            };
-            guards.push(lower_ir_formula(&IrFormula::Atomic { name, args }));
-            return guarded_return_to_ir_term(guard_exit(
-                Desugared::StmtReturn(lowered_value),
-                &guards,
-                "sugar-walk.branch-guard",
-            ));
-        }
+    if let Some(guard) = prioritized_guard {
+        guards.push(lower_ir_formula(&guard));
+        return raise_guarded_return_ir(guard_exit(
+            Desugared::StmtReturn(lower_ir(&value)),
+            &guards,
+            "sugar-walk.branch-guard",
+        ));
     }
-    let (head, args) = match &cond_term {
-        IrTerm::Ctor { name, args } => (name.as_str(), args),
-        _ => return value,
+    let Some(IrFormula::Atomic { name, args }) = cond_formula else {
+        return value;
     };
+    let head = name.as_str();
     let Some(resolved_head) = branch_guard_head(head, else_branch) else {
         return value;
     };
@@ -724,76 +727,56 @@ fn guarded_return_for_branch(cond_term: &IrTerm, else_branch: bool, value: IrTer
         args: args.clone(),
     };
     guards.push(lower_ir_formula(&guard));
-    guarded_return_to_ir_term(guard_exit(
-        Desugared::StmtReturn(lowered_value),
+    raise_guarded_return_ir(guard_exit(
+        Desugared::StmtReturn(lower_ir(&value)),
         &guards,
         "sugar-walk.branch-guard",
     ))
 }
 
-fn guarded_return_to_ir_term(guarded_return: GuardedReturn) -> IrTerm {
-    let (guards, term) = guarded_return.into_parts();
-    guards
-        .into_iter()
-        .rev()
-        .fold(raise_ir(&term), |value, guard| {
-            let guard = formula_to_term(raise_ir_formula(&guard)).unwrap_or_else(|| {
-                panic!("ControlFlowGuardOperation produced non-term branch guard")
-            });
-            wrap_cf_guarded(guard, value)
-        })
-}
-
-fn len_eq_one_branch_guard(cond_term: &IrTerm, value: &IrTerm) -> Option<IrTerm> {
-    let receiver_key = len_eq_one_receiver_key(cond_term)?;
-    let next_receiver = find_next_partial_receiver(value, &receiver_key)?;
-    Some(IrTerm::Ctor {
+fn len_eq_one_branch_guard_formula(
+    cond_expr: &Expr,
+    branch_expr: &Expr,
+    ctx: &mut LiftCtx,
+) -> Option<IrFormula> {
+    let receiver_key = len_eq_one_receiver_key_expr(cond_expr, ctx)?;
+    let next_receiver = find_next_partial_receiver_expr(branch_expr, &receiver_key, ctx)?;
+    Some(IrFormula::Atomic {
         name: panic_freedom::IS_SOME.to_string(),
         args: vec![next_receiver],
     })
 }
 
-fn len_eq_one_receiver_key(cond_term: &IrTerm) -> Option<String> {
-    let IrTerm::Ctor { name, args } = cond_term else {
+fn len_eq_one_receiver_key_expr(expr: &Expr, ctx: &mut LiftCtx) -> Option<String> {
+    let Expr::Binary(binary) = expr else {
         return None;
     };
-    if name != "cf_eq" || args.len() != 2 {
+    if !matches!(binary.op, BinOp::Eq(_)) {
         return None;
     }
-    let receiver = if is_const_one(&args[1]) {
-        len_receiver_term(&args[0])?
-    } else if is_const_one(&args[0]) {
-        len_receiver_term(&args[1])?
+    let receiver = if expr_is_const_one(&binary.right) {
+        len_receiver_expr_term(&binary.left, ctx)?
+    } else if expr_is_const_one(&binary.left) {
+        len_receiver_expr_term(&binary.right, ctx)?
     } else {
         return None;
     };
     term_key(&receiver)
 }
 
-fn find_next_partial_receiver(term: &IrTerm, collection_receiver_key: &str) -> Option<IrTerm> {
-    match term {
-        IrTerm::Ctor { name, args }
-            if matches!(
-                name.as_str(),
-                panic_freedom::METHOD_UNWRAP | panic_freedom::METHOD_EXPECT
-            ) && !args.is_empty()
-                && next_into_iter_receiver_key(&args[0]).as_deref()
-                    == Some(collection_receiver_key) =>
-        {
-            Some(args[0].clone())
+fn find_next_partial_receiver_expr(
+    expr: &Expr,
+    collection_receiver_key: &str,
+    ctx: &mut LiftCtx,
+) -> Option<IrTerm> {
+    let mut collector = PartialReceiverCollector::default();
+    collector.visit_expr(expr);
+    for receiver in collector.receivers {
+        if next_into_iter_receiver_key_expr(&receiver, ctx).as_deref() == Some(collection_receiver_key) {
+            return lift_expr_to_term_inner(&receiver, ctx);
         }
-        IrTerm::Ctor { args, .. } => args
-            .iter()
-            .find_map(|arg| find_next_partial_receiver(arg, collection_receiver_key)),
-        IrTerm::Let { bindings, body } => bindings
-            .iter()
-            .find_map(|binding| {
-                find_next_partial_receiver(&binding.bound_term, collection_receiver_key)
-            })
-            .or_else(|| find_next_partial_receiver(body, collection_receiver_key)),
-        IrTerm::Lambda { body, .. } => find_next_partial_receiver(body, collection_receiver_key),
-        IrTerm::Const { .. } | IrTerm::Var { .. } => None,
     }
+    None
 }
 
 /// Fold a value-position `match` into a right-nested `ite` chain keyed
@@ -1152,7 +1135,7 @@ fn tracked_direct_guard_fact(expr: &Expr, ctx: &mut LiftCtx) -> Option<TrackedGu
     }
     let receiver = lift_expr_to_term_inner(&method_call.receiver, ctx)?;
     let receiver_key = term_key(&receiver)?;
-    let guard = IrTerm::Ctor {
+    let guard = IrFormula::Atomic {
         name: guard_head.clone(),
         args: vec![receiver],
     };
@@ -1165,23 +1148,8 @@ fn tracked_direct_guard_fact(expr: &Expr, ctx: &mut LiftCtx) -> Option<TrackedGu
 }
 
 fn tracked_len_eq_one_fact(expr: &Expr, ctx: &mut LiftCtx) -> Option<LenEqOneFact> {
-    let Expr::Binary(binary) = expr else {
-        return None;
-    };
-    if !matches!(binary.op, BinOp::Eq(_)) {
-        return None;
-    }
-    let left = lift_expr_to_term_inner(&binary.left, ctx)?;
-    let right = lift_expr_to_term_inner(&binary.right, ctx)?;
-    let receiver = if is_const_one(&right) {
-        len_receiver_term(&left)?
-    } else if is_const_one(&left) {
-        len_receiver_term(&right)?
-    } else {
-        return None;
-    };
-    let root =
-        len_receiver_root_expr(&binary.left).or_else(|| len_receiver_root_expr(&binary.right))?;
+    let receiver = len_eq_one_receiver_expr_term(expr, ctx)?;
+    let root = len_receiver_root_from_eq_expr(expr)?;
     if ctx.mutable_roots.contains(&root) {
         return None;
     }
@@ -1191,17 +1159,47 @@ fn tracked_len_eq_one_fact(expr: &Expr, ctx: &mut LiftCtx) -> Option<LenEqOneFac
     })
 }
 
-fn len_receiver_term(term: &IrTerm) -> Option<IrTerm> {
-    match term {
-        IrTerm::Ctor { name, args } if name == "method:len" && args.len() == 1 => {
-            Some(args[0].clone())
-        }
-        IrTerm::Const { .. }
-        | IrTerm::Ctor { .. }
-        | IrTerm::Lambda { .. }
-        | IrTerm::Let { .. }
-        | IrTerm::Var { .. } => None,
+fn len_eq_one_receiver_expr_term(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
+    let Expr::Binary(binary) = expr else {
+        return None;
+    };
+    if !matches!(binary.op, BinOp::Eq(_)) {
+        return None;
     }
+    if expr_is_const_one(&binary.right) {
+        len_receiver_expr_term(&binary.left, ctx)
+    } else if expr_is_const_one(&binary.left) {
+        len_receiver_expr_term(&binary.right, ctx)
+    } else {
+        None
+    }
+}
+
+fn len_receiver_expr_term(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
+    let Expr::MethodCall(method_call) = expr else {
+        return None;
+    };
+    if method_call.method != "len" || !method_call.args.is_empty() {
+        return None;
+    }
+    lift_expr_to_term_inner(&method_call.receiver, ctx)
+}
+
+fn expr_is_const_one(expr: &Expr) -> bool {
+    let Expr::Lit(lit) = expr else {
+        return false;
+    };
+    let Lit::Int(value) = &lit.lit else {
+        return false;
+    };
+    matches!(value.base10_parse::<i64>(), Ok(1))
+}
+
+fn len_receiver_root_from_eq_expr(expr: &Expr) -> Option<String> {
+    let Expr::Binary(binary) = expr else {
+        return None;
+    };
+    len_receiver_root_expr(&binary.left).or_else(|| len_receiver_root_expr(&binary.right))
 }
 
 fn len_receiver_root_expr(expr: &Expr) -> Option<String> {
@@ -1258,10 +1256,6 @@ fn len_receiver_root_expr(expr: &Expr) -> Option<String> {
             panic!("sugar-walk len receiver classifier refused unknown syn::Expr variant")
         }
     }
-}
-
-fn is_const_one(term: &IrTerm) -> bool {
-    matches!(term, IrTerm::Const { value, .. } if value.as_i64() == Some(1))
 }
 
 fn expr_root_ident(expr: &Expr) -> Option<String> {
@@ -1840,9 +1834,9 @@ fn receiver_as_str_is_known_json_string(receiver: &Expr, ctx: &LiftCtx) -> bool 
         && matches!(infer_value_kind(&method.receiver, ctx), ValueKind::String)
 }
 
-fn wrap_known_option_unwrap_guard(receiver: IrTerm, value: IrTerm) -> IrTerm {
-    wrap_cf_guarded(
-        IrTerm::Ctor {
+fn guarded_value_for_known_option_unwrap(receiver: IrTerm, value: IrTerm) -> IrTerm {
+    guarded_value_from_formula(
+        IrFormula::Atomic {
             name: panic_freedom::IS_SOME.to_string(),
             args: vec![receiver],
         },
@@ -1850,18 +1844,20 @@ fn wrap_known_option_unwrap_guard(receiver: IrTerm, value: IrTerm) -> IrTerm {
     )
 }
 
-fn wrap_cf_guarded(guard: IrTerm, value: IrTerm) -> IrTerm {
-    IrTerm::Ctor {
-        name: panic_freedom::CF_GUARDED.to_string(),
-        args: vec![guard, value],
-    }
+fn guarded_value_from_formula(guard: IrFormula, value: IrTerm) -> IrTerm {
+    raise_guarded_return_ir(guard_exit(
+        Desugared::StmtReturn(lower_ir(&value)),
+        &[lower_ir_formula(&guard)],
+        "sugar-walk.branch-guard",
+    ))
 }
 
 fn assertion_guard_for_partial(
     method: &syn::Ident,
+    receiver_expr: &Expr,
     receiver_term: &IrTerm,
-    ctx: &LiftCtx,
-) -> Option<IrTerm> {
+    ctx: &mut LiftCtx,
+) -> Option<IrFormula> {
     let method = method.to_string();
     let receiver_key = term_key(receiver_term)?;
     for fact in &ctx.assertion_guard_facts {
@@ -1879,12 +1875,14 @@ fn assertion_guard_for_partial(
             }
         }
     }
+    let next_receiver_key = next_into_iter_receiver_key_expr(receiver_expr, ctx);
     if matches!(method.as_str(), "unwrap" | "expect")
-        && ctx.len_eq_one_facts.iter().any(|fact| {
-            next_into_iter_receiver_key(receiver_term).as_ref() == Some(&fact.receiver_key)
-        })
+        && ctx
+            .len_eq_one_facts
+            .iter()
+            .any(|fact| next_receiver_key.as_ref() == Some(&fact.receiver_key))
     {
-        return Some(IrTerm::Ctor {
+        return Some(IrFormula::Atomic {
             name: panic_freedom::IS_SOME.to_string(),
             args: vec![receiver_term.clone()],
         });
@@ -1892,23 +1890,35 @@ fn assertion_guard_for_partial(
     None
 }
 
-fn next_into_iter_receiver_key(term: &IrTerm) -> Option<String> {
-    match term {
-        IrTerm::Ctor { name, args } if name == "method:next" && args.len() == 1 => match &args[0] {
-            IrTerm::Ctor { name, args } if name == "method:into_iter" && args.len() == 1 => {
-                term_key(&args[0])
-            }
-            IrTerm::Const { .. }
-            | IrTerm::Ctor { .. }
-            | IrTerm::Lambda { .. }
-            | IrTerm::Let { .. }
-            | IrTerm::Var { .. } => None,
-        },
-        IrTerm::Const { .. }
-        | IrTerm::Ctor { .. }
-        | IrTerm::Lambda { .. }
-        | IrTerm::Let { .. }
-        | IrTerm::Var { .. } => None,
+fn next_into_iter_receiver_key_expr(expr: &Expr, ctx: &mut LiftCtx) -> Option<String> {
+    let Expr::MethodCall(next_call) = expr else {
+        return None;
+    };
+    if next_call.method != "next" || !next_call.args.is_empty() {
+        return None;
+    }
+    let Expr::MethodCall(into_iter_call) = &*next_call.receiver else {
+        return None;
+    };
+    if into_iter_call.method != "into_iter" || !into_iter_call.args.is_empty() {
+        return None;
+    }
+    let receiver = lift_expr_to_term_inner(&into_iter_call.receiver, ctx)?;
+    term_key(&receiver)
+}
+
+#[derive(Default)]
+struct PartialReceiverCollector {
+    receivers: Vec<Expr>,
+}
+
+impl<'ast> Visit<'ast> for PartialReceiverCollector {
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        let method = node.method.to_string();
+        if matches!(method.as_str(), "unwrap" | "expect") && node.args.is_empty() {
+            self.receivers.push((*node.receiver).clone());
+        }
+        visit::visit_expr_method_call(self, node);
     }
 }
 
@@ -2340,11 +2350,13 @@ fn statement_guarded_panic_effect_for_method(
         name: format!("method:{}", method.method),
         args: method_args,
     };
-    let guard = IrTerm::Ctor {
-        name: fact.post_predicate.clone(),
-        args: vec![receiver],
-    };
-    let guarded = wrap_cf_guarded(guard, value);
+    let guarded = guarded_value_from_formula(
+        IrFormula::Atomic {
+            name: fact.post_predicate.clone(),
+            args: vec![receiver],
+        },
+        value,
+    );
     debug!(
         callee = %callee,
         method = %panic_leaf,
@@ -2376,7 +2388,7 @@ fn resolved_statement_guarded_panic_effect_for_method(
         name: format!("method:{}", method.method),
         args: method_args,
     };
-    let guarded = wrap_cf_guarded(fact.guard.clone(), value);
+    let guarded = guarded_value_from_formula(fact.guard.clone(), value);
     debug!(
         method = %method.method,
         "lift_function_postcondition: emitting resolved guarded panic-effect carrier"
@@ -2530,7 +2542,7 @@ fn keyset_guard_fact_for_source(
         args: vec![source.map_term.clone(), key_term],
     };
     let receiver_key = term_key(&receiver)?;
-    let guard = IrTerm::Ctor {
+    let guard = IrFormula::Atomic {
         name: panic_freedom::IS_SOME.to_string(),
         args: vec![receiver],
     };
@@ -3876,16 +3888,15 @@ fn lift_expr_to_term_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<IrTerm> {
                 name: method_name,
                 args,
             };
-            if let Some(guard) = assertion_guard_for_partial(&m.method, &receiver, ctx) {
-                return Some(wrap_cf_guarded(guard, value));
+            if let Some(guard) = assertion_guard_for_partial(&m.method, &m.receiver, &receiver, ctx)
+            {
+                return Some(guarded_value_from_formula(guard, value));
             }
             if m.method == "unwrap"
                 && m.args.is_empty()
                 && receiver_as_str_is_known_json_string(&m.receiver, ctx)
             {
-                if let IrTerm::Ctor { args, .. } = &value {
-                    return Some(wrap_known_option_unwrap_guard(args[0].clone(), value));
-                }
+                return Some(guarded_value_for_known_option_unwrap(receiver, value));
             }
             Some(value)
         }
@@ -5222,14 +5233,14 @@ mod tests {
         // cf_guarded(is_some(x), value); the else-branch to
         // cf_guarded(is_none(x), value) -- the kit-computed complement.
         let recv = IrTerm::Var { name: "x".into() };
-        let cond = IrTerm::Ctor {
+        let cond = IrFormula::Atomic {
             name: "is_some".into(),
             args: vec![recv.clone()],
         };
         let val = || IrTerm::Var { name: "v".into() };
 
-        let then_t = guarded_return_for_branch(&cond, false, val());
-        let else_t = guarded_return_for_branch(&cond, true, val());
+        let then_t = guarded_return_for_branch(Some(&cond), false, val(), None);
+        let else_t = guarded_return_for_branch(Some(&cond), true, val(), None);
 
         match &then_t {
             IrTerm::Ctor { name, args } => {
@@ -5267,27 +5278,27 @@ mod tests {
         // A comparison condition (`cf_lt(...)`) is not a partial-pre predicate:
         // the branch value passes through UNCHANGED (no cf_guarded), so a
         // partial inside it stays undecidable and the cf_ite is byte-stable.
-        let cond = IrTerm::Ctor {
+        let cond = IrFormula::Atomic {
             name: "cf_lt".into(),
             args: vec![IrTerm::Var { name: "x".into() }, const_int(10)],
         };
         let val = IrTerm::Var { name: "v".into() };
-        let wrapped = guarded_return_for_branch(&cond, false, val.clone());
+        let wrapped = guarded_return_for_branch(Some(&cond), false, val.clone(), None);
         assert_eq!(wrapped, val, "unrecognized guard must wrap nothing");
         // A method-call condition likewise.
-        let mcond = IrTerm::Ctor {
+        let mcond = IrFormula::Atomic {
             name: "method:is_absolute".into(),
             args: vec![IrTerm::Var { name: "p".into() }],
         };
         assert_eq!(
-            guarded_return_for_branch(&mcond, true, val.clone()),
+            guarded_return_for_branch(Some(&mcond), true, val.clone(), None),
             val,
             "a method guard must wrap nothing"
         );
     }
 
     #[test]
-    fn guarded_return_for_branch_refuses_unlowerable_condition_sort() {
+    fn cf_ite_via_symbolic_value_refuses_unlowerable_condition_sort() {
         // The boundary conversion is the totality obligation for this slice:
         // a condition with no algebra image must fail loudly, not silently drop
         // its guard and over-claim branch facts.
@@ -5302,7 +5313,9 @@ mod tests {
         };
         let value = IrTerm::Var { name: "v".into() };
 
-        let refusal = std::panic::catch_unwind(|| guarded_return_for_branch(&cond, false, value));
+        let refusal = std::panic::catch_unwind(|| {
+            cf_ite_via_symbolic_value_boundary(cond, value.clone(), value)
+        });
         let Err(payload) = refusal else {
             panic!("Function-sort condition silently crossed the term boundary");
         };
@@ -5322,7 +5335,7 @@ mod tests {
         // The branch value crosses the same boundary before guard composition;
         // if it has no algebra image, the route must fail loudly instead of
         // fabricating a guarded fact for an unrepresentable value.
-        let cond = IrTerm::Ctor {
+        let cond = IrFormula::Atomic {
             name: "is_some".into(),
             args: vec![IrTerm::Var { name: "x".into() }],
         };
@@ -5336,7 +5349,8 @@ mod tests {
             },
         };
 
-        let refusal = std::panic::catch_unwind(|| guarded_return_for_branch(&cond, false, value));
+        let refusal =
+            std::panic::catch_unwind(|| guarded_return_for_branch(Some(&cond), false, value, None));
         let Err(payload) = refusal else {
             panic!("Function-sort value silently crossed the term boundary");
         };

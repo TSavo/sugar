@@ -1258,12 +1258,29 @@ fn seq_all_then(mut terms: Vec<AlgebraTerm>, tail: AlgebraTerm) -> AlgebraTerm {
     seq_all(terms)
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct TryHandlerContextDecision {
+    owner: &'static str,
+    handlers_at_emit: usize,
+    reason: &'static str,
+}
+
+fn route_try_handler_context_decision() -> TryHandlerContextDecision {
+    TryHandlerContextDecision {
+        owner: "function-boundary",
+        handlers_at_emit: 0,
+        reason: "Rust ? at sugar-walk emit propagates to the caller boundary; emit has no in-crate catch/handler context, so RouteRaisesOperation is intentionally terminal-empty and byte-compatible.",
+    }
+}
+
 fn route_try_residual_to_legacy_term(
     op_name: &'static str,
     inner: AlgebraTerm,
     effect: Effect,
 ) -> Result<AlgebraTerm, String> {
     let original = effect.clone();
+    let handler_context = route_try_handler_context_decision();
+    debug_assert_eq!(handler_context.handlers_at_emit, 0);
     match RouteRaisesOperation::new(Vec::new(), "sugar-walk.emit.try")
         .route_incomplete(Outcome::Incomplete(effect))
     {
@@ -3234,5 +3251,18 @@ mod tests {
                 "bundle CID must be deterministic across calls"
             );
         }
+    }
+
+    #[test]
+    fn question_mark_emit_handler_decision_is_named_terminal_empty() {
+        let decision = route_try_handler_context_decision();
+
+        assert_eq!(decision.owner, "function-boundary");
+        assert_eq!(decision.handlers_at_emit, 0);
+        assert!(
+            decision.reason.contains("propagates to the caller boundary"),
+            "decision must argue why emit uses an empty handler set: {}",
+            decision.reason
+        );
     }
 }
