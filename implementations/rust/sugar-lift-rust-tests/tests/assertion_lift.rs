@@ -456,7 +456,8 @@ fn size_of_core_atomic_is_layout_axiom() {
         "factory should route size_of through SizeOfSugar: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_atomic_size") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_atomic_size");
         assert!(sat, "size_of::<AtomicU32>() == 4 -- consistent (SAT)");
     }
 }
@@ -473,7 +474,8 @@ fn size_of_core_atomic_wrong_value_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/sync/atomic_size_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_atomic_size_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_atomic_size_bad");
         assert!(!sat, "size_of::<AtomicU32>() == 4 != 5 -- must be UNSAT");
     }
 }
@@ -535,7 +537,8 @@ fn const_if_then_branch_wrong_value_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/const_if_then_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_then_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_if_then_bad");
         assert!(!sat, "const if folds to 66 != 67 -- must be UNSAT");
     }
 }
@@ -551,7 +554,8 @@ fn const_if_then_branch_correct_value_is_sat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/const_if_then_good.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_then_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_if_then_good");
         assert!(sat, "const if folds to 66 == 66 -- must be SAT");
     }
 }
@@ -573,7 +577,8 @@ fn const_if_else_branch_wrong_value_is_unsat() {
         "else-branch const if must lift; skip: {:?}; audits: {:?}",
         out.skip_reasons, out.factory_audits
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_else_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_if_else_bad");
         assert!(!sat, "else-branch folds to 66 != 99 -- must be UNSAT");
     }
 }
@@ -656,7 +661,8 @@ fn const_match_wrong_value_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/const_match_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_match_bad");
         assert!(!sat, "const match folds to 20 != 21 -- must be UNSAT");
     }
 }
@@ -671,7 +677,8 @@ fn const_match_correct_value_is_sat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/const_match_good.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_match_good");
         assert!(sat, "const match folds to 20 == 20 -- must be SAT");
     }
 }
@@ -693,7 +700,8 @@ fn const_match_wildcard_fallthrough_wrong_is_unsat() {
         "wildcard-arm const match must lift; skip: {:?}; audits: {:?}",
         out.skip_reasons, out.factory_audits
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_wild_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_match_wild_bad");
         assert!(!sat, "wildcard arm folds to 0 != 5 -- must be UNSAT");
     }
 }
@@ -748,7 +756,8 @@ fn try_from_in_range_unwrap_folds_with_teeth() {
         dump.contains("Int(255)"),
         "in-range try_from().unwrap() folds to 255: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap");
         assert!(sat, "try_from(255).unwrap() == 255 -- must be SAT");
     }
     let bad = r#"
@@ -758,7 +767,8 @@ fn try_from_in_range_unwrap_folds_with_teeth() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_unwrap_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap_bad");
         assert!(
             !sat,
             "try_from(255).unwrap() is 255 != 254 -- must be UNSAT"
@@ -790,7 +800,8 @@ fn try_from_let_bound_arg_unwrap_folds_with_teeth() {
         dump.contains("Int(255)"),
         "let-bound try_from(m).unwrap() folds to 255: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_letbound");
         assert!(sat, "let m=255; try_from(m).unwrap() == 255 -- must be SAT");
     }
     let bad = r#"
@@ -801,7 +812,8 @@ fn try_from_let_bound_arg_unwrap_folds_with_teeth() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_letbound_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_bad");
         assert!(
             !sat,
             "let m=255; try_from(m).unwrap() is 255 != 254 -- must be UNSAT"
@@ -825,7 +837,8 @@ fn try_from_const_path_arg_folds() {
         dump.contains("Int(255)"),
         "try_from(<u8>::MAX).unwrap() folds to 255: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_constpath") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_constpath");
         assert!(sat, "try_from(<u8>::MAX).unwrap() == 255 -- must be SAT");
     }
 }
@@ -849,7 +862,8 @@ fn try_from_mut_local_arg_does_not_false_refute() {
     let out = lift_file(&parse(src), "coretests/num/tf_mut.rs");
     // Lazy recognition may select `option_unwrap`; the soundness gate is at desugar:
     // it must not fold to a refutable ground equality on the stale 255.
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_mut") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_mut");
         assert!(
             sat,
             "mut-local try_from must stay opaque/undecided, never refute a true assert (got UNSAT)"
@@ -873,7 +887,8 @@ fn try_from_let_bound_out_of_range_is_err_folds() {
         dump.contains("Bool(true)"),
         "let m=256; try_from(m).is_err() folds to Bool(true): {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_err") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_err");
         assert!(sat, "let m=256; try_from(m).is_err() -- must be SAT (true)");
     }
 }
@@ -894,7 +909,8 @@ fn literal_128_try_from_u128_max_is_exact_with_teeth() {
         !doc.contains("call:"),
         "u128::MAX TryFrom identity must lower through the exact u128 floor, not opaque call sugar: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_good");
         assert!(sat, "u128::MAX TryFrom identity must be z3-SAT");
     }
 
@@ -906,7 +922,8 @@ fn literal_128_try_from_u128_max_is_exact_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_u128max_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_bad");
         assert!(
             !sat,
             "wrong u128::MAX TryFrom value must be z3-UNSAT, not hidden behind EUF opacity"
@@ -925,10 +942,11 @@ fn literal_128_try_from_u128_to_i128_overflow_is_err_with_teeth() {
     let out = lift_file(&parse(good), "coretests/num/tf_u128_to_i128_err.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(
-        &inv_json(&out.decls[0]),
-        "literal_128_tf_u128_i128_err_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(&out.decls[0]),
+            "literal_128_tf_u128_i128_err_good",
+        );
         assert!(sat, "u128::MAX does not fit i128 -> is_err() must be SAT");
     }
 
@@ -940,7 +958,9 @@ fn literal_128_try_from_u128_to_i128_overflow_is_err_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_u128_to_i128_ok_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128_i128_err_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128_i128_err_bad");
         assert!(
             !sat,
             "wrong u128::MAX -> i128 TryFrom discriminant must be z3-UNSAT"
@@ -963,7 +983,8 @@ fn nonzero_new_unwrap_folds_with_teeth() {
         dump.contains("Int(1)"),
         "NonZero::new(1).unwrap().get() folds to 1: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap");
         assert!(sat, "NonZero::new(1).unwrap().get() == 1 -- must be SAT");
     }
     let bad = r#"
@@ -973,7 +994,8 @@ fn nonzero_new_unwrap_folds_with_teeth() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/num/nz_unwrap_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap_bad");
         assert!(
             !sat,
             "NonZero::new(7).unwrap().get() is 7 != 8 -- must be UNSAT"
@@ -1046,7 +1068,8 @@ fn partition_point_folds_and_warrants() {
         dump.contains("Int(2)"),
         "partition_point(|x| x<3) over [1..5] folds to 2: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_partition_point");
         assert!(sat, "partition_point == 2 holds -- must be SAT");
     }
 }
@@ -1067,7 +1090,8 @@ fn partition_point_wrong_value_is_unsat() {
         dump.contains("Int(2)"),
         "partition_point folds to 2: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_partition_point_bad");
         assert!(!sat, "partition_point is 2 != 3 -- must be UNSAT");
     }
 }
@@ -1082,7 +1106,8 @@ fn partition_point_all_and_none_boundaries() {
         }
     "#;
     let out = lift_file(&parse(all), "coretests/slice/pp_all.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_all") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_pp_all");
         assert!(
             sat,
             "all satisfy -> partition_point == len(3) -- must be SAT"
@@ -1095,7 +1120,8 @@ fn partition_point_all_and_none_boundaries() {
         }
     "#;
     let out = lift_file(&parse(none), "coretests/slice/pp_none.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_none") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_pp_none");
         assert!(sat, "none satisfy -> partition_point == 0 -- must be SAT");
     }
 }
@@ -1169,7 +1195,8 @@ fn array_iter_is_sorted_folds_and_warrants() {
         dump.contains("Bool(true)"),
         "[1,2,2,9].iter().is_sorted() must fold to true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_is_sorted");
         assert!(sat, "[1,2,2,9] is sorted -- must be SAT");
     }
 }
@@ -1195,7 +1222,8 @@ fn array_iter_unsorted_wrong_claim_is_unsat() {
         dump.contains("Bool(false)"),
         "[1,3,2].iter().is_sorted() must fold to false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_is_sorted_bad");
         assert!(
             !sat,
             "[1,3,2] is not sorted -- asserting is_sorted must be UNSAT"
@@ -1218,7 +1246,8 @@ fn singleton_and_direct_slice_is_sorted() {
         dump.contains("Bool(true)"),
         "[0].iter().is_sorted() folds true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_single") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_is_sorted_single");
         assert!(sat, "singleton is sorted -- must be SAT");
     }
     // Direct slice `is_sorted` (no `.iter()`), descending -> false -> refutes.
@@ -1234,7 +1263,8 @@ fn singleton_and_direct_slice_is_sorted() {
         dump.contains("Bool(false)"),
         "[3,2,1].is_sorted() folds false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_is_sorted_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_slice_is_sorted_bad");
         assert!(
             !sat,
             "[3,2,1] is descending -- asserting is_sorted must be UNSAT"
@@ -1318,7 +1348,8 @@ fn try_from_out_of_range_is_err_folds_and_warrants() {
         dump.contains("Bool(true)"),
         "out-of-range try_from().is_err() folds true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_try_from_err");
         assert!(sat, "256 doesn't fit u8 -> is_err() == true -- must be SAT");
     }
 }
@@ -1339,7 +1370,8 @@ fn try_from_in_range_is_ok_folds() {
         dump.contains("Bool(true)"),
         "in-range try_from().is_ok() folds true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_try_from_ok");
         assert!(sat, "255 fits u8 -> is_ok() == true -- must be SAT");
     }
 }
@@ -1361,7 +1393,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("Bool(false)"),
         "is_ok on Err folds false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok_on_err_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_try_from_ok_on_err_bad");
         assert!(
             !sat,
             "256 doesn't fit u8 -> is_ok() is false -- must be UNSAT"
@@ -1379,7 +1412,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("Bool(false)"),
         "is_err on Ok folds false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad");
         assert!(!sat, "255 fits u8 -> is_err() is false -- must be UNSAT");
     }
 
@@ -1405,7 +1439,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_literal_ok_is_ok_good"))
         .expect("scalar assertion decl for literal Ok is_ok good");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_ok_is_ok_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_literal_ok_is_ok_good");
         assert!(sat, "Ok(_).is_ok() must be SAT");
     }
 
@@ -1431,7 +1466,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_literal_ok_is_err_bad"))
         .expect("scalar assertion decl for literal Ok is_err bad");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_ok_is_err_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_literal_ok_is_err_bad");
         assert!(!sat, "Ok(_).is_err() must be z3-UNSAT");
     }
 
@@ -1457,7 +1493,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_literal_err_is_err_good"))
         .expect("scalar assertion decl for literal Err is_err good");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_err_is_err_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_literal_err_is_err_good");
         assert!(sat, "Err(_).is_err() must be SAT");
     }
 
@@ -1483,7 +1520,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_literal_err_is_ok_bad"))
         .expect("scalar assertion decl for literal Err is_ok bad");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_err_is_ok_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_literal_err_is_ok_bad");
         assert!(!sat, "Err(_).is_ok() must be z3-UNSAT");
     }
 
@@ -1513,7 +1551,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_result_inspect_is_ok_good"))
         .expect("scalar assertion decl for inspect is_ok good");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_is_ok_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_result_inspect_is_ok_good");
         assert!(sat, "Ok(_).inspect(...).is_ok() must be SAT");
     }
 
@@ -1543,7 +1582,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_result_inspect_is_err_bad"))
         .expect("scalar assertion decl for inspect is_err bad");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_is_err_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_result_inspect_is_err_bad");
         assert!(!sat, "Ok(_).inspect(...).is_err() must be z3-UNSAT");
     }
 
@@ -1574,7 +1614,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_result_inspect_err_is_err_good"))
         .expect("scalar assertion decl for inspect_err is_err good");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_err_is_err_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_result_inspect_err_is_err_good");
         assert!(sat, "Err(_).inspect_err(...).is_err() must be SAT");
     }
 
@@ -1605,7 +1646,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         .iter()
         .find(|decl| decl.name.ends_with("::t_result_inspect_err_is_ok_bad"))
         .expect("scalar assertion decl for inspect_err is_ok bad");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_err_is_ok_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "t_result_inspect_err_is_ok_bad");
         assert!(!sat, "Err(_).inspect_err(...).is_ok() must be z3-UNSAT");
     }
 
@@ -1631,7 +1673,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("\"value\":42") && !dump.contains("method:unwrap"),
         "let-bound Result unwrap receiver must fold to the Ok payload in the assertion: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv, "t_result_bound_unwrap_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "t_result_bound_unwrap_good");
         assert!(sat, "let-bound Ok(_).unwrap() == payload must be SAT");
     }
 
@@ -1657,7 +1700,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("\"value\":42") && !dump.contains("method:unwrap"),
         "let-bound Result unwrap bad twin must carry the real Ok payload in the assertion: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv, "t_result_bound_unwrap_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "t_result_bound_unwrap_bad");
         assert!(
             !sat,
             "let-bound Ok(_).unwrap() wrong payload must be z3-UNSAT"
@@ -1686,7 +1730,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("\"value\":42") && !dump.contains("method:expect"),
         "let-bound Result expect receiver must fold to the Ok payload in the assertion: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv, "t_result_bound_expect_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "t_result_bound_expect_good");
         assert!(sat, "let-bound Ok(_).expect(..) == payload must be SAT");
     }
 
@@ -1712,7 +1757,8 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
         dump.contains("\"value\":42") && !dump.contains("method:expect"),
         "let-bound Result expect bad twin must carry the real Ok payload in the assertion: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv, "t_result_bound_expect_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "t_result_bound_expect_bad");
         assert!(
             !sat,
             "let-bound Ok(_).expect(..) wrong payload must be z3-UNSAT"
@@ -1741,7 +1787,8 @@ fn option_result_literal_methods_compose_to_literal_floor() {
             !dump.contains(method_marker),
             "{fn_name} should desugar through the literal floor, not retain {method_marker}: {dump}"
         );
-        if let Some(sat) = z3_verdict(&inv, fn_name) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv, fn_name);
             assert_eq!(
                 sat,
                 expect_sat,
@@ -2337,7 +2384,8 @@ fn option_result_presence_predicates_ignore_runtime_payload_floor() {
                 && !doc.contains("method:is_err"),
             "{path}: presence predicate must lower to Bool, not method EUF: {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), z3_name) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), z3_name);
             assert_eq!(
                 sat, expect_sat,
                 "{path}: monadic presence predicate z3 verdict mismatch"
@@ -2411,7 +2459,8 @@ fn try_from_signed_unsigned_boundaries() {
         }
     "#;
     let out = lift_file(&parse(i8_overflow), "coretests/num/i8_overflow.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_overflow") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_i8_overflow");
         assert!(sat, "200 > i8::MAX(127) -> is_err() == true -- must be SAT");
     }
     let u8_neg = r#"
@@ -2421,7 +2470,8 @@ fn try_from_signed_unsigned_boundaries() {
         }
     "#;
     let out = lift_file(&parse(u8_neg), "coretests/num/u8_neg.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_u8_neg") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_u8_neg");
         assert!(
             sat,
             "-1 < 0 -> u8::try_from is_err() == true -- must be SAT"
@@ -2435,7 +2485,8 @@ fn try_from_signed_unsigned_boundaries() {
         }
     "#;
     let out = lift_file(&parse(i8_neg_ok), "coretests/num/i8_neg_ok_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_neg_ok_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_i8_neg_ok_bad");
         assert!(!sat, "-1 fits i8 -> is_err() is false -- must be UNSAT");
     }
 }
@@ -2508,7 +2559,9 @@ fn try_from_normal_return_support_is_well_sorted_and_bad_twin_refutes() {
         "panic predicate must never receive a Result ADT term: {dump}"
     );
     for (i, decl) in all_warranted_decls(&out).iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("try_from_full_inv_good_{i}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("try_from_full_inv_good_{i}"));
             assert!(
                 sat,
                 "every full warranted TryFrom invariant must be SAT and well-sorted"
@@ -2528,10 +2581,11 @@ fn try_from_normal_return_support_is_well_sorted_and_bad_twin_refutes() {
         "bad twin must still lift so the contradiction is checkable: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "try_from_full_inv_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "try_from_full_inv_bad",
+        );
         assert!(
             !sat,
             "bad twin try_from(255).unwrap() == 254 must be z3-UNSAT"
@@ -2565,7 +2619,8 @@ fn option_returning_method_normal_return_support_uses_opaque_callsite() {
         "panic predicate must not receive the method's Option return value: {dump}"
     );
     for (i, decl) in all_warranted_decls(&out).iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("checked_ilog_good_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("checked_ilog_good_{i}"));
             assert!(
                 sat,
                 "checked_ilog good invariant must be SAT and well-sorted"
@@ -2586,7 +2641,9 @@ fn option_returning_method_normal_return_support_uses_opaque_callsite() {
         "bad twin should lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "checked_ilog_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "checked_ilog_bad");
         assert!(!sat, "x != x over checked_ilog must be UNSAT");
     }
 }
@@ -2623,7 +2680,8 @@ fn size_hint_decomposes_and_warrants() {
         dump.contains("Int(100)"),
         "the count component (100) must be a ground int: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_size_hint");
         assert!(
             sat,
             "(0..100).size_hint() == (100, Some(100)) -- must be SAT"
@@ -2642,7 +2700,8 @@ fn size_hint_wrong_components_are_unsat() {
         }
     "#;
     let out = lift_file(&parse(count), "coretests/iter/sh_count_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_count_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_size_hint_count_bad");
         assert!(!sat, "count is 100 != 99 -- must be UNSAT");
     }
     let upper = r#"
@@ -2652,7 +2711,8 @@ fn size_hint_wrong_components_are_unsat() {
         }
     "#;
     let out = lift_file(&parse(upper), "coretests/iter/sh_upper_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_upper_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_size_hint_upper_bad");
         assert!(!sat, "upper is Some(100) != Some(99) -- must be UNSAT");
     }
     let variant = r#"
@@ -2662,7 +2722,8 @@ fn size_hint_wrong_components_are_unsat() {
         }
     "#;
     let out = lift_file(&parse(variant), "coretests/iter/sh_variant_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_variant_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_size_hint_variant_bad");
         assert!(!sat, "upper is Some(100) != None -- must be UNSAT");
     }
 }
@@ -2678,7 +2739,8 @@ fn size_hint_negative_and_inclusive_semantics() {
         }
     "#;
     let out = lift_file(&parse(neg), "coretests/iter/sh_neg.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_neg") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_sh_neg");
         assert!(sat, "(-10..-1) has 9 elements -- must be SAT");
     }
     // (-1..-10) is empty -> (0, Some(0)).
@@ -2689,7 +2751,8 @@ fn size_hint_negative_and_inclusive_semantics() {
         }
     "#;
     let out = lift_file(&parse(empty), "coretests/iter/sh_empty.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_empty") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_sh_empty");
         assert!(sat, "(-1..-10) is empty -- must be SAT");
     }
     // Inclusive (0..=4) -> count 5.
@@ -2700,7 +2763,8 @@ fn size_hint_negative_and_inclusive_semantics() {
         }
     "#;
     let out = lift_file(&parse(incl), "coretests/iter/sh_incl.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_incl") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_sh_incl");
         assert!(sat, "(0..=4) has 5 elements -- must be SAT");
     }
     // Inclusive bad twin: (0..=4) is 5, not 6.
@@ -2711,7 +2775,8 @@ fn size_hint_negative_and_inclusive_semantics() {
         }
     "#;
     let out = lift_file(&parse(incl_bad), "coretests/iter/sh_incl_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_incl_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_sh_incl_bad");
         assert!(!sat, "(0..=4) has 5 != 6 elements -- must be UNSAT");
     }
 }
@@ -2767,10 +2832,11 @@ fn empty_literal_range_count_len_size_hint_warrant() {
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     for (idx, decl) in out.decls.iter().enumerate() {
-        if let Some(sat) = z3_verdict(
-            &inv_json(decl),
-            &format!("empty_literal_range_terminal_good_{idx}"),
-        ) {
+        {
+            let sat = fast_smt_smoke_verdict(
+                &inv_json(decl),
+                &format!("empty_literal_range_terminal_good_{idx}"),
+            );
             assert!(sat, "empty literal range terminal {idx} must be SAT");
         }
     }
@@ -2790,10 +2856,11 @@ fn empty_literal_range_count_bad_twin_is_unsat() {
         "bad twin must still lift so z3 can refute the wrong empty-range count; skips={:?}; audits={:?}",
         out.skip_reasons, out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "empty_literal_range_count_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "empty_literal_range_count_bad",
+        );
         assert!(!sat, "empty range count is 0, not 1");
     }
 }
@@ -2846,10 +2913,11 @@ fn kmerge_size_hint_decomposes_after_delayed_tuple_producer_desugar() {
         dump.contains("Int(0)") && dump.contains("opt:some"),
         "delayed size_hint producer must ground both tuple components: {dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "kmerge_empty_size_hint_exact_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "kmerge_empty_size_hint_exact_row",
+        );
         assert!(sat, "empty kmerge size_hint row must be SAT");
     }
 }
@@ -2870,10 +2938,11 @@ fn kmerge_size_hint_wrong_component_is_unsat() {
         out.skip_reasons, out.factory_audits
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "kmerge_empty_size_hint_wrong_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "kmerge_empty_size_hint_wrong_row",
+        );
         assert!(
             !sat,
             "empty kmerge size_hint is (0, Some(0)), not (1, Some(1))"
@@ -2903,10 +2972,11 @@ fn range_from_take_size_hint_decomposes_to_static_components() {
         "range_from take size_hint tuple equality must flow through tuple_decomp: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "range_from_take_size_hint_exact_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "range_from_take_size_hint_exact_row",
+        );
         assert!(
             sat,
             "take(3) over an unbounded range has size_hint (3, Some(3))"
@@ -2932,10 +3002,11 @@ fn range_from_take_size_hint_wrong_component_is_unsat() {
         out.skip_reasons, out.factory_audits
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "range_from_take_size_hint_wrong_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "range_from_take_size_hint_wrong_row",
+        );
         assert!(
             !sat,
             "take(3) over an unbounded range is (3, Some(3)), not (4, Some(4))"
@@ -2958,10 +3029,11 @@ fn step_by_empty_range_size_hint_decomposes_to_static_components() {
         out.skip_reasons, out.factory_audits
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "step_by_empty_range_size_hint_exact_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "step_by_empty_range_size_hint_exact_row",
+        );
         assert!(
             sat,
             "empty range through step_by has size_hint (0, Some(0))"
@@ -2984,10 +3056,11 @@ fn step_by_empty_range_size_hint_wrong_component_is_unsat() {
         out.skip_reasons, out.factory_audits
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "step_by_empty_range_size_hint_wrong_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "step_by_empty_range_size_hint_wrong_row",
+        );
         assert!(
             !sat,
             "empty range through step_by is (0, Some(0)), not (1, Some(1))"
@@ -3011,10 +3084,11 @@ fn extreme_int_range_size_hint_decomposes_without_enumerating() {
         out.skip_reasons, out.factory_audits
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "extreme_int_range_size_hint_exact_row",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "extreme_int_range_size_hint_exact_row",
+        );
         assert!(
             sat,
             "extreme integer range size_hint components must be SAT"
@@ -3043,7 +3117,8 @@ fn extreme_int_range_size_hint_wrong_component_is_unsat() {
     );
     assert_warranted_decl_count(&out, 2);
     for (idx, decl) in warranted_decls(&out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("extreme_range_bad_{idx}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("extreme_range_bad_{idx}"));
             assert!(!sat, "extreme integer range size_hint is not (0, Some(0))");
         }
     }
@@ -3083,7 +3158,8 @@ fn duration_as_secs_folds_and_warrants() {
         dump.contains("Int(5)"),
         "as_secs() must fold to the ground int 5: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs");
         assert!(sat, "from_secs(5).as_secs() == 5 holds -- must be SAT");
     }
 }
@@ -3102,7 +3178,8 @@ fn duration_accessor_wrong_value_is_unsat() {
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     let dump = format!("{:?}", out.decls);
     assert!(dump.contains("Int(5)"), "as_secs() folds to 5: {dump}");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs_bad");
         assert!(
             !sat,
             "as_secs()==6 contradicts the folded 5 -- must be UNSAT"
@@ -3126,7 +3203,8 @@ fn duration_subsec_and_carry_fold() {
         dump.contains("Int(1)"),
         "from_millis(1500).as_secs() folds 1: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_millis_secs") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_millis_secs");
         assert!(sat, "from_millis(1500).as_secs() == 1 -- must be SAT");
     }
     let subsec = r#"
@@ -3141,7 +3219,8 @@ fn duration_subsec_and_carry_fold() {
         dump.contains("Int(500)"),
         "subsec_millis() folds 500: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis");
         assert!(
             sat,
             "from_millis(1500).subsec_millis() == 500 -- must be SAT"
@@ -3157,7 +3236,8 @@ fn duration_subsec_and_carry_fold() {
         &parse(subsec_bad),
         "coretests/time/dur_subsec_millis_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis_bad");
         assert!(!sat, "subsec_millis is 500 != 501 -- must be UNSAT");
     }
 }
@@ -3178,7 +3258,8 @@ fn duration_new_nanos_and_typed_rhs_fold() {
         dump.contains("Int(1000000500)"),
         "Duration::new(1,500).as_nanos() folds 1_000_000_500: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_new_nanos") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_new_nanos");
         assert!(sat, "new(1,500).as_nanos() == 1000000500 -- must be SAT");
     }
     let typed = r#"
@@ -3188,7 +3269,8 @@ fn duration_new_nanos_and_typed_rhs_fold() {
         }
     "#;
     let out = lift_file(&parse(typed), "coretests/time/dur_typed_rhs.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_typed_rhs") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_dur_typed_rhs");
         assert!(
             sat,
             "as_secs() == 5u64 (typed RHS) -- int widths are SMT Int, must be SAT"
@@ -3266,7 +3348,8 @@ fn range_is_empty_folds_and_warrants() {
         dump.contains("Bool(true)"),
         "folded is_empty value (true) must be emitted as a ground const: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_is_empty") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_range_is_empty");
         assert!(sat, "(5..5).is_empty() == true holds -- must be SAT");
     }
 }
@@ -3293,7 +3376,8 @@ fn range_not_empty_wrong_claim_is_unsat() {
         dump.contains("Bool(false)"),
         "(0..5).is_empty() must fold to false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_not_empty_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_range_not_empty_bad");
         assert!(
             !sat,
             "(0..5).is_empty() folds to false -- asserting it must be UNSAT"
@@ -3319,7 +3403,8 @@ fn range_inclusive_is_empty_semantics_hold() {
         dump.contains("Bool(true)"),
         "(6..=5).is_empty() folds true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_incl_empty") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_range_incl_empty");
         assert!(sat, "(6..=5).is_empty() == true -- must be SAT");
     }
     // NON-empty inclusive range: 5..=5 contains 5 -> claiming empty refutes.
@@ -3335,7 +3420,8 @@ fn range_inclusive_is_empty_semantics_hold() {
         dump.contains("Bool(false)"),
         "(5..=5).is_empty() folds false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_incl_not_empty_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_range_incl_not_empty_bad");
         assert!(
             !sat,
             "(5..=5) contains 5 -- asserting is_empty must be UNSAT"
@@ -3359,7 +3445,8 @@ fn array_literal_is_empty_folds_with_teeth() {
         dump.contains("Bool(true)"),
         "[0u8; 0].is_empty() folds true: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_empty_arr") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_empty_arr");
         assert!(sat, "empty array is_empty == true -- must be SAT");
     }
     let bad = r#"
@@ -3374,7 +3461,8 @@ fn array_literal_is_empty_folds_with_teeth() {
         dump.contains("Bool(false)"),
         "[1, 2, 3].is_empty() folds false: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nonempty_arr_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_nonempty_arr_bad");
         assert!(
             !sat,
             "[1, 2, 3] is non-empty -- asserting is_empty must be UNSAT"
@@ -3708,7 +3796,8 @@ fn btree_insert_absent_key_bad_twin_is_unsat() {
         dump.contains("map_insert_0_1_is_some") && !dump.contains("method:insert"),
         "insert bad twin should use the pinned temporal rewrite, not method EUF: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "btree_insert_absent_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "btree_insert_absent_bad");
         assert!(!sat, "absent-key insert().is_some() should be UNSAT");
     }
 }
@@ -3734,7 +3823,8 @@ fn for_reference_pattern_loop_over_literal_iter_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_loop") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_ref_loop");
         assert!(sat, "every element of [1,2,3] is >= 0 -- consistent (SAT)");
     }
 }
@@ -3758,7 +3848,8 @@ fn for_reference_pattern_counter_loop_is_consistent() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/ref_counter.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_counter") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_ref_counter");
         assert!(
             sat,
             "x == expected[i] holds each step -- consistent (SAT). UNSAT = frozen counter; \
@@ -3786,7 +3877,8 @@ fn for_reference_pattern_counter_loop_with_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/ref_counter_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_counter_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_ref_counter_bad");
         assert!(
             !sat,
             "x=30 != expected[2]=99 is a REAL contradiction -- must be UNSAT; SAT means the \
@@ -3819,7 +3911,8 @@ fn for_chain_inline_literal_iters_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_inline") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_chain_inline");
         assert!(sat, "[0,1,2]++[30,40] == expected -- consistent (SAT)");
     }
 }
@@ -3848,7 +3941,8 @@ fn for_chain_let_bound_ref_rhs_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_ref") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_chain_ref");
         assert!(sat, "[0,1,2]++ys == expected -- consistent (SAT)");
     }
 }
@@ -3881,7 +3975,8 @@ fn for_chain_slice_literal_ref_rhs_lifts_no_ambiguity() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_slice_ref") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_chain_slice_ref");
         assert!(sat, "[1,2]++[3,4] == expected -- consistent (SAT)");
     }
 }
@@ -3902,7 +3997,8 @@ fn for_chain_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/chain_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_chain_bad");
         assert!(
             !sat,
             "x=40 != expected[4]=99 is a REAL contradiction over the chained domain -- must be UNSAT"
@@ -3935,7 +4031,8 @@ fn for_inspect_over_literal_iter_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_inspect") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_inspect");
         assert!(sat, "inspect is identity over values -- consistent (SAT)");
     }
 }
@@ -3964,7 +4061,8 @@ fn for_step_by_over_literal_iter_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_step_by");
         assert!(
             sat,
             "[1,2,3,4,5].step_by(2) == [1,3,5] == expected -- consistent (SAT)"
@@ -3987,7 +4085,8 @@ fn for_step_by_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/step_by_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_step_by_bad");
         assert!(
             !sat,
             "x=5 != expected[2]=99 over the stepped domain -- must be UNSAT"
@@ -4018,7 +4117,8 @@ fn for_skip_then_step_by_composes() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_skip_step") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_skip_step");
         assert!(
             sat,
             "skip(1).step_by(2) of [1..6] == [2,4,6] == expected -- consistent (SAT)"
@@ -4041,7 +4141,8 @@ fn for_inspect_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/inspect_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_inspect_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_inspect_bad");
         assert!(
             !sat,
             "x=3 != expected[2]=99 over the inspect domain -- must be UNSAT"
@@ -4073,7 +4174,8 @@ fn for_flatten_over_nested_literals_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flatten");
         assert!(
             sat,
             "[[1,2],[3,4]] flattened == expected -- consistent (SAT)"
@@ -4118,7 +4220,8 @@ fn for_flatten_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flatten_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flatten_bad");
         assert!(
             !sat,
             "x=4 != expected[3]=99 over the flattened domain -- must be UNSAT"
@@ -4148,7 +4251,8 @@ fn for_enumerate_tuple_pattern_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_enum");
         assert!(
             sat,
             "x == expected[i] at each enumerate index -- consistent (SAT)"
@@ -4170,7 +4274,8 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/enumerate_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_enum_bad");
         assert!(
             !sat,
             "x=30 != expected[2]=99 at enumerate index 2 -- must be UNSAT"
@@ -4203,7 +4308,8 @@ fn for_zip_inline_literal_iters_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_zip");
         assert!(
             sat,
             "a+b at each zipped step (1+10,2+20,3+30) == sums -- consistent (SAT)"
@@ -4227,7 +4333,8 @@ fn for_zip_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/zip_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_zip_bad");
         assert!(
             !sat,
             "a+b = 3+30 = 33 != sums[2] = 99 over the zipped domain -- must be UNSAT"
@@ -4260,7 +4367,8 @@ fn for_zip_truncates_to_shorter_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_trunc") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_zip_trunc");
         assert!(
             sat,
             "truncated zip [1,2,3,4]x[10,20,30] -> 3 pairs, a+b == sums -- consistent (SAT)"
@@ -4284,7 +4392,8 @@ fn for_zip_truncated_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/zip_trunc_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_trunc_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_zip_trunc_bad");
         assert!(
             !sat,
             "a+b = 2+20 = 22 != sums[1] = 99 over the truncated zipped domain -- must be UNSAT"
@@ -4317,7 +4426,8 @@ fn for_zip_over_ranges_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_range") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_zip_range");
         assert!(
             sat,
             "a+b at each zipped range step (0+10,1+11,2+12) == sums -- consistent (SAT)"
@@ -4351,7 +4461,8 @@ fn for_slice_pattern_over_literal_of_arrays_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_slice");
         assert!(
             sat,
             "a+b at each step ([1,2]->3, [3,4]->7) == expected -- SAT"
@@ -4374,7 +4485,8 @@ fn for_slice_pattern_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/slice_pat_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_slice_bad");
         assert!(!sat, "a+b = 3+4 = 7 != expected[1] = 99 -- must be UNSAT");
     }
 }
@@ -4403,7 +4515,8 @@ fn for_slice_pattern_binds_components_in_order() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_order") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_slice_order");
         assert!(
             sat,
             "a binds the FIRST component ([1, 3]); a swap would make a = [2, 4] and refute"
@@ -4437,7 +4550,8 @@ fn for_slice_pattern_over_array_chunks_replays_literal_receiver() {
         "array_chunks should dissolve to concrete array floors before assertion lowering: {:?}",
         decl.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "array_chunks_for") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "array_chunks_for");
         assert!(sat, "both [1,2,1] and [2,1,1] chunks sum to 4");
     }
 }
@@ -4470,7 +4584,8 @@ fn for_slice_pattern_over_inferred_array_chunks_replays_literal_receiver() {
          lowering: {:?}",
         decl.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inferred_array_chunks_for") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "inferred_array_chunks_for");
         assert!(sat, "both inferred [1,2,1] and [2,1,1] chunks sum to 4");
     }
 }
@@ -4947,7 +5062,8 @@ fn for_flat_map_over_literal_base_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map");
         assert!(
             sat,
             "[1,2].flat_map(|n| [n, n+10]) == [1,11,2,12] == expected -- SAT"
@@ -4971,7 +5087,8 @@ fn for_flat_map_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flat_map_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_bad");
         assert!(
             !sat,
             "x=12 != expected[3]=99 over the flat_mapped domain -- must be UNSAT"
@@ -5004,7 +5121,8 @@ fn for_flat_map_range_body_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_range");
         assert!(
             sat,
             "[1,2,3].flat_map(|&n| 0..n) == [0,0,1,0,1,2] == expected -- SAT"
@@ -5027,7 +5145,8 @@ fn for_flat_map_range_body_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flat_map_range_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_range_bad");
         assert!(
             !sat,
             "x=2 != expected[5]=99 over the range-flat_mapped domain -- must be UNSAT"
@@ -5062,7 +5181,8 @@ fn for_flat_map_range_adapter_chain_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain");
         assert!(
             sat,
             "[0,3,6].flat_map(|&x| (x..).step_by(1).take(3)) == [0..9] == expected -- SAT"
@@ -5087,7 +5207,8 @@ fn for_flat_map_range_adapter_chain_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flat_map_chain_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain_bad");
         assert!(
             !sat,
             "x=8 != expected[8]=99 over the chain-flat_mapped domain -- must be UNSAT"
@@ -5120,7 +5241,8 @@ fn for_flat_map_step_by_two_chain_lifts_and_step_is_applied() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2");
         assert!(
             sat,
             "step_by(2).take(3) chain == [0,2,4,3,5,7,6,8,10] -- SAT"
@@ -5139,7 +5261,8 @@ fn for_flat_map_step_by_two_chain_lifts_and_step_is_applied() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/iter/flat_map_step2_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2_bad");
         assert!(
             !sat,
             "x=2 (step strided) != step-ignored expected[1]=1 -- the stride must have teeth (UNSAT)"
@@ -5247,7 +5370,8 @@ fn while_let_next_if_over_peekable_literal_lifts() {
     );
     // The `peekable`/`next_if` calls emit `not(panic(..))` SUPPORT decls; the real
     // consistency claim is the decl carrying the `=` atoms -- check THAT, not decls[0].
-    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek") {
+    {
+        let sat = fast_smt_smoke_verdict(&peek_consistency_inv(&out), "t_peek");
         assert!(sat, "consumed prefix [1,2] == expected -- consistent (SAT)");
     }
 }
@@ -5268,7 +5392,8 @@ fn while_let_next_if_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/peekable_bad.rs");
-    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&peek_consistency_inv(&out), "t_peek_bad");
         assert!(
             !sat,
             "x=2 != expected[1]=99 over the consumed prefix -- must be UNSAT"
@@ -5303,7 +5428,8 @@ fn while_let_next_if_stops_at_first_false_not_filter() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek_stop") {
+    {
+        let sat = fast_smt_smoke_verdict(&peek_consistency_inv(&out), "t_peek_stop");
         assert!(
             sat,
             "prefix is [1] only (5 stops it); the never-reached expected[1]=999 means SAT. \
@@ -5371,7 +5497,8 @@ fn for_literal_array_repeat_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_repeat") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_repeat");
         assert!(sat, "[7;3] == [7,7,7] == expected -- consistent (SAT)");
     }
 }
@@ -5391,7 +5518,8 @@ fn for_literal_array_repeat_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/repeat_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_repeat_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_repeat_bad");
         assert!(!sat, "x=7 != expected[2]=99 over [7;3] -- must be UNSAT");
     }
 }
@@ -5441,7 +5569,8 @@ fn const_len_array_repeat_index_grounds() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_repeat");
         assert!(sat, "[7; SIZE=3][1] == 7 -- consistent (SAT)");
     }
 }
@@ -5461,7 +5590,8 @@ fn const_len_array_repeat_index_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/repeat/const_repeat_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bad");
         assert!(
             !sat,
             "a[1] grounds to 7 != 99 over [7; SIZE=3] -- must be UNSAT (the teeth this lever adds)"
@@ -5491,7 +5621,8 @@ fn const_arithmetic_len_array_repeat_index_grounds_and_twin_refutes() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_arith") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_arith");
         assert!(sat, "[4; CAP=2*2-1=3][2] == 4 -- consistent (SAT)");
     }
     let bad = r#"
@@ -5504,7 +5635,8 @@ fn const_arithmetic_len_array_repeat_index_grounds_and_twin_refutes() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/repeat/const_arith_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_arith_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_arith_bad");
         assert!(
             !sat,
             "a[2] grounds to 4 != 99 over [4; CAP=3] -- must be UNSAT"
@@ -5529,7 +5661,8 @@ fn const_len_array_repeat_bool_equality_grounds_and_twin_refutes() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq");
         assert!(sat, "[5; SIZE=3] == [5,5,5] must be SAT");
     }
 
@@ -5541,7 +5674,8 @@ fn const_len_array_repeat_bool_equality_grounds_and_twin_refutes() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/repeat/const_repeat_bool_eq_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq_bad");
         assert!(!sat, "[5; SIZE=3] == [5,5,9] must be UNSAT");
     }
 }
@@ -5616,7 +5750,8 @@ fn const_generic_len_array_repeat_index_stays_symbolic() {
     // The `run` body's `a[1] == 99` must NOT be grounded (N is symbolic): if any decl is
     // produced for it, the wrong value must stay SAT (no fabricated teeth).
     for decl in &out.decls {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &decl.name) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &decl.name);
             assert!(
                 sat,
                 "a const-generic-length repeat must stay symbolic (SAT), never fabricate teeth: {}",
@@ -5645,7 +5780,8 @@ fn slice_get_unchecked_inherent_literal_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_inherent") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "gu_inherent");
         assert!(sat, "[10,20,30].get_unchecked(1) == 20 -- consistent (SAT)");
     }
 }
@@ -5660,7 +5796,8 @@ fn slice_get_unchecked_wrong_expected_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/slice/get_unchecked_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "gu_bad");
         assert!(
             !sat,
             "[10,20,30].get_unchecked(1)=20 != 99 -- must be UNSAT"
@@ -5802,7 +5939,8 @@ fn slice_get_unchecked_trait_clamp_form_lifts() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_trait") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "gu_trait");
         assert!(
             sat,
             "Clamp(2).get_unchecked([10,20,30]) == 30 -- consistent (SAT)"
@@ -5997,7 +6135,8 @@ fn finite_helper_match_return_loop_replays_splitpoint_assertions() {
         "the replayed loop should emit a loop warrant: {:?}",
         out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_good");
         assert!(sat, "the truthful splitpoint replay should be SAT");
     }
 }
@@ -6056,7 +6195,8 @@ fn finite_helper_match_return_loop_bad_twin_is_unsat() {
         "the bad twin must still lift so the contradiction is checkable: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_bad");
         assert!(!sat, "the bad capacity equality should be UNSAT");
     }
 }
@@ -6646,7 +6786,8 @@ fn wide_i128_good() {
         !serialized.contains("E+") && !serialized.contains("e+"),
         "wide i128 must not leak exponent notation into IR JSON: {serialized}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good_out.decls[0]), "wide_i128_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good_out.decls[0]), "wide_i128_good");
         assert!(sat, "wide i128 equality with itself must be z3-SAT");
     }
 
@@ -6661,7 +6802,8 @@ fn wide_i128_bad() {
 "#;
     let bad_out = lift_file(&parse(bad), "tests/wide_i128_bad.rs");
     assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&bad_out.decls[0]), "wide_i128_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad_out.decls[0]), "wide_i128_bad");
         assert!(
             !sat,
             "distinct wide i128 constants must be z3-UNSAT, not hidden behind exponent tokens"
@@ -7320,10 +7462,11 @@ fn any_referenced() {
         rendered.contains("Bool(true)") && rendered.contains("Bool(false)"),
         "expected positive and negated Any::is bool atoms in one row, got {rendered}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "dyn_any_same_type_contradiction",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "dyn_any_same_type_contradiction",
+        );
         assert!(
             !sat,
             "assert!(a.is::<i32>()) and assert!(!a.is::<i32>()) must be z3-UNSAT"
@@ -7360,7 +7503,9 @@ fn any_fixed_vec() {
             && !doc.contains("cast:&dyn Any"),
         "dyn Any type identity should compose to bool literals, got {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_good");
         assert!(sat, "correct dyn Any array identity claims must be z3-SAT");
     }
 
@@ -7376,7 +7521,9 @@ fn any_fixed_vec_bad() {
 "#;
     let out = lift_file(&parse(bad), "coretests/tests/any_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_bad");
         assert!(!sat, "wrong dyn Any array identity twin must be z3-UNSAT");
     }
 }
@@ -7426,10 +7573,11 @@ fn any_referenced() {
         "dyn Any tuple coercion source-audit rows must not stay unresolved: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "dyn_any_tuple_trace_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "dyn_any_tuple_trace_good",
+        );
         assert!(
             sat,
             "coretests any.rs local coercion identities must be z3-SAT"
@@ -7451,10 +7599,11 @@ fn any_referenced_bad() {
 "#;
     let out = lift_file(&parse(bad), "coretests/tests/any_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "dyn_any_tuple_trace_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "dyn_any_tuple_trace_bad",
+        );
         assert!(!sat, "wrong dyn Any concrete type twin must be z3-UNSAT");
     }
 
@@ -7498,10 +7647,11 @@ fn any_owning() {
         "owned dyn Any tuple coercion source-audit rows must not stay unresolved: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "dyn_any_box_tuple_trace_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "dyn_any_box_tuple_trace_good",
+        );
         assert!(
             sat,
             "coretests any.rs owned local coercion identities must be z3-SAT"
@@ -7527,10 +7677,11 @@ fn any_owning_bad() {
 "#;
     let out = lift_file(&parse(owning_bad), "coretests/tests/any_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "dyn_any_box_tuple_trace_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "dyn_any_box_tuple_trace_bad",
+        );
         assert!(
             !sat,
             "wrong owned dyn Any concrete type twin must be z3-UNSAT"
@@ -7588,7 +7739,8 @@ fn t() {{
                 && !doc.contains("method:is_ok"),
             "{label}: downcast predicate must compose to bool floor, got {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
         }
     }
@@ -8003,7 +8155,8 @@ fn parsed_literal_nan_is_nan_reduces_to_bool_floor_with_teeth() {
             doc.contains("\"name\":\"Bool\"") && !doc.contains("float.f"),
             "{label}: parsed literal NaN is_nan should compose to bool floor, got {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
         }
     }
@@ -8058,7 +8211,8 @@ fn f16_literal_nan_is_named_refused_not_unclassified_with_f32_f64_twins() {
         let src = format!("#[test] fn t() {{ {assertion} }}");
         let out = lift_file(&parse(&src), "tests/num/dec2flt/mod.rs");
         assert_warranted_decl_count(&out, 1);
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
         }
     }
@@ -8458,7 +8612,8 @@ fn bool_compare_exchange() {
         decl.inv
     );
     // The opaque Result call meets the grounded Ok(false) well-sortedly -> SAT.
-    if let Some(sat) = z3_verdict(&inv_json(decl), "compare_exchange_ok") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "compare_exchange_ok");
         assert!(
             sat,
             "the opaque compare_exchange == Ok(false) must be consistent (SAT)"
@@ -8501,7 +8656,8 @@ fn test_range_nth() {
         decl.inv
     );
     // `opt:none == opt:none` is consistent (SAT).
-    if let Some(sat) = z3_verdict(&inv_json(decl), "range_nth_none") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "range_nth_none");
         assert!(sat, "`None == None` (both opt:none) must be SAT");
     }
 }
@@ -8580,7 +8736,8 @@ fn test_and() {
     );
     // The whole conjoined contract must be well-sorted + SAT under z3 (the opaque
     // `method:and` declared SugarOption meets the Option values).
-    if let Some(sat) = z3_verdict(&inv_json(decl), "option_test_and") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "option_test_and");
         assert!(
             sat,
             "the test_and contract must be consistent (SAT) under z3"
@@ -8813,7 +8970,8 @@ fn iterator_last_literal_array() {
     let (lhs, rhs) = single_eq_atom(decl);
     assert_eq!(int_const_value(&lhs), 0);
     assert_eq!(int_const_value(&rhs), 0);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "array_last_unwrap_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "array_last_unwrap_good");
         assert!(sat, "literal last().unwrap() == 0 must be SAT");
     }
 
@@ -8825,10 +8983,11 @@ fn iterator_last_literal_array_bad() {
 "#;
     let out = lift_file(&parse(bad), "tests/array.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "array_last_unwrap_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "array_last_unwrap_bad",
+        );
         assert!(!sat, "literal last().unwrap() == 1 must be UNSAT");
     }
 }
@@ -8935,7 +9094,8 @@ fn repeat_take_size_hint() {
         "size_hint upper bound should ground to Some(3) == Some(3): {:?}",
         operands[0]
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "repeat_take_size_hint_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "repeat_take_size_hint_good");
         assert!(
             sat,
             "literal repeat().take().size_hint() == (3, Some(3)) must be SAT"
@@ -8957,10 +9117,11 @@ fn repeat_take_size_hint_bad() {
         out.warnings
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "repeat_take_size_hint_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "repeat_take_size_hint_bad",
+        );
         assert!(
             !sat,
             "literal repeat().take().size_hint() == (4, Some(4)) must be UNSAT"
@@ -9730,10 +9891,11 @@ fn string_method_terms() {
             && doc.contains("\"value\":\"rust\""),
         "expected grounded int/bool/string constants in folded string methods: {doc}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "string_methods_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "string_methods_good",
+        );
         assert!(sat, "truthful string method folds must be z3-SAT");
     }
 }
@@ -9819,7 +9981,8 @@ fn bad_lowercase() {
         let out = lift_file(&parse(src), "tests/str.rs");
         assert_eq!(out.lifted, 1, "{label} warnings: {:?}", out.warnings);
         assert_warranted_decl_count(&out, 1);
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert!(!sat, "{label} must be z3-UNSAT");
         }
     }
@@ -11651,7 +11814,8 @@ fn fmt_arith() {
         }
         other => panic!("expected equality atom, got {other:?}"),
     }
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fmt_arith") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "fmt_arith");
         assert!(sat, r#"format!("{{}}", 2 + 3) == "5" -- consistent (SAT)"#);
     }
 }
@@ -11670,7 +11834,8 @@ fn fmt_arith_bad() {
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fmt_arith_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "fmt_arith_bad");
         assert!(
             !sat,
             r#"format!("{{}}", 2 + 3) == "6" -- must be UNSAT (the arg folds to "5")"#
@@ -12060,7 +12225,8 @@ fn t() {
     assert_eq!(operands.len(), 2, "must produce a conjunction of two atoms");
     assert_eq_atom(&operands[0], 42);
     assert_eq_atom(&operands[1], 99);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "assert_eq_const_safe_real_body_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "assert_eq_const_safe_real_body_bad");
         assert!(
             !sat,
             "assert_eq_const_safe!(u8: make_val(), 99) must be z3-UNSAT"
@@ -12671,10 +12837,11 @@ fn ctor() {
         "{:?}",
         refusal_reasons(&bad_out)
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "closed_tuple_match_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "closed_tuple_match_bad",
+        );
         assert!(!sat, "wrong tuple binding match twin must be z3-UNSAT");
     }
 }
@@ -12767,10 +12934,11 @@ fn orpat() {
             "{label} bad twin should still lift: {:?}",
             refusal_reasons(&bad_out)
         );
-        if let Some(sat) = z3_verdict(
-            &inv_json(single_warranted_decl(&bad_out)),
-            &format!("closed_match_{label}_bad"),
-        ) {
+        {
+            let sat = fast_smt_smoke_verdict(
+                &inv_json(single_warranted_decl(&bad_out)),
+                &format!("closed_match_{label}_bad"),
+            );
             assert!(!sat, "{label} bad twin must be z3-UNSAT");
         }
     }
@@ -13518,7 +13686,8 @@ fn t() {
     let dump = format!("{:?}", decl);
     assert!(dump.contains("variant::Some"), "outer Some pin: {dump}");
     assert!(dump.contains("2"), "payload literal pin: {dump}");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "matches_some_literal_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "matches_some_literal_good");
         assert!(sat, "Some(2) must match Some(2)");
     }
 }
@@ -13537,7 +13706,8 @@ fn t() {
     let dump = format!("{:?}", decl);
     assert!(dump.contains("variant::Some"), "outer Some pin: {dump}");
     assert!(dump.contains("3"), "payload literal pin: {dump}");
-    if let Some(sat) = z3_verdict(&inv_json(decl), "matches_some_literal_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "matches_some_literal_bad");
         assert!(
             !sat,
             "Some(2) matching Some(3) must be z3-UNSAT once payload teeth are derived"
@@ -13749,10 +13919,11 @@ fn t() {
         out.skip_reasons
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "array_repeat_const_len_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "array_repeat_const_len_bad",
+        );
         assert!(
             !sat,
             "same x cannot equal two distinct const-length repeats"
@@ -14528,10 +14699,11 @@ fn t() {
         out.skip_reasons
     );
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "while_loop_literal_counter_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "while_loop_literal_counter_good",
+        );
         assert!(sat, "true while-loop replay must be SAT");
     }
 }
@@ -14552,10 +14724,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/while_loop_temporal_bad.rs");
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "while_loop_literal_counter_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "while_loop_literal_counter_bad",
+        );
         assert!(!sat, "wrong while-loop replay twin must be UNSAT");
     }
 }
@@ -14647,10 +14820,11 @@ fn t() {
         out.skip_reasons
     );
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "loop_break_literal_counter_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "loop_break_literal_counter_good",
+        );
         assert!(sat, "true loop/break replay must be SAT");
     }
 }
@@ -14674,10 +14848,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/loop_break_temporal_bad.rs");
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "loop_break_literal_counter_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "loop_break_literal_counter_bad",
+        );
         assert!(!sat, "wrong loop/break replay twin must be UNSAT");
     }
 }
@@ -14709,10 +14884,11 @@ fn t() {
         out.skip_reasons
     );
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "loop_continue_literal_counter_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "loop_continue_literal_counter_good",
+        );
         assert!(sat, "true loop/continue replay must be SAT");
     }
 }
@@ -14739,10 +14915,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/loop_continue_temporal_bad.rs");
     assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "loop_continue_literal_counter_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "loop_continue_literal_counter_bad",
+        );
         assert!(!sat, "wrong loop/continue replay twin must be UNSAT");
     }
 }
@@ -14826,11 +15003,11 @@ fn emit_value_contract_char_class_composes_through_compiler() {
 
     // 2) z3 (if present) must find it well-sorted and SATISFIABLE: the relation
     //    out <-> (65 <= c <= 90) is consistent (real teeth, not a contradiction).
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_char_class_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -14891,11 +15068,11 @@ fn emit_value_contract_string_matches_composes_through_compiler() {
         .expect("emitted string-membership inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_string_matches_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -14970,11 +15147,11 @@ fn emit_value_contract_guarded_matches_composes_through_compiler() {
         .expect("emitted guarded-matches inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_guarded_matches_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -15059,11 +15236,11 @@ fn emit_value_contract_unguarded_enum_variant_composes_through_compiler() {
         .expect("emitted enum-variant inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
 
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_enum_variant_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -15110,11 +15287,11 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
     let parts =
         compile_asserted_json_to_parts(&inv).expect("char-cast inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_char_cast_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -15169,11 +15346,11 @@ fn emit_value_contract_guard_return_warrants_and_composes() {
     let parts =
         compile_asserted_json_to_parts(&inv).expect("guard-clause inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_guard_return_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -15242,11 +15419,11 @@ fn emit_value_contract_slice_pattern_matches_warrants_and_composes() {
     let parts =
         compile_asserted_json_to_parts(&inv).expect("slice-pattern inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_slice_pattern_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -15307,24 +15484,22 @@ fn emit_value_contract_const_block_warrants_and_composes() {
     let parts =
         compile_asserted_json_to_parts(&inv).expect("const-block inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
-        let path = std::env::temp_dir().join("sugar_const_block_compose.smt2");
-        std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
-            .arg(&path)
-            .output()
-            .expect("run z3");
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
-            "const-block relation must be well-sorted for z3:\n{stdout}\n--- {script}"
-        );
-        assert!(
-            stdout.contains("sat"),
-            "const-block relation must be satisfiable:\n{stdout}"
-        );
-    }
+    let z3 = z3_path_or_panic();
+    let path = std::env::temp_dir().join("sugar_const_block_compose.smt2");
+    std::fs::write(&path, &script).expect("write smt2");
+    let out = std::process::Command::new(&z3)
+        .arg(&path)
+        .output()
+        .expect("run z3");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+        "const-block relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+    );
+    assert!(
+        stdout.contains("sat"),
+        "const-block relation must be satisfiable:\n{stdout}"
+    );
 }
 
 // NEW DOCTRINE -- the vendor is the referee. A body's warrant is not checked for
@@ -15332,27 +15507,84 @@ fn emit_value_contract_const_block_warrants_and_composes() {
 // vendor's sworn output, and handed to z3. SAT = the warrant coexists with the
 // answer (holds); UNSAT = the derived constraint can't be true against the sworn
 // answer -> refuse. The interior is an unopened EUF box; order/effects never enter.
-fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
-    // Some(true) = SAT, Some(false) = UNSAT, None = z3 absent.
+#[test]
+fn z3_required_resolver_rejects_invalid_z3_env_without_fallback() {
+    let err = resolve_z3_from(Some("/definitely/not/z3"), "/usr/local/bin:/usr/bin")
+        .expect_err("invalid Z3 must fail instead of falling back to PATH");
+    assert!(
+        err.contains("crime=soundness verdict without executable solver")
+            && err.contains("owner=assertion_lift")
+            && err.contains("replacement=install z3 or set Z3=/path/to/z3"),
+        "required z3 error must name crime/owner/replacement: {err}"
+    );
+}
+
+#[test]
+fn z3_required_resolver_rejects_missing_z3_loudly() {
+    let err = resolve_z3_from(None, "").expect_err("missing z3 must be a loud harness error");
+    assert!(
+        err.contains("crime=soundness verdict without solver")
+            && err.contains("owner=assertion_lift")
+            && err.contains("illegal shape=missing z3")
+            && err.contains("replacement=install z3 or set Z3=/path/to/z3"),
+        "missing z3 error must be cold-agent-executable: {err}"
+    );
+}
+
+fn resolve_z3_from(z3_env: Option<&str>, path_env: &str) -> Result<String, String> {
+    if let Some(path) = z3_env.filter(|value| !value.trim().is_empty()) {
+        if std::process::Command::new(path)
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+        {
+            return Ok(path.to_string());
+        }
+        return Err(format!(
+            "crime=soundness verdict without executable solver; owner=assertion_lift; \
+             illegal shape=Z3 points at non-executable solver `{path}`; \
+             replacement=install z3 or set Z3=/path/to/z3"
+        ));
+    }
+
+    for dir in path_env.split(':').filter(|dir| !dir.is_empty()) {
+        let candidate = std::path::Path::new(dir).join("z3");
+        if candidate.is_file()
+            && std::process::Command::new(&candidate)
+                .arg("--version")
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+        {
+            return Ok(candidate.display().to_string());
+        }
+    }
+
+    Err(
+        "crime=soundness verdict without solver; owner=assertion_lift; \
+         illegal shape=missing z3; replacement=install z3 or set Z3=/path/to/z3"
+            .to_string(),
+    )
+}
+
+fn z3_path_or_panic() -> String {
+    let z3_env = std::env::var("Z3").ok();
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    resolve_z3_from(z3_env.as_deref(), &path_env).unwrap_or_else(|err| panic!("{err}"))
+}
+
+fn fast_smt_smoke_verdict(inv: &serde_json::Value, label: &str) -> bool {
+    // Fast well-sortedness smoke only. Missing z3 is a hard harness error; a
+    // soundness verdict must not silently pass on a box without z3.
     let parts = compile_asserted_json_to_parts(inv).expect("conjoined inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = std::env::var("Z3").ok().or_else(|| {
-        ["/usr/local/bin/z3", "/usr/bin/z3", "z3"]
-            .into_iter()
-            .find(|candidate| {
-                std::process::Command::new(candidate)
-                    .arg("--version")
-                    .output()
-                    .map(|out| out.status.success())
-                    .unwrap_or(false)
-            })
-            .map(str::to_string)
-    })?;
+    let z3 = z3_path_or_panic();
     // Unique path per call: cargo runs tests in parallel; a shared temp file
     // races (one test reads another's script).
     let path = std::env::temp_dir().join(format!("sugar_vendor_check_{label}.smt2"));
     std::fs::write(&path, &script).expect("write smt2");
-    let out = std::process::Command::new(z3)
+    let out = std::process::Command::new(&z3)
         .arg(&path)
         .output()
         .expect("run z3");
@@ -15361,18 +15593,17 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
         !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
         "conjoined relation must be well-sorted:\n{stdout}\n--- {script}"
     );
-    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+    stdout.contains("sat") && !stdout.contains("unsat")
 }
 
 fn assert_warranted_decls_not_refuted(out: &AdapterOutput, label: &str) {
     for (idx, decl) in warranted_decls(out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("{label}_{idx}")) {
-            assert!(
-                sat,
-                "{label} warranted decl must not be z3-UNSAT: {}",
-                decl.name
-            );
-        }
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("{label}_{idx}"));
+        assert!(
+            sat,
+            "{label} warranted decl must not be z3-UNSAT: {}",
+            decl.name
+        );
     }
 }
 
@@ -15389,23 +15620,23 @@ fn inv_json_without_fold_recurrences(decl: &sugar_ir_symbolic::ContractDecl) -> 
 }
 
 /// Lift a single assertion and z3-check the emitted invariant.
-/// `Some(true)` = SAT (GOOD twin), `Some(false)` = UNSAT (BAD twin), `None` = z3 absent.
-fn single_assertion_verdict(src: &str, label: &str) -> Option<bool> {
+/// `true` = SAT (GOOD twin), `false` = UNSAT (BAD twin). Missing z3 is a hard error.
+fn single_assertion_verdict(src: &str, label: &str) -> bool {
     let out = lift_file(&parse(src), "tests/char_method_teeth.rs");
     assert_warranted_decl_count(&out, 1);
-    z3_verdict(&inv_json(single_warranted_decl(&out)), label)
+    fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label)
 }
 
-fn char_method_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+fn char_method_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     single_assertion_verdict(&src, label)
 }
 
-fn midpoint_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+fn midpoint_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/num/midpoint.rs");
     assert_warranted_decl_count(&out, 1);
-    z3_verdict(&inv_json(single_warranted_decl(&out)), label)
+    fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label)
 }
 
 #[test]
@@ -15425,10 +15656,10 @@ fn integer_midpoint_literal_calls_have_z3_bad_twins() {
     ];
 
     for (label, lhs, good_rhs, bad_rhs) in cases {
-        if let Some(good) = midpoint_eq_verdict(lhs, good_rhs, &format!("{label}_good")) {
+        {
+            let good = midpoint_eq_verdict(lhs, good_rhs, &format!("{label}_good"));
             assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
-            let bad =
-                midpoint_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+            let bad = midpoint_eq_verdict(lhs, bad_rhs, &format!("{label}_bad"));
             assert!(
                 !bad,
                 "{lhs} == {bad_rhs} must be z3-UNSAT as the midpoint bad twin"
@@ -15464,7 +15695,9 @@ fn integer_midpoint_literal_range_loop_has_teeth() {
     "#;
     let out = lift_file(&parse(bad), "tests/num/midpoint_loop_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "midpoint_loop_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "midpoint_loop_bad");
         assert!(!sat, "wrong midpoint loop twin must be z3-UNSAT");
     }
 }
@@ -15522,10 +15755,10 @@ fn char_literal_methods_have_z3_bad_twins() {
     ];
 
     for (label, lhs, good_rhs, bad_rhs) in cases {
-        if let Some(good) = char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")) {
+        {
+            let good = char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good"));
             assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
-            let bad =
-                char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+            let bad = char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad"));
             assert!(
                 !bad,
                 "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
@@ -15540,7 +15773,8 @@ fn char_literal_methods_have_z3_bad_twins() {
             assert_eq!(c.to_ascii_lowercase(), 'x');
         }
     "#;
-    if let Some(good) = single_assertion_verdict(ssa_good, "char_method_ssa_lower_good") {
+    {
+        let good = single_assertion_verdict(ssa_good, "char_method_ssa_lower_good");
         assert!(good, "SSA-resolved char literal receiver must discharge");
         let ssa_bad = r#"
             #[test]
@@ -15549,8 +15783,7 @@ fn char_literal_methods_have_z3_bad_twins() {
                 assert_eq!(c.to_ascii_lowercase(), 'q');
             }
         "#;
-        let bad =
-            single_assertion_verdict(ssa_bad, "char_method_ssa_lower_bad").expect("z3 present");
+        let bad = single_assertion_verdict(ssa_bad, "char_method_ssa_lower_bad");
         assert!(
             !bad,
             "wrong SSA-resolved char method result must be z3-UNSAT"
@@ -15563,7 +15796,8 @@ fn char_literal_methods_have_z3_bad_twins() {
             assert!('a'.is_lowercase());
         }
     "#;
-    if let Some(good) = single_assertion_verdict(assert_good, "char_method_assert_good") {
+    {
+        let good = single_assertion_verdict(assert_good, "char_method_assert_good");
         assert!(good, "assert-style char bool method must remain warranted");
         let assert_bad = r#"
             #[test]
@@ -15571,8 +15805,7 @@ fn char_literal_methods_have_z3_bad_twins() {
                 assert!(!'a'.is_lowercase());
             }
         "#;
-        let bad =
-            single_assertion_verdict(assert_bad, "char_method_assert_bad").expect("z3 present");
+        let bad = single_assertion_verdict(assert_bad, "char_method_assert_bad");
         assert!(
             !bad,
             "wrong assert-style char bool method twin must be z3-UNSAT"
@@ -15629,11 +15862,9 @@ fn unicode_char_methods_from_u32_casts_and_comparisons_have_teeth() {
         ),
     ];
     for (label, lhs, good_rhs, bad_rhs) in method_cases {
-        let good =
-            char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")).expect("z3 present");
+        let good = char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good"));
         assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
-        let bad =
-            char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+        let bad = char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad"));
         assert!(
             !bad,
             "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
@@ -15662,11 +15893,9 @@ fn unicode_char_methods_from_u32_casts_and_comparisons_have_teeth() {
         ),
     ];
     for (label, lhs, good_rhs, bad_rhs) in eq_cases {
-        let good =
-            char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")).expect("z3 present");
+        let good = char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good"));
         assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
-        let bad =
-            char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+        let bad = char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad"));
         assert!(
             !bad,
             "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
@@ -15685,9 +15914,9 @@ fn unicode_char_methods_from_u32_casts_and_comparisons_have_teeth() {
             assert!('é' > '\u{1f600}');
         }
     "#;
-    let good = single_assertion_verdict(compare_good, "unicode_char_cmp_good").expect("z3 present");
+    let good = single_assertion_verdict(compare_good, "unicode_char_cmp_good");
     assert!(good, "non-ASCII char ordering good twin must be z3-SAT");
-    let bad = single_assertion_verdict(compare_bad, "unicode_char_cmp_bad").expect("z3 present");
+    let bad = single_assertion_verdict(compare_bad, "unicode_char_cmp_bad");
     assert!(!bad, "wrong non-ASCII char ordering twin must be z3-UNSAT");
 }
 
@@ -15711,10 +15940,11 @@ fn opaque_result_ok_adaptor_is_well_sorted_with_reflexive_teeth() {
         dump.contains("method:ok") && dump.contains("method:parse"),
         "test must exercise the opaque Result::ok adaptor, not fold away: {dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "result_ok_reflexive_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "result_ok_reflexive_good",
+        );
         assert!(sat, "x == x over Result::ok must be SAT and well-sorted");
     }
 
@@ -15731,10 +15961,11 @@ fn opaque_result_ok_adaptor_is_well_sorted_with_reflexive_teeth() {
         "bad twin should still lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "result_ok_reflexive_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "result_ok_reflexive_bad",
+        );
         assert!(!sat, "x != x over Result::ok must be UNSAT");
     }
 }
@@ -15761,10 +15992,11 @@ fn option_unwrap_adaptor_is_well_sorted_with_reflexive_teeth() {
         dump.contains("method:unwrap") && dump.contains("method:as_mut"),
         "test must exercise Option unwrap over as_mut, not fold away: {dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "option_unwrap_reflexive_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "option_unwrap_reflexive_good",
+        );
         assert!(
             sat,
             "x == x over as_mut().unwrap() must be SAT and well-sorted"
@@ -15786,10 +16018,11 @@ fn option_unwrap_adaptor_is_well_sorted_with_reflexive_teeth() {
         "bad twin should still lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "option_unwrap_reflexive_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "option_unwrap_reflexive_bad",
+        );
         assert!(!sat, "x != x over as_mut().unwrap() must be UNSAT");
     }
 }
@@ -15814,10 +16047,11 @@ fn bool_then_closure_option_is_well_sorted_with_bad_twin() {
         dump.contains("opt:some") && !dump.contains("method:then") && !dump.contains("closure:"),
         "literal true.then(|| 0) must compose to the Option floor: {dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bool_then_closure_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bool_then_closure_good",
+        );
         assert!(
             sat,
             "x == x over true.then(|| 0) must be SAT and well-sorted"
@@ -15837,10 +16071,11 @@ fn bool_then_closure_option_is_well_sorted_with_bad_twin() {
         "bad twin should lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bool_then_closure_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bool_then_closure_bad",
+        );
         assert!(!sat, "x != x over true.then(|| 0) must be UNSAT");
     }
 }
@@ -15914,7 +16149,8 @@ fn bool_literal_methods_compose_to_option_floor_with_teeth() {
                 && !doc.contains("method:then_some"),
             "{label}: bool literal method must compose to the Option floor, not opaque method sugar: {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(
                 sat, want_sat,
                 "{label}: z3 verdict mismatch for {assertion}"
@@ -15965,7 +16201,8 @@ fn bool_literal_ops_compose_to_bool_floor_with_teeth() {
                 && !doc.contains("bit-or"),
             "{label}: bool literal op must reduce to Bool constants: {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(
                 sat, want_sat,
                 "{label}: z3 verdict mismatch for {assertion}"
@@ -15994,10 +16231,11 @@ fn nested_try_reduce_option_is_well_sorted_with_bad_twin() {
         dump.contains("method:try_reduce") || dump.contains("opt:some"),
         "test must exercise nested try_reduce/Option shape: {dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "try_reduce_nested_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "try_reduce_nested_good",
+        );
         assert!(sat, "x == x over try_reduce nested Option must be SAT");
     }
 
@@ -16014,10 +16252,11 @@ fn nested_try_reduce_option_is_well_sorted_with_bad_twin() {
         "bad twin should lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "try_reduce_nested_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "try_reduce_nested_bad",
+        );
         assert!(!sat, "x != x over try_reduce nested Option must be UNSAT");
     }
 }
@@ -16029,7 +16268,8 @@ fn vendor_pin_confirms_correct_warrant_sat() {
     let f: syn::ItemFn = syn::parse_str("fn double(x: i32) -> i32 { x * 2 }").unwrap();
     let decl = emit_value_contract("double", &f.block).expect("warrants");
     let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 6);
-    if let Some(sat) = z3_verdict(&inv_json(&conjoined), "good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&conjoined), "good");
         assert!(
             sat,
             "warrant out=x*2 at x=3 must coexist with the sworn answer 6 (SAT)"
@@ -16047,7 +16287,8 @@ fn vendor_pin_refutes_wrong_warrant_unsat() {
     let f: syn::ItemFn = syn::parse_str("fn double(x: i32) -> i32 { x * 2 }").unwrap();
     let decl = emit_value_contract("double", &f.block).expect("warrants");
     let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 7);
-    if let Some(sat) = z3_verdict(&inv_json(&conjoined), "bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&conjoined), "bad");
         assert!(
             !sat,
             "warrant out=x*2 at x=3 must CONTRADICT the sworn answer 7 (UNSAT)"
@@ -16071,11 +16312,11 @@ fn broad_functional_warrant_composes_through_compiler() {
     let parts =
         compile_asserted_json_to_parts(&inv).expect("functional warrant must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_broad_functional_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -16156,11 +16397,11 @@ fn emit_value_contract_value_term_composes_through_compiler() {
     let parts = compile_asserted_json_to_parts(&inv)
         .expect("emitted value-term inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_value_term_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3)
+        let out = std::process::Command::new(&z3)
             .arg(&path)
             .output()
             .expect("run z3");
@@ -16205,10 +16446,7 @@ fn clamp_universe_refutes_out_of_bound_bad_twin() {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let universe = parsed[0]["inv"].clone();
-    let z3 = "/usr/local/bin/z3";
-    if !std::path::Path::new(z3).exists() {
-        return;
-    }
+    let z3 = z3_path_or_panic();
     let eq_out = |v: i64| {
         serde_json::json!({"kind":"atomic","name":"=","args":[
             {"kind":"var","name":"out"},
@@ -16220,7 +16458,7 @@ fn clamp_universe_refutes_out_of_bound_bad_twin() {
         let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
         let path = std::env::temp_dir().join(format!("sugar_clamp_{val}.smt2"));
         std::fs::write(&path, &script).unwrap();
-        let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+        let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
         String::from_utf8_lossy(&out.stdout).to_string()
     };
     // GOOD twin: out == 5 is within [0,10] -> SAT (discharges).
@@ -16247,11 +16485,11 @@ fn euf_call_value_composes_through_compiler() {
     let inv = parsed[0]["inv"].clone();
     let parts = compile_asserted_json_to_parts(&inv).expect("EUF call inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if std::path::Path::new(z3).exists() {
+    let z3 = z3_path_or_panic();
+    {
         let path = std::env::temp_dir().join("sugar_euf_call_compose.smt2");
         std::fs::write(&path, &script).unwrap();
-        let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+        let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
@@ -16270,7 +16508,7 @@ fn euf_value_decls_compose_across_diverse_shapes() {
     // emits, not just one shape -- otherwise 'warranted' would be hollow. Compile
     // each real emitted decl through the prove compiler + z3.
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     let bodies = [
         "fn f(v: &[u8]) -> usize { v.len() }",
         "fn f(s: &str) -> usize { s.len() + 1 }",
@@ -16291,11 +16529,11 @@ fn euf_value_decls_compose_across_diverse_shapes() {
         let inv = parsed[0]["inv"].clone();
         let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile to SMT-LIB: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_euf_diverse.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16311,7 +16549,7 @@ fn euf_value_decls_compose_across_diverse_shapes() {
 #[test]
 fn emit_value_contract_let_prefix_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(x: i32) -> i32 { let y = x * 2; y + 1 }",
         "fn f(v: &[u8]) -> usize { let n = v.len(); n + 1 }",
@@ -16325,11 +16563,11 @@ fn emit_value_contract_let_prefix_warrants_and_composes() {
         let inv = parsed[0]["inv"].clone();
         let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_letprefix.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16362,7 +16600,7 @@ fn emit_value_contract_let_prefix_refuses_mut_and_letelse() {
 #[test]
 fn emit_value_contract_if_else_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(x: i32, a: i32, b: i32) -> i32 { if x > 0 { a } else { b } }",
         "fn f(x: i32) -> i32 { if x > 10 { 1 } else if x > 5 { 2 } else { 3 } }",
@@ -16375,11 +16613,11 @@ fn emit_value_contract_if_else_warrants_and_composes() {
         let inv = parsed[0]["inv"].clone();
         let parts = compile_asserted_json_to_parts(&inv)
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_if.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16412,7 +16650,7 @@ fn emit_value_contract_if_refuses_non_total_and_if_let() {
 #[test]
 fn emit_value_contract_bool_predicate_body_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(a: usize, b: usize) -> bool { a <= b }",
         "fn f(x: i32) -> bool { x == 0 }",
@@ -16427,11 +16665,11 @@ fn emit_value_contract_bool_predicate_body_warrants_and_composes() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_boolpred.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16447,7 +16685,7 @@ fn emit_value_contract_bool_predicate_body_warrants_and_composes() {
 #[test]
 fn emit_value_contract_scalar_match_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(x: i32) -> i32 { match x { 0 => 10, 1..=5 => 20, _ => 30 } }",
         "fn f(x: u8) -> u8 { match x { 0 | 1 => 1, _ => 0 } }",
@@ -16459,11 +16697,11 @@ fn emit_value_contract_scalar_match_warrants_and_composes() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_match.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16494,7 +16732,7 @@ fn emit_value_contract_match_refuses_guarded_and_nested() {
 #[test]
 fn emit_value_contract_multifield_enum_match_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(p: Pair) -> i32 { match p { Pair(a, b) => a + b, _ => 0 } }",
         "fn f(e: E) -> i32 { match e { E::P { x, y } => x + y, _ => 0 } }",
@@ -16506,11 +16744,11 @@ fn emit_value_contract_multifield_enum_match_warrants_and_composes() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_multifield.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16524,7 +16762,7 @@ fn emit_value_contract_multifield_enum_match_warrants_and_composes() {
 #[test]
 fn emit_value_contract_enum_match_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         // Option payload binding: Some(x) -> variant_of==Some & out=payload:Some(o); None -> ¬earlier.
         "fn f(o: Option<i32>) -> i32 { match o { Some(x) => x, None => 0 } }",
@@ -16543,11 +16781,11 @@ fn emit_value_contract_enum_match_warrants_and_composes() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_enummatch.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16563,7 +16801,7 @@ fn emit_value_contract_enum_match_warrants_and_composes() {
 #[test]
 fn emit_value_contract_let_prefix_with_control_flow_tail() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(x: i32, a: i32, b: i32) -> i32 { let t = x + 1; if t > 0 { a } else { b } }",
         "fn f(x: u32) -> bool { let m = x & 0xff; m == 0 }",
@@ -16576,11 +16814,11 @@ fn emit_value_contract_let_prefix_with_control_flow_tail() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_letctrl.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16611,12 +16849,12 @@ fn emit_value_contract_unsafe_and_block_are_value_transparent() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        let z3 = "/usr/local/bin/z3";
-        if std::path::Path::new(z3).exists() {
+        let z3 = z3_path_or_panic();
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_unsafe.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16632,7 +16870,6 @@ fn emit_value_contract_unsafe_and_block_are_value_transparent() {
 #[test]
 fn emit_value_contract_tuple_destructuring_let() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
     for src in [
         "fn f(p: (i32, i32)) -> i32 { let (a, b) = p; a + b }",
         "fn f(t: usize) -> usize { let (s, a) = (sz(t), al(t)); unsafe { mk(s, a) } }",
@@ -16645,7 +16882,6 @@ fn emit_value_contract_tuple_destructuring_let() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        let _ = z3;
     }
     // a `let mut` tuple still refuses (mutation).
     let f: syn::ItemFn =
@@ -16658,7 +16894,7 @@ fn emit_value_contract_tuple_destructuring_let() {
 #[test]
 fn emit_value_contract_if_with_call_condition() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let z3 = "/usr/local/bin/z3";
+    let z3 = z3_path_or_panic();
     for src in [
         "fn f(x: usize, a: i32, b: i32) -> i32 { if is_valid(x) { a } else { b } }",
         "fn f(s: &str, a: i32, b: i32) -> i32 { if s.is_empty() { a } else { b } }",
@@ -16670,11 +16906,11 @@ fn emit_value_contract_if_with_call_condition() {
         let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
         let parts = compile_asserted_json_to_parts(&parsed[0]["inv"])
             .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
-        if std::path::Path::new(z3).exists() {
+        {
             let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
             let path = std::env::temp_dir().join("sugar_ifcall.smt2");
             std::fs::write(&path, &script).unwrap();
-            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let out = std::process::Command::new(&z3).arg(&path).output().unwrap();
             let so = String::from_utf8_lossy(&out.stdout);
             assert!(
                 !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
@@ -16734,7 +16970,8 @@ fn cast_f32_contradiction() {
     );
     // Two operands over the SAME cast term, pinned to two different reals.
     assert_eq!(inv_operands(&out.decls[0]).len(), 2);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "float_cast_contra") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "float_cast_contra");
         assert!(!sat, "cast:f32(x)==1.0 AND ==2.0 must be UNSAT (the teeth)");
     }
 }
@@ -17302,12 +17539,14 @@ fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
         "no opaque federated/call ctor may survive: {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "monadic_some_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "monadic_some_good");
         assert!(sat, "Some(1)==Some(1) must be SAT");
     }
 
     let bad = lift_eq_decl("Some(1)", "Some(2)", "tests/monadic_some_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "monadic_some_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "monadic_some_bad");
         assert!(
             !sat,
             "the bad twin Some(1)==Some(2) must be z3-UNSAT (injectivity teeth)"
@@ -17326,7 +17565,8 @@ fn monadic_some_vs_none_is_unsat() {
         "Some(1)==None must ground to opt:some vs opt:none ctors: {:?}",
         decl.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&decl), "monadic_some_none") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&decl), "monadic_some_none");
         assert!(!sat, "Some(1)==None must be z3-UNSAT (distinctness teeth)");
     }
 }
@@ -17341,12 +17581,14 @@ fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
         vec![("res:ok".to_string(), "res:ok".to_string())],
         "Ok(1)==Ok(1) must ground to two res:ok ctors"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "monadic_ok_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "monadic_ok_good");
         assert!(sat, "Ok(1)==Ok(1) must be SAT");
     }
 
     let bad = lift_eq_decl("Ok(1)", "Ok(2)", "tests/monadic_ok_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "monadic_ok_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "monadic_ok_bad");
         assert!(!sat, "Ok(1)==Ok(2) must be z3-UNSAT (injectivity)");
     }
 
@@ -17356,7 +17598,8 @@ fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
         vec![("res:ok".to_string(), "res:err".to_string())],
         "Ok(1)==Err(1) must ground to res:ok vs res:err ctors"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&cross), "monadic_ok_err") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&cross), "monadic_ok_err");
         assert!(
             !sat,
             "Ok(1)==Err(1) must be z3-UNSAT (cross-variant distinctness)"
@@ -17393,7 +17636,8 @@ fn iter_next_over_literal_array_grounds_to_some_first_element() {
         "no opaque method:next / call:eq:Some may survive: {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(good), "iter_next_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(good), "iter_next_good");
         assert!(sat, "`Some(1) == Some(1)` (the grounded next) must be SAT");
     }
 
@@ -17404,7 +17648,8 @@ fn iter_next_over_literal_array_grounds_to_some_first_element() {
         "Some(&2)",
         "tests/iter_next_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_next_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "iter_next_bad");
         assert!(
             !sat,
             "the bad twin `.next() == Some(&2)` must be z3-UNSAT (injectivity teeth)"
@@ -17428,7 +17673,9 @@ fn iterator_composite_bound_path_and_const_cfg_range_have_teeth() {
         vec![(3, 3)],
         "bound iterator count must compose through bound_path_composite"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_good");
         assert!(sat, "0..=2 has count 3");
     }
 
@@ -17446,7 +17693,8 @@ fn iterator_composite_bound_path_and_const_cfg_range_have_teeth() {
         vec![(3, 4)],
         "bad twin must carry the concrete range count against the wrong literal"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_bad");
         assert!(!sat, "0..=2 has count 3, not 4");
     }
 
@@ -17467,7 +17715,8 @@ fn iterator_composite_bound_path_and_const_cfg_range_have_teeth() {
         vec![(3, 3)],
         "const cfg range branches must lower lazily as Composite values"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_good");
         assert!(sat, "default cfg path chooses 0..=2 with count 3");
     }
 
@@ -17485,7 +17734,8 @@ fn iterator_composite_bound_path_and_const_cfg_range_have_teeth() {
         vec![(3, 2)],
         "bad cfg twin must carry the target-resolved range count against the wrong literal"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_bad");
         assert!(!sat, "non-miri cfg path chooses 0..=2 with count 3, not 2");
     }
 }
@@ -17506,7 +17756,8 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "`.nth(1)` must ground to opt:some(20): {:?}",
         nth.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&nth), "iter_nth_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&nth), "iter_nth_good");
         assert!(sat, "`.nth(1) == Some(20)` must be SAT");
     }
     let nth_bad = lift_eq_decl(
@@ -17514,7 +17765,8 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "Some(&21)",
         "tests/iter_nth_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&nth_bad), "iter_nth_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&nth_bad), "iter_nth_bad");
         assert!(!sat, "`.nth(1) == Some(21)` must be z3-UNSAT");
     }
 
@@ -17530,7 +17782,8 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "`.last()` must ground to opt:some(30): {:?}",
         last.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&last), "iter_last_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&last), "iter_last_good");
         assert!(sat, "`.last() == Some(30)` must be SAT");
     }
 
@@ -17547,7 +17800,8 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "`.nth(9)` past the end must ground to opt:none: {:?}",
         past.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&past), "iter_nth_past") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&past), "iter_nth_past");
         assert!(sat, "`.nth(9) == None` (both opt:none) must be SAT");
     }
     let past_bad = lift_eq_decl(
@@ -17555,7 +17809,8 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "Some(&1)",
         "tests/iter_nth_past_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&past_bad), "iter_nth_past_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&past_bad), "iter_nth_past_bad");
         assert!(!sat, "`.nth(9) == Some(1)` must be z3-UNSAT (None != Some)");
     }
 }
@@ -17574,7 +17829,8 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "no opaque method:first may survive: {:?}",
         first.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&first), "slice_first_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&first), "slice_first_good");
         assert!(sat, "`.first() == Some(&1)` must be SAT");
     }
 
@@ -17590,7 +17846,8 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "no opaque method:get may survive: {:?}",
         get.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&get), "slice_get_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&get), "slice_get_good");
         assert!(sat, "`.get(1) == Some(&2)` must be SAT");
     }
 
@@ -17601,7 +17858,8 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "`.get(9)` must ground to opt:none: {:?}",
         get_past.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&get_past), "slice_get_past_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&get_past), "slice_get_past_good");
         assert!(sat, "`.get(9) == None` must be SAT");
     }
 
@@ -17621,7 +17879,8 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "no opaque method:contains may survive: {:?}",
         contains.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&contains), "slice_contains_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&contains), "slice_contains_good");
         assert!(sat, "`.contains(&2) == true` must be SAT");
     }
 
@@ -17703,7 +17962,8 @@ fn literal_slice_accessors_have_z3_bad_twins() {
 
     for (lhs, rhs, label, display) in cases {
         let decl = lift_eq_decl(lhs, rhs, &format!("tests/{label}.rs"));
-        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(&decl), label);
             assert!(!sat, "bad twin `{display}` must be z3-UNSAT");
         }
     }
@@ -17727,7 +17987,8 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "no opaque method:rposition may survive: {:?}",
         rposition.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&rposition), "slice_rposition_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&rposition), "slice_rposition_good");
         assert!(sat, "`.rposition(==2) == Some(3)` must be SAT");
     }
 
@@ -17759,7 +18020,8 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "no opaque method:binary_search may survive: {:?}",
         binary_ok.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&binary_ok), "slice_binary_search_ok") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&binary_ok), "slice_binary_search_ok");
         assert!(sat, "`.binary_search(&2) == Ok(1)` must be SAT");
     }
 
@@ -17791,7 +18053,8 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "no opaque method:split_first may survive: {:?}",
         split_first.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&split_first), "slice_split_first_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&split_first), "slice_split_first_good");
         assert!(sat, "`.split_first()` exact tuple payload must be SAT");
     }
 
@@ -17897,7 +18160,8 @@ fn literal_slice_search_split_methods_have_z3_bad_twins() {
 
     for (lhs, rhs, label, display) in cases {
         let decl = lift_eq_decl(lhs, rhs, &format!("tests/{label}.rs"));
-        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(&decl), label);
             assert!(!sat, "bad twin `{display}` must be z3-UNSAT");
         }
     }
@@ -17939,10 +18203,11 @@ fn terminal_verdict_binary_search_by_overflow_warrants_and_bad_twin_refutes() {
     "#;
     let out = lift_file(&parse(bad), "tests/slice/binary_search_by_overflow_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "binary_search_by_overflow_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "binary_search_by_overflow_bad",
+        );
         assert!(
             !sat,
             "wrong binary_search_by overflow index must be z3-UNSAT"
@@ -17979,7 +18244,9 @@ fn terminal_verdict_ptr_metadata_literal_warrants_and_runtime_layout_refuses() {
     "#;
     let out = lift_file(&parse(bad), "tests/ptr/metadata_literal_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "ptr_metadata_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "ptr_metadata_bad");
         assert!(!sat, "wrong string metadata length must be z3-UNSAT");
     }
 
@@ -18025,7 +18292,8 @@ fn terminal_verdict_memrchr_literal_warrants_and_mutable_alignment_refuses() {
     "#;
     let out = lift_file(&parse(bad), "tests/slice/memrchr_literal_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "memrchr_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "memrchr_bad");
         assert!(!sat, "wrong memrchr literal position must be z3-UNSAT");
     }
 
@@ -18133,7 +18401,8 @@ fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
         "bad twin must not clear through refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "split_chunk_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "split_chunk_bad");
         assert!(!sat, "wrong split chunk half must be z3-UNSAT");
     }
 
@@ -18159,10 +18428,11 @@ fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
         "bad len twin must not clear through refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "split_chunk_bad_len",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "split_chunk_bad_len",
+        );
         assert!(!sat, "wrong as_chunks len must be z3-UNSAT");
     }
 
@@ -18271,10 +18541,11 @@ fn literal_array_split_mut_destructure_warrants_and_bad_twin_refutes() {
         "bad twin must not clear through refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "array_split_mut_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "array_split_mut_bad",
+        );
         assert!(!sat, "wrong split_array_mut half must be z3-UNSAT");
     }
 }
@@ -18339,7 +18610,8 @@ fn literal_refcell_map_split_destructure_warrants_and_bad_twin_refutes() {
         out.skip_reasons
     );
     let bad_inv = inv_json(single_warranted_decl(&out));
-    if let Some(sat) = z3_verdict(&bad_inv, "ref_map_split_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&bad_inv, "ref_map_split_bad");
         assert!(
             !sat,
             "wrong Ref::map_split component must be z3-UNSAT after bound_path uses the literal split component: {bad_inv}"
@@ -18449,7 +18721,8 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "no opaque method:min / call:eq:Some may survive: {:?}",
         min.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&min), "iter_min_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&min), "iter_min_good");
         assert!(sat, "`.min() == Some(1)` must be SAT");
     }
     // BAD TWIN: `Some(&2)` -> `=(opt:some(1), opt:some(2))` -> z3-UNSAT (injectivity).
@@ -18458,7 +18731,8 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "Some(&2)",
         "tests/iter_min_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&min_bad), "iter_min_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&min_bad), "iter_min_bad");
         assert!(
             !sat,
             "the bad twin `.min() == Some(&2)` must be z3-UNSAT (injectivity teeth)"
@@ -18476,7 +18750,8 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "`.max()` must ground to opt:some(3): {:?}",
         max.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&max), "iter_max_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&max), "iter_max_good");
         assert!(sat, "`.max() == Some(3)` must be SAT");
     }
     let max_bad = lift_eq_decl(
@@ -18484,7 +18759,8 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "Some(&2)",
         "tests/iter_max_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&max_bad), "iter_max_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&max_bad), "iter_max_bad");
         assert!(!sat, "the bad twin `.max() == Some(&2)` must be z3-UNSAT");
     }
 }
@@ -18535,7 +18811,8 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "no opaque method:find may survive: {:?}",
         find.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&find), "iter_find_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&find), "iter_find_good");
         assert!(sat, "`.find(>3) == Some(4)` must be SAT");
     }
     // BAD TWIN: the first match is 4, not 5 -> `Some(&5)` is z3-UNSAT.
@@ -18544,7 +18821,8 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "Some(&5)",
         "tests/iter_find_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&find_bad), "iter_find_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&find_bad), "iter_find_bad");
         assert!(
             !sat,
             "the bad twin `.find(>3) == Some(&5)` must be z3-UNSAT"
@@ -18562,7 +18840,8 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "`.find()` with no match must ground to opt:none: {:?}",
         find_none.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&find_none), "iter_find_none") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&find_none), "iter_find_none");
         assert!(sat, "`.find(>9) == None` (both opt:none) must be SAT");
     }
 
@@ -18579,7 +18858,8 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "`.position()` must ground to opt:some(2): {:?}",
         pos.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&pos), "iter_position_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&pos), "iter_position_good");
         assert!(sat, "`.position(>3) == Some(2)` must be SAT");
     }
     // BAD TWIN: the index is 2, not 0 -> z3-UNSAT.
@@ -18588,7 +18868,8 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "Some(0)",
         "tests/iter_position_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&pos_bad), "iter_position_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&pos_bad), "iter_position_bad");
         assert!(
             !sat,
             "the bad twin `.position(>3) == Some(0)` must be z3-UNSAT"
@@ -18620,7 +18901,8 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "no opaque method:any may survive: {:?}",
         any.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&any), "iter_any_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&any), "iter_any_good");
         assert!(sat, "`.any(>2) == true` must be SAT");
     }
     // BAD TWIN: `.any(>2)` is truly true, asserted false -> `=(bool(true), bool(false))`
@@ -18630,7 +18912,8 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "false",
         "tests/iter_any_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&any_bad), "iter_any_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&any_bad), "iter_any_bad");
         assert!(
             !sat,
             "the bad twin `.any(>2) == false` must be z3-UNSAT (bool distinctness teeth)"
@@ -18649,7 +18932,8 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "`.all(>0)` must ground to bool(true): {:?}",
         all.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&all), "iter_all_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&all), "iter_all_good");
         assert!(sat, "`.all(>0) == true` must be SAT");
     }
     // `.all(>1)` is FALSE (1 is not > 1) -> bool(false). Asserting it true is the
@@ -18665,7 +18949,8 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "`.all(>1)` must ground to bool(false): {:?}",
         all_false.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&all_false), "iter_all_false_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&all_false), "iter_all_false_good");
         assert!(sat, "`.all(>1) == false` must be SAT");
     }
     let all_bad = lift_eq_decl(
@@ -18673,7 +18958,8 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "true",
         "tests/iter_all_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&all_bad), "iter_all_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&all_bad), "iter_all_bad");
         assert!(!sat, "the bad twin `.all(>1) == true` must be z3-UNSAT");
     }
 }
@@ -18913,7 +19199,8 @@ fn t() {
         "filter_map(even -> x*x) keeps [0,4,16,36,64] and complete each exact (elem, ys[pos]) pair"
     );
     // Each ground equality is true -> SAT (teeth: real, not vacuous).
-    if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(fold_decl), "filter_map_fold_good");
         assert!(
             sat,
             "the filter_map complete walk (0==0 ∧ 4==4 ∧ ..) must be satisfiable"
@@ -18982,7 +19269,8 @@ fn t() {
         "the bad-twin conjunction must contain genuine (refutable) inequalities: {pairs:?}"
     );
     // The conjunction (0==99 ∧ 4==99 ∧ ..) is z3-UNSAT (refutes) -- the real teeth.
-    if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(fold_decl), "filter_map_fold_bad");
         assert!(
             !sat,
             "the bad-twin filter_map conjunction must be z3-UNSAT (refutes)"
@@ -19068,7 +19356,8 @@ fn t() {
         "the sum terminal must ground the LHS to the EXACT total 15 (not an opaque ctor)"
     );
     // The grounded equality is a true fact -> SAT (teeth: real, not vacuous).
-    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_sum_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "iter_sum_good");
         assert!(sat, "the complete `15 == 15` must be satisfiable");
     }
 }
@@ -19091,7 +19380,8 @@ fn t() {
         vec![(15, 16)],
         "the bad twin must carry the REAL total 15 against the wrong 16 (refutable)"
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_sum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "iter_sum_bad");
         assert!(!sat, "the bad-twin `15 == 16` must be z3-UNSAT (refutes)");
     }
 }
@@ -19128,7 +19418,8 @@ fn t() {
         "Duration sum must compare through the exact total-nanos carrier: {:?}",
         decl
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_duration_sum_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "iter_duration_sum_good");
         assert!(sat, "the canonical Duration carrier equality must be SAT");
     }
 }
@@ -19259,14 +19550,16 @@ fn iter_product_over_literal_array_digs_and_bad_twin_refutes() {
     let good = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 120); }"#;
     let out = lift_file(&parse(good), "tests/iter_product.rs");
     assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(120, 120)]);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "iter_prod_good");
         assert!(sat, "`120 == 120` must be SAT");
     }
     // TEETH: a wrong product (100) is z3-UNSAT.
     let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 100); }"#;
     let out = lift_file(&parse(bad), "tests/iter_product_twin.rs");
     assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(120, 100)]);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "iter_prod_bad");
         assert!(!sat, "the bad-twin `120 == 100` must be z3-UNSAT (refutes)");
     }
 }
@@ -19277,14 +19570,16 @@ fn iter_count_over_literal_array_digs_length_and_bad_twin_refutes() {
     let good = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }"#;
     let out = lift_file(&parse(good), "tests/iter_count.rs");
     assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(3, 3)]);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "iter_count_good");
         assert!(sat, "`3 == 3` must be SAT");
     }
     // TEETH: a wrong length (4) is z3-UNSAT.
     let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 4); }"#;
     let out = lift_file(&parse(bad), "tests/iter_count_twin.rs");
     assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(3, 4)]);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "iter_count_bad");
         assert!(!sat, "the bad-twin `3 == 4` must be z3-UNSAT (refutes)");
     }
 }
@@ -19380,7 +19675,8 @@ fn t() {
             vec![(*expected, *expected)],
             "{label}: SSA-clean literal collection alias must reduce to the literal floor"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert!(sat, "{label}: `{expected} == {expected}` must be SAT");
         }
     }
@@ -19481,7 +19777,8 @@ fn t() {
             vec![(*real, *wrong)],
             "{label}: bad twin must carry the real literal-floor value"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert!(!sat, "{label}: `{real} == {wrong}` must be z3-UNSAT");
         }
     }
@@ -19498,10 +19795,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(good), "tests/literal_collection_alias_empty.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bound_array_is_empty_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bound_array_is_empty_good",
+        );
         assert!(sat, "bound empty array is_empty must be SAT");
     }
 
@@ -19514,10 +19812,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(bad), "tests/literal_collection_alias_empty_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bound_vec_is_empty_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bound_vec_is_empty_bad",
+        );
         assert!(
             !sat,
             "bound non-empty Vec literal is_empty bad twin must be UNSAT"
@@ -19555,7 +19854,9 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
             vec![(*total, *total)],
             "case {i}: the composed reduction must ground to the exact total {total}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), &format!("iter_compose_{i}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(&out.decls[0]), &format!("iter_compose_{i}"));
             assert!(sat, "case {i}: `{total} == {total}` must be SAT");
         }
     }
@@ -19629,7 +19930,8 @@ fn t() {
         "map-over-callsite must freeze the callee so congruence can bite: {dump}"
     );
     let inv = inv_json(decl);
-    if let Some(sat) = z3_verdict(&inv, "temporal_map_callsite_congruence_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "temporal_map_callsite_congruence_bad");
         assert!(
             !sat,
             "x(1)+x(1) != x(1)+x(1) over two map ticks must be UNSAT; split callee names make this false proof SAT: decl={dump}; inv={inv}"
@@ -19648,7 +19950,8 @@ fn temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing()
         vec![(12, 12)],
         "nested map floors must curry outer n through the inner map before scalar reduction: {good_dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "temporal_nested_map_sum_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "temporal_nested_map_sum_good");
         assert!(sat, "nested map good twin must be SAT");
     }
 
@@ -19658,7 +19961,8 @@ fn temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing()
         vec![(12, 13)],
         "nested map bad twin must retain the exact computed scalar floor"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "temporal_nested_map_sum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "temporal_nested_map_sum_bad");
         assert!(!sat, "nested map bad twin must be z3-UNSAT");
     }
 }
@@ -19697,7 +20001,8 @@ fn temporal_map_tuple_projection_chain_visits_floor_before_currying() {
             && !good_dump.contains("method:saturating_mul"),
         "the fluent chain must not leak tuple, field, map, or primitive-method residue after floor visits: {good_dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "temporal_map_tuple_field_chain_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "temporal_map_tuple_field_chain_good");
         assert!(sat, "tuple-field map chain good twin must be SAT");
     }
 
@@ -19707,7 +20012,8 @@ fn temporal_map_tuple_projection_chain_visits_floor_before_currying() {
         vec![(268, 269)],
         "wrong expected value must still see the exact scalar floor from the composed chain"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "temporal_map_tuple_field_chain_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "temporal_map_tuple_field_chain_bad");
         assert!(!sat, "tuple-field map chain bad twin must be z3-UNSAT");
     }
 }
@@ -19822,7 +20128,8 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
             vec![(*expected_lhs, *expected_rhs)],
             "case {idx} must carry the exact literal-floor equality"
         );
-        if let Some(sat) = z3_verdict(&inv_json(&decl), &format!("temporal_int_case_{idx}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(&decl), &format!("temporal_int_case_{idx}"));
             assert_eq!(
                 sat,
                 expected_lhs == expected_rhs,
@@ -19869,7 +20176,9 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
             vec![(*expected_lhs, *expected_rhs)],
             "bool case {idx} must carry the exact literal-floor equality"
         );
-        if let Some(sat) = z3_verdict(&inv_json(&decl), &format!("temporal_bool_case_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(&decl), &format!("temporal_bool_case_{idx}"));
             assert_eq!(
                 sat,
                 expected_lhs == expected_rhs,
@@ -19888,7 +20197,8 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "find must ground to the structural Option literal floor"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&find), "temporal_find_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&find), "temporal_find_good");
         assert!(sat, "find good twin must be SAT");
     }
     let find_bad = lift_eq_decl(
@@ -19896,7 +20206,8 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         "Some(5i32)",
         "tests/temporal_find_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&find_bad), "temporal_find_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&find_bad), "temporal_find_bad");
         assert!(!sat, "find bad twin must be z3-UNSAT");
     }
 
@@ -19910,7 +20221,8 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "position must ground to the structural Option literal floor"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&position), "temporal_position_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&position), "temporal_position_good");
         assert!(sat, "position good twin must be SAT");
     }
     let position_bad = lift_eq_decl(
@@ -19918,7 +20230,8 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         "Some(0usize)",
         "tests/temporal_position_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&position_bad), "temporal_position_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&position_bad), "temporal_position_bad");
         assert!(!sat, "position bad twin must be z3-UNSAT");
     }
 }
@@ -20765,10 +21078,11 @@ fn t() {
     let bad = good.replace("1 => true, _ => false", "1 => false, _ => true");
     let bad_out = lift_file(&parse(&bad), "tests/matchconst_bad.rs");
     assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "closed_const_match_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "closed_const_match_bad",
+        );
         assert!(!sat, "wrong closed const match twin must be z3-UNSAT");
     }
 }
@@ -20959,7 +21273,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(good), "tests/macro_range_contains_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "macro_range_contains_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "macro_range_contains_good");
         assert!(
             sat,
             "macro-owned `(1..4).contains(&2)` must be a well-sorted SAT obligation"
@@ -20980,7 +21295,8 @@ fn t() {
 "#;
     let bad_out = lift_file(&parse(bad), "tests/macro_range_contains_bad.rs");
     assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&bad_out.decls[0]), "macro_range_contains_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad_out.decls[0]), "macro_range_contains_bad");
         assert!(
             !sat,
             "macro-owned `(1..4).contains(&4)` must be z3-UNSAT; \
@@ -21353,11 +21669,12 @@ fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128
     // CONFIRM THE TEETH END-TO-END: equal sides -> SAT; unequal -> z3-UNSAT (the
     // ADT injectivity refutes a wrong fold). Mirrors the int-scalar reductions. The
     // z3 label MUST be unique per call: cargo runs these tests in parallel and
-    // `z3_verdict` writes a per-label temp file, so a shared label would race.
+    // `fast_smt_smoke_verdict` writes a per-label temp file, so a shared label would race.
     static TF_LABEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = TF_LABEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = format!("try_fold_some_pair_{n}");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), &label) {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), &label);
         assert_eq!(
             sat,
             pair.0 == pair.1,
@@ -21912,9 +22229,11 @@ fn case2_zero_byte_inlines_to_finite_conjunction_dig() {
         assert_eq!(op, "<", "the inlined atom is a `<` comparison");
         assert_eq!(rhs, 4, "the bound is < 4");
         seen.push(lhs);
-        // Each ground atom `site < 4` (site in 0..3) is TRUE -> SAT (teeth: real,
-        // not vacuous). z3_verdict: Some(true)=SAT, Some(false)=UNSAT, None=z3 absent.
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("case2_good_b{site}")) {
+        // Each ground atom `site < 4` (site in 0..3) is TRUE -> SAT (teeth:
+        // real, not vacuous). fast_smt_smoke_verdict: true=SAT, false=UNSAT; missing z3
+        // is a hard harness error.
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("case2_good_b{site}"));
             assert!(sat, "ground `{lhs} < 4` must be satisfiable (true)");
         }
     }
@@ -21949,8 +22268,9 @@ fn case2_zero_byte_bad_twin_byte_lt_3_refutes_z3_unsat() {
         ("<", 3, 3),
         "bad-twin site 3 grounds to `3 < 3` (false)"
     );
-    // z3_verdict: Some(true)=SAT, Some(false)=UNSAT, None=z3 absent.
-    if let Some(sat) = z3_verdict(&inv_json(decl), "case2_bad_twin_b3") {
+    // fast_smt_smoke_verdict: true=SAT, false=UNSAT; missing z3 is a hard harness error.
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "case2_bad_twin_b3");
         assert!(!sat, "bad-twin `3 < 3` is z3-UNSAT (refutes)");
     }
 }
@@ -22186,71 +22506,52 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
 // expected string would still "pass" — no teeth). One discrimination per Display type.
 
 /// Lift a single `#[test] fn t() { assert_eq!(<lhs>, <rhs>); }` and z3-check its inv.
-/// `Some(true)` = SAT (discharges), `Some(false)` = UNSAT (refuted), `None` = z3 absent.
-fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+/// `true` = SAT (discharges), `false` = UNSAT (refuted). Missing z3 is a hard error.
+fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> bool {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
     assert_warranted_decl_count(&out, 1);
-    let decl = single_warranted_decl(&out).clone();
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&[decl]);
-    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-    let inv = parsed[0]["inv"].clone();
-    let z3 = "/usr/local/bin/z3";
-    if !std::path::Path::new(z3).exists() {
-        return None;
-    }
-    let parts =
-        compile_asserted_json_to_parts(&inv).expect("format equality must compile to SMT-LIB");
-    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let path = std::env::temp_dir().join(format!("sugar_fmt_teeth_{label}.smt2"));
-    std::fs::write(&path, &script).unwrap();
-    let z3out = std::process::Command::new(z3)
-        .arg(&path)
-        .output()
-        .expect("run z3");
-    let stdout = String::from_utf8_lossy(&z3out.stdout);
-    assert!(
-        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
-        "format equality must be well-sorted:\n{stdout}\n--- {script}"
-    );
-    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+    fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label)
 }
 
 #[test]
 fn format_int_eq_has_teeth() {
     // Display + hex int. GOOD: correct string SAT; BAD: wrong string UNSAT.
-    if let Some(good) = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""42""#, "int_good") {
+    {
+        let good = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""42""#, "int_good");
         assert!(
             good,
             "format!(\"{{}}\", 42u32) == \"42\" must be SAT (discharges)"
         );
-        let bad = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""99""#, "int_bad").unwrap();
+        let bad = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""99""#, "int_bad");
         assert!(!bad, "a WRONG expected string must be z3-UNSAT (teeth)");
         // radix spec carries teeth too.
-        let hx = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""ff""#, "hex_good").unwrap();
+        let hx = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""ff""#, "hex_good");
         assert!(hx, "format!(\"{{:x}}\", 255u32) == \"ff\" must be SAT");
-        let hxbad = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""00""#, "hex_bad").unwrap();
+        let hxbad = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""00""#, "hex_bad");
         assert!(!hxbad, "wrong hex string must be z3-UNSAT");
     }
 }
 
 #[test]
 fn format_char_eq_has_teeth() {
-    if let Some(good) = format_eq_verdict(r#"format!("{}", 'a')"#, r#""a""#, "char_good") {
+    {
+        let good = format_eq_verdict(r#"format!("{}", 'a')"#, r#""a""#, "char_good");
         assert!(good, "format!(\"{{}}\", 'a') == \"a\" must be SAT");
-        let bad = format_eq_verdict(r#"format!("{}", 'a')"#, r#""b""#, "char_bad").unwrap();
+        let bad = format_eq_verdict(r#"format!("{}", 'a')"#, r#""b""#, "char_bad");
         assert!(!bad, "wrong char string must be z3-UNSAT (teeth)");
     }
 }
 
 #[test]
 fn format_str_eq_has_teeth() {
-    if let Some(good) = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""\"hi\"""#, "str_good") {
+    {
+        let good = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""\"hi\"""#, "str_good");
         assert!(
             good,
             "format!(\"{{:?}}\", \"hi\") == \"\\\"hi\\\"\" must be SAT"
         );
-        let bad = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""hi""#, "str_bad").unwrap();
+        let bad = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""hi""#, "str_bad");
         assert!(
             !bad,
             "Debug str must quote -> bare \"hi\" is z3-UNSAT (teeth)"
@@ -22264,45 +22565,40 @@ fn format_str_eq_has_teeth() {
 // Display -- that collapse produced the fmt/float.rs false refutations (decl[0]/[3]).
 #[test]
 fn format_debug_float_eq_has_teeth() {
-    let Some(good) = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0.0""#, "dbgf_zero")
-    else {
-        return; // z3 absent
-    };
+    let good = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0.0""#, "dbgf_zero");
     assert!(
         good,
         "format!(\"{{:?}}\", 0.0f64) == \"0.0\" must be SAT (Debug shows the decimal point)"
     );
     // BAD TWIN: the Display rendering ("0") is the WRONG Debug string -> must REFUTE.
-    let bad = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0""#, "dbgf_zero_bad").unwrap();
+    let bad = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0""#, "dbgf_zero_bad");
     assert!(
         !bad,
         "Debug 0.0 is \"0.0\", not the Display \"0\" -> wrong string z3-UNSAT (teeth)"
     );
     // exponential high cutoff: Debug of 1e16 is "1e16".
-    let cut = format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut").unwrap();
+    let cut = format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut");
     assert!(cut, "format!(\"{{:?}}\", 1e16f64) == \"1e16\" must be SAT");
     let cut_bad = format_eq_verdict(
         r#"format!("{:?}", 1e16f64)"#,
         r#""10000000000000000""#,
         "dbgf_cut_bad",
-    )
-    .unwrap();
+    );
     assert!(
         !cut_bad,
         "Debug 1e16 is exponential \"1e16\", not the Display decimal -> z3-UNSAT (teeth)"
     );
     // small-magnitude exponential: Debug of 0.00009 is "9e-5".
-    let small =
-        format_eq_verdict(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small").unwrap();
+    let small = format_eq_verdict(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small");
     assert!(
         small,
         "format!(\"{{:?}}\", 0.00009f64) == \"9e-5\" must be SAT"
     );
     // integer-valued negative: Debug of -3.0 is "-3.0".
-    let neg = format_eq_verdict(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg").unwrap();
+    let neg = format_eq_verdict(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg");
     assert!(neg, "format!(\"{{:?}}\", -3f64) == \"-3.0\" must be SAT");
     // f32 behaves identically.
-    let f32d = format_eq_verdict(r#"format!("{:?}", 0.0f32)"#, r#""0.0""#, "dbgf_f32").unwrap();
+    let f32d = format_eq_verdict(r#"format!("{:?}", 0.0f32)"#, r#""0.0""#, "dbgf_f32");
     assert!(f32d, "format!(\"{{:?}}\", 0.0f32) == \"0.0\" must be SAT");
 }
 
@@ -22310,15 +22606,13 @@ fn format_debug_float_eq_has_teeth() {
 // trailing `.0` -- distinct from Debug. Proves the two specs are not aliased to one arm.
 #[test]
 fn format_display_float_distinct_from_debug() {
-    let Some(good) = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0""#, "dispf_zero") else {
-        return; // z3 absent
-    };
+    let good = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0""#, "dispf_zero");
     assert!(
         good,
         "format!(\"{{}}\", 0.0f64) == \"0\" must be SAT (Display has no decimal point)"
     );
     // BAD TWIN: the Debug rendering ("0.0") is the WRONG Display string -> must REFUTE.
-    let bad = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0.0""#, "dispf_zero_bad").unwrap();
+    let bad = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0.0""#, "dispf_zero_bad");
     assert!(
         !bad,
         "Display 0.0 is \"0\", not the Debug \"0.0\" -> z3-UNSAT (teeth, specs are distinct)"
@@ -22327,9 +22621,10 @@ fn format_display_float_distinct_from_debug() {
 
 #[test]
 fn format_bool_eq_has_teeth() {
-    if let Some(good) = format_eq_verdict(r#"format!("{}", true)"#, r#""true""#, "bool_good") {
+    {
+        let good = format_eq_verdict(r#"format!("{}", true)"#, r#""true""#, "bool_good");
         assert!(good, "format!(\"{{}}\", true) == \"true\" must be SAT");
-        let bad = format_eq_verdict(r#"format!("{}", true)"#, r#""false""#, "bool_bad").unwrap();
+        let bad = format_eq_verdict(r#"format!("{}", true)"#, r#""false""#, "bool_bad");
         assert!(!bad, "wrong bool string must be z3-UNSAT (teeth)");
     }
 }
@@ -22338,13 +22633,13 @@ fn format_bool_eq_has_teeth() {
 fn format_float_eq_has_teeth() {
     // Float Display + precision through the format float engine (the subsumed
     // flt2dec compute path), end-to-end with teeth.
-    if let Some(good) = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good") {
+    {
+        let good = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good");
         assert!(
             good,
             "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT"
         );
-        let bad =
-            format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad").unwrap();
+        let bad = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad");
         assert!(!bad, "wrong rounded float string must be z3-UNSAT (teeth)");
     }
 }
@@ -22352,26 +22647,25 @@ fn format_float_eq_has_teeth() {
 #[test]
 fn format_concat_and_to_string_have_teeth() {
     // concat! and .to_string() also dissolve to a checkable str_const.
-    if let Some(good) = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abc""#, "concat_good") {
+    {
+        let good = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abc""#, "concat_good");
         assert!(good, "concat!(\"a\",\"b\",\"c\") == \"abc\" must be SAT");
-        let bad = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abz""#, "concat_bad").unwrap();
+        let bad = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abz""#, "concat_bad");
         assert!(!bad, "wrong concat string must be z3-UNSAT (teeth)");
-        let ts = format_eq_verdict(r#"42u8.to_string()"#, r#""42""#, "tostr_good").unwrap();
+        let ts = format_eq_verdict(r#"42u8.to_string()"#, r#""42""#, "tostr_good");
         assert!(ts, "42u8.to_string() == \"42\" must be SAT");
-        let tsbad = format_eq_verdict(r#"42u8.to_string()"#, r#""43""#, "tostr_bad").unwrap();
+        let tsbad = format_eq_verdict(r#"42u8.to_string()"#, r#""43""#, "tostr_bad");
         assert!(!tsbad, "wrong to_string must be z3-UNSAT (teeth)");
     }
 }
 
 #[test]
 fn nested_format_argument_uses_literal_string_floor() {
-    let Some(good) = format_eq_verdict(
+    let good = format_eq_verdict(
         r#"format!("{}", format!("a{}", 1))"#,
         r#""a1""#,
         "nested_format_good",
-    ) else {
-        return; // z3 absent
-    };
+    );
     assert!(
         good,
         "nested format argument must reduce inner format! to a literal string floor"
@@ -22380,8 +22674,7 @@ fn nested_format_argument_uses_literal_string_floor() {
         r#"format!("{}", format!("a{}", 1))"#,
         r#""a2""#,
         "nested_format_bad",
-    )
-    .unwrap();
+    );
     assert!(!bad, "wrong nested format string must be z3-UNSAT (teeth)");
 }
 
@@ -22391,41 +22684,35 @@ fn str_case_conversion_methods_have_teeth() {
     // `.to_uppercase()`/`.to_lowercase()` dissolve to the real str_const (recompute-
     // don't-trust), so the wrong-value twin is z3-UNSAT -- real string-theory teeth, not
     // the tautology an opaque `method:` var would satisfy.
-    if let Some(good) =
-        format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABC""#, "ascii_up_good")
     {
+        let good = format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABC""#, "ascii_up_good");
         assert!(good, "abc.to_ascii_uppercase() == ABC must be SAT");
-        let bad =
-            format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABD""#, "ascii_up_bad").unwrap();
+        let bad = format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABD""#, "ascii_up_bad");
         assert!(!bad, "wrong uppercase string must be z3-UNSAT (teeth)");
-        let lo = format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abc""#, "ascii_lo_good")
-            .unwrap();
+        let lo = format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abc""#, "ascii_lo_good");
         assert!(lo, "ABC.to_ascii_lowercase() == abc must be SAT");
-        let lobad =
-            format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abd""#, "ascii_lo_bad").unwrap();
+        let lobad = format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abd""#, "ascii_lo_bad");
         assert!(!lobad, "wrong lowercase string must be z3-UNSAT (teeth)");
         // ASCII-gated Unicode case maps equal the byte-wise mapping (version-independent).
-        let up = format_eq_verdict(r#""abc".to_uppercase()"#, r#""ABC""#, "uni_up_good").unwrap();
+        let up = format_eq_verdict(r#""abc".to_uppercase()"#, r#""ABC""#, "uni_up_good");
         assert!(up, "ASCII-receiver to_uppercase == ABC must be SAT");
     }
 }
 
 #[test]
 fn str_replace_trim_methods_have_teeth() {
-    if let Some(good) =
-        format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a/b/c""#, "replace_good")
     {
+        let good = format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a/b/c""#, "replace_good");
         assert!(good, "replace dissolves -> SAT");
-        let bad =
-            format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a-b-c""#, "replace_bad").unwrap();
+        let bad = format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a-b-c""#, "replace_bad");
         assert!(!bad, "wrong replace string must be z3-UNSAT (teeth)");
-        let tr = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi""#, "trim_good").unwrap();
+        let tr = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi""#, "trim_good");
         assert!(tr, "trim dissolves -> SAT");
-        let trbad = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi ""#, "trim_bad").unwrap();
+        let trbad = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi ""#, "trim_bad");
         assert!(!trbad, "wrong trim string must be z3-UNSAT (teeth)");
-        let rp = format_eq_verdict(r#""ab".repeat(3)"#, r#""ababab""#, "repeat_good").unwrap();
+        let rp = format_eq_verdict(r#""ab".repeat(3)"#, r#""ababab""#, "repeat_good");
         assert!(rp, "repeat dissolves -> SAT");
-        let rpbad = format_eq_verdict(r#""ab".repeat(3)"#, r#""abab""#, "repeat_bad").unwrap();
+        let rpbad = format_eq_verdict(r#""ab".repeat(3)"#, r#""abab""#, "repeat_bad");
         assert!(!rpbad, "wrong repeat string must be z3-UNSAT (teeth)");
     }
 }
@@ -22632,7 +22919,8 @@ fn t() {
         );
     }
     for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("int_arith_good_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("int_arith_good_{i}"));
             assert!(sat, "literal integer arithmetic good case {i} must be SAT");
         }
     }
@@ -22655,7 +22943,8 @@ fn t() {
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("int_arith_bad_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("int_arith_bad_{i}"));
             assert!(
                 !sat,
                 "literal integer arithmetic bad twin {i} must be UNSAT"
@@ -22686,7 +22975,8 @@ fn t() {
         "overflowing_add must lower through tuple producer components, not opaque method terms: {doc}"
     );
     for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("overflowing_int_good_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("overflowing_int_good_{i}"));
             assert!(sat, "overflowing arithmetic good case {i} must be SAT");
         }
     }
@@ -22706,7 +22996,8 @@ fn t() {
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("overflowing_int_bad_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("overflowing_int_bad_{i}"));
             assert!(!sat, "overflowing arithmetic bad twin {i} must be UNSAT");
         }
     }
@@ -22824,7 +23115,9 @@ fn t() {
         !doc.contains("method:into") && !doc.contains("method:unwrap"),
         "typed .into() should dispatch through the reduced primitive floor, not leave method residue: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_good");
         assert!(sat, "good .into() twin must be z3-SAT");
     }
 
@@ -22844,7 +23137,9 @@ fn t() {
         "bad .into() twin must still lift so the contradiction is checkable: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_bad");
         assert!(!sat, "wrong .into() expected value must be z3-UNSAT");
     }
 }
@@ -22889,7 +23184,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/bit_width_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "bit_width_good");
         assert!(
             sat,
             "0b010_1100u32.bit_width()=6 == 6 must be z3-SAT (the warrant holds)"
@@ -22909,7 +23205,8 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/bit_width_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "bit_width_bad");
         assert!(
             !sat,
             "0b010_1100u32.bit_width()=6 != 7 must be z3-UNSAT (teeth bite the bad twin)"
@@ -22945,7 +23242,8 @@ fn t() {
         !doc.contains("method:bit_width") && !doc.contains("call:NonZero"),
         "NonZero bit_width must lower to a grounded scalar fact: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_nz") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "bit_width_nz");
         assert!(
             sat,
             "NonZero(44).bit_width()=6 == NonZero(6)=6 must be z3-SAT"
@@ -22969,10 +23267,11 @@ fn t() {
         "NonZero::MAX.bit_width should ground; skips={:?}; audits={:?}; decls={:?}",
         good_out.skip_reasons, good_out.factory_audits, good_out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_out)),
-        "nonzero_max_bit_width_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_out)),
+            "nonzero_max_bit_width_good",
+        );
         assert!(sat, "u32::MAX bit_width is 32");
     }
 
@@ -22990,10 +23289,11 @@ fn t() {
         "bad bit_width twin must still lift so z3 can bite; skips={:?}",
         bad_out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "nonzero_max_bit_width_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "nonzero_max_bit_width_bad",
+        );
         assert!(!sat, "u32::MAX bit_width is not 31");
     }
 }
@@ -23014,10 +23314,11 @@ fn t() {
         "bad NonZero associated-const twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "nonzero_assoc_const_get_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "nonzero_assoc_const_get_bad",
+        );
         assert!(
             !sat,
             "NonZeroU32::MIN.get() is 1, so a claimed value of 2 must be z3-UNSAT"
@@ -23041,10 +23342,11 @@ fn t() {
         "truthful NonZero associated-const twin must lift; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "nonzero_assoc_const_get_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "nonzero_assoc_const_get_good",
+        );
         assert!(sat, "NonZeroU32::MIN.get() == 1 must be z3-SAT");
     }
 }
@@ -23095,10 +23397,11 @@ fn t() {
         "NonZero isolate_highest_one should ground; skips={:?}; audits={:?}; decls={:?}",
         good_out.skip_reasons, good_out.factory_audits, good_out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_out)),
-        "nonzero_isolate_highest_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_out)),
+            "nonzero_isolate_highest_good",
+        );
         assert!(sat, "0b0110_0100 isolates to 0b0100_0000");
     }
 
@@ -23119,10 +23422,11 @@ fn t() {
         "bad isolate_highest_one twin must still lift so z3 can bite; skips={:?}",
         bad_out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "nonzero_isolate_highest_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "nonzero_isolate_highest_bad",
+        );
         assert!(!sat, "0b0110_0100 does not isolate to 0b0010_0000");
     }
 }
@@ -23178,7 +23482,8 @@ fn t() {{
             "{label}: NonZero bit method should ground; skips={:?}; audits={:?}; decls={:?}",
             out.skip_reasons, out.factory_audits, out.decls
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: wrong-value twin must bite");
         }
     }
@@ -23206,7 +23511,8 @@ fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
             && !doc.contains("method:pow"),
         "{label}: numeric literal method should lower to concrete scalar terms: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`"
@@ -23489,7 +23795,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/from_bool_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "from_bool_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "from_bool_good");
         assert!(
             sat,
             "<u8>::from(true)=1 == 1 must be z3-SAT (the warrant holds)"
@@ -23509,7 +23816,8 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/from_bool_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "from_bool_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "from_bool_bad");
         assert!(
             !sat,
             "<u8>::from(false)=0 != 1 must be z3-UNSAT (teeth bite the bad twin)"
@@ -23535,10 +23843,11 @@ fn t() {
         "literal numeric From into 128-bit targets must ground, not EUF-collapse: {doc}"
     );
     for (idx, decl) in out.decls.iter().enumerate() {
-        if let Some(sat) = z3_verdict(
-            &inv_json(decl),
-            &format!("literal_128_numeric_from_good_{idx}"),
-        ) {
+        {
+            let sat = fast_smt_smoke_verdict(
+                &inv_json(decl),
+                &format!("literal_128_numeric_from_good_{idx}"),
+            );
             assert!(sat, "literal numeric From good twin {idx} must be z3-SAT");
         }
     }
@@ -23551,7 +23860,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(bad), "tests/literal_128_numeric_from_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_numeric_from_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "literal_128_numeric_from_bad");
         assert!(!sat, "wrong u64::MAX -> u128 From value must be z3-UNSAT");
     }
 }
@@ -23574,7 +23884,9 @@ fn t() {
         "char literal From into u128 must ground to the Unicode scalar value: {doc}"
     );
     for (idx, decl) in out.decls.iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("u128_from_char_good_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("u128_from_char_good_{idx}"));
             assert!(sat, "char -> u128 good twin {idx} must be z3-SAT");
         }
     }
@@ -23587,7 +23899,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(bad), "tests/u128_from_char_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "u128_from_char_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "u128_from_char_bad");
         assert!(!sat, "wrong char -> u128 value must be z3-UNSAT");
     }
 }
@@ -23611,10 +23924,11 @@ fn t() {
         !doc.contains("call:u128::from"),
         "literal IPv6 constructor should reduce through u128::from, not EUF-collapse: {doc}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "u128_from_ipv6_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "u128_from_ipv6_good",
+        );
         assert!(sat, "IPv6 -> u128 good twin must be z3-SAT");
     }
 
@@ -23630,7 +23944,9 @@ fn t() {
     let out = lift_file(&parse(bad), "tests/u128_from_ipv6_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     let doc = warranted_doc(&out);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "u128_from_ipv6_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "u128_from_ipv6_bad");
         assert!(!sat, "wrong IPv6 -> u128 value must be z3-UNSAT: {doc}");
     }
 }
@@ -23654,7 +23970,8 @@ fn t() {
         !doc.contains("number too large"),
         "unsuffixed full-width u128 literal should parse exactly as u128 and may const-fold afterward: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_good");
         assert!(sat, "full-width u128 literal equality must be z3-SAT");
     }
 
@@ -23669,7 +23986,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(bad), "tests/full_width_u128_hex_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_bad");
         assert!(!sat, "wrong full-width u128 literal must be z3-UNSAT");
     }
 }
@@ -24304,7 +24622,8 @@ fn t() {
         "statement macro wrapper must be owned by macro_assertion_surface, audits: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "macro-assertion-good") {
+    {
+        let sat = z3_sat_of_inv(&out.decls[0], "macro-assertion-good");
         assert!(sat, "good expanded macro assertion must be z3-SAT");
     }
 
@@ -24324,7 +24643,8 @@ fn t() {
         "bad twin must still lift the macro assertion surface; skips: {:?}; audits: {:?}",
         bad_out.skip_reasons, bad_out.factory_audits
     );
-    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "macro-assertion-bad") {
+    {
+        let sat = z3_sat_of_inv(&bad_out.decls[0], "macro-assertion-bad");
         assert!(!sat, "wrong expanded macro assertion must be z3-UNSAT");
     }
 }
@@ -24386,31 +24706,10 @@ fn opt_some_int_value(t: &Term) -> i128 {
     }
 }
 
-/// Run z3 over a lifted decl's asserted inv; returns Some(true)=sat, Some(false)=unsat,
-/// None if z3 is absent (skip-when-absent: a host-tool test must not fail without it).
-fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bool> {
-    let z3 = "/usr/local/bin/z3";
-    if !std::path::Path::new(z3).exists() {
-        return None;
-    }
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
-    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-    let inv = parsed[0]["inv"].clone();
-    let parts =
-        compile_asserted_json_to_parts(&inv).expect("expanded macro inv must compile to SMT-LIB");
-    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let path = std::env::temp_dir().join(format!("sugar_macro_term_{tag}.smt2"));
-    std::fs::write(&path, &script).expect("write smt2");
-    let out = std::process::Command::new(z3)
-        .arg(&path)
-        .output()
-        .expect("run z3");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
-        "expanded macro relation must be well-sorted for z3:\n{stdout}\n--- script ---\n{script}"
-    );
-    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+/// Run z3 over a lifted decl's asserted inv; returns true=sat, false=unsat.
+/// Missing z3 is a hard harness error because these are soundness teeth.
+fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> bool {
+    fast_smt_smoke_verdict(&inv_json(decl), tag)
 }
 
 #[test]
@@ -24453,7 +24752,8 @@ fn t() {
     );
 
     // TEETH (good twin): `5 == 5` is z3-SAT (consistent).
-    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "good") {
+    {
+        let sat = z3_sat_of_inv(&out.decls[0], "good");
         assert!(sat, "grounded `5 == 5` must be z3-SAT (consistent)");
     }
 
@@ -24474,7 +24774,8 @@ fn t() {
         5,
         "bad twin LHS must also be the grounded literal 5, got {bad_lhs:?}"
     );
-    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "bad") {
+    {
+        let sat = z3_sat_of_inv(&bad_out.decls[0], "bad");
         assert!(
             !sat,
             "grounded `5 == 6` must be z3-UNSAT (teeth: the bad twin is refuted)"
@@ -24550,7 +24851,8 @@ fn t() {
         !doc.contains("macro:"),
         "offset_of! is a compiler layout axiom, not an opaque macro term: {doc}"
     );
-    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "offset_of_good") {
+    {
+        let sat = z3_sat_of_inv(&out.decls[0], "offset_of_good");
         assert!(sat, "offset_of!(Foo, y) == 2 must be SAT");
     }
 
@@ -24579,7 +24881,8 @@ fn t() {
         ),
         "bad twin must still lower LHS to literal 2, got {bad_lhs:?}"
     );
-    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "offset_of_bad") {
+    {
+        let sat = z3_sat_of_inv(&bad_out.decls[0], "offset_of_bad");
         assert!(
             !sat,
             "offset_of!(Foo, y) == 3 must be UNSAT once the compiler axiom is literal"
@@ -24832,7 +25135,8 @@ fn assert_composed_h_bad_twin_refutes() {
             eq_json(call, call_json("+", vec![int_json(2), int_json(1)]))
         ]
     });
-    if let Some(sat) = z3_verdict(&composed, "composed_h_bad_twin") {
+    {
+        let sat = fast_smt_smoke_verdict(&composed, "composed_h_bad_twin");
         assert!(
             !sat,
             "call:h(2)==4 conjoined with h's post out==2+1 must be z3-UNSAT"
@@ -25110,7 +25414,8 @@ fn contradiction() {
         "both contradictory pins must be present (not masked)"
     );
     // The whole conjoined contract is z3-UNSAT: `+(2,1)==3 && +(2,1)==4` cannot hold.
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_contradiction") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "inline_contradiction");
         assert!(
             !sat,
             "the conjoined `+(2,1)==3 && +(2,1)==4` must be z3-UNSAT (contradiction caught)"
@@ -25303,10 +25608,11 @@ fn ip_addr_literal_property_predicates_have_teeth() {
         "literal IpAddr property should warrant; skips={:?}; audits={:?}",
         good_out.skip_reasons, good_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_out)),
-        "ip_literal_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_out)),
+            "ip_literal_good",
+        );
         assert!(sat, "127.0.0.1 is loopback");
     }
 
@@ -25325,7 +25631,9 @@ fn ip_addr_literal_property_predicates_have_teeth() {
         "bad twin must still lift so z3 can bite; skips={:?}; audits={:?}",
         bad_out.skip_reasons, bad_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&bad_out)), "ip_literal_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&bad_out)), "ip_literal_bad");
         assert!(!sat, "127.0.0.1 is not global");
     }
 }
@@ -25351,7 +25659,9 @@ fn ip_addr_associated_const_property_predicates_have_teeth() {
         good_out.skip_reasons, good_out.factory_audits
     );
     for (idx, decl) in warranted_decls(&good_out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("ip_const_property_good_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("ip_const_property_good_{idx}"));
             assert!(sat, "IP associated const good predicate {idx} must be SAT");
         }
     }
@@ -25373,7 +25683,9 @@ fn ip_addr_associated_const_property_predicates_have_teeth() {
         bad_out.skip_reasons, bad_out.factory_audits
     );
     for (idx, decl) in warranted_decls(&bad_out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("ip_const_property_bad_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("ip_const_property_bad_{idx}"));
             assert!(
                 !sat,
                 "IP associated const bad predicate {idx} must be UNSAT"
@@ -25791,10 +26103,11 @@ fn range_literal_methods_have_good_bad_teeth() {
         "bad range twin must still lift so z3 can bite; skips={:?}; audits={:?}",
         bad_out.skip_reasons, bad_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "range_literal_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "range_literal_bad",
+        );
         assert!(!sat, "literal range BAD twin must be z3-UNSAT");
     }
 }
@@ -25818,10 +26131,11 @@ fn literal_range_collect_vec_has_good_bad_teeth() {
         "{:?}",
         good_out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_out)),
-        "literal_range_collect_vec_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_out)),
+            "literal_range_collect_vec_good",
+        );
         assert!(sat, "collecting 0..5 yields [0,1,2,3,4]");
     }
 
@@ -25837,10 +26151,11 @@ fn literal_range_collect_vec_has_good_bad_teeth() {
         "bad collect twin must still lift so z3 can bite; skips={:?}; audits={:?}",
         bad_out.skip_reasons, bad_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_out)),
-        "literal_range_collect_vec_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_out)),
+            "literal_range_collect_vec_bad",
+        );
         assert!(!sat, "collecting 0..5 does not yield a trailing 9");
     }
 }
@@ -25883,10 +26198,11 @@ fn iterator_adapter_collect_vec_filter_map_and_intersperse_have_teeth() {
         good_out.skip_reasons
     );
     for (idx, decl) in warranted_decls(&good_out).iter().enumerate() {
-        if let Some(sat) = z3_verdict(
-            &inv_json(decl),
-            &format!("iterator_adapter_collect_vec_good_{idx}"),
-        ) {
+        {
+            let sat = fast_smt_smoke_verdict(
+                &inv_json(decl),
+                &format!("iterator_adapter_collect_vec_good_{idx}"),
+            );
             assert!(sat, "good iterator-adapter collect claim {idx} must be SAT");
         }
     }
@@ -25922,10 +26238,11 @@ fn iterator_adapter_collect_vec_filter_map_and_intersperse_have_teeth() {
         bad_out.skip_reasons, bad_out.factory_audits
     );
     for (idx, decl) in warranted_decls(&bad_out).iter().enumerate() {
-        if let Some(sat) = z3_verdict(
-            &inv_json(decl),
-            &format!("iterator_adapter_collect_vec_bad_{idx}"),
-        ) {
+        {
+            let sat = fast_smt_smoke_verdict(
+                &inv_json(decl),
+                &format!("iterator_adapter_collect_vec_bad_{idx}"),
+            );
             assert!(
                 !sat,
                 "bad iterator-adapter collect twin {idx} must be z3-UNSAT"
@@ -25961,10 +26278,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "{:?}",
         good_out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_out)),
-        "reversed_literal_range_terminals_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_out)),
+            "reversed_literal_range_terminals_good",
+        );
         assert!(sat, "literal range terminal/collect good row must be SAT");
     }
 
@@ -25980,10 +26298,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad reversed-range count twin must still lift; skips={:?}; audits={:?}",
         bad_count_out.skip_reasons, bad_count_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_count_out)),
-        "reversed_literal_range_count_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_count_out)),
+            "reversed_literal_range_count_bad",
+        );
         assert!(!sat, "reversed empty range has count 0, not 1");
     }
 
@@ -26000,10 +26319,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "empty literal range next() must warrant None; skips={:?}; audits={:?}",
         good_next_out.skip_reasons, good_next_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&good_next_out)),
-        "empty_literal_range_next_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&good_next_out)),
+            "empty_literal_range_next_good",
+        );
         assert!(sat, "empty literal range next() returns None");
     }
 
@@ -26020,10 +26340,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad bound empty-range is_empty twin must still lift; skips={:?}; audits={:?}",
         bad_is_empty_out.skip_reasons, bad_is_empty_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_is_empty_out)),
-        "empty_literal_range_is_empty_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_is_empty_out)),
+            "empty_literal_range_is_empty_bad",
+        );
         assert!(!sat, "bound empty literal range is_empty() is true");
     }
 
@@ -26040,10 +26361,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad empty-range next twin must still lift; skips={:?}; audits={:?}",
         bad_next_out.skip_reasons, bad_next_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_next_out)),
-        "empty_literal_range_next_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_next_out)),
+            "empty_literal_range_next_bad",
+        );
         assert!(!sat, "empty literal range next() is None, not Some(10)");
     }
 
@@ -26059,10 +26381,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad empty-range max twin must still lift; skips={:?}; audits={:?}",
         bad_max_out.skip_reasons, bad_max_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_max_out)),
-        "empty_literal_range_max_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_max_out)),
+            "empty_literal_range_max_bad",
+        );
         assert!(!sat, "empty literal range max() is None, not Some(5)");
     }
 
@@ -26078,10 +26401,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad empty-range min twin must still lift; skips={:?}; audits={:?}",
         bad_min_out.skip_reasons, bad_min_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_min_out)),
-        "empty_literal_range_min_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_min_out)),
+            "empty_literal_range_min_bad",
+        );
         assert!(!sat, "empty literal range min() is None, not Some(5)");
     }
 
@@ -26097,10 +26421,11 @@ fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
         "bad step_by collect twin must still lift; skips={:?}; audits={:?}",
         bad_collect_out.skip_reasons, bad_collect_out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&bad_collect_out)),
-        "literal_range_step_collect_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&bad_collect_out)),
+            "literal_range_step_collect_bad",
+        );
         assert!(
             !sat,
             "step_by collect yields [0,5,10,15], not a trailing 99"
@@ -26313,7 +26638,9 @@ fn peekable_non_fused_empty_literal_warrants_none_with_teeth() {
         good_out.skip_reasons
     );
     for (idx, decl) in warranted_decls(&good_out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("peekable_non_fused_good_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("peekable_non_fused_good_{idx}"));
             assert!(
                 sat,
                 "GOOD peekable None assertion must be SAT: {}",
@@ -26338,7 +26665,9 @@ fn peekable_non_fused_empty_literal_warrants_none_with_teeth() {
         bad_out.skip_reasons, bad_out.assertion_facts
     );
     for (idx, decl) in warranted_decls(&bad_out).into_iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("peekable_non_fused_bad_{idx}")) {
+        {
+            let sat =
+                fast_smt_smoke_verdict(&inv_json(decl), &format!("peekable_non_fused_bad_{idx}"));
             assert!(
                 !sat,
                 "BAD peekable None assertion must be z3-UNSAT: {}; pairs={:?}; inv={}",
@@ -27555,7 +27884,8 @@ fn t() {
         "bad range literal equality twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "range_term_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "range_term_bad");
         assert!(
             !sat,
             "0..3 is structurally different from 0..4; the lying equality must be z3-UNSAT"
@@ -27577,7 +27907,8 @@ fn t() {
         "truthful range literal equality twin must lift; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "range_term_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "range_term_good");
         assert!(sat, "0..3 == 0..3 must be z3-SAT");
     }
 }
@@ -27599,7 +27930,8 @@ fn t_field_term_bad() {
         "bad struct-field projection twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "field_term_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "field_term_bad");
         assert!(
             !sat,
             "WitnessPoint {{ x: 5 }}.x == 6 must be z3-UNSAT once the ctor field fact is derived"
@@ -27624,7 +27956,8 @@ fn t_field_term_good() {
         "truthful struct-field projection twin must lift; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "field_term_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "field_term_good");
         assert!(sat, "WitnessPoint {{ x: 5 }}.x == 5 must be z3-SAT");
     }
 }
@@ -27677,10 +28010,11 @@ fn t_literal_ip_addr_bad() {
         "bad literal IP ctor equality twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "literal_ip_addr_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "literal_ip_addr_bad",
+        );
         assert!(
             !sat,
             "Ipv4Addr::new(..., 1) == Ipv4Addr::new(..., 2) must be z3-UNSAT"
@@ -27707,10 +28041,11 @@ fn t_literal_ip_addr_good() {
         "truthful literal IP ctor equality twin must lift; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "literal_ip_addr_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "literal_ip_addr_good",
+        );
         assert!(sat, "identical literal Ipv4Addr ctors must be z3-SAT");
     }
 }
@@ -27759,10 +28094,11 @@ fn t_str_table_select_bad() {
         "bad table-select twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "str_table_select_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "str_table_select_bad",
+        );
         assert!(
             !sat,
             "[65,66,67][1&1] as char == 'C' must be z3-UNSAT because 1&1 selects 'B'"
@@ -27784,10 +28120,11 @@ fn t_str_table_select_good() {
         "truthful table-select twin must lift; skips={:?}; audits={:?}; decls={:?}",
         out.skip_reasons, out.factory_audits, out.decls
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "str_table_select_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "str_table_select_good",
+        );
         assert!(sat, "[65,66,67][1&1] as char == 'B' must be z3-SAT");
     }
 }
@@ -28567,7 +28904,8 @@ fn t() {
         "a pure point-wise inner assert over a closed literal must DIG through the catch_unwind peel: {:?}",
         out_good.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out_good.decls[0]), "catch_unwind_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out_good.decls[0]), "catch_unwind_good");
         assert!(
             sat,
             "the lifted `v == 6` (with v := 6) must be SAT under z3"
@@ -28592,7 +28930,8 @@ fn t() {
         "both inner asserts must lift through the peel so the contradiction is checkable: {:?}",
         out_bad.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out_bad.decls[0]), "catch_unwind_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out_bad.decls[0]), "catch_unwind_bad");
         assert!(
             !sat,
             "the bad twin `v == 6 AND v == 7` must be UNSAT under z3 (the anchor-flip teeth)"
@@ -28623,10 +28962,11 @@ fn t() {
         good_dump.contains("variant_of") && good_dump.contains("variant::Some"),
         "panic-locus should pin the literal Option discriminant to Some: {good_dump}"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out_good)),
-        "option_empty_vec_match_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out_good)),
+            "option_empty_vec_match_good",
+        );
         assert!(sat, "literal Some(vec![]) panic-locus fact must be SAT");
     }
 
@@ -28647,10 +28987,11 @@ fn t() {
         "bad twin must lift both the panic-locus Some fact and explicit None claim: {:?}",
         out_bad.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out_bad)),
-        "option_empty_vec_match_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out_bad)),
+            "option_empty_vec_match_bad",
+        );
         assert!(
             !sat,
             "Some(vec![]) plus an explicit None discriminant must be z3-UNSAT"
@@ -28777,7 +29118,8 @@ fn shared_borrow_of_literal_index_warrants_pointee() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_index_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "shared_index_good");
         assert!(sat, "&[10,20,30][1] == &20 -> 20 == 20 -- consistent (SAT)");
     }
 }
@@ -28801,7 +29143,8 @@ fn shared_borrow_of_literal_index_wrong_pointee_is_unsat() {
         out.assertions_lifted,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_index_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "shared_index_bad");
         assert!(
             !sat,
             "&[10,20,30][1] == &99 -> 20 == 99 is a REAL contradiction -- must be UNSAT; SAT \
@@ -28829,7 +29172,8 @@ fn shared_borrow_of_local_warrants_value() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "borrow_local_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "borrow_local_good");
         assert!(sat, "&x == &5 with x = 5 -> 5 == 5 -- consistent (SAT)");
     }
 }
@@ -28851,7 +29195,8 @@ fn shared_borrow_of_local_wrong_value_is_unsat() {
         out.assertions_lifted,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "borrow_local_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "borrow_local_bad");
         assert!(
             !sat,
             "&x == &6 with x = 5 -> 5 == 6 is a REAL contradiction -- must be UNSAT"
@@ -28904,7 +29249,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_new_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_new_good");
         assert!(
             sat,
             "MaybeUninit::new(7).assume_init() == 7 must be SAT (transparent literal)"
@@ -28926,7 +29272,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_new_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_new_bad");
         assert!(
             !sat,
             "MaybeUninit::new(7).assume_init() == 8 must be z3-UNSAT (teeth bite the bad twin)"
@@ -28950,7 +29297,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_uninit.rs");
     // If any claim was produced, it must be SAT — opaque EUF, no discrimination.
     for decl in &out.decls {
-        if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_uninit_no_teeth") {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_uninit_no_teeth");
             assert!(
                 sat,
                 "uninit().assume_init() == 8 must be SAT (opaque/no teeth): {:?}",
@@ -28981,7 +29329,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_bad");
         assert!(
             !sat,
             "MaybeUninit::<u32>::zeroed().assume_init() == 1 must be z3-UNSAT (teeth bite the bad twin)"
@@ -29001,7 +29350,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_good.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_good");
         assert!(
             sat,
             "MaybeUninit::<u32>::zeroed().assume_init() == 0 must be SAT (transparent zero)"
@@ -29023,7 +29373,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bool_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_bad");
         assert!(
             !sat,
             "MaybeUninit::<bool>::zeroed().assume_init() == true must be z3-UNSAT (all-zeros bool is false)"
@@ -29043,7 +29394,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bool_good.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_good");
         assert!(
             sat,
             "MaybeUninit::<bool>::zeroed().assume_init() == false must be SAT"
@@ -29089,7 +29441,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/mem_zeroed_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "mem_zeroed_u32_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "mem_zeroed_u32_bad");
         assert!(
             !sat,
             "core::mem::zeroed::<u32>() == 1 must be z3-UNSAT (teeth bite the bad twin)"
@@ -29109,7 +29462,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/mem_zeroed_good.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "mem_zeroed_u32_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "mem_zeroed_u32_good");
         assert!(
             sat,
             "core::mem::zeroed::<u32>() == 0 must be SAT (transparent zero)"
@@ -29138,7 +29492,8 @@ fn assert_decl_verdict(src: &str, want_sat: bool, label: &str) {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), label) {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`"
@@ -29530,7 +29885,8 @@ fn t() {
             "{label}: literal chunk/window zip must lower to literal floor: {:?}",
             decl.inv
         );
-        if let Some(sat) = z3_verdict(&inv_json(decl), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), label);
             assert_eq!(sat, want_sat, "{label}: expected sat={want_sat}");
         }
     }
@@ -29602,7 +29958,8 @@ fn literal_slice_chunk_window_count_methods_ground_with_teeth() {
                 "{label}_{suffix}: count must lower to literal usize floor: {:?}",
                 decl.inv
             );
-            if let Some(sat) = z3_verdict(&inv_json(decl), &format!("{label}_{suffix}")) {
+            {
+                let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("{label}_{suffix}"));
                 assert_eq!(sat, want_sat, "{label}_{suffix}: expected sat={want_sat}");
             }
         }
@@ -29667,7 +30024,8 @@ fn vec_macro_runtime_element_stays_symbolic() {
         &parse("#[test] fn t() { assert_eq!(vec![compute(), 2, 3][0], 99); }"),
         "coretests/collection/runtime_elem.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "vec_runtime_elem") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "vec_runtime_elem");
         assert!(
             sat,
             "a runtime element must stay symbolic (SAT), never fabricated into teeth"
@@ -29705,7 +30063,8 @@ fn iter_reduce_over_literal_digs_with_teeth() {
         "`.reduce()` over [1,2,3] must ground to opt:some(6): {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_reduce_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "iter_reduce_good");
         assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
     }
     // TEETH: a WRONG expected value (7) must be z3-UNSAT (ADT injectivity: 6 ≠ 7).
@@ -29714,7 +30073,8 @@ fn iter_reduce_over_literal_digs_with_teeth() {
         "Some(7i32)",
         "tests/iter_reduce_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_reduce_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "iter_reduce_bad");
         assert!(
             !sat,
             "opt:some(6)==opt:some(7) -- real contradiction -- must be z3-UNSAT"
@@ -29737,7 +30097,8 @@ fn iter_reduce_empty_source_is_none() {
         "`.reduce()` over empty source must ground to opt:none: {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_reduce_empty") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "iter_reduce_empty");
         assert!(sat, "opt:none==opt:none must be SAT");
     }
     // TEETH: `opt:none == opt:some(0)` must be UNSAT (ADT distinctness).
@@ -29746,7 +30107,8 @@ fn iter_reduce_empty_source_is_none() {
         "Some(0i32)",
         "tests/iter_reduce_empty_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_reduce_empty_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "iter_reduce_empty_bad");
         assert!(
             !sat,
             "opt:none==opt:some(0) -- None vs Some is always UNSAT (ADT distinctness)"
@@ -29783,7 +30145,8 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
         "`.scan(..).last()` must ground to opt:some(6): {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_scan_last_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "iter_scan_last_good");
         assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
     }
     // TEETH: wrong expected (7) must be z3-UNSAT.
@@ -29792,7 +30155,8 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
         "Some(7i32)",
         "tests/iter_scan_last_bad.rs",
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_scan_last_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "iter_scan_last_bad");
         assert!(
             !sat,
             "opt:some(6)==opt:some(7) -- real contradiction -- must be z3-UNSAT"
@@ -29815,7 +30179,8 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         "`.scan(..).sum()` must ground to the exact total 10: {:?}",
         good.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_scan_sum_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&good), "iter_scan_sum_good");
         assert!(sat, "10==10 must be SAT");
     }
     // TEETH: wrong total (11) must be z3-UNSAT.
@@ -29830,7 +30195,8 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         "the bad twin must carry the REAL total 10 against the wrong 11 (refutable): {:?}",
         bad.inv
     );
-    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_scan_sum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&bad), "iter_scan_sum_bad");
         assert!(!sat, "10==11 -- real contradiction -- must be z3-UNSAT");
     }
 }
@@ -29865,7 +30231,8 @@ fn shared_borrow_deref_read_warrants_value() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_deref_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "shared_deref_good");
         assert!(sat, "*r == 5 with x = 5 -> 5 == 5 -- consistent (SAT)");
     }
 }
@@ -29888,7 +30255,8 @@ fn shared_borrow_deref_read_wrong_value_is_unsat() {
         "bad twin must lift: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_deref_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "shared_deref_bad");
         assert!(
             !sat,
             "*r == 6 with x = 5 -> 5 == 6 is a REAL contradiction -- must be UNSAT; SAT means \
@@ -29912,7 +30280,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/nonzero_new_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_get_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "nonzero_new_get_bad");
         assert!(
             !sat,
             "NonZeroU32::new(5).unwrap().get() == 6 must be z3-UNSAT (teeth bite the bad twin)"
@@ -29935,7 +30304,8 @@ fn deref_of_shared_borrow_of_index_warrants_pointee() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "star_amp_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "star_amp_good");
         assert!(sat, "*&[10,20,30][1] == 20 -> 20 == 20 (SAT)");
     }
     let bad = r#"
@@ -29943,7 +30313,8 @@ fn deref_of_shared_borrow_of_index_warrants_pointee() {
         fn t_star_amp_bad() { assert!(*&[10, 20, 30][1] == 99); }
     "#;
     let out = lift_file(&parse(bad), "coretests/borrow/star_amp_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "star_amp_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "star_amp_bad");
         assert!(!sat, "*&[10,20,30][1] == 99 -> 20 == 99 must be UNSAT");
     }
 }
@@ -29994,7 +30365,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/nonzero_new_good.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_get_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "nonzero_new_get_good");
         assert!(
             sat,
             "NonZeroU32::new(5).unwrap().get() == 5 must be SAT (transparent literal)"
@@ -30014,7 +30386,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/nonzero_new_zero_none_bad.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_zero_is_some_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "nonzero_new_zero_is_some_bad");
         assert!(
             !sat,
             "NonZeroU32::new(0).is_some() must be z3-UNSAT (zero → None, not Some)"
@@ -30034,7 +30407,8 @@ fn t() {
     let out = lift_file(&parse(src), "tests/nonzero_new_zero_none_good.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_zero_is_none_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "nonzero_new_zero_is_none_good");
         assert!(
             sat,
             "NonZeroU32::new(0).is_none() must be SAT (zero → None)"
@@ -30060,7 +30434,8 @@ fn t() {
     // Runtime arg must produce 0 warranted claims (refused/backstopped) OR
     // all claims must be SAT (opaque EUF — no discrimination, no false teeth).
     for decl in &out.decls {
-        if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_runtime_no_teeth") {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), "nonzero_new_runtime_no_teeth");
             assert!(
                 sat,
                 "NonZeroU32::new(opaque).unwrap().get() == 99 must be SAT (no teeth): {:?}",
@@ -30174,7 +30549,8 @@ fn literal_ascii_char_range_count_warrants_with_bad_twin() {
         "tests/char_range_count_bad.rs",
     );
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "char_range_count_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "char_range_count_bad");
         assert!(!sat, "wrong ASCII char-range count must be z3-UNSAT");
     }
 }
@@ -30289,7 +30665,8 @@ fn direct_mut_local_still_warrants_post_value() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "direct_mut_post") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "direct_mut_post");
         assert!(sat, "x += 1 then x == 6 -> 6 == 6 (SAT)");
     }
 }
@@ -30313,7 +30690,9 @@ fn cell_set_get_literal_pin_warrants_final_value() {
         "literal-pinned Cell set/get should warrant, not refuse: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_good");
         assert!(sat, "Cell::set(20) then get() == 20 should be z3-SAT");
     }
 }
@@ -30332,7 +30711,9 @@ fn cell_set_get_bad_twin_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/cell/cell_set_get_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_bad");
         assert!(!sat, "wrong final Cell value must be z3-UNSAT");
     }
 }
@@ -30356,10 +30737,11 @@ fn refcell_borrow_mut_literal_pin_warrants_final_value() {
         "literal-pinned RefCell borrow_mut/borrow should warrant, not refuse: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "refcell_borrow_mut_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "refcell_borrow_mut_good",
+        );
         assert!(
             sat,
             "RefCell borrow_mut write then borrow read should be z3-SAT"
@@ -30381,10 +30763,11 @@ fn refcell_borrow_mut_bad_twin_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/cell/refcell_borrow_mut_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "refcell_borrow_mut_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "refcell_borrow_mut_bad",
+        );
         assert!(!sat, "wrong final RefCell value must be z3-UNSAT");
     }
 }
@@ -30456,7 +30839,9 @@ fn disjoint_mut_alias_assign_ops_warrant_replayed_vector() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_good");
         assert!(
             sat,
             "[1,2,3] with disjoint alias writes should prove [101,2,13]"
@@ -30482,7 +30867,9 @@ fn disjoint_mut_alias_assign_ops_bad_twin_is_unsat() {
         "bad twin must still lift so z3 can reject the wrong replayed vector: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_bad");
         assert!(!sat, "wrong element 14 versus replayed 13 must be z3-UNSAT");
     }
 }
@@ -30508,10 +30895,11 @@ fn disjoint_mut_slice_alias_assign_ops_warrant_replayed_vector() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "disjoint_mut_slice_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "disjoint_mut_slice_good",
+        );
         assert!(
             sat,
             "[1,2,3] with disjoint slice writes should prove [11,102,1003]"
@@ -30541,10 +30929,11 @@ fn disjoint_mut_slice_alias_assign_ops_bad_twin_is_unsat() {
         "bad slice twin must still lift so z3 can reject the wrong replayed vector: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "disjoint_mut_slice_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "disjoint_mut_slice_bad",
+        );
         assert!(
             !sat,
             "wrong element 1004 versus replayed 1003 must be z3-UNSAT"
@@ -30573,7 +30962,8 @@ fn unrelated_alias_mutation_does_not_refuse_other_locals() {
         out.assertions_lifted,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unrelated_x") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "unrelated_x");
         assert!(
             sat,
             "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)"
@@ -30704,7 +31094,8 @@ fn slice_coercion_cast_warrants_array_value() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "slice_coerce_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "slice_coerce_good");
         assert!(
             sat,
             "&[1,2,3] as &[_] == &[1,2,3] -> the array equals itself (SAT)"
@@ -30768,7 +31159,8 @@ fn kit_slice_coercion_distinct_arrays_refute_with_literal_teeth() {
         !doc.contains("literal:Array("),
         "literal array equality should decompose to scalar teeth, not aggregate vars: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv, "kit_slice_bad_twin_pos") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv, "kit_slice_bad_twin_pos");
         assert!(!sat, "distinct literal arrays must be z3-UNSAT");
     }
 }
@@ -30800,7 +31192,8 @@ fn array_try_from_unwrap_over_literal_slice_lifts_with_bad_twin() {
         out.skip_reasons
     );
     for (i, decl) in out.decls.iter().enumerate() {
-        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("array_try_from_good_{i}")) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(decl), &format!("array_try_from_good_{i}"));
             assert!(sat, "good array try_from literal equality must be SAT");
         }
     }
@@ -30818,7 +31211,9 @@ fn array_try_from_unwrap_over_literal_slice_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(bad), "coretests/array/try_from_literal_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "array_try_from_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "array_try_from_bad");
         assert!(
             !sat,
             "wrong expected array for literal-backed try_from must be z3-UNSAT"
@@ -30904,7 +31299,9 @@ fn bound_literal_array_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(good), "coretests/array/bound_literal_array_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_good");
         assert!(sat, "equal bound literal arrays must be z3-SAT");
     }
 
@@ -30918,7 +31315,8 @@ fn bound_literal_array_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(bad), "coretests/array/bound_literal_array_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_bad");
         assert!(!sat, "wrong bound literal array must be z3-UNSAT");
     }
 }
@@ -30935,7 +31333,8 @@ fn struct_literal_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(good), "coretests/struct/literal_struct_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "struct_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "struct_good");
         assert!(sat, "equal text-determined struct literals must be z3-SAT");
     }
 
@@ -30949,7 +31348,8 @@ fn struct_literal_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(bad), "coretests/struct/literal_struct_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "struct_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "struct_bad");
         assert!(
             !sat,
             "wrong text-determined struct literal must be z3-UNSAT"
@@ -30968,7 +31368,9 @@ fn result_array_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(good), "coretests/result/result_array_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "result_array_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "result_array_good");
         assert!(sat, "equal text-determined Result arrays must be z3-SAT");
     }
 
@@ -30981,7 +31383,9 @@ fn result_array_equality_lifts_with_bad_twin() {
     "#;
     let out = lift_file(&parse(bad), "coretests/result/result_array_bad.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "result_array_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "result_array_bad");
         assert!(!sat, "wrong text-determined Result array must be z3-UNSAT");
     }
 }
@@ -31095,7 +31499,8 @@ fn closure_read_only_capture_does_not_over_refuse() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "closure_readonly") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "closure_readonly");
         assert!(
             sat,
             "x == 5 holds; a read-only closure capture must not gate `x` (SAT)"
@@ -31123,7 +31528,8 @@ fn straight_line_mutation_still_warrants_after_counter_gate() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "sl_counter_gate") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "sl_counter_gate");
         assert!(sat, "x += 1 then x == 6 -> 6 == 6 (SAT)");
     }
 }
@@ -31155,7 +31561,8 @@ fn literal_for_loop_scalar_accumulator_post_read_warrants() {
         dump.contains("\"value\":6") && !dump.contains("temporally unstable"),
         "the post-loop read must carry the folded final accumulator value: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "for_accum_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "for_accum_good");
         assert!(sat, "literal loop sum 1+2+3 == 6 must be z3-SAT");
     }
 }
@@ -31179,7 +31586,8 @@ fn literal_for_loop_scalar_accumulator_bad_twin_is_unsat() {
         dump.contains("\"value\":6") && dump.contains("\"value\":7"),
         "the bad twin must carry the real folded 6 against the wrong 7: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "for_accum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "for_accum_bad");
         assert!(!sat, "literal loop sum 1+2+3 == 7 must be z3-UNSAT");
     }
 }
@@ -31204,7 +31612,8 @@ fn literal_bound_range_for_loop_scalar_accumulator_bad_twin_is_unsat() {
         dump.contains("\"value\":6") && dump.contains("\"value\":7"),
         "the literal-bound range twin must carry the real folded 6 against wrong 7: {dump}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "for_range_accum_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "for_range_accum_bad");
         assert!(
             !sat,
             "literal-bound range loop sum 0+1+2+3 == 7 must be z3-UNSAT"
@@ -31235,10 +31644,11 @@ fn direct_literal_range_for_loop_scalar_accumulator_has_teeth() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "for_direct_range_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "for_direct_range_good",
+        );
         assert!(sat, "literal range loop sum 0+1+2+3+4 == 10 must be z3-SAT");
     }
 
@@ -31253,10 +31663,11 @@ fn direct_literal_range_for_loop_scalar_accumulator_has_teeth() {
         }
     "#;
     let out = lift_file(&parse(bad), "coretests/loop/for_direct_range_accum_bad.rs");
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "for_direct_range_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "for_direct_range_bad",
+        );
         assert!(
             !sat,
             "literal range loop sum 0+1+2+3+4 == 11 must be z3-UNSAT"
@@ -31292,7 +31703,8 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
         complete_eq_int_pairs(decl),
         vec![(1, 1), (2, 2), (3, 3), (4, 4)]
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "for_body_good");
         assert!(sat, "point-wise literal body assert must be z3-SAT");
     }
 
@@ -31310,7 +31722,8 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
         complete_eq_int_pairs(decl),
         vec![(1, 2), (2, 3), (3, 4), (4, 5)]
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "for_body_bad");
         assert!(!sat, "bad point-wise literal body assert must be z3-UNSAT");
     }
 }
@@ -31374,10 +31787,11 @@ fn const_range_for_loop_index_assignment_replays_post_loop_reads() {
         "const range index assignment loop must not stay unresolved: {:?}",
         out.factory_audits
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "const_range_for_loop_index_assignment_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "const_range_for_loop_index_assignment_good",
+        );
         assert!(sat, "correct replayed array values must be z3-SAT");
     }
 
@@ -31394,10 +31808,11 @@ fn const_range_for_loop_index_assignment_replays_post_loop_reads() {
     "#;
     let out = lift_file(&parse(bad), "coretests/tests/slice_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "const_range_for_loop_index_assignment_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "const_range_for_loop_index_assignment_bad",
+        );
         assert!(!sat, "wrong replayed array value twin must be z3-UNSAT");
     }
 }
@@ -31443,10 +31858,11 @@ fn nested_alloc_layout_literal_range_loop_replays_pointwise_with_teeth() {
         "literal nested range loop must not remain a for-context over-claim: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "alloc_layout_nested_range_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "alloc_layout_nested_range_good",
+        );
         assert!(
             sat,
             "layout edge facts over literal nested ranges must be z3-SAT"
@@ -31476,7 +31892,8 @@ fn nested_alloc_layout_literal_range_loop_replays_pointwise_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "tests/alloc.rs");
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "alloc_layout_nested_range_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "alloc_layout_nested_range_bad");
         assert!(
             !sat,
             "wrong layout edge expectation over literal nested ranges must be z3-UNSAT"
@@ -31603,7 +32020,9 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
         complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(0, 0)]
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_good");
         assert!(sat, "fully drained iterator len == 0 should be SAT");
     }
 
@@ -31622,7 +32041,8 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
         complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(0, 1)]
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_bad");
         assert!(!sat, "wrong exhausted iterator len must be z3-UNSAT");
     }
 
@@ -31704,10 +32124,11 @@ fn exhausted_literal_iterator_block_slice_index_has_teeth() {
         vec![(0, 0)],
         "fully exhausted literal iterator block should index the empty tail slice"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "exhausted_block_slice_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "exhausted_block_slice_good",
+        );
         assert!(sat, "empty tail slice length == 0 should be SAT");
     }
 
@@ -31728,10 +32149,11 @@ fn exhausted_literal_iterator_block_slice_index_has_teeth() {
         vec![(0, 1)],
         "bad twin must carry the real empty-tail length against the wrong literal"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "exhausted_block_slice_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "exhausted_block_slice_bad",
+        );
         assert!(!sat, "empty tail slice length == 1 should be z3-UNSAT");
     }
 }
@@ -31944,7 +32366,8 @@ fn chained_next_next_len_over_literal_iterator_grounds_remaining_len() {
         }
         other => panic!("expected grounded equality, got {other:?}"),
     }
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len");
         assert!(
             sat,
             "after two next() calls over [1, 2], remaining len is 0"
@@ -31965,7 +32388,9 @@ fn chained_next_next_len_bad_twin_refutes() {
         "coretests/iter/adapters/chained_next_next_len_bad.rs",
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len_bad");
         assert!(!sat, "wrong remaining len must be z3-UNSAT");
     }
 }
@@ -32162,10 +32587,11 @@ fn consumed_iterator_advance_by_then_next_declines() {
         out.skip_reasons,
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "advance_by_then_next",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "advance_by_then_next",
+        );
         assert!(
             sat,
             "advance_by(1) should rewrite the iterator receiver before next()"
@@ -32192,10 +32618,13 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
         out.skip_reasons
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_first") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_first");
         assert!(sat, "first must snapshot the pre-consumption next() value");
     }
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len");
         assert!(
             sat,
             "it.len() must read the post-consumption iterator state"
@@ -32219,10 +32648,11 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
         vec![(3, 3)],
         "UFCS IntoIterator local must resolve to the post-next assigner"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "ufcs_into_iter_count_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "ufcs_into_iter_count_good",
+        );
         assert!(sat, "post-consumption UFCS iterator count should be 3");
     }
 
@@ -32241,10 +32671,11 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
         vec![(10, 10)],
         "let-bound next().unwrap() good twin must carry the first item"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bound_next_unwrap_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bound_next_unwrap_good",
+        );
         assert!(
             sat,
             "first next().unwrap() over a literal iterator should be 10"
@@ -32266,7 +32697,9 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_len_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len_bad");
         assert!(
             !sat,
             "wrong post-consumption remaining length must be z3-UNSAT"
@@ -32290,10 +32723,11 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
         vec![(3, 4)],
         "UFCS IntoIterator bad twin must carry the real remaining count"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "ufcs_into_iter_count_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "ufcs_into_iter_count_bad",
+        );
         assert!(
             !sat,
             "wrong post-consumption UFCS iterator count must be z3-UNSAT"
@@ -32318,10 +32752,11 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
         vec![(10, 11)],
         "let-bound next().unwrap() bad twin must carry the real first item"
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "bound_next_unwrap_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "bound_next_unwrap_bad",
+        );
         assert!(
             !sat,
             "wrong next().unwrap() value over a literal iterator must be z3-UNSAT"
@@ -32361,7 +32796,8 @@ fn consumed_iterator_fold_after_next_digs_remaining_sequence() {
         "consumed-local fold is exact temporal sugar here, not an effect refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_fold_body") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_fold_body");
         assert!(
             sat,
             "fold body over the post-next remaining sequence must be SAT"
@@ -32400,7 +32836,8 @@ fn consumed_iterator_rfold_after_next_back_digs_remaining_sequence() {
         "consumed-local rfold is exact temporal sugar here, not an effect refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_rfold_body") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_rfold_body");
         assert!(
             sat,
             "rfold body over the post-next_back remaining sequence must be SAT"
@@ -32426,7 +32863,8 @@ fn temporal_fold_recurrence_chain_is_load_bearing_for_accumulator_claims() {
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
 
-    if let Some(sat) = z3_verdict(&inv_json(decl), "fold_chain_with_recurrence_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "fold_chain_with_recurrence_bad");
         assert!(
             !sat,
             "the real recurrence chain makes the second acc == 0 assertion UNSAT"
@@ -32434,7 +32872,8 @@ fn temporal_fold_recurrence_chain_is_load_bearing_for_accumulator_claims() {
     }
 
     let recurrence_free = inv_json_without_fold_recurrences(decl);
-    if let Some(sat) = z3_verdict(&recurrence_free, "fold_chain_recurrence_free_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&recurrence_free, "fold_chain_recurrence_free_bad");
         assert!(
             sat,
             "without the threaded acc_k facts, the bad accumulator claim is no longer refuted"
@@ -32473,10 +32912,11 @@ fn temporal_adapter_pipeline_filter_take_fold_dispatches_to_floors() {
             "pipeline must dispatch through {owner}; selected={selected:?}"
         );
     }
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "filter_take_fold_pipeline",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "filter_take_fold_pipeline",
+        );
         assert!(sat, "filter -> take -> fold pipeline must be SAT");
     }
 }
@@ -32495,7 +32935,9 @@ fn temporal_filter_data_dependent_count_bad_twin_refutes() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/adapters/filter_count_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "filter_count_bad") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "filter_count_bad");
         assert!(
             !sat,
             "the real filter floor measures two output ticks, so count == 3 must refute"
@@ -32519,10 +32961,11 @@ fn rfold_enters_fold_floor_in_reverse_order_for_non_commutative_accumulators() {
         "coretests/iter/adapters/rfold_non_commutative_order.rs",
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "rfold_non_commutative_order",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "rfold_non_commutative_order",
+        );
         assert!(
             sat,
             "rfold must reverse the element sequence before the fold floor threads a non-commutative accumulator"
@@ -32562,10 +33005,11 @@ fn consumed_flatten_fold_after_next_back_digs_remaining_sequence() {
         "literal-source consumed flatten fold should warrant exactly: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "flatten_fold_after_next_back_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "flatten_fold_after_next_back_good",
+        );
         assert!(sat, "remaining flattened fold sequence should be SAT");
     }
 }
@@ -32597,10 +33041,11 @@ fn consumed_flatten_fold_after_next_back_bad_twin_refutes() {
         "bad twin must carry the real consumed flattened fold sequence: {:?}",
         single_warranted_decl(&out).inv
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "flatten_fold_after_next_back_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "flatten_fold_after_next_back_bad",
+        );
         assert!(
             !sat,
             "wrong middle element in consumed flattened fold must be z3-UNSAT"
@@ -32640,10 +33085,11 @@ fn consumed_flatten_rfold_after_next_back_digs_remaining_sequence() {
         "literal-source consumed flatten rfold should warrant exactly: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "flatten_rfold_after_next_back_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "flatten_rfold_after_next_back_good",
+        );
         assert!(sat, "remaining flattened rfold sequence should be SAT");
     }
 }
@@ -32675,10 +33121,11 @@ fn consumed_flatten_rfold_after_next_back_bad_twin_refutes() {
         "bad twin must carry the real consumed flattened rfold sequence: {:?}",
         single_warranted_decl(&out).inv
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "flatten_rfold_after_next_back_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "flatten_rfold_after_next_back_bad",
+        );
         assert!(
             !sat,
             "wrong middle element in consumed flattened rfold must be z3-UNSAT"
@@ -32713,10 +33160,11 @@ fn consumed_iterator_position_after_next_digs_remaining_index() {
         "literal-source post-consumption position is exact temporal sugar, not support/refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "position_after_next_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "position_after_next_good",
+        );
         assert!(sat, "post-next position should ground to Some(2)");
     }
 }
@@ -32743,10 +33191,11 @@ fn consumed_iterator_position_after_next_bad_twin_refutes() {
         "bad twin must carry the real post-consumption position: {:?}",
         single_warranted_decl(&out).inv
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "position_after_next_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "position_after_next_bad",
+        );
         assert!(
             !sat,
             "wrong post-next position must be z3-UNSAT, not undecided/support"
@@ -32781,10 +33230,11 @@ fn consumed_filter_next_back_after_next_back_digs_remaining_tail() {
         "literal-source post-consumption next_back is exact temporal sugar: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "filter_next_back_after_next_back_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "filter_next_back_after_next_back_good",
+        );
         assert!(sat, "post-next_back filtered tail should ground to 4");
     }
 }
@@ -32811,10 +33261,11 @@ fn consumed_filter_next_back_after_next_back_bad_twin_refutes() {
         "bad twin must carry the real post-consumption filtered tail: {:?}",
         single_warranted_decl(&out).inv
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "filter_next_back_after_next_back_bad",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "filter_next_back_after_next_back_bad",
+        );
         assert!(!sat, "wrong post-next_back filtered tail must be z3-UNSAT");
     }
 }
@@ -32848,10 +33299,11 @@ fn consumed_filter_next_back_exhausted_digs_none() {
         "exhausted literal-source filtered iterator should ground to None, not refuse: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "filter_next_back_exhausted_good",
-    ) {
+    {
+        let sat = fast_smt_smoke_verdict(
+            &inv_json(single_warranted_decl(&out)),
+            "filter_next_back_exhausted_good",
+        );
         assert!(sat, "exhausted next_back should ground to None");
     }
 }
@@ -32881,7 +33333,8 @@ fn non_consumed_iterator_fold_still_warrants_body_assertion() {
         out.assertions_refused,
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fresh_fold_body") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "fresh_fold_body");
         assert!(sat, "fresh literal fold body assertions hold under z3");
     }
 }
@@ -32974,7 +33427,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/tuple_decomp_id_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_good");
         assert!(
             sat,
             "the exact componentwise decode (= 13176795 ..)(= -22 ..)(= 1 ..) must be z3-SAT"
@@ -32995,7 +33449,8 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/tuple_decomp_id_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_bad");
         assert!(
             !sat,
             "a wrong mantissa component 13176796 != 13176795 must be z3-UNSAT (the decomposed teeth bite)"
@@ -33013,7 +33468,8 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/tuple_decomp_id_sign.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_sign") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_sign");
         assert!(
             !sat,
             "a wrong sign component -1 != 1 must be z3-UNSAT (every component is teethed)"
@@ -33102,7 +33558,8 @@ fn t() {
         "bad ldexp twin must still lift so z3 can refute it: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_ldexp_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_ldexp_bad");
         assert!(
             !sat,
             "ldexp_f32(1.0, 100).integer_decode() has exponent 77, not 76"
@@ -33153,7 +33610,9 @@ fn t() {
         complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(1, 1), (2, 2)]
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "tuple_plain_good") {
+    {
+        let sat =
+            fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), "tuple_plain_good");
         assert!(sat, "literal tuple equality good twin must be SAT");
     }
 }
@@ -33217,7 +33676,8 @@ fn tuple_literal_projection_and_equality_bad_twins_refute() {
             !doc.contains("literal:Tuple(") && !doc.contains("field:0") && !doc.contains("field:1"),
             "{label}: tuple literal method must compose to scalar floor: {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch for {assertion}");
         }
     }
@@ -33293,7 +33753,8 @@ fn slice_tuple_pattern_destructure_literal_sources_have_teeth() {
                 "{label}: destructured literal binding should include scalar floor {want_pair:?}; got {got_pairs:?}"
             );
         }
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(single_warranted_decl(&out)), label);
             assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
         }
     }
@@ -33394,7 +33855,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/range_contains_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_good") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "range_contains_good");
         assert!(
             sat,
             "(1..5).contains(&3) = true must be z3-SAT (the warrant holds)"
@@ -33413,7 +33875,8 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/range_contains_bad.rs");
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_bad") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "range_contains_bad");
         assert!(
             !sat,
             "(1..5).contains(&5) = false (5 is the exclusive end) -> assert!(false) must be z3-UNSAT (teeth bite)"
@@ -33433,7 +33896,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/range_contains_incl.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_incl") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(&out.decls[0]), "range_contains_incl");
         assert!(
             sat,
             "(1..=5).contains(&5) = true (inclusive end) must be z3-SAT"
@@ -33536,7 +34000,8 @@ fn range_inclusive_start_end_bad_twins_are_unsat() {
             "{lhs} == {rhs} must ground before the bad-twin z3 check: {:?}",
             decl.inv
         );
-        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+        {
+            let sat = fast_smt_smoke_verdict(&inv_json(&decl), label);
             assert!(
                 !sat,
                 "{lhs} == {rhs} is the wrong endpoint claim and must be z3-UNSAT"
@@ -34106,7 +34571,8 @@ fn singleton_double_ended_filter_multi_advance_has_literal_teeth() {
         4,
         "multi-advance sequence should emit one grouped four-claim contract: {decl:?}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(decl), "singleton_filter_multi") {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), "singleton_filter_multi");
         assert!(sat, "multi-advance grouped contract must be SAT: {decl:?}");
     }
 }
@@ -34176,7 +34642,8 @@ fn assert_singleton_decl_verdict(src: &str, want_sat: bool, label: &str) {
     );
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), label) {
+    {
+        let sat = fast_smt_smoke_verdict(&inv_json(decl), label);
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`; decl={decl:?}"
