@@ -35,7 +35,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term(
         "binop",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_binop_good() {
+                    assert_eq!(2 + 3 * 4, 14);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_binop_bad() {
+                    assert_eq!(2 + 3 * 4, 15);
+                }
+            "#,
+        ),
         recognize,
     );
 

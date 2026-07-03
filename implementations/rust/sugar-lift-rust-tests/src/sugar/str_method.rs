@@ -35,7 +35,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "str_method",
         &["iter_terminal", "is_empty", "len"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_str_method_good() {
+                    assert_eq!(" hi ".trim(), "hi");
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_str_method_bad() {
+                    assert_eq!(" hi ".trim(), " hi ");
+                }
+            "#,
+        ),
         recognize,
     );
 

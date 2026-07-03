@@ -27,7 +27,32 @@ use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
     "offset_of",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[repr(C)]
+            struct WitnessOffsetOf {
+                a: u8,
+                b: u32,
+            }
+
+            #[test]
+            fn t_offset_of_good() {
+                assert_eq!(std::mem::offset_of!(WitnessOffsetOf, b), 4);
+            }
+        "#,
+        r#"
+            #[repr(C)]
+            struct WitnessOffsetOf {
+                a: u8,
+                b: u32,
+            }
+
+            #[test]
+            fn t_offset_of_bad() {
+                assert_eq!(std::mem::offset_of!(WitnessOffsetOf, b), 0);
+            }
+        "#,
+    ),
     recognize,
 );
 

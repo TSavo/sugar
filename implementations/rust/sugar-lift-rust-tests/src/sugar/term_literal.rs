@@ -57,7 +57,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "term_literal",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_term_literal_good() {
+                    assert_eq!(42, 42);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_term_literal_bad() {
+                    assert_eq!(42, 43);
+                }
+            "#,
+        ),
         recognize,
     );
 

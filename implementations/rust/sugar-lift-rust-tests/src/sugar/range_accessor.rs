@@ -22,7 +22,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "range_accessor",
         &["method"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_range_accessor_good() {
+                    assert_eq!(*(0..=10).start(), 0);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_range_accessor_bad() {
+                    assert_eq!(*(0..=10).start(), 1);
+                }
+            "#,
+        ),
         recognize,
     );
 

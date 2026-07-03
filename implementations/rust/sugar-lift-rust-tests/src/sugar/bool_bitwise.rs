@@ -15,7 +15,20 @@ use sugar_ir_symbolic::{and_, or_, Formula};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_bool_bitwise",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_constraint_bool_bitwise_good() {
+                assert!(true & true);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_constraint_bool_bitwise_bad() {
+                assert!(true & false);
+            }
+        "#,
+    ),
     recognize,
 );
 

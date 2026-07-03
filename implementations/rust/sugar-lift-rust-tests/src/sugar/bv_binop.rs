@@ -26,7 +26,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "bv_binop",
         &["binop"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_bv_binop_good() {
+                    assert_eq!(0b1010u32 & 0b0110u32, 0b0010u32);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_bv_binop_bad() {
+                    assert_eq!(0b1010u32 & 0b0110u32, 0b0110u32);
+                }
+            "#,
+        ),
         recognize,
     );
 

@@ -20,7 +20,20 @@ use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "option_unwrap",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_unwrap_good() {
+                assert_eq!(Some(7).unwrap(), 7);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_unwrap_bad() {
+                assert_eq!(Some(7).unwrap(), 8);
+            }
+        "#,
+    ),
     recognize,
 );
 

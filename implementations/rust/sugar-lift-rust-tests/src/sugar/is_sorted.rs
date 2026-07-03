@@ -40,7 +40,20 @@ use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "is_sorted",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_is_sorted_good() {
+                assert!([1, 2, 2, 9].iter().is_sorted());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_is_sorted_bad() {
+                assert!([1, 3, 2].iter().is_sorted());
+            }
+        "#,
+    ),
     recognize,
 );
 

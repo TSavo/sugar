@@ -18,7 +18,26 @@ pub(crate) const DURATION_TERM_CTOR: &str = "duration:Duration";
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "duration_value",
     &["const_path", "path", "call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_duration_value_good() {
+                assert_eq!(
+                    std::time::Duration::from_millis(1500),
+                    std::time::Duration::new(1, 500_000_000)
+                );
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_duration_value_bad() {
+                assert_eq!(
+                    std::time::Duration::from_millis(1500),
+                    std::time::Duration::new(2, 0)
+                );
+            }
+        "#,
+    ),
     recognize,
 );
 

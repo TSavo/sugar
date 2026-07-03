@@ -25,7 +25,22 @@ use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "into",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_into_good() {
+                let x: u32 = true.into();
+                assert_eq!(x, 1u32);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_into_bad() {
+                let x: u32 = true.into();
+                assert_eq!(x, 0u32);
+            }
+        "#,
+    ),
     recognize,
 );
 

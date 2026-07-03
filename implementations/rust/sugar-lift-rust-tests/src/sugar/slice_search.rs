@@ -24,7 +24,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "slice_search",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_slice_search_good() {
+                assert_eq!([1, 2, 3].binary_search(&2), Ok(1));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_slice_search_bad() {
+                assert_eq!([1, 2, 3].binary_search(&2), Ok(2));
+            }
+        "#,
+    ),
     recognize_term,
 );
 

@@ -20,7 +20,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "cast_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_cast_term_good() {
+                    assert_eq!(65u8 as char, 'A');
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_cast_term_bad() {
+                    assert_eq!(65u8 as char, 'B');
+                }
+            "#,
+        ),
         recognize,
     );
 

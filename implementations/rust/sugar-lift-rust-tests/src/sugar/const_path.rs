@@ -20,7 +20,24 @@ use tracing::debug;
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "const",
     &["path"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            const WITNESS_CONST_PATH: i32 = 5;
+
+            #[test]
+            fn t_const_path_good() {
+                assert_eq!(WITNESS_CONST_PATH, 5);
+            }
+        "#,
+        r#"
+            const WITNESS_CONST_PATH: i32 = 5;
+
+            #[test]
+            fn t_const_path_bad() {
+                assert_eq!(WITNESS_CONST_PATH, 6);
+            }
+        "#,
+    ),
     recognize,
 );
 

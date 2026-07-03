@@ -27,7 +27,20 @@ use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "sizeof",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_sizeof_good() {
+                    assert_eq!(std::mem::size_of::<u32>(), 4);
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_sizeof_bad() {
+                    assert_eq!(std::mem::size_of::<u32>(), 5);
+                }
+            "#,
+    ),
     recognize,
 );
 

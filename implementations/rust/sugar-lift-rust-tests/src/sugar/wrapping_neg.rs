@@ -19,7 +19,20 @@ use crate::{term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "wrapping_neg",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_wrapping_neg_good() {
+                assert_eq!(5i32.wrapping_neg(), -5);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_wrapping_neg_bad() {
+                assert_eq!(5i32.wrapping_neg(), -6);
+            }
+        "#,
+    ),
     recognize,
 );
 
