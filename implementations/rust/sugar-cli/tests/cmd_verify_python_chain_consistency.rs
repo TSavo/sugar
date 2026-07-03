@@ -83,27 +83,89 @@ fn unique_project(suffix: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let project = repo_root()
-        .join("implementations/rust/target/python-chain-consistency")
+    let project = std::env::temp_dir()
+        .join("sugar-python-chain-consistency")
         .join(format!("{stamp}-{suffix}"));
     fs::create_dir_all(&project).expect("mkdir project");
     project
+}
+
+fn active_profile_bin(name: &str) -> PathBuf {
+    let mut bin = sugar_bin()
+        .parent()
+        .expect("CARGO_BIN_EXE_sugar has a profile directory")
+        .join(name);
+    if !std::env::consts::EXE_SUFFIX.is_empty() {
+        bin.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    bin
+}
+
+fn cargo_profile_args() -> Vec<String> {
+    let sugar = sugar_bin();
+    let profile_dir = sugar
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or("debug");
+    match profile_dir {
+        "debug" => Vec::new(),
+        "release" => vec!["--release".to_string()],
+        other => vec!["--profile".to_string(), other.to_string()],
+    }
+}
+
+fn ensure_active_profile_smt_compiler_built() -> PathBuf {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let bin = active_profile_bin("sugar-ir-smt-lib");
+            if !bin.is_file() {
+                let mut cmd = Command::new("cargo");
+                cmd.arg("build")
+                    .arg("--manifest-path")
+                    .arg(repo_root().join("implementations/rust/Cargo.toml"))
+                    .args(cargo_profile_args())
+                    .args([
+                        "-p",
+                        "sugar-ir-compiler-smt-lib",
+                        "--bin",
+                        "sugar-ir-smt-lib",
+                    ]);
+                let out = cmd.output().expect("spawn cargo build for SMT compiler");
+                assert!(
+                    out.status.success(),
+                    "active-profile SMT compiler must build for python-chain consistency test\nstdout: {}\nstderr: {}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            assert!(
+                bin.is_file(),
+                "active-profile SMT compiler binary missing after build: {}",
+                bin.display()
+            );
+            bin
+        })
+        .clone()
 }
 
 fn install_smt_compiler_manifest(project: &Path) {
     let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
     fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
     let rust_workspace = repo_root().join("implementations/rust");
+    let smt_bin = ensure_active_profile_smt_compiler_built();
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
             r#"name = "smt-lib-reference"
 version = "0.1.0"
 protocol_version = "sugar-ir-compiler/1"
-command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+command = [{}]
 working_dir = "{}"
 dialects = ["smt-lib-v2.6"]
 "#,
+            toml_string(&smt_bin.display().to_string()),
             rust_workspace.display()
         ),
     )
@@ -232,6 +294,7 @@ fn run_sugar(project: &Path, args: &[&str]) -> (Json, i32, String, String) {
         .args(args)
         .current_dir(project)
         .env("PYTHONPATH", python_lift_pythonpath())
+        .env_remove("SUGAR_COMPONENT_PATH")
         .output()
         .expect("spawn sugar");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -246,6 +309,7 @@ fn run_mint(project: &Path) {
         .args(["mint", "--out", ".", "--quiet"])
         .current_dir(project)
         .env("PYTHONPATH", python_lift_pythonpath())
+        .env_remove("SUGAR_COMPONENT_PATH")
         .output()
         .expect("spawn mint");
     assert!(
@@ -280,41 +344,11 @@ fn assert_tooling_available() -> bool {
     true
 }
 
-fn ensure_repo_smt_compiler_built() {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let out = Command::new("cargo")
-            .arg("build")
-            .arg("--manifest-path")
-            .arg(repo_root().join("implementations/rust/Cargo.toml"))
-            .args([
-                "-p",
-                "sugar-ir-compiler-smt-lib",
-                "--bin",
-                "sugar-ir-smt-lib",
-            ])
-            // The repo-level component manifest points at
-            // implementations/rust/target/debug/sugar-ir-smt-lib. Build that
-            // exact rendezvous target even if the outer cargo test uses a
-            // custom target dir for the test binary itself.
-            .env_remove("CARGO_TARGET_DIR")
-            .output()
-            .expect("spawn cargo build for repo SMT compiler");
-        assert!(
-            out.status.success(),
-            "repo SMT compiler must build for zero-config component rendezvous\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    });
-}
-
 #[test]
 fn python_chain_good_twin_composes_body_discharge_with_consistency() {
     if !assert_tooling_available() {
         return;
     }
-    ensure_repo_smt_compiler_built();
 
     let project = stage_chain_project("good", 6);
     run_mint(&project);
@@ -342,7 +376,6 @@ fn python_chain_bad_twin_refutes_through_the_same_call_seam() {
     if !assert_tooling_available() {
         return;
     }
-    ensure_repo_smt_compiler_built();
 
     let project = stage_chain_project("bad", 99);
     run_mint(&project);
