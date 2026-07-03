@@ -12,26 +12,47 @@
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, num, Term};
+use sugar_ir_symbolic::{and_, eq, make_var, num, Term};
 use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::temporal_floor::{FoldFloor, TemporalFloorRefusal};
 use crate::{
     canonical_term_sig, closure_body_is_side_effecting, closure_single_param_ident,
     collect_assertion_entries, const_acc_init_value, const_fold_acc_update_value,
     const_fold_int_term, const_int_acc_init, const_val_term, count_asserts_in_stmts,
-    resolve_index_in_formula, simple_path_name, strip_refs_groups, subst_var_in_formula, token_key,
-    translate_term_in_scope, tuple_components, AssertionFactKind, ConstVal, Desugared,
-    DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
+    resolve_index_in_formula_with_bindings, simple_path_name, strip_refs_groups,
+    subst_var_in_formula, subst_var_in_term, token_key, translate_term_in_scope, tuple_components,
+    AssertionFactKind, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
+    Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "fold",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_fold_good() {
+                    let _fold_owner = [(1i32, 1i32), (2, 3)].into_iter().fold(0, |acc, (x, expected)| {
+                        assert_eq!(acc + x, expected);
+                        acc + x
+                    });
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_fold_bad() {
+                    let _fold_owner = [(1i32, 1i32), (2, 4)].into_iter().fold(0, |acc, (x, expected)| {
+                        assert_eq!(acc + x, expected);
+                        acc + x
+                    });
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -47,7 +68,7 @@ pub(crate) fn recognize_composite(
     match expr {
         Expr::MethodCall(call) => {
             let method = call.method.to_string();
-            if matches!(method.as_str(), "fold" | "rfold") {
+            if method == "fold" || method == "rfold" {
                 if let Some(name) = simple_path_name(&call.receiver) {
                     let version = fcx.scope().version_of(&name);
                     let advanced = version.is_some_and(|version| version > 1);
@@ -246,58 +267,120 @@ impl Sugar for FoldSugar {
             }
         }
 
+        let mut tail_scope = ctx
+            .scope
+            .fork_with_stable_term_binding(&self.acc_var, make_var(&self.acc_var));
+        match &self.item_binder {
+            FoldItemBinder::Whole(var) => {
+                tail_scope = tail_scope.fork_with_stable_term_binding(var, make_var(var));
+            }
+            FoldItemBinder::Pair(c0, c1) => {
+                tail_scope = tail_scope.fork_with_stable_term_binding(c0, make_var(c0));
+                tail_scope = tail_scope.fork_with_stable_term_binding(c1, make_var(c1));
+            }
+        }
+        let tail_template = translate_term_in_scope(&self.tail, &tail_scope)
+            .unwrap_or_else(|_| fold_gap("fold accumulator update did not translate to a term"));
+
         // Thread the accumulator over the RESULTING element sequence: substitute the
         // concrete acc_k + the item binder's component(s) into the body formula, and
         // const-fold the tail to acc_{k+1} given those same bindings.
-        let mut instances = Vec::with_capacity(seq.len());
-        let mut acc = acc_0;
-        for (iteration, elem) in seq.iter().enumerate() {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::fold",
-                method = %self.method,
-                iteration,
-                acc = ?acc,
-                item = %elem.label(),
-                value = ?elem.value(),
-                "fold replay iteration"
-            );
-            let acc_term =
-                const_val_term(&acc).unwrap_or_else(|| fold_gap("fold accumulator was not a term"));
-            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &acc_term);
-            let mut tail_env: BTreeMap<String, ConstVal> = BTreeMap::new();
-            tail_env.insert(self.acc_var.clone(), acc.clone());
-            match &self.item_binder {
-                FoldItemBinder::Whole(var) => {
-                    let t = elem.whole_term(ctx);
-                    inst = subst_var_in_formula(&inst, var, &t);
-                    if let Some(value) = elem.whole_value() {
-                        tail_env.insert(var.clone(), value);
+        let floor = FoldFloor::default();
+        let operand = match floor.derived_operand(seq.len()) {
+            Ok(operand) => operand,
+            Err(err) => return fold_floor_refusal(err),
+        };
+        let acc_term =
+            const_val_term(&acc_0).unwrap_or_else(|| fold_gap("fold accumulator was not a term"));
+        let init = FoldAccumulator {
+            value: acc_0,
+            term: acc_term,
+        };
+        let output = match floor.desugar(
+            ctx.scope.temporal_floor(),
+            operand,
+            &self.acc_var,
+            init,
+            seq.iter(),
+            |iteration, acc, elem, alias| {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::fold",
+                    method = %self.method,
+                    iteration,
+                    acc = ?acc.value,
+                    item = %elem.label(),
+                    value = ?elem.value(),
+                    "fold replay iteration"
+                );
+                let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &acc.term);
+                let mut recurrence_rhs =
+                    subst_var_in_term(&tail_template, &self.acc_var, &acc.term);
+                let mut tail_env: BTreeMap<String, ConstVal> = BTreeMap::new();
+                tail_env.insert(self.acc_var.clone(), acc.value.clone());
+                match &self.item_binder {
+                    FoldItemBinder::Whole(var) => {
+                        let t = elem.whole_term(ctx);
+                        inst = subst_var_in_formula(&inst, var, &t);
+                        recurrence_rhs = subst_var_in_term(&recurrence_rhs, var, &t);
+                        if let Some(value) = elem.whole_value() {
+                            tail_env.insert(var.clone(), value);
+                        }
+                    }
+                    FoldItemBinder::Pair(c0, c1) => {
+                        let (t0, t1) = elem.pair_terms(ctx);
+                        inst = subst_var_in_formula(&inst, c0, &t0);
+                        inst = subst_var_in_formula(&inst, c1, &t1);
+                        recurrence_rhs = subst_var_in_term(&recurrence_rhs, c0, &t0);
+                        recurrence_rhs = subst_var_in_term(&recurrence_rhs, c1, &t1);
+                        if let Some(ConstVal::Tuple(parts)) = elem.value() {
+                            if let Some(value) = parts.first() {
+                                tail_env.insert(c0.clone(), value.clone());
+                            }
+                            if let Some(value) = parts.get(1) {
+                                tail_env.insert(c1.clone(), value.clone());
+                            }
+                        }
                     }
                 }
-                FoldItemBinder::Pair(c0, c1) => {
-                    let (t0, t1) = elem.pair_terms(ctx);
-                    inst = subst_var_in_formula(&inst, c0, &t0);
-                    inst = subst_var_in_formula(&inst, c1, &t1);
-                    if let Some(ConstVal::Tuple(parts)) = elem.value() {
-                        if let Some(value) = parts.first() {
-                            tail_env.insert(c0.clone(), value.clone());
-                        }
-                        if let Some(value) = parts.get(1) {
-                            tail_env.insert(c1.clone(), value.clone());
-                        }
+                // Resolve `index(<lit-array>, <const>)` reads (the now-threaded index) to
+                // their literal elements -- the teeth: the asserted RHS carries the real
+                // element value, so a wrong-expected twin is z3-refutable.
+                if !array_terms.is_empty() {
+                    let acc_index_term = const_val_term(&acc.value)
+                        .unwrap_or_else(|| fold_gap("fold accumulator was not a term"));
+                    let mut index_bindings =
+                        BTreeMap::from([(self.acc_var.clone(), acc_index_term.clone())]);
+                    if let Term::Var { name } = acc.term.as_ref() {
+                        index_bindings.insert(name.clone(), acc_index_term);
                     }
+                    inst = resolve_index_in_formula_with_bindings(
+                        &inst,
+                        &array_terms,
+                        &index_bindings,
+                    );
                 }
-            }
-            // Resolve `index(<lit-array>, <const>)` reads (the now-threaded index) to
-            // their literal elements -- the teeth: the asserted RHS carries the real
-            // element value, so a wrong-expected twin is z3-refutable.
-            if !array_terms.is_empty() {
-                inst = resolve_index_in_formula(&inst, &array_terms);
-            }
-            instances.push(inst);
-            acc = const_fold_acc_update_value(&self.tail, &tail_env)
-                .unwrap_or_else(|| fold_gap("fold accumulator update did not const-fold"));
-        }
+                let next_value = const_fold_acc_update_value(&self.tail, &tail_env)
+                    .unwrap_or_else(|| fold_gap("fold accumulator update did not const-fold"));
+                let next_term = make_var(alias.value().to_string());
+                let recurrence = eq(next_term.clone(), recurrence_rhs);
+                (
+                    and_(vec![inst, recurrence]),
+                    FoldAccumulator {
+                        value: next_value,
+                        term: next_term,
+                    },
+                )
+            },
+        ) {
+            Ok(output) => output,
+            Err(err) => return fold_floor_refusal(err),
+        };
+        ctx.record_fold_floor_audit(&self.method, output.ticks().len());
+        let instances = output
+            .ticks()
+            .iter()
+            .map(|tick| tick.emission().clone())
+            .collect();
         let conj = and_(instances);
         let warrant = Warrant {
             name: Some(format!("{}::{}", ctx.scope.local_scope(), self.method)),
@@ -309,6 +392,12 @@ impl Sugar for FoldSugar {
             warrant,
         })
     }
+}
+
+#[derive(Clone)]
+struct FoldAccumulator {
+    value: ConstVal,
+    term: Rc<Term>,
 }
 
 enum FoldReplayElem {
@@ -367,6 +456,13 @@ impl FoldReplayElem {
 
 fn fold_gap(reason: &str) -> ! {
     panic!("fold did not reach a lawful floor: {reason}")
+}
+
+fn fold_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::fold".to_string(),
+        reason: err.to_string(),
+    })
 }
 
 fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {

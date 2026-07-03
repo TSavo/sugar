@@ -16,8 +16,8 @@ use toml::Value;
 
 const CATALOG_TOML: &str = include_str!("fixtures/temporal_floor_catalog.toml");
 
-const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 52;
-const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 26;
+const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 48;
+const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 25;
 const EXPECTED_EMBEDDINGS_R: usize = 0;
 
 const REQUIRED_CATALOG_ROWS: &[&str] = &[
@@ -73,7 +73,6 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "float_refinement.rs:309",
     "float_refinement.rs:334",
     "float_refinement.rs:362",
-    "fold.rs:50",
     "for_replay.rs:1639",
     "forall.rs:592",
     "forall.rs:668",
@@ -88,10 +87,10 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "intersperse_collect_string.rs:158",
     "intersperse_collect_string.rs:176",
     "intersperse_concat.rs:119",
-    "ip_addr.rs:269",
-    "ip_addr.rs:272",
-    "iter_terminal.rs:572",
-    "iter_terminal.rs:713",
+    "ip_addr.rs:286",
+    "ip_addr.rs:289",
+    "iter_terminal.rs:573",
+    "iter_terminal.rs:714",
     "let_stmt.rs:65",
     "method_family.rs:484",
     "method_family.rs:650",
@@ -99,8 +98,8 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "option_unwrap.rs:42",
     "peekable.rs:53",
     "peekable.rs:213",
-    "primitive_int.rs:466",
-    "primitive_int.rs:2003",
+    "primitive_int.rs:479",
+    "primitive_int.rs:2016",
     "result_predicate.rs:59",
     "result_predicate.rs:279",
     "rev.rs:29",
@@ -544,7 +543,14 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
     );
     assert_eq!(
         metrics.landed_counted_loci,
-        as_set(&["map.rs:74", "map.rs:101"]),
+        as_set(&[
+            "fold.rs:69",
+            "fold.rs:70",
+            "iter_terminal.rs:622",
+            "iter_terminal.rs:623",
+            "map.rs:74",
+            "map.rs:101",
+        ]),
         "landed count exemptions must be visible in the temporal catalog"
     );
 }

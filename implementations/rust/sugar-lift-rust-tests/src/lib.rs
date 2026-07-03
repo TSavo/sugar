@@ -5419,6 +5419,10 @@ impl TemporalScope {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    pub(crate) fn temporal_floor(&self) -> &sugar::temporal_floor::TemporalFloor {
+        &self.temporal_floor
+    }
+
     pub(crate) fn temporal_rewrite_alias(&self, name: &str, version: usize) -> String {
         self.temporal_floor
             .alias(sugar::temporal_floor::RewriteDoorway::new(name, version))
@@ -6152,7 +6156,7 @@ fn loop_body_mutates(stmts: &[Stmt]) -> bool {
 
 /// Substitute every free occurrence of the variable `name` in a term with
 /// `repl`. Used to bind a loop variable to a quantifier's bound variable.
-fn subst_var_in_term(term: &Rc<Term>, name: &str, repl: &Rc<Term>) -> Rc<Term> {
+pub(crate) fn subst_var_in_term(term: &Rc<Term>, name: &str, repl: &Rc<Term>) -> Rc<Term> {
     match term.as_ref() {
         Term::Var { name: n } if n == name => repl.clone(),
         Term::Ctor { name: cname, args } => Rc::new(Term::Ctor {
@@ -6215,15 +6219,24 @@ fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> R
 /// EUF accessor -- the established sound floor; the program would have panicked OOB,
 /// outside our claim). Sound only over an IMMUTABLE literal array (the caller passes
 /// only `let`-bound non-`mut` array literals).
-fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>>>) -> Rc<Term> {
+fn resolve_index_in_term_with_bindings(
+    term: &Rc<Term>,
+    arrays: &BTreeMap<String, Vec<Rc<Term>>>,
+    index_bindings: &BTreeMap<String, Rc<Term>>,
+) -> Rc<Term> {
     match term.as_ref() {
         Term::Ctor { name, args } if name == "index" && args.len() == 2 => {
             // Resolve children first (a nested index), then this one.
-            let base = resolve_index_in_term(&args[0], arrays);
-            let idx = resolve_index_in_term(&args[1], arrays);
+            let base = resolve_index_in_term_with_bindings(&args[0], arrays, index_bindings);
+            let idx = resolve_index_in_term_with_bindings(&args[1], arrays, index_bindings);
             // The threaded index is often arithmetic over a literal (`i - 1` with `i`
             // substituted to a const) -- const-fold it to a literal position first.
-            let idx_k = term_as_int(&idx).or_else(|| const_fold_int_term(&idx));
+            let idx_for_fold = index_bindings
+                .iter()
+                .fold(idx.clone(), |term, (name, repl)| {
+                    subst_var_in_term(&term, name, repl)
+                });
+            let idx_k = term_as_int(&idx_for_fold).or_else(|| const_fold_int_term(&idx_for_fold));
             if let (Term::Var { name: arr }, Some(k)) = (base.as_ref(), idx_k) {
                 if let Some(elems) = arrays.get(arr) {
                     // `usize::try_from` (NOT `as usize`): a wide i128 index must
@@ -6246,7 +6259,7 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
             name: name.clone(),
             args: args
                 .iter()
-                .map(|a| resolve_index_in_term(a, arrays))
+                .map(|a| resolve_index_in_term_with_bindings(a, arrays, index_bindings))
                 .collect(),
         }),
         _ => term.clone(),
@@ -6487,19 +6500,27 @@ fn resolve_index_in_formula(
     formula: &Rc<Formula>,
     arrays: &BTreeMap<String, Vec<Rc<Term>>>,
 ) -> Rc<Formula> {
+    resolve_index_in_formula_with_bindings(formula, arrays, &BTreeMap::new())
+}
+
+fn resolve_index_in_formula_with_bindings(
+    formula: &Rc<Formula>,
+    arrays: &BTreeMap<String, Vec<Rc<Term>>>,
+    index_bindings: &BTreeMap<String, Rc<Term>>,
+) -> Rc<Formula> {
     match formula.as_ref() {
         Formula::Atomic { name, args } => Rc::new(Formula::Atomic {
             name: name.clone(),
             args: args
                 .iter()
-                .map(|a| resolve_index_in_term(a, arrays))
+                .map(|a| resolve_index_in_term_with_bindings(a, arrays, index_bindings))
                 .collect(),
         }),
         Formula::Connective { kind, operands } => Rc::new(Formula::Connective {
             kind: kind.clone(),
             operands: operands
                 .iter()
-                .map(|f| resolve_index_in_formula(f, arrays))
+                .map(|f| resolve_index_in_formula_with_bindings(f, arrays, index_bindings))
                 .collect(),
         }),
         Formula::Quantifier {
@@ -6511,7 +6532,7 @@ fn resolve_index_in_formula(
             kind: kind.clone(),
             name: name.clone(),
             sort: sort.clone(),
-            body: resolve_index_in_formula(body, arrays),
+            body: resolve_index_in_formula_with_bindings(body, arrays, index_bindings),
         }),
         _ => formula.clone(),
     }
@@ -10821,6 +10842,25 @@ impl SugarCtx<'_, '_> {
             output: "term-sequence",
             reason: Some(
                 "MapSugar delegated counted composition through TemporalFloor CURRY doorway"
+                    .to_string(),
+            ),
+            emitted_formula: None,
+        });
+    }
+
+    fn record_fold_floor_audit(&self, method: &str, tick_count: usize) {
+        self.record_factory_audit(FactoryAudit {
+            ast_kind: "temporal-floor",
+            site: format!("{method} floor over {tick_count} tick(s)"),
+            line: 0,
+            span: None,
+            requested_role: "TemporalFloor::Fold".to_string(),
+            selected: Some("fold"),
+            candidates: Vec::new(),
+            disposition: FactoryDisposition::Warranted,
+            output: "constraints",
+            reason: Some(
+                "FoldSugar delegated accumulator recurrence through TemporalFloor REWRITE doorway"
                     .to_string(),
             ),
             emitted_formula: None,

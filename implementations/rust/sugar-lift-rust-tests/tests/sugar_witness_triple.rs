@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 78;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 127;
+const EXPECTED_SEED_CLAIMS: usize = 79;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 126;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -638,7 +638,7 @@ fn seed_witnesses_satisfy_the_triple() {
 #[test]
 fn corrected_s8_pairs_match_real_rust_semantics() {
     let witnesses = seed_witnesses();
-    for claim in ["const_item", "map", "return_sugar"] {
+    for claim in ["const_item", "fold", "map", "return_sugar"] {
         let witness = witnesses
             .iter()
             .find(|witness| witness.claim == claim)

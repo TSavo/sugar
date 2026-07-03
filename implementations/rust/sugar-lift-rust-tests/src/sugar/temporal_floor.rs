@@ -461,6 +461,117 @@ impl IterFloor {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FoldFloor {
+    iter: IterFloor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FoldTick<E> {
+    accumulator_alias: TemporalBinding,
+    emission: E,
+}
+
+impl<E> FoldTick<E> {
+    pub(crate) fn accumulator_alias(&self) -> &TemporalBinding {
+        &self.accumulator_alias
+    }
+
+    pub(crate) fn emission(&self) -> &E {
+        &self.emission
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FoldFloorOutput<A, E> {
+    final_accumulator: A,
+    ticks: Vec<FoldTick<E>>,
+    standing: IterStanding,
+}
+
+impl<A, E> FoldFloorOutput<A, E> {
+    pub(crate) fn final_accumulator(&self) -> &A {
+        &self.final_accumulator
+    }
+
+    pub(crate) fn ticks(&self) -> &[FoldTick<E>] {
+        &self.ticks
+    }
+
+    pub(crate) fn standing(&self) -> &IterStanding {
+        &self.standing
+    }
+}
+
+impl FoldFloor {
+    pub(crate) fn derived_operand(
+        &self,
+        count: usize,
+    ) -> Result<IterStanding, TemporalFloorRefusal> {
+        self.iter.alias(&CollectionIterMember::derived(count))
+    }
+
+    pub(crate) fn desugar<I, T, A, E, F>(
+        &self,
+        temporal: &TemporalFloor,
+        operand: IterStanding,
+        accumulator_name: &str,
+        init: A,
+        items: I,
+        mut step: F,
+    ) -> Result<FoldFloorOutput<A, E>, TemporalFloorRefusal>
+    where
+        I: IntoIterator<Item = T>,
+        A: Clone,
+        F: FnMut(usize, &A, T, &TemporalBinding) -> (E, A),
+    {
+        if accumulator_name.is_empty() {
+            return Err(TemporalFloorRefusal::new(
+                "missing standing",
+                "FoldFloor",
+                "fold accumulator doorway carried an empty name",
+                "route the closure accumulator binding into the fold floor",
+            ));
+        }
+
+        let (accumulator, ticks) =
+            items
+                .into_iter()
+                .enumerate()
+                .fold(Ok((init, Vec::new())), |state, (idx, item)| {
+                    state.and_then(|(accumulator, mut ticks)| {
+                        let alias =
+                            temporal.alias(RewriteDoorway::new(accumulator_name, idx + 1))?;
+                        let (emission, next_accumulator) = step(idx, &accumulator, item, &alias);
+                        ticks.push(FoldTick {
+                            accumulator_alias: alias,
+                            emission,
+                        });
+                        Ok((next_accumulator, ticks))
+                    })
+                })?;
+
+        if ticks.len() != operand.count() {
+            return Err(TemporalFloorRefusal::new(
+                "count mismatch",
+                "FoldFloor",
+                format!(
+                    "operand standing had {} tick(s), real fold produced {} tick(s)",
+                    operand.count(),
+                    ticks.len()
+                ),
+                "route fold operands through the iter floor standing that measured this sequence",
+            ));
+        }
+
+        Ok(FoldFloorOutput {
+            final_accumulator: accumulator,
+            ticks,
+            standing: operand,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemporalFloorRefusal {
     crime: &'static str,
@@ -648,5 +759,82 @@ mod tests {
         );
         assert_ne!(first_rewrite.value(), frozen_first.suffix());
         assert_ne!(second_rewrite.value(), frozen_second.suffix());
+    }
+
+    #[test]
+    fn fold_floor_threads_accumulator_through_rewrite_doorway() {
+        let temporal = TemporalFloor::default();
+        let floor = FoldFloor::default();
+        let operand = floor.derived_operand(3).unwrap();
+
+        let out = floor
+            .desugar(
+                &temporal,
+                operand,
+                "acc",
+                0i32,
+                [1, 2, 3],
+                |_, acc, item, alias| {
+                    (
+                        format!("{} == {} + {}", alias.value(), acc, item),
+                        acc + item,
+                    )
+                },
+            )
+            .expect("fold floor desugars through temporal floor rewrites");
+
+        assert_eq!(*out.final_accumulator(), 6);
+        assert_eq!(
+            out.ticks()
+                .iter()
+                .map(|tick| tick.accumulator_alias().value().to_string())
+                .collect::<Vec<_>>(),
+            vec!["acc@def1", "acc@def2", "acc@def3"]
+        );
+        assert_eq!(
+            out.ticks()
+                .iter()
+                .map(|tick| tick.emission())
+                .collect::<Vec<_>>(),
+            vec![
+                "acc@def1 == 0 + 1",
+                "acc@def2 == 1 + 2",
+                "acc@def3 == 3 + 3"
+            ]
+        );
+    }
+
+    #[test]
+    fn fold_accumulator_curry_doorway_would_collapse_the_rewrite_chain() {
+        let floor = TemporalFloor::default();
+        let first_rewrite = floor.alias(RewriteDoorway::new("acc", 1)).unwrap();
+        let second_rewrite = floor.alias(RewriteDoorway::new("acc", 2)).unwrap();
+        let first_curry = floor.alias(CurryDoorway::new("acc", 0)).unwrap();
+        let second_curry = floor.alias(CurryDoorway::new("acc", 0)).unwrap();
+
+        assert_ne!(
+            first_rewrite.value(),
+            second_rewrite.value(),
+            "fold accumulators must rewrite into a tick-indexed chain"
+        );
+        assert_eq!(
+            first_curry.suffix(),
+            second_curry.suffix(),
+            "using curry for the accumulator would freeze all ticks to one symbol"
+        );
+        assert_ne!(first_rewrite.value(), first_curry.suffix());
+        assert_ne!(second_rewrite.value(), second_curry.suffix());
+    }
+
+    #[test]
+    fn fold_floor_refuses_operand_without_iter_standing() {
+        let err = IterStanding::new("FoldInput", IterProvenance::Derived, None)
+            .expect_err("missing fold operand standing refuses");
+        let msg = err.to_string();
+
+        assert!(msg.contains("crime=missing standing"));
+        assert!(msg.contains("owner=IterFloor"));
+        assert!(msg.contains("shape=FoldInput carried no finite member count"));
+        assert!(msg.contains("replacement=construct IterStanding"));
     }
 }

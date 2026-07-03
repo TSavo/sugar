@@ -15326,6 +15326,12 @@ fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
     parsed[0]["inv"].clone()
 }
 
+fn inv_json_without_fold_recurrences(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
+    let mut stripped = decl.clone();
+    stripped.inv = decl.inv.as_deref().and_then(strip_fold_recurrences);
+    inv_json(&stripped)
+}
+
 /// Lift a single assertion and z3-check the emitted invariant.
 /// `Some(true)` = SAT (GOOD twin), `Some(false)` = UNSAT (BAD twin), `None` = z3 absent.
 fn single_assertion_verdict(src: &str, label: &str) -> Option<bool> {
@@ -17014,6 +17020,56 @@ fn complete_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i
         walk(inv, &mut out);
     }
     out
+}
+
+fn strip_fold_recurrences(formula: &Formula) -> Option<std::rc::Rc<Formula>> {
+    if is_fold_recurrence_atom(formula) {
+        return None;
+    }
+    match formula {
+        Formula::Connective { kind, operands } => Some(std::rc::Rc::new(Formula::Connective {
+            kind: kind.clone(),
+            operands: operands
+                .iter()
+                .filter_map(|operand| strip_fold_recurrences(operand))
+                .collect(),
+        })),
+        Formula::Quantifier {
+            kind,
+            name,
+            sort,
+            body,
+        } => strip_fold_recurrences(body).map(|body| {
+            std::rc::Rc::new(Formula::Quantifier {
+                kind: kind.clone(),
+                name: name.clone(),
+                sort: sort.clone(),
+                body,
+            })
+        }),
+        Formula::Choice {
+            var_name,
+            sort,
+            body,
+        } => strip_fold_recurrences(body).map(|body| {
+            std::rc::Rc::new(Formula::Choice {
+                var_name: var_name.clone(),
+                sort: sort.clone(),
+                body,
+            })
+        }),
+        _ => Some(std::rc::Rc::new(formula.clone())),
+    }
+}
+
+fn is_fold_recurrence_atom(formula: &Formula) -> bool {
+    match formula {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            matches!(args[0].as_ref(), Term::Var { name } if name.starts_with("acc@def"))
+                && !matches!(args[1].as_ref(), Term::Const { .. })
+        }
+        _ => false,
+    }
 }
 
 fn complete_eq_real_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
@@ -32009,6 +32065,67 @@ fn consumed_iterator_rfold_after_next_back_digs_remaining_sequence() {
         assert!(
             sat,
             "rfold body over the post-next_back remaining sequence must be SAT"
+        );
+    }
+}
+
+#[test]
+fn temporal_fold_recurrence_chain_is_load_bearing_for_accumulator_claims() {
+    let src = r#"
+        #[test]
+        fn t_fold_chain_without_recurrence_bad() {
+            let _done = [1_i32, 2].into_iter().fold(0, |acc, x| {
+                assert_eq!(acc, 0);
+                acc + x
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/fold_chain_without_recurrence_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+
+    if let Some(sat) = z3_verdict(&inv_json(decl), "fold_chain_with_recurrence_bad") {
+        assert!(
+            !sat,
+            "the real recurrence chain makes the second acc == 0 assertion UNSAT"
+        );
+    }
+
+    let recurrence_free = inv_json_without_fold_recurrences(decl);
+    if let Some(sat) = z3_verdict(&recurrence_free, "fold_chain_recurrence_free_bad") {
+        assert!(
+            sat,
+            "without the threaded acc_k facts, the bad accumulator claim is no longer refuted"
+        );
+    }
+}
+
+#[test]
+fn rfold_enters_fold_floor_in_reverse_order_for_non_commutative_accumulators() {
+    let src = r#"
+        #[test]
+        fn t_rfold_non_commutative_order() {
+            let _done = [(1_i32, -5_i32), (2, -3), (3, 0)].into_iter().rfold(0, |acc, (x, expected_acc)| {
+                assert_eq!(acc, expected_acc);
+                acc - x
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/rfold_non_commutative_order.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "rfold_non_commutative_order",
+    ) {
+        assert!(
+            sat,
+            "rfold must reverse the element sequence before the fold floor threads a non-commutative accumulator"
         );
     }
 }

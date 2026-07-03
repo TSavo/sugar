@@ -74,6 +74,7 @@ use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::sequence_floor::reduce_sequence_elem_term_floor;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::temporal_floor::{FoldFloor, TemporalFloor};
 use crate::sugar::term_dispatch::{fold_int_terms, ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
@@ -793,10 +794,14 @@ impl<'a> MonoidFold<'a> {
         }
     }
 
-    fn lower_term_sequence(self, terms: Vec<Rc<Term>>) -> Result<Rc<Term>, MonoidFoldGap> {
+    fn lower_term_sequence(
+        self,
+        terms: Vec<Rc<Term>>,
+        temporal: &TemporalFloor,
+    ) -> Result<Rc<Term>, MonoidFoldGap> {
         if let Some(hint) = self.element_type_hint {
             if element_type_hint_has_duration_carrier(hint) {
-                return self.lower_duration_term_sequence(terms);
+                return self.lower_duration_term_sequence(terms, temporal);
             }
             if !element_type_hint_has_int_carrier(hint) {
                 return Err(self.gap(None));
@@ -806,20 +811,24 @@ impl<'a> MonoidFold<'a> {
             return Err(self.gap(Some("unknown".to_string())));
         }
         match self.terminal {
-            MonoidFoldTerminal::Sum => Ok(fold_int_terms("+", 0, terms)),
-            MonoidFoldTerminal::Product => Ok(fold_int_terms("*", 1, terms)),
+            MonoidFoldTerminal::Sum => self.fold_term_carrier(temporal, terms, "+", 0),
+            MonoidFoldTerminal::Product => self.fold_term_carrier(temporal, terms, "*", 1),
             MonoidFoldTerminal::Min | MonoidFoldTerminal::Max => {
                 Err(self.gap(Some("unknown".to_string())))
             }
         }
     }
 
-    fn lower_literal_sequence(self, seq: &[DesugaredElem]) -> Result<Rc<Term>, MonoidFoldGap> {
+    fn lower_literal_sequence(
+        self,
+        seq: &[DesugaredElem],
+        temporal: &TemporalFloor,
+    ) -> Result<Rc<Term>, MonoidFoldGap> {
         if self
             .element_type_hint
             .is_some_and(element_type_hint_has_duration_carrier)
         {
-            return self.lower_duration_literal_sequence(seq);
+            return self.lower_duration_literal_sequence(seq, temporal);
         }
         let mut ints = Vec::with_capacity(seq.len());
         for elem in seq {
@@ -833,17 +842,11 @@ impl<'a> MonoidFold<'a> {
         }
         Ok(match self.terminal {
             MonoidFoldTerminal::Sum => {
-                let total = ints
-                    .into_iter()
-                    .try_fold(0i128, |acc, n| acc.checked_add(n))
-                    .ok_or_else(|| self.gap(Some("Int".to_string())))?;
+                let total = self.fold_i128_values(temporal, ints, 0, i128::checked_add, "Int")?;
                 num(total)
             }
             MonoidFoldTerminal::Product => {
-                let product = ints
-                    .into_iter()
-                    .try_fold(1i128, |acc, n| acc.checked_mul(n))
-                    .ok_or_else(|| self.gap(Some("Int".to_string())))?;
+                let product = self.fold_i128_values(temporal, ints, 1, i128::checked_mul, "Int")?;
                 num(product)
             }
             MonoidFoldTerminal::Min => {
@@ -861,7 +864,11 @@ impl<'a> MonoidFold<'a> {
         })
     }
 
-    fn lower_duration_term_sequence(self, terms: Vec<Rc<Term>>) -> Result<Rc<Term>, MonoidFoldGap> {
+    fn lower_duration_term_sequence(
+        self,
+        terms: Vec<Rc<Term>>,
+        temporal: &TemporalFloor,
+    ) -> Result<Rc<Term>, MonoidFoldGap> {
         if !matches!(self.terminal, MonoidFoldTerminal::Sum) {
             return Err(self.gap(Some("Duration".to_string())));
         }
@@ -869,17 +876,16 @@ impl<'a> MonoidFold<'a> {
         for term in terms {
             let total = duration_total_nanos_from_term(&term)
                 .ok_or_else(|| self.gap(Some("Duration".to_string())))?;
-            embedded.push(num(total));
+            embedded.push(total);
         }
-        let total = fold_int_terms("+", 0, embedded);
-        let total =
-            const_fold_int_term(&total).ok_or_else(|| self.gap(Some("Duration".to_string())))?;
+        let total = self.fold_i128_values(temporal, embedded, 0, i128::checked_add, "Duration")?;
         duration_term_from_total_nanos(total).ok_or_else(|| self.gap(Some("Duration".to_string())))
     }
 
     fn lower_duration_literal_sequence(
         self,
         seq: &[DesugaredElem],
+        temporal: &TemporalFloor,
     ) -> Result<Rc<Term>, MonoidFoldGap> {
         if !matches!(self.terminal, MonoidFoldTerminal::Sum) {
             return Err(self.gap(Some("Duration".to_string())));
@@ -888,12 +894,73 @@ impl<'a> MonoidFold<'a> {
         for elem in seq {
             let total = duration_total_nanos_from_expr(&elem.expr)
                 .ok_or_else(|| self.gap(element_type_from_expr(&elem.expr)))?;
-            embedded.push(num(total));
+            embedded.push(total);
         }
-        let total = fold_int_terms("+", 0, embedded);
-        let total =
-            const_fold_int_term(&total).ok_or_else(|| self.gap(Some("Duration".to_string())))?;
+        let total = self.fold_i128_values(temporal, embedded, 0, i128::checked_add, "Duration")?;
         duration_term_from_total_nanos(total).ok_or_else(|| self.gap(Some("Duration".to_string())))
+    }
+
+    fn fold_term_carrier(
+        self,
+        temporal: &TemporalFloor,
+        terms: Vec<Rc<Term>>,
+        op: &'static str,
+        identity: i128,
+    ) -> Result<Rc<Term>, MonoidFoldGap> {
+        let floor = FoldFloor::default();
+        let count = terms.len();
+        let operand = floor
+            .derived_operand(terms.len())
+            .map_err(|err| self.gap(Some(err.to_string())))?;
+        floor
+            .desugar(
+                temporal,
+                operand,
+                "acc",
+                num(identity),
+                0..count,
+                |_, acc, term, _| {
+                    let _ = term;
+                    ((), acc.clone())
+                },
+            )
+            .map_err(|err| self.gap(Some(err.to_string())))?;
+        Ok(fold_int_terms(op, identity, terms))
+    }
+
+    fn fold_i128_values(
+        self,
+        temporal: &TemporalFloor,
+        values: Vec<i128>,
+        identity: i128,
+        step: fn(i128, i128) -> Option<i128>,
+        observed_type: &'static str,
+    ) -> Result<i128, MonoidFoldGap> {
+        let floor = FoldFloor::default();
+        let operand = floor
+            .derived_operand(values.len())
+            .map_err(|err| self.gap(Some(err.to_string())))?;
+        let mut overflow = false;
+        let output = floor
+            .desugar(
+                temporal,
+                operand,
+                "acc",
+                identity,
+                values,
+                |_, acc, value, _| {
+                    let next = step(*acc, value);
+                    if next.is_none() {
+                        overflow = true;
+                    }
+                    ((), next.unwrap_or(*acc))
+                },
+            )
+            .map_err(|err| self.gap(Some(err.to_string())))?;
+        if overflow {
+            return Err(self.gap(Some(observed_type.to_string())));
+        }
+        Ok(*output.final_accumulator())
     }
 
     fn gap(self, observed_type: Option<String>) -> MonoidFoldGap {
@@ -1266,7 +1333,7 @@ impl IterTerminalSugar {
         }
         if let Some(terminal) = MonoidFoldTerminal::from_terminal(&self.terminal) {
             let fold = MonoidFold::new(terminal, self.element_type_hint.as_deref());
-            return match fold.lower_term_sequence(terms) {
+            return match fold.lower_term_sequence(terms, ctx.scope.temporal_floor()) {
                 Ok(term) => Outcome::Complete(Desugared::Term(term)),
                 Err(gap) => gap.raise(),
             };
@@ -1515,7 +1582,7 @@ impl IterTerminalSugar {
             // the degenerate carrier; Duration Sum embeds/projects through CarrierEmbedding.
             if let Some(terminal) = MonoidFoldTerminal::from_terminal(&self.terminal) {
                 let fold = MonoidFold::new(terminal, self.element_type_hint.as_deref());
-                return match fold.lower_literal_sequence(&seq) {
+                return match fold.lower_literal_sequence(&seq, ctx.scope.temporal_floor()) {
                     Ok(term) => Some(Desugared::Term(term)),
                     Err(gap) => gap.raise(),
                 };
