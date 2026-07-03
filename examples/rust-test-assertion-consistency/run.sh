@@ -27,11 +27,14 @@ for suite in good bad; do
 done
 
 consistency_statuses() {
-  python3 - "$1" <<'PY'
-import json
+  python3 - "$REPO" "$1" <<'PY'
 import sys
+from pathlib import Path
 
-d = json.load(open(sys.argv[1], encoding="utf-8"))
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+d = load_receipt(sys.argv[2])
 rows = []
 for row in d.get("rows", []):
     prop = row.get("property") or ""

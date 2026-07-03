@@ -36,7 +36,7 @@ for suite in good bad; do
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
 
-pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+pyget() { python3 "$REPO/tools/showcase/json_get.py" "$1" "$2"; }
 
 write_lying_discharge() {
   local script="$1"

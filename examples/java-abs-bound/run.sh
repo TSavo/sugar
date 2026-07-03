@@ -81,12 +81,18 @@ echo "-- prove --"
 prove_json="$dir/.prove.json"
 ( cd "$dir" && "$SUGAR" prove . --json 2>/dev/null ) > "$prove_json" || true
 
-consistency_status="$(python3 -c "
-import json, sys
-rows = json.load(open('$prove_json')).get('rows', [])
+consistency_status="$(python3 - "$REPO" "$prove_json" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+rows = load_receipt(sys.argv[2]).get('rows', [])
 c = [r.get('status') for r in rows if 'consistency' in (r.get('property') or '')]
 print(','.join(c) if c else 'MISSING')
-")"
+PY
+)"
 echo "   consistency: $consistency_status"
 
 if ! echo "$consistency_status" | grep -q 'unsatisfied'; then
@@ -98,10 +104,15 @@ echo "-- verify: durable artifact --"
 verify_json="$dir/.verify.json"
 ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json 2>/dev/null ) > "$verify_json" || true
 
-python3 - "$suite" "$verify_json" <<'PY'
-import json, sys
-suite, path = sys.argv[1], sys.argv[2]
-receipt = json.load(open(path, encoding="utf-8"))
+python3 - "$REPO" "$suite" "$verify_json" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+suite, path = sys.argv[2], sys.argv[3]
+receipt = load_receipt(path)
 rows = receipt.get("rows", [])
 consistency = [
     r.get("status")

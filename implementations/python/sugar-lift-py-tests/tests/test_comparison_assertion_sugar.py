@@ -64,6 +64,56 @@ def test_comparison_assertion_lifts_not_equal_fact() -> None:
     }
 
 
+def test_comparison_assertion_lifts_non_eq_call_with_bytes() -> None:
+    report = build_literal_call_report(
+        source=(
+            "def test_derive_key(alg):\n"
+            "    assert alg.derive_key(b\"raaaa\") != b\"raaaa\"\n"
+        ),
+        filename="test_token_padding.py",
+        memento_file="test_token_padding.py",
+    )
+
+    assert report is not None
+    contract = report.payload.ir[0]
+    assert contract.source_warrants[0].role == "python.comparison-assertion-sugar"
+    assert contract.inv == {
+        "kind": "atomic",
+        "name": "≠",
+        "args": [
+            {
+                "kind": "ctor",
+                "name": "call:derive_key",
+                "args": [
+                    {"kind": "var", "name": "alg"},
+                    {
+                        "kind": "ctor",
+                        "name": "python:bytes",
+                        "args": [
+                            {
+                                "kind": "const",
+                                "sort": {"kind": "primitive", "name": "String"},
+                                "value": "7261616161",
+                            }
+                        ],
+                    },
+                ],
+            },
+            {
+                "kind": "ctor",
+                "name": "python:bytes",
+                "args": [
+                    {
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": "7261616161",
+                    }
+                ],
+            },
+        ],
+    }
+
+
 def test_comparison_assertion_lifts_order_relation_fact() -> None:
     report = build_literal_call_report(
         source=("def test_count(count, limit):\n" "    assert count <= limit\n"),

@@ -22,7 +22,7 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 )
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import ImportAliasValue, SupportValue
+from sugar_lift_py_tests.floor import DictLiteralValue, ImportAliasValue, SupportValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_lift_py_tests.witness_harness import (
@@ -103,6 +103,8 @@ EXPECTED_OPT_OUT_SUGARS = {
     "AwaitSugar",
     "BitwiseOpSugar",
     "CommentSugar",
+    "DictSugar",
+    "ExprSugar",
     "ListLiteralSugar",
     "OrdByteSugar",
     "SubscriptAssignSugar",
@@ -113,6 +115,7 @@ EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AttributeDeleteSugar",
     "BitwiseOpSugar",
     "OrdByteSugar",
+    "DictSugar",
 }
 
 
@@ -179,9 +182,11 @@ def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     assert SupportValue.non_fol_support is True
     assert ImportAliasValue.non_fol_support is True
+    assert DictLiteralValue.non_fol_support is True
     assert current_non_fol_support_floor_names() == {
         "SupportValue",
         "ImportAliasValue",
+        "DictLiteralValue",
     }
 
     audit = non_fol_opt_out_audit()
@@ -247,7 +252,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 4
+    assert len(rows) == 5
     assert all(row.retirement_condition for row in rows)
     assert {
         row.sugar_name
@@ -259,7 +264,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     assert seed_report.seed_count == EXPECTED_SEED_CASES
     assert seed_report.unique_owner_count == EXPECTED_SEED_OWNER_COUNT
-    assert seed_report.catalog_count == 53
+    assert seed_report.catalog_count == 55
     assert seed_report.witness_triples_failing == EXPECTED_TRIPLE_FAILURES
     assert seed_report.witnesses_not_dispatching_to_owner == 0
     assert [
@@ -719,7 +724,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "R(temporal-opt-outs): 4" in text
-    assert "seed coverage: 54 seed cases, 41/53 catalog sugars" in text
+    assert "seed coverage: 54 seed cases, 41/55 catalog sugars" in text
     assert "unenrolled sugars:" not in text
     assert "temporal opt-outs:" in text
 
@@ -739,7 +744,7 @@ def test_sugar_witness_cli_exits_red_for_temporal_opt_out_frontier(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 4" in stdout
+    assert "R(temporal-opt-outs): 5" in stdout
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:

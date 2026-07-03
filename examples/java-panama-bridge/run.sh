@@ -179,10 +179,15 @@ PY
   (cd "$CONTRACT_DIR" && "$SUGAR" verify --project . --json 2>/dev/null) > "$CONTRACT_DIR/.verify.json"
   rc=$?
   set -e
-  python3 - "$CONTRACT_DIR/.verify.json" "$rc" "$TARGET_EUF" <<'PY'
-import json, sys
-path = sys.argv[1]; rc = int(sys.argv[2]); euf = sys.argv[3]
-data = json.load(open(path, encoding="utf-8"))
+  python3 - "$REPO" "$CONTRACT_DIR/.verify.json" "$rc" "$TARGET_EUF" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+path = sys.argv[2]; rc = int(sys.argv[3]); euf = sys.argv[4]
+data = load_receipt(path)
 rows = data.get("rows", [])
 statuses = [(r.get("property",""), r.get("status","")) for r in rows]
 nonrefl = [s for p, s in statuses]
@@ -260,10 +265,16 @@ clean_suite() {
 }
 
 edge_summary() {
-  python3 - "$1" <<'PY'
-import json, sys
-path = sys.argv[1]
-data = json.load(open(path, encoding="utf-8"))
+  python3 - "$REPO" "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+path = sys.argv[2]
+data = load_receipt(path)
 edges = data.get("edges", [])
 if not edges:
     print("MISSING"); raise SystemExit(0)
@@ -277,11 +288,16 @@ PY
 #   GOOD → all discharged → prints "discharged"
 #   BAD  → the bridge row is unsatisfied → prints "refused"
 overall_verdict() {
-  python3 - "$1" <<'PY'
-import json, sys
-path = sys.argv[1]
+  python3 - "$REPO" "$1" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+path = sys.argv[2]
 try:
-    data = json.load(open(path, encoding="utf-8"))
+    data = load_receipt(path)
 except Exception:
     print("MISSING"); raise SystemExit(0)
 rows = data.get("rows") or data.get("claims") or []
@@ -352,9 +368,14 @@ PY
 
   # Print every consistency row verbatim so the verdict is auditable.
   echo "   consistency rows:"
-  python3 - "$dir/.verify.json" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1], encoding="utf-8"))
+  python3 - "$REPO" "$dir/.verify.json" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+data = load_receipt(sys.argv[2])
 for r in data.get("rows", []):
     prop = r.get("property","")
     if "consistency:" in prop:
@@ -375,10 +396,15 @@ PY
       exit 1
     fi
     # And confirm the ONLY refused consistency row is the bridge row.
-    python3 - "$dir/.verify.json" "$TARGET_EUF" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-euf = sys.argv[2]
+    python3 - "$REPO" "$dir/.verify.json" "$TARGET_EUF" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "tools" / "showcase"))
+from json_get import load_receipt
+
+data = load_receipt(sys.argv[2])
+euf = sys.argv[3]
 refused = []
 for r in data.get("rows", []):
     prop = r.get("property","")

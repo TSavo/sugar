@@ -1,6 +1,6 @@
 """A comment (a docstring / bare-string statement) is inert. The factory classifies
 it as Support, and CommentSugar desugars to SupportValue -- it ALWAYS completes and
-contributes no first-order logic. A non-comment statement is not Support."""
+contributes no first-order logic. A non-comment statement is not CommentSugar."""
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ def test_factory_classifies_a_comment_as_support():
 def test_non_comment_statements_get_their_own_sugar_not_comment():
     # an assignment is a statement, but it dispatches to AssignSugar -- not Comment.
     assert _support_candidates("x = 1") == ["AssignSugar"]
-    # a bare int expression is neither a comment nor any other statement sugar.
-    assert _support_candidates("5") == []
+    # a bare int expression dispatches to ExprSugar -- not Comment.
+    assert _support_candidates("5") == ["ExprSugar"]
 
 
 def test_comment_desugars_to_support_and_always_completes():

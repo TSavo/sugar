@@ -54,14 +54,31 @@ verify_rc=0
   "$SUGAR" verify --project . --emit-witnesses "$PROJECT/witnesses-out" --json
 ) > "$VERIFY_JSON" || verify_rc=$?
 
-python3 - "$VERIFY_JSON" "$Z3_OUT" "$z3_rc" "$verify_rc" <<'PY'
-import json
+python3 - "$ROOT" "$VERIFY_JSON" "$Z3_OUT" "$z3_rc" "$verify_rc" <<'PY'
 import sys
 from pathlib import Path
 
-verify_path, z3_path, z3_rc, verify_rc = sys.argv[1:5]
-receipt = json.loads(Path(verify_path).read_text(encoding="utf-8"))
+root, verify_path, z3_path, z3_rc, verify_rc = sys.argv[1:6]
+sys.path.insert(0, root)
+from tools.showcase.json_get import load_receipt
+
+receipt = load_receipt(verify_path)
 claims = {row["property"]: row for row in receipt["claims"]}
+missing = [
+    name
+    for name in (
+        "forall_vampire_good_right_identity",
+        "forall_vampire_bad_false_universal",
+    )
+    if name not in claims
+]
+if missing:
+    available = ", ".join(sorted(claims)) or "<none>"
+    raise SystemExit(
+        "FAIL: missing forall-vampire claim row(s): "
+        + ", ".join(missing)
+        + f"; available rows: {available}"
+    )
 good = claims["forall_vampire_good_right_identity"]
 bad = claims["forall_vampire_bad_false_universal"]
 z3_text = Path(z3_path).read_text(encoding="utf-8").strip()
