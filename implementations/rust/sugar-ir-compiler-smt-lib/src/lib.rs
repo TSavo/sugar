@@ -243,7 +243,7 @@ fn validate_formula(formula: &sugar_ir_types::IrFormula) -> Result<(), String> {
 
 fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
     match input {
-        CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
+        CompilerInput::Formula(formula) => compile_formula_to_parts(formula.formula()),
         CompilerInput::Term(term) => compile_term_to_parts(term),
         CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
             "equational_theory".to_string(),
@@ -296,7 +296,7 @@ mod tests {
                 "asserted SMT-LIB compile expects a formula input".to_string(),
             ));
         };
-        compile_asserted_formula_to_parts(&formula)
+        compile_asserted_formula_to_parts(formula.formula())
     }
 
     fn eq(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {

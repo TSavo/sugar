@@ -100,14 +100,16 @@ fn smtlib_and_lean_compile_typed_formula_match_native_typed_emitters() {
     let smt = SmtLibCompiler::new();
     assert_eq!(
         smt.compile_typed(&typed, SMT_DIALECT).expect("typed smt"),
-        sugar_ir_compiler_smt_lib::compile_formula_to_parts(formula).expect("typed smt emitter")
+        sugar_ir_compiler_smt_lib::compile_formula_to_parts(formula.formula())
+            .expect("typed smt emitter")
     );
 
     let lean = LeanCompiler::new();
     assert_eq!(
         lean.compile_typed(&typed, LEAN_DIALECT)
             .expect("typed lean"),
-        sugar_ir_compiler_lean::compile_formula_to_parts(formula).expect("typed lean emitter")
+        sugar_ir_compiler_lean::compile_formula_to_parts(formula.formula())
+            .expect("typed lean emitter")
     );
 }
 

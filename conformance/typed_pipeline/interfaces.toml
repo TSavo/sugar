@@ -7,6 +7,7 @@ declared_escape_hatch_rows_open = 3
 ambient_testimony_sites = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
+rust_naked_formula_crossings = 15
 
 [[pipeline_seams]]
 root = "implementations/rust/sugar-cli/src"
@@ -50,6 +51,138 @@ file_prefixes = ["lib"]
 [[pipeline_seams]]
 root = "implementations/rust/sugar-ir-compiler-maude/src"
 file_prefixes = ["lib"]
+
+[[proofir_membership_sources]]
+path = "implementations/rust/sugar-ir-types/src/lib.rs"
+
+[[proofir_membership_sources]]
+path = "implementations/rust/sugar-ir-symbolic/src/lib.rs"
+
+[[proofir_membership_sources]]
+path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs"
+
+[[proofir_membership_sources]]
+path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs"
+
+[[rust_naked_formula_crossings]]
+id = "lean-public-compile-formula-helper"
+shape = "formula-typed-claim-boundary"
+owner = "proofir-vocab-s10::compiler-seam"
+retirement = "change public compiler helper callers to ClaimFormula/CompilerInput and make raw Formula lowering backend-local"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-lean/src/lib.rs", item = "compile_formula_to_parts", needles = ["pub fn compile_formula_to_parts(formula: &Formula)"] }
+
+[[rust_naked_formula_crossings]]
+id = "smtlib-public-compile-formula-helper"
+shape = "formula-typed-claim-boundary"
+owner = "proofir-vocab-s10::compiler-seam"
+retirement = "change public compiler helper callers to ClaimFormula/CompilerInput and make raw Formula lowering backend-local"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_formula_to_parts", needles = ["formula: &sugar_ir_types::Formula"] }
+
+[[rust_naked_formula_crossings]]
+id = "smtlib-public-compile-asserted-formula-helper"
+shape = "formula-typed-claim-boundary"
+owner = "proofir-vocab-s10::compiler-seam"
+retirement = "move the sugar-lift caller to ClaimFormula/CompilerInput and delete or privatize compile_asserted_formula_to_parts"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_asserted_formula_to_parts", needles = ["formula: &sugar_ir_types::Formula"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-args-pre"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractArgs raw pre slot with PreCondition/ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractArgs", needles = ["pub pre: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-args-post"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractArgs raw post slot with PostCondition/ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractArgs", needles = ["pub post: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-args-inv"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractArgs raw inv slot with ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractArgs", needles = ["pub inv: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-decl-pre"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractDecl raw pre slot with PreCondition/ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractDecl", needles = ["pub pre: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-decl-post"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractDecl raw post slot with PostCondition/ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractDecl", needles = ["pub post: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-contract-decl-inv"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "replace ContractDecl raw inv slot with ClaimFormula construction"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "ContractDecl", needles = ["pub inv: Option<Rc<Formula>>"] }
+
+[[rust_naked_formula_crossings]]
+id = "symbolic-must-precondition"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-symbolic::contract-authoring"
+retirement = "make must consume PreCondition or a terminal claim wrapper instead of Rc<Formula>"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-symbolic/src/lib.rs", item = "must", needles = ["pub fn must<S: Into<String>>(name: S, precondition: Rc<Formula>)"] }
+
+[[rust_naked_formula_crossings]]
+id = "ir-types-dimension-value-compare-to"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-types::wire-dto"
+retirement = "wrap DimensionValueMemento compare_to at construction with ClaimFormula while preserving wire Formula bytes"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "DimensionValueMemento", needles = ["pub compare_to: IrFormula"] }
+
+[[rust_naked_formula_crossings]]
+id = "ir-types-dimension-value-new-compare-to"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-types::wire-dto"
+retirement = "make DimensionValueMemento::new consume the role-wrapped formula and lower to wire DTO internally"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "new", needles = ["compare_to: IrFormula"] }
+
+[[rust_naked_formula_crossings]]
+id = "ir-types-evidence-memento-predicate"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-types::wire-dto"
+retirement = "wrap EvidenceMemento predicate at construction with ProvenancedFormula/ClaimFormula while preserving wire Formula bytes"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "EvidenceMemento", needles = ["pub predicate: IrFormula"] }
+
+[[rust_naked_formula_crossings]]
+id = "ir-types-compound-contract-composed-post"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-types::wire-dto"
+retirement = "wrap CompoundContractMemento composed_post at construction with PostCondition/ClaimFormula while preserving wire Formula bytes"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "CompoundContractMemento", needles = ["pub composed_post: IrFormula"] }
+
+[[rust_naked_formula_crossings]]
+id = "ir-types-compound-contract-composed-pre"
+shape = "formula-typed-claim-boundary"
+owner = "sugar-ir-types::wire-dto"
+retirement = "wrap CompoundContractMemento composed_pre at construction with PreCondition/ClaimFormula while preserving wire Formula bytes"
+baseline = true
+source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "CompoundContractMemento", needles = ["pub composed_pre: IrFormula"] }
 
 [[interface_sources]]
 path = "implementations/rust/sugar-cli/src/component_plan.rs"

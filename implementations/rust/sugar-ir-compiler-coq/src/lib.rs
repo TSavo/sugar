@@ -55,7 +55,7 @@ impl CoqCompiler {
         ir: &CompilerInput,
     ) -> Result<(String, String, Vec<FreeVar>), CompileError> {
         match ir {
-            CompilerInput::Formula(formula) => self.compile_formula_inner(formula),
+            CompilerInput::Formula(formula) => self.compile_formula_inner(formula.formula()),
             CompilerInput::Term(term) => self.compile_term_inner(term),
             CompilerInput::EquationalTheory(_) => Err(CompileError::UnsupportedPredicate(
                 "equational_theory".to_string(),
