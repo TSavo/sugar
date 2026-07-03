@@ -19681,6 +19681,24 @@ pub(crate) fn assertion_entry_from_relation(
             claim_count: 1,
         };
     }
+    if let Some(atom) = value_ctor_argument_projection_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
+    if let Some(atom) = table_select_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
 
     let name = if is_ground_value(lhs.as_ref()) {
         callsite_assertion_name(rhs.as_ref(), scope.local_scope())
@@ -19816,6 +19834,121 @@ fn struct_field_value<'a>(term: &'a Rc<Term>, field: &str) -> Option<&'a Rc<Term
         }
     }
     None
+}
+
+fn value_ctor_argument_projection_relation_atom(
+    lhs: &Rc<Term>,
+    rhs: &Rc<Term>,
+    op: RelationOp,
+) -> Option<Rc<Formula>> {
+    if !matches!(op, RelationOp::Eq | RelationOp::Ne) {
+        return None;
+    }
+    let mut atoms = Vec::new();
+    push_value_ctor_argument_projection_atoms(lhs, &mut atoms);
+    push_value_ctor_argument_projection_atoms(rhs, &mut atoms);
+    if atoms.is_empty() {
+        return None;
+    }
+    atoms.insert(
+        0,
+        match op {
+            RelationOp::Eq => eq(lhs.clone(), rhs.clone()),
+            RelationOp::Ne => ne(lhs.clone(), rhs.clone()),
+            _ => {
+                unreachable!("value ctor argument facts are only emitted for equality operators")
+            }
+        },
+    );
+    Some(and_(atoms))
+}
+
+fn push_value_ctor_argument_projection_atoms(term: &Rc<Term>, atoms: &mut Vec<Rc<Formula>>) {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return;
+    };
+    if !value_ctor_argument_projection_accepts(name) {
+        return;
+    }
+    for (index, arg) in args.iter().enumerate() {
+        atoms.push(eq(value_ctor_argument_term(index, term), arg.clone()));
+    }
+}
+
+fn value_ctor_argument_projection_accepts(name: &str) -> bool {
+    // Declared acceptance set for source-constructed value literals whose arguments
+    // are the value's identity. This is the #3412 ctor-projection shape applied only
+    // where the constructor semantics are already owned by a literal-value sugar.
+    matches!(name, "ip:v4" | "ip:v6" | "ip:any-v4" | "ip:any-v6")
+}
+
+fn value_ctor_argument_term(index: usize, term: &Rc<Term>) -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: format!("ctor-arg:{index}"),
+        args: vec![term.clone()],
+    })
+}
+
+fn table_select_relation_atom(
+    lhs: &Rc<Term>,
+    rhs: &Rc<Term>,
+    op: RelationOp,
+) -> Option<Rc<Formula>> {
+    let lhs_value = selected_table_value(lhs);
+    let rhs_value = selected_table_value(rhs);
+    if lhs_value.is_none() && rhs_value.is_none() {
+        return None;
+    }
+    let lhs = lhs_value.unwrap_or_else(|| lhs.clone());
+    let rhs = rhs_value.unwrap_or_else(|| rhs.clone());
+    Some(match op {
+        RelationOp::Eq => eq(lhs, rhs),
+        RelationOp::Ne => ne(lhs, rhs),
+        RelationOp::Lt => lt(lhs, rhs),
+        RelationOp::Le => lte(lhs, rhs),
+        RelationOp::Gt => gt(lhs, rhs),
+        RelationOp::Ge => gte(lhs, rhs),
+    })
+}
+
+fn selected_table_value(term: &Rc<Term>) -> Option<Rc<Term>> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == "cast:char" && args.len() == 1 => {
+            let codepoint = selected_table_codepoint(&args[0])?;
+            char::from_u32(codepoint).map(|ch| str_const(ch.to_string()))
+        }
+        _ => selected_table_codepoint(term).map(|codepoint| num(i128::from(codepoint))),
+    }
+}
+
+fn selected_table_codepoint(term: &Rc<Term>) -> Option<u32> {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return None;
+    };
+    if name != "str.table-select" || args.len() != 2 {
+        return None;
+    }
+    let alpha = string_const_value(&args[0])?;
+    let index = const_fold_int_term(&args[1])
+        .or_else(|| const_fold_u128_term(&args[1]).and_then(|value| i128::try_from(value).ok()))?;
+    if index < 0 {
+        return None;
+    }
+    alpha
+        .chars()
+        .nth(usize::try_from(index).ok()?)
+        .map(u32::from)
+}
+
+fn string_const_value(term: &Rc<Term>) -> Option<&str> {
+    let Term::Const {
+        value: ConstValue::String(value),
+        ..
+    } = term.as_ref()
+    else {
+        return None;
+    };
+    Some(value)
 }
 
 fn const_u128_relation_atom(lhs: &Rc<Term>, rhs: &Rc<Term>, op: RelationOp) -> Option<Rc<Formula>> {

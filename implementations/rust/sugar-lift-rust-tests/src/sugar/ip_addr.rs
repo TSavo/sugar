@@ -25,8 +25,29 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "literal_ip_addr",
     &["const_path", "path", "call", "method"],
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family c: literal IP address value relation lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::net::Ipv4Addr;
+
+            #[test]
+            fn t_literal_ip_addr_good() {
+                assert_eq!(
+                    Ipv4Addr::new(127, 0, 0, 1),
+                    Ipv4Addr::new(127, 0, 0, 1)
+                );
+            }
+        "#,
+        r#"
+            use std::net::Ipv4Addr;
+
+            #[test]
+            fn t_literal_ip_addr_bad() {
+                assert_eq!(
+                    Ipv4Addr::new(127, 0, 0, 1),
+                    Ipv4Addr::new(127, 0, 0, 2)
+                );
+            }
+        "#,
     ),
     recognize_term,
 );

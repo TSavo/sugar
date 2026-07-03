@@ -27659,6 +27659,167 @@ fn t_field_term_struct_update_refusal() {
 }
 
 #[test]
+fn literal_ip_addr_ctor_equality_bad_twin_is_z3_unsat() {
+    let src = r#"
+use std::net::Ipv4Addr;
+
+#[test]
+fn t_literal_ip_addr_bad() {
+    assert_eq!(
+        Ipv4Addr::new(127, 0, 0, 1),
+        Ipv4Addr::new(127, 0, 0, 2)
+    );
+}
+"#;
+    let out = lift_file(&parse(src), "tests/literal-ip-addr-equality-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad literal IP ctor equality twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "literal_ip_addr_bad",
+    ) {
+        assert!(
+            !sat,
+            "Ipv4Addr::new(..., 1) == Ipv4Addr::new(..., 2) must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn literal_ip_addr_ctor_equality_good_twin_is_sat() {
+    let src = r#"
+use std::net::Ipv4Addr;
+
+#[test]
+fn t_literal_ip_addr_good() {
+    assert_eq!(
+        Ipv4Addr::new(127, 0, 0, 1),
+        Ipv4Addr::new(127, 0, 0, 1)
+    );
+}
+"#;
+    let out = lift_file(&parse(src), "tests/literal-ip-addr-equality-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful literal IP ctor equality twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "literal_ip_addr_good",
+    ) {
+        assert!(sat, "identical literal Ipv4Addr ctors must be z3-SAT");
+    }
+}
+
+#[test]
+fn literal_ip_addr_runtime_segment_refuses_instead_of_fabricating() {
+    let src = r#"
+use std::net::Ipv4Addr;
+
+#[test]
+fn t_literal_ip_addr_runtime_segment() {
+    assert_eq!(
+        Ipv4Addr::new(127, 0, 0, runtime()),
+        Ipv4Addr::new(127, 0, 0, 1)
+    );
+}
+"#;
+    let out = lift_file(&parse(src), "tests/literal-ip-addr-runtime-segment.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime IP segment must not fabricate a ctor-argument equality: {:?}",
+        out.decls
+    );
+    assert!(
+        out.assertions_refused >= 1
+            && out
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("runtime IP address receiver, not literal")),
+        "runtime IP segment must be a named RuntimeIpAddr refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn str_table_select_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t_str_table_select_bad() {
+    assert_eq!([65u8, 66u8, 67u8][1 & 1] as char, 'C');
+}
+"#;
+    let out = lift_file(&parse(src), "tests/str-table-select-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad table-select twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "str_table_select_bad",
+    ) {
+        assert!(
+            !sat,
+            "[65,66,67][1&1] as char == 'C' must be z3-UNSAT because 1&1 selects 'B'"
+        );
+    }
+}
+
+#[test]
+fn str_table_select_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t_str_table_select_good() {
+    assert_eq!([65u8, 66u8, 67u8][1 & 1] as char, 'B');
+}
+"#;
+    let out = lift_file(&parse(src), "tests/str-table-select-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful table-select twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "str_table_select_good",
+    ) {
+        assert!(sat, "[65,66,67][1&1] as char == 'B' must be z3-SAT");
+    }
+}
+
+#[test]
+fn str_table_select_runtime_index_stays_opaque_not_fabricated() {
+    let src = r#"
+#[test]
+fn t_str_table_select_runtime_index() {
+    assert_eq!([65u8, 66u8, 67u8][runtime() & 1] as char, 'C');
+}
+"#;
+    let out = lift_file(&parse(src), "tests/str-table-select-runtime-index.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "runtime table-select index still lifts as an opaque selected term; skips={:?}",
+        out.skip_reasons
+    );
+    let ops = inv_operands(single_warranted_decl(&out));
+    assert_eq!(
+        ops.len(),
+        1,
+        "runtime index should stay a single opaque relation"
+    );
+    let dump = format!("{:?}", ops[0]);
+    assert!(
+        dump.contains("str.table-select") && dump.contains("call:runtime"),
+        "runtime table-select index must not fabricate a concrete selected element: {dump}"
+    );
+}
+
+#[test]
 fn rpc_source_refuses_mutating_closure_value_construction_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_mutating_closure_value.rs",
