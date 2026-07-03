@@ -432,6 +432,23 @@ impl IterFloorMember for CollectionIterMember {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MapOutputIterMember {
+    count: usize,
+}
+
+impl MapOutputIterMember {
+    pub(crate) fn new(count: usize) -> Self {
+        Self { count }
+    }
+}
+
+impl IterFloorMember for MapOutputIterMember {
+    fn standing(&self) -> Result<IterStanding, TemporalFloorRefusal> {
+        IterStanding::new("MapOutput", IterProvenance::Derived, Some(self.count))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct IterFloor;
 
@@ -573,6 +590,16 @@ mod tests {
         assert_eq!(members[0].count(), 2);
         assert_eq!(members[5].provenance(), IterProvenance::Stated);
         assert_eq!(members[6].provenance(), IterProvenance::Derived);
+    }
+
+    #[test]
+    fn iter_floor_counts_map_output_as_derived() {
+        let floor = IterFloor;
+        let standing = floor.alias(&MapOutputIterMember::new(2)).unwrap();
+
+        assert_eq!(standing.member(), "MapOutput");
+        assert_eq!(standing.provenance(), IterProvenance::Derived);
+        assert_eq!(standing.count(), 2);
     }
 
     #[test]

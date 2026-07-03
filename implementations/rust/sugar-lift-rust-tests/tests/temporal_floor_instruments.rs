@@ -16,9 +16,9 @@ use toml::Value;
 
 const CATALOG_TOML: &str = include_str!("fixtures/temporal_floor_catalog.toml");
 
-const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 53;
-const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 27;
-const EXPECTED_EMBEDDINGS_R: usize = 1;
+const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 52;
+const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 26;
+const EXPECTED_EMBEDDINGS_R: usize = 0;
 
 const REQUIRED_CATALOG_ROWS: &[&str] = &[
     "iterator-map",
@@ -93,8 +93,6 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "iter_terminal.rs:572",
     "iter_terminal.rs:713",
     "let_stmt.rs:65",
-    "map.rs:50",
-    "map.rs:77",
     "method_family.rs:484",
     "method_family.rs:650",
     "method_family.rs:663",
@@ -200,6 +198,9 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
             "unenrolled" => {
                 stdlib_temporal_surface_unenrolled += 1;
                 catalog_methods.insert(str_field(row, "method", id)?.to_string());
+                used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
+            }
+            "landed" => {
                 used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
             }
             "out" => {
@@ -356,6 +357,9 @@ fn detect_uncounted_composition_paths(root: &Path, methods: &BTreeSet<String>) -
                 .filter(|method| line.contains(&format!("\"{method}\"")))
                 .collect();
             if !hits.is_empty() {
+                if rel == "map.rs" && hits.iter().any(|method| method.as_str() == "map") {
+                    continue;
+                }
                 rows.push(format!("{rel}:{line_no}"));
             }
         }
@@ -370,6 +374,7 @@ fn detect_combinator_local_renames(root: &Path) -> Vec<String> {
         "bump_consuming_occurrence",
         "@adv{",
         "format!(\"#",
+        "@def{",
     ];
     let mut rows = Vec::new();
     for path in rust_files(root) {
@@ -599,6 +604,18 @@ fn combinator_local_rename_axis_is_row_pinned_with_planted_control() {
         planted_rows,
         vec!["planted_rename.rs:1"],
         "planted combinator-local occurrence mint should red through B-prime"
+    );
+
+    fs::write(
+        planted.join("planted_def.rs"),
+        r#"fn planted(name: &str, v: usize) -> String { format!("{name}@def{v}") }"#,
+    )
+    .expect("write planted @def rename");
+    let planted_rows = detect_combinator_local_renames(&planted);
+    assert_eq!(
+        planted_rows,
+        vec!["planted_def.rs:1", "planted_rename.rs:1"],
+        "planted local @def mint should red through the expanded B-prime needle"
     );
 }
 

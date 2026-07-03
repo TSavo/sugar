@@ -19468,9 +19468,10 @@ fn temporal_closure_adaptor_recognizers_are_lazy_source_audit() {
 #[test]
 fn temporal_map_literal_domain_rewrites_body_call_args_per_element() {
     // Regression pin for the construction law: map owns only the finite-domain binding
-    // (`n := 1`, `n := 2`). The closure body floor accepts the curry visitor, so opaque
-    // callbacks become orderless per-point symbols (`x_1()`, `x_2()`), not a raw
-    // `method:map` residue, a single unbound `x(n)` callsite, or an ordered trace.
+    // (`n := 1`, `n := 2`). The map floor dispatches through the CURRY doorway, so
+    // opaque callbacks keep one frozen callee symbol (`call:x`) and split only the
+    // applications (`call:x(1)`, `call:x(2)`). Splitting the callee would destroy EUF
+    // congruence across equal ticks.
     let src = r#"
 fn x(n: i32) -> i32 { opaque(n) }
 
@@ -19484,13 +19485,44 @@ fn t() {
     assert_warranted_decl_count(&out, 1);
     let dump = format!("{:?}", single_warranted_decl(&out));
     assert!(
-        dump.contains("call:x#map1") && dump.contains("call:x#map2"),
-        "map must instantiate the closure body as one orderless FOL occurrence per literal element: {dump}"
+        dump.contains("call:x(i:1:i32)") && dump.contains("call:x(i:2:i32)"),
+        "map must instantiate the closure body as call:x over each literal element: {dump}"
     );
     assert!(
-        !dump.contains("method:map") && !dump.contains("call:x(n)") && !dump.contains("Before"),
-        "map must not leak the adaptor or unbound closure parameter as the body floor: {dump}"
+        !dump.contains("call:x#map")
+            && !dump.contains("method:map")
+            && !dump.contains("call:x(n)")
+            && !dump.contains("Before"),
+        "map must not split the callee, leak the adaptor, or leave the unbound closure parameter: {dump}"
     );
+}
+
+#[test]
+fn temporal_map_callsite_curry_preserves_euf_congruence_for_equal_ticks() {
+    let src = r#"
+fn x(n: i32) -> i32 { opaque(n) }
+
+#[test]
+fn t() {
+    let got = [1i32, 1].into_iter().map(|n| x(n)).sum::<i32>();
+    assert_ne!(got, x(1) + x(1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/temporal_map_callsite_congruence_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let dump = format!("{decl:?}");
+    assert!(
+        dump.contains("call:x") && !dump.contains("call:x#map"),
+        "map-over-callsite must freeze the callee so congruence can bite: {dump}"
+    );
+    let inv = inv_json(decl);
+    if let Some(sat) = z3_verdict(&inv, "temporal_map_callsite_congruence_bad") {
+        assert!(
+            !sat,
+            "x(1)+x(1) != x(1)+x(1) over two map ticks must be UNSAT; split callee names make this false proof SAT: decl={dump}; inv={inv}"
+        );
+    }
 }
 
 #[test]
@@ -19498,10 +19530,11 @@ fn temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing()
     let lhs = "[1i32, 2].into_iter().map(|n| [1i32, 2].into_iter().map(|h| n + h).sum::<i32>()).sum::<i32>()";
 
     let good = lift_eq_decl(lhs, "12i32", "tests/temporal_nested_map_sum_good.rs");
+    let good_dump = format!("{:?}", good.inv);
     assert_eq!(
         complete_eq_int_pairs(&good),
         vec![(12, 12)],
-        "nested map floors must curry outer n through the inner map before scalar reduction"
+        "nested map floors must curry outer n through the inner map before scalar reduction: {good_dump}"
     );
     if let Some(sat) = z3_verdict(&inv_json(&good), "temporal_nested_map_sum_good") {
         assert!(sat, "nested map good twin must be SAT");

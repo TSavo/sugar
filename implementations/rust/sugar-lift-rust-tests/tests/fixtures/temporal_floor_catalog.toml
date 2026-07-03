@@ -17,7 +17,7 @@ operation_floor = "map"
 doorway = "curry"
 owner = "S3"
 target_slice = "S3"
-status = "unenrolled"
+status = "landed"
 
 [[catalog]]
 id = "iterator-filter"
@@ -614,7 +614,7 @@ reason = "foundational counted enumeration floor"
 id = "floor-map"
 floor = "map"
 owner = "S3"
-status = "planned"
+status = "landed"
 reason = "one map implementation owned by the floor"
 
 [[operation_floor]]
@@ -838,7 +838,7 @@ floor = "iter"
 member = "MapOutput"
 provenance = "derived-from-map-floor"
 owner = "S3"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-stated-collection"
