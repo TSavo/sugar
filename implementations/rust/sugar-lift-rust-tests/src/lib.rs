@@ -5141,6 +5141,10 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().unknown_mutation_reason(name)
     }
 
+    pub(crate) fn mutable_alias_base(&self, name: &str) -> Option<String> {
+        self.temporal_rewrite.borrow().mutable_alias_base(name)
+    }
+
     pub(crate) fn temporal_cell_kind(&self, name: &str) -> Option<sugar::assign_op::CellKind> {
         self.temporal_rewrite.borrow().cell_kind(name)
     }
@@ -5489,10 +5493,12 @@ impl TemporalScope {
         self.plan.mut_locals.contains(name)
     }
 
-    /// Whether `name` is MUTATED through a `&mut` alias the temporal replay ledger did
-    /// not resolve. Such a local's tracked value is stale, so a read of it must REFUSE
-    /// rather than lift the stale literal (the no-false-refutation gate). Literal
-    /// assignments replayed through `TemporalRewriteState` are not stale and may lift.
+    /// Whether `name` was mutated through a `&mut` alias without an independent exact
+    /// replay. A direct literal alias assignment like `*p = 1` is an exact replay and
+    /// remains a valid post-state witness. An unreplayed alias mutation has only the
+    /// stale pre-state, while a compound alias mutation like `*p += 1` reuses that prior
+    /// tracked value as part of its own testimony. Both cases must REFUSE rather than
+    /// lift a stale or self-corroborating value (the no-false-refutation gate).
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
         self.alias_deref_mutation_needs_refusal(name)
     }
@@ -5503,7 +5509,8 @@ impl TemporalScope {
         }
         let temporal_rewrite = self.temporal_rewrite.borrow();
         temporal_rewrite.unknown_mutation_reason(name).is_none()
-            && !temporal_rewrite.replayed_mutable_alias_base(name)
+            && (!temporal_rewrite.replayed_mutable_alias_base(name)
+                || temporal_rewrite.compound_alias_rewrite_needs_refusal(name))
     }
 
     /// Whether `name` is a TEMPORALLY-UNSTABLE loop counter (mutated in a loop the tracker
@@ -11618,6 +11625,14 @@ fn panic_freedom_direct_method_callsite_effect(
 ) -> Option<Effect> {
     let method = call.method.to_string();
     if let Some(receiver) = panic_freedom_iterator_consumption_receiver(call) {
+        if let Some(base) = scope.mutable_alias_base(&receiver) {
+            return Some(Effect::AmbiguousTemporalIdentity {
+                boundary: base.clone(),
+                reason: format!(
+                    "ambiguous temporal identity for receiver `{base}`; skipped assertion"
+                ),
+            });
+        }
         if scope.temporal_rewrite_expr_for(&receiver).is_some() {
             return None;
         }

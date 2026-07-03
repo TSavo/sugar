@@ -17,24 +17,12 @@ use serde_json::json;
 
 const EXPECTED_RED: &[(&str, &str)] = &[
     (
-        "alias_deref_mutated_read_refuses_not_false_refutation",
-        "floor-gap:mutable-alias-state",
-    ),
-    (
-        "alias_receiver_identity_is_ambiguous_and_skipped",
-        "floor-gap:mutable-alias-state",
-    ),
-    (
         "bounded_next_binding_bad_remaining_len_refutes",
         "floor-gap:iterator-temporal-state",
     ),
     (
         "bounded_next_binding_snapshots_return_and_advances_receiver_state",
         "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "broad_functional_warrant_carries_const_bound_assertions",
-        "floor-gap:macro-visible-source",
     ),
     (
         "catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused",

@@ -179,6 +179,7 @@ pub(crate) struct TemporalRewriteState {
     unknown_mutations: BTreeMap<String, String>,
     exhausted_iterators: BTreeSet<String>,
     rewritten_bases: BTreeSet<String>,
+    compound_alias_rewrites: BTreeSet<String>,
     loop_replayed: BTreeSet<String>,
 }
 
@@ -235,6 +236,7 @@ struct TemporalBindingSnapshot {
     unknown_mutation: Option<String>,
     exhausted_iterator: bool,
     rewritten_base: bool,
+    compound_alias_rewrite: bool,
     loop_replayed: bool,
 }
 
@@ -352,6 +354,18 @@ impl TemporalRewriteState {
         self.rewritten_bases.contains(name)
     }
 
+    pub(crate) fn compound_alias_rewrite_needs_refusal(&self, name: &str) -> bool {
+        self.compound_alias_rewrites.contains(name)
+    }
+
+    pub(crate) fn mutable_alias_base(&self, name: &str) -> Option<String> {
+        match self.aliases.get(name)? {
+            RewritePlace::Scalar(base)
+            | RewritePlace::Element { base, .. }
+            | RewritePlace::Slice { base, .. } => Some(base.clone()),
+        }
+    }
+
     pub(crate) fn cell_kind(&self, name: &str) -> Option<CellKind> {
         self.cell_values.get(name).map(|state| state.kind)
     }
@@ -400,6 +414,7 @@ impl TemporalRewriteState {
     fn clear_value(&mut self, name: &str) {
         self.values.remove(name);
         self.term_values.remove(name);
+        self.compound_alias_rewrites.remove(name);
     }
 
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
@@ -553,12 +568,22 @@ impl TemporalRewriteState {
                     applied |= handled;
                 } else if let Some((direction, count)) = iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
-                        applied |= self.advance_iterator_binding(&name, direction, count);
+                        if let Some(base) = self.mutable_alias_base(&name) {
+                            applied |=
+                                self.invalidate_iterator_binding(&base, &call.method.to_string());
+                        } else {
+                            applied |= self.advance_iterator_binding(&name, direction, count);
+                        }
                     }
                 } else if unknown_iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
-                        applied |=
-                            self.invalidate_iterator_binding(&name, &call.method.to_string());
+                        if let Some(base) = self.mutable_alias_base(&name) {
+                            applied |=
+                                self.invalidate_iterator_binding(&base, &call.method.to_string());
+                        } else {
+                            applied |=
+                                self.invalidate_iterator_binding(&name, &call.method.to_string());
+                        }
                     }
                 }
                 if borrowed_iterator_terminal(call) {
@@ -714,6 +739,7 @@ impl TemporalRewriteState {
             unknown_mutation: self.unknown_mutations.get(name).cloned(),
             exhausted_iterator: self.exhausted_iterators.contains(name),
             rewritten_base: self.rewritten_bases.contains(name),
+            compound_alias_rewrite: self.compound_alias_rewrites.contains(name),
             loop_replayed: self.loop_replayed.contains(name),
         }
     }
@@ -735,6 +761,11 @@ impl TemporalRewriteState {
             snapshot.exhausted_iterator,
         );
         restore_set_entry(&mut self.rewritten_bases, name, snapshot.rewritten_base);
+        restore_set_entry(
+            &mut self.compound_alias_rewrites,
+            name,
+            snapshot.compound_alias_rewrite,
+        );
         restore_set_entry(&mut self.loop_replayed, name, snapshot.loop_replayed);
     }
 
@@ -981,6 +1012,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
+        self.compound_alias_rewrites.remove(name);
         self.loop_replayed.remove(name);
         self.exhausted_iterators.remove(name);
         self.poison_cell(name, reason.clone());
@@ -1164,6 +1196,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.cell_values.remove(name);
         self.rewritten_bases.remove(name);
+        self.compound_alias_rewrites.remove(name);
         self.loop_replayed.remove(name);
         self.exhausted_iterators.remove(name);
         self.term_values.remove(name);
@@ -1293,8 +1326,12 @@ impl TemporalRewriteState {
             return self.invalidate_unknown_assignment(&target, lhs, rhs);
         };
         let target_label = target_label(&target);
+        let target_base = target_base(&target);
         let value_label = token_key(&value);
         let applied = self.set_target(target, value);
+        if applied {
+            self.compound_alias_rewrites.remove(&target_base);
+        }
         if applied && emit_trace {
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -1312,7 +1349,12 @@ impl TemporalRewriteState {
         let Some(target) = self.target_for_lhs(lhs) else {
             return false;
         };
-        self.set_target_term(target, term)
+        let target_base = target_base(&target);
+        let applied = self.set_target_term(target, term);
+        if applied {
+            self.compound_alias_rewrites.remove(&target_base);
+        }
+        applied
     }
 
     pub(crate) fn apply_compound_assign_term(
@@ -1327,8 +1369,13 @@ impl TemporalRewriteState {
         let Some(old) = self.target_term(&target) else {
             return false;
         };
+        let target_base = target_base(&target);
         let updated = compose_assignment_term(op, old, rhs);
-        self.set_target_term(target, updated)
+        let applied = self.set_target_term(target, updated);
+        if applied {
+            self.compound_alias_rewrites.insert(target_base);
+        }
+        applied
     }
 
     fn apply_compound_assign(&mut self, binary: &syn::ExprBinary, emit_trace: bool) -> bool {
@@ -1351,8 +1398,12 @@ impl TemporalRewriteState {
             return self.invalidate_unknown_assignment(&target, &binary.left, &binary.right);
         };
         let target_label = target_label(&target);
+        let target_base = target_base(&target);
         let updated_label = token_key(&updated);
         let applied = self.set_target(target, updated);
+        if applied {
+            self.compound_alias_rewrites.insert(target_base);
+        }
         if applied && emit_trace {
             debug!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -1463,11 +1514,7 @@ impl TemporalRewriteState {
 
     fn alias_capability_base(&self, expr: &Expr) -> Option<String> {
         let name = simple_path_name(expr)?;
-        match self.aliases.get(&name)? {
-            RewritePlace::Scalar(base)
-            | RewritePlace::Element { base, .. }
-            | RewritePlace::Slice { base, .. } => Some(base.clone()),
-        }
+        self.mutable_alias_base(&name)
     }
 
     fn invalidate_unknown_assignment(&mut self, target: &Target, lhs: &Expr, rhs: &Expr) -> bool {
@@ -1483,6 +1530,7 @@ impl TemporalRewriteState {
         self.aliases.remove(&base);
         self.unknown_consumed_iterators.remove(&base);
         self.rewritten_bases.remove(&base);
+        self.compound_alias_rewrites.remove(&base);
         self.loop_replayed.remove(&base);
         self.exhausted_iterators.remove(&base);
         self.poison_cell(&base, reason.clone());
@@ -2905,6 +2953,33 @@ mod tests {
             Some(13)
         );
         assert!(state.replayed_mutable_alias_base("v"));
+    }
+
+    #[test]
+    fn compound_alias_rewrite_marks_refusal_but_exact_assignment_clears_it() {
+        let mut state = TemporalRewriteState::default();
+        state.record_literal_value("r", syn::parse_quote!(0));
+        state
+            .aliases
+            .insert("p".to_string(), RewritePlace::Scalar("r".to_string()));
+
+        let compound: Expr = syn::parse_quote!(*p += 1);
+        assert!(state.apply_with_trace(&compound, false));
+        assert!(
+            state.compound_alias_rewrite_needs_refusal("r"),
+            "compound mutation through &mut alias must refuse a later read"
+        );
+
+        let exact: Expr = syn::parse_quote!(*p = 7);
+        assert!(state.apply_with_trace(&exact, false));
+        assert!(
+            !state.compound_alias_rewrite_needs_refusal("r"),
+            "an exact alias assignment establishes a fresh replayable post-state"
+        );
+        assert_eq!(
+            state.expr_for("r").and_then(|expr| const_int(&expr)),
+            Some(7)
+        );
     }
 
     #[test]

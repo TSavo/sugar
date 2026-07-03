@@ -918,15 +918,15 @@ mod tests {
     }
 
     #[test]
-    fn panic_macro_is_builtin_sugar_before_generic_macro_term() {
-        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+    fn divergent_builtin_macro_is_builtin_sugar_before_generic_macro_term() {
+        let expr: Expr = syn::parse_str("todo!()").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Term);
         let panic_macro = names
             .iter()
             .position(|name| *name == "panic_macro")
             .unwrap_or_else(|| {
                 panic!(
-                    "panic! is a builtin divergence macro and needs dedicated PanicMacroSugar \
+                    "todo! is a builtin divergence macro and needs dedicated PanicMacroSugar \
                      before generic macro_term; candidates were {names:?}"
                 )
             });
@@ -937,7 +937,7 @@ mod tests {
 
         assert!(
             panic_macro < macro_term,
-            "PanicMacroSugar must outrank MacroTermSugar for panic!: {names:?}"
+            "PanicMacroSugar must outrank MacroTermSugar for divergent builtin macros: {names:?}"
         );
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
@@ -947,12 +947,12 @@ mod tests {
 
     #[test]
     fn panic_macro_reports_builtin_effect_instead_of_macro_rules_gap() {
-        let expr: Expr = syn::parse_str("panic!(\"boom\")").unwrap();
+        let expr: Expr = syn::parse_str("unimplemented!()").unwrap();
         let audits = run_expr_with_audit(&expr, SugarRole::Term);
         let audit = audits
             .iter()
-            .find(|audit| audit.site == "panic ! (\"boom\")" && audit.requested_role == "Term")
-            .unwrap_or_else(|| panic!("panic! term site should be audited: {audits:?}"));
+            .find(|audit| audit.site == "unimplemented ! ()" && audit.requested_role == "Term")
+            .unwrap_or_else(|| panic!("unimplemented! term site should be audited: {audits:?}"));
 
         assert_eq!(audit.selected, Some("panic_macro"));
         assert_eq!(audit.disposition, FactoryDisposition::Refused);
@@ -961,7 +961,7 @@ mod tests {
                 .reason
                 .as_deref()
                 .is_some_and(|reason| reason.contains("panic! macro divergence")),
-            "panic! should report a typed builtin panic effect, not a macro_rules gap: {audit:?}"
+            "divergent builtin macros should report a typed builtin effect, not a macro_rules gap: {audit:?}"
         );
     }
 
