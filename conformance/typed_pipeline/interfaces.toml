@@ -4,7 +4,7 @@ version = 1
 interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
-ambient_testimony_sites = 1
+ambient_testimony_sites = 0
 transport_json_backend_ingress = 0
 backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
@@ -802,14 +802,6 @@ replay_inputs = [
   "Maude compiler version",
 ]
 source = { path = "implementations/rust/sugar-ir-compiler-maude/src/lib.rs", item = "MaudeCompiler", kind = "struct" }
-
-[[ambient_testimony_sites]]
-id = "issue-3313-ambient-ground-callsite-self-witness"
-shape = "ambient-ground-callsite-self-witness"
-owner = "rust verifier consistency seam"
-retirement = "split obligation and witness at the ambient ground-callsite boundary so the exact stated row cannot be conjoined as its own evidence (#3313)"
-baseline = true
-source = { path = "implementations/rust/sugar-verifier/src/consistency.rs", item = "ambient-ground-callsite-self-witness", needles = ["collect_ambient_ground_callsite_facts", "with_ambient_ground_callsite_facts"] }
 
 [[frontend_boundary_sources]]
 path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"

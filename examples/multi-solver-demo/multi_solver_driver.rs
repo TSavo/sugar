@@ -16,6 +16,7 @@
 
 use std::time::Duration;
 
+use sugar_ir_compiler::CompilerInput;
 use sugar_verifier::solvers::{
     plan::{run_plan, Registry},
     registry, SolverPlan, SolversConfig,
@@ -63,6 +64,7 @@ fn run_mode(name: &str, toml_body: &str) {
         "kind":"atomic","name":">",
         "args":[{"kind":"var","name":"n"},{"kind":"const","value":0}]
     });
+    let formula = CompilerInput::decode_json(formula).expect("demo formula decodes");
     let started = std::time::Instant::now();
     let (verdict, reason, invs) = run_plan(&plan, &registry, &smt, Some(&formula));
     let elapsed = started.elapsed();

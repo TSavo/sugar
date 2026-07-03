@@ -1679,6 +1679,10 @@ mod tests {
         [0x42; 32]
     }
 
+    fn fixture_cid(hex: char) -> String {
+        format!("blake3-512:{}", hex.to_string().repeat(128))
+    }
+
     fn valid_effect_site_annotation_args() -> MintEffectSiteAnnotationArgs {
         MintEffectSiteAnnotationArgs {
             effect_kind: "panic-freedom".into(),
@@ -1689,7 +1693,7 @@ mod tests {
             category: "lock_poisoning_residue".into(),
             tier_to_close: "irreducible".into(),
             reason: "lock poisoning is runtime residue".into(),
-            input_cids: vec!["blake3-512:input".into()],
+            input_cids: vec![fixture_cid('1')],
             produced_by: "test".into(),
             produced_at: "2026-06-01T00:00:00Z".into(),
             signer_seed: dummy_seed(),
@@ -1974,7 +1978,7 @@ mod tests {
             key: authority_key.clone(),
             scope_kind: "contract".into(),
             scope: "checked_add_u8.postcondition".into(),
-            parent_authority: Some(AuthorityMementoRef::new("blake3-512:parent")),
+            parent_authority: Some(AuthorityMementoRef::new(fixture_cid('d'))),
             produced_by: "test".into(),
             produced_at: "2026-05-08T00:00:00.000Z".into(),
             signer_seed: dummy_seed(),
@@ -1990,7 +1994,7 @@ mod tests {
             other => panic!("expected authority, got {}", other.kind()),
         };
 
-        assert_eq!(member.kind(), "authority");
+        assert_eq!(member.kind().as_str(), "authority");
         assert_eq!(a.principal, "bridgeworks.software");
         assert_eq!(a.key, authority_key.as_str());
         assert_eq!(a.scope_kind, "contract");
@@ -2000,7 +2004,7 @@ mod tests {
                 .as_ref()
                 .and_then(|v| v.first())
                 .map(|c| c.as_str()),
-            Some("blake3-512:parent")
+            Some(fixture_cid('d').as_str())
         );
         assert!(minted.cid.starts_with("blake3-512:"));
     }
@@ -2019,7 +2023,7 @@ mod tests {
             other => panic!("expected effect-site-annotation, got {}", other.kind()),
         };
 
-        assert_eq!(member.kind(), "effect-site-annotation");
+        assert_eq!(member.kind().as_str(), "effect-site-annotation");
         assert_eq!(e.effect_kind, "panic-freedom");
         assert_eq!(e.file, "src/lib.rs");
         assert_eq!(e.line, 42i64);
@@ -2030,7 +2034,7 @@ mod tests {
         assert_eq!(e.reason, "lock poisoning is runtime residue");
         assert_eq!(
             e.input_cids.first().map(|c| c.as_str()),
-            Some("blake3-512:input")
+            Some(fixture_cid('1').as_str())
         );
         assert!(minted.cid.starts_with("blake3-512:"));
     }
@@ -2038,9 +2042,9 @@ mod tests {
     #[test]
     fn effect_site_annotation_input_cids_are_order_invariant() {
         let mut first = valid_effect_site_annotation_args();
-        first.input_cids = vec!["blake3-512:a".into(), "blake3-512:b".into()];
+        first.input_cids = vec![fixture_cid('a'), fixture_cid('b')];
         let mut second = valid_effect_site_annotation_args();
-        second.input_cids = vec!["blake3-512:b".into(), "blake3-512:a".into()];
+        second.input_cids = vec![fixture_cid('b'), fixture_cid('a')];
 
         let first = mint_effect_site_annotation(&first).expect("mint first");
         let second = mint_effect_site_annotation(&second).expect("mint second");

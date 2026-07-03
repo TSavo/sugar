@@ -1181,6 +1181,7 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
 
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
+    source_cid: String,
     scope: Option<String>,
     term_key: String,
     fact: Json,
@@ -1196,6 +1197,7 @@ struct AmbientGroundCallsiteFact {
 /// not pool across independent consumers that happen to name the same callsite.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
+    source_cid: &str,
     scope: &Option<String>,
     out: &mut Vec<AmbientGroundCallsiteFact>,
 ) {
@@ -1204,7 +1206,7 @@ fn collect_ambient_ground_callsite_facts(
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    collect_ambient_ground_callsite_facts(op, scope, out);
+                    collect_ambient_ground_callsite_facts(op, source_cid, scope, out);
                 }
             }
         }
@@ -1213,7 +1215,7 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
-                collect_ambient_ground_callsite_facts(&ops[1], scope, out);
+                collect_ambient_ground_callsite_facts(&ops[1], source_cid, scope, out);
             }
         }
         Some("atomic") if inv.get("name").and_then(|v| v.as_str()) == Some("=") => {
@@ -1224,6 +1226,7 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
+                source_cid: source_cid.to_string(),
                 scope: scope.clone(),
                 term_key,
                 fact: inv.clone(),
@@ -1618,6 +1621,7 @@ fn with_ambient_ground_callsite_facts(
     inv: Json,
     property_name: &str,
     ambient: &[AmbientGroundCallsiteFact],
+    excluded_source_cids: &[String],
 ) -> Json {
     if ambient.is_empty() || !property_name.contains("#euf#") {
         return inv;
@@ -1637,6 +1641,14 @@ fn with_ambient_ground_callsite_facts(
     let mut seen = std::collections::BTreeSet::new();
     let mut facts = Vec::new();
     for fact in ambient {
+        // A stated row is not independent testimony for itself. The ambient
+        // replay path may only add facts sourced from other mementos.
+        if excluded_source_cids
+            .iter()
+            .any(|source_cid| source_cid == &fact.source_cid)
+        {
+            continue;
+        }
         if fact
             .scope
             .as_ref()
@@ -1926,6 +1938,7 @@ pub fn verify_consistency(
             let ground_scope = ambient_ground_callsite_scope(contract_name);
             collect_ambient_ground_callsite_facts(
                 &inv,
+                cid,
                 &ground_scope,
                 &mut ambient_ground_callsite_facts,
             );
@@ -2023,6 +2036,7 @@ pub fn verify_consistency(
                     inv,
                     property_name,
                     &ambient_ground_callsite_facts,
+                    &inv_cids,
                 );
                 out.push(check_inv_consistency(
                     inv_cids[0].clone(),
@@ -2042,6 +2056,7 @@ pub fn verify_consistency(
                         inv,
                         property_name,
                         &ambient_ground_callsite_facts,
+                        std::slice::from_ref(cid),
                     );
                     out.push(check_inv_consistency(
                         (*cid).clone(),
@@ -2886,6 +2901,72 @@ mod tests {
     }
 
     #[test]
+    fn ambient_ground_callsite_fact_does_not_self_witness_stated_only_claim() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let stated_inv = json!({"kind":"and","operands":[eqf(calla, int(10))]});
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-only-callsite",
+            "src/lib.rs::tests::test_a::A#euf#c:call:A()::assertion",
+            stated_inv,
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one stated-only obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "a stated-only callsite equality must not discharge by feeding itself \
+             back as ambient testimony: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("single constraint"),
+            "refusal must stay loud and name the missing independent witness: {}",
+            res[0].reason
+        );
+    }
+
+    #[test]
+    fn ambient_ground_callsite_fact_from_independent_memento_witnesses_truthful_claim() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:derived-callsite",
+            "src/lib.rs::tests::test_a::derived#euf#c:call:A()::replay",
+            json!({"kind":"and","operands":[eqf(calla.clone(), int(10))]}),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-callsite",
+            "src/lib.rs::tests::test_a::A#euf#c:call:A()::assertion",
+            json!({"kind":"and","operands":[eqf(calla, int(10))]}),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(
+            res.len(),
+            2,
+            "two independently sourced obligations: {res:?}"
+        );
+        let stated = res
+            .iter()
+            .find(|r| r.contract_cid == test_cid_string("blake3-512:stated-callsite"))
+            .expect("stated row present");
+        assert_eq!(
+            stated.verdict,
+            ObligationVerdict::Discharged,
+            "matching independent ground callsite testimony still witnesses the \
+             stated equality: {res:?}"
+        );
+    }
+
+    #[test]
     fn ambient_ground_callsite_facts_do_not_cross_consumer_scopes() {
         let (plan, reg) = z3_plan_and_registry();
         let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
@@ -2918,8 +2999,9 @@ mod tests {
             .expect("consumer A point row present");
         assert_eq!(
             consumer_a.verdict,
-            ObligationVerdict::Discharged,
-            "consumer A's point assertion must not pool into other consumer scopes: {res:?}"
+            ObligationVerdict::Refused,
+            "consumer A's point assertion must not pool into other consumer scopes \
+             OR discharge by self-witnessing: {res:?}"
         );
         let consumer_b = res
             .iter()
@@ -2927,8 +3009,9 @@ mod tests {
             .expect("consumer B point row present");
         assert_eq!(
             consumer_b.verdict,
-            ObligationVerdict::Discharged,
-            "consumer B must not see consumer A's different value for the same structural callsite: {res:?}"
+            ObligationVerdict::Refused,
+            "consumer B must not see consumer A's different value for the same structural \
+             callsite, and with no independent same-scope witness remains refused: {res:?}"
         );
     }
 
@@ -3269,8 +3352,8 @@ mod tests {
     /// (an un-elided test-local `n`) is a fact about that test's locals, not
     /// about a callsite, and must NOT travel ambiently: two tests' unrelated
     /// locals can share a spelling and would couple through name capture. The
-    /// open universal stays home; the separate in-range-looking point-claim
-    /// stays Discharged.
+    /// open universal stays home; the separate in-range-looking point-claim has
+    /// no independent witness and stays Refused.
     #[test]
     fn open_forall_is_not_ambient() {
         let (plan, reg) = z3_plan_and_registry();
@@ -3309,8 +3392,9 @@ mod tests {
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
-            ObligationVerdict::Discharged,
-            "an OPEN universal must not refute anything ambiently: {res:?}"
+            ObligationVerdict::Refused,
+            "an OPEN universal must not refute anything ambiently or become a \
+             self-witnessed discharge: {res:?}"
         );
     }
 
@@ -3355,8 +3439,9 @@ mod tests {
             .expect("point-claim row present");
         assert_eq!(
             point.verdict,
-            ObligationVerdict::Discharged,
-            "a witness member's forall must not leak into symbolic checks: {res:?}"
+            ObligationVerdict::Refused,
+            "a witness member's forall must not leak into symbolic checks, and the \
+             standalone point claim must not self-witness: {res:?}"
         );
     }
 
