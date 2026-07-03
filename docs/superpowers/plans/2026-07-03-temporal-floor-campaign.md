@@ -169,6 +169,32 @@ ratified in conversation:
   family (the members above); S3's MapSugar bounds its operand on iter-standing;
   the R(embeddings) axis counts per-floor-per-literal doorways.
 
+### Addendum 2 — the keystone: one operation, one aliasing authority (T Savo, 2026-07-03)
+
+T: "Walk it up THROUGH a map floor. It's one operation. Desugar. And that's why
+there's a temporal floor: the place where rewrites go to be aliased."
+
+- **Every floor's one operation is desugar.** The map floor does not compute a
+  mapping; it runs the real combinator over the composing lhe/rhe and yields
+  compositions — rewrites, one per tick. Floors are desugaring authorities per
+  shape; nothing else.
+- **The temporal floor is the terminal aliasing authority.** ALL rewrites — map
+  ticks, fold's threading accumulator, `mut` assignment, shadowing, guarded-raise
+  branch occurrences — dispatch to the temporal floor to be aliased
+  (X(1) → X_1()). NO combinator owns its own renaming (distributed renaming =
+  distributed intelligence = the crime; anti-goal). One door mints every alias,
+  so occurrence identity is globally consistent, collision-free, and CID-stable
+  under one owner's deterministic discipline.
+- **bind/curry/rewrite are one operation through three doorways** — alias this
+  rewrite into the timeless universe. That is why #3026 is MANDATORY: nothing in
+  the system can be sound about time until there is exactly one place time goes
+  to become a name.
+- Slice impact: the S2 substrate's occurrence-rename infrastructure IS the
+  temporal floor (rename it accordingly in the slice; it is a floor with members
+  and a single operation, not a helper library); every combinator slice (S3+)
+  consumes it by dispatch, never by local renaming; add the anti-goal to every
+  drain slice: a combinator that mints its own occurrence names = reject.
+
 ## Instruments (S1 — before any drain)
 
 - **Instrument A — the catalog enumeration:** `R(stdlib-temporal-surface-unenrolled)`.
