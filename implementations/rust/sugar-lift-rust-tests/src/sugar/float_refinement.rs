@@ -9,8 +9,9 @@ use std::rc::Rc;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::float_floor::{
-    stable_width_from_method_name, stable_width_from_method_turbofish, stable_width_from_path,
-    stable_width_from_suffix, stable_width_from_type_key, unstable_width_from_method_name,
+    float_special_predicate_reduction_for_term, stable_width_from_method_name,
+    stable_width_from_method_turbofish, stable_width_from_path, stable_width_from_suffix,
+    stable_width_from_type_key, unstable_width_from_method_name,
     unstable_width_from_method_turbofish, unstable_width_from_path, unstable_width_from_suffix,
     IeeeFloatWidth, IeeeFloatWidthAccept, IeeeFloatWidthNameVisitor,
 };
@@ -26,8 +27,19 @@ use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_float_refinement",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e: float refinement semantic lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+        #[test]
+        fn t() {
+            assert!(!f32::NAN.is_finite());
+        }
+        "#,
+        r#"
+        #[test]
+        fn t() {
+            assert!(f32::NAN.is_finite());
+        }
+        "#,
     ),
     recognize,
 );
@@ -154,7 +166,7 @@ fn assertion_entry_method(
     };
     Ok(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
-        atom: atomic_(float_predicate_atom_name(width, &method), vec![receiver]),
+        atom: float_refinement_atom(width, &method, receiver),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
@@ -197,13 +209,7 @@ impl Sugar for FloatRefinementSugar {
             Err(outcome) => return outcome,
         };
         let name = callsite_assertion_name(receiver.as_ref(), ctx.scope.local_scope());
-        constraint(
-            atomic_(
-                float_predicate_atom_name(width, &self.method),
-                vec![receiver],
-            ),
-            name,
-        )
+        constraint(float_refinement_atom(width, &self.method, receiver), name)
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
@@ -381,6 +387,13 @@ fn float_refinement_receiver_unstable_width(expr: &Expr) -> Option<&'static str>
 fn float_predicate_atom_name(width: IeeeFloatWidth, method: &str) -> String {
     let width = width.accept_ieee_float_width(IeeeFloatWidthNameVisitor);
     format!("float.{width}.{method}")
+}
+
+fn float_refinement_atom(width: IeeeFloatWidth, method: &str, receiver: Rc<Term>) -> Rc<Formula> {
+    if let Some(value) = float_special_predicate_reduction_for_term(&receiver, method) {
+        return eq(bool_const(value), bool_const(true));
+    }
+    atomic_(float_predicate_atom_name(width, method), vec![receiver])
 }
 
 fn path_to_name(path: &syn::Path) -> String {

@@ -1,149 +1,62 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `ComputeFloatSugar`: stdlib dec2flt `compute_float::<f32/f64>(q, w)` is an
-// internal Rust axiom. When the call is pinned to literal arguments, ask rustc for
-// the exact `BiasedFp { p_biased, m }` pair and emit the same literal tuple the
-// source wrapper returns. Non-literal arguments do not get guessed.
-
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
-use std::io::Write;
-use std::path::Path;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+// `ComputeFloatSugar`: stdlib dec2flt `compute_float::<f32/f64>(q, w)` is float
+// computation. Family (e)'s doctrine permits only identity reduction over special
+// values; decimal-to-float arithmetic is refused.
 
 use crate::sugar::source_fragment::SourceFragment;
-use sugar_ir_symbolic::{make_var, num, Term};
 use syn::{
     Expr, ExprCall, ExprField, ExprPath, GenericArgument, ItemFn, Member, Pat, PathArguments, Stmt,
     Type,
 };
-use tracing::{debug, warn};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
-use crate::{
-    canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared,
-    Effect, Outcome, Sugar, SugarCtx,
-};
+use crate::sugar::factory::SugarBuildCtx;
+use crate::{strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "compute_float",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e: compute_float wrapper remains EUF and lying SAT",
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "float-specials",
+        "#3415 family e: compute_float requires decimal-to-float computation; T ruling permits only special identity reduction or refusal",
     ),
     recognize,
 );
 
 // FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr::/Call field access.
-// Uses call_func() as Call-type gate, call_arg_count(), call_args(), token_str(),
-// SugarBody::term_frag(), and frag-wrapper helpers exclusively.
+// Uses call_func() as Call-type gate, call_arg_count(), token_str(), and
+// frag-wrapper helpers exclusively.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Gate: call_func() returns None for anything that is not an Expr::Call.
     frag.call_func()?;
     if frag.call_arg_count() != 2 {
         return None;
     }
-    let args = frag.call_args();
     let width = direct_compute_float_width_frag(frag, fcx)
         .or_else(|| wrapper_compute_float_width_frag(frag, fcx))?;
     Some(Box::new(ComputeFloatSugar {
         width,
-        q: SugarBody::term_frag(&args[0], fcx),
-        w: SugarBody::term_frag(&args[1], fcx),
         site: frag.token_str(),
     }))
 }
 
 struct ComputeFloatSugar {
     width: ComputeFloatWidth,
-    q: SugarBody<TermFloor>,
-    w: SugarBody<TermFloor>,
     site: String,
 }
 
 impl Sugar for ComputeFloatSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let q = match term_body(&self.q, ctx, "compute_float q argument") {
-            Ok(term) => term,
-            Err(outcome) => return outcome,
-        };
-        let w = match term_body(&self.w, ctx, "compute_float w argument") {
-            Ok(term) => term,
-            Err(outcome) => return outcome,
-        };
-        let Some(q) = const_fold_int_term(&q).and_then(|value| i64::try_from(value).ok()) else {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = self.width.type_name(),
-                "compute_float q argument did not bottom out to an i64 literal"
-            );
-            return self.runtime_operand("i64");
-        };
-        let Some(w) = const_fold_u128_term(&w)
-            .or_else(|| const_fold_int_term(&w).and_then(|value| u128::try_from(value).ok()))
-            .and_then(|value| u64::try_from(value).ok())
-        else {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = self.width.type_name(),
-                "compute_float w argument did not bottom out to a u64 literal"
-            );
-            return self.runtime_operand("u64");
-        };
-        let Some(fp) = rustc_compute_float(self.width, q, w) else {
-            panic!(
-                "compute_float::<{}> literal harness failed for q={q}, w={w}",
-                self.width.type_name()
-            );
-        };
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::compute_float",
-            width = self.width.type_name(),
-            q,
-            w,
-            p_biased = fp.p_biased,
-            mantissa = fp.m,
-            "resolved compute_float stdlib axiom to literal tuple"
-        );
-        Outcome::Complete(Desugared::Term(biased_fp_tuple_term(fp)))
-    }
-}
-
-impl ComputeFloatSugar {
-    fn runtime_operand(&self, kind: &str) -> Outcome {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::RuntimeNumericOperand {
             boundary: self.site.clone(),
             operation: format!("compute_float::<{}>", self.width.type_name()),
-            kind: kind.to_string(),
+            kind: format!(
+                "crime=float computation; #3415 float-special doctrine permits only floored \
+                 special identity reduction; replacement=identity reduction or nothing"
+            ),
         })
     }
-}
-
-fn term_body(
-    body: &SugarBody<TermFloor>,
-    ctx: &SugarCtx,
-    owner: &'static str,
-) -> Result<std::rc::Rc<Term>, Outcome> {
-    match body.reduce(ctx) {
-        Outcome::Complete(desugared) => {
-            Ok(desugared.accept_desugared_floor(RequiredTermVisitor { owner }))
-        }
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-    }
-}
-
-fn biased_fp_tuple_term(fp: BiasedFp) -> std::rc::Rc<Term> {
-    let p_biased = num(i128::from(fp.p_biased));
-    let mantissa = num(i128::from(fp.m));
-    make_var(format!(
-        "literal:Tuple({},{})",
-        canonical_term_sig(&p_biased),
-        canonical_term_sig(&mantissa)
-    ))
 }
 
 fn direct_compute_float_width(call: &ExprCall, fcx: &SugarBuildCtx) -> Option<ComputeFloatWidth> {
@@ -350,179 +263,6 @@ impl ComputeFloatWidth {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct BiasedFp {
-    p_biased: i32,
-    m: u64,
-}
-
-fn rustc_compute_float(width: ComputeFloatWidth, q: i64, w: u64) -> Option<BiasedFp> {
-    let cache = COMPUTE_FLOAT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
-    let key = (width, q, w);
-    if let Some(cached) = cache
-        .lock()
-        .expect("compute_float cache poisoned")
-        .get(&key)
-    {
-        return *cached;
-    }
-    let result = compile_and_run_compute_float_harness(width, q, w);
-    cache
-        .lock()
-        .expect("compute_float cache poisoned")
-        .insert(key, result);
-    result
-}
-
-static COMPUTE_FLOAT_CACHE: OnceLock<
-    Mutex<BTreeMap<(ComputeFloatWidth, i64, u64), Option<BiasedFp>>>,
-> = OnceLock::new();
-static COMPUTE_FLOAT_HARNESS_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn compile_and_run_compute_float_harness(
-    width: ComputeFloatWidth,
-    q: i64,
-    w: u64,
-) -> Option<BiasedFp> {
-    let ty = width.type_name();
-    let source = format!(
-        "#![feature(num_internals, dec2flt)]\n\
-         #![allow(internal_features)]\n\
-         extern crate core;\n\
-         use core::num::imp::dec2flt::lemire::compute_float;\n\
-         fn main() {{\n\
-             let fp = compute_float::<{ty}>({q}i64, {w}u64);\n\
-             println!(\"{{}} {{}}\", fp.p_biased, fp.m);\n\
-         }}\n"
-    );
-    let tag = harness_tag(&source);
-    let dir = std::env::temp_dir().join("sugar_compute_float_harness");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        warn!(
-            target: "sugar_lift_rust_tests::sugar::compute_float",
-            width = ty,
-            q,
-            w,
-            error = %e,
-            "could not create rustc compute_float harness directory"
-        );
-        return None;
-    }
-    let src_path = dir.join(format!("compute_float_{tag}.rs"));
-    let bin_path = dir.join(format!("compute_float_{tag}_bin"));
-    let result = run_compute_float_harness(&src_path, &bin_path, &source, width, q, w);
-    let _ = std::fs::remove_file(&src_path);
-    let _ = std::fs::remove_file(&bin_path);
-    result
-}
-
-fn harness_tag(source: &str) -> String {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    source.hash(&mut h);
-    let digest = h.finish();
-    let count = COMPUTE_FLOAT_HARNESS_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{digest:016x}_{count:016x}")
-}
-
-fn run_compute_float_harness(
-    src_path: &Path,
-    bin_path: &Path,
-    source: &str,
-    width: ComputeFloatWidth,
-    q: i64,
-    w: u64,
-) -> Option<BiasedFp> {
-    if let Err(e) = std::fs::File::create(src_path).and_then(|mut f| f.write_all(source.as_bytes()))
-    {
-        warn!(
-            target: "sugar_lift_rust_tests::sugar::compute_float",
-            width = width.type_name(),
-            q,
-            w,
-            error = %e,
-            "could not write rustc compute_float harness"
-        );
-        return None;
-    }
-    let compile = Command::new("rustc")
-        .env("RUSTC_BOOTSTRAP", "1")
-        .arg("--edition")
-        .arg("2021")
-        .arg("-A")
-        .arg("warnings")
-        .arg(src_path)
-        .arg("-o")
-        .arg(bin_path)
-        .output();
-    match compile {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            let mut stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            stderr.truncate(800);
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = width.type_name(),
-                q,
-                w,
-                stderr = stderr.as_str(),
-                "rustc compute_float harness did not compile"
-            );
-            return None;
-        }
-        Err(e) => {
-            warn!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = width.type_name(),
-                q,
-                w,
-                error = %e,
-                "could not invoke rustc compute_float harness"
-            );
-            return None;
-        }
-    }
-    let run = Command::new(bin_path).output();
-    let out = match run {
-        Ok(out) if out.status.success() => out,
-        Ok(out) => {
-            let mut stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            stderr.truncate(800);
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = width.type_name(),
-                q,
-                w,
-                stderr = stderr.as_str(),
-                "rustc compute_float harness binary failed"
-            );
-            return None;
-        }
-        Err(e) => {
-            warn!(
-                target: "sugar_lift_rust_tests::sugar::compute_float",
-                width = width.type_name(),
-                q,
-                w,
-                error = %e,
-                "could not run rustc compute_float harness binary"
-            );
-            return None;
-        }
-    };
-    parse_biased_fp_stdout(&out.stdout)
-}
-
-fn parse_biased_fp_stdout(stdout: &[u8]) -> Option<BiasedFp> {
-    let stdout = String::from_utf8_lossy(stdout);
-    let mut parts = stdout.split_whitespace();
-    let p_biased = parts.next()?.parse::<i32>().ok()?;
-    let m = parts.next()?.parse::<u64>().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(BiasedFp { p_biased, m })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,20 +270,6 @@ mod tests {
     use crate::sugar::source_fragment::{parse_file, FragNode, SourceFragment};
     use crate::{LiftOptions, TemporalPlan, TemporalScope};
     use std::collections::BTreeMap;
-
-    #[test]
-    fn rustc_harness_answers_known_scaled_rows() {
-        assert_eq!(
-            rustc_compute_float(ComputeFloatWidth::F32, -10, (1u64 << 24) * 10u64.pow(10))
-                .map(|fp| (fp.p_biased, fp.m)),
-            Some((151, 0))
-        );
-        assert_eq!(
-            rustc_compute_float(ComputeFloatWidth::F64, -3, ((1u64 << 53) + 2) * 1000)
-                .map(|fp| (fp.p_biased, fp.m)),
-            Some((1076, 1))
-        );
-    }
 
     fn compute_float_call_frag<'a>(file: &'a syn::File, file_str: &'a str) -> SourceFragment<'a> {
         let item = &file.items[0];

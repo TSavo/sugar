@@ -20,8 +20,8 @@ use syn::{
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::{ldexp_f32, ldexp_f64};
 use crate::{
-    const_fold_int_term, const_fold_u128_term, real_const, simple_call_name, simple_path_name,
-    strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    const_fold_int_term, const_fold_u128_term, make_var, real_const, simple_call_name,
+    simple_path_name, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) type FloatWidthScope = std::collections::BTreeMap<String, IeeeFloatWidth>;
@@ -72,7 +72,21 @@ pub(crate) enum IeeeFloatValue {
     F64(f64),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IeeeFloatSpecial {
+    Nan,
+    PosInfinity,
+    NegInfinity,
+}
+
 impl IeeeFloatValue {
+    pub(crate) fn width(self) -> IeeeFloatWidth {
+        match self {
+            IeeeFloatValue::F32(_) => IeeeFloatWidth::F32,
+            IeeeFloatValue::F64(_) => IeeeFloatWidth::F64,
+        }
+    }
+
     pub(crate) fn to_bits_term(self) -> Rc<Term> {
         match self {
             IeeeFloatValue::F32(value) => int_width_term(i128::from(value.to_bits()), "u32"),
@@ -140,7 +154,7 @@ impl IeeeFloatValue {
         }
     }
 
-    fn term(self) -> Rc<Term> {
+    pub(crate) fn term(self) -> Rc<Term> {
         match self {
             IeeeFloatValue::F32(value) => Rc::new(Term::Ctor {
                 name: FLOAT_F32_CTOR.to_string(),
@@ -151,6 +165,35 @@ impl IeeeFloatValue {
                 args: vec![int_width_term(i128::from(value.to_bits()), "u64")],
             }),
         }
+    }
+
+    pub(crate) fn special_identity_term(self) -> Option<Rc<Term>> {
+        self.special_identity_name().map(make_var)
+    }
+
+    pub(crate) fn special(self) -> Option<IeeeFloatSpecial> {
+        match self {
+            IeeeFloatValue::F32(value) if value.is_nan() => Some(IeeeFloatSpecial::Nan),
+            IeeeFloatValue::F32(value) if value == f32::INFINITY => {
+                Some(IeeeFloatSpecial::PosInfinity)
+            }
+            IeeeFloatValue::F32(value) if value == f32::NEG_INFINITY => {
+                Some(IeeeFloatSpecial::NegInfinity)
+            }
+            IeeeFloatValue::F64(value) if value.is_nan() => Some(IeeeFloatSpecial::Nan),
+            IeeeFloatValue::F64(value) if value == f64::INFINITY => {
+                Some(IeeeFloatSpecial::PosInfinity)
+            }
+            IeeeFloatValue::F64(value) if value == f64::NEG_INFINITY => {
+                Some(IeeeFloatSpecial::NegInfinity)
+            }
+            _ => None,
+        }
+    }
+
+    fn special_identity_name(self) -> Option<&'static str> {
+        let special = self.special()?;
+        Some(float_special_identity_name(self.width(), special))
     }
 }
 
@@ -168,6 +211,13 @@ pub(crate) trait IeeeFloatAccept {
 impl IeeeFloatAccept for Rc<Term> {
     fn accept_ieee_float<V: IeeeFloatVisitor>(&self, visitor: V) -> V::Output {
         match self.as_ref() {
+            Term::Var { name } => {
+                if let Some(value) = primitive_float_assoc_const_name(name) {
+                    visitor.visit_float(value)
+                } else {
+                    visitor.visit_non_float(self)
+                }
+            }
             Term::Ctor { name, args } if name == FLOAT_F32_CTOR && args.len() == 1 => {
                 let Some(bits) = const_fold_u128_term(&args[0])
                     .or_else(|| const_fold_int_term(&args[0]).and_then(|n| u128::try_from(n).ok()))
@@ -192,6 +242,97 @@ impl IeeeFloatAccept for Rc<Term> {
             }
             _ => visitor.visit_non_float(self),
         }
+    }
+}
+
+struct IeeeFloatValueVisitor;
+
+impl IeeeFloatVisitor for IeeeFloatValueVisitor {
+    type Output = Option<IeeeFloatValue>;
+
+    fn visit_float(self, value: IeeeFloatValue) -> Self::Output {
+        Some(value)
+    }
+
+    fn visit_non_float(self, _term: &Rc<Term>) -> Self::Output {
+        None
+    }
+}
+
+pub(crate) fn ieee_float_value_from_term(term: &Rc<Term>) -> Option<IeeeFloatValue> {
+    term.accept_ieee_float(IeeeFloatValueVisitor)
+}
+
+pub(crate) fn float_special_predicate_reduction_for_term(
+    term: &Rc<Term>,
+    method: &str,
+) -> Option<bool> {
+    let Some(value) = ieee_float_value_from_term(term) else {
+        return None;
+    };
+    value.special()?;
+    Some(match value {
+        IeeeFloatValue::F32(value) => match method {
+            "is_nan" => value.is_nan(),
+            "is_infinite" => value.is_infinite(),
+            "is_finite" => value.is_finite(),
+            "is_normal" => value.is_normal(),
+            "is_sign_positive" => value.is_sign_positive(),
+            "is_sign_negative" => value.is_sign_negative(),
+            _ => return None,
+        },
+        IeeeFloatValue::F64(value) => match method {
+            "is_nan" => value.is_nan(),
+            "is_infinite" => value.is_infinite(),
+            "is_finite" => value.is_finite(),
+            "is_normal" => value.is_normal(),
+            "is_sign_positive" => value.is_sign_positive(),
+            "is_sign_negative" => value.is_sign_negative(),
+            _ => return None,
+        },
+    })
+}
+
+pub(crate) fn float_special_identity_eq_reduction_for_terms(
+    lhs: &Rc<Term>,
+    rhs: &Rc<Term>,
+) -> Option<bool> {
+    let Some(lhs_value) = ieee_float_value_from_term(lhs) else {
+        return None;
+    };
+    let Some(rhs_value) = ieee_float_value_from_term(rhs) else {
+        return None;
+    };
+    if lhs_value.width() != rhs_value.width() {
+        return None;
+    }
+    match (lhs_value.special(), rhs_value.special()) {
+        (None, None) => None,
+        (Some(IeeeFloatSpecial::Nan), _) | (_, Some(IeeeFloatSpecial::Nan)) => Some(false),
+        (Some(lhs), Some(rhs)) => Some(lhs == rhs),
+        (Some(_), None) | (None, Some(_)) => Some(false),
+    }
+}
+
+pub(crate) fn infinity_special_term(width: IeeeFloatWidth, is_positive: bool) -> Rc<Term> {
+    match (width, is_positive) {
+        (IeeeFloatWidth::F32, true) => IeeeFloatValue::F32(f32::INFINITY),
+        (IeeeFloatWidth::F32, false) => IeeeFloatValue::F32(f32::NEG_INFINITY),
+        (IeeeFloatWidth::F64, true) => IeeeFloatValue::F64(f64::INFINITY),
+        (IeeeFloatWidth::F64, false) => IeeeFloatValue::F64(f64::NEG_INFINITY),
+    }
+    .special_identity_term()
+    .expect("infinity values have special identity terms")
+}
+
+fn float_special_identity_name(width: IeeeFloatWidth, special: IeeeFloatSpecial) -> &'static str {
+    match (width, special) {
+        (IeeeFloatWidth::F32, IeeeFloatSpecial::Nan) => "f32::NAN",
+        (IeeeFloatWidth::F32, IeeeFloatSpecial::PosInfinity) => "f32::INFINITY",
+        (IeeeFloatWidth::F32, IeeeFloatSpecial::NegInfinity) => "f32::NEG_INFINITY",
+        (IeeeFloatWidth::F64, IeeeFloatSpecial::Nan) => "f64::NAN",
+        (IeeeFloatWidth::F64, IeeeFloatSpecial::PosInfinity) => "f64::INFINITY",
+        (IeeeFloatWidth::F64, IeeeFloatSpecial::NegInfinity) => "f64::NEG_INFINITY",
     }
 }
 
@@ -803,7 +944,25 @@ fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Option<IeeeFloatS
             path.path.segments[1].ident.to_string(),
         )
     };
-    let value = match (ty.as_str(), konst.as_str()) {
+    if matches!(ty.as_str(), "f16" | "f128") {
+        return Some(ieee_refinement_source(
+            site.to_string(),
+            format!("f16/f128 float bit model is not expressible `{site}`"),
+        ));
+    }
+    let value = primitive_float_assoc_const_pair(ty.as_str(), konst.as_str())?;
+    Some(IeeeFloatSource::Value(value))
+}
+
+fn primitive_float_assoc_const_name(name: &str) -> Option<IeeeFloatValue> {
+    let mut parts = name.rsplit("::");
+    let konst = parts.next()?;
+    let ty = parts.next()?;
+    primitive_float_assoc_const_pair(ty, konst)
+}
+
+fn primitive_float_assoc_const_pair(ty: &str, konst: &str) -> Option<IeeeFloatValue> {
+    Some(match (ty, konst) {
         ("f32", "MIN") => IeeeFloatValue::F32(f32::MIN),
         ("f32", "MAX") => IeeeFloatValue::F32(f32::MAX),
         ("f32", "EPSILON") => IeeeFloatValue::F32(f32::EPSILON),
@@ -820,15 +979,8 @@ fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Option<IeeeFloatS
         ("f64", "NEG_INFINITY") => IeeeFloatValue::F64(f64::NEG_INFINITY),
         ("f64", "NAN") => IeeeFloatValue::F64(f64::NAN),
         ("f64", "NEG_NAN") => IeeeFloatValue::F64(-f64::NAN),
-        ("f16" | "f128", _) => {
-            return Some(ieee_refinement_source(
-                site.to_string(),
-                format!("f16/f128 float bit model is not expressible `{site}`"),
-            ));
-        }
         _ => return None,
-    };
-    Some(IeeeFloatSource::Value(value))
+    })
 }
 
 fn primitive_float_type_name(ty: &syn::Type) -> Option<String> {
@@ -1034,6 +1186,7 @@ fn float_floor_gap(reason: &str) -> ! {
 mod tests {
     use super::*;
 
+    use sugar_ir_symbolic::make_var;
     use syn::{parse_quote, Expr};
 
     #[test]
@@ -1079,5 +1232,78 @@ mod tests {
             IeeeFloatValue::F64(actual) => assert_eq!(actual, 1.5),
             _ => panic!("expected widened f64 floor"),
         }
+    }
+
+    #[test]
+    fn float_specials_are_identity_constants_and_reduce_before_solver() {
+        let x = make_var("x");
+        assert_eq!(
+            float_special_predicate_reduction_for_term(&x, "is_finite"),
+            None,
+            "an unknown float variable must not reduce a special predicate"
+        );
+        assert_eq!(
+            float_special_identity_eq_reduction_for_terms(&x, &x),
+            None,
+            "an unknown float variable equality must not reduce or emit an identity claim"
+        );
+
+        let nan_repr = IeeeFloatValue::F32(f32::NAN).term();
+        assert!(
+            matches!(nan_repr.as_ref(), Term::Ctor { name, .. } if name == FLOAT_F32_CTOR),
+            "the representation floor still carries bits for to_bits/integer_decode: {nan_repr:?}"
+        );
+        let nan = IeeeFloatValue::F32(f32::NAN)
+            .special_identity_term()
+            .expect("NaN has a special identity");
+        assert!(
+            matches!(nan.as_ref(), Term::Var { name } if name == "f32::NAN"),
+            "NaN must be an identity-sorted constant, not a float ctor: {nan:?}"
+        );
+        assert_eq!(
+            float_special_predicate_reduction_for_term(&nan, "is_nan"),
+            Some(true)
+        );
+        assert_eq!(
+            float_special_predicate_reduction_for_term(&nan, "is_finite"),
+            Some(false)
+        );
+        assert_eq!(
+            float_special_identity_eq_reduction_for_terms(&nan, &nan),
+            Some(false),
+            "NaN equality reduces upstream; it must not become solver-visible identity testimony"
+        );
+
+        let pos_inf = IeeeFloatValue::F32(f32::INFINITY)
+            .special_identity_term()
+            .expect("INFINITY has a special identity");
+        let neg_inf = IeeeFloatValue::F32(f32::NEG_INFINITY)
+            .special_identity_term()
+            .expect("NEG_INFINITY has a special identity");
+        assert!(
+            matches!(pos_inf.as_ref(), Term::Var { name } if name == "f32::INFINITY"),
+            "INFINITY must be an identity-sorted constant: {pos_inf:?}"
+        );
+        assert!(
+            matches!(neg_inf.as_ref(), Term::Var { name } if name == "f32::NEG_INFINITY"),
+            "NEG_INFINITY must be an identity-sorted constant: {neg_inf:?}"
+        );
+        assert_eq!(
+            float_special_predicate_reduction_for_term(&pos_inf, "is_infinite"),
+            Some(true)
+        );
+        assert_eq!(
+            float_special_predicate_reduction_for_term(&pos_inf, "is_finite"),
+            Some(false)
+        );
+        assert_eq!(
+            float_special_identity_eq_reduction_for_terms(&pos_inf, &pos_inf),
+            Some(true)
+        );
+        assert_eq!(
+            float_special_identity_eq_reduction_for_terms(&pos_inf, &neg_inf),
+            Some(false),
+            "positive/negative infinity identity comparison reduces to false upstream"
+        );
     }
 }

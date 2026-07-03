@@ -534,6 +534,9 @@ pub enum Disposition {
 ///   * `signed zero float literal remains an IEEE refinement` -- a `-0.0` sign-sensitive
 ///                            IEEE value; the Real sort collapses ±0, so lifting risks a
 ///                            sign-collapse fake-discharge.
+///   * `crime=float equality over unknown float value` -- a float equality shape whose
+///                            receiver is not a known special identity; the kit must
+///                            reduce special identities before emission or refuse.
 ///   * `requires known f32/f64 receiver width` -- a float refinement over an unknown/
 ///                            unstable f-width (f16 / parse-unwrap chain).
 /// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
@@ -861,6 +864,13 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // earned refusal rather than a structural recognizer gap.
         || reason.contains("NaN comparison")
             && reason.contains("Rust float PartialEq/PartialOrd semantics")
+        // TERMINAL (FLOAT SPECIALS -- unknown identity): special-value equality only lowers
+        // after the kit has a known floored identity (`NAN`, `INFINITY`, `NEG_INFINITY`) to
+        // reduce before solver emission. A float variable may be NaN/finite/infinite, but it
+        // is not one of those known identities at the assertion site; emitting an identity
+        // claim or a float predicate would be fabricated testimony. Refuse by doctrine.
+        || (reason.contains("crime=float equality over unknown float value")
+            && reason.contains("requires a known special identity"))
         // TERMINAL (FLOAT TAIL #3 -- unknown/unstable f-width): a float refinement predicate
         // (`is_nan`/`is_infinite`/..) whose receiver has NO resolvable f32/f64 width -- an
         // f16/f128 unstable-width receiver or an unresolved parse/unwrap chain
@@ -25651,6 +25661,7 @@ fn t() {
             "signed zero float literal remains an IEEE refinement `- 0.0`",
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
             "assert!: NaN comparison `f32 :: NAN` uses Rust float PartialEq/PartialOrd semantics, not ordinary total-order/equality semantics; refused",
+            "crime=float equality over unknown float value; #3415 float-special doctrine requires a known special identity before emission `x_f64`; replacement=identity reduction or refusal",
             "float refinement predicate `is_nan` f16 NaN width not modeled `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
             "assert!: unsupported term `mem::size_of::<T>()`: layout is unknown to this lift (rustc could not compile a monomorphic size_of harness for this type); refused",

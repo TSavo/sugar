@@ -10,6 +10,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::float_floor::{
+    float_special_identity_eq_reduction_for_terms, infinity_special_term,
     stable_width_from_method_name, stable_width_from_path, stable_width_from_suffix,
     stable_width_from_type_key, IeeeFloatWidth, IeeeFloatWidthAccept, IeeeFloatWidthNameVisitor,
 };
@@ -19,14 +20,25 @@ use crate::{
     token_key, AssertionEntry, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect,
     FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, Warrant,
 };
-use sugar_ir_symbolic::{and_, atomic_, eq, Formula, Term};
+use sugar_ir_symbolic::{eq, Formula, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_infinity_eq",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e catch #34: infinity equality semantic lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+        #[test]
+        fn t() {
+            assert!(f32::INFINITY == f32::INFINITY);
+        }
+        "#,
+        r#"
+        #[test]
+        fn t() {
+            assert!(f32::INFINITY == f32::NEG_INFINITY);
+        }
+        "#,
     ),
     recognize,
 );
@@ -34,8 +46,19 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_infinity_eq",
     SugarRole::AssertionSurface,
-    crate::sugar::claim::SugarWitnesses::pinned_catch(
-        "#3415 family e: float/infinity semantics lie remains SAT",
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+        #[test]
+        fn t() {
+            assert_eq!(f32::INFINITY, f32::INFINITY);
+        }
+        "#,
+        r#"
+        #[test]
+        fn t() {
+            assert_eq!(f32::INFINITY, f32::NEG_INFINITY);
+        }
+        "#,
     ),
     recognize,
 );
@@ -164,21 +187,9 @@ fn assertion_entry_for_infinity(
         Outcome::Incomplete(effect) => return Err(effect),
     };
 
-    let sign_pred = if is_positive {
-        "is_sign_positive"
-    } else {
-        "is_sign_negative"
+    let Some(atom) = infinity_identity_atom(width, is_positive, receiver.clone()) else {
+        return Err(unknown_float_equality_effect(receiver_expr));
     };
-    let atom = and_(vec![
-        atomic_(
-            float_predicate_atom_name(width, "is_infinite"),
-            vec![receiver.clone()],
-        ),
-        atomic_(
-            float_predicate_atom_name(width, sign_pred),
-            vec![receiver.clone()],
-        ),
-    ]);
     Ok(AssertionEntry {
         name: callsite_assertion_name(receiver.as_ref(), scope.local_scope()),
         atom,
@@ -210,21 +221,10 @@ impl Sugar for InfinityEqSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let sign_pred = if self.is_positive {
-            "is_sign_positive"
-        } else {
-            "is_sign_negative"
+        let Some(atom) = infinity_identity_atom(self.width, self.is_positive, receiver.clone())
+        else {
+            return Outcome::Incomplete(unknown_float_equality_effect(&self.receiver_expr));
         };
-        let atom = and_(vec![
-            atomic_(
-                float_predicate_atom_name(self.width, "is_infinite"),
-                vec![receiver.clone()],
-            ),
-            atomic_(
-                float_predicate_atom_name(self.width, sign_pred),
-                vec![receiver.clone()],
-            ),
-        ]);
         constraint(
             atom,
             callsite_assertion_name(receiver.as_ref(), ctx.scope.local_scope()),
@@ -288,8 +288,26 @@ fn width_name(width: IeeeFloatWidth) -> &'static str {
     width.accept_ieee_float_width(IeeeFloatWidthNameVisitor)
 }
 
-fn float_predicate_atom_name(width: IeeeFloatWidth, method: &str) -> String {
-    format!("float.{}.{}", width_name(width), method)
+fn infinity_identity_atom(
+    width: IeeeFloatWidth,
+    is_positive: bool,
+    receiver: Rc<Term>,
+) -> Option<Rc<Formula>> {
+    let constant = infinity_special_term(width, is_positive);
+    let value = float_special_identity_eq_reduction_for_terms(&receiver, &constant)?;
+    Some(eq(bool_const(value), bool_const(true)))
+}
+
+fn unknown_float_equality_effect(expr: &Expr) -> Effect {
+    let boundary = token_key(expr.clone());
+    Effect::FloatIeeeRefinement {
+        boundary: boundary.clone(),
+        reason: format!(
+            "crime=float equality over unknown float value; #3415 float-special doctrine \
+             requires a known special identity before emission `{boundary}`; \
+             replacement=identity reduction or refusal"
+        ),
+    }
 }
 
 fn path_to_name(path: &syn::Path) -> String {
@@ -357,7 +375,7 @@ fn infinity_eq_gap(reason: &str) -> ! {
 mod tests {
     use super::*;
 
-    use crate::{record_simple_value_binding, TemporalPlan, TemporalScope};
+    use crate::{make_var, record_simple_value_binding, TemporalPlan, TemporalScope};
     use syn::{parse_quote, Expr, Local, Stmt};
 
     fn local_from_stmt(stmt: Stmt) -> Local {
@@ -409,9 +427,9 @@ mod tests {
             float_receiver_width(&receiver, &scope),
             Some(IeeeFloatWidth::F32)
         );
-        assert_eq!(
-            float_predicate_atom_name(IeeeFloatWidth::F32, "is_infinite"),
-            "float.f32.is_infinite"
+        assert!(
+            infinity_identity_atom(IeeeFloatWidth::F32, true, make_var("x")).is_none(),
+            "a typed variable has width, but no known special identity to reduce"
         );
     }
 }

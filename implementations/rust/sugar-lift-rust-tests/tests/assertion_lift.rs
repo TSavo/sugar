@@ -5810,8 +5810,48 @@ fn slice_get_unchecked_trait_clamp_form_lifts() {
     }
 }
 
+fn assert_compute_float_refused_by_doctrine(
+    src: &str,
+    expected_refusals: usize,
+    label: &str,
+) -> AdapterOutput {
+    let out = lift_file(&parse(src), label);
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "compute_float rows must not lower to tuple facts after #3415; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    assert_eq!(
+        out.assertions_refused, expected_refusals,
+        "each compute_float assertion must refuse by doctrine; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.selected.as_deref() == Some("compute_float")),
+        "compute_float sugar should still own the wrapper call and refuse it: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("compute_float")
+                && reason.contains("crime=float computation")
+                && reason.contains("#3415 float-special doctrine")
+                && reason.contains("replacement=identity reduction or nothing")
+        }),
+        "refusal must name the crime and executable replacement, got {:?}",
+        out.skip_reasons
+    );
+    println!(
+        "{label} compute_float refusal receipt: {:?}",
+        out.skip_reasons
+    );
+    out
+}
+
 #[test]
-fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
+fn compute_float32_wrapper_refuses_float_computation_by_doctrine() {
     let src = r#"
         fn compute_float32(q: i64, w: u64) -> (i32, u64) {
             let fp = compute_float::<f32>(q, w);
@@ -5826,32 +5866,11 @@ fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
             assert_eq!(compute_float32(-10, (val + 2) * scale), (151, 1));
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/num/dec2flt/lemire.rs");
-    assert_eq!(
-        out.assertions_lifted, 2,
-        "compute_float32 wrapper should lift to literal tuple facts: {:?}; audits: {:?}",
-        out.skip_reasons, out.factory_audits
-    );
-    assert!(
-        out.factory_audits
-            .iter()
-            .any(|audit| audit.selected.as_deref() == Some("compute_float")),
-        "compute_float sugar should own the wrapper call: {:?}",
-        out.factory_audits
-    );
-    assert!(
-        !warranted_dump(&out).contains("call:compute_float"),
-        "compute_float calls should not leak as opaque call terms: {:?}",
-        out.decls
-    );
-    let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 2, "{operands:?}");
-    assert_equality_mentions_var(&operands[0], "literal:Tuple(i:151,i:0)");
-    assert_equality_mentions_var(&operands[1], "literal:Tuple(i:151,i:1)");
+    assert_compute_float_refused_by_doctrine(src, 2, "coretests/num/dec2flt/lemire.rs");
 }
 
 #[test]
-fn compute_float64_wrapper_lowers_scaled_literals_to_tuple_axioms() {
+fn compute_float64_wrapper_refuses_float_computation_by_doctrine() {
     let src = r#"
         fn compute_float64(q: i64, w: u64) -> (i32, u64) {
             let fp = compute_float::<f64>(q, w);
@@ -5865,27 +5884,7 @@ fn compute_float64_wrapper_lowers_scaled_literals_to_tuple_axioms() {
             assert_eq!(compute_float64(-3, (val + 2) * scale), (1076, 1));
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/num/dec2flt/lemire.rs");
-    assert_eq!(
-        out.assertions_lifted, 1,
-        "compute_float64 wrapper should lift to a literal tuple fact: {:?}; audits: {:?}",
-        out.skip_reasons, out.factory_audits
-    );
-    assert!(
-        out.factory_audits
-            .iter()
-            .any(|audit| audit.selected.as_deref() == Some("compute_float")),
-        "compute_float sugar should own the wrapper call: {:?}",
-        out.factory_audits
-    );
-    assert!(
-        !warranted_dump(&out).contains("call:compute_float"),
-        "compute_float calls should not leak as opaque call terms: {:?}",
-        out.decls
-    );
-    let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "{operands:?}");
-    assert_equality_mentions_var(&operands[0], "literal:Tuple(i:1076,i:1)");
+    assert_compute_float_refused_by_doctrine(src, 1, "coretests/num/dec2flt/lemire.rs");
 }
 
 #[test]
@@ -8003,9 +8002,8 @@ fn parsed_literal_nan_is_nan_reduces_to_bool_floor_with_teeth() {
             doc.contains("\"name\":\"Bool\"") && !doc.contains("float.f"),
             "{label}: parsed literal NaN is_nan should compose to bool floor, got {doc}"
         );
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
-            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
-        }
+        let sat = z3_verdict_required(&inv_json(single_warranted_decl(&out)), label);
+        assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
     }
 }
 
@@ -8058,9 +8056,8 @@ fn f16_literal_nan_is_named_refused_not_unclassified_with_f32_f64_twins() {
         let src = format!("#[test] fn t() {{ {assertion} }}");
         let out = lift_file(&parse(&src), "tests/num/dec2flt/mod.rs");
         assert_warranted_decl_count(&out, 1);
-        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
-            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
-        }
+        let sat = z3_verdict_required(&inv_json(single_warranted_decl(&out)), label);
+        assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
     }
 }
 
@@ -10667,40 +10664,10 @@ async fn async_scalar_is_six() {
     assert_await_call_eq_atom(&operands[0], "call:make_value", 6);
 }
 
-// --- infinity-equality conjunction tests ---
-
-fn assert_float_refinement_conj_var(
-    formula: &Formula,
-    expected_infinite_pred: &str,
-    expected_sign_pred: &str,
-    expected_var: &str,
-) {
-    match formula {
-        Formula::Connective { kind, operands } if kind == "and" => {
-            assert_eq!(
-                operands.len(),
-                2,
-                "infinity conjunction must have 2 operands"
-            );
-            assert_float_refinement_var_atom(
-                operands[0].as_ref(),
-                expected_infinite_pred,
-                expected_var,
-            );
-            assert_float_refinement_var_atom(
-                operands[1].as_ref(),
-                expected_sign_pred,
-                expected_var,
-            );
-        }
-        other => panic!("expected and-conjunction for infinity equality, got {other:?}"),
-    }
-}
+// --- infinity-equality reduction tests ---
 
 #[test]
-fn assert_eq_f64_infinity_lifts_to_is_infinite_and_is_sign_positive_conjunction() {
-    // RED: assert_eq!(x_f64, f64::INFINITY) must lift to
-    // and(float.f64.is_infinite(x_f64), float.f64.is_sign_positive(x_f64)).
+fn assert_eq_f64_infinity_over_variable_refuses_instead_of_emitting_float_predicates() {
     let src = r#"
 #[test]
 fn check_pos_infinity() {
@@ -10710,25 +10677,29 @@ fn check_pos_infinity() {
 "#;
     let out = lift_file(&parse(src), "tests/num/mod.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_float_refinement_conj_var(
-        operands[0].as_ref(),
-        "float.f64.is_infinite",
-        "float.f64.is_sign_positive",
-        "x_f64",
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "unknown float variable equality must not emit a reduced fact or identity claim: {:?}",
+        out.decls
+    );
+    assert!(
+        out.assertions_refused >= 1,
+        "unknown float variable equality should refuse/stay opaque loudly: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("float equality")
+                && reason.contains("requires a known special identity")
+                && reason.contains("replacement=identity reduction or refusal")
+        }),
+        "refusal must name the crime and replacement: {:?}",
+        out.skip_reasons
     );
 }
 
 #[test]
-fn assert_eq_f32_neg_infinity_lifts_to_is_infinite_and_is_sign_negative_conjunction() {
-    // RED: assert_eq!(x_f32, f32::NEG_INFINITY) must lift to
-    // and(float.f32.is_infinite(x_f32), float.f32.is_sign_negative(x_f32)).
+fn assert_eq_f32_neg_infinity_over_variable_refuses_instead_of_emitting_float_predicates() {
     let src = r#"
 #[test]
 fn check_neg_infinity() {
@@ -10738,23 +10709,29 @@ fn check_neg_infinity() {
 "#;
     let out = lift_file(&parse(src), "tests/num/mod.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_float_refinement_conj_var(
-        operands[0].as_ref(),
-        "float.f32.is_infinite",
-        "float.f32.is_sign_negative",
-        "x_f32",
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "unknown float variable equality must not emit a reduced fact or identity claim: {:?}",
+        out.decls
+    );
+    assert!(
+        out.assertions_refused >= 1,
+        "unknown float variable equality should refuse/stay opaque loudly: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("float equality")
+                && reason.contains("requires a known special identity")
+                && reason.contains("replacement=identity reduction or refusal")
+        }),
+        "refusal must name the crime and replacement: {:?}",
+        out.skip_reasons
     );
 }
 
 #[test]
-fn assert_infinity_eq_reversed_operand_order_lifts_correctly() {
+fn reversed_infinity_eq_over_variable_refuses_instead_of_emitting_float_predicates() {
     // Operand order reversed: f64::INFINITY == x_f64 (assert! form, binary eq).
     let src = r#"
 #[test]
@@ -10765,18 +10742,24 @@ fn check_pos_infinity_reversed() {
 "#;
     let out = lift_file(&parse(src), "tests/num/mod.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_float_refinement_conj_var(
-        operands[0].as_ref(),
-        "float.f64.is_infinite",
-        "float.f64.is_sign_positive",
-        "x_f64",
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "unknown float variable equality must not emit a reduced fact or identity claim: {:?}",
+        out.decls
+    );
+    assert!(
+        out.assertions_refused >= 1,
+        "unknown float variable equality should refuse/stay opaque loudly: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("float equality")
+                && reason.contains("requires a known special identity")
+                && reason.contains("replacement=identity reduction or refusal")
+        }),
+        "refusal must name the crime and replacement: {:?}",
+        out.skip_reasons
     );
 }
 
@@ -15332,22 +15315,32 @@ fn emit_value_contract_const_block_warrants_and_composes() {
 // vendor's sworn output, and handed to z3. SAT = the warrant coexists with the
 // answer (holds); UNSAT = the derived constraint can't be true against the sworn
 // answer -> refuse. The interior is an unopened EUF box; order/effects never enter.
+fn z3_path() -> Option<String> {
+    if let Ok(path) = std::env::var("Z3") {
+        return std::process::Command::new(&path)
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|_| path);
+    }
+    ["/usr/local/bin/z3", "/usr/bin/z3", "z3"]
+        .into_iter()
+        .find(|candidate| {
+            std::process::Command::new(candidate)
+                .arg("--version")
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+        })
+        .map(str::to_string)
+}
+
 fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     // Some(true) = SAT, Some(false) = UNSAT, None = z3 absent.
     let parts = compile_asserted_json_to_parts(inv).expect("conjoined inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = std::env::var("Z3").ok().or_else(|| {
-        ["/usr/local/bin/z3", "/usr/bin/z3", "z3"]
-            .into_iter()
-            .find(|candidate| {
-                std::process::Command::new(candidate)
-                    .arg("--version")
-                    .output()
-                    .map(|out| out.status.success())
-                    .unwrap_or(false)
-            })
-            .map(str::to_string)
-    })?;
+    let z3 = z3_path()?;
     // Unique path per call: cargo runs tests in parallel; a shared temp file
     // races (one test reads another's script).
     let path = std::env::temp_dir().join(format!("sugar_vendor_check_{label}.smt2"));
@@ -15362,6 +15355,14 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
         "conjoined relation must be well-sorted:\n{stdout}\n--- {script}"
     );
     Some(stdout.contains("sat") && !stdout.contains("unsat"))
+}
+
+fn z3_verdict_required(inv: &serde_json::Value, label: &str) -> bool {
+    z3_verdict(inv, label).unwrap_or_else(|| {
+        panic!(
+            "{label}: Z3 is required for this soundness receipt; set Z3=/path/to/z3 or put z3 on PATH"
+        )
+    })
 }
 
 fn assert_warranted_decls_not_refuted(out: &AdapterOutput, label: &str) {
@@ -16734,9 +16735,8 @@ fn cast_f32_contradiction() {
     );
     // Two operands over the SAME cast term, pinned to two different reals.
     assert_eq!(inv_operands(&out.decls[0]).len(), 2);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "float_cast_contra") {
-        assert!(!sat, "cast:f32(x)==1.0 AND ==2.0 must be UNSAT (the teeth)");
-    }
+    let sat = z3_verdict_required(&inv_json(&out.decls[0]), "float_cast_contra");
+    assert!(!sat, "cast:f32(x)==1.0 AND ==2.0 must be UNSAT (the teeth)");
 }
 
 // (A) DISCRIMINATION: a pointer-target cast still REFUSES (the float widening did not
@@ -22191,29 +22191,14 @@ fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
     assert_warranted_decl_count(&out, 1);
-    let decl = single_warranted_decl(&out).clone();
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&[decl]);
-    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
-    let inv = parsed[0]["inv"].clone();
-    let z3 = "/usr/local/bin/z3";
-    if !std::path::Path::new(z3).exists() {
-        return None;
-    }
-    let parts =
-        compile_asserted_json_to_parts(&inv).expect("format equality must compile to SMT-LIB");
-    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let path = std::env::temp_dir().join(format!("sugar_fmt_teeth_{label}.smt2"));
-    std::fs::write(&path, &script).unwrap();
-    let z3out = std::process::Command::new(z3)
-        .arg(&path)
-        .output()
-        .expect("run z3");
-    let stdout = String::from_utf8_lossy(&z3out.stdout);
-    assert!(
-        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
-        "format equality must be well-sorted:\n{stdout}\n--- {script}"
-    );
-    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+    z3_verdict(&inv_json(single_warranted_decl(&out)), label)
+}
+
+fn format_eq_verdict_required(lhs: &str, rhs: &str, label: &str) -> bool {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
+    assert_warranted_decl_count(&out, 1);
+    z3_verdict_required(&inv_json(single_warranted_decl(&out)), label)
 }
 
 #[test]
@@ -22264,45 +22249,41 @@ fn format_str_eq_has_teeth() {
 // Display -- that collapse produced the fmt/float.rs false refutations (decl[0]/[3]).
 #[test]
 fn format_debug_float_eq_has_teeth() {
-    let Some(good) = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0.0""#, "dbgf_zero")
-    else {
-        return; // z3 absent
-    };
+    let good = format_eq_verdict_required(r#"format!("{:?}", 0.0f64)"#, r#""0.0""#, "dbgf_zero");
     assert!(
         good,
         "format!(\"{{:?}}\", 0.0f64) == \"0.0\" must be SAT (Debug shows the decimal point)"
     );
     // BAD TWIN: the Display rendering ("0") is the WRONG Debug string -> must REFUTE.
-    let bad = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0""#, "dbgf_zero_bad").unwrap();
+    let bad = format_eq_verdict_required(r#"format!("{:?}", 0.0f64)"#, r#""0""#, "dbgf_zero_bad");
     assert!(
         !bad,
         "Debug 0.0 is \"0.0\", not the Display \"0\" -> wrong string z3-UNSAT (teeth)"
     );
     // exponential high cutoff: Debug of 1e16 is "1e16".
-    let cut = format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut").unwrap();
+    let cut = format_eq_verdict_required(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut");
     assert!(cut, "format!(\"{{:?}}\", 1e16f64) == \"1e16\" must be SAT");
-    let cut_bad = format_eq_verdict(
+    let cut_bad = format_eq_verdict_required(
         r#"format!("{:?}", 1e16f64)"#,
         r#""10000000000000000""#,
         "dbgf_cut_bad",
-    )
-    .unwrap();
+    );
     assert!(
         !cut_bad,
         "Debug 1e16 is exponential \"1e16\", not the Display decimal -> z3-UNSAT (teeth)"
     );
     // small-magnitude exponential: Debug of 0.00009 is "9e-5".
     let small =
-        format_eq_verdict(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small").unwrap();
+        format_eq_verdict_required(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small");
     assert!(
         small,
         "format!(\"{{:?}}\", 0.00009f64) == \"9e-5\" must be SAT"
     );
     // integer-valued negative: Debug of -3.0 is "-3.0".
-    let neg = format_eq_verdict(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg").unwrap();
+    let neg = format_eq_verdict_required(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg");
     assert!(neg, "format!(\"{{:?}}\", -3f64) == \"-3.0\" must be SAT");
     // f32 behaves identically.
-    let f32d = format_eq_verdict(r#"format!("{:?}", 0.0f32)"#, r#""0.0""#, "dbgf_f32").unwrap();
+    let f32d = format_eq_verdict_required(r#"format!("{:?}", 0.0f32)"#, r#""0.0""#, "dbgf_f32");
     assert!(f32d, "format!(\"{{:?}}\", 0.0f32) == \"0.0\" must be SAT");
 }
 
@@ -22310,15 +22291,13 @@ fn format_debug_float_eq_has_teeth() {
 // trailing `.0` -- distinct from Debug. Proves the two specs are not aliased to one arm.
 #[test]
 fn format_display_float_distinct_from_debug() {
-    let Some(good) = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0""#, "dispf_zero") else {
-        return; // z3 absent
-    };
+    let good = format_eq_verdict_required(r#"format!("{}", 0.0f64)"#, r#""0""#, "dispf_zero");
     assert!(
         good,
         "format!(\"{{}}\", 0.0f64) == \"0\" must be SAT (Display has no decimal point)"
     );
     // BAD TWIN: the Debug rendering ("0.0") is the WRONG Display string -> must REFUTE.
-    let bad = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0.0""#, "dispf_zero_bad").unwrap();
+    let bad = format_eq_verdict_required(r#"format!("{}", 0.0f64)"#, r#""0.0""#, "dispf_zero_bad");
     assert!(
         !bad,
         "Display 0.0 is \"0\", not the Debug \"0.0\" -> z3-UNSAT (teeth, specs are distinct)"
@@ -22338,15 +22317,13 @@ fn format_bool_eq_has_teeth() {
 fn format_float_eq_has_teeth() {
     // Float Display + precision through the format float engine (the subsumed
     // flt2dec compute path), end-to-end with teeth.
-    if let Some(good) = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good") {
-        assert!(
-            good,
-            "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT"
-        );
-        let bad =
-            format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad").unwrap();
-        assert!(!bad, "wrong rounded float string must be z3-UNSAT (teeth)");
-    }
+    let good = format_eq_verdict_required(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good");
+    assert!(
+        good,
+        "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT"
+    );
+    let bad = format_eq_verdict_required(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad");
+    assert!(!bad, "wrong rounded float string must be z3-UNSAT (teeth)");
 }
 
 #[test]
@@ -23184,7 +23161,12 @@ fn t() {{
     }
 }
 
-fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
+fn assert_numeric_method_decl_verdict_with_z3(
+    src: &str,
+    want_sat: bool,
+    label: &str,
+    require_z3: bool,
+) {
     let full = format!("#[test] fn t() {{ {src} }}");
     let out = lift_file(&parse(&full), "tests/num/literal_methods.rs");
     assert!(
@@ -23206,12 +23188,26 @@ fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
             && !doc.contains("method:pow"),
         "{label}: numeric literal method should lower to concrete scalar terms: {doc}"
     );
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+    let inv = inv_json(single_warranted_decl(&out));
+    let sat = if require_z3 {
+        Some(z3_verdict_required(&inv, label))
+    } else {
+        z3_verdict(&inv, label)
+    };
+    if let Some(sat) = sat {
         assert_eq!(
             sat, want_sat,
             "{label}: expected sat={want_sat} for `{src}`"
         );
     }
+}
+
+fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
+    assert_numeric_method_decl_verdict_with_z3(src, want_sat, label, false);
+}
+
+fn assert_numeric_method_decl_verdict_required(src: &str, want_sat: bool, label: &str) {
+    assert_numeric_method_decl_verdict_with_z3(src, want_sat, label, true);
 }
 
 #[test]
@@ -23268,22 +23264,22 @@ fn numeric_literal_methods_ground_with_teeth() {
         false,
         "numeric_pow_ssa_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "let x = 3.5f64; assert_eq!(x.abs(), 3.5);",
         true,
         "numeric_float_abs_ssa_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "let x = 3.5f64; assert_eq!(x.abs(), 4.5);",
         false,
         "numeric_float_abs_ssa_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "let x = -3.5f64; assert_eq!(x.signum(), -1.0);",
         true,
         "numeric_float_signum_ssa_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "let x = -3.5f64; assert_eq!(x.signum(), 1.0);",
         false,
         "numeric_float_signum_ssa_bad",
@@ -23292,92 +23288,92 @@ fn numeric_literal_methods_ground_with_teeth() {
 
 #[test]
 fn float_literal_to_bits_and_from_bits_have_exact_teeth() {
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(1.5f32.to_bits(), 0x3fc00000u32);",
         true,
         "float_to_bits_f32_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(1.5f32.to_bits(), 0x3fc00001u32);",
         false,
         "float_to_bits_f32_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!((-2.25f64).to_bits(), 0xc002000000000000u64);",
         true,
         "float_to_bits_f64_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!((-2.25f64).to_bits(), 0x4002000000000000u64);",
         false,
         "float_to_bits_f64_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f32::EPSILON.to_bits(), 0x34000000u32);",
         true,
         "float_to_bits_assoc_const_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f32::EPSILON.to_bits(), 0x34000001u32);",
         false,
         "float_to_bits_assoc_const_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f32 as Float>::NAN.to_bits(), 0x7fc00000u32);",
         true,
         "float_to_bits_qself_nan_f32_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f32 as Float>::NAN.to_bits(), 0x7fc00001u32);",
         false,
         "float_to_bits_qself_nan_f32_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f32 as Float>::NEG_NAN.to_bits(), 0xffc00000u32);",
         true,
         "float_to_bits_qself_neg_nan_f32_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f32 as Float>::NEG_NAN.to_bits(), 0x7fc00000u32);",
         false,
         "float_to_bits_qself_neg_nan_f32_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f64 as Float>::NAN.to_bits(), 0x7ff8000000000000u64);",
         true,
         "float_to_bits_qself_nan_f64_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f64 as Float>::NAN.to_bits(), 0x7ff8000000000001u64);",
         false,
         "float_to_bits_qself_nan_f64_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f64 as Float>::NEG_NAN.to_bits(), 0xfff8000000000000u64);",
         true,
         "float_to_bits_qself_neg_nan_f64_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(<f64 as Float>::NEG_NAN.to_bits(), 0x7ff8000000000000u64);",
         false,
         "float_to_bits_qself_neg_nan_f64_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f32::from_bits(0x3fc00000), 1.5f32);",
         true,
         "float_from_bits_f32_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f32::from_bits(0x3fc00000), 1.25f32);",
         false,
         "float_from_bits_f32_bad",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f64::from_bits(0xc002000000000000), -2.25f64);",
         true,
         "float_from_bits_f64_good",
     );
-    assert_numeric_method_decl_verdict(
+    assert_numeric_method_decl_verdict_required(
         "assert_eq!(f64::from_bits(0xc002000000000000), 2.25f64);",
         false,
         "float_from_bits_f64_bad",

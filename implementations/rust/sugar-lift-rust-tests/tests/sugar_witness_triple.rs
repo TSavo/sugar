@@ -309,6 +309,28 @@ fn assert_witness_dispatches_to_owner(claim: &str, out: &AdapterOutput) -> Resul
     }
 }
 
+fn assert_claim_verdict(claim: &str, label: &str, src: &str, expected_sat: bool, z3: &str) {
+    let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
+    assert_witness_dispatches_to_owner(claim, &out)
+        .unwrap_or_else(|err| panic!("{label}: {err}; skips={:?}", out.skip_reasons));
+    let decl = single_warranted_decl(&out);
+    let inv_dump = format!("{:?}", decl.inv);
+    assert!(
+        !inv_dump.contains("float."),
+        "{label}: float specials must reduce before solver emission, got {inv_dump}"
+    );
+    assert!(
+        !inv_dump.contains("float:"),
+        "{label}: float specials must not enter the solver universe as float ctors, got {inv_dump}"
+    );
+    let got_sat = z3_verdict(&assertion_formula_json(decl), label, z3);
+    assert_eq!(
+        got_sat, expected_sat,
+        "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}; decl={decl:?}",
+        out.skip_reasons
+    );
+}
+
 #[test]
 fn z3_absence_is_a_loud_harness_error() {
     let err = resolve_z3_from(None, "").expect_err("empty PATH must not silently skip z3");
@@ -316,6 +338,83 @@ fn z3_absence_is_a_loud_harness_error() {
         err.contains("requires z3"),
         "z3 absence must be a loud harness error, got {err:?}"
     );
+}
+
+#[test]
+fn float_special_identity_reductions_refute_family_e_known_special_lies() {
+    let z3 = z3_path_or_panic();
+    let cases = [
+        (
+            "constraint_float_refinement",
+            "float_special_nan_is_finite_truthful",
+            r#"
+            #[test]
+            fn t() {
+                assert!(!f32::NAN.is_finite());
+            }
+            "#,
+            true,
+        ),
+        (
+            "constraint_float_refinement",
+            "float_special_nan_is_finite_lying",
+            r#"
+            #[test]
+            fn t() {
+                assert!(f32::NAN.is_finite());
+            }
+            "#,
+            false,
+        ),
+        (
+            "constraint_infinity_eq",
+            "float_special_constraint_infinity_identity_truthful",
+            r#"
+            #[test]
+            fn t() {
+                assert!(f32::INFINITY == f32::INFINITY);
+            }
+            "#,
+            true,
+        ),
+        (
+            "constraint_infinity_eq",
+            "float_special_constraint_infinity_identity_lying",
+            r#"
+            #[test]
+            fn t() {
+                assert!(f32::INFINITY == f32::NEG_INFINITY);
+            }
+            "#,
+            false,
+        ),
+        (
+            "assertion_surface_infinity_eq",
+            "float_special_assertion_surface_infinity_identity_truthful",
+            r#"
+            #[test]
+            fn t() {
+                assert_eq!(f32::INFINITY, f32::INFINITY);
+            }
+            "#,
+            true,
+        ),
+        (
+            "assertion_surface_infinity_eq",
+            "float_special_assertion_surface_infinity_identity_lying",
+            r#"
+            #[test]
+            fn t() {
+                assert_eq!(f32::INFINITY, f32::NEG_INFINITY);
+            }
+            "#,
+            false,
+        ),
+    ];
+
+    for (claim, label, src, expected_sat) in cases {
+        assert_claim_verdict(claim, label, src, expected_sat, &z3);
+    }
 }
 
 #[test]
@@ -734,6 +833,12 @@ const S9_BATCH4_PAIR_CLAIMS: &[&str] = &[
 
 const S9_BATCH5_PAIR_CLAIMS: &[&str] = &["literal_ip_addr", "str_table_select"];
 
+const FLOAT_SPECIAL_PAIR_CLAIMS: &[&str] = &[
+    "constraint_float_refinement",
+    "constraint_infinity_eq",
+    "assertion_surface_infinity_eq",
+];
+
 const S5_ADAPTER_PAIR_CLAIMS: &[&str] = &[
     "filter",
     "filter_map",
@@ -771,6 +876,7 @@ fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
         S9_BATCH3_PAIR_CLAIMS,
         S9_BATCH4_PAIR_CLAIMS,
         S9_BATCH5_PAIR_CLAIMS,
+        FLOAT_SPECIAL_PAIR_CLAIMS,
         S5_ADAPTER_PAIR_CLAIMS,
         S6_OPTION_RESULT_PAIR_CLAIMS,
     ]
@@ -959,6 +1065,11 @@ fn s9_batch4_pairs_match_real_rust_semantics() {
 #[test]
 fn s9_batch5_pairs_match_real_rust_semantics() {
     assert_pairs_match_real_rust_semantics(S9_BATCH5_PAIR_CLAIMS);
+}
+
+#[test]
+fn float_special_pairs_match_real_rust_semantics() {
+    assert_pairs_match_real_rust_semantics(FLOAT_SPECIAL_PAIR_CLAIMS);
 }
 
 #[test]
