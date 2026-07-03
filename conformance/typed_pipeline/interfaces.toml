@@ -1,0 +1,357 @@
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 6
+
+[[interface_sources]]
+path = "implementations/rust/sugar-cli/src/lift_plugin.rs"
+ignored_items = [
+  { name = "LiftPluginOptions", reason = "input carrier declared by the lift-plugin-session boundary; not a separate S1 escape-hatch row" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-cli/src/cmd_prove.rs"
+
+[[interface_sources]]
+path = "implementations/rust/sugar-verifier/src/solvers/mod.rs"
+ignored_items = [
+  { name = "SolverIdentity", reason = "solver identity is evidence metadata; S7 owns telemetry typing beyond the six S1 rows" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-verifier/src/runner.rs"
+ignored_items = [
+  { name = "RUN_SIGNER_SEED", reason = "private deterministic test/run signer seed, not a pipeline interface" },
+  { name = "ProofRunArtifactError", reason = "local construction error wrapper; ProofRunArtifact is the interface" },
+  { name = "Runner", reason = "orchestrator implementation object; RunnerConfig and ProofRunArtifact are the boundary declarations" },
+  { name = "StageCapture", reason = "private receipt assembly helper" },
+  { name = "TrustAnchorConfig", reason = "private config decode helper inside verifier runner" },
+  { name = "SelfPostResult", reason = "private body-discharge helper result" },
+]
+
+[[interfaces]]
+id = "component-plan"
+owner = "sugar-cli::component_plan"
+input_type = "project root + ComponentPlanOptions + PlanIntent"
+output_type = "ComponentPlan"
+addressing_rule = "component manifests are discovered from component.toml roots; replay pins the selected PlannedLiftManifest/PlannedIrCompiler data"
+failure_type = "ComponentDiagnostic with DiagnosticLevel"
+replay_inputs = [
+  "project root",
+  "component manifests",
+  "ComponentPlanOptions",
+  "PlanIntent",
+]
+source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "ComponentPlan", kind = "struct" }
+
+[[interfaces]]
+id = "planned-lift-manifest"
+owner = "sugar-cli::component_plan"
+input_type = "component registration response"
+output_type = "PlannedLiftManifest"
+addressing_rule = "surface/name/protocol_version plus command and working_dir select the lift surface"
+failure_type = "ComponentDiagnostic"
+replay_inputs = [
+  "component manifest source",
+  "surface",
+  "command",
+  "working_dir",
+]
+source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "PlannedLiftManifest", kind = "struct" }
+
+[[interfaces]]
+id = "planned-ir-compiler"
+owner = "sugar-cli::component_plan"
+input_type = "component registration response"
+output_type = "PlannedIrCompiler"
+addressing_rule = "compiler name/protocol_version/dialects select the IR compiler"
+failure_type = "ComponentDiagnostic"
+replay_inputs = [
+  "component manifest source",
+  "compiler name",
+  "protocol_version",
+  "dialects",
+  "command",
+]
+source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "PlannedIrCompiler", kind = "struct" }
+
+[[interfaces]]
+id = "project-plugin-entry"
+owner = "sugar-cli::project_config"
+input_type = ".sugar/config.toml [[plugins]] entry"
+output_type = "PluginEntry"
+addressing_rule = "surface plus kind select the project-enabled plugin route"
+failure_type = "ProjectConfig defaulting; command layers fail at resolution boundaries"
+replay_inputs = [
+  ".sugar/config.toml",
+  "plugin surface",
+  "plugin kind",
+  "workspace_override",
+]
+source = { path = "implementations/rust/sugar-cli/src/project_config.rs", item = "PluginEntry", kind = "struct" }
+
+[[interfaces]]
+id = "project-witness-entry"
+owner = "sugar-cli::project_config"
+input_type = ".sugar/config.toml [[witnesses]] entry"
+output_type = "WitnessEntry"
+addressing_rule = "witness name and kind select report/command/file witness production"
+failure_type = "string diagnostics at config decode/use sites; typed witness drains own structured source"
+replay_inputs = [
+  ".sugar/config.toml",
+  "witness name",
+  "witness kind",
+  "command/path",
+]
+source = { path = "implementations/rust/sugar-cli/src/project_config.rs", item = "WitnessEntry", kind = "struct" }
+
+[[interfaces]]
+id = "project-config"
+owner = "sugar-cli::project_config"
+input_type = ".sugar/config.toml + user config"
+output_type = "ProjectConfig"
+addressing_rule = "known config paths plus section names select project/user configuration"
+failure_type = "best-effort config defaulting; command boundaries own hard failure"
+replay_inputs = [
+  "project config path",
+  "user config path",
+  "selected authoring surface",
+  "solver configuration",
+]
+source = { path = "implementations/rust/sugar-cli/src/project_config.rs", item = "ProjectConfig", kind = "struct" }
+
+[[interfaces]]
+id = "lift-plugin-manifest"
+owner = "sugar-cli::lift_plugin"
+input_type = ".sugar/lift/<surface>/manifest.toml or planned component manifest"
+output_type = "LiftPluginManifest"
+addressing_rule = "surface path resolves to manifest; name/version/protocol_version identify plugin"
+failure_type = "LiftPluginError"
+replay_inputs = [
+  "surface",
+  "manifest path or planned component record",
+  "command",
+  "working_dir",
+  "method",
+]
+source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginManifest", kind = "struct" }
+
+[[interfaces]]
+id = "lift-plugin-session"
+owner = "sugar-cli::lift_plugin"
+input_type = "LiftPluginManifest + LiftPluginOptions + project root"
+output_type = "LiftPluginSession"
+addressing_rule = "DomainClaim carries typed claim identity; legacy_response remains a compatibility projection"
+failure_type = "LiftPluginError"
+replay_inputs = [
+  "project root",
+  "surface",
+  "lift request JSON",
+  "plugin command",
+  "DomainClaim",
+]
+source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginSession", kind = "struct" }
+
+[[interfaces.escape_hatches]]
+shape = "serde-json-value"
+owner = "lift-plugin seam"
+retirement = "replace legacy_response consumers with typed DomainClaim/LiftResponseProjection claim projections, then delete the Value field (S3/#3316)"
+baseline = true
+source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginSession", needles = ["legacy_response: Value"] }
+
+[[interfaces]]
+id = "lift-plugin-error"
+owner = "sugar-cli::lift_plugin"
+input_type = "lift plugin execution failures"
+output_type = "LiftPluginError"
+addressing_rule = "error variant names the missing binary, refusal memento, or legacy failed text"
+failure_type = "LiftPluginError"
+replay_inputs = [
+  "plugin command",
+  "path execution error",
+  "composition refusal memento",
+]
+source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginError", kind = "enum" }
+
+[[interfaces.escape_hatches]]
+shape = "free-text-machine-error"
+owner = "lift-plugin seam"
+retirement = "replace Failed(String) across machine boundaries with a structured diagnostic/refusal memento (S3/#3316)"
+baseline = true
+source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginError", needles = ["Failed(String)"] }
+
+[[interfaces]]
+id = "prove-local-plugin-manifest"
+owner = "sugar-cli::cmd_prove"
+input_type = "witness-discharge lift surface manifest"
+output_type = "PluginManifest"
+addressing_rule = "surface plus project/user/component lookup selects the manifest used for witness discharge"
+failure_type = "String diagnostic at manifest resolution"
+replay_inputs = [
+  "project root",
+  "surface",
+  "manifest path",
+  "planned lift manifest",
+]
+source = { path = "implementations/rust/sugar-cli/src/cmd_prove.rs", item = "PluginManifest", kind = "struct" }
+
+[[interfaces.escape_hatches]]
+shape = "duplicate-manifest-shape"
+owner = "component-plan seam"
+retirement = "unify lift_plugin::LiftPluginManifest and cmd_prove::PluginManifest on PlannedLiftManifest (S5/#3315)"
+baseline = true
+source = { path = "implementations/rust/sugar-cli/src/cmd_prove.rs", item = "PluginManifest", needles = ["struct PluginManifest"] }
+
+[[interfaces]]
+id = "solver-result"
+owner = "sugar-verifier::solvers"
+input_type = "solver subprocess or in-process solver execution"
+output_type = "SolveResult"
+addressing_rule = "solver identity plus invocation context determines the solver result row"
+failure_type = "SolveResult.error string plus ObligationVerdict"
+replay_inputs = [
+  "CompiledFormula",
+  "SolverIdentity",
+  "solver name/version",
+  "solver invocation flags",
+]
+source = { path = "implementations/rust/sugar-verifier/src/solvers/mod.rs", item = "SolveResult", kind = "struct" }
+
+[[interfaces.escape_hatches]]
+shape = "free-text-solver-telemetry"
+owner = "ir-compiler-solver seam"
+retirement = "pin solver stdout/error as sidecar-CID evidence with structured exit metadata (S7)"
+baseline = true
+source = { path = "implementations/rust/sugar-verifier/src/solvers/mod.rs", item = "SolveResult", needles = ["error: String", "solver_stdout: String"] }
+
+[[interfaces]]
+id = "solver-trait"
+owner = "sugar-verifier::solvers"
+input_type = "SMT/compiled formula plus solver implementation"
+output_type = "SolveResult"
+addressing_rule = "Solver::identity supplies CID-addressed solver identity when available"
+failure_type = "SolveResult"
+replay_inputs = [
+  "compiled formula",
+  "solver identity",
+  "solver version",
+]
+source = { path = "implementations/rust/sugar-verifier/src/solvers/mod.rs", item = "Solver", kind = "trait" }
+
+[[interfaces]]
+id = "verifier-stage-vocabulary"
+owner = "sugar-verifier::runner"
+input_type = "verifier run stage list"
+output_type = "VERIFIER_STAGE_VOCABULARY"
+addressing_rule = "stage strings are embedded in proof-run receipts and reports"
+failure_type = "stage vocabulary drift is a conformance row"
+replay_inputs = [
+  "proof-run memento spec",
+  "runner stage receipt names",
+]
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "VERIFIER_STAGE_VOCABULARY", kind = "const" }
+
+[[interfaces.escape_hatches]]
+shape = "stage-vocabulary-drift"
+owner = "verifier seam"
+retirement = "reconcile smt_emit vs smt_emitter deliberately in code/spec vocabulary (S7)"
+baseline = true
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "VERIFIER_STAGE_VOCABULARY", needles = ["\"smt_emit\""] }
+
+[[interfaces]]
+id = "proof-run-artifact"
+owner = "sugar-verifier::runner"
+input_type = "RunnerConfig + loaded proof bytes + solver plan"
+output_type = "ProofRunArtifact"
+addressing_rule = "bundle_cid and stage receipts address the verifier run artifact"
+failure_type = "ProofRunArtifactError"
+replay_inputs = [
+  "bundle path",
+  "bundle cid",
+  "stage receipts",
+  "proof run memento",
+]
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "ProofRunArtifact", kind = "struct" }
+
+[[interfaces]]
+id = "runner-config"
+owner = "sugar-verifier::runner"
+input_type = "CLI/project verifier configuration"
+output_type = "RunnerConfig"
+addressing_rule = "project_root plus solver configuration select proof verification inputs"
+failure_type = "Runner construction/run diagnostics"
+replay_inputs = [
+  "project_root",
+  "cache_dir",
+  "trusted_implication_signers",
+  "solvers_config",
+  "extra proof inputs",
+]
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "RunnerConfig", kind = "struct" }
+
+[[interfaces.escape_hatches]]
+shape = "silent-fallback"
+owner = "ir-compiler-solver seam"
+retirement = "replace z3_path fallback resolution with config-driven solver plan only; classify fallback as compat (S7)"
+baseline = true
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "RunnerConfig", needles = ["z3_path: String"] }
+
+[[interfaces]]
+id = "solver-stats"
+owner = "sugar-verifier::runner"
+input_type = "SolveResult stream"
+output_type = "SolverStats"
+addressing_rule = "solver name/version key stats in the report"
+failure_type = "Report row/status diagnostics"
+replay_inputs = [
+  "solver version",
+  "SolveResult verdicts",
+  "wall-clock telemetry",
+]
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "SolverStats", kind = "struct" }
+
+[[interfaces]]
+id = "tier-stats"
+owner = "sugar-verifier::runner"
+input_type = "verifier tier execution"
+output_type = "TierStats"
+addressing_rule = "tier counters are serialized into proof-run reports"
+failure_type = "Report row/status diagnostics"
+replay_inputs = [
+  "tier 1/2/3 counters",
+  "solver stats",
+]
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "TierStats", kind = "struct" }
+
+[[interfaces]]
+id = "report-witness-proof"
+owner = "sugar-cli::report_witness"
+input_type = "report JSON + replay pins + witness output directory"
+output_type = "ReportWitnessProof"
+addressing_rule = "proof_cid, witness_cid, and evidence_cid address the emitted witness artifacts"
+failure_type = "String diagnostic at witness minting boundary"
+replay_inputs = [
+  "report CID",
+  "replay pins CID",
+  "proof file",
+  "evidence file",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "ReportWitnessProof", kind = "struct" }
+
+[[interfaces]]
+id = "json-witness-options"
+owner = "sugar-cli::report_witness"
+input_type = "witness minting options"
+output_type = "JsonWitnessOptions"
+addressing_rule = "planCid and actualOutputCids pin replay scope when present"
+failure_type = "String diagnostic if actualOutputCids appear without planCid"
+replay_inputs = [
+  "verifier CID",
+  "policy CID",
+  "extra input CIDs",
+  "plan CID",
+  "actual output CIDs",
+]
+source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "JsonWitnessOptions", kind = "struct" }
