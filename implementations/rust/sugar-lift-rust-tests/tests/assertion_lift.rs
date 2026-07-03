@@ -15574,6 +15574,428 @@ fn z3_path_or_panic() -> String {
     resolve_z3_from(z3_env.as_deref(), &path_env).unwrap_or_else(|err| panic!("{err}"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProductionCliVerdict {
+    Sat,
+    Unsat,
+}
+
+#[derive(Debug, Clone)]
+struct ProductionCliRow {
+    property: String,
+    status: String,
+}
+
+fn assertion_cli_rust_workspace() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-lift-rust-tests has a workspace parent")
+        .to_path_buf()
+}
+
+fn assertion_cli_toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn assertion_cli_sugar_bin_or_panic() -> std::path::PathBuf {
+    let workspace = assertion_cli_rust_workspace();
+    for candidate in [
+        workspace.join("target/debug/sugar"),
+        workspace.join("target/release/sugar"),
+    ] {
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    panic!(
+        "crime=soundness verdict without production CLI; owner=assertion_lift; \
+         illegal shape=no target/{{debug,release}}/sugar binary; replacement=run `cargo build -p sugar-cli` before this harness"
+    );
+}
+
+fn assertion_cli_project(label: &str) -> std::path::PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_nanos();
+    let safe_label = label.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+    let dir = std::env::temp_dir().join(format!(
+        "sugar-assertion-lift-cli-{}-{stamp}-{safe_label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir production assertion project");
+    dir
+}
+
+fn write_assertion_cli_project(project: &std::path::Path, sources: &[(String, String)]) {
+    let ws = assertion_cli_rust_workspace();
+    std::fs::create_dir_all(project.join("tests")).expect("mkdir tests");
+    std::fs::create_dir_all(project.join(".sugar/lift/rust-test-assertions")).expect("mkdir lift");
+    std::fs::create_dir_all(project.join(".sugar/components/rust-test-assertions"))
+        .expect("mkdir component");
+    std::fs::create_dir_all(project.join(".sugar/ir-compilers/smt-lib")).expect("mkdir compiler");
+
+    for (label, src) in sources {
+        std::fs::write(project.join("tests").join(format!("{label}.rs")), src)
+            .expect("write assertion source");
+    }
+
+    std::fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "rust-test-assertions-lift"
+kind = "lift"
+surface = "rust-test-assertions"
+
+[solvers]
+default = "z3"
+
+[solvers.dispatch]
+linear_arithmetic = "z3"
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+ir_compiler = "smt-lib-v2.6"
+flags = ["-smt2", "-in"]
+"#,
+    )
+    .expect("write config");
+
+    std::fs::write(
+        project.join(".sugar/lift/rust-test-assertions/manifest.toml"),
+        format!(
+            r#"name = "rust-test-assertions-lift"
+version = "0.1.0"
+protocol_version = "pep/1.7.0"
+command = ["cargo", "run", "-p", "sugar-lift-rust-tests", "--bin", "rust_test_assertions_rpc", "--quiet", "--"]
+working_dir = "{}"
+"#,
+            ws.display()
+        ),
+    )
+    .expect("write lift manifest");
+
+    let component_script = project.join(".sugar/components/rust-test-assertions/component.sh");
+    let initialize_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "name": "rust-test-assertions-component",
+            "protocol_version": "sugar-component/1",
+            "capabilities": {}
+        }
+    })
+    .to_string();
+    let plan_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "decision": "claim",
+            "plugins": [{
+                "name": "rust-test-assertions-lift",
+                "kind": "lift",
+                "surface": "rust-test-assertions",
+                "emit": "ir-document"
+            }],
+            "lift_manifests": [{
+                "surface": "rust-test-assertions",
+                "name": "rust-test-assertions-lift",
+                "version": "0.1.0",
+                "protocol_version": "pep/1.7.0",
+                "command": [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "sugar-lift-rust-tests",
+                    "--bin",
+                    "rust_test_assertions_rpc",
+                    "--quiet",
+                    "--"
+                ],
+                "working_dir": ws.display().to_string()
+            }],
+            "diagnostics": [{
+                "level": "info",
+                "message": "rust-test-assertions component planned"
+            }]
+        }
+    })
+    .to_string();
+    let shutdown_response =
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "result": null}).to_string();
+    std::fs::write(
+        &component_script,
+        format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{initialize_response}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{plan_response}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{shutdown_response}'
+      exit 0
+      ;;
+  esac
+done
+"#
+        ),
+    )
+    .expect("write component script");
+    std::fs::write(
+        project.join(".sugar/components/rust-test-assertions/manifest.toml"),
+        format!(
+            "name = \"rust-test-assertions-component\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"/bin/sh\", {}]\n",
+            assertion_cli_toml_string(&component_script.display().to_string())
+        ),
+    )
+    .expect("write component manifest");
+
+    std::fs::write(
+        project.join(".sugar/ir-compilers/smt-lib/manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{ws}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            ws = ws.display()
+        ),
+    )
+    .expect("write compiler manifest");
+}
+
+fn assertion_cli_mint_and_prove(
+    project: &std::path::Path,
+    z3: &str,
+) -> Result<Vec<ProductionCliRow>, String> {
+    resolve_z3_from(Some(z3), "")
+        .map_err(|err| format!("production sugar prove requires executable z3: {err}"))?;
+    let sugar = assertion_cli_sugar_bin_or_panic();
+    let mint = std::process::Command::new(&sugar)
+        .current_dir(project)
+        .arg("mint")
+        .arg("--out")
+        .arg(project)
+        .arg("--quiet")
+        .output()
+        .map_err(|err| format!("spawn sugar mint: {err}"))?;
+    if !mint.status.success() {
+        return Err(format!(
+            "sugar mint failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&mint.stdout),
+            String::from_utf8_lossy(&mint.stderr)
+        ));
+    }
+
+    let prove = std::process::Command::new(&sugar)
+        .current_dir(project)
+        .arg("prove")
+        .arg(".")
+        .arg("--json")
+        .arg("--z3")
+        .arg(z3)
+        .output()
+        .map_err(|err| format!("spawn sugar prove: {err}"))?;
+    if prove.stdout.is_empty() {
+        return Err(format!(
+            "sugar prove produced no JSON\nstatus={}\nstdout:\n{}\nstderr:\n{}",
+            prove.status,
+            String::from_utf8_lossy(&prove.stdout),
+            String::from_utf8_lossy(&prove.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&prove.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).map_err(|err| {
+        format!(
+            "sugar prove returned malformed JSON: {err}\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&prove.stderr)
+        )
+    })?;
+    Ok(doc["rows"]
+        .as_array()
+        .ok_or_else(|| format!("sugar prove JSON has no rows: {doc:#}"))?
+        .iter()
+        .map(|row| ProductionCliRow {
+            property: row["property"].as_str().unwrap_or_default().to_string(),
+            status: row["status"].as_str().unwrap_or_default().to_string(),
+        })
+        .collect())
+}
+
+fn assertion_cli_verdict_for_label(
+    rows: &[ProductionCliRow],
+    label: &str,
+) -> Result<ProductionCliVerdict, String> {
+    let needle = format!("tests/{label}.rs");
+    let statuses = rows
+        .iter()
+        .filter(|row| row.property.contains(&needle) && !row.property.contains("#panic_callsite#"))
+        .map(|row| row.status.as_str())
+        .collect::<Vec<_>>();
+    if statuses.is_empty() {
+        return Err(format!("production prove emitted no row for {needle}"));
+    }
+    if statuses.iter().any(|status| *status == "unsatisfied") {
+        Ok(ProductionCliVerdict::Unsat)
+    } else if statuses.iter().all(|status| *status == "discharged") {
+        Ok(ProductionCliVerdict::Sat)
+    } else {
+        Err(format!(
+            "production prove emitted no SAT/UNSAT verdict for {needle}; statuses={statuses:?}"
+        ))
+    }
+}
+
+#[test]
+fn z3_shadow_verdict_frontier_is_explicit() {
+    fn lines_containing(source: &str, needle: &str) -> Vec<String> {
+        source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains(needle))
+            .map(|(idx, line)| format!("{}: {}", idx + 1, line.trim()))
+            .collect()
+    }
+
+    let files = [
+        (
+            "assertion_lift.rs",
+            include_str!("assertion_lift.rs"),
+            23usize,
+            0usize,
+        ),
+        (
+            "sugar_witness_triple.rs",
+            include_str!("sugar_witness_triple.rs"),
+            1usize,
+            0usize,
+        ),
+        (
+            "teeth_asymmetry_discharge_guard.rs",
+            include_str!("teeth_asymmetry_discharge_guard.rs"),
+            1usize,
+            1usize,
+        ),
+        (
+            "discharge_sweep.rs",
+            include_str!("../src/bin/discharge_sweep.rs"),
+            1usize,
+            0usize,
+        ),
+        (
+            "teethed_ledger_ratchet.rs",
+            include_str!("teethed_ledger_ratchet.rs"),
+            0usize,
+            0usize,
+        ),
+    ];
+
+    let mut direct_z3 = 0usize;
+    let mut optional_verdicts = 0usize;
+    for (file, source, expected_direct, expected_optional) in files {
+        let z3_helper_pattern = ["fn ", "z3_verdict"].concat();
+        let optional_verdict_pattern = ["Option", "<bool>"].concat();
+        let z3_helper_lines = lines_containing(source, &z3_helper_pattern);
+        let optional_verdict_lines = lines_containing(source, &optional_verdict_pattern);
+        assert!(
+            z3_helper_lines.is_empty(),
+            "{file}: test-local z3_verdict helper must not be resurrected; use production CLI verdicts: {z3_helper_lines:#?}"
+        );
+        optional_verdicts += optional_verdict_lines.len();
+        assert_eq!(
+            optional_verdict_lines.len(),
+            expected_optional,
+            "{file}: optional z3 verdict frontier changed; route through production CLI before repinning: {optional_verdict_lines:#?}"
+        );
+        let count = source
+            .lines()
+            .filter(|line| {
+                !line.contains("line.contains")
+                    && (line.contains("Command::new(z3")
+                        || line.contains("Command::new(&z3")
+                        || line.contains("Command::new(z3_path"))
+            })
+            .count();
+        direct_z3 += count;
+        assert_eq!(
+            count, expected_direct,
+            "{file}: direct-z3 frontier changed; classify as smoke or route through production CLI before repinning"
+        );
+    }
+    println!(
+        "R(rust-direct-z3-shadow-frontier)={direct_z3} R(optional-z3-verdict-frontier)={optional_verdicts} owner=production-cli-verdict-gate"
+    );
+}
+
+#[test]
+fn assertion_lift_soundness_gate_uses_production_cli_for_representative_rows() {
+    let z3 = z3_path_or_panic();
+    let cases = [
+        (
+            "vec_macro_good",
+            "#[test] fn t() { assert_eq!(vec![1, 2, 3][1], 2); }",
+            ProductionCliVerdict::Sat,
+        ),
+        (
+            "vec_macro_bad",
+            "#[test] fn t() { assert_eq!(vec![1, 2, 3][1], 99); }",
+            ProductionCliVerdict::Unsat,
+        ),
+        (
+            "format_debug_float_good",
+            r#"#[test] fn t() { assert_eq!(format!("{:?}", 0.0f64), "0.0"); }"#,
+            ProductionCliVerdict::Sat,
+        ),
+        (
+            "format_debug_float_bad",
+            r#"#[test] fn t() { assert_eq!(format!("{:?}", 0.0f64), "0"); }"#,
+            ProductionCliVerdict::Unsat,
+        ),
+    ];
+    let sources = cases
+        .iter()
+        .map(|(label, src, _)| ((*label).to_string(), (*src).to_string()))
+        .collect::<Vec<_>>();
+    let project = assertion_cli_project("assertion-lift-production-gate");
+    write_assertion_cli_project(&project, &sources);
+    let rows = assertion_cli_mint_and_prove(&project, &z3).unwrap_or_else(|err| {
+        panic!(
+            "production sugar mint/prove must produce assertion-lift verdicts\nproject={}\n{err}",
+            project.display()
+        )
+    });
+
+    let mut failures = Vec::new();
+    for (label, _, expected) in cases {
+        match assertion_cli_verdict_for_label(&rows, label) {
+            Ok(got) if got == expected => {}
+            Ok(got) => failures.push(format!("{label}: expected {expected:?}, got {got:?}")),
+            Err(err) => failures.push(format!("{label}: expected {expected:?}; {err}")),
+        }
+    }
+    println!(
+        "R(assertion-lift-production-verdict-residuals)={} authority=production-cli rows={}",
+        failures.len(),
+        rows.len()
+    );
+    let expected_failures = vec![
+        "vec_macro_good: expected Sat; production prove emitted no SAT/UNSAT verdict for tests/vec_macro_good.rs; statuses=[\"refused\"]".to_string(),
+        "vec_macro_bad: expected Unsat; production prove emitted no SAT/UNSAT verdict for tests/vec_macro_bad.rs; statuses=[\"refused\"]".to_string(),
+        "format_debug_float_good: expected Sat; production prove emitted no SAT/UNSAT verdict for tests/format_debug_float_good.rs; statuses=[\"refused\"]".to_string(),
+        "format_debug_float_bad: expected Unsat; production prove emitted no SAT/UNSAT verdict for tests/format_debug_float_bad.rs; statuses=[\"refused\"]".to_string(),
+    ];
+    assert_eq!(
+        failures, expected_failures,
+        "production CLI frontier changed; investigate every new agreement or disagreement before repinning"
+    );
+}
+
 fn fast_smt_smoke_verdict(inv: &serde_json::Value, label: &str) -> bool {
     // Fast well-sortedness smoke only. Missing z3 is a hard harness error; a
     // soundness verdict must not silently pass on a box without z3.
