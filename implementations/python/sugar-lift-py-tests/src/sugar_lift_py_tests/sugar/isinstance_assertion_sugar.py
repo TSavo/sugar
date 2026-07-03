@@ -50,10 +50,10 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             subject=symbolic_term(
                 subject,
                 owner="isinstance subject",
-                import_aliases=getattr(ctx, "import_aliases", {}) or {},
-                from_imports=getattr(ctx, "from_imports", {}) or {},
-                name_resolver=getattr(ctx, "name_resolver", {}) or {},
-                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+                import_aliases=ctx.import_aliases or {},
+                from_imports=ctx.from_imports or {},
+                name_resolver=ctx.name_resolver or {},
+                external_bridge_sink=ctx.external_bridge_sink,
             ),
             type_name=_type_expr_name(type_expr),
         )

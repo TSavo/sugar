@@ -40,10 +40,10 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
     @classmethod
     def build(cls, site, ctx) -> "IdentityAssertionSugar":
         test = site.assert_test()
-        import_aliases = getattr(ctx, "import_aliases", {}) or {}
-        from_imports = getattr(ctx, "from_imports", {}) or {}
-        name_resolver = getattr(ctx, "name_resolver", {}) or {}
-        external_bridge_sink = getattr(ctx, "external_bridge_sink", None)
+        import_aliases = ctx.import_aliases or {}
+        from_imports = ctx.from_imports or {}
+        name_resolver = ctx.name_resolver or {}
+        external_bridge_sink = ctx.external_bridge_sink
         return cls(
             left=symbolic_term(
                 test.compare_left(),

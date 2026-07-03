@@ -20,11 +20,21 @@ class FactoryBuildContext:
     contract_bindings: list[Any] = field(default_factory=list)
     external_bridge_sink: Any = None
     audit_sink: Any = None
+    factory_audit_sink: Any = None
+    proof_sink: Any = None
+    report_sink: Any = None
+    operation_log: list[tuple[str, str, str]] = field(default_factory=list)
+    dig_sink: Any = None
+    record_operation: Any = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
     # CallSugar.build refuses a callee already in this set: eagerly building a recursive
     # universe never terminates, and an infinite recursion is not finitely constructible ->
     # the bridge stays the vendor's axiom rather than hanging the lifter.
     building: frozenset = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        if self.factory_audit_sink is None and self.audit_sink is not None:
+            object.__setattr__(self, "factory_audit_sink", self.audit_sink)
 
     def build_child(self, node, role: SugarRole):
         from sugar_lift_py_tests.factory.build import build_node
@@ -69,5 +79,11 @@ class FactoryBuildContext:
             contract_bindings=self.contract_bindings,
             external_bridge_sink=self.external_bridge_sink,
             audit_sink=self.audit_sink,
+            factory_audit_sink=self.factory_audit_sink,
+            proof_sink=self.proof_sink,
+            report_sink=self.report_sink,
+            operation_log=self.operation_log,
+            dig_sink=self.dig_sink,
+            record_operation=self.record_operation,
             building=self.building,
         )

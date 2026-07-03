@@ -143,7 +143,7 @@ def perform_temporal_operation(
                 message=info.message,
             ),
         )
-    recorder = getattr(ctx, "record_operation", None)
+    recorder = None if ctx is None else ctx.record_operation
     if recorder is not None:
         recorder(owner=owner, method_name=method_name, operation=operation)
     return method(operation, ctx)

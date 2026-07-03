@@ -44,10 +44,10 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             call=symbolic_term(
                 test,
                 owner="call truth assertion",
-                import_aliases=getattr(ctx, "import_aliases", {}) or {},
-                from_imports=getattr(ctx, "from_imports", {}) or {},
-                name_resolver=getattr(ctx, "name_resolver", {}) or {},
-                external_bridge_sink=getattr(ctx, "external_bridge_sink", None),
+                import_aliases=ctx.import_aliases or {},
+                from_imports=ctx.from_imports or {},
+                name_resolver=ctx.name_resolver or {},
+                external_bridge_sink=ctx.external_bridge_sink,
             ),
             call_body=_local_constructor_body(test, ctx),
             boolean_call=_local_boolean_function_call(test, ctx),
@@ -81,12 +81,12 @@ def _local_constructor_body(test, ctx) -> SugarBody | None:
     if target is None:
         return None
     import_target = test.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
+        ctx.import_aliases or {},
+        ctx.from_imports or {},
     )
     if import_target is not None:
         return None
-    function_node = (getattr(ctx, "name_resolver", None) or {}).get(target)
+    function_node = (ctx.name_resolver or {}).get(target)
     if function_node is None:
         return None
 
@@ -102,12 +102,12 @@ def _local_boolean_function_call(test, ctx) -> bool:
     if target is None:
         return False
     import_target = test.call_import_target_name(
-        getattr(ctx, "import_aliases", {}) or {},
-        getattr(ctx, "from_imports", {}) or {},
+        ctx.import_aliases or {},
+        ctx.from_imports or {},
     )
     if import_target is not None:
         return False
-    function_node = (getattr(ctx, "name_resolver", None) or {}).get(target)
+    function_node = (ctx.name_resolver or {}).get(target)
     if function_node is None:
         return False
 
