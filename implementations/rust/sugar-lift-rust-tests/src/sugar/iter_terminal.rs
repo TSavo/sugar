@@ -1160,11 +1160,8 @@ impl IterTerminalSugar {
         if !receiver_is_versioned_iterator(&receiver_name, ctx.scope) {
             return None;
         }
-        let occurrence = ctx.scope.bump_consuming_occurrence(&receiver_name);
-        if occurrence == 0 {
-            return None;
-        }
-        let mut args = vec![make_var(format!("{receiver_name}@adv{occurrence}"))];
+        let alias = ctx.scope.temporal_consuming_rewrite_alias(&receiver_name)?;
+        let mut args = vec![make_var(alias)];
         args.extend(self.terminal.occurrence_fallback_args()?);
         Some(Rc::new(Term::Ctor {
             name: format!("method:{method}"),

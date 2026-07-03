@@ -22,8 +22,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{
-    CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
-    TermFloorAccept,
+    CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor, TermFloorAccept,
 };
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
@@ -155,10 +154,7 @@ impl QuantifierPredicate {
             Outcome::Complete(desugared) => desugared.accept_desugared_floor(CurryVisitor {
                 param: &self.param,
                 arg: &elem_term,
-                occurrence: CurryOccurrence {
-                    family: "quant",
-                    ordinal,
-                },
+                occurrence: ctx.scope.temporal_curry_occurrence("quant", ordinal),
             }),
             Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
         };

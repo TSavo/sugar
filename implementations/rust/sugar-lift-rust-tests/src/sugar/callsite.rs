@@ -118,9 +118,8 @@ fn opaque_callsite_call_or_method_term(ctx: &SugarCtx, expr: &Expr) -> Rc<Term> 
             if is_consuming_iterator_method(&call.method.to_string()) {
                 if let Term::Var { name } = receiver.as_ref() {
                     if receiver_is_versioned_iterator(name, ctx.scope) {
-                        let occ = ctx.scope.bump_consuming_occurrence(name);
-                        if occ > 0 {
-                            receiver = make_var(format!("{name}@adv{occ}"));
+                        if let Some(alias) = ctx.scope.temporal_consuming_rewrite_alias(name) {
+                            receiver = make_var(alias);
                         }
                     }
                 }

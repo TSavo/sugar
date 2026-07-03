@@ -155,7 +155,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/function_map.rs",
-        line: 243,
+        line: 241,
         enclosing_fn: "reduce_function_map",
         max_floor_arms: 2,
         owner: "FunctionMapSugar receiver sequence projection",

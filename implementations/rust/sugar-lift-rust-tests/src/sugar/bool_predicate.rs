@@ -7,7 +7,7 @@ use syn::{Expr, Pat};
 
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::term_dispatch::{
-    literal_predicate_bool_or_runtime_effect, CurryOccurrence, CurryVisitor, DesugaredFloorAccept,
+    literal_predicate_bool_or_runtime_effect, CurryVisitor, DesugaredFloorAccept,
 };
 use crate::{
     canonical_term_sig, const_val_term, curry_param_name, curry_param_term, helper_param_names,
@@ -45,7 +45,7 @@ impl BoolPredicateClosure {
             Outcome::Complete(d) => d.accept_desugared_floor(CurryVisitor {
                 param: &self.param,
                 arg: &elem_term,
-                occurrence: CurryOccurrence { family, ordinal },
+                occurrence: ctx.scope.temporal_curry_occurrence(family, ordinal),
             }),
             Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
         };
@@ -106,7 +106,7 @@ impl BoolPredicateFunction {
             Outcome::Complete(d) => d.accept_desugared_floor(CurryVisitor {
                 param: &self.body.curry_param,
                 arg: &elem_term,
-                occurrence: CurryOccurrence { family, ordinal },
+                occurrence: ctx.scope.temporal_curry_occurrence(family, ordinal),
             }),
             Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
         };

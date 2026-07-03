@@ -16,6 +16,7 @@ use crate::sugar::primitive_int::{
     is_deferred_primitive_method_name, try_eval_deferred_primitive_method,
 };
 use crate::sugar::symbolic_value::SymbolicValue;
+use crate::sugar::temporal_floor::CurryOccurrence;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
     scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, Effect,
@@ -163,24 +164,6 @@ fn floor_dispatch_gap_effect(gap: CoverageGapInfo) -> Effect {
     Effect::CoverageGap {
         boundary: gap.observed.clone(),
         reason: gap.message(),
-    }
-}
-
-/// A finite-domain occurrence context for a term-floor curry.
-///
-/// The caller supplies the binding (`param := arg`) and the occurrence owner
-/// supplies the point identity. Runtime call/method terms inside the body become
-/// nullary occurrence symbols (`call:f#map1()`, `call:f#map2()`) instead of
-/// ordered call traces such as `Before(f(1), f(2))`.
-#[derive(Clone, Copy)]
-pub(crate) struct CurryOccurrence<'a> {
-    pub(crate) family: &'a str,
-    pub(crate) ordinal: usize,
-}
-
-impl CurryOccurrence<'_> {
-    fn suffix(&self) -> String {
-        format!("#{}{}", self.family, self.ordinal + 1)
     }
 }
 
@@ -705,7 +688,7 @@ fn curry_term(
                 curried
             } else {
                 Rc::new(Term::Ctor {
-                    name: format!("{}{}", name, occurrence.suffix()),
+                    name: format!("{}{suffix}", name, suffix = occurrence.suffix()),
                     args: Vec::new(),
                 })
             }
@@ -928,10 +911,17 @@ pub(crate) fn fold_int_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugar::temporal_floor::{CurryDoorway, TemporalFloor};
     use sugar_ir_symbolic::{and_, eq, num, Formula, Sort};
 
     fn var(name: &str) -> Rc<Term> {
         make_var(name)
+    }
+
+    fn occurrence(family: &'static str, ordinal: usize) -> CurryOccurrence<'static> {
+        TemporalFloor::default()
+            .alias(CurryDoorway::new(family, ordinal))
+            .expect("test occurrence aliases through temporal floor")
     }
 
     struct PredicateKindProbe;
@@ -1118,10 +1108,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "x",
             arg: &num(2),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 0,
-            },
+            occurrence: occurrence("map", 0),
         });
 
         assert_eq!(const_fold_int_term(&curried), Some(3));
@@ -1137,10 +1124,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "x",
             arg: &num(2),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 1,
-            },
+            occurrence: occurrence("map", 1),
         });
 
         match curried.as_ref() {
@@ -1162,10 +1146,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "ch",
             arg: &num(i128::from(b'A')),
-            occurrence: CurryOccurrence {
-                family: "quant",
-                ordinal: 0,
-            },
+            occurrence: occurrence("quant", 0),
         });
 
         assert_eq!(
@@ -1184,10 +1165,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "id",
             arg: &num(42),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 0,
-            },
+            occurrence: occurrence("map", 0),
         });
 
         match curried.as_ref() {
@@ -1209,10 +1187,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "x",
             arg: &num(7),
-            occurrence: CurryOccurrence {
-                family: "quant",
-                ordinal: 2,
-            },
+            occurrence: occurrence("quant", 2),
         });
 
         match curried.as_ref() {
@@ -1240,10 +1215,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "n",
             arg: &num(4),
-            occurrence: CurryOccurrence {
-                family: "quant",
-                ordinal: 0,
-            },
+            occurrence: occurrence("quant", 0),
         });
 
         assert_eq!(
@@ -1274,10 +1246,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "n",
             arg: &num(2),
-            occurrence: CurryOccurrence {
-                family: "filter",
-                ordinal: 0,
-            },
+            occurrence: occurrence("filter", 0),
         });
 
         assert_eq!(
@@ -1296,10 +1265,7 @@ mod tests {
         let outer = inner.accept_term_floor(CurryVisitor {
             param: "n",
             arg: &num(2),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 1,
-            },
+            occurrence: occurrence("map", 1),
         });
 
         match outer.as_ref() {
@@ -1327,10 +1293,7 @@ mod tests {
         let curried = floor.accept_desugared_floor(CurryVisitor {
             param: "n",
             arg: &num(10),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 0,
-            },
+            occurrence: occurrence("map", 0),
         });
 
         let Desugared::TermSeq(terms) = curried else {
@@ -1377,10 +1340,7 @@ mod tests {
         let curried = term.accept_term_floor(CurryVisitor {
             param: "x",
             arg: &num(9),
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal: 0,
-            },
+            occurrence: occurrence("map", 0),
         });
 
         match curried.as_ref() {

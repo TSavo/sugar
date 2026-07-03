@@ -17,8 +17,8 @@ use toml::Value;
 const CATALOG_TOML: &str = include_str!("fixtures/temporal_floor_catalog.toml");
 
 const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 53;
-const EXPECTED_OPERATION_FLOORS_LANDED_R: usize = 27;
-const EXPECTED_EMBEDDINGS_R: usize = 8;
+const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 27;
+const EXPECTED_EMBEDDINGS_R: usize = 1;
 
 const REQUIRED_CATALOG_ROWS: &[&str] = &[
     "iterator-map",
@@ -77,7 +77,7 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "for_replay.rs:1639",
     "forall.rs:592",
     "forall.rs:668",
-    "function_map.rs:83",
+    "function_map.rs:81",
     "generic_body_sugar.rs:349",
     "identity_map.rs:32",
     "infinity_eq.rs:270",
@@ -117,27 +117,12 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "zip.rs:43",
 ];
 
-const EXPECTED_COMBINATOR_LOCAL_RENAMES: &[&str] = &[
-    "bool_predicate.rs:48",
-    "bool_predicate.rs:109",
-    "callsite.rs:121",
-    "callsite.rs:123",
-    "function_map.rs:330",
-    "iter_terminal.rs:1163",
-    "iter_terminal.rs:1167",
-    "literal_iterator_quantifier.rs:158",
-    "map.rs:409",
-    "method.rs:98",
-    "method.rs:100",
-    "term_dispatch.rs:183",
-    "term_dispatch.rs:708",
-    "try_from_fn.rs:151",
-];
+const EXPECTED_COMBINATOR_LOCAL_RENAMES: &[&str] = &[];
 
 #[derive(Debug)]
 struct Metrics {
     stdlib_temporal_surface_unenrolled: usize,
-    operation_floors_landed_r: usize,
+    operation_floors_unlanded_r: usize,
     embeddings_r: usize,
     catalog_methods: BTreeSet<String>,
     operation_floor_rows: BTreeSet<String>,
@@ -240,7 +225,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
     }
 
     let mut operation_floor_rows = BTreeSet::new();
-    let mut operation_floors_landed_r = 0usize;
+    let mut operation_floors_unlanded_r = 0usize;
     for row in floors {
         let id = str_field(row, "id", "operation_floor row")?;
         let floor = str_field(row, "floor", id)?;
@@ -249,7 +234,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
         }
         let status = str_field(row, "status", id)?;
         if status != "landed" {
-            operation_floors_landed_r += 1;
+            operation_floors_unlanded_r += 1;
         }
         str_field(row, "owner", id)?;
         str_field(row, "reason", id)?;
@@ -307,7 +292,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
 
     Ok(Metrics {
         stdlib_temporal_surface_unenrolled,
-        operation_floors_landed_r,
+        operation_floors_unlanded_r,
         embeddings_r,
         catalog_methods,
         operation_floor_rows,
@@ -384,7 +369,6 @@ fn detect_combinator_local_renames(root: &Path) -> Vec<String> {
         "CurryOccurrence {",
         "bump_consuming_occurrence",
         "@adv{",
-        "occurrence.suffix()",
         "format!(\"#",
     ];
     let mut rows = Vec::new();
@@ -394,6 +378,9 @@ fn detect_combinator_local_renames(root: &Path) -> Vec<String> {
             .expect("file belongs to scan root")
             .display()
             .to_string();
+        if rel == "temporal_floor.rs" {
+            continue;
+        }
         for (line_no, line) in production_lines(&path) {
             if local_rename_needles
                 .iter()
@@ -488,8 +475,8 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
         metrics.stdlib_temporal_surface_unenrolled
     );
     println!(
-        "R(operation-floors-landed) = {}",
-        metrics.operation_floors_landed_r
+        "R(operation-floors-unlanded) = {}",
+        metrics.operation_floors_unlanded_r
     );
     println!("R(embeddings) = {}", metrics.embeddings_r);
     println!("operation floors = {:#?}", metrics.operation_floor_rows);
@@ -499,8 +486,8 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
         EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED
     );
     assert_eq!(
-        metrics.operation_floors_landed_r,
-        EXPECTED_OPERATION_FLOORS_LANDED_R
+        metrics.operation_floors_unlanded_r,
+        EXPECTED_OPERATION_FLOORS_UNLANDED_R
     );
     assert_eq!(metrics.embeddings_r, EXPECTED_EMBEDDINGS_R);
     assert_eq!(

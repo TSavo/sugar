@@ -17,7 +17,7 @@ use crate::sugar::factory::{
 };
 use crate::sugar::sequence_floor::{sequence_elem_term_floor, sequence_value_term_floor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::term_dispatch::{CurryOccurrence, CurryVisitor, DesugaredFloorAccept};
+use crate::sugar::term_dispatch::{CurryVisitor, DesugaredFloorAccept};
 use crate::sugar::{format::stable_let_bindings, method_family};
 use crate::{
     canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
@@ -406,10 +406,7 @@ fn curry_map_body_for_term(
         Outcome::Complete(d) => d.accept_desugared_floor(CurryVisitor {
             param: &mapper.curry_param,
             arg: elem_term,
-            occurrence: CurryOccurrence {
-                family: "map",
-                ordinal,
-            },
+            occurrence: ctx.scope.temporal_curry_occurrence("map", ordinal),
         }),
         Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
