@@ -64,6 +64,8 @@ class TemporalContext:
             FactoryAuditRow,
             FactoryGap,
             FactoryGapInfo,
+            GapKind,
+            GapLocus,
         )
 
         info = FactoryGapInfo(
@@ -72,8 +74,8 @@ class TemporalContext:
             observed=observed,
             requested=requested,
             fix=fix,
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

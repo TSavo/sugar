@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import ObjectField, ObjectMethodValue, ObjectValue
 from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -71,8 +77,8 @@ class ConstructorStrategy:
                 observed=type(exc).__name__,
                 requested="constructor field floor",
                 fix=f"write more constructor floor for `{self.class_name}.{name}`: {exc}",
-                gap_kind="Constructor",
-                gap_locus="construction",
+                gap_kind=GapKind.CONSTRUCTOR,
+                gap_locus=GapLocus.CONSTRUCTION,
             )
             raise FactoryGap(
                 info,
@@ -104,8 +110,8 @@ class ConstructorStrategy:
                     f"`{self.class_name}.{name}` or emit an explicit "
                     "__set_name__ effect"
                 ),
-                gap_kind="Constructor",
-                gap_locus="construction",
+                gap_kind=GapKind.CONSTRUCTOR,
+                gap_locus=GapLocus.CONSTRUCTION,
             )
             raise FactoryGap(
                 info,

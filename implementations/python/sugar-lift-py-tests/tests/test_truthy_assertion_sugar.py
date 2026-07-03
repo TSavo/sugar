@@ -11,7 +11,11 @@ import pytest
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import FactoryGap
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
+from sugar_lift_py_tests.factory.factory_gap_info import (
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.sugar import truthy_assertion_sugar as truthy_module
@@ -41,8 +45,8 @@ class _GapBuildContext:
             observed="Name",
             requested="truthy term body",
             fix="write more Floor for truthy body",
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,
@@ -470,7 +474,7 @@ def test_truthy_assertion_without_bool_or_len_is_a_named_floor_gap() -> None:
         "requested": "constructor-bound method",
         "fix": ("define `__len__` on `Empty` or add the floor that owns this method"),
         "gap_kind": "Constructor",
-        "gap_locus": "construction",
+        "gap_locus": "Construction",
     }
 
 

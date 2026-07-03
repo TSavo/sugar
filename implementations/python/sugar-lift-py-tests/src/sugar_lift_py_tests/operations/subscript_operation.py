@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
@@ -177,8 +183,8 @@ def _raise_string_slice_gap(
         observed=observed,
         requested=requested,
         fix=fix,
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,
@@ -208,8 +214,8 @@ def _raise_subscript_gap(
         observed=observed,
         requested=requested,
         fix=fix,
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,

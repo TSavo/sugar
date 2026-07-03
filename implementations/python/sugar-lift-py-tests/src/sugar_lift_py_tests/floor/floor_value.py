@@ -20,6 +20,8 @@ class FloorValue:
             FactoryAuditRow,
             FactoryGap,
             FactoryGapInfo,
+            GapKind,
+            GapLocus,
         )
 
         observed = type(self).__name__
@@ -29,8 +31,8 @@ class FloorValue:
             observed=observed,
             requested="project this floor value to a term",
             fix=f"write more Floor: implement {observed}.to_term",
-            gap_kind="Floor",
-            gap_locus="Projection",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.PROJECTION,
         )
         gap = FactoryGap(
             info,
@@ -44,6 +46,4 @@ class FloorValue:
                 message=info.message,
             ),
         )
-        gap.info["gap_kind"] = "Floor"
-        gap.info["gap_locus"] = "Projection"
         raise gap

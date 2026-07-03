@@ -17,7 +17,7 @@ class SugarBody:
         reducer = getattr(self.sugar, "desugar", None)
         if reducer is None:
             raise TypeError(
-                f"write more Floor for this construction: owner=SugarBody "
+                f"write more Floor for this Construction: owner=SugarBody "
                 f"observed={type(self.sugar).__name__} requested=desugar "
                 f"fix=add desugar to {type(self.sugar).__name__}"
             )

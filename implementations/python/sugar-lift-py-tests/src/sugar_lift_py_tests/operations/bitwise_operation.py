@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, ClassVar
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import (
     Bv32Value,
     FloorValue,
@@ -87,8 +93,8 @@ class BitwiseOperation:
                     "add BitwiseOperation support for "
                     f"{observed} or emit a real effect"
                 ),
-                gap_kind="Floor",
-                gap_locus="construction",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
             )
             raise FactoryGap(
                 info,

@@ -40,5 +40,5 @@ def test_array_element_floor_gap_blames_the_element_source():
         "requested": "array element floor",
         "fix": "add ArrayLiteral element floor for StringValue",
         "gap_kind": "Floor",
-        "gap_locus": "construction",
+        "gap_locus": "Construction",
     }

@@ -8,7 +8,7 @@ from .factory_audit_row import FactoryAuditRow
 from .factory_build_context import FactoryBuildContext
 from .factory_build_result import FactoryBuildResult
 from .factory_gap import FactoryGap
-from .factory_gap_info import FactoryGapInfo
+from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
 
@@ -200,8 +200,8 @@ def _raise_ambiguous_candidates(
         observed=f"{site.observed} candidates=[{', '.join(names)}]",
         requested=role.value,
         fix="declare comes_before or split the sugar role",
-        gap_kind="Sugar ordering",
-        gap_locus="AST",
+        gap_kind=GapKind.SUGAR_ORDERING,
+        gap_locus=GapLocus.AST,
     )
     audit_row = FactoryAuditRow(
         role=role.value,

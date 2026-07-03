@@ -67,7 +67,13 @@ def _call_method_gap(
     requested: str,
     fix: str,
 ):
-    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 
     info = FactoryGapInfo(
         owner=owner,
@@ -75,8 +81,8 @@ def _call_method_gap(
         observed=observed,
         requested=requested,
         fix=fix,
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,

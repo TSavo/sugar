@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -47,8 +53,8 @@ class UnaryOperatorOperation:
             observed=f"{self.operator}({receiver})",
             requested="unary operator floor",
             fix=f"add UnaryOperatorOperation support for {self.operator} on {receiver}",
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

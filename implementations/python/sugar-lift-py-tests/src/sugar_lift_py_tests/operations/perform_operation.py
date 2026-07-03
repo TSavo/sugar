@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sugar_lift_py_tests.factory import FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import FactoryGap, FactoryGapInfo, GapKind, GapLocus
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Outcome
@@ -24,8 +24,8 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
             f"declare {operation_name}.method_name as a ClassVar[str] "
             "owned by the operation"
         ),
-        gap_kind="Operation",
-        gap_locus="method_name",
+        gap_kind=GapKind.OPERATION,
+        gap_locus=GapLocus.METHOD_NAME,
     )
     raise FactoryGap(
         info,
@@ -59,8 +59,8 @@ def _missing_floor_gap(
         observed=observed,
         requested=method_name,
         fix=f"add {method_name} to {observed} or emit a real effect",
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,
@@ -104,8 +104,8 @@ def perform_operation(
                 f"check {operation_name}.method_name or add "
                 f"{type(receiver).__name__}.{method_name}"
             ),
-            gap_kind="Operation",
-            gap_locus="method_name",
+            gap_kind=GapKind.OPERATION,
+            gap_locus=GapLocus.METHOD_NAME,
         )
         raise FactoryGap(
             info,

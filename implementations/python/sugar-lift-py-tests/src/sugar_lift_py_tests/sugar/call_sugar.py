@@ -7,7 +7,11 @@ from typing import Protocol
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
-from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
+from sugar_lift_py_tests.factory.factory_gap_info import (
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import Formula, Term, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
@@ -652,7 +656,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}(...)",
                 requested="positional constructor arguments",
                 fix=f"add keyword constructor argument binding sugar for `{target}`",
-                gap_kind="Constructor",
+                gap_kind=GapKind.CONSTRUCTOR,
             )
         )
     methods = _build_object_methods(class_site, ctx)
@@ -666,7 +670,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                     observed=f"{target}(...)",
                     requested="zero-arg constructor",
                     fix=f"add constructor argument binding sugar for `{target}`",
-                    gap_kind="Constructor",
+                    gap_kind=GapKind.CONSTRUCTOR,
                 )
             )
         return ConstructorStrategy(
@@ -685,7 +689,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}.__init__({', '.join(params)})",
                 requested="constructor self parameter",
                 fix=f"add constructor argument binding sugar for `{target}.__init__`",
-                gap_kind="Constructor",
+                gap_kind=GapKind.CONSTRUCTOR,
             )
         )
     constructor_params = tuple(params[1:])
@@ -697,7 +701,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                 observed=f"{target}(...)",
                 requested=f"{len(constructor_params)} constructor arguments",
                 fix=f"add constructor argument binding sugar for `{target}`",
-                gap_kind="Constructor",
+                gap_kind=GapKind.CONSTRUCTOR,
             )
         )
     self_name = params[0]
@@ -727,7 +731,7 @@ def _build_constructor_strategy(fragment, ctx, target: str, class_site):
                     f"write more constructor sugar for `{target}.__init__`: "
                     "support this statement shape or emit an effect"
                 ),
-                gap_kind="Constructor",
+                gap_kind=GapKind.CONSTRUCTOR,
             )
         )
     return ConstructorStrategy(

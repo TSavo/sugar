@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState, FloorValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 
@@ -55,8 +61,8 @@ class AddOperation:
             observed=f"{receiver}+{type(self.operand).__name__}",
             requested="add operand floor",
             fix=f"add AddOperation support for {receiver} with {type(self.operand).__name__}",
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

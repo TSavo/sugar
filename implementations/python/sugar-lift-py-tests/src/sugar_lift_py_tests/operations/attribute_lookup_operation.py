@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn, TypeGuard
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 
@@ -97,9 +103,11 @@ class AttributeLookupOperation:
             requested=requested,
             fix=fix,
             gap_kind=(
-                "Constructor" if requested.startswith("constructor-bound ") else "Floor"
+                GapKind.CONSTRUCTOR
+                if requested.startswith("constructor-bound ")
+                else GapKind.FLOOR
             ),
-            gap_locus="construction",
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

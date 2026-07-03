@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from typing import Callable, ClassVar, NoReturn
 
 from sugar_lift_py_tests.effect import RuntimeEffect
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     BoolValue,
@@ -182,8 +188,8 @@ class BinaryOperatorOperation:
                 f"add BinaryOperatorOperation support for {receiver} "
                 f"{self.operator} {type(self.right).__name__}"
             ),
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,
