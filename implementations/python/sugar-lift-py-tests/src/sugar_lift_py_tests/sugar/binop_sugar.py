@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import BinaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import binop_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _SYMBOL: dict[str, str] = {
@@ -30,6 +31,10 @@ class BinOpSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "BinOp" and site.operator_kind() in _SYMBOL
+
+    @classmethod
+    def witnesses(cls):
+        return binop_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "BinOpSugar":

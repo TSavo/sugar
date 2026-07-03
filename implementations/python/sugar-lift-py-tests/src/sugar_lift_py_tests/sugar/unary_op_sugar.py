@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import UnaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import unary_op_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _SYMBOL = {
@@ -34,6 +35,10 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
         if sugar is None:
             raise TypeError("UnaryOpSugar claim built an unsupported unary op")
         return sugar
+
+    @classmethod
+    def witnesses(cls):
+        return unary_op_return_witness()
 
     @classmethod
     def from_site(cls, site, *, operand: SugarBody) -> "UnaryOpSugar | None":

@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import BinaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import object_equality_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -32,6 +33,10 @@ class ObjectEqualityTermSugar(Sugar, role=SugarRole.TERM):
             right=ctx.build_body(site.compare_comparators()[0], SugarRole.TERM),
             blame=site.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return object_equality_return_witness()
 
     def desugar(self, ctx) -> Outcome:
         left_outcome = self.left.reduce(ctx)

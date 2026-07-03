@@ -7,6 +7,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula, Term, eq, gt, gte, lt, lte, ne
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witness_examples import comparison_assertion_witness
 
 _OPERATOR_FORMULAS: dict[str, Callable[[Term, Term], Formula]] = {
     "Eq": eq,
@@ -46,6 +47,10 @@ class ComparisonAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             if _contains_call(left) or _contains_call(right):
                 return False
         return can_symbolic_term(left) and can_symbolic_term(right)
+
+    @classmethod
+    def witnesses(cls):
+        return comparison_assertion_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "ComparisonAssertionSugar":

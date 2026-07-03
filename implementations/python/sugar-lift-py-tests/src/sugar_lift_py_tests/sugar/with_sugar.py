@@ -7,6 +7,7 @@ from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapI
 from sugar_lift_py_tests.operations import ContextManagerOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import with_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -47,6 +48,10 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             optional_name=optional_name,
             blame=site.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return with_return_witness()
 
     def desugar(self, ctx) -> Outcome:
         manager_outcome = self.manager.reduce(ctx)

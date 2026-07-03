@@ -13,6 +13,11 @@ from sugar_lift_py_tests.operations import (
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import (
+    builtin_len_return_witness,
+    divmod_subscript_return_witness,
+    format_int_return_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -33,6 +38,10 @@ class BuiltinCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         if site.call_is_method_call():
             return site.call_qualified_target_name() == _OPERATOR_INDEX_CALL
         return site.call_target_name() in _OWNED_BUILTIN_CALLS
+
+    @classmethod
+    def witnesses(cls):
+        return builtin_len_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> Sugar:
@@ -110,6 +119,10 @@ class DivmodBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
         )
 
     @classmethod
+    def witnesses(cls):
+        return divmod_subscript_return_witness()
+
+    @classmethod
     def build(cls, site, ctx) -> Sugar:
         if not cls.owns(site):
             raise TypeError(
@@ -164,6 +177,10 @@ class FormatBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
             and site.call_target_name() == "format"
             and site.call_arg_count() in (1, 2)
         )
+
+    @classmethod
+    def witnesses(cls):
+        return format_int_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> Sugar:

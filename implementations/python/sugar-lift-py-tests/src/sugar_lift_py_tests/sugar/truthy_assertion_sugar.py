@@ -10,6 +10,7 @@ from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.object_truthiness import object_truth_formula
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witness_examples import truthy_assertion_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -47,6 +48,10 @@ class TruthyAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             degraded_reason=degraded_reason,
             blame=site.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return truthy_assertion_witness()
 
     def assertion_formula(self) -> Formula:
         return atomic("py.truthy", [self.term])

@@ -26,6 +26,7 @@ from sugar_lift_py_tests.ir import (
 from sugar_lift_py_tests.operations import ControlFlowGuardOperation, perform_operation
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import if_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -44,6 +45,10 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "If"
+
+    @classmethod
+    def witnesses(cls):
+        return if_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "IfSugar":

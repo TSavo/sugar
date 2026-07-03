@@ -142,6 +142,8 @@ def _build_site(
         candidates=[candidate.name for candidate in candidates],
         message=message,
     )
+    if ctx.audit_sink is not None:
+        ctx.audit_sink.append(audit_row.to_json())
     return FactoryBuildResult(sugar=sugar, audit_row=audit_row)
 
 

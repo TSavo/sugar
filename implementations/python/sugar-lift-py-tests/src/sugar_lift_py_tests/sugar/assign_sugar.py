@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import assign_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -23,6 +24,10 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Assign" and site.assign_target_name() is not None
+
+    @classmethod
+    def witnesses(cls):
+        return assign_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "AssignSugar":

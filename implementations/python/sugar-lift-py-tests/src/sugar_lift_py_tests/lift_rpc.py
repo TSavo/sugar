@@ -409,6 +409,7 @@ def _handle_lift(
                 payload.source_mementos.extend(file_payload.source_mementos)
                 _merge_source_ledger(payload.source_ledger, file_payload.source_ledger)
                 payload.source_audits.extend(file_payload.source_audits)
+                payload.factory_audits.extend(file_payload.factory_audits)
                 payload.factory_walk.extend(file_payload.factory_walk)
                 payload.call_edges.extend(file_payload.call_edges)
                 payload.diagnostics.extend(file_payload.diagnostics)

@@ -7,6 +7,7 @@ from sugar_lift_py_tests.ir import Formula, Term, identity
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.not_sugar import NotSugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witness_examples import identity_assertion_witness
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,10 @@ class IdentityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         return can_symbolic_term(test.compare_left()) and can_symbolic_term(
             test.compare_comparators()[0]
         )
+
+    @classmethod
+    def witnesses(cls):
+        return identity_assertion_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "IdentityAssertionSugar":

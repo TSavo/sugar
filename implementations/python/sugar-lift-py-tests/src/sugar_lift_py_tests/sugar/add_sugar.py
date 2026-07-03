@@ -7,6 +7,7 @@ from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.operations import AddOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import add_method_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -19,6 +20,10 @@ class AddSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     @classmethod
     def owns(cls, site) -> bool:
         return _is_add_call(site)
+
+    @classmethod
+    def witnesses(cls):
+        return add_method_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "AddSugar":

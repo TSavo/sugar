@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import MaterializeOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import to_list_len_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -27,6 +28,10 @@ class ToListSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         if sugar is None:
             raise TypeError("ToListSugar claim built a non-to-list call")
         return sugar
+
+    @classmethod
+    def witnesses(cls):
+        return to_list_len_return_witness()
 
     @classmethod
     def from_site(cls, site, *, receiver: SugarBody) -> "ToListSugar | None":
