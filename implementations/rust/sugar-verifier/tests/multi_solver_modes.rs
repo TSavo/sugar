@@ -295,6 +295,7 @@ binary = "stub:unsat"
         extra_projects: Vec::new(),
         extra_proof_files: Vec::new(),
         extra_proofs: Vec::new(),
+        plan_artifact: None,
         trusted_implication_signers: Vec::new(),
     };
     let runner = Runner::new(cfg);

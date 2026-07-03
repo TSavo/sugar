@@ -3,7 +3,7 @@ version = 1
 [ratchet]
 interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 1
+declared_escape_hatch_rows_open = 0
 ambient_testimony_sites = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
@@ -398,6 +398,41 @@ replay_inputs = [
 source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "PlannedLiftManifest", kind = "struct" }
 
 [[interfaces]]
+id = "planned-component"
+owner = "sugar-cli::component_plan"
+input_type = "selected component registration manifest"
+output_type = "PlannedComponent"
+addressing_rule = "source_cid addresses the selected component manifest bytes; name/protocol_version/command select the component RPC"
+failure_type = "ComponentDiagnostic at component discovery/planning"
+replay_inputs = [
+  "component manifest source",
+  "component manifest source_cid",
+  "component name",
+  "protocol_version",
+  "command",
+  "working_dir",
+]
+source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "PlannedComponent", kind = "struct" }
+
+[[interfaces]]
+id = "component-plan-artifact-memento"
+owner = "sugar-cli::component_plan"
+input_type = "ComponentPlan + PlanIntent + ComponentPlanOptions"
+output_type = "PlanArtifactMemento"
+addressing_rule = "plan_cid is JCS(body) over component-plan-artifact; member_cid is JCS(plan-memento envelope)"
+failure_type = "PlanArtifact replay refusal naming crime/owner/shape/replacement"
+replay_inputs = [
+  "selection inputs",
+  "selected components",
+  "plugins",
+  "PlannedLiftManifest rows",
+  "PlannedIrCompiler rows",
+  "diagnostics",
+  "workspace census",
+]
+source = { path = "implementations/rust/sugar-cli/src/component_plan.rs", item = "PlanArtifactMemento", kind = "struct" }
+
+[[interfaces]]
 id = "planned-ir-compiler"
 owner = "sugar-cli::component_plan"
 input_type = "component registration response"
@@ -459,25 +494,9 @@ replay_inputs = [
 source = { path = "implementations/rust/sugar-cli/src/project_config.rs", item = "ProjectConfig", kind = "struct" }
 
 [[interfaces]]
-id = "lift-plugin-manifest"
-owner = "sugar-cli::lift_plugin"
-input_type = ".sugar/lift/<surface>/manifest.toml or planned component manifest"
-output_type = "LiftPluginManifest"
-addressing_rule = "surface path resolves to manifest; name/version/protocol_version identify plugin"
-failure_type = "LiftPluginError"
-replay_inputs = [
-  "surface",
-  "manifest path or planned component record",
-  "command",
-  "working_dir",
-  "method",
-]
-source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginManifest", kind = "struct" }
-
-[[interfaces]]
 id = "lift-plugin-session"
 owner = "sugar-cli::lift_plugin"
-input_type = "LiftPluginManifest + LiftPluginOptions + project root"
+input_type = "PlannedLiftManifest + LiftPluginOptions + project root"
 output_type = "LiftPluginSession"
 addressing_rule = "DomainClaim carries typed claim identity; response compatibility projection is derived from the claim payload"
 failure_type = "LiftPluginError"
@@ -505,26 +524,18 @@ replay_inputs = [
 source = { path = "implementations/rust/sugar-cli/src/lift_plugin.rs", item = "LiftPluginError", kind = "enum" }
 
 [[interfaces]]
-id = "prove-local-plugin-manifest"
-owner = "sugar-cli::cmd_prove"
-input_type = "witness-discharge lift surface manifest"
-output_type = "PluginManifest"
-addressing_rule = "surface plus project/user/component lookup selects the manifest used for witness discharge"
-failure_type = "String diagnostic at manifest resolution"
+id = "plan-artifact-run-input"
+owner = "sugar-verifier::runner"
+input_type = "PlanArtifactMemento"
+output_type = "PlanArtifactInput"
+addressing_rule = "plan_cid is inserted into ProofRunMemento.input_artifact_cids; member_bytes are stored as a plan-memento member addressed by member_cid"
+failure_type = "ProofRunArtifactError"
 replay_inputs = [
-  "project root",
-  "surface",
-  "manifest path",
-  "planned lift manifest",
+  "plan_cid",
+  "plan_memento member_cid",
+  "plan_memento member bytes",
 ]
-source = { path = "implementations/rust/sugar-cli/src/cmd_prove.rs", item = "PluginManifest", kind = "struct" }
-
-[[interfaces.escape_hatches]]
-shape = "duplicate-manifest-shape"
-owner = "component-plan seam"
-retirement = "unify lift_plugin::LiftPluginManifest and cmd_prove::PluginManifest on PlannedLiftManifest (S5/#3315)"
-baseline = true
-source = { path = "implementations/rust/sugar-cli/src/cmd_prove.rs", item = "PluginManifest", needles = ["struct PluginManifest"] }
+source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "PlanArtifactInput", kind = "struct" }
 
 [[interfaces]]
 id = "solver-result"
