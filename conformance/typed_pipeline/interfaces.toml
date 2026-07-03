@@ -250,6 +250,29 @@ ignored_items = [
 ]
 
 [[interface_sources]]
+path = "implementations/rust/sugar-verifier/src/types.rs"
+ignored_items = [
+  { name = "LoadError", reason = "load diagnostic payload nested under the declared MementoPool boundary" },
+  { name = "EffectSiteAnnotation", reason = "diagnostic annotation row; effect-site proof evidence owns its own campaign" },
+  { name = "SourcePath", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
+  { name = "SourceLine", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
+  { name = "SourceSymbol", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
+  { name = "ResolvedContractBody", reason = "resolved view nested inside the declared VerifiedContract" },
+  { name = "ImplicationKey", reason = "private implication helper key, not a pipeline boundary" },
+  { name = "ImplicationResult", reason = "pool implication helper result, not the S8 data-access boundary" },
+  { name = "BridgePin", reason = "bridge pin enum nested inside callsite/resolve_target handling, not the S8 data-access boundary" },
+  { name = "CallSite", reason = "pre-existing verifier stage carrier; S8 only types the pool lookup key" },
+  { name = "AttributeSafetyObligation", reason = "attribute-safety stage payload, not the S8 data-access boundary" },
+  { name = "ResolvedProperty", reason = "resolve_target stage carrier, not the S8 data-access boundary" },
+  { name = "Obligation", reason = "instantiate/solve stage carrier, not the S8 data-access boundary" },
+  { name = "ObligationVerdict", reason = "nested solver/report vocabulary already represented by SolveResult and report rows" },
+  { name = "ReportRow", reason = "verifier report payload owned by report/runner rows, not the S8 pool seam" },
+  { name = "ResolvedCallEdge", reason = "call-edge diagnostic row, not the S8 data-access boundary" },
+  { name = "ToolchainPlanReport", reason = "toolchain diagnostic report row, not the S8 data-access boundary" },
+  { name = "Report", reason = "aggregate verifier report payload owned by runner/report lanes, not the S8 pool seam" },
+]
+
+[[interface_sources]]
 path = "implementations/rust/sugar-cli/src/report_witness.rs"
 
 [[interface_sources]]
@@ -612,6 +635,52 @@ replay_inputs = [
   "solver stats",
 ]
 source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "TierStats", kind = "struct" }
+
+[[interfaces]]
+id = "bundle-scoped-callsite-key"
+owner = "sugar-verifier::types"
+input_type = "proof bundle CID + source path + source line + source symbol"
+output_type = "BundleScopedCallsiteKey"
+addressing_rule = "the tuple-scoped key binds producer lookup to a specific proof bundle and callsite identity"
+failure_type = "constructor refusal for empty source path or empty source symbol"
+replay_inputs = [
+  "bundle memento CID",
+  "source path",
+  "source line",
+  "source symbol",
+]
+source = { path = "implementations/rust/sugar-verifier/src/types.rs", item = "BundleScopedCallsiteKey", kind = "struct" }
+
+[[interfaces]]
+id = "verified-contract"
+owner = "sugar-verifier::types"
+input_type = "MementoPool contract CID lookup"
+output_type = "VerifiedContract"
+addressing_rule = "contract CIDs resolve through pool-owned typed storage and body/atom graph resolution"
+failure_type = "Option::None for absent or non-contract CIDs; resolved body remains optional"
+replay_inputs = [
+  "contract memento CID",
+  "stored member",
+  "contract body CID graph",
+  "atom CID leaves",
+]
+source = { path = "implementations/rust/sugar-verifier/src/types.rs", item = "VerifiedContract", kind = "struct" }
+
+[[interfaces]]
+id = "memento-pool-data-access"
+owner = "sugar-verifier::types"
+input_type = "verified proof members plus typed lookup keys"
+output_type = "MementoPool"
+addressing_rule = "callsite bridge lookup accepts only BundleScopedCallsiteKey; contract body access returns VerifiedContract"
+failure_type = "LoadError rows and Option::None on absent typed lookups"
+replay_inputs = [
+  "proof bundle bytes",
+  "member CIDs",
+  "bundle membership",
+  "BundleScopedCallsiteKey",
+  "contract/body/atom CIDs",
+]
+source = { path = "implementations/rust/sugar-verifier/src/types.rs", item = "MementoPool", kind = "struct" }
 
 [[interfaces]]
 id = "report-witness-proof"

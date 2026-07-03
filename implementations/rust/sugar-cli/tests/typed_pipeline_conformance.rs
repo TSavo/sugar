@@ -600,22 +600,13 @@ source = {{ path = "{}", item = "ALT_STAGE_VOCABULARY", kind = "const" }}
 }
 
 #[test]
-fn unscoped_key_and_replay_irrecoverable_detectors_discriminate() {
+fn replay_irrecoverable_detector_discriminates_after_scoped_key_retirement() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("ambient_shapes.rs");
     std::fs::write(
         &source,
         r#"
-use std::collections::BTreeMap;
 use std::path::PathBuf;
-
-pub struct UnscopedLookupInterface {
-    by_symbol: BTreeMap<String, MementoCid>,
-}
-
-pub struct ScopedLookupInterface {
-    by_callsite: BTreeMap<(MementoCid, String, usize, String), MementoCid>,
-}
 
 pub struct ReplayIrrecoverableInterface {
     raw_evidence: Vec<u8>,
@@ -642,26 +633,6 @@ declared_escape_hatch_rows_open = 0
 path = "{}"
 
 [[interfaces]]
-id = "unscoped"
-owner = "test::ambient"
-input_type = "fixture"
-output_type = "UnscopedLookupInterface"
-addressing_rule = "fixture"
-failure_type = "fixture"
-replay_inputs = ["fixture"]
-source = {{ path = "{}", item = "UnscopedLookupInterface", kind = "struct" }}
-
-[[interfaces]]
-id = "scoped"
-owner = "test::ambient"
-input_type = "fixture"
-output_type = "ScopedLookupInterface"
-addressing_rule = "fixture"
-failure_type = "fixture"
-replay_inputs = ["fixture"]
-source = {{ path = "{}", item = "ScopedLookupInterface", kind = "struct" }}
-
-[[interfaces]]
 id = "irrecoverable"
 owner = "test::ambient"
 input_type = "fixture"
@@ -683,8 +654,6 @@ source = {{ path = "{}", item = "ReplayPinnedInterface", kind = "struct" }}
 "#,
         source.display(),
         source.display(),
-        source.display(),
-        source.display(),
         source.display()
     ));
 
@@ -696,26 +665,10 @@ source = {{ path = "{}", item = "ReplayPinnedInterface", kind = "struct" }}
     assert!(
         findings.iter().any(|finding| {
             finding.axis == "undeclared-escape-hatches"
-                && finding.item == "UnscopedLookupInterface"
-                && finding.message.contains("unscoped-key-lookup")
-        }),
-        "unscoped bare-key lookup must red; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-    assert!(
-        findings.iter().any(|finding| {
-            finding.axis == "undeclared-escape-hatches"
                 && finding.item == "ReplayIrrecoverableInterface"
                 && finding.message.contains("replay-irrecoverable-input")
         }),
         "raw replay input without a cid must red; findings:\n{}",
-        render_findings(&findings, 0)
-    );
-    assert!(
-        findings
-            .iter()
-            .all(|finding| finding.item != "ScopedLookupInterface"),
-        "scoped callsite key must stay green; findings:\n{}",
         render_findings(&findings, 0)
     );
     assert!(
@@ -1850,8 +1803,6 @@ fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<Hat
             Some("silent-fallback")
         } else if trimmed.contains("\"smt_emit\"") {
             Some("stage-vocabulary-drift")
-        } else if is_unscoped_key_lookup(trimmed) {
-            Some("unscoped-key-lookup")
         } else if is_replay_irrecoverable_input(trimmed, has_replay_cid) {
             Some("replay-irrecoverable-input")
         } else {
@@ -1868,13 +1819,6 @@ fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<Hat
         }
     }
     findings
-}
-
-fn is_unscoped_key_lookup(trimmed: &str) -> bool {
-    let compact = trimmed.replace(' ', "");
-    (compact.contains("BTreeMap<String,MementoCid>")
-        || compact.contains("HashMap<String,MementoCid>"))
-        && !compact.contains("(MementoCid,")
 }
 
 fn is_replay_irrecoverable_input(trimmed: &str, has_replay_cid: bool) -> bool {

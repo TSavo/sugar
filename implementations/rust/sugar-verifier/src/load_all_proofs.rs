@@ -31,7 +31,9 @@ use sugar_proof_envelope::{
     AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, ProofGraph, StoredMember,
 };
 
-use crate::types::{BridgePin, EffectSiteAnnotation, LoadError, MementoPool};
+use crate::types::{
+    BridgePin, BundleScopedCallsiteKey, EffectSiteAnnotation, LoadError, MementoPool,
+};
 
 const PANIC_FREEDOM_EFFECT: &str = "panic-freedom";
 const EFFECT_SITE_ANNOTATION_LOAD_ERROR_TAG: &str = "[effect-site-annotation]";
@@ -359,28 +361,33 @@ fn load_catalog_bytes(
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.is_empty())
                             .map(|sym| {
-                            let callsite_key = member.body().and_then(|body| {
-                                let cs = body.get("callsite");
-                                let file = cs
-                                    .and_then(|v| v.get("file"))
-                                    .and_then(|v| v.as_str())
-                                    .filter(|s| !s.is_empty());
-                                let line = cs
-                                    .and_then(|v| v.get("start_line").or_else(|| v.get("line")))
-                                    .and_then(|v| v.as_u64())
-                                    .map(|n| n as usize);
-                                match (file, line) {
-                                    (Some(file), Some(line)) => Some((
-                                        derived_full.clone(),
-                                        file.to_string(),
-                                        line,
-                                        sym.to_string(),
-                                    )),
-                                    _ => None,
-                                }
-                            });
-                            (sym.to_string(), callsite_key)
-                        })
+                                let callsite_key = member.body().and_then(|body| {
+                                    let cs = body.get("callsite");
+                                    let file = cs
+                                        .and_then(|v| v.get("file"))
+                                        .and_then(|v| v.as_str())
+                                        .filter(|s| !s.is_empty());
+                                    let line = cs
+                                        .and_then(|v| {
+                                            v.get("start_line").or_else(|| v.get("line"))
+                                        })
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as usize);
+                                    match (file, line) {
+                                        (Some(file), Some(line)) => {
+                                            BundleScopedCallsiteKey::from_parts(
+                                                derived_full.clone(),
+                                                file.to_string(),
+                                                line,
+                                                sym.to_string(),
+                                            )
+                                            .ok()
+                                        }
+                                        _ => None,
+                                    }
+                                });
+                                (sym.to_string(), callsite_key)
+                            })
                     }
                     MemberKind::AliasingMemento
                     | MemberKind::AssertionSurfaceMemento
@@ -450,9 +457,7 @@ fn load_catalog_bytes(
             // for soundness: relative paths (`src/lib.rs`) collide
             // across crates. First-writer wins per full key.
             if let Some(key) = callsite_key {
-                pool.bridges_by_callsite
-                    .entry(key)
-                    .or_insert_with(|| cid.clone());
+                pool.index_bridge_by_callsite_if_absent(key, cid.clone());
             }
         }
     }

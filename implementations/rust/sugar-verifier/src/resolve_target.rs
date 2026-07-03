@@ -48,9 +48,13 @@ pub fn run(cs: &CallSite, pool: &MementoPool) -> Result<ResolvedProperty, String
         return Err("target memento is not a contract memento".into());
     }
     // Shape-agnostic body: v1.2 layered -> `header`, v1.1 flat -> `evidence.body`.
-    let body = pool
-        .contract_body_for_member(env)
+    let verified = pool
+        .verified_contract_by_cid(target_cid)
+        .expect("target member kind was checked above");
+    let body = verified
+        .body()
         .filter(|v| v.is_object())
+        .cloned()
         .ok_or("contract memento has no body/header object")?;
 
     // Forward pin: BridgeDeclaration.ConsequentBundlePinned.
