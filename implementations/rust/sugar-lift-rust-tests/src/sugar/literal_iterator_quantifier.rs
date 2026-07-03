@@ -34,7 +34,7 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_literal_iterator_quantifier",
     SugarRole::Constraint,
     crate::sugar::claim::SugarWitnesses::temporal_campaign(
-        "#3415 family j / temporal quantifier cross-chain: finite literal iterator curry facts",
+        "#3415 successor / family j: finite literal iterator quantifier curry facts still lack lying-SAT contradiction",
     ),
     recognize,
 );
