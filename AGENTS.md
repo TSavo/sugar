@@ -147,6 +147,30 @@ wearing runtime clothes. When we say "route it through the floor," "one door
 for construction," "make the missing arm a compile error" — that is Composite,
 Factory, Visitor, applied to proofs instead of widgets. Same law, older book.
 
+The deeper theorem is construction closure: **in a well-constructed system,
+every durable pressure tries to become first-class in that system's native
+construction form.** A recurring bug family is not only a local defect; it is
+the system telling you that its ontology is missing a kind of thing. OO designs
+turn type switches into objects and dispatch. Procedural systems turn ambient
+side effects into explicit steps, state transitions, and handles. Functional
+systems turn mutation and IO into values, effects, and monads. Borrow-checked
+systems turn access into ownership, borrows, lifetimes, moves, regions,
+capabilities, and typestate: no authority without provenance. Typed systems
+turn stringly/runtime distinctions into enums, structs, traits, and exhaustive
+matches. Proof systems turn trusted assertions into obligations, witnesses, and
+checkers. Protocol systems turn folklore into wire contracts and state
+machines. Conformance systems turn "we think this should stay true" into
+ratchets, fixtures, bad twins, and retirement paths.
+
+That is why instruments must name the replacement architecture, not merely the
+offender. The question is always: what form is this system trying to become
+more of? If the offender is an unexplained access, it wants ownership. If it is
+an implicit boundary, it wants a contract. If it is a stringly distinction, it
+wants a type. If it is a trusted claim, it wants evidence. If it is repeated
+review judgment, it wants an instrument. Good refactors do not just remove bad
+code; they promote an unconstructed residue into the native substrate where the
+same mistake becomes impossible, or at least loudly measured on the way there.
+
 So the prime directive one level above "instrument first": **every instrument
 should be trying to climb the ladder and retire itself.** An auditor is a
 confession that the type system cannot yet say the thing. Some confessions are
