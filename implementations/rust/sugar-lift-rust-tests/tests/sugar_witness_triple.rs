@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value as Json};
@@ -276,7 +277,7 @@ fn compile_asserted_json_to_parts(
     }
 }
 
-fn fast_smt_smoke_verdict(inv: &serde_json::Value, label: &str, z3: &str) -> bool {
+fn fast_smt_smoke_check(inv: &serde_json::Value, label: &str, z3: &str) -> bool {
     // Fast well-sortedness smoke only. The production verdict witness below is
     // the soundness authority because it goes through sugar mint/prove.
     let parts = compile_asserted_json_to_parts(inv).expect("witness inv must compile to SMT-LIB");
@@ -303,6 +304,8 @@ struct ProveRow {
     property: String,
     status: String,
 }
+
+static PRODUCTION_CLI_LOCK: Mutex<()> = Mutex::new(());
 
 fn rust_workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -505,6 +508,9 @@ dialects = ["smt-lib-v2.6"]
 }
 
 fn mint_and_prove_project(project: &Path, z3: &str) -> Result<Vec<ProveRow>, String> {
+    let _guard = PRODUCTION_CLI_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     resolve_z3_from(Some(z3), "")
         .map_err(|err| format!("production sugar prove requires executable z3: {err}"))?;
     let sugar = sugar_bin_or_panic();
@@ -570,6 +576,16 @@ fn production_statuses_for_label(rows: &[ProveRow], label: &str) -> Result<Vec<S
         Err(format!("production prove emitted no row for {needle}"))
     } else {
         Ok(statuses)
+    }
+}
+
+fn production_direction(statuses: &[String]) -> Option<ProductionVerdict> {
+    if statuses.iter().any(|status| status == "unsatisfied") {
+        Some(ProductionVerdict::Unsat)
+    } else if statuses.iter().all(|status| status == "discharged") {
+        Some(ProductionVerdict::Sat)
+    } else {
+        None
     }
 }
 
@@ -663,6 +679,11 @@ fn z3_absence_is_a_loud_harness_error() {
 #[test]
 fn fast_smt_smoke_is_not_a_witness_verdict_authority() {
     let source = include_str!("sugar_witness_triple.rs");
+    let old_helper_name = ["fast_smt_smoke", "_verdict"].concat();
+    assert!(
+        !source.contains(&old_helper_name),
+        "fast SMT helper name must not say verdict; it is a smoke check, not soundness authority"
+    );
     let expected_token = ["expected", "_sat"].concat();
     let got_token = ["got", "_sat"].concat();
     let forbidden = source
@@ -1088,6 +1109,10 @@ const EXPECTED_PRODUCTION_TRUTHFUL_RESIDUALS: usize = 119;
 const EXPECTED_PRODUCTION_HIDDEN_LIES: usize = 0;
 const EXPECTED_PRODUCTION_LYING_NO_ROW_RESIDUALS: usize = 3;
 const EXPECTED_PRODUCTION_DISCHARGED_TRUTHS: &[&str] = &["map_truthful", "return_sugar_truthful"];
+const EXPECTED_WITNESS_SMOKE_PRODUCTION_DIRECTIONAL_AGREEMENTS: usize = 2;
+const EXPECTED_WITNESS_SMOKE_PRODUCTION_DISAGREEMENTS: usize = 0;
+const EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE: usize = 238;
+const EXPECTED_WITNESS_SMOKE_UNAVAILABLE: usize = 2;
 
 fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
     [
@@ -1330,17 +1355,42 @@ fn production_cli_verdict_fails_loudly_when_z3_is_absent() {
 }
 
 #[test]
-fn seed_witnesses_match_fast_smt_smoke() {
+fn seed_witnesses_compare_fast_smt_smoke_to_production_cli() {
     let z3 = z3_path_or_panic();
+    let witnesses = seed_witnesses();
+    let cli_cases = witnesses
+        .iter()
+        .flat_map(|witness| {
+            [
+                (format!("{}_truthful", witness.claim), witness.truthful),
+                (format!("{}_lying", witness.claim), witness.lying),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let project = unique_cli_project("seed-witness-differential");
+    write_rust_test_assertion_project(&project, &cli_cases);
+    let rows = mint_and_prove_project(&project, &z3).unwrap_or_else(|err| {
+        panic!(
+            "production sugar mint/prove must produce differential verdicts for seed catalog\nproject={}\n{err}",
+            project.display()
+        )
+    });
+
     let mut owner_mismatches = Vec::new();
+    let mut smoke_unavailable = Vec::new();
+    let mut production_direction_unavailable = Vec::new();
+    let mut disagreements = Vec::new();
+    let mut directional_agreements = 0usize;
     let mut smoke_rows = 0usize;
-    for witness in seed_witnesses() {
+    for witness in witnesses {
         if witness.claim == "return_sugar" {
             // This smoke path checks assertion-formula well-sortedness only.
             // ReturnSugar's source witness is a value-contract route; its
-            // production verdict is covered by the CLI authority above, and
-            // the old in-process value-contract conjoin is not a verdict
-            // authority.
+            // production verdict is covered by the CLI authority above. The
+            // old in-process value-contract conjoin is not a verdict
+            // authority, so this row is explicitly smoke-unavailable.
+            smoke_unavailable.push("return_sugar_truthful: value-contract route".to_string());
+            smoke_unavailable.push("return_sugar_lying: value-contract route".to_string());
             continue;
         }
         for (kind, src) in [("truthful", witness.truthful), ("lying", witness.lying)] {
@@ -1351,15 +1401,57 @@ fn seed_witnesses_match_fast_smt_smoke() {
                 continue;
             }
             let decl = single_warranted_decl(&out);
-            let _ = fast_smt_smoke_verdict(&assertion_formula_json(decl), &label, &z3);
+            let smoke_direction =
+                if fast_smt_smoke_check(&assertion_formula_json(decl), &label, &z3) {
+                    ProductionVerdict::Sat
+                } else {
+                    ProductionVerdict::Unsat
+                };
             smoke_rows += 1;
+            match production_statuses_for_label(&rows, &label) {
+                Ok(statuses) => match production_direction(&statuses) {
+                    Some(authority_direction) if authority_direction == smoke_direction => {
+                        directional_agreements += 1;
+                    }
+                    Some(authority_direction) => disagreements.push(format!(
+                        "{label}: smoke={smoke_direction:?} production={authority_direction:?} statuses={statuses:?}"
+                    )),
+                    None => production_direction_unavailable.push(format!(
+                        "{label}: smoke={smoke_direction:?} production_statuses={statuses:?}"
+                    )),
+                },
+                Err(err) => production_direction_unavailable
+                    .push(format!("{label}: smoke={smoke_direction:?}; {err}")),
+            }
         }
     }
     println!(
-        "R(witness-fast-smt-smoke-owner-mismatches)={} smoke_rows={smoke_rows} authority=none",
-        owner_mismatches.len()
+        "R(witness-fast-smt-smoke-owner-mismatches)={} R(witness-smoke-unavailable)={} R(witness-smoke-production-direction-unavailable)={} R(witness-smoke-production-disagreements)={} smoke_rows={smoke_rows} directional_agreements={directional_agreements} authority=source-to-sugar-cli",
+        owner_mismatches.len(),
+        smoke_unavailable.len(),
+        production_direction_unavailable.len(),
+        disagreements.len()
     );
     assert!(owner_mismatches.is_empty(), "{owner_mismatches:#?}");
+    assert_eq!(
+        smoke_unavailable.len(),
+        EXPECTED_WITNESS_SMOKE_UNAVAILABLE,
+        "smoke-unavailable witness rows changed; each needs a named source-to-smoke bridge or explicit retirement:\n{smoke_unavailable:#?}"
+    );
+    assert_eq!(
+        production_direction_unavailable.len(),
+        EXPECTED_WITNESS_PRODUCTION_DIRECTION_UNAVAILABLE,
+        "production CLI gave no SAT/UNSAT direction for these smoke-checked rows; classify as coverage gaps or drains:\n{production_direction_unavailable:#?}"
+    );
+    assert_eq!(
+        disagreements.len(),
+        EXPECTED_WITNESS_SMOKE_PRODUCTION_DISAGREEMENTS,
+        "fast smoke and production CLI disagree on directional verdicts; these are active shadow-pipeline findings:\n{disagreements:#?}"
+    );
+    assert_eq!(
+        directional_agreements, EXPECTED_WITNESS_SMOKE_PRODUCTION_DIRECTIONAL_AGREEMENTS,
+        "directional agreement count changed; inspect every newly directional row before repinning"
+    );
 }
 
 #[test]
