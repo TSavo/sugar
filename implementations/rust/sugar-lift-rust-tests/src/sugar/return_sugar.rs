@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// ReturnSugar: lifts a `return <expr>` statement or a tail expression to
-// `Desugared::StmtReturn(term)`. The caller (BlockSugar) then places this into the
-// guarded-return composition. Mirrors Python's `ReturnValue(term)` production from
-// `ReturnSugar`.
+// ReturnSugar: lifts a tail expression to `Desugared::StmtReturn(term)` and an
+// explicit `return <expr>` statement to routeable early-return raise data. The
+// caller (BlockSugar / SourceContract routing) then decides whether a surrounding
+// handler consumes the early return. Mirrors Python's `ReturnValue(term)` normal
+// path plus Phase-2's routeable effect boundary for explicit returns.
 //
 // Recognized shapes:
 //   - `return <expr>;` or `return <expr>` (Stmt::Expr(Expr::Return(Some(e)), _))
@@ -11,13 +12,14 @@
 //     (those are claimed by IfSugar / BlockSugar respectively).
 //
 // Desugar: build a TermFloor child body via `SugarBody::term_frag`; desugar time
-// calls the body's factory-built Sugar and wraps the resulting Term in
-// `Desugared::StmtReturn`. On failure, propagate the `Incomplete(effect)`.
+// calls the body's factory-built Sugar and wraps the resulting Term according to
+// the recognized kind. On failure, propagate the `Incomplete(effect)`.
 
 use crate::sugar::claim::StmtSugarClaim;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::route_raises_operation::RouteRaisesOperation;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("return_sugar", recognize);
 
@@ -25,7 +27,9 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     // Arm 1: explicit `return <expr>;` or `return <expr>` (with or without semicolon).
     if let Some(val_frag) = frag.return_value() {
         return Some(Box::new(ReturnSugar {
+            boundary: frag.token_str(),
             body: SugarBody::term_frag(&val_frag, fcx),
+            kind: ReturnKind::Explicit,
         }));
     }
     // Arm 2: tail expression (no trailing semicolon) that is not a control-flow block.
@@ -34,21 +38,41 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     // (literals, calls, field accesses, binops, etc.).
     if let Some(tail_frag) = frag.stmt_tail_expr_noncf() {
         return Some(Box::new(ReturnSugar {
+            boundary: frag.token_str(),
             body: SugarBody::term_frag(&tail_frag, fcx),
+            kind: ReturnKind::Tail,
         }));
     }
     None
 }
 
 struct ReturnSugar {
+    boundary: String,
     body: SugarBody<TermFloor>,
+    kind: ReturnKind,
+}
+
+#[derive(Clone, Copy)]
+enum ReturnKind {
+    Explicit,
+    Tail,
 }
 
 impl Sugar for ReturnSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.body.desugar(ctx) {
             Outcome::Complete(d) => match d.into_term() {
-                Some(term) => Outcome::Complete(Desugared::StmtReturn(term)),
+                Some(term) => match self.kind {
+                    ReturnKind::Explicit => {
+                        let effect = Effect::Raise(RaiseEffect::EarlyReturnValue {
+                            boundary: self.boundary.clone(),
+                            value: term,
+                        });
+                        RouteRaisesOperation::new(Vec::new(), "ReturnSugar")
+                            .route_incomplete_with_scope(Outcome::Incomplete(effect), ctx.scope)
+                    }
+                    ReturnKind::Tail => Outcome::Complete(Desugared::StmtReturn(term)),
+                },
                 None => panic!(
                     "ReturnSugar body completed a non-Term; the term factory produced a \
                      non-term Desugared where a Term was required"

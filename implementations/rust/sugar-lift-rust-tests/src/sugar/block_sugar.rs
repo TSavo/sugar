@@ -308,7 +308,7 @@ mod tests {
     use crate::sugar::term_dispatch::{term_floor_dispatch, FloorDispatch};
     use crate::{
         sugar_ctx_with_factory_audits, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome,
-        ReductionCtx, TemporalPlan, TemporalScope,
+        RaiseEffect, ReductionCtx, TemporalPlan, TemporalScope,
     };
 
     fn reduce_fn_block_to_statement_floor(src: &str) -> Outcome {
@@ -507,6 +507,86 @@ mod tests {
             raises[0].guards().len(),
             2,
             "outer and inner guards must both prefix the raise"
+        );
+    }
+
+    #[test]
+    fn explicit_return_in_branch_is_early_return_raise_data_before_function_routing() {
+        let src = r#"
+            pub fn f(flag: bool) -> u32 {
+                if flag { return 5u32; }
+                7u32
+            }
+        "#;
+
+        let outcome = reduce_fn_block_to_statement_floor(src);
+        let Outcome::Complete(Desugared::StmtBlock {
+            guarded,
+            raises,
+            fall_through,
+        }) = outcome
+        else {
+            panic!("early return block should complete to statement data");
+        };
+
+        assert_eq!(guarded.len(), 1, "tail return remains guarded by !flag");
+        assert_eq!(
+            raises.len(),
+            1,
+            "explicit return becomes routeable raise data"
+        );
+        assert_eq!(
+            fall_through.len(),
+            1,
+            "if-without-else still leaves the !flag fall-through"
+        );
+        assert!(
+            matches!(
+                raises[0].effect(),
+                Effect::Raise(RaiseEffect::EarlyReturnValue { .. })
+            ),
+            "branch return should be typed as EarlyReturnValue, got {:?}",
+            raises[0].effect()
+        );
+    }
+
+    #[test]
+    fn panic_branch_routes_to_no_normal_exit_and_preserves_fallthrough_formula() {
+        let src = r#"
+            pub fn f(flag: bool) -> u32 {
+                if flag { panic!() }
+                7u32
+            }
+        "#;
+        let file: syn::File = syn::parse_str(src).expect("parse");
+        let syn::Item::Fn(ref func) = file.items[0] else {
+            panic!("expected fn");
+        };
+
+        let contract =
+            emit_value_contract("f", &func.block).expect("panic branch should route to formula");
+        let inv_str = format!("{:?}", contract.inv);
+        assert!(
+            inv_str.contains("implies") && inv_str.contains("not") && inv_str.contains("out"),
+            "panic branch should preserve the negated-condition fall-through formula: {inv_str}"
+        );
+    }
+
+    #[test]
+    fn uncaught_panic_without_fallthrough_refuses_formula_emission() {
+        let src = r#"
+            pub fn f() -> u32 {
+                panic!()
+            }
+        "#;
+        let file: syn::File = syn::parse_str(src).expect("parse");
+        let syn::Item::Fn(ref func) = file.items[0] else {
+            panic!("expected fn");
+        };
+
+        assert!(
+            emit_value_contract("f", &func.block).is_none(),
+            "a bare panic has no normal return formula to fabricate"
         );
     }
 

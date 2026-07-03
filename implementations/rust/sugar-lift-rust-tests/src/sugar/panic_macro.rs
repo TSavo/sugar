@@ -8,6 +8,7 @@
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::route_raises_operation::RouteRaisesOperation;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
 
@@ -30,9 +31,11 @@ struct PanicMacroSugar {
 }
 
 impl Sugar for PanicMacroSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::PanicMacro {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let outcome = Outcome::Incomplete(Effect::PanicMacro {
             boundary: self.boundary.clone(),
-        })
+        });
+        RouteRaisesOperation::new(Vec::new(), "PanicMacro")
+            .route_incomplete_with_scope(outcome, ctx.scope)
     }
 }

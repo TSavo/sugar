@@ -20,27 +20,12 @@ struct ExpectedUnroutedConstruct {
     replacement: &'static str,
 }
 
-const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[
-    ExpectedUnroutedConstruct {
-        key: "drop-effect-family-missing",
-        family: "drop",
-        owner: "Phase2-S6",
-        replacement: "decide Drop/finally-fallthrough effect shape and route/refuse it explicitly",
-    },
-    ExpectedUnroutedConstruct {
-        key: "early-return-control-flow-unrouted",
-        family: "early-return",
-        owner: "Phase2-S5",
-        replacement:
-            "route early-return/control-flow effects through RouteRaisesOperation handlers",
-    },
-    ExpectedUnroutedConstruct {
-        key: "panic-family-unrouted",
-        family: "panic",
-        owner: "Phase2-S5",
-        replacement: "route PanicMacro/LiteralPanic through RouteRaisesOperation handlers",
-    },
-];
+const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[ExpectedUnroutedConstruct {
+    key: "drop-effect-family-missing",
+    family: "drop",
+    owner: "Phase2-S6",
+    replacement: "decide Drop/finally-fallthrough effect shape and route/refuse it explicitly",
+}];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct ObservedUnroutedConstruct {

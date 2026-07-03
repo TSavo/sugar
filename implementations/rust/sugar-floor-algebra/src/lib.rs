@@ -48,11 +48,12 @@ pub use term_dispatch::{
 /// `PanicMacro`/`LiteralPanic`/`ControlFlow` siblings below for byte-compatible
 /// legacy reasons, and uses this family for newly-typed raise cases such as
 /// `Result::Err` and early-return routing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum RaiseEffect {
     Panic { boundary: String },
     ResultErr { boundary: String },
     EarlyReturn { boundary: String },
+    EarlyReturnValue { boundary: String, value: Rc<Term> },
 }
 
 impl RaiseEffect {
@@ -60,7 +61,8 @@ impl RaiseEffect {
         match self {
             Self::Panic { boundary }
             | Self::ResultErr { boundary }
-            | Self::EarlyReturn { boundary } => boundary,
+            | Self::EarlyReturn { boundary }
+            | Self::EarlyReturnValue { boundary, .. } => boundary,
         }
     }
 
@@ -68,12 +70,35 @@ impl RaiseEffect {
         match self {
             Self::Panic { .. } => "panic",
             Self::ResultErr { .. } => "result-err",
-            Self::EarlyReturn { .. } => "early-return",
+            Self::EarlyReturn { .. } | Self::EarlyReturnValue { .. } => "early-return",
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl PartialEq for RaiseEffect {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Panic { boundary: left }, Self::Panic { boundary: right })
+            | (Self::ResultErr { boundary: left }, Self::ResultErr { boundary: right })
+            | (Self::EarlyReturn { boundary: left }, Self::EarlyReturn { boundary: right }) => {
+                left == right
+            }
+            (
+                Self::EarlyReturnValue {
+                    boundary: left_boundary,
+                    value: left_value,
+                },
+                Self::EarlyReturnValue {
+                    boundary: right_boundary,
+                    value: right_value,
+                },
+            ) => left_boundary == right_boundary && Rc::ptr_eq(left_value, right_value),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Raise(RaiseEffect),
     PanicMacro { boundary: String },
