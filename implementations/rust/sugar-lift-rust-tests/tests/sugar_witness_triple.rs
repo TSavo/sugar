@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 90;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 115;
+const EXPECTED_SEED_CLAIMS: usize = 95;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 110;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -776,6 +776,33 @@ fn s9_batch3_pairs_match_real_rust_semantics() {
         "constraint_regex_match",
         "constraint_no_panic_call",
         "size_hint_tuple_producer",
+    ];
+    for claim in claims {
+        let witness = witnesses
+            .iter()
+            .find(|witness| witness.claim == claim)
+            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
+        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
+        let lying = run_rust_test_source(claim, "lying", witness.lying);
+        println!(
+            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
+            if truthful { "PASS" } else { "FAIL" },
+            if lying { "PASS" } else { "FAIL" }
+        );
+        assert!(truthful, "{claim} truthful witness must pass as real Rust");
+        assert!(!lying, "{claim} lying witness must fail as real Rust");
+    }
+}
+
+#[test]
+fn s9_batch4_pairs_match_real_rust_semantics() {
+    let witnesses = seed_witnesses();
+    let claims = [
+        "bound_constraint",
+        "bound_path_tuple_producer",
+        "reference_term",
+        "literal_slice",
+        "loop_break_term",
     ];
     for claim in claims {
         let witness = witnesses
