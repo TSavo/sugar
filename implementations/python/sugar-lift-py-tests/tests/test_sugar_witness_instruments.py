@@ -723,7 +723,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
     assert "R(witness-triples-failing): 0" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "R(temporal-opt-outs): 4" in text
+    assert "R(temporal-opt-outs): 5" in text
     assert "seed coverage: 54 seed cases, 41/55 catalog sugars" in text
     assert "unenrolled sugars:" not in text
     assert "temporal opt-outs:" in text
