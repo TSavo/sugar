@@ -728,6 +728,169 @@ path = "{}"
 }
 
 #[test]
+fn planted_ambient_same_kind_corroboration_shape_turns_red_without_old_function_names() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("ambient_shape.rs");
+    std::fs::write(
+        &source,
+        r#"
+struct AmbientGroundCallsiteFact {
+    source_cid: String,
+}
+
+fn gather_ground_callsite_rows(out: &mut Vec<AmbientGroundCallsiteFact>) {
+    out.push(AmbientGroundCallsiteFact { source_cid: "cid".to_string() });
+}
+
+fn conjoin_replayed_callsite_rows(
+    ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
+    excluded_source_cids: &[String],
+) {
+    let _ = (ambient_ground_callsite_facts, excluded_source_cids);
+}
+"#,
+    )
+    .expect("write planted ambient same-kind site");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+
+[[ambient_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "same-kind ambient planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "ambient-testimony-sites"
+                && finding.item == "ambient-ground-callsite-same-kind-corroboration"
+        }),
+        "shape-based ambient detector must red on source-split-but-kind-blind replay; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn ambient_source_with_source_and_kind_split_stays_green() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("ambient_split.rs");
+    std::fs::write(
+        &source,
+        r#"
+const MISSING_INDEPENDENT_KIND_REASON: &str = "fixture";
+
+enum ProofIrProvenanceKind {
+    Stated,
+    Derived,
+}
+
+struct AmbientFactWitnessKey {
+    source_cid: String,
+    provenance_kind: ProofIrProvenanceKind,
+}
+
+struct AmbientGroundCallsiteFact {
+    source_cid: String,
+    witness_key: AmbientFactWitnessKey,
+}
+
+fn conjoin_replayed_callsite_rows(
+    ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
+    excluded_source_cids: &[String],
+    current_ground_witnesses: &std::collections::BTreeSet<AmbientFactWitnessKey>,
+) {
+    let _ = (
+        ambient_ground_callsite_facts,
+        excluded_source_cids,
+        current_ground_witnesses,
+        MISSING_INDEPENDENT_KIND_REASON,
+    );
+}
+"#,
+    )
+    .expect("write source+kind split ambient near miss");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+
+[[ambient_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.axis != "ambient-testimony-sites"),
+        "ambient source with independent source and provenance-kind witnesses must stay green; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn declared_ambient_site_with_stale_needle_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("ambient_retired.rs");
+    std::fs::write(
+        &source,
+        r#"
+fn split_obligation_witness_boundary_and_replay() {}
+"#,
+    )
+    .expect("write retired ambient site");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 1
+
+[[ambient_testimony_sites]]
+id = "retired-ambient-row"
+shape = "ambient-ground-callsite-self-witness"
+owner = "test::ambient"
+retirement = "split obligation, witness, boundary, and replay inputs"
+baseline = true
+source = {{ path = "{}", item = "ambient-ground-callsite-self-witness", needles = ["with_ambient_ground_callsite_facts"] }}
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "declared-ambient-testimony-site-missing"
+                && finding.item == "ambient-ground-callsite-self-witness"
+        }),
+        "stale ambient testimony declaration must red; findings:\n{}",
+        render_findings(&findings, 1)
+    );
+}
+
+#[test]
 fn frontend_boundary_string_sludge_error_path_planted_offender_turns_red() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("planted_rpc_error.rs");
@@ -780,6 +943,38 @@ source = {{ path = "{}", item = "RpcFrontendFailure", kind = "enum" }}
                 && finding.message.contains("free-text-machine-error")
         }),
         "planted Failed(String) frontend error path must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn frontend_provenance_unadmitted_ratchet_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest = manifest_from_str(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+frontend_provenance_unadmitted = 1
+untyped_verifier_obligation_paths = 0
+rust_naked_formula_crossings = 0
+"#,
+    );
+
+    let findings = audit_manifest_with_mode(temp.path(), &manifest, true);
+    println!(
+        "frontend provenance ratchet planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "ratchet-vector" && finding.item == "R.frontend_provenance_unadmitted"
+        }),
+        "nonzero frontend provenance residue must red; findings:\n{}",
         render_findings(&findings, 0)
     );
 }
@@ -1122,6 +1317,7 @@ fn audit_manifest_with_mode(
 
     for ambient in &manifest.ambient_testimony_sites {
         validate_ambient_site_declaration(ambient, &mut findings);
+        validate_ambient_site_needles_present(root, ambient, &mut findings);
     }
     for ambient in discover_ambient_testimony(root, manifest) {
         if !ambient_site_is_declared(root, manifest, &ambient) {
@@ -1877,37 +2073,28 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let has_ambient_ground_path = text.contains("collect_ambient_ground_callsite_facts")
-            && text.contains("with_ambient_ground_callsite_facts");
+        let Some(ambient_line) = ambient_ground_callsite_shape_line(&text) else {
+            continue;
+        };
         let has_source_split = text.contains("source_cid") && text.contains("excluded_source_cids");
         let has_kind_split = text.contains("ProofIrProvenanceKind")
             && text.contains("AmbientFactWitnessKey")
             && text.contains("provenance_kind")
             && text.contains("MISSING_INDEPENDENT_KIND_REASON");
-        if has_ambient_ground_path && !has_source_split {
-            let line = text
-                .lines()
-                .position(|line| line.contains("with_ambient_ground_callsite_facts"))
-                .map(|idx| idx + 1)
-                .unwrap_or(1);
+        if !has_source_split {
             findings.push(AmbientFinding {
                 path: rel.clone(),
                 item: "ambient-ground-callsite-self-witness".to_string(),
-                line,
+                line: ambient_line,
                 shape: "ambient-ground-callsite-self-witness".to_string(),
                 text: "ambient ground callsite facts can be collected and conjoined into a matching obligation".to_string(),
             });
         }
-        if has_ambient_ground_path && has_source_split && !has_kind_split {
-            let line = text
-                .lines()
-                .position(|line| line.contains("with_ambient_ground_callsite_facts"))
-                .map(|idx| idx + 1)
-                .unwrap_or(1);
+        if has_source_split && !has_kind_split {
             findings.push(AmbientFinding {
                 path: rel,
                 item: "ambient-ground-callsite-same-kind-corroboration".to_string(),
-                line,
+                line: ambient_line,
                 shape: "ambient-ground-callsite-same-kind-corroboration".to_string(),
                 text: "ambient ground callsite replay is source-CID-keyed but lacks provenance-KIND witness keys".to_string(),
             });
@@ -1915,6 +2102,14 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
     }
     findings.sort();
     findings
+}
+
+fn ambient_ground_callsite_shape_line(text: &str) -> Option<usize> {
+    text.lines().enumerate().find_map(|(idx, line)| {
+        let lowered = line.to_ascii_lowercase().replace('_', "");
+        (lowered.contains("ambient") && lowered.contains("ground") && lowered.contains("callsite"))
+            .then_some(idx + 1)
+    })
 }
 
 fn ambient_site_is_declared(
@@ -1932,6 +2127,32 @@ fn ambient_site_is_declared(
                     .unwrap_or(false)
             })
     })
+}
+
+fn validate_ambient_site_needles_present(
+    root: &Path,
+    ambient: &AmbientTestimonySite,
+    findings: &mut Vec<Finding>,
+) {
+    let path = resolve_manifest_path(root, &ambient.source.path);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    for needle in &ambient.source.needles {
+        if !text.contains(needle) {
+            findings.push(Finding {
+                axis: "declared-ambient-testimony-site-missing",
+                path: ambient.source.path.clone(),
+                line: 0,
+                item: ambient.source.item.clone(),
+                message: format!(
+                    "declared ambient testimony row `{}` needle `{needle}` is no longer present",
+                    ambient.id
+                ),
+                replacement:
+                    "delete the row only with the typed split that retired the ambient discharge"
+                        .to_string(),
+            });
+        }
+    }
 }
 
 fn validate_frontend_boundary_declaration(

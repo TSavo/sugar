@@ -40,6 +40,12 @@ fn insert_test_member(pool: &mut MementoPool, cid: MementoCid, envelope: Json) {
 }
 
 #[test]
+fn source_line_constructor_is_a_plain_coordinate_carrier() {
+    assert_eq!(SourceLine::new(0).as_usize(), 0);
+    assert_eq!(SourceLine::new(42).as_usize(), 42);
+}
+
+#[test]
 fn scoped_key_resolves_the_same_bridge_and_contract_body() {
     let mut pool = MementoPool::default();
     let bundle = memento_cid("caller-bundle");
@@ -48,7 +54,7 @@ fn scoped_key_resolves_the_same_bridge_and_contract_body() {
     let key = BundleScopedCallsiteKey::new(
         bundle,
         SourcePath::new("src/lib.rs").expect("source path"),
-        SourceLine::new(42).expect("source line"),
+        SourceLine::new(42),
         SourceSymbol::new("method:unwrap").expect("source symbol"),
     );
     let bridge_env = json!({
