@@ -8,7 +8,7 @@ use sugar_lift_rust_tests::{
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
 const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
-const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 4;
+const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 3;
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
@@ -27,12 +27,6 @@ struct PendingRouterWitnessSlot {
 
 fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
     vec![
-        PendingRouterWitnessSlot {
-            router: "question_mark",
-            owner_slice: "Phase2-S4",
-            truthful_slot: "x? Ok path discharges through the router",
-            lying_slot: "x? Err path propagates to an uncaught UNSAT twin",
-        },
         PendingRouterWitnessSlot {
             router: "panic",
             owner_slice: "Phase2-S5",
@@ -367,6 +361,67 @@ fn z3_absence_is_a_loud_harness_error() {
     assert!(
         err.contains("requires z3"),
         "z3 absence must be a loud harness error, got {err:?}"
+    );
+}
+
+#[test]
+fn phase2_question_mark_ok_path_has_solver_bad_twin() {
+    let z3 = z3_path_or_panic();
+    let truthful = r#"
+        #[test]
+        fn t_question_mark_ok_good() -> Result<(), i32> {
+            let x = Ok::<i32, i32>(7)?;
+            assert_eq!(x, 7);
+            Ok(())
+        }
+    "#;
+    let lying = r#"
+        #[test]
+        fn t_question_mark_ok_bad() -> Result<(), i32> {
+            let x = Ok::<i32, i32>(7)?;
+            assert_eq!(x, 8);
+            Ok(())
+        }
+    "#;
+
+    for (label, src, expected_sat) in [
+        ("phase2_question_mark_ok_good", truthful, true),
+        ("phase2_question_mark_ok_bad", lying, false),
+    ] {
+        let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
+        let decl = single_warranted_decl(&out);
+        let got_sat = z3_verdict(&inv_json(decl), label, &z3);
+        assert_eq!(
+            got_sat, expected_sat,
+            "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}",
+            out.skip_reasons
+        );
+    }
+}
+
+#[test]
+fn phase2_question_mark_err_path_remains_uncaught_boundary() {
+    let src = r#"
+        #[test]
+        fn t_question_mark_err_uncaught() -> Result<(), i32> {
+            let x = Err::<i32, i32>(9)?;
+            assert_eq!(x, 7);
+            Ok(())
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "sugar-witness/phase2_question_mark_err_uncaught.rs",
+    );
+    assert!(
+        warranted_facts(&out).is_empty(),
+        "uncaught Err(_)? must not fabricate a warranted assertion; facts={:?}",
+        out.assertion_facts
+    );
+    let rendered = format!("{:?} {:?}", out.assertion_facts, out.skip_reasons);
+    assert!(
+        rendered.contains("result error raise effect") || rendered.contains("ResultErr"),
+        "uncaught Err(_)? should surface the typed ResultErr boundary, got {rendered}"
     );
 }
 

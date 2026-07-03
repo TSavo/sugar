@@ -14,7 +14,7 @@ use sugar_ir_symbolic::{and_, Formula};
 
 use crate::sugar::control_flow_guard_operation::{guard_block, guard_exit};
 use crate::sugar::guarded_raise::GuardedRaise;
-use crate::sugar::raise_value::RaiseValue;
+use crate::sugar::raise_value::{is_raise_like_effect, RaiseValue};
 use crate::{Desugared, Effect, Outcome, TemporalScope};
 
 pub(crate) trait RouteRaiseHandler {
@@ -65,6 +65,25 @@ pub(crate) struct RouteRaisesOperation<'a> {
 impl<'a> RouteRaisesOperation<'a> {
     pub(crate) fn new(handlers: Vec<&'a dyn RouteRaiseHandler>, owner: &'a str) -> Self {
         Self { handlers, owner }
+    }
+
+    pub(crate) fn route_incomplete_with_scope(
+        self,
+        outcome: Outcome,
+        scope: &TemporalScope,
+    ) -> Outcome {
+        let Outcome::Incomplete(effect) = outcome else {
+            return outcome;
+        };
+        if !is_raise_like_effect(&effect) {
+            return Outcome::Incomplete(effect);
+        }
+        for handler in &self.handlers {
+            if handler.matches(&effect) {
+                return handler.reduce(scope, &effect);
+            }
+        }
+        Outcome::Incomplete(effect)
     }
 }
 

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `ControlFlowTermSugar`: the REFUSE-side node for an effectful control-flow construct in TERM
-// position -- a `try { .. }` block (`Expr::TryBlock`), an `async { .. }` block (`Expr::Async`),
-// or a `?` operator (`Expr::Try`). It OWNS, in its own `desugar`, the single control-flow
-// verdict the old inline `Expr::TryBlock | Expr::Async | Expr::Try` arm of
-// `translate_term_in_scope` made -- such a construct is NOT a single timeless point-wise value:
-// a `try` block early-returns its `Err`, an `async` block is a future evaluated elsewhere, a `?`
-// is a conditional early-return. There is no construction-from-literals to walk, so no value
-// lifter could read a single `t`. A SOURCE property, not a missing lift. Typed as
-// `Effect::ControlFlow`.
+// `ControlFlowTermSugar`: the refuse/router-side node for an effectful control-flow construct in
+// TERM position -- a `try { .. }` block (`Expr::TryBlock`), an `async { .. }` block
+// (`Expr::Async`), or a `?` operator (`Expr::Try`). `try { .. }` and `async { .. }` still own the
+// single `Effect::ControlFlow` verdict the old inline
+// `Expr::TryBlock | Expr::Async | Expr::Try` arm of `translate_term_in_scope` made: those
+// constructs are not timeless point-wise values. `?` now first reduces its child through the term
+// floor; a grounded `res:ok(v)` becomes `v`, and a grounded `res:err(_)` becomes typed
+// `RaiseEffect::ResultErr` routed through `RouteRaisesOperation`. Non-Result or unsupported `?`
+// shapes remain the old loud `ControlFlow` refusal.
 //
 // (This is the TERM-position producer of `Effect::ControlFlow`. The STATEMENT-position
 // producer is the `.await` continuation leaf of the landed `StatementPositionSugar` node; an
@@ -16,21 +16,27 @@
 //
 // THE TARGET SHAPE (`walk -> new -> compose -> desugar() collapses to one Outcome`):
 // `decompose_control_flow_term` (the `build` arm) recognizes the construct (an `Expr::TryBlock`
-// / `Expr::Async` / `Expr::Try`) and `new`s the node, composing the expr's token-key as the
-// single CHILD LEAF -- with NO degeneracy opinion and no early exit (its only `None` is
+// / `Expr::Async` / `Expr::Try`) and `new`s the node, composing the expr's token-key and, for
+// `?`, the inner term floor -- with NO degeneracy opinion and no early exit (its only `None` is
 // non-recognition: any other expr is not a control-flow-term bucket -- nothing to classify here;
 // it stays on the constructive `translate_term_in_scope` paths / the term catch-all). `desugar`
-// is where the verdict is made, and the single LEAF owns it:
-//   * the CONTROL-FLOW leaf: a recognized try/async/`?` construct is deferred/early-returning
+// is where the verdict is made:
+//   * the CONTROL-FLOW leaf: a recognized try/async construct is deferred/early-returning
 //     control flow, not a timeless point-wise value -> `ControlFlow`.
-// The composite makes NO check of its own: a recognized node always returns Incomplete from its
-// control-flow leaf (recognition -- a try/async/`?` construct -- IS the verdict's precondition).
+//   * the QUESTION-MARK leaf: a grounded Result is routed through the Phase 2 raise spine.
+// The composite makes NO check of its own: recognition selects the node; reduction owns the
+// verdict.
 
+use std::rc::Rc;
+
+use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::route_raises_operation::{RouteRaiseHandler, RouteRaisesOperation};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
+use crate::{token_key, Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("control_flow_term", recognize_term);
@@ -41,13 +47,10 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
 /// `ControlFlowTermSugar` refuse-shape. TERM and COMPOSITE roles both carry the same typed node;
 /// the child effect's reason is rendered only when the caller consumes the `Outcome`.
-pub(crate) fn recognize_term(
-    frag: &SourceFragment,
-    _fcx: &SugarBuildCtx,
-) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
-        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr),
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr, fcx),
         _ => None,
     }
 }
@@ -59,17 +62,17 @@ pub(crate) fn recognize_term(
 /// COMPOSITE arm of the old fat factory.
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,
-    _fcx: &SugarBuildCtx,
+    fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     match expr {
-        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr),
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => boxed_control_flow(expr, fcx),
         _ => None,
     }
 }
 
-fn boxed_control_flow(expr: &Expr) -> Option<Box<dyn Sugar>> {
-    decompose_control_flow_term(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
+fn boxed_control_flow(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    decompose_control_flow_term(expr, fcx).map(|node| Box::new(node) as Box<dyn Sugar>)
 }
 
 /// The effectful control-flow construct in term position (`try`/`async`/`?`), composed as a
@@ -79,10 +82,16 @@ pub(crate) struct ControlFlowTermSugar {
     /// to the old inline `token_key(expr)`), the leaf whose construct is the deferred/early-
     /// returning control flow.
     boundary: String,
+    kind: ControlFlowTermKind,
+}
+
+enum ControlFlowTermKind {
+    DeferredControlFlow,
+    QuestionMark { inner: SugarBody<TermFloor> },
 }
 
 impl ControlFlowTermSugar {
-    /// CONTROL-FLOW leaf: a recognized try/async/`?` construct is deferred or early-returning
+    /// CONTROL-FLOW leaf: a recognized try/async construct is deferred or early-returning
     /// control flow -- not a single timeless point-wise value, no construction-from-literals to
     /// walk -> `ControlFlow`. Recognition (the construct shape) is this leaf's precondition, so
     /// it always fires for a built node; it never completes.
@@ -92,22 +101,21 @@ impl ControlFlowTermSugar {
         }
     }
 
-    /// The total reduction, made WITHOUT a `SugarCtx` -- the verdict is purely SYNTACTIC (it
-    /// reads only the recognized construct shape), so it does not need scope/options. The
-    /// `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
-    /// while the thin caller-router (the `Expr::TryBlock | Expr::Async | Expr::Try` arm) reads
-    /// the SAME verdict here. A built node always names `ControlFlow` because recognition is the
-    /// verdict's precondition.
+    /// The ctx-free reduction for the try/async leaf. `?` uses the ctx-aware route below because
+    /// it must reduce its child and preserve the current scope for matching handlers.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
         Outcome::Incomplete(self.control_flow_effect())
     }
 }
 
 impl Sugar for ControlFlowTermSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        // The verdict is ctx-independent; delegate to the ctx-free reduction so the trait
-        // shape and the thin caller-router agree by construction.
-        self.desugar_ctx_free()
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match &self.kind {
+            ControlFlowTermKind::DeferredControlFlow => self.desugar_ctx_free(),
+            ControlFlowTermKind::QuestionMark { inner } => {
+                reduce_question_mark(inner, &self.boundary, ctx, Vec::new())
+            }
+        }
     }
 }
 
@@ -117,11 +125,234 @@ impl Sugar for ControlFlowTermSugar {
 /// constructive `translate_term_in_scope` paths / the term catch-all (the fake-refuse
 /// guardrail). It makes NO verdict -- the control-flow decision is
 /// `ControlFlowTermSugar::desugar`'s (and its leaf's) alone.
-pub(crate) fn decompose_control_flow_term(expr: &Expr) -> Option<ControlFlowTermSugar> {
+pub(crate) fn decompose_control_flow_term(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+) -> Option<ControlFlowTermSugar> {
     match expr {
-        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => Some(ControlFlowTermSugar {
+        Expr::TryBlock(_) | Expr::Async(_) => Some(ControlFlowTermSugar {
             boundary: token_key(expr),
+            kind: ControlFlowTermKind::DeferredControlFlow,
+        }),
+        Expr::Try(try_expr) => Some(ControlFlowTermSugar {
+            boundary: token_key(expr),
+            kind: ControlFlowTermKind::QuestionMark {
+                inner: SugarBody::term(&try_expr.expr, fcx),
+            },
         }),
         _ => None,
+    }
+}
+
+pub(crate) struct RoutedQuestionMarkTerm<'a> {
+    boundary: String,
+    inner: SugarBody<TermFloor>,
+    handlers: Vec<&'a dyn RouteRaiseHandler>,
+}
+
+impl Sugar for RoutedQuestionMarkTerm<'_> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        reduce_question_mark(&self.inner, &self.boundary, ctx, self.handlers.clone())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn decompose_control_flow_term_with_handlers<'a>(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    handlers: Vec<&'a dyn RouteRaiseHandler>,
+) -> Option<RoutedQuestionMarkTerm<'a>> {
+    match expr {
+        Expr::Try(try_expr) => Some(RoutedQuestionMarkTerm {
+            boundary: token_key(expr),
+            inner: SugarBody::term(&try_expr.expr, fcx),
+            handlers,
+        }),
+        _ => None,
+    }
+}
+
+fn reduce_question_mark(
+    inner: &SugarBody<TermFloor>,
+    boundary: &str,
+    ctx: &SugarCtx,
+    handlers: Vec<&dyn RouteRaiseHandler>,
+) -> Outcome {
+    let term = match inner.reduce(ctx) {
+        Outcome::Complete(desugared) => match desugared.into_term() {
+            Some(term) => term,
+            None => panic!("question-mark inner completed as non-term for `{boundary}`"),
+        },
+        Outcome::Incomplete(effect) => {
+            return RouteRaisesOperation::new(handlers, "QuestionMark")
+                .route_incomplete_with_scope(Outcome::Incomplete(effect), ctx.scope)
+        }
+    };
+    term.accept_monadic_floor(QuestionMarkVisitor {
+        boundary,
+        scope: ctx.scope,
+        handlers,
+    })
+}
+
+struct QuestionMarkVisitor<'a> {
+    boundary: &'a str,
+    scope: &'a crate::TemporalScope,
+    handlers: Vec<&'a dyn RouteRaiseHandler>,
+}
+
+impl MonadicFloorVisitor for QuestionMarkVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_some(self, _inner: &Rc<Term>) -> Self::Output {
+        self.unsupported_control_flow("Option::Some")
+    }
+
+    fn visit_none(self) -> Self::Output {
+        self.unsupported_control_flow("Option::None")
+    }
+
+    fn visit_ok(self, inner: &Rc<Term>) -> Self::Output {
+        Outcome::Complete(Desugared::Term(Rc::clone(inner)))
+    }
+
+    fn visit_err(self, _inner: &Rc<Term>) -> Self::Output {
+        let effect = Effect::Raise(RaiseEffect::ResultErr {
+            boundary: self.boundary.to_string(),
+        });
+        RouteRaisesOperation::new(self.handlers, "QuestionMark")
+            .route_incomplete_with_scope(Outcome::Incomplete(effect), self.scope)
+    }
+
+    fn visit_non_monadic(self, _term: &Rc<Term>) -> Self::Output {
+        self.unsupported_control_flow("non-Result")
+    }
+}
+
+impl QuestionMarkVisitor<'_> {
+    fn unsupported_control_flow(self, kind: &str) -> Outcome {
+        Outcome::Incomplete(Effect::ControlFlow {
+            boundary: format!("{} ({kind} ?)", self.boundary),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use sugar_ir_symbolic::{num, ConstValue, Term};
+
+    use super::*;
+    use crate::sugar::route_raises_operation::RouteRaiseHandler;
+    use crate::{Desugared, LiftOptions, RaiseEffect, ReductionCtx, TemporalPlan, TemporalScope};
+
+    fn ctx() -> (TemporalScope, LiftOptions) {
+        (
+            TemporalScope::new("question-mark-test", TemporalPlan::default()),
+            LiftOptions::default(),
+        )
+    }
+
+    fn run_expr(src: &str) -> Outcome {
+        let expr: Expr = syn::parse_str(src).expect("question-mark expr parses");
+        let (scope, options) = ctx();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = recognize_term(&SourceFragment::expr(&expr, "<question-mark-test>"), &fcx)
+            .expect("question mark recognized");
+        let items: Vec<syn::Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = crate::FloatWidthScope::new();
+        let sugar_ctx = crate::sugar_ctx_with_factory_audits(
+            &scope,
+            &options,
+            &reducer,
+            &mut float_widths,
+            0,
+            None,
+        );
+        sugar.reduce(&sugar_ctx)
+    }
+
+    fn assert_int_term(outcome: Outcome, expected: i128) {
+        let Outcome::Complete(Desugared::Term(term)) = outcome else {
+            panic!("expected complete term");
+        };
+        let Term::Const {
+            value: ConstValue::Int(got),
+            ..
+        } = term.as_ref()
+        else {
+            panic!("expected int const term");
+        };
+        assert_eq!(*got, expected);
+    }
+
+    #[test]
+    fn question_mark_ok_path_reduces_to_inner_term() {
+        assert_int_term(run_expr("Ok(7)?"), 7);
+    }
+
+    #[test]
+    fn question_mark_err_path_routes_to_unmatched_result_err() {
+        let Outcome::Incomplete(Effect::Raise(RaiseEffect::ResultErr { boundary })) =
+            run_expr("Err(9)?")
+        else {
+            panic!("Err(_)? must propagate a typed ResultErr raise");
+        };
+        assert!(
+            boundary.contains("Err"),
+            "boundary should name the question-mark source, got {boundary}"
+        );
+    }
+
+    struct CatchResultErr;
+
+    impl RouteRaiseHandler for CatchResultErr {
+        fn matches(&self, effect: &Effect) -> bool {
+            matches!(effect, Effect::Raise(RaiseEffect::ResultErr { .. }))
+        }
+
+        fn reduce(&self, _scope: &TemporalScope, _effect: &Effect) -> Outcome {
+            Outcome::Complete(Desugared::StmtReturn(num(99)))
+        }
+    }
+
+    #[test]
+    fn question_mark_err_path_can_be_caught_by_wrapping_handler() {
+        let expr: Expr = syn::parse_str("Err(9)?").expect("question-mark expr parses");
+        let (scope, options) = ctx();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let sugar = decompose_control_flow_term_with_handlers(
+            &expr,
+            &fcx,
+            vec![&CatchResultErr as &dyn RouteRaiseHandler],
+        )
+        .expect("question mark recognized");
+        let items: Vec<syn::Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = crate::FloatWidthScope::new();
+        let sugar_ctx = crate::sugar_ctx_with_factory_audits(
+            &scope,
+            &options,
+            &reducer,
+            &mut float_widths,
+            0,
+            None,
+        );
+
+        let Outcome::Complete(Desugared::StmtReturn(term)) = sugar.reduce(&sugar_ctx) else {
+            panic!("matching handler should route Err(_)? to its return floor");
+        };
+        let Term::Const {
+            value: ConstValue::Int(got),
+            ..
+        } = term.as_ref()
+        else {
+            panic!("handler returned non-int term");
+        };
+        assert_eq!(*got, 99);
     }
 }

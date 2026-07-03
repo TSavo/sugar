@@ -40,13 +40,6 @@ const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[
         owner: "Phase2-S5",
         replacement: "route PanicMacro/LiteralPanic through RouteRaisesOperation handlers",
     },
-    ExpectedUnroutedConstruct {
-        key: "question-mark-opaque-irterm-op",
-        family: "question-mark-try",
-        owner: "#3196",
-        replacement:
-            "route Expr::Try through term_boundary into the Phase 2 router; do not fix in #3292",
-    },
 ];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -171,23 +164,6 @@ fn collect_unrouted_constructs(root: &Path) -> Vec<ObservedUnroutedConstruct> {
         );
     }
 
-    let emit = "implementations/rust/sugar-walk/src/emit.rs";
-    let emit_source = read_source(root, emit);
-    if emit_source.contains("Expr::Try(try_expr)")
-        && emit_source.contains("AlgebraTerm::op(\n            \"try\"")
-    {
-        push_row(
-            &mut rows,
-            "question-mark-opaque-irterm-op",
-            "question-mark-try",
-            emit,
-            line_containing(&emit_source, "Expr::Try(try_expr)"),
-            "Expr::Try lowers to opaque AlgebraTerm::op(\"try\", ...) on the IrTerm side",
-            "#3196",
-            "route Expr::Try through term_boundary into the Phase 2 router; do not fix in #3292",
-        );
-    }
-
     let panic_macro = "implementations/rust/sugar-lift-rust-tests/src/sugar/panic_macro.rs";
     let panic_source = read_source(root, panic_macro);
     if source_has_unrouted_panic_family(&panic_source) {
@@ -240,6 +216,25 @@ fn collect_unrouted_constructs(root: &Path) -> Vec<ObservedUnroutedConstruct> {
     rows
 }
 
+fn cross_campaign_irterm_question_mark_rows(root: &Path) -> Vec<Value> {
+    let emit = "implementations/rust/sugar-walk/src/emit.rs";
+    let emit_source = read_source(root, emit);
+    if emit_source.contains("Expr::Try(try_expr)")
+        && emit_source.contains("AlgebraTerm::op(\n            \"try\"")
+    {
+        return vec![json!({
+            "key": "question-mark-opaque-irterm-op",
+            "family": "question-mark-try",
+            "file": emit,
+            "line": line_containing(&emit_source, "Expr::Try(try_expr)"),
+            "evidence": "Expr::Try lowers to opaque AlgebraTerm::op(\"try\", ...) on the IrTerm side",
+            "owner": "#3196",
+            "replacement": "route Expr::Try through term_boundary into the Phase 2 router; outside #3295 algebra-side scope",
+        })];
+    }
+    Vec::new()
+}
+
 fn expected_by_key() -> BTreeMap<&'static str, &'static ExpectedUnroutedConstruct> {
     EXPECTED_UNROUTED_CONSTRUCTS
         .iter()
@@ -286,6 +281,7 @@ fn report_json(
     json!({
         "R(control-flow-constructs-unrouted)": observed.len(),
         "vectorByFamily": vector_by_family(observed),
+        "crossCampaignIrTermRows": cross_campaign_irterm_question_mark_rows(root),
         "coordinatedFloorProjectionRows": coordinated_floor_projection_rows(root),
         "expected": EXPECTED_UNROUTED_CONSTRUCTS.iter().map(ExpectedUnroutedConstruct::to_json).collect::<Vec<_>>(),
         "observed": observed.iter().map(ObservedUnroutedConstruct::to_json).collect::<Vec<_>>(),
