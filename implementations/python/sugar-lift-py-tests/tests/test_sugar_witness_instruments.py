@@ -345,7 +345,7 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
     result = run_source_through_real_solver(tmp_path / "effectful", source)
     trace = {
         "variant": "effectful-dunder",
-        "observed": result.verdict,
+        "statuses": [row.get("status") for row in result.prove_doc.get("rows", [])],
         "ir": _binary_dunder_euf_rows(result.lift_doc),
         "diagnostics": result.lift_doc["diagnostics"],
         "rows": result.prove_doc.get("rows"),
@@ -430,7 +430,7 @@ def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
     result = run_source_through_real_solver(tmp_path / "effectful-display", source)
     trace = {
         "variant": "effectful-display-conversion",
-        "observed": result.verdict,
+        "statuses": [row.get("status") for row in result.prove_doc.get("rows", [])],
         "ir": _euf_rows(result.lift_doc),
         "diagnostics": result.lift_doc["diagnostics"],
         "rows": result.prove_doc.get("rows"),

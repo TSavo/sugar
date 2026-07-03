@@ -1483,6 +1483,43 @@ fn ground_callsite_witness_keys(
     facts.into_iter().map(|fact| fact.witness_key).collect()
 }
 
+fn is_ground_callsite_fact_formula(formula: &Json) -> bool {
+    if formula.get("kind").and_then(|k| k.as_str()) != Some("atomic")
+        || formula.get("name").and_then(|v| v.as_str()) != Some("=")
+    {
+        return false;
+    }
+    let Some((term, _value)) = ground_term_const_equality(formula) else {
+        return false;
+    };
+    ground_callsite_term_key(term).is_some()
+}
+
+fn is_derived_ground_callsite_support(
+    property_name: &str,
+    candidate: &ConsistencyCandidate,
+    inv: &Json,
+) -> bool {
+    if candidate.provenance_kind != ProofIrProvenanceKind::Derived
+        || !property_name.contains("#euf#")
+    {
+        return false;
+    }
+    let conjuncts = top_level_conjuncts(inv.clone());
+    !conjuncts.is_empty() && conjuncts.iter().all(is_ground_callsite_fact_formula)
+}
+
+fn suppress_standalone_support_vacuity(
+    property_name: &str,
+    candidate: &ConsistencyCandidate,
+    original_inv: &Json,
+    result: &ConsistencyResult,
+) -> bool {
+    result.verdict == ObligationVerdict::Refused
+        && result.reason.starts_with(VACUOUS_SINGLE_REASON)
+        && is_derived_ground_callsite_support(property_name, candidate, original_inv)
+}
+
 fn is_callsite_ctor_term(term: &Json) -> bool {
     term.get("kind").and_then(|k| k.as_str()) == Some("ctor")
         && term
@@ -2351,12 +2388,16 @@ pub fn verify_consistency(
                 }
             } else {
                 for candidate in &inv_candidates {
-                    let inv = canonicalize_formula_json(&axiom_context_formula(&candidate.body));
+                    let original_inv =
+                        canonicalize_formula_json(&axiom_context_formula(&candidate.body));
                     let scope = ambient_ground_callsite_scope(property_name);
-                    let current_ground_witnesses =
-                        ground_callsite_witness_keys(&inv, &scope, candidate.provenance_kind);
+                    let current_ground_witnesses = ground_callsite_witness_keys(
+                        &original_inv,
+                        &scope,
+                        candidate.provenance_kind,
+                    );
                     let (inv, linked_posts) =
-                        with_ambient_posts_with_instances(inv, &ambient_posts);
+                        with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
                     let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
                         inv,
                         property_name,
@@ -2365,8 +2406,8 @@ pub fn verify_consistency(
                         &current_ground_witnesses,
                     );
                     let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
-                    if skipped_same_kind_duplicate {
-                        out.push(check_inv_consistency_with_vacuity_reason(
+                    let result = if skipped_same_kind_duplicate {
+                        check_inv_consistency_with_vacuity_reason(
                             candidate.cid.clone(),
                             property_name,
                             inv,
@@ -2375,9 +2416,9 @@ pub fn verify_consistency(
                             registry,
                             compilers,
                             MISSING_INDEPENDENT_KIND_REASON,
-                        ));
+                        )
                     } else {
-                        out.push(check_inv_consistency(
+                        check_inv_consistency(
                             candidate.cid.clone(),
                             property_name,
                             inv,
@@ -2385,7 +2426,15 @@ pub fn verify_consistency(
                             plan,
                             registry,
                             compilers,
-                        ));
+                        )
+                    };
+                    if !suppress_standalone_support_vacuity(
+                        property_name,
+                        candidate,
+                        &original_inv,
+                        &result,
+                    ) {
+                        out.push(result);
                     }
                 }
             }
@@ -3435,6 +3484,87 @@ mod tests {
             ObligationVerdict::Discharged,
             "matching independent ground callsite testimony still witnesses the \
              stated equality: {res:?}"
+        );
+    }
+
+    #[test]
+    fn conflicting_derived_ground_callsite_support_stays_loud() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let name = "A#euf#c:call:A()::assertion";
+
+        let mut pool = MementoPool::default();
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-a-is-ten",
+            name,
+            json!({"kind":"and","operands":[eqf(calla.clone(), int(10))]}),
+        );
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-a-is-eleven",
+            name,
+            json!({"kind":"and","operands":[eqf(calla, int(11))]}),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(
+            res.len(),
+            1,
+            "same-name derived support facts still group as one semantic obligation: {res:?}"
+        );
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "derived support contradictions remain a loud refutation, not a skipped \
+             support row: {res:?}"
+        );
+    }
+
+    #[test]
+    fn derived_ground_callsite_support_does_not_create_standalone_vacuity_row() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let call_len = json!({"kind":"ctor","name":"call:Box.__len__","args":[
+            {"kind":"ctor","name":"py.object.identity","args":[
+                {"kind":"const","sort":{"kind":"primitive","name":"String"},"value":"Box"},
+                {"kind":"const","sort":{"kind":"primitive","name":"String"},"value":"test.py:6:28"},
+            ]}
+        ]});
+
+        let mut pool = MementoPool::default();
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-len-support",
+            "Box.__len__#euf#c:call:Box.__len__(c:py.object.identity(s:'Box',s:'test.py:6:28'))::assertion",
+            json!({"kind":"and","operands":[eqf(call_len, int(1))]}),
+        );
+        insert_derived_contract(
+            &mut pool,
+            "blake3-512:derived-a-claim",
+            "A#euf#c:call:A()::assertion",
+            json!({"kind":"and","operands":[eqf(calla.clone(), int(20))]}),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-a-claim",
+            "A#euf#c:call:A()::assertion",
+            json!({"kind":"and","operands":[eqf(calla, int(20))]}),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(
+            res.len(),
+            1,
+            "Derived-only ground callsite support must feed ambient testimony, not \
+             become a standalone vacuity verdict row: {res:?}"
+        );
+        assert_eq!(res[0].property_name, "A#euf#c:call:A()::assertion");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "the split Stated+Derived semantic fact group should discharge as one \
+             obligation: {res:?}"
         );
     }
 
