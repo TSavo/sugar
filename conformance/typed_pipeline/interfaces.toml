@@ -4,6 +4,57 @@ version = 1
 interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
 declared_escape_hatch_rows_open = 6
+ambient_testimony_sites = 1
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-cli/src"
+file_prefixes = [
+  "component_plan",
+  "project_config",
+  "lift_plugin",
+  "cmd_prove",
+  "report_witness",
+]
+
+[[pipeline_seams]]
+root = "implementations/rust/sugar-verifier/src"
+file_prefixes = [
+  "solvers/mod",
+  "runner",
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-cli/src/component_plan.rs"
+ignored_items = [
+  { name = "COMPONENT_PROTOCOL_VERSION", reason = "protocol constant used by component RPC, not a boundary object" },
+  { name = "COMPONENT_PLAN_RPC_METHOD", reason = "method string for component RPC, not a boundary object" },
+  { name = "COMPONENT_PLAN_TIMEOUT_ENV", reason = "private timeout configuration helper" },
+  { name = "COMPONENT_PLAN_TIMEOUT", reason = "private timeout configuration helper" },
+  { name = "ComponentPlanOptions", reason = "planner option carrier consumed by the declared ComponentPlan boundary" },
+  { name = "PlanIntent", reason = "closed routing enum consumed by the declared ComponentPlan boundary" },
+  { name = "WorkspaceCensus", reason = "nested census payload inside the declared ComponentPlan boundary" },
+  { name = "LanguageEvidence", reason = "nested census evidence payload inside the declared ComponentPlan boundary" },
+  { name = "ForensicItem", reason = "nested census evidence payload inside the declared ComponentPlan boundary" },
+  { name = "ComponentDiagnostic", reason = "failure payload already named by ComponentPlan failure_type" },
+  { name = "DiagnosticLevel", reason = "nested diagnostic enum inside ComponentDiagnostic" },
+  { name = "ComponentRegistration", reason = "private discovery helper, not a pipeline boundary" },
+  { name = "ComponentManifest", reason = "private component.toml decode helper, not a pipeline boundary" },
+  { name = "DiscoveredComponents", reason = "private discovery accumulator, not a pipeline boundary" },
+  { name = "ComponentPlanOutcome", reason = "private planner control-flow enum" },
+  { name = "ComponentPlanDecision", reason = "private planner control-flow enum" },
+  { name = "ComponentDecline", reason = "private planner diagnostic helper" },
+  { name = "ComponentPlanResult", reason = "private component RPC helper result" },
+  { name = "VecStringExt", reason = "private conversion helper trait" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-cli/src/project_config.rs"
+ignored_items = [
+  { name = "KitAliasEntry", reason = "CLI shortcut config, not a typed-pipeline discharge boundary" },
+  { name = "PlatformProfile", reason = "materialization profile config owned by materialize lanes" },
+  { name = "KNOWN_SURFACES", reason = "doctor/config suggestion vocabulary, not a boundary object" },
+  { name = "KNOWN_SOLVERS", reason = "doctor/config suggestion vocabulary, not a boundary object" },
+]
 
 [[interface_sources]]
 path = "implementations/rust/sugar-cli/src/lift_plugin.rs"
@@ -30,6 +81,9 @@ ignored_items = [
   { name = "TrustAnchorConfig", reason = "private config decode helper inside verifier runner" },
   { name = "SelfPostResult", reason = "private body-discharge helper result" },
 ]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-cli/src/report_witness.rs"
 
 [[interfaces]]
 id = "component-plan"
@@ -355,3 +409,11 @@ replay_inputs = [
   "actual output CIDs",
 ]
 source = { path = "implementations/rust/sugar-cli/src/report_witness.rs", item = "JsonWitnessOptions", kind = "struct" }
+
+[[ambient_testimony_sites]]
+id = "issue-3313-ambient-ground-callsite-self-witness"
+shape = "ambient-ground-callsite-self-witness"
+owner = "rust verifier consistency seam"
+retirement = "split obligation and witness at the ambient ground-callsite boundary so the exact stated row cannot be conjoined as its own evidence (#3313)"
+baseline = true
+source = { path = "implementations/rust/sugar-verifier/src/consistency.rs", item = "ambient-ground-callsite-self-witness", needles = ["collect_ambient_ground_callsite_facts", "with_ambient_ground_callsite_facts"] }
