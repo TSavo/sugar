@@ -18,6 +18,8 @@ doorway = "curry"
 owner = "S3"
 target_slice = "S3"
 status = "landed"
+counted_loci = ["map.rs:74", "map.rs:101"]
+counted_loci_reason = "MapSugar recognizers dispatch into the landed map floor; any other map.rs composition row remains auditor-visible."
 
 [[catalog]]
 id = "iterator-filter"
