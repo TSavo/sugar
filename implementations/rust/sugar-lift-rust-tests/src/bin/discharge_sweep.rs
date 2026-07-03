@@ -28,9 +28,12 @@
 //        (reads <corpus-dir>/.sugar/config.toml for [rust-test-assertions.target_cfg])
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
+use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
 use sugar_lift_rust_tests::{
     lift_file_with_all_source_imports, AssertionFactKind, ConstSourceRegistry,
     FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
@@ -278,6 +281,130 @@ struct UncheckableRecord {
     offending_smt_term: String,
 }
 
+#[derive(Clone)]
+struct Obligation {
+    label: String,
+    rel: String,
+    contract: String,
+    contract_doc: Value,
+    inv: Value,
+    source: Arc<str>,
+    source_cid: String,
+    file_has_mut_skip: bool,
+}
+
+impl Obligation {
+    fn replay_record(
+        &self,
+        shadow_full: Teeth,
+        shadow_value: Option<Teeth>,
+    ) -> ReplayableObligationRecord {
+        let record = ReplayableObligationRecord::new(
+            &self.label,
+            &self.rel,
+            &self.contract,
+            self.source.as_ref(),
+            &self.contract_doc,
+            &self.inv,
+            shadow_full,
+            shadow_value,
+        );
+        debug_assert_eq!(record.source_cid, self.source_cid);
+        record
+    }
+}
+
+/// One source-preserving obligation record for re-adjudicating the shadow
+/// ledger through production CLI. The source bytes are carried with their CID:
+/// replay is possible, and identity drift is visible.
+#[derive(Clone)]
+struct ReplayableObligationRecord {
+    label: String,
+    rel: String,
+    contract: String,
+    source: String,
+    source_cid: String,
+    contract_cid: String,
+    formula_cid: String,
+    contract_ir: Value,
+    formula_ir: Value,
+    shadow_full: String,
+    shadow_value: Option<String>,
+}
+
+impl ReplayableObligationRecord {
+    fn new(
+        label: &str,
+        rel: &str,
+        contract: &str,
+        source: &str,
+        contract_ir: &Value,
+        formula_ir: &Value,
+        shadow_full: Teeth,
+        shadow_value: Option<Teeth>,
+    ) -> Self {
+        Self {
+            label: label.to_string(),
+            rel: rel.to_string(),
+            contract: contract.to_string(),
+            source: source.to_string(),
+            source_cid: blake3_512_of(source.as_bytes()),
+            contract_cid: jcs_cid_of_json(contract_ir),
+            formula_cid: jcs_cid_of_json(formula_ir),
+            contract_ir: contract_ir.clone(),
+            formula_ir: formula_ir.clone(),
+            shadow_full: teeth_summary(&shadow_full),
+            shadow_value: shadow_value.map(|teeth| teeth_summary(&teeth)),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "label": self.label,
+            "rel": self.rel,
+            "contract": self.contract,
+            "source": self.source,
+            "source_cid": self.source_cid,
+            "contract_cid": self.contract_cid,
+            "formula_cid": self.formula_cid,
+            "contract_ir": self.contract_ir,
+            "formula_ir": self.formula_ir,
+            "shadow_full": self.shadow_full,
+            "shadow_value": self.shadow_value,
+        })
+    }
+}
+
+fn teeth_summary(teeth: &Teeth) -> String {
+    match teeth {
+        Teeth::Discharged { reflexive: true } => "discharged:reflexive".to_string(),
+        Teeth::Discharged { reflexive: false } => "discharged:substantive".to_string(),
+        Teeth::Refuted => "refuted".to_string(),
+        Teeth::Undecided => "undecided".to_string(),
+        Teeth::SolverTimeout => "solver-timeout".to_string(),
+        Teeth::Uncheckable(reason) => format!("uncheckable:{reason}"),
+    }
+}
+
+fn write_replayable_jsonl(
+    path: &str,
+    records: &[ReplayableObligationRecord],
+) -> std::io::Result<()> {
+    let mut lines = String::new();
+    let mut records = records.to_vec();
+    records.sort_by(|a, b| {
+        a.rel
+            .cmp(&b.rel)
+            .then(a.contract.cmp(&b.contract))
+            .then(a.label.cmp(&b.label))
+    });
+    for record in &records {
+        lines.push_str(&serde_json::to_string(&record.to_json())?);
+        lines.push('\n');
+    }
+    std::fs::write(path, lines)
+}
+
 /// Extract the dominant blocking operation from an UNDECIDED inv: the first
 /// "interesting" (non-const) sub-term kind in the first non-panic atom's args.
 /// Returns strings like `ctor:<name>`, `var:<name>`, `let`, `lambda`, `?`.
@@ -509,12 +636,18 @@ fn main() {
         eprintln!(
             "usage: discharge_sweep <corpus-dir> [--json <out.json>] [--z3 <path>] \
              [--dump-refuted <path>] [--dump-undecided <path>] \
-             [--dump-uncheckable <path>]"
+             [--dump-uncheckable <path>] [--dump-replayable <path>] \
+             [--production-replay-limit <n>] [--production-replay-json <path>] \
+             [--sugar <path>]"
         );
         std::process::exit(2);
     }
     let corpus = Path::new(&args[1]);
     let json_out = arg_value(&args, "--json");
+    let dump_replayable = arg_value(&args, "--dump-replayable");
+    let production_replay_limit = arg_usize(&args, "--production-replay-limit");
+    let production_replay_json = arg_value(&args, "--production-replay-json");
+    let sugar_path = arg_value(&args, "--sugar").map(PathBuf::from);
     let z3_path = arg_value(&args, "--z3")
         .or_else(|| std::env::var("Z3").ok())
         .unwrap_or_else(|| "/usr/local/bin/z3".to_string());
@@ -558,14 +691,16 @@ fn main() {
     // (which ARE Sync), then fan the z3 work out below. Per-file progress goes
     // to stderr so a slow lift is visible, never a silent hang.
     let total_files = files.len();
-    // (label, rel, contract, inv, file_has_mut_skip)
-    let mut obligations: Vec<(String, String, String, Value, bool)> = Vec::new();
+    let mut obligations: Vec<Obligation> = Vec::new();
+    let mut preflight_replayable = Vec::new();
     let mut preflight_uncheckable = Vec::new();
     let mut no_inv_total = 0usize;
     for (fi, (rel, src)) in files.iter().enumerate() {
         let Ok(file) = syn::parse_file(src) else {
             continue;
         };
+        let source: Arc<str> = Arc::from(src.as_str());
+        let source_cid = blake3_512_of(source.as_bytes());
         let out = lift_file_with_all_source_imports(
             &file,
             rel,
@@ -599,25 +734,48 @@ fn main() {
             }
             let doc =
                 sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
-            let inv = match serde_json::from_str::<Value>(&doc) {
-                Ok(parsed) => parsed.get(0).and_then(declaration_formula),
+            let contract_doc = match serde_json::from_str::<Value>(&doc) {
+                Ok(parsed) => parsed.get(0).cloned(),
                 Err(_) => None,
             };
+            let inv = contract_doc.as_ref().and_then(declaration_formula);
+            let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
             match inv {
                 Some(inv) if !inv.is_null() => {
-                    let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
-                    obligations.push((
+                    let Some(contract_doc) = contract_doc else {
+                        continue;
+                    };
+                    obligations.push(Obligation {
                         label,
-                        rel.clone(),
-                        decl.name.clone(),
+                        rel: rel.clone(),
+                        contract: decl.name.clone(),
+                        contract_doc,
                         inv,
+                        source: Arc::clone(&source),
+                        source_cid: source_cid.clone(),
                         file_has_mut_skip,
-                    ));
+                    });
                     file_obs += 1;
                 }
                 _ => {
-                    let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
+                    let formula = Value::Null;
+                    let contract_doc = contract_doc.unwrap_or_else(|| {
+                        json!({
+                            "name": decl.name,
+                            "reason": "contract JSON did not parse"
+                        })
+                    });
                     no_inv_total += 1;
+                    preflight_replayable.push(ReplayableObligationRecord::new(
+                        &label,
+                        rel,
+                        &decl.name,
+                        source.as_ref(),
+                        &contract_doc,
+                        &formula,
+                        Teeth::Uncheckable("no-inv".to_string()),
+                        None,
+                    ));
                     preflight_uncheckable.push(UncheckableRecord {
                         label,
                         contract: decl.name.clone(),
@@ -651,32 +809,37 @@ fn main() {
     let total_ob = obligations.len();
     let acc = obligations
         .par_iter()
-        .map(|(label, rel, contract, inv, mut_skip)| {
-            let full = discharge_inv(inv, &z3_path, label);
+        .map(|obligation| {
+            let full = discharge_inv(&obligation.inv, &z3_path, &obligation.label);
             // Value-claim teeth: reuse FULL when no panic conjunct (no extra z3).
-            let value = match value_only_inv(inv) {
-                Some(vi) if &vi != inv => Some(discharge_inv(&vi, &z3_path, &format!("{label}_v"))),
+            let value = match value_only_inv(&obligation.inv) {
+                Some(vi) if vi != obligation.inv => Some(discharge_inv(
+                    &vi,
+                    &z3_path,
+                    &format!("{}_v", obligation.label),
+                )),
                 Some(_) => Some(full.clone()),
                 None => None, // panic-only obligation -- no value claim to teeth
             };
+            let replayable = obligation.replay_record(full.clone(), value.clone());
             let refuted = matches!(full, Teeth::Refuted).then(|| RefutedRecord {
-                file: rel.clone(),
-                signature: refuted_signature(inv),
-                mut_skip_class: *mut_skip,
+                file: obligation.rel.clone(),
+                signature: refuted_signature(&obligation.inv),
+                mut_skip_class: obligation.file_has_mut_skip,
             });
             let undecided =
                 matches!(full, Teeth::Undecided | Teeth::SolverTimeout).then(|| UndecidedRecord {
-                    file: rel.clone(),
-                    signature: refuted_signature(inv),
-                    dom_op: undecided_dom_op(inv),
+                    file: obligation.rel.clone(),
+                    signature: refuted_signature(&obligation.inv),
+                    dom_op: undecided_dom_op(&obligation.inv),
                 });
             let uncheckable = match &full {
                 Teeth::Uncheckable(reason) => Some(UncheckableRecord {
-                    label: label.clone(),
-                    contract: contract.clone(),
-                    file: rel.clone(),
-                    signature: refuted_signature(inv),
-                    dom_op: undecided_dom_op(inv),
+                    label: obligation.label.clone(),
+                    contract: obligation.contract.clone(),
+                    file: obligation.rel.clone(),
+                    signature: refuted_signature(&obligation.inv),
+                    dom_op: undecided_dom_op(&obligation.inv),
                     reason: reason.clone(),
                     offending_smt_term: offending_smt_term(reason),
                 }),
@@ -686,11 +849,11 @@ fn main() {
             if n % 500 == 0 {
                 eprintln!("  discharged {n}/{total_ob}");
             }
-            (full, value, refuted, undecided, uncheckable)
+            (full, value, refuted, undecided, uncheckable, replayable)
         })
         .fold(
             Acc::default,
-            |mut acc, (full, value, refuted, undecided, uncheckable)| {
+            |mut acc, (full, value, refuted, undecided, uncheckable, replayable)| {
                 acc.full.record(&full);
                 if let Some(v) = &value {
                     acc.value.record(v);
@@ -704,6 +867,7 @@ fn main() {
                 if let Some(u) = uncheckable {
                     acc.uncheckable.push(u);
                 }
+                acc.replayable.push(replayable);
                 acc
             },
         )
@@ -716,9 +880,26 @@ fn main() {
         acc.full.record(&Teeth::Uncheckable("no-inv".into()));
     }
     acc.uncheckable.extend(preflight_uncheckable);
+    acc.replayable.extend(preflight_replayable);
 
     print_headline(&acc.full, &acc.value, z3_available, &z3_path);
     print_refuted_breakdown(&acc.refuted);
+
+    if let Some(path) = dump_replayable {
+        if let Err(e) = write_replayable_jsonl(&path, &acc.replayable) {
+            eprintln!("discharge_sweep: write --dump-replayable {path}: {e}");
+        }
+    }
+
+    let production_replay = production_replay_limit.map(|limit| {
+        production_replay_subset(
+            &acc.replayable,
+            limit,
+            &z3_path,
+            sugar_path.as_deref(),
+            production_replay_json.as_deref(),
+        )
+    });
 
     if let Some(path) = arg_value(&args, "--dump-refuted") {
         let mut lines = String::from("file\tsignature\tmut_skip_class\n");
@@ -788,6 +969,7 @@ fn main() {
         let obj = json!({
             "teethed_ledger": {
                 "warranted_obligations": f.warranted_obligations,
+                "replayable_obligations": acc.replayable.len(),
                 "discharged": f.discharged(),
                 "discharged_substantive": f.discharged_substantive,
                 "discharged_reflexive": f.discharged_reflexive,
@@ -807,6 +989,7 @@ fn main() {
                 // False-refutation breakdown (corpus is all-true).
                 "refuted_mut_skip_class": mut_class,
                 "refuted_other_class": f.refuted.saturating_sub(mut_class),
+                "production_replay": production_replay,
             }
         });
         if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&obj).unwrap()) {
@@ -824,6 +1007,7 @@ struct Acc {
     refuted: Vec<RefutedRecord>,
     undecided: Vec<UndecidedRecord>,
     uncheckable: Vec<UncheckableRecord>,
+    replayable: Vec<ReplayableObligationRecord>,
 }
 
 impl Acc {
@@ -833,6 +1017,7 @@ impl Acc {
         self.refuted.extend(other.refuted);
         self.undecided.extend(other.undecided);
         self.uncheckable.extend(other.uncheckable);
+        self.replayable.extend(other.replayable);
     }
 }
 
@@ -947,9 +1132,435 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
+fn arg_usize(args: &[String], flag: &str) -> Option<usize> {
+    arg_value(args, flag).map(|raw| {
+        raw.parse::<usize>().unwrap_or_else(|err| {
+            eprintln!("discharge_sweep: {flag} must be a positive integer, got `{raw}`: {err}");
+            std::process::exit(2);
+        })
+    })
+}
+
+fn rust_workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-lift-rust-tests has a workspace parent")
+        .to_path_buf()
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn sugar_binary(sugar_path: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(path) = sugar_path {
+        if path.is_file() {
+            return path
+                .canonicalize()
+                .map_err(|err| format!("canonicalize --sugar {}: {err}", path.display()));
+        }
+        return Err(format!("--sugar path is not a file: {}", path.display()));
+    }
+    let workspace = rust_workspace();
+    for candidate in [
+        workspace.join("target/debug/sugar"),
+        workspace.join("target/release/sugar"),
+    ] {
+        if candidate.is_file() {
+            return candidate
+                .canonicalize()
+                .map_err(|err| format!("canonicalize sugar {}: {err}", candidate.display()));
+        }
+    }
+    Err(format!(
+        "crime=production replay without sugar CLI; owner=discharge_sweep; \
+         illegal shape=no target/{{debug,release}}/sugar binary under {}; \
+         replacement=run `cargo build -p sugar-cli --bin sugar --locked` or pass --sugar",
+        workspace.display()
+    ))
+}
+
+fn unique_replay_project() -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "discharge-sweep-production-replay-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir production replay project");
+    dir
+}
+
+fn write_production_replay_project(
+    project: &Path,
+    records: &[ReplayableObligationRecord],
+) -> Result<(), String> {
+    let workspace = rust_workspace();
+    std::fs::create_dir_all(project.join("tests")).map_err(|err| format!("mkdir tests: {err}"))?;
+    std::fs::create_dir_all(project.join(".sugar/lift/rust-test-assertions"))
+        .map_err(|err| format!("mkdir lift: {err}"))?;
+    std::fs::create_dir_all(project.join(".sugar/components/rust-test-assertions"))
+        .map_err(|err| format!("mkdir component: {err}"))?;
+    std::fs::create_dir_all(project.join(".sugar/ir-compilers/smt-lib"))
+        .map_err(|err| format!("mkdir compiler: {err}"))?;
+
+    let mut sources: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
+    for record in records {
+        match sources.get(record.rel.as_str()) {
+            Some((seen_cid, _)) if *seen_cid != record.source_cid => {
+                return Err(format!(
+                    "rel `{}` maps to multiple source CIDs: {} and {}",
+                    record.rel, seen_cid, record.source_cid
+                ));
+            }
+            Some(_) => {}
+            None => {
+                sources.insert(&record.rel, (&record.source_cid, &record.source));
+            }
+        }
+    }
+    for (rel, (_, source)) in sources {
+        let dest = project.join("tests").join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
+        }
+        std::fs::write(&dest, source).map_err(|err| format!("write {}: {err}", dest.display()))?;
+    }
+
+    std::fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "rust-test-assertions-lift"
+kind = "lift"
+surface = "rust-test-assertions"
+emit = "ir-document"
+
+[platform_profile]
+language = "rust"
+library = "discharge-sweep-production-replay"
+version = "rustc 1.96.0"
+
+[solvers]
+mode = "first-wins"
+portfolio = ["z3"]
+
+[solvers.z3]
+binary = "z3"
+ir_compiler = "smt-lib-v2.6"
+flags = ["-smt2", "-in"]
+timeout_seconds = 30
+version = "4.x"
+
+[rust-test-assertions.target_cfg]
+target = "x86_64-apple-darwin"
+facts = ["test", "debug_assertions", "target_arch=\"x86_64\"", "target_pointer_width=\"64\"", "target_os=\"macos\"", "unix"]
+"#,
+    )
+    .map_err(|err| format!("write .sugar/config.toml: {err}"))?;
+
+    std::fs::write(
+        project.join(".sugar/lift/rust-test-assertions/manifest.toml"),
+        format!(
+            r#"name = "rust-test-assertions-lift"
+version = "0.1.0"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+command = ["cargo", "run", "-p", "sugar-lift-rust-tests", "--bin", "rust_test_assertions_rpc", "--quiet", "--"]
+working_dir = "{ws}"
+
+[capabilities]
+authoring_surfaces = ["rust-test-assertions"]
+ir_version = "v1.1.0"
+emits_signed_mementos = false
+"#,
+            ws = workspace.display()
+        ),
+    )
+    .map_err(|err| format!("write lift manifest: {err}"))?;
+
+    let component_script = project
+        .join(".sugar/components/rust-test-assertions")
+        .join("component.sh");
+    let initialize_response = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "name": "rust-test-assertions-component",
+            "protocol_version": "sugar-component/1",
+            "capabilities": {}
+        }
+    })
+    .to_string();
+    let plan_response = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "decision": "claim",
+            "plugins": [{
+                "name": "rust-test-assertions-lift",
+                "kind": "lift",
+                "surface": "rust-test-assertions",
+                "emit": "ir-document"
+            }],
+            "lift_manifests": [{
+                "surface": "rust-test-assertions",
+                "name": "rust-test-assertions-lift",
+                "version": "0.1.0",
+                "protocol_version": "pep/1.7.0",
+                "command": [
+                    "cargo",
+                    "run",
+                    "-p",
+                    "sugar-lift-rust-tests",
+                    "--bin",
+                    "rust_test_assertions_rpc",
+                    "--quiet",
+                    "--"
+                ],
+                "working_dir": workspace.display().to_string()
+            }],
+            "diagnostics": [{
+                "level": "info",
+                "message": "rust-test-assertions component planned"
+            }]
+        }
+    })
+    .to_string();
+    let shutdown_response = json!({"jsonrpc": "2.0", "id": 3, "result": null}).to_string();
+    std::fs::write(
+        &component_script,
+        format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{initialize_response}'
+      ;;
+    *'"method":"sugar.component.plan"'*)
+      printf '%s\n' '{plan_response}'
+      ;;
+    *'"method":"shutdown"'*)
+      printf '%s\n' '{shutdown_response}'
+      exit 0
+      ;;
+  esac
+done
+"#
+        ),
+    )
+    .map_err(|err| format!("write component script: {err}"))?;
+    std::fs::write(
+        project.join(".sugar/components/rust-test-assertions/manifest.toml"),
+        format!(
+            "name = \"rust-test-assertions-component\"\nprotocol_version = \"sugar-component/1\"\ncommand = [\"/bin/sh\", {}]\n",
+            toml_string(&component_script.display().to_string())
+        ),
+    )
+    .map_err(|err| format!("write component manifest: {err}"))?;
+
+    std::fs::write(
+        project.join(".sugar/ir-compilers/smt-lib/manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{ws}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            ws = workspace.display()
+        ),
+    )
+    .map_err(|err| format!("write compiler manifest: {err}"))?;
+    Ok(())
+}
+
+fn production_rows(project: &Path, sugar: &Path, z3: &str) -> Result<Vec<Value>, String> {
+    let mint = Command::new(sugar)
+        .current_dir(project)
+        .arg("mint")
+        .arg("--out")
+        .arg(project)
+        .arg("--quiet")
+        .output()
+        .map_err(|err| format!("spawn sugar mint: {err}"))?;
+    if !mint.status.success() {
+        return Err(format!(
+            "sugar mint failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&mint.stdout),
+            String::from_utf8_lossy(&mint.stderr)
+        ));
+    }
+    let prove = Command::new(sugar)
+        .current_dir(project)
+        .arg("prove")
+        .arg(".")
+        .arg("--json")
+        .arg("--z3")
+        .arg(z3)
+        .output()
+        .map_err(|err| format!("spawn sugar prove: {err}"))?;
+    if prove.stdout.is_empty() {
+        return Err(format!(
+            "sugar prove produced no JSON\nstatus={}\nstdout:\n{}\nstderr:\n{}",
+            prove.status,
+            String::from_utf8_lossy(&prove.stdout),
+            String::from_utf8_lossy(&prove.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&prove.stdout);
+    let doc: Value = serde_json::from_str(&stdout).map_err(|err| {
+        format!(
+            "sugar prove returned malformed JSON: {err}\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&prove.stderr)
+        )
+    })?;
+    Ok(doc["rows"]
+        .as_array()
+        .ok_or_else(|| format!("sugar prove JSON has no rows: {doc:#}"))?
+        .clone())
+}
+
+fn statuses_for_record(rows: &[Value], record: &ReplayableObligationRecord) -> Vec<String> {
+    let rel_needle = format!("tests/{}", record.rel);
+    let mut contract_statuses = rows
+        .iter()
+        .filter(|row| {
+            row["property"]
+                .as_str()
+                .map(|property| property.contains(&record.contract))
+                .unwrap_or(false)
+        })
+        .filter_map(|row| row["status"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    if contract_statuses.is_empty() {
+        contract_statuses = rows
+            .iter()
+            .filter(|row| {
+                row["property"]
+                    .as_str()
+                    .map(|property| property.contains(&rel_needle))
+                    .unwrap_or(false)
+            })
+            .filter_map(|row| row["status"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+    }
+    let mut statuses = contract_statuses;
+    statuses.sort();
+    statuses.dedup();
+    statuses
+}
+
+fn production_direction(statuses: &[String]) -> Option<&'static str> {
+    if statuses.iter().any(|status| status == "unsatisfied") {
+        Some("refuted")
+    } else if !statuses.is_empty() && statuses.iter().all(|status| status == "discharged") {
+        Some("discharged")
+    } else {
+        None
+    }
+}
+
+fn replay_classification(record: &ReplayableObligationRecord, statuses: &[String]) -> &'static str {
+    match (record.shadow_full.as_str(), production_direction(statuses)) {
+        ("refuted", Some("discharged")) => "active-disagreement",
+        (shadow, Some("refuted")) if shadow.starts_with("discharged:") => "active-disagreement",
+        (_, None) => "coverage-gap",
+        _ => "agreement-or-nondirectional",
+    }
+}
+
+fn production_replay_subset(
+    records: &[ReplayableObligationRecord],
+    limit: usize,
+    z3: &str,
+    sugar_path: Option<&Path>,
+    output_path: Option<&str>,
+) -> Value {
+    let mut selected = records.to_vec();
+    selected.sort_by(|a, b| {
+        a.rel
+            .cmp(&b.rel)
+            .then(a.contract.cmp(&b.contract))
+            .then(a.label.cmp(&b.label))
+    });
+    selected.truncate(limit);
+    if selected.is_empty() {
+        return json!({
+            "checked": 0,
+            "active_disagreements": 0,
+            "coverage_gaps": 0,
+            "rows": [],
+        });
+    }
+    let result = (|| -> Result<Value, String> {
+        let sugar = sugar_binary(sugar_path)?;
+        let project = unique_replay_project();
+        write_production_replay_project(&project, &selected)?;
+        let rows = production_rows(&project, &sugar, z3)?;
+        let mut active = 0usize;
+        let mut coverage = 0usize;
+        let mut replay_rows = Vec::new();
+        for record in &selected {
+            let statuses = statuses_for_record(&rows, record);
+            let classification = replay_classification(record, &statuses);
+            if classification == "active-disagreement" {
+                active += 1;
+            } else if classification == "coverage-gap" {
+                coverage += 1;
+            }
+            replay_rows.push(json!({
+                "label": record.label,
+                "rel": record.rel,
+                "contract": record.contract,
+                "source_cid": record.source_cid,
+                "contract_cid": record.contract_cid,
+                "formula_cid": record.formula_cid,
+                "shadow_full": record.shadow_full,
+                "production_statuses": statuses,
+                "classification": classification,
+            }));
+        }
+        Ok(json!({
+            "authority": "source-to-sugar-cli",
+            "project": project.display().to_string(),
+            "checked": selected.len(),
+            "active_disagreements": active,
+            "coverage_gaps": coverage,
+            "production_row_count": rows.len(),
+            "rows": replay_rows,
+        }))
+    })();
+    let value = match result {
+        Ok(value) => value,
+        Err(err) => json!({
+            "authority": "source-to-sugar-cli",
+            "checked": 0,
+            "active_disagreements": 0,
+            "coverage_gaps": 0,
+            "error": err,
+        }),
+    };
+    if let Some(path) = output_path {
+        if let Err(err) = std::fs::write(path, serde_json::to_string_pretty(&value).unwrap()) {
+            eprintln!("discharge_sweep: write --production-replay-json {path}: {err}");
+        }
+    }
+    let checked = value["checked"].as_u64().unwrap_or(0);
+    let active = value["active_disagreements"].as_u64().unwrap_or(0);
+    let coverage = value["coverage_gaps"].as_u64().unwrap_or(0);
+    eprintln!(
+        "discharge_sweep production replay: checked={checked} active_disagreements={active} coverage_gaps={coverage}"
+    );
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json, BLAKE3_512_PREFIX};
 
     fn inv_of(src: &str) -> Value {
         let file = syn::parse_file(src).expect("parses");
@@ -964,6 +1575,71 @@ mod tests {
     fn z3() -> Option<String> {
         let p = std::env::var("Z3").unwrap_or_else(|_| "/usr/local/bin/z3".to_string());
         Path::new(&p).exists().then_some(p)
+    }
+
+    #[test]
+    fn replayable_obligation_record_pins_source_contract_and_formula_identity() {
+        let source = "fn claim() { assert_eq!(1 + 1, 2); }\n";
+        let formula = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "const", "sort": "Int", "value": 2},
+                {"kind": "const", "sort": "Int", "value": 2}
+            ]
+        });
+        let contract_doc = json!({
+            "name": "claim",
+            "inv": formula.clone()
+        });
+
+        let record = ReplayableObligationRecord::new(
+            "tests_arith_rs_0",
+            "arith.rs",
+            "claim",
+            source,
+            &contract_doc,
+            &formula,
+            Teeth::Discharged { reflexive: false },
+            None,
+        );
+
+        assert_eq!(record.source, source);
+        assert_eq!(record.source_cid, blake3_512_of(source.as_bytes()));
+        assert_eq!(record.contract_cid, jcs_cid_of_json(&contract_doc));
+        assert_eq!(record.formula_cid, jcs_cid_of_json(&formula));
+        assert!(record.source_cid.starts_with(BLAKE3_512_PREFIX));
+        assert!(record.contract_cid.starts_with(BLAKE3_512_PREFIX));
+        assert!(record.formula_cid.starts_with(BLAKE3_512_PREFIX));
+    }
+
+    #[test]
+    fn production_status_matching_prefers_contract_identity_before_file_fallback() {
+        let source = "fn claim_a() { assert_eq!(1, 1); }\nfn claim_b() { assert_eq!(2, 2); }\n";
+        let formula = json!({"kind": "const", "sort": "Bool", "value": true});
+        let contract_doc = json!({"name": "claim_a", "inv": formula.clone()});
+        let record = ReplayableObligationRecord::new(
+            "tests_multi_rs_0",
+            "multi.rs",
+            "claim_a",
+            source,
+            &contract_doc,
+            &formula,
+            Teeth::Discharged { reflexive: false },
+            None,
+        );
+        let rows = vec![
+            json!({"property": "tests/multi.rs::claim_a", "status": "discharged"}),
+            json!({"property": "tests/multi.rs::claim_b", "status": "refused"}),
+        ];
+
+        assert_eq!(statuses_for_record(&rows, &record), vec!["discharged"]);
+
+        let fallback_rows = vec![json!({"property": "tests/multi.rs", "status": "refused"})];
+        assert_eq!(
+            statuses_for_record(&fallback_rows, &record),
+            vec!["refused"]
+        );
     }
 
     #[test]
