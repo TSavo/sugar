@@ -70,7 +70,7 @@ use tracing::{debug, info, warn};
 use crate::solvers::{
     run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
-use crate::types::{MementoCid, MementoPool, ObligationVerdict};
+use crate::types::{MementoCid, MementoPool, ObligationVerdict, StoredMember};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_ir_compiler::CompilerInput;
@@ -95,6 +95,36 @@ const CONSISTENT_REASON: &str = "test assertions mutually consistent about calls
 const CONTRADICTORY_REASON: &str = "test assertions contradictory about callsite";
 const VACUOUS_SINGLE_REASON: &str =
     "consistency check vacuous: single constraint has no sibling to contradict — not a substantive discharge";
+const MISSING_INDEPENDENT_KIND_REASON: &str =
+    "consistency check lacks an independent-KIND witness: Stated testimony cannot corroborate Stated testimony";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ProofIrProvenanceKind {
+    Stated,
+    Derived,
+}
+
+impl ProofIrProvenanceKind {
+    fn label(self) -> &'static str {
+        match self {
+            ProofIrProvenanceKind::Stated => "Stated",
+            ProofIrProvenanceKind::Derived => "Derived",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AmbientFactWitnessKey {
+    semantic_cid: String,
+    provenance_kind: ProofIrProvenanceKind,
+}
+
+#[derive(Debug, Clone)]
+struct ConsistencyCandidate {
+    cid: String,
+    body: Json,
+    provenance_kind: ProofIrProvenanceKind,
+}
 
 /// Does this contract carry asserted axioms that must be checked for
 /// satisfiability against the local universe? We approximate the boundary
@@ -141,6 +171,93 @@ fn is_setup_binding_name(name: &str) -> bool {
         _ => name,
     };
     stem.ends_with("::facts")
+}
+
+fn contract_property_name(body: &Json) -> &str {
+    body.get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
+        .unwrap_or("<unnamed>")
+}
+
+fn contract_provenance_kind(
+    member: &StoredMember,
+    body: &Json,
+) -> Result<ProofIrProvenanceKind, String> {
+    if let Some(provenance) = member
+        .field("proofirProvenance")
+        .or_else(|| body.get("proofirProvenance"))
+    {
+        return proofir_provenance_kind(provenance);
+    }
+    if let Some(warrants) = member
+        .field("sourceWarrants")
+        .or_else(|| body.get("sourceWarrants"))
+        .or_else(|| body.get("source_warrants"))
+    {
+        return source_warrants_provenance_kind(warrants);
+    }
+    Err(
+        "contract memento lacks required proofirProvenance/sourceWarrants provenance KIND"
+            .to_string(),
+    )
+}
+
+fn proofir_provenance_kind(provenance: &Json) -> Result<ProofIrProvenanceKind, String> {
+    let Some(warrants) = provenance.get("warrants").and_then(|v| v.as_array()) else {
+        return Err("proofirProvenance missing warrants array".to_string());
+    };
+    let mut saw_stated = false;
+    let mut saw_derived = false;
+    for warrant in warrants {
+        match warrant.get("kind").and_then(|v| v.as_str()) {
+            Some("Stated") => saw_stated = true,
+            Some("Derived") => saw_derived = true,
+            Some(other) => {
+                return Err(format!(
+                    "proofirProvenance carries unknown warrant kind `{other}`"
+                ))
+            }
+            None => return Err("proofirProvenance warrant missing kind".to_string()),
+        }
+    }
+    if saw_derived {
+        Ok(ProofIrProvenanceKind::Derived)
+    } else if saw_stated {
+        Ok(ProofIrProvenanceKind::Stated)
+    } else {
+        Err("proofirProvenance warrants array is empty".to_string())
+    }
+}
+
+fn source_warrants_provenance_kind(warrants: &Json) -> Result<ProofIrProvenanceKind, String> {
+    let Some(warrants) = warrants.as_array() else {
+        return Err("sourceWarrants must be an array to derive provenance KIND".to_string());
+    };
+    let mut saw_stated = false;
+    let mut saw_derived = false;
+    for warrant in warrants {
+        match warrant.get("kind").and_then(|v| v.as_str()) {
+            Some("source-memento") => saw_stated = true,
+            Some("proofir-provenance") => match proofir_provenance_kind(warrant)? {
+                ProofIrProvenanceKind::Stated => saw_stated = true,
+                ProofIrProvenanceKind::Derived => saw_derived = true,
+            },
+            Some(other) => {
+                return Err(format!(
+                    "sourceWarrants carries unknown provenance memento kind `{other}`"
+                ))
+            }
+            None => return Err("sourceWarrants entry missing kind".to_string()),
+        }
+    }
+    if saw_derived {
+        Ok(ProofIrProvenanceKind::Derived)
+    } else if saw_stated {
+        Ok(ProofIrProvenanceKind::Stated)
+    } else {
+        Err("sourceWarrants array is empty".to_string())
+    }
 }
 
 fn axiom_context_formula(body: &Json) -> Json {
@@ -913,12 +1030,72 @@ fn is_witness_member(body: &Json) -> bool {
         == Some("custom")
 }
 
+fn provenance_kind_refusal(cid: String, body: &Json, reason: String) -> ConsistencyResult {
+    let property_name = contract_property_name(body).to_string();
+    let verdict = ObligationVerdict::Refused;
+    let full_reason = format!(
+        "consistency check refused: contract `{property_name}` lacks required provenance KIND for ambient testimony ({reason})"
+    );
+    ConsistencyResult {
+        contract_cid: cid,
+        property_name: property_name.clone(),
+        verdict,
+        reason: full_reason.clone(),
+        witnessed: false,
+        verification: Some(json!({
+            "kind": "consistency-provenance-kind",
+            "property": property_name,
+            "finalVerdict": verdict.as_str(),
+            "reason": full_reason,
+        })),
+    }
+}
+
 fn canonicalize_formula_json(inv: &Json) -> Json {
     let Ok(formula) = serde_json::from_value::<sugar_ir_types::IrFormula>(inv.clone()) else {
         return inv.clone();
     };
     serde_json::to_value(sugar_ir_types::canonicalize_formula(&formula))
         .unwrap_or_else(|_| inv.clone())
+}
+
+fn formula_semantic_cid(formula: &Json) -> String {
+    let canonical = canonicalize_formula_json(formula);
+    let bytes = libsugar::canonical::json_jcs(&canonical)
+        .unwrap_or_else(|_| serde_json::to_string(&canonical).unwrap_or_default());
+    blake3_512_of(bytes.as_bytes())
+}
+
+fn top_level_conjuncts(formula: Json) -> Vec<Json> {
+    if formula.get("kind").and_then(|k| k.as_str()) == Some("and") {
+        if let Some(operands) = formula.get("operands").and_then(|v| v.as_array()) {
+            return operands.clone();
+        }
+    }
+    vec![formula]
+}
+
+fn conjoin_distinct_provenance_witnesses(invs: Vec<(Json, ProofIrProvenanceKind)>) -> (Json, bool) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut operands = Vec::new();
+    let mut collapsed_same_kind_duplicate = false;
+    for (inv, provenance_kind) in invs {
+        for conjunct in top_level_conjuncts(inv) {
+            let key = AmbientFactWitnessKey {
+                semantic_cid: formula_semantic_cid(&conjunct),
+                provenance_kind,
+            };
+            if seen.insert(key) {
+                operands.push(conjunct);
+            } else {
+                collapsed_same_kind_duplicate = true;
+            }
+        }
+    }
+    (
+        serde_json::json!({ "kind": "and", "operands": operands }),
+        collapsed_same_kind_duplicate,
+    )
 }
 
 fn linked_posts_to_json(linked_posts: &[LinkedPostInstance]) -> Json {
@@ -1040,6 +1217,28 @@ fn check_inv_consistency(
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> ConsistencyResult {
+    check_inv_consistency_with_vacuity_reason(
+        cid,
+        property_name,
+        inv,
+        linked_posts,
+        plan,
+        registry,
+        compilers,
+        VACUOUS_SINGLE_REASON,
+    )
+}
+
+fn check_inv_consistency_with_vacuity_reason(
+    cid: String,
+    property_name: &str,
+    inv: Json,
+    linked_posts: Vec<LinkedPostInstance>,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+    vacuity_reason: &'static str,
+) -> ConsistencyResult {
     let t_local = std::time::Instant::now();
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
     let local_inst_us = t_local.elapsed().as_micros();
@@ -1055,7 +1254,7 @@ fn check_inv_consistency(
             contract_cid: cid,
             property_name: property_name.to_string(),
             verdict,
-            reason: format!("{VACUOUS_SINGLE_REASON} `{property_name}`"),
+            reason: format!("{vacuity_reason} `{property_name}`"),
             witnessed: false,
             verification: Some(consistency_verification_detail(
                 property_name,
@@ -1063,7 +1262,7 @@ fn check_inv_consistency(
                 &linked_posts,
                 None,
                 verdict,
-                Some(VACUOUS_SINGLE_REASON),
+                Some(vacuity_reason),
                 &[],
             )),
         };
@@ -1184,6 +1383,7 @@ struct AmbientGroundCallsiteFact {
     source_cid: String,
     scope: Option<String>,
     term_key: String,
+    witness_key: AmbientFactWitnessKey,
     fact: Json,
 }
 
@@ -1199,6 +1399,7 @@ fn collect_ambient_ground_callsite_facts(
     inv: &Json,
     source_cid: &str,
     scope: &Option<String>,
+    provenance_kind: ProofIrProvenanceKind,
     out: &mut Vec<AmbientGroundCallsiteFact>,
 ) {
     match inv.get("kind").and_then(|k| k.as_str()) {
@@ -1206,7 +1407,13 @@ fn collect_ambient_ground_callsite_facts(
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    collect_ambient_ground_callsite_facts(op, source_cid, scope, out);
+                    collect_ambient_ground_callsite_facts(
+                        op,
+                        source_cid,
+                        scope,
+                        provenance_kind,
+                        out,
+                    );
                 }
             }
         }
@@ -1215,7 +1422,13 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
-                collect_ambient_ground_callsite_facts(&ops[1], source_cid, scope, out);
+                collect_ambient_ground_callsite_facts(
+                    &ops[1],
+                    source_cid,
+                    scope,
+                    provenance_kind,
+                    out,
+                );
             }
         }
         Some("atomic") if inv.get("name").and_then(|v| v.as_str()) == Some("=") => {
@@ -1229,11 +1442,31 @@ fn collect_ambient_ground_callsite_facts(
                 source_cid: source_cid.to_string(),
                 scope: scope.clone(),
                 term_key,
+                witness_key: AmbientFactWitnessKey {
+                    semantic_cid: formula_semantic_cid(inv),
+                    provenance_kind,
+                },
                 fact: inv.clone(),
             });
         }
         _ => {}
     }
+}
+
+fn ground_callsite_witness_keys(
+    inv: &Json,
+    scope: &Option<String>,
+    provenance_kind: ProofIrProvenanceKind,
+) -> std::collections::BTreeSet<AmbientFactWitnessKey> {
+    let mut facts = Vec::new();
+    collect_ambient_ground_callsite_facts(
+        inv,
+        "<current-obligation>",
+        scope,
+        provenance_kind,
+        &mut facts,
+    );
+    facts.into_iter().map(|fact| fact.witness_key).collect()
 }
 
 fn is_callsite_ctor_term(term: &Json) -> bool {
@@ -1622,9 +1855,10 @@ fn with_ambient_ground_callsite_facts(
     property_name: &str,
     ambient: &[AmbientGroundCallsiteFact],
     excluded_source_cids: &[String],
-) -> Json {
+    current_ground_witnesses: &std::collections::BTreeSet<AmbientFactWitnessKey>,
+) -> (Json, bool) {
     if ambient.is_empty() || !property_name.contains("#euf#") {
-        return inv;
+        return (inv, false);
     }
 
     let mut callsites = Vec::new();
@@ -1634,12 +1868,13 @@ fn with_ambient_ground_callsite_facts(
         .filter_map(ground_callsite_term_key)
         .collect();
     if wanted.is_empty() {
-        return inv;
+        return (inv, false);
     }
     let obligation_scope = ambient_ground_callsite_scope(property_name);
 
     let mut seen = std::collections::BTreeSet::new();
     let mut facts = Vec::new();
+    let mut skipped_same_kind_duplicate = false;
     for fact in ambient {
         // A stated row is not independent testimony for itself. The ambient
         // replay path may only add facts sourced from other mementos.
@@ -1659,20 +1894,25 @@ fn with_ambient_ground_callsite_facts(
         if !wanted.contains(&fact.term_key) {
             continue;
         }
-        let key = libsugar::canonical::json_jcs(&fact.fact)
-            .unwrap_or_else(|_| serde_json::to_string(&fact.fact).unwrap_or_default());
-        if seen.insert(key) {
+        if current_ground_witnesses.contains(&fact.witness_key) {
+            skipped_same_kind_duplicate = true;
+            continue;
+        }
+        if seen.insert(fact.witness_key.clone()) {
             facts.push(fact.fact.clone());
         }
     }
     if facts.is_empty() {
-        return inv;
+        return (inv, skipped_same_kind_duplicate);
     }
 
     let mut operands = Vec::with_capacity(facts.len() + 1);
     operands.push(inv);
     operands.extend(facts);
-    serde_json::json!({ "kind": "and", "operands": operands })
+    (
+        serde_json::json!({ "kind": "and", "operands": operands }),
+        skipped_same_kind_duplicate,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -1900,11 +2140,35 @@ pub fn verify_consistency(
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> Vec<ConsistencyResult> {
-    let candidates: Vec<(String, Json)> = pool
-        .contract_members_with_bodies()
-        .map(|(cid, body)| (cid.to_string(), body))
-        .filter(|(_, body)| is_consistency_candidate(body))
-        .collect();
+    let mut candidates: Vec<ConsistencyCandidate> = Vec::new();
+    let mut provenance_refusals: Vec<ConsistencyResult> = Vec::new();
+    for (cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if !is_consistency_candidate(&body) {
+            continue;
+        }
+        match contract_provenance_kind(member, &body) {
+            Ok(provenance_kind) => candidates.push(ConsistencyCandidate {
+                cid: cid.to_string(),
+                body,
+                provenance_kind,
+            }),
+            Err(reason) => {
+                warn!(
+                    cid = %cid,
+                    contract = contract_property_name(&body),
+                    reason = %reason,
+                    "verifier/ambient: contract lacks required provenance KIND; refusing rather than defaulting"
+                );
+                provenance_refusals.push(provenance_kind_refusal(cid.to_string(), &body, reason));
+            }
+        }
+    }
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim
@@ -1921,15 +2185,13 @@ pub fn verify_consistency(
     // shared engine, not per-lifter.
     let mut ambient_foralls: Vec<Json> = Vec::new();
     let mut ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
-    for (cid, body) in &candidates {
+    for candidate in &candidates {
+        let cid = &candidate.cid;
+        let body = &candidate.body;
         if is_witness_member(body) {
             continue;
         }
-        let contract_name = body
-            .get("name")
-            .and_then(|v| v.as_str())
-            .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
-            .unwrap_or("<unnamed>");
+        let contract_name = contract_property_name(body);
         if let Some(inv) = body.get("inv") {
             let inv = canonicalize_formula_json(inv);
             let before = ambient_foralls.len();
@@ -1940,12 +2202,14 @@ pub fn verify_consistency(
                 &inv,
                 cid,
                 &ground_scope,
+                candidate.provenance_kind,
                 &mut ambient_ground_callsite_facts,
             );
             if found > 0 {
                 debug!(
                     cid = cid.as_str(),
                     contract = contract_name,
+                    provenance_kind = candidate.provenance_kind.label(),
                     foralls = found,
                     inv_kind = inv.get("kind").and_then(|k| k.as_str()).unwrap_or("?"),
                     "verifier/ambient: collected universal(s) from contract inv"
@@ -1975,23 +2239,15 @@ pub fn verify_consistency(
     // assertions dedupe by CID (one member) and stay PROVEN. The contract NAME is
     // the content-keyed callsite, so same name == same callsite == sound to
     // conjoin -- the same invariant mint relies on.
-    let mut by_name: std::collections::BTreeMap<String, Vec<(String, Json)>> =
+    let mut by_name: std::collections::BTreeMap<String, Vec<ConsistencyCandidate>> =
         std::collections::BTreeMap::new();
-    for (cid, body) in &candidates {
-        let name = body
-            .get("name")
-            .and_then(|v| v.as_str())
-            .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
-            .unwrap_or("<unnamed>")
-            .to_string();
-        by_name
-            .entry(name)
-            .or_default()
-            .push((cid.clone(), body.clone()));
+    for candidate in &candidates {
+        let name = contract_property_name(&candidate.body).to_string();
+        by_name.entry(name).or_default().push(candidate.clone());
     }
-    let groups: Vec<(String, Vec<(String, Json)>)> = by_name.into_iter().collect();
+    let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name.into_iter().collect();
 
-    let results: Vec<ConsistencyResult> = groups
+    let mut results: Vec<ConsistencyResult> = groups
         .par_iter()
         .flat_map(|(property_name, members)| {
             let mut out: Vec<ConsistencyResult> = Vec::new();
@@ -2001,20 +2257,21 @@ pub fn verify_consistency(
             // AND never short-circuit the group: a witness member must not mask
             // a contradictory inv group.
             let mut inv_cids: Vec<String> = Vec::new();
-            let mut inv_bodies: Vec<Json> = Vec::new();
-            for (m_cid, body) in members {
+            let mut inv_candidates: Vec<ConsistencyCandidate> = Vec::new();
+            for candidate in members {
+                let body = &candidate.body;
                 if is_witness_member(body) {
                     if let Some(res) =
-                        try_witness_discharge(body, m_cid.clone(), property_name.clone())
+                        try_witness_discharge(body, candidate.cid.clone(), property_name.clone())
                     {
                         out.push(res);
                         continue;
                     }
                 }
-                inv_bodies.push(body.clone());
-                inv_cids.push(m_cid.clone());
+                inv_cids.push(candidate.cid.clone());
+                inv_candidates.push(candidate.clone());
             }
-            if inv_bodies.is_empty() {
+            if inv_candidates.is_empty() {
                 return out;
             }
 
@@ -2025,53 +2282,103 @@ pub fn verify_consistency(
             // same subject, so those stay PER-CONTRACT (conjoining them could falsely
             // refuse two unrelated tests that happen to share a function name).
             let callsite_keyed = property_name.contains("#euf#");
-            if callsite_keyed && inv_bodies.len() > 1 {
-                let invs: Vec<Json> = inv_bodies
+            if callsite_keyed && inv_candidates.len() > 1 {
+                let invs: Vec<(Json, ProofIrProvenanceKind)> = inv_candidates
                     .iter()
-                    .map(|b| canonicalize_formula_json(&axiom_context_formula(b)))
+                    .map(|candidate| {
+                        (
+                            canonicalize_formula_json(&axiom_context_formula(&candidate.body)),
+                            candidate.provenance_kind,
+                        )
+                    })
                     .collect();
-                let inv = serde_json::json!({ "kind": "and", "operands": invs });
+                let (inv, collapsed_same_kind_duplicate) =
+                    conjoin_distinct_provenance_witnesses(invs);
+                let current_ground_witnesses: std::collections::BTreeSet<_> = inv_candidates
+                    .iter()
+                    .flat_map(|candidate| {
+                        let scope = ambient_ground_callsite_scope(property_name);
+                        let inv =
+                            canonicalize_formula_json(&axiom_context_formula(&candidate.body));
+                        ground_callsite_witness_keys(&inv, &scope, candidate.provenance_kind)
+                            .into_iter()
+                    })
+                    .collect();
                 let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
-                let inv = with_ambient_ground_callsite_facts(
+                let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
                     inv,
                     property_name,
                     &ambient_ground_callsite_facts,
                     &inv_cids,
+                    &current_ground_witnesses,
                 );
-                out.push(check_inv_consistency(
-                    inv_cids[0].clone(),
-                    property_name,
-                    with_ambient_foralls(inv, property_name, &ambient_foralls),
-                    linked_posts,
-                    plan,
-                    registry,
-                    compilers,
-                ));
-            } else {
-                for (cid, body) in inv_cids.iter().zip(inv_bodies.iter()) {
-                    let inv = canonicalize_formula_json(&axiom_context_formula(body));
-                    let (inv, linked_posts) =
-                        with_ambient_posts_with_instances(inv, &ambient_posts);
-                    let inv = with_ambient_ground_callsite_facts(
+                let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
+                if collapsed_same_kind_duplicate || skipped_same_kind_duplicate {
+                    out.push(check_inv_consistency_with_vacuity_reason(
+                        inv_cids[0].clone(),
+                        property_name,
                         inv,
-                        property_name,
-                        &ambient_ground_callsite_facts,
-                        std::slice::from_ref(cid),
-                    );
+                        linked_posts,
+                        plan,
+                        registry,
+                        compilers,
+                        MISSING_INDEPENDENT_KIND_REASON,
+                    ));
+                } else {
                     out.push(check_inv_consistency(
-                        (*cid).clone(),
+                        inv_cids[0].clone(),
                         property_name,
-                        with_ambient_foralls(inv, property_name, &ambient_foralls),
+                        inv,
                         linked_posts,
                         plan,
                         registry,
                         compilers,
                     ));
                 }
+            } else {
+                for candidate in &inv_candidates {
+                    let inv = canonicalize_formula_json(&axiom_context_formula(&candidate.body));
+                    let scope = ambient_ground_callsite_scope(property_name);
+                    let current_ground_witnesses =
+                        ground_callsite_witness_keys(&inv, &scope, candidate.provenance_kind);
+                    let (inv, linked_posts) =
+                        with_ambient_posts_with_instances(inv, &ambient_posts);
+                    let (inv, skipped_same_kind_duplicate) = with_ambient_ground_callsite_facts(
+                        inv,
+                        property_name,
+                        &ambient_ground_callsite_facts,
+                        std::slice::from_ref(&candidate.cid),
+                        &current_ground_witnesses,
+                    );
+                    let inv = with_ambient_foralls(inv, property_name, &ambient_foralls);
+                    if skipped_same_kind_duplicate {
+                        out.push(check_inv_consistency_with_vacuity_reason(
+                            candidate.cid.clone(),
+                            property_name,
+                            inv,
+                            linked_posts,
+                            plan,
+                            registry,
+                            compilers,
+                            MISSING_INDEPENDENT_KIND_REASON,
+                        ));
+                    } else {
+                        out.push(check_inv_consistency(
+                            candidate.cid.clone(),
+                            property_name,
+                            inv,
+                            linked_posts,
+                            plan,
+                            registry,
+                            compilers,
+                        ));
+                    }
+                }
             }
             out
         })
         .collect();
+    results.extend(provenance_refusals);
 
     info!(
         candidates = candidates.len(),
@@ -2131,6 +2438,7 @@ mod tests {
                     "kind": "contract",
                     "contractName": name,
                     "inv": inv,
+                    "proofirProvenance": proofir_provenance("Stated"),
                 }
             }
         });
@@ -2170,11 +2478,52 @@ mod tests {
     fn implies(a: Json, b: Json) -> Json {
         json!({"kind":"implies","operands":[a,b]})
     }
-    fn insert_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
+    fn proofir_provenance(kind: &str) -> Json {
+        let warrant = match kind {
+            "Stated" => json!({
+                "kind": "Stated",
+                "locus": {"path": "tests/consistency.rs", "line": 1, "column": 0}
+            }),
+            "Derived" => json!({
+                "kind": "Derived",
+                "floorChain": ["tests/consistency-floor"]
+            }),
+            other => panic!("unknown test proofir provenance kind {other}"),
+        };
+        json!({
+            "kind": "proofir-provenance",
+            "nodeClass": "EqualityFact",
+            "constructionSite": {"path": "tests/consistency.rs", "line": 1, "column": 0},
+            "warrants": [warrant]
+        })
+    }
+
+    fn insert_contract_with_provenance(
+        pool: &mut MementoPool,
+        cid: &str,
+        name: &str,
+        inv: Json,
+        provenance_kind: &str,
+    ) {
         let env = json!({
-            "envelope": { "header": { "kind": "contract", "contractName": name, "inv": inv } }
+            "envelope": {
+                "header": {
+                    "kind": "contract",
+                    "contractName": name,
+                    "inv": inv,
+                    "proofirProvenance": proofir_provenance(provenance_kind)
+                }
+            }
         });
         pool.insert_unanchored_for_tests(test_cid(cid), env);
+    }
+
+    fn insert_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
+        insert_contract_with_provenance(pool, cid, name, inv, "Stated");
+    }
+
+    fn insert_derived_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
+        insert_contract_with_provenance(pool, cid, name, inv, "Derived");
     }
 
     fn unique_temp_dir(label: &str) -> std::path::PathBuf {
@@ -2930,12 +3279,121 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_minted_stated_ground_callsite_fact_does_not_mutually_corroborate() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let stated_inv = json!({"kind":"and","operands":[eqf(calla, int(10))]});
+        let name = "src/lib.rs::tests::test_a::A#euf#c:call:A()::assertion";
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-lie-copy-a",
+            name,
+            stated_inv.clone(),
+        );
+        insert_contract(&mut pool, "blake3-512:stated-lie-copy-b", name, stated_inv);
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(
+            res.len(),
+            1,
+            "duplicate same-name stated rows coalesce: {res:?}"
+        );
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "duplicate stated mementos are still one stated warrant, not an \
+             independent-kind witness: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("independent-KIND"),
+            "refusal must name the missing independent-KIND witness: {}",
+            res[0].reason
+        );
+    }
+
+    #[test]
+    fn same_stated_ground_callsite_fact_under_distinct_names_does_not_replay_as_independent_kind() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let stated_inv = json!({"kind":"and","operands":[eqf(calla, int(10))]});
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:ambient-stated-copy-a",
+            "src/lib.rs::tests::test_a::A#euf#c:call:A()::assertion",
+            stated_inv.clone(),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:ambient-stated-copy-b",
+            "src/lib.rs::tests::test_a::B#euf#c:call:A()::assertion",
+            stated_inv,
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 2, "distinct names stay distinct rows: {res:?}");
+        for row in &res {
+            assert_eq!(
+                row.verdict,
+                ObligationVerdict::Refused,
+                "same-kind ambient replay must not corroborate row {row:?}"
+            );
+            assert!(
+                row.reason.contains("independent-KIND"),
+                "ambient same-kind refusal must name the missing witness kind: {}",
+                row.reason
+            );
+        }
+    }
+
+    #[test]
+    fn different_stated_ground_callsite_facts_still_refute() {
+        let (plan, reg) = z3_plan_and_registry();
+        let calla = json!({"kind":"ctor","name":"call:A","args":[]});
+        let name = "src/lib.rs::tests::test_a::A#euf#c:call:A()::assertion";
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-a-is-ten",
+            name,
+            json!({"kind":"and","operands":[eqf(calla.clone(), int(10))]}),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:stated-a-is-eleven",
+            name,
+            json!({"kind":"and","operands":[eqf(calla, int(11))]}),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(
+            res.len(),
+            1,
+            "different stated values collapse to one contradiction row: {res:?}"
+        );
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "kind filtering must not hide genuine same-callsite contradictions: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("contradictory"),
+            "reason must still name contradiction, got: {}",
+            res[0].reason
+        );
+    }
+
+    #[test]
     fn ambient_ground_callsite_fact_from_independent_memento_witnesses_truthful_claim() {
         let (plan, reg) = z3_plan_and_registry();
         let calla = json!({"kind":"ctor","name":"call:A","args":[]});
 
         let mut pool = MementoPool::default();
-        insert_contract(
+        insert_derived_contract(
             &mut pool,
             "blake3-512:derived-callsite",
             "src/lib.rs::tests::test_a::derived#euf#c:call:A()::replay",
@@ -3675,6 +4133,7 @@ mod tests {
                     "contractName": "rust-source::contradictory_universe",
                     "inv": eqf(var("out"), int(5)),
                     "post": eqf(var("out"), int(6)),
+                    "proofirProvenance": proofir_provenance("Stated"),
                 }
             }
         });
