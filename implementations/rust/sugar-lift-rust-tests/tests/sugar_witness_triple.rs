@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 106;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 99;
+const EXPECTED_SEED_CLAIMS: usize = 107;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 98;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -187,11 +187,6 @@ const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
         detail: "match-scrutinee carrier facts need owner-aligned pattern witness machinery",
     },
     PendingResidual {
-        claim: "constraint_matches_macro",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family b: macro-expansion shape semantic lie remains SAT",
-    },
-    PendingResidual {
         claim: "constraint_relation_macro",
         class: PendingResidualClass::ReasonedBucket,
         detail: "owner-mismatch macro row: relation witnesses dispatch through assertion-surface owners",
@@ -215,11 +210,6 @@ const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
         claim: "dormant_mut_ref",
         class: PendingResidualClass::ReasonedBucket,
         detail: "mutable alias state; needs temporal/mutable-reference witness machinery",
-    },
-    PendingResidual {
-        claim: "field_term",
-        class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family a: field projection semantic lie remains SAT",
     },
     PendingResidual {
         claim: "flat_map",
@@ -534,7 +524,7 @@ const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
     PendingResidual {
         claim: "vec_macro",
         class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family b/f: vec macro collection-shape semantic lie remains SAT",
+        detail: "#3415 family b/f: direct vec equality lie fixed via aggregate decomposition (#3430); nested/non-direct vec shapes still SAT; enrollment blocked on owner-correct Pair shape",
     },
     PendingResidual {
         claim: "write_macro",
@@ -1333,6 +1323,7 @@ fn s9_batch3_pairs_match_real_rust_semantics() {
         "integer_decode_tuple_producer",
         "memchr",
         "macro_term",
+        "constraint_matches_macro",
         "control_flow_term",
         "conditional",
         "match_node",

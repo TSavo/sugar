@@ -11,7 +11,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
-    callsite_assertion_name, lit_membership_term, strict_variant_path, token_key, wrapped_variant,
+    callsite_assertion_name, lit_membership_term, strict_variant_path, token_key,
     AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, eq, str_const, Formula, Term};
@@ -21,7 +21,20 @@ use syn::{Expr, ExprMacro, Pat, Token};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_matches_macro",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_matches_macro_good() {
+                assert!(matches!(Some(2_i32), Some(2_i32)));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_matches_macro_bad() {
+                assert!(matches!(Some(2_i32), Some(3_i32)));
+            }
+        "#,
+    ),
     recognize,
 );
 
@@ -82,22 +95,66 @@ fn pattern_atom(subject: &Rc<Term>, pattern: &Pat) -> Option<Rc<Formula>> {
     if let Some(variant) = strict_variant_path(pattern) {
         return Some(variant_atom(subject.clone(), &variant));
     }
-    if let Some((wrapper, inner)) = wrapped_variant(pattern) {
-        return Some(wrapped_variant_atom(subject, &wrapper, inner.as_deref()));
+    if let Some(atom) = wrapped_variant_pattern_atom(subject, pattern) {
+        return Some(atom);
     }
     tuple_pattern_atom(subject, pattern)
 }
 
-fn wrapped_variant_atom(subject: &Rc<Term>, wrapper: &str, inner: Option<&str>) -> Rc<Formula> {
-    let outer = variant_atom(subject.clone(), wrapper);
-    let Some(inner_variant) = inner else {
-        return outer;
+fn wrapped_variant_pattern_atom(subject: &Rc<Term>, pattern: &Pat) -> Option<Rc<Formula>> {
+    let Pat::TupleStruct(tuple) = strip_pat_ref_paren(pattern) else {
+        return None;
     };
-    let payload = Rc::new(Term::Ctor {
+    if tuple.path.segments.len() != 1 || tuple.elems.len() != 1 {
+        return None;
+    }
+    let wrapper = tuple.path.segments[0].ident.to_string();
+    if !matches!(wrapper.as_str(), "Some" | "Ok" | "Err") {
+        return None;
+    }
+    let outer = variant_atom(subject.clone(), &wrapper);
+    let inner = strip_pat_ref_paren(&tuple.elems[0]);
+    if matches!(inner, Pat::Wild(_)) {
+        return Some(outer);
+    }
+    if let Some(inner_variant) = strict_variant_path(inner) {
+        let payload = payload_term(subject, &wrapper);
+        return Some(and_(vec![outer, variant_atom(payload, &inner_variant)]));
+    }
+    if let Pat::Lit(lit) = inner {
+        let payload = payload_term(subject, &wrapper);
+        return Some(and_(vec![
+            outer,
+            eq(payload, lit_membership_term(&lit.lit)?),
+        ]));
+    }
+    Some(outer)
+}
+
+fn payload_term(subject: &Rc<Term>, wrapper: &str) -> Rc<Term> {
+    if let Some(payload) = known_single_payload(subject, wrapper) {
+        return payload;
+    }
+    Rc::new(Term::Ctor {
         name: format!("payload:{wrapper}"),
         args: vec![subject.clone()],
-    });
-    and_(vec![outer, variant_atom(payload, inner_variant)])
+    })
+}
+
+fn known_single_payload(subject: &Rc<Term>, wrapper: &str) -> Option<Rc<Term>> {
+    let Term::Ctor { name, args } = subject.as_ref() else {
+        return None;
+    };
+    if args.len() != 1 {
+        return None;
+    }
+    let expected = match wrapper {
+        "Some" => "opt:some",
+        "Ok" => "res:ok",
+        "Err" => "res:err",
+        _ => return None,
+    };
+    (name == expected).then(|| Rc::clone(&args[0]))
 }
 
 fn tuple_pattern_atom(subject: &Rc<Term>, pattern: &Pat) -> Option<Rc<Formula>> {
