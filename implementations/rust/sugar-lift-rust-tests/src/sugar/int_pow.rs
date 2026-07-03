@@ -24,7 +24,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "int_pow",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_int_pow_good() {
+                assert_eq!(2u32.pow(3), 8);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_int_pow_bad() {
+                assert_eq!(2u32.pow(3), 9);
+            }
+        "#,
+    ),
     recognize,
 );
 

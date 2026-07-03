@@ -41,7 +41,20 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_or
     "constraint_char_literal_method",
     SugarRole::Constraint,
     &["constraint_string_predicate", "constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_constraint_char_literal_method_good() {
+                assert!('x'.is_ascii());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_constraint_char_literal_method_bad() {
+                assert!('x'.is_uppercase());
+            }
+        "#,
+    ),
     recognize_constraint,
 );
 

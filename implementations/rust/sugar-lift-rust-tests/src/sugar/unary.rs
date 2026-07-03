@@ -79,7 +79,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "unary",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_unary_good() {
+                    assert_eq!(-5, -5);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_unary_bad() {
+                    assert_eq!(-5, -6);
+                }
+            "#,
+        ),
         recognize,
     );
 

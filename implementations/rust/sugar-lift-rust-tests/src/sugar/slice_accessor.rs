@@ -29,7 +29,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "slice_accessor",
         &["iter_terminal", "method"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_slice_accessor_good() {
+                    assert_eq!([1, 2, 3].first(), Some(&1));
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_slice_accessor_bad() {
+                    assert_eq!([1, 2, 3].first(), Some(&2));
+                }
+            "#,
+        ),
         recognize,
     );
 

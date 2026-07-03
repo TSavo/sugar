@@ -23,7 +23,20 @@ use crate::{str_const, strip_refs_groups, token_key, Desugared, Effect, Outcome,
 pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "nonzero_new",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_nonzero_new_good() {
+                assert!(std::num::NonZeroU32::new(5).is_some());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_nonzero_new_bad() {
+                assert!(std::num::NonZeroU32::new(0).is_some());
+            }
+        "#,
+    ),
     recognize_new,
 );
 
@@ -37,7 +50,20 @@ pub(crate) const ASSOC_CONST_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "nonzero_get",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_nonzero_get_good() {
+                assert_eq!(std::num::NonZeroU32::new(5).unwrap().get(), 5);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_nonzero_get_bad() {
+                assert_eq!(std::num::NonZeroU32::new(5).unwrap().get(), 6);
+            }
+        "#,
+    ),
     recognize_get,
 );
 

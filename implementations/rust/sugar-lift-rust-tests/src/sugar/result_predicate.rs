@@ -32,7 +32,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "result_predicate",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_predicate_good() {
+                assert!(Ok::<i32, i32>(7).is_ok());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_predicate_bad() {
+                assert!(Err::<i32, i32>(7).is_ok());
+            }
+        "#,
+    ),
     recognize,
 );
 

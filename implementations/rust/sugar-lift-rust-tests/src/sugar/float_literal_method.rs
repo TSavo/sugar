@@ -21,7 +21,20 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "float_literal_method",
     &["primitive_int", "call", "method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_float_literal_method_good() {
+                assert_eq!(1.0_f32.to_bits(), 1_065_353_216u32);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_float_literal_method_bad() {
+                assert_eq!(1.0_f32.to_bits(), 0u32);
+            }
+        "#,
+    ),
     recognize,
 );
 

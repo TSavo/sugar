@@ -15,7 +15,20 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "to_string",
         &["method", "transparent_term"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_to_string_good() {
+                    assert_eq!(42.to_string(), "42");
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_to_string_bad() {
+                    assert_eq!(42.to_string(), "43");
+                }
+            "#,
+        ),
         recognize,
     );
 

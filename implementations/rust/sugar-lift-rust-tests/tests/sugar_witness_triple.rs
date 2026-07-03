@@ -10,10 +10,10 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 15;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 191;
+const EXPECTED_SEED_CLAIMS: usize = 45;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 160;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
-const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 3;
+const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
 
 #[derive(Clone, Copy)]
@@ -639,6 +639,58 @@ fn seed_witnesses_satisfy_the_triple() {
 fn corrected_s8_pairs_match_real_rust_semantics() {
     let witnesses = seed_witnesses();
     for claim in ["const_item", "return_sugar"] {
+        let witness = witnesses
+            .iter()
+            .find(|witness| witness.claim == claim)
+            .unwrap_or_else(|| panic!("{claim} must be enrolled as a seed witness"));
+        let truthful = run_rust_test_source(claim, "truthful", witness.truthful);
+        let lying = run_rust_test_source(claim, "lying", witness.lying);
+        println!(
+            "ground-truth Rust semantics: {claim}/truthful={} {claim}/lying={}",
+            if truthful { "PASS" } else { "FAIL" },
+            if lying { "PASS" } else { "FAIL" }
+        );
+        assert!(truthful, "{claim} truthful witness must pass as real Rust");
+        assert!(!lying, "{claim} lying witness must fail as real Rust");
+    }
+}
+
+#[test]
+fn s9_batch1_pairs_match_real_rust_semantics() {
+    let witnesses = seed_witnesses();
+    let claims = [
+        "term_literal",
+        "const_block",
+        "const",
+        "binop",
+        "bv_binop",
+        "constraint_bool_bitwise",
+        "unary",
+        "wrapping_neg",
+        "int_pow",
+        "int_sqrt",
+        "cast_term",
+        "option_predicate",
+        "result_predicate",
+        "option_unwrap",
+        "is_empty",
+        "is_sorted",
+        "str_method",
+        "to_string",
+        "constraint_string_predicate",
+        "constraint_char_literal_method",
+        "slice_accessor",
+        "slice_search",
+        "range_accessor",
+        "sizeof",
+        "offset_of",
+        "duration_value",
+        "into",
+        "nonzero_new",
+        "nonzero_get",
+        "float_literal_method",
+    ];
+    for claim in claims {
         let witness = witnesses
             .iter()
             .find(|witness| witness.claim == claim)

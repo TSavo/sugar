@@ -21,7 +21,20 @@ use crate::{const_fold_int_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "int_sqrt",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_int_sqrt_good() {
+                assert_eq!(16u32.isqrt(), 4);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_int_sqrt_bad() {
+                assert_eq!(16u32.isqrt(), 5);
+            }
+        "#,
+    ),
     recognize,
 );
 

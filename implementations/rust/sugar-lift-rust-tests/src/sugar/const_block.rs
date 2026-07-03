@@ -15,7 +15,20 @@ use syn::{Expr, Stmt};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "const_block",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_const_block_good() {
+                    assert_eq!(const { 1 + 1 }, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_const_block_bad() {
+                    assert_eq!(const { 1 + 1 }, 3);
+                }
+            "#,
+        ),
         recognize,
     );
 

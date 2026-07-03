@@ -43,7 +43,20 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "is_empty",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_is_empty_good() {
+                assert!((5..5).is_empty());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_is_empty_bad() {
+                assert!((0..5).is_empty());
+            }
+        "#,
+    ),
     recognize,
 );
 

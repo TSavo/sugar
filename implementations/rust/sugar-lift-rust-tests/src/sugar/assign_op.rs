@@ -26,7 +26,11 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "temporal_assign_op",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_opt_out(
+        "TemporalFloor",
+        "compound assignment rewrites are temporal support: the statement mutates the later read, not a standalone verdict-bearing assertion",
+        "until stmt-position assertion anchoring is wired for guarded temporal rewrite blocks",
+    ),
     recognize,
 );
 

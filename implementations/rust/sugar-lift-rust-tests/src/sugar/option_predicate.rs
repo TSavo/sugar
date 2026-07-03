@@ -30,7 +30,20 @@ use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "option_predicate",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_predicate_good() {
+                assert!(Some(7).is_some());
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_predicate_bad() {
+                assert!(None::<i32>.is_some());
+            }
+        "#,
+    ),
     recognize,
 );
 

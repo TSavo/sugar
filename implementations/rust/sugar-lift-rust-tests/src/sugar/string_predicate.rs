@@ -20,7 +20,20 @@ use syn::{Expr, ExprLit, Lit};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_string_predicate",
     SugarRole::Constraint,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_string_predicate_good() {
+                assert!("hello".starts_with("he"));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_string_predicate_bad() {
+                assert!("hello".starts_with("zz"));
+            }
+        "#,
+    ),
     recognize,
 );
 
