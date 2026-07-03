@@ -120,12 +120,7 @@ load-bearing statements, quoted:
    definitions — `cond → X_next == X_if` and `¬cond → X_next == X_else`. This is
    SSA's phi node dissolved into FOL: occurrence-renaming IS the SSA rename pass;
    the join needs no special instruction because the universe already has
-   implication. **Bearing on the held AST-vs-LLBC decision:** MIR/LLBC is already
-   in SSA-ish guarded-region form — the differential test (same source, both
-   paths, same pinned FOL) is two derivations of the same renaming; the AST-side
-   floor is checkable against LLBC nearly for free, OR LLBC is the cheaper seat
-   with the AST floor as its sugar-facing view. Held for T; the comparison is now
-   precise.
+   implication.
 
 7a. **The doorway choice is a soundness decision — map over a callsite is a CURRY**
    (T, 2026-07-03: *"What's the temporal floor of map over a callsite? It's a
@@ -172,11 +167,16 @@ The issue's Python-port framing maps onto this design rather than competing with
   point forward), closures = **curry** (scope-captured floor values riding inside the
   clever object). BoundVar scope-captured lazy aliasing (`x = x + 1` terminates by
   construction) rides on #3017 item 4.
-- **ARCHITECT DECISION REQUIRED IN-PHASE (unchanged from the issue, held for T):**
-  the AST-lift vs LLBC/MIR seam. The temporal floor likely owns the AST side, with
-  the LLBC side proving equivalence via differential test (same source, both paths,
-  same pinned FOL). This decision gates S3+ drains that would commit to a seam; S1
-  and S2 are seam-neutral. Do not assume it — flag to the coordinator when reached.
+- **SEAM DECISION — RESOLVED BY T (2026-07-03): there is no LLBC/MIR seam.** The
+  "AST-lift vs LLBC/MIR" question was contamination from an earlier agent-written
+  plan (2026-07-01 rust-spine plan), propagated into #3026 and here; T rejected it
+  on sight. The temporal floor lives on the AST side, full stop — the sugar must
+  still be standing for floors to dispatch (LLBC is post-desugar), and a second
+  lift path is a SECOND REPRESENTATION (the crime), regardless of whose compiler
+  produces it. Charon/LLBC is a third-party tool: out of scope by the catalog law.
+  The floor's correctness is witnessed the same way as everything else in this
+  system: witnesses through the production pipeline, counted compositions of the
+  REAL stdlib, byte/CID discipline — never a parallel model to agree with.
 
 ### Addendum — the iter floor is the foundational membership (T Savo, 2026-07-03)
 
@@ -466,7 +466,7 @@ with witness pairs whose lying counts go UNSAT through the production pipeline;
 `R(uncounted-composition-paths) = 0` gate-armed; occurrence-renaming deterministic
 under replay (CID-stable); the OUT boundary manifest'd; every operation floor landed
 with one lawful implementation and its membership set (the dispatch matrix dissolved,
-#3061 cited); byte-drift 0 throughout; and the AST-vs-LLBC seam decision made BY T on
+#3061 cited); byte-drift 0 throughout; and the no-second-lift-path law (T, 2026-07-03: no LLBC/MIR seam exists) held on
 the record (not assumed by a worker). The closure clause, verbatim shape: **one door
 (all values through the floor), one owner per operation (the floor does the right
 thing once), membership by standing, embedding as the only per-sort code.** And the
