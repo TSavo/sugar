@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula, and_, or_
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import boolop_assertion_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -21,6 +22,10 @@ class BoolOpAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             return False
         test = site.assert_test()
         return test.observed == "BoolOp" and test.boolop_op_kind() in {"and", "or"}
+
+    @classmethod
+    def witnesses(cls):
+        return boolop_assertion_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "BoolOpAssertionSugar":

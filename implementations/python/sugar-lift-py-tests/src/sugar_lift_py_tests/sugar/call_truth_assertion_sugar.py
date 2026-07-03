@@ -9,6 +9,7 @@ from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.object_truthiness import object_truth_formula
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witness_examples import call_truth_assertion_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -30,6 +31,10 @@ class CallTruthAssertionSugar(Sugar, role=SugarRole.ASSERTION):
         if test.call_target_name() == "isinstance":
             return False
         return can_symbolic_term(test)
+
+    @classmethod
+    def witnesses(cls):
+        return call_truth_assertion_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "CallTruthAssertionSugar":

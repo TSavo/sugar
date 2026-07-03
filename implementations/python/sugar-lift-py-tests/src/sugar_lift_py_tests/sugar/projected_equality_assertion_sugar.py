@@ -7,6 +7,9 @@ from sugar_lift_py_tests.ir import Formula, eq
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import (
+    projected_equality_assertion_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -38,6 +41,10 @@ class ProjectedEqualityAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             left=ctx.build_body(test.compare_left(), SugarRole.TERM),
             right=ctx.build_body(test.compare_comparators()[0], SugarRole.TERM),
         )
+
+    @classmethod
+    def witnesses(cls):
+        return projected_equality_assertion_witness()
 
     def assertion_formula(self, ctx) -> Formula:
         return eq(

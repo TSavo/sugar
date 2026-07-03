@@ -31,11 +31,18 @@ class WitnessPipelineResult:
     @property
     def selected_sugars(self) -> tuple[str, ...]:
         walk = self.lift_doc.get("factoryAuditSummary", {}).get("factoryWalk", [])
-        return tuple(
-            row["selected"]
-            for row in walk
-            if isinstance(row, dict) and isinstance(row.get("selected"), str)
-        )
+        audits = self.lift_doc.get("factoryAudits", [])
+        selected: list[str] = []
+        seen: set[str] = set()
+        for row in [*walk, *audits]:
+            if not isinstance(row, dict) or not isinstance(row.get("selected"), str):
+                continue
+            name = row["selected"]
+            if name in seen:
+                continue
+            seen.add(name)
+            selected.append(name)
+        return tuple(selected)
 
     @property
     def proofir_emitted(self) -> bool:

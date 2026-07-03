@@ -262,6 +262,7 @@ def build_literal_call_report(
     contracts: list[Any] = []
     source_mementos: list[SourceMementoDto] = []
     source_audits: list[dict[str, Any]] = []
+    factory_audits: list[Any] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
     dig_refusals: list[DigRefusal] = []
@@ -306,6 +307,7 @@ def build_literal_call_report(
                 module_statements=module_statements,
                 dig_refusals=dig_refusals,
                 agreement_violations=agreement_violations,
+                factory_audits=factory_audits,
             )
             # _lift_assert never returns None now: it lifts the assert or PANICS
             # (FactoryGap). A silent skip here would be the cardinal crime.
@@ -331,6 +333,7 @@ def build_literal_call_report(
             source_mementos=memento_payload,
             source_ledger=_source_ledger(len(source_audits)),
             source_audits=source_audits,
+            factory_audits=factory_audits,
             factory_walk=walk_payload,
             call_edges=call_edges,
             diagnostics=[
@@ -400,6 +403,7 @@ def _lift_assert(
     module_statements: list[SourceFragment],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
+    factory_audits: list[Any],
 ) -> LiftResult:
     """One mechanism. An assertion `callee(args) == expected` is a fact -- a debt on
     `callee` -- and it WARRANTS a dig for `callee`'s contract.
@@ -427,6 +431,7 @@ def _lift_assert(
         from_imports=from_imports,
         contract_bindings=contract_bindings,
         module_statements=module_statements,
+        factory_audits=factory_audits,
     )
     if assertion_sugar is not None:
         return assertion_sugar
@@ -485,6 +490,7 @@ def _lift_assert(
             from_imports=from_imports,
             contract_bindings=contract_bindings,
             module_statements=module_statements,
+            factory_audits=factory_audits,
         ),
     )
 
@@ -504,6 +510,7 @@ def _lift_assert(
             source_lines=source_lines,
             dig_refusals=dig_refusals,
             agreement_violations=agreement_violations,
+            factory_audits=factory_audits,
         )
     return _merge_lifts(universe, assertion)
 
@@ -521,6 +528,7 @@ def _lift_assertion_via_factory(
     from_imports: dict[str, tuple[str, str]],
     contract_bindings: list,
     module_statements: list[SourceFragment],
+    factory_audits: list[Any],
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
 
@@ -537,6 +545,7 @@ def _lift_assertion_via_factory(
         contract_bindings=contract_bindings,
         module_statements=module_statements,
         external_bridge_sink=external_bridge_sink,
+        factory_audits=factory_audits,
     )
     if _is_simple_bound_name_equality(
         stmt, _prior_assignment_names(module_statements, fn, stmt)
@@ -611,6 +620,7 @@ def _assertion_factory_ctx(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     external_bridge_sink: list[dict[str, Any]] | None = None,
+    factory_audits: list[Any] | None = None,
 ) -> FactoryBuildContext:
     from .build import default_catalog
 
@@ -622,6 +632,7 @@ def _assertion_factory_ctx(
         from_imports=from_imports,
         contract_bindings=contract_bindings,
         external_bridge_sink=external_bridge_sink,
+        audit_sink=factory_audits,
     )
     ctx = _ctx_with_function_params(fn, ctx)
     return _ctx_with_prior_assignments(module_statements, fn, stmt, ctx)
@@ -1204,6 +1215,7 @@ def _construct_callsite_from_factory_term(
     source_lines: list[str],
     dig_refusals: list[DigRefusal],
     agreement_violations: list[FloorContractAgreementViolation],
+    factory_audits: list[Any],
 ) -> LiftResult:
     """Construct floor facts by reading the factory's CallSiteValue term.
 
@@ -1227,6 +1239,7 @@ def _construct_callsite_from_factory_term(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        audit_sink=factory_audits,
     )
     sink: list[tuple[str, FloorValue]] = []
     reduce_ctx = ReduceContext.root(
@@ -1254,6 +1267,7 @@ def _construct_callsite_from_factory_term(
             memento_file=memento_file,
             source_lines=source_lines,
             dig_refusals=dig_refusals,
+            factory_audits=factory_audits,
         )
         if uni is None:
             return
@@ -1551,6 +1565,7 @@ def _function_universe(
     memento_file: str,
     source_lines: list[str],
     dig_refusals: list[DigRefusal],
+    factory_audits: list[Any],
 ) -> LiftResult | None:
     """The `::callable` universe for ONE resolved function, walked from its DEFINITION.
 
@@ -1570,6 +1585,7 @@ def _function_universe(
         filename=filename,
         catalog=default_catalog(),
         name_resolver=_resolver_nodes(functions_by_name, classes_by_name),
+        audit_sink=factory_audits,
     )
     try:
         universe_sugar = build_control_flow_body_sugar(callee, build_ctx)

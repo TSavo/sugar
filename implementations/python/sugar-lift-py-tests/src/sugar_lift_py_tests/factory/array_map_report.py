@@ -44,6 +44,7 @@ def build_array_map_report(
     contracts: list[BodyUniverseDto] = []
     source_mementos: list[SourceMementoDto] = []
     source_audits: list[dict[str, Any]] = []
+    factory_audits: list[Any] = []
     factory_walk: list[FactoryWalkRowDto] = []
     call_edges: list[dict[str, Any]] = []
     functions_by_name = {
@@ -62,6 +63,7 @@ def build_array_map_report(
                 memento_file=memento_file or filename,
                 source_lines=lines,
                 functions_by_name=functions_by_name,
+                factory_audits=factory_audits,
             )
             if lifted is None:
                 continue
@@ -85,6 +87,7 @@ def build_array_map_report(
             source_mementos=memento_payload,
             source_ledger=_source_ledger(len(source_audits)),
             source_audits=source_audits,
+            factory_audits=factory_audits,
             factory_walk=walk_payload,
             call_edges=call_edges,
         )
@@ -99,6 +102,7 @@ def _lift_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    factory_audits: list[Any],
 ) -> (
     tuple[
         list[BodyUniverseDto],
@@ -124,6 +128,7 @@ def _lift_assert(
         filename=filename,
         memento_file=memento_file,
         source_lines=source_lines,
+        factory_audits=factory_audits,
     )
     if lifted is not None:
         return lifted
@@ -135,6 +140,7 @@ def _lift_assert(
         memento_file=memento_file,
         source_lines=source_lines,
         functions_by_name=functions_by_name,
+        factory_audits=factory_audits,
     )
 
 
@@ -146,6 +152,7 @@ def _lift_fluent_array_map_assert(
     filename: str,
     memento_file: str,
     source_lines: list[str],
+    factory_audits: list[Any],
 ) -> (
     tuple[
         list[BodyUniverseDto],
@@ -164,7 +171,11 @@ def _lift_fluent_array_map_assert(
         and call.call_arg_count() == 1
     ):
         return None
-    factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
+    factory_ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=_array_map_catalog(),
+        audit_sink=factory_audits,
+    )
     receiver = factory_ctx.build_body(call.call_receiver(), SugarRole.TERM)
     if not isinstance(receiver.sugar, ArrayLiteralSugar):
         return None
@@ -251,6 +262,7 @@ def _lift_native_list_map_assert(
     memento_file: str,
     source_lines: list[str],
     functions_by_name: dict[str, SourceFragment],
+    factory_audits: list[Any],
 ) -> (
     tuple[
         list[BodyUniverseDto],
@@ -266,7 +278,11 @@ def _lift_native_list_map_assert(
     list_sugar_value = list_sugar(left_frag, functions_by_name, blame=blame)
     if list_sugar_value is None:
         return None
-    factory_ctx = FactoryBuildContext(filename=filename, catalog=_array_map_catalog())
+    factory_ctx = FactoryBuildContext(
+        filename=filename,
+        catalog=_array_map_catalog(),
+        audit_sink=factory_audits,
+    )
     expected_sugar = _array_literal_sugar(
         comparison.compare_comparators()[0], factory_ctx
     )

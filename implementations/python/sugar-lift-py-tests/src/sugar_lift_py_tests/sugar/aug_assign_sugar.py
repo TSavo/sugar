@@ -10,6 +10,7 @@ from sugar_lift_py_tests.operations import (
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import aug_assign_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _INPLACE_SYMBOL: dict[str, str] = {
@@ -43,6 +44,10 @@ class AugAssignSugar(Sugar, role=SugarRole.STATEMENT):
             and fragment.aug_assign_target().observed == "Name"
             and fragment.aug_assign_op() in _INPLACE_SYMBOL
         )
+
+    @classmethod
+    def witnesses(cls):
+        return aug_assign_return_witness()
 
     @classmethod
     def build(cls, fragment, ctx):

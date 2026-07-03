@@ -19,6 +19,7 @@ from sugar_lift_py_tests.outcome import (
     complete_value,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import block_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.temporal import bind_temporal
 
@@ -46,6 +47,10 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Block"
+
+    @classmethod
+    def witnesses(cls):
+        return block_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "BlockSugar":

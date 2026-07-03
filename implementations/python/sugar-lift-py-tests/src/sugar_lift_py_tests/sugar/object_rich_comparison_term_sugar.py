@@ -9,6 +9,9 @@ from sugar_lift_py_tests.operations.object_method_call import call_object_method
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import (
+    object_rich_compare_return_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _RICH_COMPARISON_DUNDERS: dict[str, str] = {
@@ -49,6 +52,10 @@ class ObjectRichComparisonTermSugar(Sugar, role=SugarRole.TERM):
             right=ctx.build_body(site.compare_comparators()[0], SugarRole.TERM),
             blame=site.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return object_rich_compare_return_witness()
 
     def desugar(self, ctx) -> Outcome:
         left_outcome = self.left.reduce(ctx)

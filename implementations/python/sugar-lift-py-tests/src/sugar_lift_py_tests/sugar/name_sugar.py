@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import name_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -24,6 +25,10 @@ class NameSugar(Sugar, role=SugarRole.TERM):
         if sugar is None:
             raise TypeError("NameSugar claim built a non-name")
         return sugar
+
+    @classmethod
+    def witnesses(cls):
+        return name_return_witness()
 
     @classmethod
     def _from_site(cls, site, ctx) -> "NameSugar | None":

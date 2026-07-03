@@ -9,6 +9,7 @@ from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, real_lit, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import constant_bytes_return_witness
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,10 @@ class ConstantSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return cls.from_site(site) is not None
+
+    @classmethod
+    def witnesses(cls):
+        return constant_bytes_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "ConstantSugar":

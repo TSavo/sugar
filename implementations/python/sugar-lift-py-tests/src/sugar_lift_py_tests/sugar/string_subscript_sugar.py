@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.operations import SubscriptOperation, perform_operation
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import string_subscript_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -43,6 +44,10 @@ class StringSubscriptSugar(Sugar, role=SugarRole.TERM):
         if sugar is None:
             raise TypeError("StringSubscriptSugar claim built a non-subscript")
         return sugar
+
+    @classmethod
+    def witnesses(cls):
+        return string_subscript_return_witness()
 
     @classmethod
     def from_site(

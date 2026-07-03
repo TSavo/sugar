@@ -7,6 +7,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import raise_try_return_witness
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,10 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
             exception_name=_exception_name(terms[0]) if terms else None,
             blame=fragment.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return raise_try_return_witness()
 
     def desugar(self, ctx=None) -> Outcome:
         return Complete(

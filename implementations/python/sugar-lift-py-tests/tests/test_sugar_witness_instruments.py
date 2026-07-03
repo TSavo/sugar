@@ -29,33 +29,82 @@ from sugar_lift_py_tests.witness_harness import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-EXPECTED_UNENROLLED_SUGARS = 42
-EXPECTED_SEED_CASES = 19
-EXPECTED_SEED_OWNER_COUNT = 7
+EXPECTED_UNENROLLED_SUGARS = 8
+EXPECTED_SEED_CASES = 53
+EXPECTED_SEED_OWNER_COUNT = 41
 # #3303-class residue: display-conversion callsites currently emit only the
 # stated assertion, so the lying witness remains SAT until a derived fact lands.
-EXPECTED_TRIPLE_FAILURES = 1
+EXPECTED_TRIPLE_FAILURES = 14
 EXPECTED_MIGRATED_SEED_NAMES = {
+    "add_method_return",
+    "assign_return",
     "array_literal_map_method",
+    "attribute_return",
+    "aug_assign_return",
+    "binop_return",
+    "block_return",
+    "boolop_assertion_literal",
+    "builder_ctor_len_return",
+    "builtin_len_return",
     "builtin_divmod_callsite",
     "builtin_hash_callsite",
     "builtin_len_callsite",
+    "call_truth_assertion_boolop",
     "chained_comparison_literal",
+    "comparison_assertion_boolop",
+    "constant_bytes_return",
+    "divmod_subscript_return",
+    "format_int_return",
+    "identity_assertion_boolop",
+    "if_return",
+    "isinstance_assertion_boolop",
     "lambda_map_method",
+    "membership_assertion_boolop",
+    "name_return",
+    "not_assertion_boolop",
     "slice_callsite",
     "literal_call_return",
     "map_method",
     "object_call_slot_callsite",
     "object_display_conversion_callsite",
+    "object_equality_return",
     "object_getitem_callsite",
     "object_next_callsite",
+    "object_rich_compare_return",
     "object_rich_compare_callsite",
+    "primitive_literal_return",
+    "projected_equality_assertion_boolop",
+    "raise_try_return",
+    "slice_string_return",
+    "string_subscript_return",
+    "to_list_len_return",
     "try_body",
     "try_except_raise",
     "try_finally_inert",
     "try_finally_override",
+    "truthy_assertion_boolop",
+    "tuple_assign_return",
+    "tuple_literal_subscript_return",
+    "tuple_unpack_assign_return",
+    "unary_op_return",
+    "with_return",
 }
-EXPECTED_PINNED_FAILURE_SEED_NAMES = {"object_display_conversion_callsite"}
+EXPECTED_PINNED_FAILURE_SEED_NAMES = {
+    "builder_ctor_len_return",
+    "builtin_len_return",
+    "call_truth_assertion_boolop",
+    "constant_bytes_return",
+    "divmod_subscript_return",
+    "format_int_return",
+    "isinstance_assertion_boolop",
+    "object_display_conversion_callsite",
+    "object_equality_return",
+    "object_rich_compare_return",
+    "to_list_len_return",
+    "truthy_assertion_boolop",
+    "tuple_literal_subscript_return",
+    "tuple_unpack_assign_return",
+}
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
     "CommentSugar",
@@ -84,9 +133,18 @@ def test_sugar_witness_enrollment_auditor_pins_catalog_baseline() -> None:
     assert "LambdaSugar" not in by_name
     assert "MapSugar" not in by_name
     assert "ChainedComparisonAssertionSugar" not in by_name
+    assert "AddSugar" not in by_name
+    assert "ProjectedEqualityAssertionSugar" not in by_name
+    assert "TupleUnpackAssignSugar" not in by_name
     assert not (EXPECTED_OPT_OUT_SUGARS & set(by_name))
-    assert by_name["ProjectedEqualityAssertionSugar"].role == "assertion"
-    assert by_name["AddSugar"].role == "term"
+    assert by_name["AsyncForSugar"].role == "statement"
+    assert by_name["AsyncWithSugar"].role == "statement"
+    assert by_name["AttributeAssignSugar"].role == "statement"
+    assert by_name["AttributeDeleteSugar"].role == "statement"
+    assert by_name["AwaitSugar"].role == "term"
+    assert by_name["BitwiseOpSugar"].role == "term"
+    assert by_name["ListLiteralSugar"].role == "term"
+    assert by_name["OrdByteSugar"].role == "term"
 
 
 def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
@@ -176,7 +234,20 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
         )
         for failure in seed_report.triple_failures
     ] == [
+        ("builder_ctor_len_return", "lying", "verdict", "unsat", "sat"),
+        ("builtin_len_return", "lying", "verdict", "unsat", "sat"),
+        ("call_truth_assertion_boolop", "lying", "verdict", "unsat", "sat"),
+        ("constant_bytes_return", "lying", "verdict", "unsat", "sat"),
+        ("divmod_subscript_return", "lying", "verdict", "unsat", "sat"),
+        ("format_int_return", "lying", "verdict", "unsat", "sat"),
+        ("isinstance_assertion_boolop", "lying", "verdict", "unsat", "sat"),
         ("object_display_conversion_callsite", "lying", "verdict", "unsat", "sat"),
+        ("object_equality_return", "lying", "verdict", "unsat", "sat"),
+        ("object_rich_compare_return", "lying", "verdict", "unsat", "sat"),
+        ("to_list_len_return", "lying", "verdict", "unsat", "sat"),
+        ("truthy_assertion_boolop", "lying", "verdict", "unsat", "sat"),
+        ("tuple_literal_subscript_return", "lying", "verdict", "unsat", "sat"),
+        ("tuple_unpack_assign_return", "lying", "verdict", "unsat", "sat"),
     ]
     assert seed_report.non_circularity_failures == ()
 
@@ -306,7 +377,8 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     mismatch = report.non_circularity_failures[0]
     assert mismatch.seed == "slice_callsite"
     assert mismatch.expected_sugar == "TrySugar"
-    assert mismatch.selected_sugars == ("CallSugar", "CallSugar")
+    assert "CallSugar" in mismatch.selected_sugars
+    assert "TrySugar" not in mismatch.selected_sugars
     assert report.triple_failures[0].axis == "sugar-fired"
 
 
@@ -324,12 +396,12 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "non_fol_opt_out_drift": 0,
         "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
     }
-    assert "R(unenrolled-sugars): 42" in text
-    assert "R(witness-triples-failing): 1" in text
+    assert "R(unenrolled-sugars): 8" in text
+    assert "R(witness-triples-failing): 14" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "seed coverage: 19 seed cases, 7/53 catalog sugars" in text
-    assert "AddSugar (sugar_lift_py_tests.sugar.add_sugar)" in text
+    assert "seed coverage: 53 seed cases, 41/53 catalog sugars" in text
+    assert "AsyncForSugar (sugar_lift_py_tests.sugar.async_for_sugar)" in text
 
 
 def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
@@ -344,8 +416,8 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
 
     assert status == 1
     stdout = capsys.readouterr().out
-    assert "R(unenrolled-sugars): 42" in stdout
-    assert "R(witness-triples-failing): 1" in stdout
+    assert "R(unenrolled-sugars): 8" in stdout
+    assert "R(witness-triples-failing): 14" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
 
 

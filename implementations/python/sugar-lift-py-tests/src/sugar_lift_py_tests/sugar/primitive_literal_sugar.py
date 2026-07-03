@@ -7,6 +7,7 @@ from sugar_lift_py_tests.floor import BoolValue, StringValue, SymbolicValue, Ter
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import primitive_literal_return_witness
 
 PrimitiveValue = bool | int | float | str | None
 
@@ -25,6 +26,10 @@ class PrimitiveLiteralSugar(Sugar, role=SugarRole.TERM):
         if sugar is None:
             raise TypeError("PrimitiveLiteralSugar claim built a non-primitive literal")
         return sugar
+
+    @classmethod
+    def witnesses(cls):
+        return primitive_literal_return_witness()
 
     @classmethod
     def from_site(cls, site) -> "PrimitiveLiteralSugar | None":

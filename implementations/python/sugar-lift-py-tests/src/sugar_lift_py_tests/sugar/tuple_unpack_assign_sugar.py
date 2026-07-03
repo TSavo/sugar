@@ -7,6 +7,9 @@ from sugar_lift_py_tests.floor import BlockValue, BoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.tuple_unpack_projection import TupleUnpackProjection
+from sugar_lift_py_tests.sugar.witness_examples import (
+    tuple_unpack_assign_return_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -42,6 +45,10 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
             receiver=ctx.build_body(site.assign_value(), SugarRole.TERM),
             blame=site.blame,
         )
+
+    @classmethod
+    def witnesses(cls):
+        return tuple_unpack_assign_return_witness()
 
     def desugar(self, ctx) -> Outcome:
         return Complete(

@@ -9,6 +9,7 @@ from sugar_lift_py_tests.operations import AttributeLookupOperation, perform_ope
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.symbolic_term import can_symbolic_term, symbolic_term
+from sugar_lift_py_tests.sugar.witness_examples import attribute_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -23,6 +24,10 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "Attribute" and can_symbolic_term(site)
+
+    @classmethod
+    def witnesses(cls):
+        return attribute_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "AttributeSugar":

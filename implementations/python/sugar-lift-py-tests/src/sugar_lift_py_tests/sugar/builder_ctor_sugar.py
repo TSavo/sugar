@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ArrayLiteral, BuilderState
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import builder_ctor_len_return_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -17,6 +18,10 @@ class BuilderCtorSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     @classmethod
     def owns(cls, site) -> bool:
         return _is_builder_call(site)
+
+    @classmethod
+    def witnesses(cls):
+        return builder_ctor_len_return_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "BuilderCtorSugar":

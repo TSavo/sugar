@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula, Term, atomic, str_const
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witness_examples import isinstance_assertion_witness
 from sugar_lift_py_tests.sugar.symbolic_term import symbolic_term
 
 
@@ -26,6 +27,10 @@ class IsInstanceAssertionSugar(Sugar, role=SugarRole.ASSERTION):
             and not test.call_has_keywords()
             and test.call_arg_count() == 2
         )
+
+    @classmethod
+    def witnesses(cls):
+        return isinstance_assertion_witness()
 
     @classmethod
     def build(cls, site, ctx) -> "IsInstanceAssertionSugar":
