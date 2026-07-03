@@ -798,7 +798,7 @@ floor = "iter"
 member = "ArrayLiteral"
 provenance = "literal"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-tuple-literal"
@@ -806,7 +806,7 @@ floor = "iter"
 member = "TupleLiteral"
 provenance = "literal"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-string-literal-chars"
@@ -814,7 +814,7 @@ floor = "iter"
 member = "StringLiteral.chars"
 provenance = "literal"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-string-literal-bytes"
@@ -822,7 +822,7 @@ floor = "iter"
 member = "StringLiteral.bytes"
 provenance = "literal"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-range-literal"
@@ -830,7 +830,7 @@ floor = "iter"
 member = "RangeLiteral"
 provenance = "literal"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-map-output"
@@ -846,7 +846,7 @@ floor = "iter"
 member = "StatedCollection"
 provenance = "Stated"
 owner = "S2"
-status = "missing"
+status = "landed"
 
 [[embedding]]
 id = "iter-derived-collection"
@@ -854,4 +854,4 @@ floor = "iter"
 member = "DerivedCollection"
 provenance = "Derived"
 owner = "S2"
-status = "missing"
+status = "landed"

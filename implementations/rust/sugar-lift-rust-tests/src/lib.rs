@@ -221,6 +221,7 @@ pub mod sugar {
     pub mod symbolic_value;
     pub mod take;
     pub mod take_while;
+    pub mod temporal_floor;
     pub mod temporal_read;
     pub mod term_dispatch;
     pub mod term_leaf;
@@ -4693,14 +4694,12 @@ pub(crate) struct TemporalScope {
     plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
     ambiguous: BTreeSet<String>,
-    /// Per-statement count of CONSUMING reads (`next`/`nth`/...) seen so far for
-    /// each iterator binding. A consuming read ADVANCES the iterator, so two such
-    /// reads of the same binding WITHIN ONE statement (`assert_ne!(it.nth(0),
-    /// it.nth(0))`) observe distinct `t` and must not coalesce into `ne(X, X)`.
-    /// The version bump is per STATEMENT (between statements); this counter splits
-    /// per OCCURRENCE within a statement. Interior-mutable so it can advance while
-    /// term translation holds `&self`; reset to empty at each statement boundary.
-    consuming_occurrence: std::cell::RefCell<BTreeMap<String, usize>>,
+    /// Terminal aliasing authority for temporal rewrites. A consuming read
+    /// ADVANCES an iterator; two such reads of the same binding WITHIN ONE
+    /// statement (`assert_ne!(it.nth(0), it.nth(0))`) observe distinct `t` and
+    /// must not coalesce into `ne(X, X)`. The temporal floor owns that per-
+    /// occurrence split and is reset at each statement boundary.
+    temporal_floor: sugar::temporal_floor::TemporalFloor,
     /// In-scope LITERAL arrays captured from this block's `let <id> = [e0, e1, ..]`
     /// (and `Box::new([..])`), so a `.iter().all(|x| ..)` / `.any(..)` quantifier
     /// over a `let`-bound finite domain can resolve its receiver to the element
@@ -4813,7 +4812,7 @@ impl TemporalScope {
             plan,
             versions: BTreeMap::new(),
             ambiguous: BTreeSet::new(),
-            consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
+            temporal_floor: sugar::temporal_floor::TemporalFloor::default(),
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
             mutable_let_bindings: BTreeSet::new(),
@@ -5347,9 +5346,7 @@ impl TemporalScope {
             plan: self.plan.clone(),
             versions: self.versions.clone(),
             ambiguous: self.ambiguous.clone(),
-            consuming_occurrence: std::cell::RefCell::new(
-                self.consuming_occurrence.borrow().clone(),
-            ),
+            temporal_floor: self.temporal_floor.clone(),
             literal_arrays: self.literal_arrays.clone(),
             let_bindings: self.let_bindings.clone(),
             mutable_let_bindings: self.mutable_let_bindings.clone(),
@@ -5412,16 +5409,21 @@ impl TemporalScope {
         self.literal_arrays.get(name).map(Vec::as_slice)
     }
 
-    /// Record one CONSUMING read of iterator `name` in the current statement and
-    /// return how many such reads PRECEDED it (0 for the first). The caller appends
-    /// `@adv{n}` for n > 0 so the second-and-later reads in one statement are
-    /// distinct terms. `name` is the already-versioned receiver var (`it@def5`).
-    fn bump_consuming_occurrence(&self, name: &str) -> usize {
-        let mut map = self.consuming_occurrence.borrow_mut();
-        let count = map.entry(name.to_string()).or_insert(0);
-        let prior = *count;
-        *count += 1;
-        prior
+    pub(crate) fn temporal_curry_occurrence<'a>(
+        &self,
+        family: &'a str,
+        ordinal: usize,
+    ) -> sugar::temporal_floor::CurryOccurrence<'a> {
+        self.temporal_floor
+            .alias(sugar::temporal_floor::CurryDoorway::new(family, ordinal))
+            .unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    pub(crate) fn temporal_consuming_rewrite_alias(&self, name: &str) -> Option<String> {
+        self.temporal_floor
+            .alias(sugar::temporal_floor::ConsumingRewriteDoorway::new(name))
+            .unwrap_or_else(|err| panic!("{err}"))
+            .map(|alias| alias.into_name())
     }
 
     fn local_scope(&self) -> &str {
@@ -16704,7 +16706,7 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     // Per-occurrence consuming-read counters are statement-local: a new statement
     // starts fresh (cross-statement distinctness is already carried by the version
     // bump above).
-    scope.consuming_occurrence.borrow_mut().clear();
+    scope.temporal_floor.reset_statement();
 }
 
 fn record_const_expanded_temporal_rewrite_local(scope: &mut TemporalScope, local: &syn::Local) {

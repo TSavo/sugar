@@ -13,9 +13,7 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::method_family;
 use crate::sugar::sequence_floor::{sequence_elem_term_floor, sequence_value_term_floor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::term_dispatch::{
-    literal_array_term_from_terms, CurryOccurrence, CurryVisitor, TermFloorAccept,
-};
+use crate::sugar::term_dispatch::{literal_array_term_from_terms, CurryVisitor, TermFloorAccept};
 use crate::{
     const_eval, const_fold_int_term, curry_param_name, curry_param_term, helper_param_names,
     resolve_value_call_inline, strip_refs_groups, value_body_tail_substituted, ConstVal, Desugared,
@@ -327,10 +325,7 @@ fn curry_function_map_terms(
             body_term.accept_term_floor(CurryVisitor {
                 param: curry_param,
                 arg: &elem_term,
-                occurrence: CurryOccurrence {
-                    family: "function_map",
-                    ordinal,
-                },
+                occurrence: ctx.scope.temporal_curry_occurrence("function_map", ordinal),
             })
         })
         .collect())

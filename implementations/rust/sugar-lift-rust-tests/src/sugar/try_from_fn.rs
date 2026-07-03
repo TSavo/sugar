@@ -14,9 +14,7 @@ use syn::{Expr, GenericArgument, Path, PathArguments};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::sugar::term_dispatch::{
-    literal_array_term_from_terms, CurryOccurrence, CurryVisitor, TermFloorAccept,
-};
+use crate::sugar::term_dispatch::{literal_array_term_from_terms, CurryVisitor, TermFloorAccept};
 use crate::{
     curry_param_name, curry_param_term, helper_param_names, parse_int_lit,
     value_body_tail_substituted, Desugared, Outcome, Sugar, SugarCtx,
@@ -148,10 +146,7 @@ fn reduce_try_from_fn(
         let curried = mapper.accept_term_floor(CurryVisitor {
             param: &body.curry_param,
             arg: &index_term,
-            occurrence: CurryOccurrence {
-                family: "try_from_fn",
-                ordinal: index,
-            },
+            occurrence: ctx.scope.temporal_curry_occurrence("try_from_fn", index),
         });
         match option_payload(&curried) {
             Some(Some(value)) => mapped.push(value),
