@@ -29,18 +29,33 @@ from sugar_lift_py_tests.witness_harness import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
-EXPECTED_UNENROLLED_SUGARS = 46
-EXPECTED_SEED_CASES = 4
-EXPECTED_SEED_OWNER_COUNT = 3
-# #3307: binary-dunder callsites must emit the derived body/floor fact so a
-# lying vendor assertion contradicts real body testimony through the solver.
-EXPECTED_TRIPLE_FAILURES = 0
+EXPECTED_UNENROLLED_SUGARS = 42
+EXPECTED_SEED_CASES = 19
+EXPECTED_SEED_OWNER_COUNT = 7
+# #3303-class residue: display-conversion callsites currently emit only the
+# stated assertion, so the lying witness remains SAT until a derived fact lands.
+EXPECTED_TRIPLE_FAILURES = 1
 EXPECTED_MIGRATED_SEED_NAMES = {
+    "array_literal_map_method",
+    "builtin_divmod_callsite",
+    "builtin_hash_callsite",
+    "builtin_len_callsite",
+    "chained_comparison_literal",
+    "lambda_map_method",
     "slice_callsite",
     "literal_call_return",
+    "map_method",
+    "object_call_slot_callsite",
+    "object_display_conversion_callsite",
+    "object_getitem_callsite",
+    "object_next_callsite",
+    "object_rich_compare_callsite",
     "try_body",
+    "try_except_raise",
+    "try_finally_inert",
+    "try_finally_override",
 }
-EXPECTED_PINNED_FAILURE_SEED_NAMES: set[str] = set()
+EXPECTED_PINNED_FAILURE_SEED_NAMES = {"object_display_conversion_callsite"}
 EXPECTED_OPT_OUT_SUGARS = {
     "AliasSugar",
     "CommentSugar",
@@ -65,6 +80,10 @@ def test_sugar_witness_enrollment_auditor_pins_catalog_baseline() -> None:
     assert "CallSugar" not in by_name
     assert "ReturnSugar" not in by_name
     assert "TrySugar" not in by_name
+    assert "ArrayLiteralSugar" not in by_name
+    assert "LambdaSugar" not in by_name
+    assert "MapSugar" not in by_name
+    assert "ChainedComparisonAssertionSugar" not in by_name
     assert not (EXPECTED_OPT_OUT_SUGARS & set(by_name))
     assert by_name["ProjectedEqualityAssertionSugar"].role == "assertion"
     assert by_name["AddSugar"].role == "term"
@@ -75,10 +94,16 @@ def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
     by_name = {seed.name: seed for seed in seeds}
 
     assert EXPECTED_MIGRATED_SEED_NAMES <= set(by_name)
-    assert EXPECTED_PINNED_FAILURE_SEED_NAMES.isdisjoint(by_name)
+    assert EXPECTED_PINNED_FAILURE_SEED_NAMES <= set(by_name)
     assert by_name["slice_callsite"].owner_sugar == "CallSugar"
     assert by_name["literal_call_return"].owner_sugar == "ReturnSugar"
     assert by_name["try_body"].owner_sugar == "TrySugar"
+    assert by_name["array_literal_map_method"].owner_sugar == "ArrayLiteralSugar"
+    assert by_name["lambda_map_method"].owner_sugar == "LambdaSugar"
+    assert by_name["map_method"].owner_sugar == "MapSugar"
+    assert by_name["chained_comparison_literal"].owner_sugar == (
+        "ChainedComparisonAssertionSugar"
+    )
 
 
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
@@ -150,7 +175,9 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
             failure.observed,
         )
         for failure in seed_report.triple_failures
-    ] == []
+    ] == [
+        ("object_display_conversion_callsite", "lying", "verdict", "unsat", "sat"),
+    ]
     assert seed_report.non_circularity_failures == ()
 
 
@@ -297,11 +324,11 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "non_fol_opt_out_drift": 0,
         "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
     }
-    assert "R(unenrolled-sugars): 46" in text
-    assert "R(witness-triples-failing): 0" in text
+    assert "R(unenrolled-sugars): 42" in text
+    assert "R(witness-triples-failing): 1" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
-    assert "seed coverage: 4 seed cases, 3/53 catalog sugars" in text
+    assert "seed coverage: 19 seed cases, 7/53 catalog sugars" in text
     assert "AddSugar (sugar_lift_py_tests.sugar.add_sugar)" in text
 
 
@@ -317,8 +344,8 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
 
     assert status == 1
     stdout = capsys.readouterr().out
-    assert "R(unenrolled-sugars): 46" in stdout
-    assert "R(witness-triples-failing): 0" in stdout
+    assert "R(unenrolled-sugars): 42" in stdout
+    assert "R(witness-triples-failing): 1" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
 
 

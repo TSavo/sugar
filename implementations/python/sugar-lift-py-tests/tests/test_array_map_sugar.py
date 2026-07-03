@@ -78,32 +78,30 @@ def _write_native_callable_twin(project: Path, expected: str) -> None:
     )
 
 
-def _inv_status(contract: dict) -> str:
+def _equality_value_pairs(contract: dict) -> tuple[tuple[int, int], ...]:
     inv = contract["inv"]
     assert inv["kind"] == "and"
-    equalities = inv["operands"]
-    assert all(item["kind"] == "atomic" and item["name"] == "=" for item in equalities)
-    values = [
-        (item["args"][0]["value"], item["args"][1]["value"]) for item in equalities
-    ]
-    return "sat" if all(left == right for left, right in values) else "unsat"
+    pairs: list[tuple[int, int]] = []
+    for item in inv["operands"]:
+        assert item["kind"] == "atomic"
+        assert item["name"] == "="
+        left, right = item["args"]
+        assert left["kind"] == "const"
+        assert right["kind"] == "const"
+        pairs.append((left["value"], right["value"]))
+    return tuple(pairs)
 
 
-def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(
+def test_array_literal_method_map_sugar_emits_expected_formula(
     tmp_path: Path,
 ) -> None:
     good = tmp_path / "good"
-    bad = tmp_path / "bad"
     _write_twin(good, "[2, 3, 4]")
-    _write_twin(bad, "[2, 3, 99]")
 
     good_doc = _run_lift_rpc(good)
-    bad_doc = _run_lift_rpc(bad)
 
     good_contract = good_doc["ir"][0]
-    bad_contract = bad_doc["ir"][0]
-    assert _inv_status(good_contract) == "sat"
-    assert _inv_status(bad_contract) == "unsat"
+    assert _equality_value_pairs(good_contract) == ((3, 3), (2, 2), (3, 3), (4, 4))
 
     walk = good_doc["factoryAuditSummary"]["factoryWalk"]
     assert [row["selected"] for row in walk] == [
@@ -142,12 +140,9 @@ def test_array_literal_method_map_sugar_emits_sat_and_unsat_twins(
 
 def test_native_list_map_function_ref_emits_callable_universe(tmp_path: Path) -> None:
     good = tmp_path / "good"
-    bad = tmp_path / "bad"
     _write_native_callable_twin(good, "[1, 2, 3, 4, 5]")
-    _write_native_callable_twin(bad, "[1, 2, 3, 4, 99]")
 
     good_doc = _run_lift_rpc(good)
-    bad_doc = _run_lift_rpc(bad)
 
     names = [contract["name"] for contract in good_doc["ir"]]
     assert names == [
@@ -160,8 +155,14 @@ def test_native_list_map_function_ref_emits_callable_universe(tmp_path: Path) ->
     assert id_contract["post"]["args"][1]["name"] == "x"
     assert id_contract["sourceWarrants"][0]["sourceFunctionName"] == "id"
     assert id_contract["sourceWarrants"][0]["span"]["start_line"] == 1
-    assert _inv_status(good_contract) == "sat"
-    assert _inv_status(bad_doc["ir"][1]) == "unsat"
+    assert _equality_value_pairs(good_contract) == (
+        (5, 5),
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (5, 5),
+    )
 
     walk = good_doc["factoryAuditSummary"]["factoryWalk"]
     assert [row["selected"] for row in walk] == [

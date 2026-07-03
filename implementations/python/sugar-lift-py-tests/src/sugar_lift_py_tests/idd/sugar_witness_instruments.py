@@ -210,54 +210,21 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
     ),
 )
 
-PINNED_SUGAR_WITNESS_SEEDS: tuple[SugarWitnessSeed, ...] = (
-    SugarWitnessSeed(
-        name="binary_dunder_callsite",
-        owner_sugar="CallSugar",
-        family="binary-dunder",
-        truthful=WitnessSource(
-            source=(
-                "class X:\n"
-                "    def __init__(self, y):\n"
-                "        self.x = y\n"
-                "    def __add__(self, other):\n"
-                "        return other.x\n"
-                "def A():\n"
-                "    return [10, 20, 30][X(0) + X(1)]\n"
-                "def test_a():\n"
-                "    assert A() == 20\n"
-            ),
-            expected="sat",
-        ),
-        lying=WitnessSource(
-            source=(
-                "class X:\n"
-                "    def __init__(self, y):\n"
-                "        self.x = y\n"
-                "    def __add__(self, other):\n"
-                "        return other.x\n"
-                "def A():\n"
-                "    return [10, 20, 30][X(0) + X(1)]\n"
-                "def test_a():\n"
-                "    assert A() == 10\n"
-            ),
-            expected="unsat",
-        ),
-    ),
-)
-
-
 def seeds_from_catalog_witnesses() -> tuple[SugarWitnessSeed, ...]:
     seeds: list[SugarWitnessSeed] = []
     for claim in _catalog_claims():
         witness = _claim_witnesses(claim)
         if isinstance(witness, SugarWitnessPair):
             seeds.append(witness)
+        elif isinstance(witness, tuple) and all(
+            isinstance(item, SugarWitnessPair) for item in witness
+        ):
+            seeds.extend(witness)
     return tuple(sorted(seeds, key=lambda seed: seed.name))
 
 
 def default_sugar_witness_seeds() -> tuple[SugarWitnessSeed, ...]:
-    return seeds_from_catalog_witnesses() + PINNED_SUGAR_WITNESS_SEEDS
+    return seeds_from_catalog_witnesses()
 
 
 def collect_sugar_witness_frontier(
@@ -465,6 +432,10 @@ def _claim_witnesses(claim) -> object:
 def _claim_has_witness_or_opt_out(claim) -> bool:
     witness = _claim_witnesses(claim)
     if isinstance(witness, SugarWitnessPair):
+        return True
+    if isinstance(witness, tuple) and witness and all(
+        isinstance(item, SugarWitnessPair) for item in witness
+    ):
         return True
     if _non_fol_opt_out_for(claim.name) is not None:
         return True

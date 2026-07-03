@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 import ast
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 from factory_reduce import fol
@@ -21,10 +16,6 @@ from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.sugar.object_rich_comparison_term_sugar import (
     ObjectRichComparisonTermSugar,
 )
-
-ROOT = Path(__file__).resolve().parents[4]
-PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
-
 
 def _ctx_for_module(source: str) -> FactoryBuildContext:
     module = ast.parse(source)
@@ -47,77 +38,6 @@ def _reduce_expr(source: str, expr: str):
         ctx.build_body(node, SugarRole.TERM).reduce(ctx),
         owner="object rich comparison",
     )
-
-
-def _run_lift_rpc(project: Path) -> dict:
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(PY_TESTS / "src"),
-    }
-    request = "\n".join(
-        json.dumps(message)
-        for message in [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "lift",
-                "params": {"workspace_root": str(project), "source_paths": ["."]},
-            },
-            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
-        ]
-    )
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
-        input=request + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    responses = [
-        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
-    ]
-    response = next(item for item in responses if item.get("id") == 2)
-    assert "error" not in response, response
-    return response["result"]
-
-
-def _write_comparison_assertion(project: Path, *, expected: int) -> None:
-    project.mkdir()
-    (project / "test_object_rich_compare.py").write_text(
-        (
-            "class X:\n"
-            "    def __init__(self, x):\n"
-            "        self.x = x\n"
-            "\n"
-            "    def __lt__(self, other):\n"
-            "        return other.x\n"
-            "\n"
-            "def test_object_rich_compare():\n"
-            f"    assert [10, 20, 30][X(0) < X(1)] == {expected}\n"
-        ),
-        encoding="utf-8",
-    )
-
-
-def _first_inv(doc: dict) -> dict:
-    return doc["ir"][0]["inv"]
-
-
-def _formula_status(formula: dict) -> str:
-    assert formula["kind"] == "atomic"
-    assert formula["name"] == "="
-    left, right = formula["args"]
-    return "sat" if left == right else "unsat"
-
-
-def _formula_values(formula: dict) -> tuple[int, int]:
-    left, right = formula["args"]
-    return left["value"], right["value"]
 
 
 @pytest.mark.parametrize(
@@ -180,23 +100,6 @@ class X:
     value = _reduce_expr(source, "[10, 20, 30][X(0) < X(1)]")
 
     assert value == TermValue(20)
-
-
-def test_object_rich_comparison_lift_rpc_emits_sat_and_unsat_twins(
-    tmp_path: Path,
-) -> None:
-    good = tmp_path / "good"
-    bad = tmp_path / "bad"
-    _write_comparison_assertion(good, expected=20)
-    _write_comparison_assertion(bad, expected=10)
-
-    good_inv = _first_inv(_run_lift_rpc(good))
-    bad_inv = _first_inv(_run_lift_rpc(bad))
-
-    assert _formula_status(good_inv) == "sat"
-    assert _formula_values(good_inv) == (20, 20)
-    assert _formula_status(bad_inv) == "unsat"
-    assert _formula_values(bad_inv) == (20, 10)
 
 
 def test_identity_assertions_do_not_route_through_rich_comparison_dunders() -> None:

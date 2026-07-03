@@ -269,8 +269,6 @@ def test_truthy_assertion_uses_len_fallback_after_missing_bool_dunder() -> None:
     unsat_inv = unsat.payload.ir[0].inv
     assert sat_inv == _int_ne(1, 0)
     assert unsat_inv == _int_ne(0, 0)
-    assert _truth_formula_status(sat_inv) == "sat"
-    assert _truth_formula_status(unsat_inv) == "unsat"
 
 
 def test_truthy_assertion_keeps_external_call_truth_as_symbolic_py_truthy() -> None:
@@ -365,13 +363,3 @@ def _int_const(value: int) -> dict:
         "sort": {"kind": "primitive", "name": "Int"},
         "value": value,
     }
-
-
-def _truth_formula_status(formula: dict) -> str:
-    assert formula["kind"] == "atomic"
-    left, right = formula["args"]
-    if formula["name"] == "=":
-        return "sat" if left == right else "unsat"
-    if formula["name"] == "≠":
-        return "sat" if left != right else "unsat"
-    raise AssertionError(f"unexpected truth formula {formula!r}")

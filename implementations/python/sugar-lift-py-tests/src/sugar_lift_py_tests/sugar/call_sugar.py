@@ -13,7 +13,11 @@ from sugar_lift_py_tests.ir import Formula, Term, eq, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
+from sugar_lift_py_tests.sugar.witnesses import (
+    SugarWitnessPair,
+    SugarWitnesses,
+    WitnessSource,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 # A resolved callee's body is either a single TERM expression (`return <expr>`, a
@@ -313,30 +317,178 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         return fragment.observed == "Call"
 
     @classmethod
-    def witnesses(cls) -> SugarWitnessPair:
-        return SugarWitnessPair(
-            name="slice_callsite",
-            owner_sugar=cls.__name__,
-            family="slice/subscript",
-            truthful=WitnessSource(
-                source=(
-                    "def A():\n"
-                    "    return 'abcdef'[1:3]\n"
-                    "\n"
-                    "def test_a():\n"
-                    "    assert A() == 'bc'\n"
+    def witnesses(cls) -> SugarWitnesses:
+        def pair(
+            name: str,
+            family: str,
+            prefix: str,
+            expression: str,
+            truthful: str,
+            lying: str,
+        ) -> SugarWitnessPair:
+            return SugarWitnessPair(
+                name=name,
+                owner_sugar=cls.__name__,
+                family=family,
+                truthful=WitnessSource(
+                    source=(
+                        f"{prefix}"
+                        "def A():\n"
+                        f"    return {expression}\n"
+                        "\n"
+                        "def test_a():\n"
+                        f"    assert A() == {truthful}\n"
+                    ),
+                    expected="sat",
                 ),
-                expected="sat",
+                lying=WitnessSource(
+                    source=(
+                        f"{prefix}"
+                        "def A():\n"
+                        f"    return {expression}\n"
+                        "\n"
+                        "def test_a():\n"
+                        f"    assert A() == {lying}\n"
+                    ),
+                    expected="unsat",
+                ),
+            )
+
+        return (
+            pair(
+                "slice_callsite",
+                "slice/subscript",
+                "",
+                "'abcdef'[1:3]",
+                "'bc'",
+                "'zz'",
             ),
-            lying=WitnessSource(
-                source=(
-                    "def A():\n"
-                    "    return 'abcdef'[1:3]\n"
+            pair(
+                "binary_dunder_callsite",
+                "binary-dunder",
+                (
+                    "class X:\n"
+                    "    def __init__(self, y):\n"
+                    "        self.x = y\n"
+                    "    def __add__(self, other):\n"
+                    "        return other.x\n"
                     "\n"
-                    "def test_a():\n"
-                    "    assert A() == 'zz'\n"
                 ),
-                expected="unsat",
+                "[10, 20, 30][X(0) + X(1)]",
+                "20",
+                "10",
+            ),
+            pair(
+                "object_next_callsite",
+                "object-next-dunder",
+                (
+                    "class Box:\n"
+                    "    def __init__(self, x):\n"
+                    "        self.x = x\n"
+                    "    def __next__(self):\n"
+                    "        return self.x\n"
+                    "\n"
+                ),
+                "[10, 20, 30][next(Box(1))]",
+                "20",
+                "10",
+            ),
+            pair(
+                "object_getitem_callsite",
+                "object-getitem-dunder",
+                (
+                    "class Box:\n"
+                    "    def __init__(self, x):\n"
+                    "        self.x = x\n"
+                    "    def __getitem__(self, key):\n"
+                    "        return self.x\n"
+                    "\n"
+                ),
+                "[10, 20, 30][Box(1)[0]]",
+                "20",
+                "10",
+            ),
+            pair(
+                "object_call_slot_callsite",
+                "object-call-slot",
+                (
+                    "class CallableReturningOne:\n"
+                    "    def __call__(self):\n"
+                    "        return 1\n"
+                    "\n"
+                ),
+                "[10, 20, 30][CallableReturningOne()()]",
+                "20",
+                "10",
+            ),
+            pair(
+                "object_display_conversion_callsite",
+                "object-display-conversion-dunder",
+                (
+                    "class Box:\n"
+                    "    def __repr__(self):\n"
+                    "        return 'one'\n"
+                    "\n"
+                ),
+                "[10, 20, 30][repr(Box()) == 'one']",
+                "20",
+                "10",
+            ),
+            pair(
+                "object_rich_compare_callsite",
+                "object-rich-comparison-dunder",
+                (
+                    "class X:\n"
+                    "    def __init__(self, x):\n"
+                    "        self.x = x\n"
+                    "    def __lt__(self, other):\n"
+                    "        return other.x\n"
+                    "\n"
+                ),
+                "[10, 20, 30][X(0) < X(1)]",
+                "20",
+                "10",
+            ),
+            pair(
+                "builtin_len_callsite",
+                "builtin-dunder-len",
+                (
+                    "class Box:\n"
+                    "    def __len__(self):\n"
+                    "        return 1\n"
+                    "\n"
+                ),
+                "[10, 20, 30][len(Box())]",
+                "20",
+                "10",
+            ),
+            pair(
+                "builtin_hash_callsite",
+                "builtin-dunder-hash",
+                (
+                    "class Box:\n"
+                    "    def __hash__(self):\n"
+                    "        return 1\n"
+                    "\n"
+                ),
+                "[10, 20, 30][hash(Box())]",
+                "20",
+                "10",
+            ),
+            pair(
+                "builtin_divmod_callsite",
+                "builtin-dunder-divmod",
+                (
+                    "class Box:\n"
+                    "    def __init__(self, x):\n"
+                    "        self.x = x\n"
+                    "    def __divmod__(self, other):\n"
+                    "        return self.x\n"
+                    "\n"
+                ),
+                "[10, 20, 30][divmod(Box(1), 2)]",
+                "20",
+                "10",
             ),
         )
 
