@@ -54,13 +54,13 @@ use crate::{
 pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement_before(
     "block_sugar",
     &["stmt_support"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    BLOCK_STMT_WITNESSES,
     recognize_block,
 );
 
 pub(crate) static SUPPORT_STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::fallback_statement(
     "stmt_support",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    SUPPORT_STMT_NOT_VERDICT_BEARING_WITNESSES,
     recognize_support,
 );
 
@@ -285,6 +285,18 @@ fn guard_raise(statement: Desugared, guards: &[Rc<Formula>], owner: &'static str
 fn block_stmt_gap(reason: &str) -> ! {
     panic!("guarded return floor did not reach lawful statement composition: {reason}")
 }
+
+const BLOCK_STMT_WITNESSES: crate::sugar::claim::SugarWitnesses =
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "StmtBlock",
+        "block composes statement floors and guards; nested assertions own verdicts",
+    );
+
+const SUPPORT_STMT_NOT_VERDICT_BEARING_WITNESSES: crate::sugar::claim::SugarWitnesses =
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "StmtSupport",
+        "fallback statement support is inert and emits no standalone FOL verdict",
+    );
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
 //

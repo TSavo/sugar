@@ -23,7 +23,10 @@ use crate::{Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "return_sugar",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "StmtReturn/EarlyReturnValue",
+        "return is control-flow data routed by block/source-contract composition",
+    ),
     recognize,
 );
 

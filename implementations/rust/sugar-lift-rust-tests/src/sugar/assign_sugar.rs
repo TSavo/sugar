@@ -23,7 +23,10 @@ use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "assign_sugar",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "StmtBound",
+        "let binding captures scope for later statements; consuming assertions own verdicts",
+    ),
     recognize,
 );
 

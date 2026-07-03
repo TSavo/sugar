@@ -10,7 +10,8 @@ use sugar_lift_rust_tests::{
 };
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 191;
+const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 7;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
 
 #[derive(Clone, Copy)]
@@ -404,6 +405,31 @@ fn witness_catalog_seed_frontier_is_pinned() {
             )
         })
         .count();
+    for claim in catalog.iter().filter(|claim| {
+        matches!(
+            claim.witnesses,
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing { .. }
+        )
+    }) {
+        match claim.witnesses {
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing {
+                floor,
+                reason,
+            } => {
+                assert!(
+                    !floor.trim().is_empty(),
+                    "NotVerdictBearing claim `{}` must name its floor",
+                    claim.name
+                );
+                assert!(
+                    !reason.trim().is_empty(),
+                    "NotVerdictBearing claim `{}` must justify the opt-out",
+                    claim.name
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
     println!(
         "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={}",
         seeded.len(),
@@ -412,6 +438,7 @@ fn witness_catalog_seed_frontier_is_pinned() {
     );
     assert_eq!(seeded.len(), EXPECTED_SEED_CLAIMS);
     assert_eq!(pending.len(), EXPECTED_ENROLLMENT_FRONTIER);
+    assert_eq!(not_verdict_bearing, EXPECTED_NOT_VERDICT_BEARING_CLAIMS);
     assert_eq!(
         seeded.len() + pending.len() + not_verdict_bearing,
         catalog.len(),

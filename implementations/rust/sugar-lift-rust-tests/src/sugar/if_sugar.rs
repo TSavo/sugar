@@ -43,7 +43,10 @@ use crate::{bool_const, Desugared, Effect, FloatWidthScope, Outcome, Sugar, Suga
 
 pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
     "if_sugar",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "StmtBlock",
+        "if statements compose guarded block outputs; branch assertions own verdicts",
+    ),
     recognize,
 );
 

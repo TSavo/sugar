@@ -31,7 +31,10 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
     "impl_method",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "ImplMethod",
+        "asserting impl methods are runtime effects; call sites own verdict facts",
+    ),
     recognize,
 );
 

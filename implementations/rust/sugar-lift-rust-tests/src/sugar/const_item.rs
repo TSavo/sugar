@@ -22,7 +22,10 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
     "const_item",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::not_verdict_bearing(
+        "Seq",
+        "const/static item is inert support; it emits no standalone FOL verdict",
+    ),
     recognize,
 );
 
