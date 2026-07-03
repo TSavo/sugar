@@ -7,6 +7,10 @@ import pytest
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.factory.factory_gap import FactoryGap
+from sugar_lift_py_tests.factory.dig_refusal import DigRefusal
+from sugar_lift_py_tests.factory.floor_contract_agreement import (
+    FloorContractAgreementViolation,
+)
 from sugar_lift_py_tests.ir import (
     eq,
     eq as ir_eq,
@@ -16,7 +20,13 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import (
+    CoverageGapEffect,
+    RaiseEffect,
+    RuntimeEffect,
+    effect_kind,
+    effect_reason,
+)
 from sugar_lift_py_tests.proofir import (
     ConstructionSite,
     Derived,
@@ -47,6 +57,15 @@ def _contract_provenance() -> Provenance:
     site = ConstructionSite(path="tests/test_construction_law.py", line=1)
     return Provenance(
         node_class="FunctionContract",
+        construction_site=site,
+        warrant=Derived(floor_chain=("construction-law",)),
+    )
+
+
+def _refusal_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="RefusalRecord",
         construction_site=site,
         warrant=Derived(floor_chain=("construction-law",)),
     )
@@ -206,16 +225,87 @@ def test_naked_formula_cannot_be_inserted_as_equality_fact_term() -> None:
 
 
 def test_refusal_record_stays_disjoint_from_predicates() -> None:
-    with pytest.raises(FactoryGap, match="formula and refusal"):
+    assert not issubclass(RefusalRecord, EqualityFact.__bases__[0])
+
+    with pytest.raises(TypeError, match="formula"):
         RefusalRecord.from_incomplete(
             Incomplete(RuntimeEffect("opaque runtime effect")),
-            provenance=Provenance(
-                node_class="RefusalRecord",
-                construction_site=ConstructionSite(
-                    path="tests/test_construction_law.py",
-                    line=1,
-                ),
-                warrant=Derived(floor_chain=("construction-law",)),
-            ),
+            provenance=_refusal_provenance(),
             formula=ir_eq(make_var("call"), num(0)),
         )
+
+
+def test_incomplete_effect_is_a_closed_typed_union() -> None:
+    class FutureEffect:
+        reason = "future effect without a handler arm"
+
+    with pytest.raises(TypeError, match="typed Effect"):
+        Incomplete(FutureEffect())
+
+    with pytest.raises(TypeError, match="unhandled Effect"):
+        effect_kind(FutureEffect())  # type: ignore[arg-type]
+
+    runtime = RuntimeEffect("opaque runtime effect")
+    raise_effect = RaiseEffect("ValueError", "tests/test_construction_law.py:1")
+    coverage = CoverageGapEffect(
+        boundary="floor-dispatch",
+        reason="no owning arm reached this floor",
+    )
+
+    for effect in (runtime, raise_effect, coverage):
+        incomplete = Incomplete(effect)
+        record = RefusalRecord.from_incomplete(
+            incomplete,
+            provenance=_refusal_provenance(),
+        )
+        assert record.denotation() is None
+        assert record.effect_kind == effect_kind(effect)
+        assert record.reason == effect_reason(effect)
+        assert record.to_declaration()["effectKind"] == effect_kind(effect)
+
+
+def test_refusal_diagnostics_route_through_refusal_record(monkeypatch) -> None:
+    routed: list[tuple[str, object]] = []
+
+    def dig_route(refusal: DigRefusal) -> dict[str, object]:
+        routed.append(("dig", refusal))
+        return {"kind": "dig-refusal", "callee": refusal.callee}
+
+    def agreement_route(
+        violation: FloorContractAgreementViolation,
+    ) -> dict[str, object]:
+        routed.append(("agreement", violation))
+        return {"kind": "floor-contract-agreement-violation", "callee": violation.callee}
+
+    monkeypatch.setattr(
+        RefusalRecord,
+        "dig_refusal_diagnostic",
+        staticmethod(dig_route),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        RefusalRecord,
+        "agreement_violation_diagnostic",
+        staticmethod(agreement_route),
+        raising=False,
+    )
+
+    dig = DigRefusal(
+        callee="pkg.mod::A",
+        blame="factory",
+        caught="RuntimeError",
+        reason="cannot climb",
+    )
+    violation = FloorContractAgreementViolation(
+        callee="pkg.mod::A",
+        contract="pkg.mod::A",
+        callsite="pkg.mod::test_a",
+        reason="derived floor does not model callable post",
+    )
+
+    assert dig.to_json() == {"kind": "dig-refusal", "callee": "pkg.mod::A"}
+    assert violation.to_json() == {
+        "kind": "floor-contract-agreement-violation",
+        "callee": "pkg.mod::A",
+    }
+    assert routed == [("dig", dig), ("agreement", violation)]

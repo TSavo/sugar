@@ -7,28 +7,20 @@ from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
-from sugar_lift_py_tests.factory.dig_refusal import DigRefusal
 from sugar_lift_py_tests.ir import (
     Formula,
     Int,
     Sort,
     Term,
-    _Atomic,
-    _Connective,
     _ConstBool,
     _ConstInt,
     _ConstReal,
     _ConstStr,
     _Ctor,
-    _Quantifier,
     _Var,
     _json_like_to_value,
-    eq,
     formula_to_value,
-    make_var,
-    num,
 )
-from sugar_lift_py_tests.outcome import Incomplete
 
 
 @dataclass(frozen=True)
@@ -160,129 +152,6 @@ class ProofIRNode(ABC):
 
 _INT_SORT = Int()
 
-
-@dataclass(frozen=True, init=False)
-class RefusalRecord(ProofIRNode):
-    node_class: ClassVar[str] = "RefusalRecord"
-
-    effect_kind: str = field(init=False)
-    reason: str = field(init=False)
-    _provenance: Provenance = field(init=False, repr=False)
-
-    def __init__(
-        self,
-        effect_kind: str,
-        reason: str,
-        provenance: Provenance,
-    ) -> None:
-        _require_provenance(provenance, owner=self.node_class)
-        if not effect_kind:
-            _proofir_gap(
-                owner=self.node_class,
-                observed="empty effect kind",
-                requested="typed effect kind",
-                fix="construct RefusalRecord from Incomplete or a typed gap",
-            )
-        if not reason:
-            _proofir_gap(
-                owner=self.node_class,
-                observed="empty reason",
-                requested="effect reason",
-                fix="preserve the refusal reason when constructing RefusalRecord",
-            )
-        object.__setattr__(self, "effect_kind", effect_kind)
-        object.__setattr__(self, "reason", reason)
-        object.__setattr__(self, "_provenance", provenance)
-
-    @classmethod
-    def from_incomplete(
-        cls,
-        incomplete: Incomplete,
-        *,
-        provenance: Provenance,
-        formula: Formula | None = None,
-    ) -> "RefusalRecord":
-        if formula is not None:
-            _proofir_gap(
-                owner=cls.node_class,
-                observed="Outcome carried both formula and refusal",
-                requested="exactly one vocabulary expression for Outcome::Incomplete",
-                fix="emit either EqualityFact/FunctionContract or RefusalRecord, never both",
-            )
-        effect = incomplete.effect
-        return cls(
-            effect_kind=type(effect).__name__,
-            reason=incomplete.reason,
-            provenance=provenance,
-        )
-
-    @classmethod
-    def from_gap(
-        cls,
-        gap: FactoryGap | DigRefusal,
-        *,
-        provenance: Provenance,
-        formula: Formula | None = None,
-    ) -> "RefusalRecord":
-        if formula is not None:
-            _proofir_gap(
-                owner=cls.node_class,
-                observed="gap carried both formula and refusal",
-                requested="exactly one vocabulary expression for a refused gap",
-                fix="emit either a fact or a refusal record, never both",
-            )
-        if isinstance(gap, FactoryGap):
-            return cls(
-                effect_kind=str(gap.info.get("gap_kind", "FactoryGap")),
-                reason=str(gap),
-                provenance=provenance,
-            )
-        return cls(effect_kind=gap.caught, reason=gap.reason, provenance=provenance)
-
-    def denotation(self) -> None:
-        return None
-
-    def provenance(self) -> Provenance:
-        return self._provenance
-
-    def to_declaration(self) -> dict[str, Any]:
-        return {
-            "kind": "refusal-record",
-            "effectKind": self.effect_kind,
-            "reason": self.reason,
-            "provenance": self.provenance().to_rpc(),
-        }
-
-    @classmethod
-    def verdict_witnesses(cls) -> VerdictWitnessPair:
-        return VerdictWitnessPair(
-            truthful=VerdictWitnessCase(
-                name="refusal-record-bridge-only",
-                expected="sat",
-                formulas=(),
-                declarations={},
-                source=_effectful_refusal_source(),
-                node_class=cls.node_class,
-                expected_sugar="python.literal-call-sugar",
-                refusal_absence=True,
-                construct=lambda: cls.from_incomplete(
-                    _runtime_effect_incomplete("opaque runtime effect"),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
-                ),
-            ),
-            lying=VerdictWitnessCase(
-                name="refusal-record-fact-and-refusal-refuses",
-                expected="construction-refusal",
-                formulas=(),
-                declarations={},
-                construct=lambda: cls.from_incomplete(
-                    _runtime_effect_incomplete("opaque runtime effect"),
-                    provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),
-                    formula=eq(make_var("call"), num(0)),
-                ),
-            ),
-        )
-
 def _truthful_source() -> str:
     return (
         "def A(x):\n"
@@ -300,17 +169,6 @@ def _lying_source() -> str:
         "\n"
         "def test_a():\n"
         "    assert A(5) == 7\n"
-    )
-
-
-def _effectful_refusal_source() -> str:
-    return (
-        "def A(x):\n"
-        "    print(x)\n"
-        "    return x\n"
-        "\n"
-        "def test_a():\n"
-        "    assert A(5) == 5\n"
     )
 
 
@@ -378,30 +236,6 @@ def _is_term(term: object) -> bool:
     return isinstance(term, (_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor))
 
 
-def _is_formula(formula: object) -> bool:
-    return isinstance(formula, (_Atomic, _Connective, _Quantifier))
-
-
-def _formula_mentions_var(formula: Formula, name: str) -> bool:
-    if isinstance(formula, _Atomic):
-        return any(_term_mentions_var(term, name) for term in formula.args)
-    if isinstance(formula, _Connective):
-        return any(_formula_mentions_var(operand, name) for operand in formula.operands)
-    if isinstance(formula, _Quantifier):
-        if formula.name == name:
-            return False
-        return _formula_mentions_var(formula.body, name)
-    return False
-
-
-def _term_mentions_var(term: Term, name: str) -> bool:
-    if isinstance(term, _Var):
-        return term.name == name
-    if isinstance(term, _Ctor):
-        return any(_term_mentions_var(arg, name) for arg in term.args)
-    return False
-
-
 def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
     return json.loads(encode_jcs(formula_to_value(formula)))
 
@@ -421,12 +255,6 @@ def _witness_provenance(node_class: str, *, warrants: tuple[str, ...]) -> Proven
         construction_site=site,
         warrant=tuple(resolved),
     )
-
-
-def _runtime_effect_incomplete(reason: str) -> Incomplete:
-    from sugar_lift_py_tests.effect import RuntimeEffect
-
-    return Incomplete(RuntimeEffect(reason))
 
 
 def _canonical_term_sig(term: Term) -> str:
@@ -486,9 +314,10 @@ from .function_contract import (  # noqa: E402
     FunctionContract,
     FunctionContractBuilder,
 )
+from .refusal_record import RefusalRecord  # noqa: E402
 
 
-REGISTERED_PROOFIR_NODE_CLASSES: tuple[type[ProofIRNode], ...] = (
+REGISTERED_PROOFIR_NODE_CLASSES: tuple[type[Any], ...] = (
     EqualityFact,
     FunctionContract,
     RefusalRecord,

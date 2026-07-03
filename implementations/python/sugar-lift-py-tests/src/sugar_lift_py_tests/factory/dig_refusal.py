@@ -14,13 +14,9 @@ class DigRefusal:
     reason: str
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "kind": "dig-refusal",
-            "callee": self.callee,
-            "blame": self.blame,
-            "caught": self.caught,
-            "reason": self.reason,
-        }
+        from sugar_lift_py_tests.proofir.nodes.refusal_record import RefusalRecord
+
+        return RefusalRecord.dig_refusal_diagnostic(self)
 
     def to_rpc(self) -> dict[str, Any]:
         return self.to_json()

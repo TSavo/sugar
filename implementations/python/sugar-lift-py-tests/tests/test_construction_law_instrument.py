@@ -18,9 +18,9 @@ def test_construction_law_scanner_reads_the_live_repo() -> None:
     axes = {crossing.axis for crossing in report.crossings}
     assert "_formula_to_rpc-outside-serializer" in axes
     assert "raw-BodyUniverseDto-formula-slot" in axes
-    assert "Formula-typed-node-constructor-field" in axes
     assert "dict-str-any-formula-slot" in axes
-    assert "monolithic-proofir-semantic-class" in axes
+    assert "Formula-typed-node-constructor-field" not in axes
+    assert "monolithic-proofir-semantic-class" not in axes
 
     assert any(
         crossing.path.endswith("factory/literal_call_report.py")
@@ -33,11 +33,7 @@ def test_construction_law_scanner_reads_the_live_repo() -> None:
         and "pre" in crossing.detail
         for crossing in report.crossings
     )
-    assert any(
-        crossing.axis == "monolithic-proofir-semantic-class"
-        and "RefusalRecord" in crossing.detail
-        for crossing in report.crossings
-    )
+    assert not any("RefusalRecord" in crossing.detail for crossing in report.crossings)
     assert not any("FunctionContract" in crossing.detail for crossing in report.crossings)
     assert not any(
         crossing.axis == "monolithic-proofir-semantic-class"
@@ -50,17 +46,18 @@ def test_construction_law_scanner_reads_the_live_repo() -> None:
     )
 
 
-def test_s6_function_contract_drain_updates_live_scanner_vector() -> None:
+def test_s7_refusal_record_drain_updates_live_scanner_vector() -> None:
     report = collect_naked_formula_boundary_crossings(ROOT)
     axes = Counter(crossing.axis for crossing in report.crossings)
 
-    assert report.r == 14
+    assert report.r == 11
     assert axes["_formula_to_rpc-outside-serializer"] == 1
     assert axes["raw-BodyUniverseDto-formula-slot"] == 7
-    assert axes["Formula-typed-node-constructor-field"] == 2
     assert axes["dict-str-any-formula-slot"] == 3
-    assert axes["monolithic-proofir-semantic-class"] == 1
+    assert axes["Formula-typed-node-constructor-field"] == 0
+    assert axes["monolithic-proofir-semantic-class"] == 0
     assert not any("FunctionContract" in crossing.detail for crossing in report.crossings)
+    assert not any("RefusalRecord" in crossing.detail for crossing in report.crossings)
 
 
 def test_s6_euf_fact_seat_does_not_infer_call_sort_from_rhs() -> None:
