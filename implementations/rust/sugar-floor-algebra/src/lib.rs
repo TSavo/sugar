@@ -98,9 +98,39 @@ impl PartialEq for RaiseEffect {
     }
 }
 
+/// Runtime effects that are not routeable raises.
+///
+/// Python exposes `RuntimeEffect` as a typed sibling of `RaiseEffect` and
+/// `CoverageGapEffect`; `_route_incomplete` propagates it unchanged. Rust uses
+/// that shape for Drop/finally refusal corners: they are first-class data, but
+/// not handler-consumable control-flow exits.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RuntimeEffect {
+    ObservableDrop { boundary: String, reason: String },
+    FinallyOverIncomplete { boundary: String },
+}
+
+impl RuntimeEffect {
+    pub fn boundary(&self) -> &str {
+        match self {
+            Self::ObservableDrop { boundary, .. } | Self::FinallyOverIncomplete { boundary } => {
+                boundary
+            }
+        }
+    }
+
+    pub fn family(&self) -> &'static str {
+        match self {
+            Self::ObservableDrop { .. } => "drop",
+            Self::FinallyOverIncomplete { .. } => "finally-over-incomplete",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     Raise(RaiseEffect),
+    Runtime(RuntimeEffect),
     PanicMacro { boundary: String },
     LiteralPanic { boundary: String },
     ControlFlow { boundary: String },

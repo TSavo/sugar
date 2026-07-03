@@ -720,6 +720,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("effectful control-flow block")
         || reason.contains("result error raise effect")
         || reason.contains("early return raise effect")
+        || reason.contains("observable Drop effect")
+        || reason.contains("finally guarded return over incomplete incoming exit")
         // TERMINAL: std `future::join!` constructs a future whose output is produced only
         // when a runtime driver polls/awaits it. There is no source-visible macro body to
         // expand and no single timeless output value at construction.
@@ -9086,6 +9088,38 @@ impl RaiseEffect {
     }
 }
 
+/// Runtime effects that are not routeable raises.
+///
+/// Python's reference has a typed `RuntimeEffect` sibling and propagates it
+/// unchanged through `_route_incomplete`. Rust uses that same mechanism for
+/// Drop/finally refusal corners: named data, never simulated control flow.
+#[derive(Debug, Clone)]
+enum RuntimeEffect {
+    ObservableDrop { boundary: String, reason: String },
+    FinallyOverIncomplete { boundary: String },
+}
+
+impl RuntimeEffect {
+    fn boundary(&self) -> &str {
+        match self {
+            RuntimeEffect::ObservableDrop { boundary, .. }
+            | RuntimeEffect::FinallyOverIncomplete { boundary } => boundary,
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            RuntimeEffect::ObservableDrop { boundary, reason } => {
+                format!("observable Drop effect `{boundary}`: {reason}; refused")
+            }
+            RuntimeEffect::FinallyOverIncomplete { boundary } => format!(
+                "finally guarded return over incomplete incoming exit `{boundary}`: add guarded \
+                 effect exit joining before lowering this shape; refused"
+            ),
+        }
+    }
+}
+
 /// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
 /// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
 /// mutable read, ...), plus named unsupported terms. `reason()` returns the terminal refusal string
@@ -9103,6 +9137,10 @@ enum Effect {
     /// Existing panic/control-flow variants remain as siblings for byte-compatible legacy
     /// refusal strings; `is_raise_like_effect` recognizes both shapes.
     Raise(RaiseEffect),
+    /// RUNTIME-FAMILY: non-raise runtime effects that are first-class refusal data.
+    /// These propagate through RouteRaisesOperation unchanged, mirroring Python
+    /// RuntimeEffect rather than pretending Drop/finally is a handler-consumable raise.
+    Runtime(RuntimeEffect),
     /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
     /// `.push`, an assignment). The asserted value varies per iteration independently of
     /// the bound var, so a single universal over it would be a false claim. A source
@@ -9404,6 +9442,7 @@ impl Effect {
     fn reason(&self) -> String {
         match self {
             Effect::Raise(effect) => effect.reason(),
+            Effect::Runtime(effect) => effect.reason(),
             // The proto string the collector already emits for a side-effecting / iterator-
             // advancing closure body (kept verbatim so the CID is conserved). `Mutation` and
             // `IterAdvance` carry the SAME terminal class; typed apart records the cause.
@@ -9599,6 +9638,7 @@ impl Effect {
     fn boundary(&self) -> SourceMemento {
         let boundary = match self {
             Effect::Raise(effect) => effect.boundary().to_string(),
+            Effect::Runtime(effect) => effect.boundary().to_string(),
             Effect::Mutation { boundary }
             | Effect::IterAdvance { boundary }
             | Effect::ConsumedIteratorState { boundary }
