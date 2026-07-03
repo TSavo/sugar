@@ -11,7 +11,7 @@ use sugar_lift_rust_tests::{
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
 const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
-const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 1;
+const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
@@ -29,12 +29,7 @@ struct PendingRouterWitnessSlot {
 }
 
 fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
-    vec![PendingRouterWitnessSlot {
-        router: "drop",
-        owner_slice: "Phase2-S6",
-        truthful_slot: "no-op Drop does not perturb emitted bytes or verdict",
-        lying_slot: "effectful Drop enters the effect algebra and refuses/routes explicitly",
-    }]
+    Vec::new()
 }
 
 fn seed_witnesses() -> Vec<WitnessPair> {
@@ -498,6 +493,47 @@ fn phase2_uncaught_panic_remains_residual_refusal() {
     assert!(
         decl.is_none(),
         "a bare panic has no normal return formula to fabricate: {decl:?}"
+    );
+}
+
+#[test]
+fn phase2_noop_drop_does_not_perturb_assertion_emission() {
+    let without_drop = lift_file(
+        &parse(
+            r#"
+            #[test]
+            fn t_noop_drop_without() {
+                assert_eq!(1 + 1, 2);
+            }
+        "#,
+        ),
+        "sugar-witness/phase2_noop_drop_without.rs",
+    );
+    let with_drop = lift_file(
+        &parse(
+            r#"
+            struct NoopDrop;
+
+            impl Drop for NoopDrop {
+                fn drop(&mut self) {}
+            }
+
+            #[test]
+            fn t_noop_drop_with() {
+                let _guard = NoopDrop;
+                assert_eq!(1 + 1, 2);
+            }
+        "#,
+        ),
+        "sugar-witness/phase2_noop_drop_with.rs",
+    );
+
+    assert_eq!(
+        inv_json(single_warranted_decl(&with_drop)),
+        inv_json(single_warranted_decl(&without_drop)),
+        "a no-op Drop must not perturb the emitted assertion invariant; with_drop facts={:?}; skips={:?}",
+        with_drop.assertion_facts,
+        with_drop.skip_reasons
     );
 }
 

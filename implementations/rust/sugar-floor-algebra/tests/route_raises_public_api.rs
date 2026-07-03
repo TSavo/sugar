@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use sugar_floor_algebra::{
     Desugared, Effect, GuardedRaise, Outcome, RaiseEffect, RouteRaiseHandler, RouteRaisesAccept,
-    RouteRaisesOperation,
+    RouteRaisesOperation, RuntimeEffect,
 };
 use sugar_ir_symbolic::{atomic_, num, ConstValue, Formula, Term};
 
@@ -19,6 +19,19 @@ fn coverage_gap_effect() -> Effect {
         boundary: "open-plugin-floor".to_string(),
         reason: "synthetic open edge".to_string(),
     }
+}
+
+fn observable_drop_effect() -> Effect {
+    Effect::Runtime(RuntimeEffect::ObservableDrop {
+        boundary: "DropCounter::drop".to_string(),
+        reason: "observable Drop side effect".to_string(),
+    })
+}
+
+fn finally_over_incomplete_effect() -> Effect {
+    Effect::Runtime(RuntimeEffect::FinallyOverIncomplete {
+        boundary: "finally cleanup over panic".to_string(),
+    })
 }
 
 fn assert_return_int(outcome: Outcome, expected: i128) {
@@ -79,6 +92,26 @@ fn public_router_propagates_unmatched_raise_unchanged() {
 #[test]
 fn public_router_propagates_non_raise_effect_unchanged() {
     let effect = coverage_gap_effect();
+    let handler = ResultErrHandler;
+    let outcome = RouteRaisesOperation::new(vec![&handler], "public-router-test")
+        .route_incomplete(Outcome::Incomplete(effect.clone()));
+
+    assert_incomplete_effect(outcome, effect);
+}
+
+#[test]
+fn public_router_propagates_runtime_drop_effect_unchanged() {
+    let effect = observable_drop_effect();
+    let handler = ResultErrHandler;
+    let outcome = RouteRaisesOperation::new(vec![&handler], "public-router-test")
+        .route_incomplete(Outcome::Incomplete(effect.clone()));
+
+    assert_incomplete_effect(outcome, effect);
+}
+
+#[test]
+fn public_router_propagates_finally_over_incomplete_runtime_effect_unchanged() {
+    let effect = finally_over_incomplete_effect();
     let handler = ResultErrHandler;
     let outcome = RouteRaisesOperation::new(vec![&handler], "public-router-test")
         .route_incomplete(Outcome::Incomplete(effect.clone()));

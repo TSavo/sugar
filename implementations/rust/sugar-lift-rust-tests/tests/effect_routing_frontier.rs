@@ -20,12 +20,7 @@ struct ExpectedUnroutedConstruct {
     replacement: &'static str,
 }
 
-const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[ExpectedUnroutedConstruct {
-    key: "drop-effect-family-missing",
-    family: "drop",
-    owner: "Phase2-S6",
-    replacement: "decide Drop/finally-fallthrough effect shape and route/refuse it explicitly",
-}];
+const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct ObservedUnroutedConstruct {
