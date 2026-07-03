@@ -269,6 +269,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
             "dict literals are structural term support; the current solver "
             "path has no standalone dict-constructor verdict witness"
         ),
+        retirement_condition=(
+            "until dict-constructor equality carries a verdict witness "
+            "through the solver path (assert {1:2} == {1:3} is a "
+            "verdict-bearing claim; only the machinery is missing — "
+            "the structural-identity tests already prove the twin is "
+            "constructible the moment the path exists)"
+        ),
     ),
     NonFolOptOut(
         sugar_name="ExprSugar",

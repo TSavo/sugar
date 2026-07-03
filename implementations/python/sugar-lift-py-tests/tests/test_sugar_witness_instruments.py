@@ -115,6 +115,7 @@ EXPECTED_TEMPORAL_OPT_OUT_SUGARS = {
     "AttributeDeleteSugar",
     "BitwiseOpSugar",
     "OrdByteSugar",
+    "DictSugar",
 }
 
 
@@ -251,7 +252,7 @@ def test_temporal_opt_outs_are_pinned_as_retirable_deferrals() -> None:
     rows = temporal_opt_outs()
 
     assert {row.sugar_name for row in rows} == EXPECTED_TEMPORAL_OPT_OUT_SUGARS
-    assert len(rows) == 4
+    assert len(rows) == 5
     assert all(row.retirement_condition for row in rows)
     assert {
         row.sugar_name
@@ -743,7 +744,7 @@ def test_sugar_witness_cli_exits_red_for_temporal_opt_out_frontier(
     assert "R(unenrolled-sugars): 0" in stdout
     assert "R(witness-triples-failing): 0" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
-    assert "R(temporal-opt-outs): 4" in stdout
+    assert "R(temporal-opt-outs): 5" in stdout
 
 
 def test_witness_pipeline_solver_absence_is_loud() -> None:
