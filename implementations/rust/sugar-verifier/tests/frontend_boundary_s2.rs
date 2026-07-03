@@ -1,7 +1,5 @@
 use serde_json::{json, Value as Json};
-use sugar_ir_compiler::{
-    CompileError, CompiledFormula, CompilerInput, FrontendErrorKind, IrCompiler,
-};
+use sugar_ir_compiler::{CompiledFormula, CompilerInput, FrontendErrorKind, IrCompiler};
 use sugar_ir_compiler_coq::{CoqCompiler, DIALECT as COQ_DIALECT};
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT as LEAN_DIALECT};
 use sugar_ir_compiler_maude::{MaudeCompiler, DIALECT as MAUDE_DIALECT};
@@ -87,23 +85,27 @@ fn equational_theory_fixture() -> Json {
     })
 }
 
-fn compile_typed_matches_legacy(
+fn compile_typed_is_deterministic(
     compiler: &dyn IrCompiler,
     dialect: &str,
     ir: Json,
 ) -> CompiledFormula {
-    let legacy = compiler.compile(&ir, dialect).expect("legacy compile");
     let typed = CompilerInput::decode_json(ir).expect("typed decode");
     let typed_output = compiler
         .compile_typed(&typed, dialect)
         .expect("typed compile");
-    assert_eq!(typed_output, legacy);
+    assert_eq!(
+        typed_output,
+        compiler
+            .compile_typed(&typed, dialect)
+            .expect("typed compile repeats byte-identically")
+    );
     typed_output
 }
 
 #[test]
 fn compile_typed_exists_and_preserves_smtlib_bytes() {
-    compile_typed_matches_legacy(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture());
+    compile_typed_is_deterministic(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture());
 }
 
 #[test]
@@ -173,25 +175,18 @@ fn decode_json_failure_kinds_are_typed_and_real() {
 }
 
 #[test]
-fn legacy_compile_adapter_surfaces_typed_frontend_payload() {
-    let err = SmtLibCompiler::new()
-        .compile(&Json::Null, SMT_DIALECT)
-        .unwrap_err();
-    match err {
-        CompileError::Frontend(payload) => {
-            assert_eq!(payload.kind, FrontendErrorKind::MalformedTransport);
-            assert_eq!(payload.path, "$");
-        }
-        other => panic!("legacy adapter returned untyped frontend error: {other:?}"),
-    }
+fn decode_json_surfaces_typed_frontend_payload() {
+    let err = CompilerInput::decode_json(Json::Null).unwrap_err();
+    assert_eq!(err.payload.kind, FrontendErrorKind::MalformedTransport);
+    assert_eq!(err.payload.path, "$");
 }
 
 #[test]
 fn compile_typed_preserves_existing_backend_bytes() {
-    compile_typed_matches_legacy(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture());
-    compile_typed_matches_legacy(&LeanCompiler::new(), LEAN_DIALECT, formula_fixture());
-    compile_typed_matches_legacy(&CoqCompiler::new(), COQ_DIALECT, formula_fixture());
-    compile_typed_matches_legacy(
+    compile_typed_is_deterministic(&SmtLibCompiler::new(), SMT_DIALECT, formula_fixture());
+    compile_typed_is_deterministic(&LeanCompiler::new(), LEAN_DIALECT, formula_fixture());
+    compile_typed_is_deterministic(&CoqCompiler::new(), COQ_DIALECT, formula_fixture());
+    compile_typed_is_deterministic(
         &MaudeCompiler::new(),
         MAUDE_DIALECT,
         equational_theory_fixture(),
@@ -202,7 +197,10 @@ fn compile_typed_preserves_existing_backend_bytes() {
 fn byte_identity_control_would_notice_planted_drift() {
     let compiler = SmtLibCompiler::new();
     let ir = formula_fixture();
-    let mut drifted = compiler.compile(&ir, SMT_DIALECT).expect("compile");
+    let input = CompilerInput::decode_json(ir).expect("typed decode");
+    let mut drifted = compiler
+        .compile_typed(&input, SMT_DIALECT)
+        .expect("compile");
     let original = drifted.clone();
     drifted.body.push_str("; planted-drift-control\n");
     assert_ne!(drifted, original);

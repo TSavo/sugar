@@ -151,9 +151,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn compile_json(ir: serde_json::Value) -> Result<CompiledFormula, CompileError> {
+        let input = CompilerInput::decode_json(ir)?;
+        CoqCompiler::new().compile_typed(&input, DIALECT)
+    }
+
     #[test]
     fn compiles_simple_formula() {
-        let compiler = CoqCompiler::new();
         let ir = json!({
             "kind": "atomic",
             "name": "=",
@@ -163,21 +167,20 @@ mod tests {
             ]
         });
 
-        let result = compiler.compile(&ir, DIALECT).unwrap();
+        let result = compile_json(ir).unwrap();
         assert!(result.body.contains("Goal"));
         assert!(result.body.contains("x = 42"));
     }
 
     #[test]
     fn defines_kit_predicates() {
-        let compiler = CoqCompiler::new();
         let ir = json!({
             "kind": "atomic",
             "name": "roundTrips",
             "args": [{"kind": "var", "name": "s"}]
         });
 
-        let result = compiler.compile(&ir, DIALECT).unwrap();
+        let result = compile_json(ir).unwrap();
         // Generated compiler emits Parameter declarations in the body
         assert!(result.body.contains("Parameter s"));
         assert!(result.body.contains("roundTrips s"));
@@ -185,7 +188,6 @@ mod tests {
 
     #[test]
     fn compiles_forall() {
-        let compiler = CoqCompiler::new();
         let ir = json!({
             "kind": "forall",
             "name": "x",
@@ -200,7 +202,7 @@ mod tests {
             }
         });
 
-        let result = compiler.compile(&ir, DIALECT).unwrap();
+        let result = compile_json(ir).unwrap();
         assert!(result.body.contains("forall x : Z"));
     }
 }

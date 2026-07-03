@@ -5,7 +5,7 @@ mod vocabulary;
 
 use std::collections::BTreeSet;
 
-use sugar_ir_compiler::IrCompiler;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use vocabulary::{
     audit_row, collect_corpus, formula_json_for, BackendReport, CorpusSymbol, Disposition,
     SymbolPosition,
@@ -27,7 +27,11 @@ fn report() -> BackendReport {
             if let Some(reason) = coq_builtin_arity_refusal(symbol) {
                 return audit_row(symbol, Disposition::Refused, reason);
             }
-            match compiler.compile(&ir, sugar_ir_compiler_coq::DIALECT) {
+            let input = match CompilerInput::decode_json(ir) {
+                Ok(input) => input,
+                Err(err) => return audit_row(symbol, Disposition::Refused, err.to_string()),
+            };
+            match compiler.compile_typed(&input, sugar_ir_compiler_coq::DIALECT) {
                 Ok(_) if coq_encoded(symbol) => audit_row(
                     symbol,
                     Disposition::Encoded,

@@ -304,9 +304,21 @@ fn z3_path_or_panic() -> String {
     resolve_z3_from(z3_env.as_deref(), &path_env).unwrap_or_else(|err| panic!("{err}"))
 }
 
+fn compile_asserted_json_to_parts(
+    formula: &serde_json::Value,
+) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
+    match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
+        sugar_ir_compiler::CompilerInput::Formula(formula) => {
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+        }
+        _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
+            "asserted SMT-LIB compile expects a formula input".to_string(),
+        )),
+    }
+}
+
 fn z3_verdict(inv: &serde_json::Value, label: &str, z3: &str) -> bool {
-    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(inv)
-        .expect("witness inv must compile to SMT-LIB");
+    let parts = compile_asserted_json_to_parts(inv).expect("witness inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let path = std::env::temp_dir().join(format!("sugar_witness_triple_{label}.smt2"));
     std::fs::write(&path, &script).expect("write witness smt2");

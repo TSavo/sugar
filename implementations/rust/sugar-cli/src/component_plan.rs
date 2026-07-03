@@ -1451,18 +1451,6 @@ mod tests {
     }
 
     impl IrCompiler for TestCompiler {
-        fn compile(&self, _ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-            let typed = sugar_ir_compiler::CompilerInput::decode_json(json!({
-                "kind": "atomic",
-                "name": "=",
-                "args": [
-                    {"kind": "var", "name": "x"},
-                    {"kind": "var", "name": "x"}
-                ]
-            }))?;
-            self.compile_typed(&typed, dialect)
-        }
-
         fn compile_typed(
             &self,
             _ir: &sugar_ir_compiler::CompilerInput,

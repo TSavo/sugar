@@ -257,7 +257,7 @@ fn frontend_error(
             path: path.into(),
             detail: detail.into(),
             retirement:
-                "S7 deletes the legacy compile(&Json) adapter once typed compiler inputs are universal"
+                "transport formats terminate at frontend decode; backends receive CompilerInput"
                     .to_string(),
         },
     }
@@ -275,9 +275,8 @@ fn binary_frontend_error(
             input_format: BINARY_INPUT_FORMAT.to_string(),
             path: path.into(),
             detail: detail.into(),
-            retirement:
-                "S7 deletes the legacy compile(&Json) adapter; binary ProofIR remains a typed frontend"
-                    .to_string(),
+            retirement: "binary ProofIR remains a typed frontend; backends receive CompilerInput"
+                .to_string(),
         },
     }
 }
@@ -287,9 +286,8 @@ fn remap_frontend_error_to_binary(error: FrontendError) -> FrontendError {
         payload: FrontendErrorPayload {
             frontend: BINARY_FRONTEND_ID.to_string(),
             input_format: BINARY_INPUT_FORMAT.to_string(),
-            retirement:
-                "S7 deletes the legacy compile(&Json) adapter; binary ProofIR remains a typed frontend"
-                    .to_string(),
+            retirement: "binary ProofIR remains a typed frontend; backends receive CompilerInput"
+                .to_string(),
             ..error.payload
         },
     }

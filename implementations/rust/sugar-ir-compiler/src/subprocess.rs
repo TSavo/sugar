@@ -192,11 +192,6 @@ impl IrCompiler for LazyJsonRpcCompiler {
         ir: &CompilerInput,
         dialect: &str,
     ) -> Result<CompiledFormula, CompileError> {
-        let ir = ir.to_json_value()?;
-        self.compile(&ir, dialect)
-    }
-
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
         THREAD_LOCAL_COMPILERS.with(|cell| {
             let mut map = cell.borrow_mut();
             let compiler = match map.entry(self.id) {
@@ -218,7 +213,7 @@ impl IrCompiler for LazyJsonRpcCompiler {
                     e.insert(spawned)
                 }
             };
-            let result = compiler.compile(ir, dialect);
+            let result = compiler.compile_typed(ir, dialect);
             if matches!(result, Err(CompileError::Transport(_))) {
                 warn!(
                     command = %render_command(&self.command),
@@ -243,10 +238,20 @@ impl IrCompiler for JsonRpcCompiler {
         dialect: &str,
     ) -> Result<CompiledFormula, CompileError> {
         let ir = ir.to_json_value()?;
-        self.compile(&ir, dialect)
+        self.compile_transport_json(&ir, dialect)
     }
 
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
+    fn capabilities(&self) -> Capabilities {
+        self.cached_caps.clone()
+    }
+}
+
+impl JsonRpcCompiler {
+    fn compile_transport_json(
+        &self,
+        ir: &Json,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
         let id = {
             let mut g = self.next_id.lock().unwrap();
             let v = *g;
@@ -299,10 +304,6 @@ impl IrCompiler for JsonRpcCompiler {
             "ir compiler rpc: compile response"
         );
         Ok(compiled)
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        self.cached_caps.clone()
     }
 }
 
@@ -517,8 +518,10 @@ fn render_command(command: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
-    use crate::{FrontendErrorKind, FrontendErrorPayload};
+    use crate::{CompilerInput, FrontendErrorKind, FrontendErrorPayload};
 
     #[test]
     fn rpc_frontend_error_data_round_trips_as_typed_payload() {
@@ -529,7 +532,7 @@ mod tests {
             path: "$".to_string(),
             detail: "ProofIR compiler input must be a JSON object".to_string(),
             retirement:
-                "S7 deletes the legacy compile(&Json) adapter once typed compiler inputs are universal"
+                "transport formats terminate at frontend decode; backends receive CompilerInput"
                     .to_string(),
         };
         let err = json!({
@@ -545,6 +548,34 @@ mod tests {
                 assert_eq!(round_trip, expected);
             }
             other => panic!("RPC frontend payload degraded instead of round-tripping: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn live_subprocess_decode_failure_round_trips_typed_frontend_payload() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("sugar-ir-compiler lives inside the rust workspace");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let command = vec![
+            cargo,
+            "run".to_string(),
+            "--quiet".to_string(),
+            "-p".to_string(),
+            "sugar-ir-compiler-smt-lib".to_string(),
+            "--bin".to_string(),
+            "sugar-ir-smt-lib".to_string(),
+            "--".to_string(),
+        ];
+        let compiler = JsonRpcCompiler::spawn_command(&command, Some(workspace_root))
+            .expect("spawn live SMT-LIB compiler subprocess");
+        let expected = CompilerInput::decode_json(Json::Null)
+            .expect_err("null transport is malformed")
+            .payload;
+
+        match compiler.compile_transport_json(&Json::Null, "smt-lib-v2.6") {
+            Err(CompileError::Frontend(actual)) => assert_eq!(actual, expected),
+            other => panic!("live subprocess decode failure degraded: {other:?}"),
         }
     }
 }

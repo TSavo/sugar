@@ -78,45 +78,50 @@ fn smtlib_and_lean_compile_typed_do_not_reencode_to_transport_json() {
 #[test]
 fn smtlib_compile_typed_term_matches_legacy_term_emitter() {
     let ir = term_fixture();
-    let typed = typed(ir.clone());
+    let typed = typed(ir);
     let out = SmtLibCompiler::new()
         .compile_typed(&typed, SMT_DIALECT)
         .expect("typed SMT-LIB term compile");
-    let legacy = SmtLibCompiler::new()
-        .compile(&ir, SMT_DIALECT)
-        .expect("legacy SMT-LIB term compile")
-        .script();
-    assert_eq!(out.script(), legacy);
+    let CompilerInput::Term(term) = &typed else {
+        panic!("fixture should decode as a term");
+    };
+    let expected =
+        sugar_ir_compiler_smt_lib::compile_term_to_parts(term).expect("typed SMT-LIB term emitter");
+    assert_eq!(out.script(), expected.script());
 }
 
 #[test]
-fn smtlib_and_lean_compile_typed_formula_match_legacy_compile_bytes() {
-    let formula = formula_fixture();
-    let typed = typed(formula.clone());
+fn smtlib_and_lean_compile_typed_formula_match_native_typed_emitters() {
+    let typed = typed(formula_fixture());
+    let CompilerInput::Formula(formula) = &typed else {
+        panic!("fixture should decode as a formula");
+    };
 
     let smt = SmtLibCompiler::new();
     assert_eq!(
         smt.compile_typed(&typed, SMT_DIALECT).expect("typed smt"),
-        smt.compile(&formula, SMT_DIALECT).expect("legacy smt")
+        sugar_ir_compiler_smt_lib::compile_formula_to_parts(formula).expect("typed smt emitter")
     );
 
     let lean = LeanCompiler::new();
     assert_eq!(
         lean.compile_typed(&typed, LEAN_DIALECT)
             .expect("typed lean"),
-        lean.compile(&formula, LEAN_DIALECT).expect("legacy lean")
+        sugar_ir_compiler_lean::compile_formula_to_parts(formula).expect("typed lean emitter")
     );
 }
 
 #[test]
-fn lean_compile_typed_term_matches_legacy_term_compile_bytes() {
-    let ir = term_fixture();
-    let typed = typed(ir.clone());
+fn lean_compile_typed_term_matches_native_typed_emitter() {
+    let typed = typed(term_fixture());
+    let CompilerInput::Term(term) = &typed else {
+        panic!("fixture should decode as a term");
+    };
     let lean = LeanCompiler::new();
     assert_eq!(
         lean.compile_typed(&typed, LEAN_DIALECT)
             .expect("typed lean"),
-        lean.compile(&ir, LEAN_DIALECT).expect("legacy lean")
+        sugar_ir_compiler_lean::compile_term_to_parts(term).expect("typed lean emitter")
     );
 }
 

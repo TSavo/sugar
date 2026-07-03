@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde_json::{json, Value as Json};
-use sugar_ir_compiler::{subprocess::JsonRpcCompiler, IrCompiler};
+use sugar_ir_compiler::{subprocess::JsonRpcCompiler, CompilerInput, IrCompiler};
 use sugar_ir_compiler_maude::{MaudeCompiler, DIALECT};
 
 fn binary_path() -> Option<PathBuf> {
@@ -78,11 +78,14 @@ fn subprocess_compile_matches_in_process_byte_for_byte() {
         return;
     };
     let ir = nat_obligation();
+    let input = CompilerInput::decode_json(ir).expect("fixture decodes");
     let via_subprocess = JsonRpcCompiler::spawn(&bin)
         .expect("spawn")
-        .compile(&ir, DIALECT)
+        .compile_typed(&input, DIALECT)
         .expect("compile");
-    let via_in_process = MaudeCompiler::new().compile(&ir, DIALECT).expect("compile");
+    let via_in_process = MaudeCompiler::new()
+        .compile_typed(&input, DIALECT)
+        .expect("compile");
     assert_eq!(via_subprocess, via_in_process);
     assert!(via_subprocess.metadata.get("maude").is_some());
 }

@@ -108,15 +108,6 @@ impl From<FrontendError> for CompileError {
     }
 }
 
-pub fn compile_json_adapter<C: IrCompiler + ?Sized>(
-    compiler: &C,
-    ir: &Json,
-    dialect: &str,
-) -> Result<CompiledFormula, CompileError> {
-    let typed = CompilerInput::decode_json(ir.clone())?;
-    compiler.compile_typed(&typed, dialect)
-}
-
 /// The trait every IR compiler implements, whether it lives in-process
 /// or speaks JSON-RPC over a subprocess pipe.
 pub trait IrCompiler: Send + Sync {
@@ -126,12 +117,6 @@ pub trait IrCompiler: Send + Sync {
         ir: &CompilerInput,
         dialect: &str,
     ) -> Result<CompiledFormula, CompileError>;
-
-    /// Compatibility adapter for legacy IR-JSON callers. It is declared as an
-    /// S2 escape hatch and retires when S7 deletes the transport JSON entrypoint.
-    fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        compile_json_adapter(self, ir, dialect)
-    }
 
     /// Capability descriptor: dialects served, sorts and predicates
     /// supported. Cached by the registry on insert.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde_json::{json, Value as Json};
-use sugar_ir_compiler::{CompileError, IrCompiler};
+use sugar_ir_compiler::{CompileError, CompilerInput, IrCompiler};
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
 
 fn const_ir(value: Json, sort_name: &str) -> Json {
@@ -14,8 +14,9 @@ fn const_ir(value: Json, sort_name: &str) -> Json {
 
 fn compile_const(value: Json, sort_name: &str) -> Result<String, CompileError> {
     let compiler = LeanCompiler::new();
+    let input = CompilerInput::decode_json(const_ir(value, sort_name))?;
     compiler
-        .compile(&const_ir(value, sort_name), DIALECT)
+        .compile_typed(&input, DIALECT)
         .map(|compiled| compiled.script())
 }
 

@@ -213,25 +213,18 @@ mod tests {
     };
 
     struct CountingCompiler {
-        compile_calls: AtomicUsize,
         compile_typed_calls: AtomicUsize,
     }
 
     impl CountingCompiler {
         fn new() -> Self {
             Self {
-                compile_calls: AtomicUsize::new(0),
                 compile_typed_calls: AtomicUsize::new(0),
             }
         }
     }
 
     impl IrCompiler for CountingCompiler {
-        fn compile(&self, _ir: &Json, _dialect: &str) -> Result<CompiledFormula, CompileError> {
-            self.compile_calls.fetch_add(1, Ordering::SeqCst);
-            panic!("RPC server must decode ir_json and call compile_typed, not backend compile")
-        }
-
         fn compile_typed(
             &self,
             _ir: &CompilerInput,
@@ -293,7 +286,6 @@ mod tests {
         assert!(matches!(control, ServerControl::Continue));
         assert!(response.get("error").is_none(), "{response}");
         assert_eq!(response["result"]["body"], "(check-sat)\n");
-        assert_eq!(compiler.compile_calls.load(Ordering::SeqCst), 0);
         assert_eq!(compiler.compile_typed_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -316,7 +308,6 @@ mod tests {
         assert_eq!(data["path"], "$");
         assert!(data["detail"].as_str().unwrap().contains("JSON object"));
         assert!(data["retirement"].as_str().unwrap().contains("S7 deletes"));
-        assert_eq!(compiler.compile_calls.load(Ordering::SeqCst), 0);
         assert_eq!(compiler.compile_typed_calls.load(Ordering::SeqCst), 0);
     }
 }

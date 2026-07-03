@@ -12,11 +12,12 @@
 // guard.
 
 use serde_json::json;
-use sugar_ir_compiler::IrCompiler;
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_coq::CoqCompiler;
 
 fn compile(f: &serde_json::Value) -> String {
-    let r = CoqCompiler.compile(f, "coq").expect("compile");
+    let input = CompilerInput::decode_json(f.clone()).expect("fixture decodes");
+    let r = CoqCompiler.compile_typed(&input, "coq").expect("compile");
     format!("{}{}", r.preamble, r.body)
 }
 
