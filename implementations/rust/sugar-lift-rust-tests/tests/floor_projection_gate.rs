@@ -115,7 +115,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/fold.rs",
-        line: 140,
+        line: 161,
         enclosing_fn: "desugar",
         max_floor_arms: 2,
         owner: "FoldSugar receiver sequence projection",

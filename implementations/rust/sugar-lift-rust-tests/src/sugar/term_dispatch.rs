@@ -5,6 +5,8 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, str_const, ConstValue, LetBinding, Term};
 use syn::{Expr, Item};
 
+#[cfg(test)]
+use crate::bool_const;
 use crate::sugar::block_term::translate_expression_only_block_in_scope_with_audits;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::factory_gap_info::CoverageGapInfo;
@@ -18,9 +20,9 @@ use crate::sugar::primitive_int::{
 use crate::sugar::symbolic_value::SymbolicValue;
 use crate::sugar::temporal_floor::CurryOccurrence;
 use crate::{
-    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num,
-    scope_const_block_locals, sugar_ctx_with_factory_audits, token_key, Desugared, Effect,
-    FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, TemporalScope,
+    canonical_term_sig, const_fold_int_term, const_fold_u128_term, num, scope_const_block_locals,
+    sugar_ctx_with_factory_audits, token_key, Desugared, Effect, FactoryAuditLog, FloatWidthScope,
+    LiftOptions, Outcome, ReductionCtx, TemporalScope,
 };
 
 pub(crate) const VALUE_IF_TERM: &str = "value:if";

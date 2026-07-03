@@ -63,7 +63,9 @@ operation_floor = "fold"
 doorway = "rewrite"
 owner = "S4"
 target_slice = "S4"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["fold.rs:70"]
+counted_loci_reason = "FoldSugar recognizer dispatches accumulator recurrence through the landed fold floor; the accumulator uses REWRITE per tick and the closure callee remains CURRY-owned by term dispatch."
 
 [[catalog]]
 id = "iterator-rfold"
@@ -74,7 +76,9 @@ operation_floor = "fold"
 doorway = "rewrite"
 owner = "S4"
 target_slice = "S4"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["fold.rs:69"]
+counted_loci_reason = "RFoldSugar shares the fold recognizer and reverses the measured operand before dispatching to the same landed fold floor."
 
 [[catalog]]
 id = "iterator-for-each"
@@ -206,7 +210,9 @@ operation_floor = "fold"
 doorway = "rewrite"
 owner = "S4"
 target_slice = "S4"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["iter_terminal.rs:622"]
+counted_loci_reason = "Iterator::sum terminal lowers through MonoidFold and CarrierEmbedding into the landed fold floor."
 
 [[catalog]]
 id = "iterator-product"
@@ -217,7 +223,9 @@ operation_floor = "fold"
 doorway = "rewrite"
 owner = "S4"
 target_slice = "S4"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["iter_terminal.rs:623"]
+counted_loci_reason = "Iterator::product terminal lowers through MonoidFold into the landed fold floor."
 
 [[catalog]]
 id = "iterator-next"
@@ -623,8 +631,8 @@ reason = "one map implementation owned by the floor"
 id = "floor-fold"
 floor = "fold"
 owner = "S4"
-status = "planned"
-reason = "recurrence implementation owned once"
+status = "landed"
+reason = "one fold recurrence implementation owned by the floor; element sorts embed into the carrier before standing"
 
 [[operation_floor]]
 id = "floor-filter"
