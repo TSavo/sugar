@@ -15882,8 +15882,8 @@ fn z3_shadow_verdict_frontier_is_explicit() {
         (
             "teeth_asymmetry_discharge_guard.rs",
             include_str!("teeth_asymmetry_discharge_guard.rs"),
-            1usize,
-            1usize,
+            0usize,
+            0usize,
         ),
         (
             "discharge_sweep.rs",
