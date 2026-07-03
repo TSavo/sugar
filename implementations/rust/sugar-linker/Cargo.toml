@@ -16,6 +16,7 @@ doctest = false
 [dependencies]
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-verifier = { path = "../sugar-verifier" }
+sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 serde = { workspace = true }
 serde_json = { workspace = true }

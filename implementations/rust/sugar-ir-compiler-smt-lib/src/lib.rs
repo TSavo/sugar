@@ -241,25 +241,6 @@ fn validate_formula(formula: &sugar_ir_types::IrFormula) -> Result<(), String> {
     }
 }
 
-/// Legacy single-string entry point. Equal to `preamble + body` from
-/// `compile_to_parts`. Also accepts bare terms (lambda, let, etc.) for
-/// backward compatibility with the historical verifier emitter.
-pub fn emit(ir_formula: &Json) -> Result<String, String> {
-    compile_to_parts(ir_formula)
-        .map(|c| {
-            let mut s = c.preamble;
-            s.push_str(&c.body);
-            s
-        })
-        .map_err(|e| e.to_string())
-}
-
-/// Compile to (preamble, body, free_vars). Pure; no I/O.
-pub fn compile_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
-    let input = CompilerInput::decode_json(ir_formula.clone())?;
-    compile_input_to_parts(&input)
-}
-
 fn compile_input_to_parts(input: &CompilerInput) -> Result<CompiledFormula, CompileError> {
     match input {
         CompilerInput::Formula(formula) => compile_formula_to_parts(formula),
@@ -307,19 +288,26 @@ pub fn compile_term_to_parts(term: &sugar_ir_types::Term) -> Result<CompiledForm
     })
 }
 
-pub fn emit_asserted(ir_formula: &Json) -> Result<String, String> {
-    compile_asserted_to_parts(ir_formula)
-        .map(|c| {
-            let mut s = c.preamble;
-            s.push_str(&c.body);
-            s
-        })
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_compile_to_parts(ir_formula: &Json) -> Result<CompiledFormula, CompileError> {
+        let input = CompilerInput::decode_json(ir_formula.clone())?;
+        compile_input_to_parts(&input)
+    }
+
+    fn fixture_compile_asserted_to_parts(
+        ir_formula: &Json,
+    ) -> Result<CompiledFormula, CompileError> {
+        let input = CompilerInput::decode_json(ir_formula.clone())?;
+        let CompilerInput::Formula(formula) = input else {
+            return Err(CompileError::MalformedIr(
+                "asserted SMT-LIB compile expects a formula input".to_string(),
+            ));
+        };
+        compile_asserted_formula_to_parts(&formula)
+    }
 
     fn eq(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {
         serde_json::json!({"kind": "atomic", "name": "=", "args": [a, b]})
@@ -348,7 +336,7 @@ mod tests {
             ctor("method:to_string", vec![var("v")]),
             string_const("1.2.3"),
         );
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             !script.contains("(declare-const v String)"),
@@ -367,7 +355,7 @@ mod tests {
             ctor("method:to_string", vec![var("v")]),
             string_const("1.2.3"),
         );
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert!(
@@ -386,7 +374,7 @@ mod tests {
             ctor("method:ok", vec![ctor("call:parse", vec![var("s")])]),
             ctor("opt:none", vec![]),
         );
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(declare-fun |call:parse| (Int) SugarResult)"),
@@ -404,7 +392,7 @@ mod tests {
             ),
             var("out"),
         );
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(declare-fun |method:as_mut| (Int) SugarOption)"),
@@ -419,7 +407,7 @@ mod tests {
             ctor("method:unwrap", vec![ctor("call:get", vec![var("xs")])]),
             var("out"),
         );
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(declare-fun |call:get| (Int) Int)"),
@@ -439,7 +427,7 @@ mod tests {
             eq(ctor("closure:a | b", vec![int_const(1)]), int_const(2)),
             eq(ctor("closure:a | b", vec![int_const(1), int_const(2)]), int_const(3))
         ]});
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("|sugar:_|"),
@@ -471,7 +459,7 @@ mod tests {
             string_theory_atom("prefix-of", vec![prefix.clone(), recv.clone()]),
             eq(ctor("method:starts_with", vec![recv, prefix]), int_const(1))
         ]});
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(declare-const displayed String)"),
@@ -500,7 +488,7 @@ mod tests {
             eq(option_deref.clone(), option_deref),
             eq(int_ref.clone(), int_ref)
         ]});
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(declare-fun |ref#args:SugarResult| (SugarResult) Int)")
@@ -528,7 +516,7 @@ mod tests {
             eq(try_reduce.clone(), some_some),
             eq(try_reduce, ctor("opt:none", vec![]))
         ]});
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("SugarOptionOption")
@@ -576,7 +564,10 @@ mod tests {
         );
         let ir = serde_json::json!({"kind":"and","operands":[universe_row, int_row]});
 
-        for result in [compile_to_parts(&ir), compile_asserted_to_parts(&ir)] {
+        for result in [
+            fixture_compile_to_parts(&ir),
+            fixture_compile_asserted_to_parts(&ir),
+        ] {
             let err = result.expect_err("mixed-sort conjunction must be refused, not emitted");
             let msg = err.to_string();
             assert!(
@@ -607,7 +598,7 @@ mod tests {
             )
         };
         let ir = serde_json::json!({"kind":"and","operands":[mk(7), mk(8)]});
-        compile_to_parts(&ir).expect("same-regime conjunction must compile");
+        fixture_compile_to_parts(&ir).expect("same-regime conjunction must compile");
 
         // And the all-String twin: same ctor equated to two String literals.
         let mks = |s: &str| {
@@ -621,7 +612,7 @@ mod tests {
             )
         };
         let ir2 = serde_json::json!({"kind":"and","operands":[mks("a"), mks("b")]});
-        compile_to_parts(&ir2).expect("all-String conjunction must compile");
+        fixture_compile_to_parts(&ir2).expect("all-String conjunction must compile");
     }
 
     #[test]
@@ -632,7 +623,7 @@ mod tests {
         // whitelist had to refuse such terms because the negated path could
         // not render them.
         let ir = eq(ctor("Ok", vec![var("x")]), ctor("Ok", vec![var("x")]));
-        let parts = compile_to_parts(&ir).expect("compile");
+        let parts = fixture_compile_to_parts(&ir).expect("compile");
         assert!(
             parts.preamble.contains("(declare-fun Ok ("),
             "Ok must be declared as an uninterpreted fn on the negated path: {}",
@@ -666,7 +657,7 @@ mod tests {
             atomic("is_some", vec![var("opt")]),
             atomic("is_some", vec![var("opt")]),
         );
-        let parts = compile_to_parts(&ir).expect("compile");
+        let parts = fixture_compile_to_parts(&ir).expect("compile");
         assert!(
             parts.preamble.contains("(declare-fun is_some (Int) Bool)"),
             "is_some must be declared as a Bool-returning fn: {}",
@@ -693,7 +684,7 @@ mod tests {
                     {"kind": "not", "operands": [atom]},
                 ]
             });
-            let parts = compile_asserted_to_parts(&inv).expect("compile");
+            let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
             assert!(
                 parts
                     .preamble
@@ -730,7 +721,7 @@ mod tests {
             atomic(">", vec![var("n"), zero]),
             atomic("=", vec![var("n"), var("n")]),
         );
-        let parts = compile_to_parts(&ir).expect("compile");
+        let parts = fixture_compile_to_parts(&ir).expect("compile");
         assert!(
             !parts.preamble.contains("(declare-fun = ")
                 && !parts.preamble.contains("(declare-fun > "),
@@ -752,7 +743,7 @@ mod tests {
             return;
         };
 
-        let guarded = compile_to_parts(&implies(
+        let guarded = fixture_compile_to_parts(&implies(
             atomic("is_some", vec![var("opt")]),
             atomic("is_some", vec![var("opt")]),
         ))
@@ -763,7 +754,8 @@ mod tests {
             "guarded `(=> is_some(opt) is_some(opt))` must be unsat (discharged): {g_out}"
         );
 
-        let bare = compile_to_parts(&atomic("is_some", vec![var("opt")])).expect("compile bare");
+        let bare =
+            fixture_compile_to_parts(&atomic("is_some", vec![var("opt")])).expect("compile bare");
         let b_out = run_z3(&z3, &format!("{}{}", bare.preamble, bare.body));
         assert!(
             b_out.contains("sat") && !b_out.contains("unsat"),
@@ -786,7 +778,7 @@ mod tests {
         };
 
         let reflexive =
-            compile_to_parts(&eq(ctor("Ok", vec![var("x")]), ctor("Ok", vec![var("x")])))
+            fixture_compile_to_parts(&eq(ctor("Ok", vec![var("x")]), ctor("Ok", vec![var("x")])))
                 .expect("compile reflexive");
         let r_out = run_z3(&z3, &format!("{}{}", reflexive.preamble, reflexive.body));
         assert!(
@@ -795,7 +787,7 @@ mod tests {
         );
 
         let distinct =
-            compile_to_parts(&eq(ctor("Ok", vec![var("x")]), ctor("Err", vec![var("x")])))
+            fixture_compile_to_parts(&eq(ctor("Ok", vec![var("x")]), ctor("Err", vec![var("x")])))
                 .expect("compile distinct");
         let d_out = run_z3(&z3, &format!("{}{}", distinct.preamble, distinct.body));
         assert!(
@@ -838,7 +830,7 @@ mod tests {
         // Must compile without error and produce a real sat/unsat, not a parse error.
         let z3 = which_z3().expect("z3 must be present for string-literal soundness check");
         let inv = eq(var("r"), string_const(r#"{"a":1}"#));
-        let parts = compile_asserted_to_parts(&inv).expect("compile must succeed");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile must succeed");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert!(
@@ -865,7 +857,7 @@ mod tests {
                 eq(var("r"), string_const("b")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile must succeed");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile must succeed");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert!(
@@ -893,7 +885,7 @@ mod tests {
         ];
         for s in weird_cases {
             let inv = eq(var("r"), string_const(s));
-            let parts = compile_asserted_to_parts(&inv).expect("compile must succeed");
+            let parts = fixture_compile_asserted_to_parts(&inv).expect("compile must succeed");
             let script = format!("{}{}", parts.preamble, parts.body);
             let out = run_z3(&z3, &script);
             assert!(
@@ -928,7 +920,7 @@ mod tests {
                 string_theory_atom("suffix-of", vec![string_const("de"), string_const("abcde")]),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains(r#"(str.contains "abcde" "bcd")"#),
@@ -966,7 +958,7 @@ mod tests {
                 ]},
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1005,7 +997,7 @@ mod tests {
                 ]},
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(str.len \"\\u{ff5e}\\u{ff5e}\\u{ff5e}\\u{ff5e}\\u{ff5e}\")"),
@@ -1087,7 +1079,7 @@ mod tests {
             {"kind":"not","operands":[{"kind":"atomic","name":"member","args":[
                 {"kind":"const","value":"double-slash","sort":{"kind":"primitive","name":"String"}}, sub("HTTP_HOST")]}]},
             {"kind":"atomic","name":"=","args":[sub("PATH_INFO"), {"kind":"const","value":"/double-slash","sort":{"kind":"primitive","name":"String"}}]}]});
-        let parts = compile_asserted_to_parts(&inv).expect("must compile, no mixed-sort");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("must compile, no mixed-sort");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             !script.contains("String)"),
@@ -1123,7 +1115,7 @@ mod tests {
                 eq(subj, string_const("\u{e2}\u{9c}\u{93}")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("\\u{9c}") && script.contains("\\u{93}") && script.contains("\\u{e2}"),
@@ -1154,7 +1146,7 @@ mod tests {
                 eq(call, string_const("Zm9v")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(re.* (re.union (str.to_re \"+\")"),
@@ -1194,7 +1186,7 @@ mod tests {
                 eq(call, string_const("YmFy+/x=")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1210,13 +1202,14 @@ mod tests {
         // free-VAR equality (`r == "a"`) must NOT route to string theory —
         // cross-type consistency (`r == "a" ∧ r == 1` UNSAT via distinctness)
         // depends on it. Same for `None == "x"`.
-        let var_eq = compile_asserted_to_parts(&eq(var("r"), string_const("a"))).expect("compile");
+        let var_eq =
+            fixture_compile_asserted_to_parts(&eq(var("r"), string_const("a"))).expect("compile");
         let script = format!("{}{}", var_eq.preamble, var_eq.body);
         assert!(
             script.contains("strlit_") && script.contains("(declare-const r Int)"),
             "var equality must stay in the opaque-Int regime:\n{script}"
         );
-        let none_eq = compile_asserted_to_parts(&eq(
+        let none_eq = fixture_compile_asserted_to_parts(&eq(
             serde_json::json!({"kind":"ctor","name":"None","args":[]}),
             string_const("x"),
         ))
@@ -1235,7 +1228,7 @@ mod tests {
         // fallback, and the empty string is in the Kleene-star universe (SAT
         // alone). Quote char in the set must be escaped SMT-style ("" not \").
         let inv = string_theory_atom("str.chars-in-set", vec![var("r"), string_const("a\"b")]);
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(str.in_re r (re.* (re.union (str.to_re \"\"\"\") (re.union (str.to_re \"a\") (str.to_re \"b\")))))"),
@@ -1278,7 +1271,7 @@ mod tests {
                 eq(call, string_const("a@example.com")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("str.in_re") && script.contains("(str.to_re \"@\")"),
@@ -1315,7 +1308,7 @@ mod tests {
                 eq(call, string_const("ADMIN@evil.com")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1345,7 +1338,7 @@ mod tests {
                 eq(call, string_const("a+x@host.computer")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1360,7 +1353,8 @@ mod tests {
         // REFUSE BY NAME (backstop): a non-regular regex (lookahead) must NOT
         // render an approximated language or become an uninterpreted predicate.
         let inv = string_theory_atom("str.in-regex", vec![var("r"), string_const("foo(?=bar)")]);
-        let err = compile_asserted_to_parts(&inv).expect_err("non-regular regex must refuse");
+        let err =
+            fixture_compile_asserted_to_parts(&inv).expect_err("non-regular regex must refuse");
         let msg = err.to_string();
         assert!(
             msg.contains("str.in-regex")
@@ -1392,7 +1386,7 @@ mod tests {
                 eq(call, string_const("YmFy-_x=")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1420,7 +1414,7 @@ mod tests {
                 eq(call, string_const("YmFy+x=")),
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1436,7 +1430,7 @@ mod tests {
         // quote escaped, no opaque strlit_ laundering, no uninterpreted
         // predicate fallback; the lone row is SAT (empty string qualifies).
         let inv = string_theory_atom("str.chars-not-in-set", vec![var("r"), string_const("/+/")]);
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("(and (not (str.contains r \"+\")) (not (str.contains r \"/\")))"),
@@ -1452,7 +1446,7 @@ mod tests {
             "chars-not-in-set must be a theory lowering, not an uninterpreted predicate:\n{script}"
         );
         let single = string_theory_atom("str.chars-not-in-set", vec![var("r"), string_const("+")]);
-        let single_parts = compile_asserted_to_parts(&single).expect("compile");
+        let single_parts = fixture_compile_asserted_to_parts(&single).expect("compile");
         let single_script = format!("{}{}", single_parts.preamble, single_parts.body);
         assert!(
             single_script.contains("(not (str.contains r \"+\"))")
@@ -1484,7 +1478,7 @@ mod tests {
                 eq(call.clone(), ctor("python:bytes", vec![string_const("YmFy+x=")])),
             ]
         });
-        let parts = compile_asserted_to_parts(&bad).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&bad).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             script.contains("\"YmFy+x=\""),
@@ -1506,7 +1500,7 @@ mod tests {
                 eq(call, ctor("python:bytes", vec![string_const("YmFy-x=")])),
             ]
         });
-        let parts = compile_asserted_to_parts(&good).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&good).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1546,7 +1540,7 @@ mod tests {
             atomic("identity", vec![var("r"), none_ctor()]),
             atomic("identity", vec![var("r"), none_ctor()]),
         );
-        let parts = compile_asserted_to_parts(&good).expect("compile good identity");
+        let parts = fixture_compile_asserted_to_parts(&good).expect("compile good identity");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             !script.contains("(declare-fun identity"),
@@ -1569,7 +1563,7 @@ mod tests {
             atomic("identity", vec![var("r"), none_ctor()]),
             atomic("identity", vec![var("r"), bool_const(true)]),
         );
-        let parts = compile_asserted_to_parts(&bad).expect("compile bad identity");
+        let parts = fixture_compile_asserted_to_parts(&bad).expect("compile bad identity");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert!(
             !script.contains("(declare-fun identity"),
@@ -1586,8 +1580,8 @@ mod tests {
             atomic("identity", vec![var("r"), bool_const(true)]),
             atomic("identity", vec![var("r"), int_const(1)]),
         );
-        let parts =
-            compile_asserted_to_parts(&bool_vs_int_identity).expect("compile bool/int identity");
+        let parts = fixture_compile_asserted_to_parts(&bool_vs_int_identity)
+            .expect("compile bool/int identity");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1600,7 +1594,8 @@ mod tests {
             atomic("identity", vec![var("r"), bool_const(true)]),
             not_formula(atomic("identity", vec![var("r"), none_ctor()])),
         );
-        let parts = compile_asserted_to_parts(&negated_good).expect("compile negated identity");
+        let parts =
+            fixture_compile_asserted_to_parts(&negated_good).expect("compile negated identity");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1613,7 +1608,8 @@ mod tests {
             atomic("identity", vec![var("r"), none_ctor()]),
             not_formula(atomic("identity", vec![var("r"), none_ctor()])),
         );
-        let parts = compile_asserted_to_parts(&negated_bad).expect("compile negated contradiction");
+        let parts =
+            fixture_compile_asserted_to_parts(&negated_bad).expect("compile negated contradiction");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1630,7 +1626,7 @@ mod tests {
         // axiom -> z3 picks strlit == 5 -> SAT (false consistent).
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), string_const("5")), eq(var("r"), int_const(5)));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1645,7 +1641,7 @@ mod tests {
         // Python: `None != 5`. `r is None ∧ r == 5` is contradictory -> UNSAT.
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), none_ctor()), eq(var("r"), int_const(5)));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1660,7 +1656,7 @@ mod tests {
         // Python: `None != "x"`. `r is None ∧ r == "x"` is contradictory -> UNSAT.
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), none_ctor()), eq(var("r"), string_const("x")));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1678,7 +1674,7 @@ mod tests {
         // False encodes as 0, and None must be distinct from 0.
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), none_ctor()), eq(var("r"), bool_const(false)));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1696,7 +1692,7 @@ mod tests {
         // int. A false-refusal here would mean over-distinctness. Permanent.
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), bool_const(true)), eq(var("r"), int_const(1)));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert!(
@@ -1715,7 +1711,7 @@ mod tests {
         // Python: `False == 0`. `r == False ∧ r == 0` is CONSISTENT -> SAT.
         let z3 = which_z3().expect("z3 required");
         let inv = and2(eq(var("r"), bool_const(false)), eq(var("r"), int_const(0)));
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         let out = run_z3(&z3, &script);
         assert_eq!(
@@ -1754,7 +1750,7 @@ mod tests {
             "sort": { "kind": "function", "args": [], "return": { "kind": "primitive", "name": "Bool" } },
             "body": { "kind": "atomic", "name": "true", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         assert_eq!(result.opacity_manifest.opacities.len(), 1);
         assert_eq!(
             result.opacity_manifest.opacities[0].reason_code,
@@ -1789,7 +1785,7 @@ mod tests {
             "sort": { "kind": "dependent", "name": "Vec<n>", "indexVar": "n", "indexSort": { "kind": "primitive", "name": "Int" } },
             "body": { "kind": "atomic", "name": "true", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         assert_eq!(result.opacity_manifest.opacities.len(), 1);
         assert_eq!(
             result.opacity_manifest.opacities[0].reason_code,
@@ -1820,7 +1816,7 @@ mod tests {
                 { "kind": "const", "value": 0, "sort": { "kind": "primitive", "name": "Int" } }
             ]}
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         assert!(result.opacity_manifest.opacities.is_empty());
         assert!(result.body.contains("(forall ((x Int))"));
     }
@@ -1837,7 +1833,7 @@ mod tests {
             "sort": { "kind": "primitive", "name": "Ref<Connection>" },
             "body": { "kind": "atomic", "name": "true", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         assert_eq!(result.opacity_manifest.opacities.len(), 1);
         assert_eq!(
             result.opacity_manifest.opacities[0].reason_code,
@@ -1875,7 +1871,7 @@ mod tests {
             "sort": { "kind": "function", "args": [], "return": { "kind": "primitive", "name": "Bool" } },
             "body": { "kind": "atomic", "name": "true", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         let manifest = &result.opacity_manifest;
         assert_eq!(manifest.protocol_version, "ir-compiler-protocol/2");
         assert_eq!(manifest.compiler, "smt-lib-v2.6");
@@ -1896,7 +1892,7 @@ mod tests {
                   "body": { "kind": "atomic", "name": "true", "args": [] } }
             ]
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         assert_eq!(result.opacity_manifest.opacities.len(), 2);
         let cids: Vec<&str> = result
             .opacity_manifest
@@ -1940,7 +1936,7 @@ mod tests {
             "sort": { "kind": "primitive", "name": "OpaqueT" },
             "body": { "kind": "atomic", "name": "true", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         // Sanity: check the sound quantifier is present in the body.
         assert!(
             result.body.contains("(forall ((x S_"),
@@ -1971,7 +1967,7 @@ mod tests {
             "sort": { "kind": "primitive", "name": "OpaqueT" },
             "body": { "kind": "atomic", "name": "false", "args": [] }
         });
-        let result = compile_to_parts(&ir).expect("compile succeeds");
+        let result = fixture_compile_to_parts(&ir).expect("compile succeeds");
         // Sanity: the body must contain the real quantifier, not collapsed true.
         assert!(
             result.body.contains("(forall ((x S_"),
@@ -2084,7 +2080,7 @@ mod tests {
                 abs_bv_atom(-2147483648)
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         // The sworn equality must have been promoted to bv32 (BV hex literal,
         // NOT a bare Int numeral -2147483648). Contagion proof.
@@ -2130,7 +2126,7 @@ mod tests {
                 abs_bv_atom(-2147483648)
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         // Both BV literals must appear (the false claim #x7fffffff and the
         // walked-body subject #x80000000).
@@ -2154,7 +2150,7 @@ mod tests {
         // builtins. Declaring them as uninterpreted would shadow the theory and
         // let z3 pick a false interpretation.
         let inv = abs_bv_atom(-2147483648);
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         for forbidden in &[
             "declare-fun bv32",
@@ -2181,7 +2177,7 @@ mod tests {
         // name substituted at emit time. It must NOT be emitted as a
         // `(declare-const a ...)` free variable in the SMT script.
         let inv = abs_bv_atom(-2147483648);
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let preamble = &parts.preamble;
         assert!(
             !preamble.contains("declare-const a "),
@@ -2208,7 +2204,7 @@ mod tests {
                 {"kind": "const", "value": 5, "sort": {"kind": "primitive", "name": "Int"}}
             ]
         });
-        let parts = compile_asserted_to_parts(&eq_atom).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&eq_atom).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         // Must be in Int regime — no BV sort in preamble
         assert!(
@@ -2240,9 +2236,9 @@ mod tests {
                 abs_bv_atom(-2147483648)
             ]
         });
-        // compile_asserted_to_parts runs check_mixed_sort_conjunction first;
+        // fixture_compile_asserted_to_parts runs check_mixed_sort_conjunction first;
         // it must NOT return Err.
-        let result = compile_asserted_to_parts(&inv);
+        let result = fixture_compile_asserted_to_parts(&inv);
         assert!(
             result.is_ok(),
             "bv32 universe + Int sworn equality on same term must compile (no B7 STOP); \
@@ -2278,7 +2274,7 @@ mod tests {
                 ]}
             ]
         });
-        let parts = compile_asserted_to_parts(&inv)
+        let parts = fixture_compile_asserted_to_parts(&inv)
             .expect("untainted ctor == string is now opaque-Int, compiles");
         let script = format!("{}{}", parts.preamble, parts.body);
         assert_eq!(
@@ -2311,7 +2307,7 @@ mod tests {
                 ]}
             ]
         });
-        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
         let script = format!("{}{}", parts.preamble, parts.body);
         // Must stay in string theory: no BV sort, no int32.eq-const promotion.
         assert!(

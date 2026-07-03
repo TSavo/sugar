@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use sugar_ir_compiler::CompilerInput;
 use sugar_verifier::solvers::{
     plan::{run_plan, Registry},
     SolverPlan, SolverSeat, SolversConfig, StubSolver,
@@ -20,6 +21,10 @@ use sugar_verifier::SolverHandle;
 
 fn parse(toml_body: &str) -> SolversConfig {
     SolversConfig::from_toml(toml_body).expect("parse toml")
+}
+
+fn compiler_input(value: serde_json::Value) -> CompilerInput {
+    CompilerInput::decode_json(value).expect("multi-solver fixture decodes")
 }
 
 #[test]
@@ -129,10 +134,10 @@ binary = "stub:undecidable"
     let plan = SolverPlan::from_config(&cfg);
     let registry = sugar_verifier::solvers::registry::build(&cfg);
 
-    let f = serde_json::json!({
+    let f = compiler_input(serde_json::json!({
         "kind": "atomic", "name": "length",
         "args": [{"kind":"var","name":"s"}]
-    });
+    }));
     let (verdict, _, invs) = run_plan(&plan, &registry, "(check-sat)", Some(&f));
     assert_eq!(verdict, ObligationVerdict::Discharged);
     assert_eq!(invs[0].result.solver_name, "cvc5");
@@ -155,10 +160,13 @@ binary = "stub:unsat"
     let cfg = parse(body);
     let plan = SolverPlan::from_config(&cfg);
     let registry = sugar_verifier::solvers::registry::build(&cfg);
-    let f = serde_json::json!({
+    let f = compiler_input(serde_json::json!({
         "kind":"atomic","name":">",
-        "args":[{"kind":"var","name":"x"},{"kind":"const","value":0}]
-    });
+        "args":[
+            {"kind":"var","name":"x"},
+            {"kind":"const","value":0,"sort":{"kind":"primitive","name":"Int"}}
+        ]
+    }));
     let (_, _, invs) = run_plan(&plan, &registry, "(check-sat)", Some(&f));
     assert_eq!(invs[0].result.solver_name, "z3");
 }
@@ -196,7 +204,7 @@ binary = "stub:unsat"
     );
     let plan = SolverPlan::from_config(&cfg);
     let registry = sugar_verifier::solvers::registry::build(&cfg);
-    let f = serde_json::json!({"kind":"atomic","name":">","args":[]});
+    let f = compiler_input(serde_json::json!({"kind":"atomic","name":">","args":[]}));
     let (v, reason, _) = run_plan(&plan, &registry, "(check-sat)", Some(&f));
     assert_eq!(v, ObligationVerdict::Undecidable);
     assert!(reason.contains("no matching solver"));

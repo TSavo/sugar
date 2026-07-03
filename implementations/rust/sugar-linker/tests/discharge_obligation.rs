@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
 use sugar_linker::solver_api::{
-    registry, ObligationVerdict, SolverHandle, SolverPlan, SolversConfig, StubSolver,
+    registry, ObligationVerdict, SolverHandle, SolverPlan, SolverSeat, SolversConfig, StubSolver,
 };
 use sugar_linker::{
     link, link_with_solvers, LinkerCallEdge, LinkerContract, LinkerInputs, Registry,
@@ -107,14 +107,14 @@ fn inputs(caller_post: Option<Json>, callee_pre: Option<Json>) -> LinkerInputs {
 
 /// Build a registry containing one stub solver returning a fixed
 /// verdict, plus a Single plan referencing it. Mirrors the
-/// `.sugar/config.toml` shape `[solvers] default = "fake"`.
+/// `.sugar/config.toml` shape where a named solver seat owns a handle.
 fn stub_registry_and_plan(verdict: ObligationVerdict) -> (Registry, SolverPlan) {
-    let mut r: HashMap<String, SolverHandle> = HashMap::new();
+    let mut r: HashMap<SolverSeat, SolverHandle> = HashMap::new();
     r.insert(
-        "fake".into(),
+        SolverSeat::Z3,
         Arc::new(StubSolver::new("fake", verdict)) as SolverHandle,
     );
-    (r, SolverPlan::Single("fake".into()))
+    (r, SolverPlan::Single(SolverSeat::Z3))
 }
 
 // -------------------------------------------------------------------
@@ -167,7 +167,7 @@ fn jcs_canonical_equality_discharges_without_solver() {
     // Use an EMPTY registry: if the linker needed to invoke the
     // solver this would surface as "implication-undecidable".
     let registry: Registry = HashMap::new();
-    let plan = SolverPlan::Single("__no_solver__".into());
+    let plan = SolverPlan::Single(SolverSeat::Z3);
     let out = link_with_solvers(inputs(Some(post), Some(pre)), &registry, &plan);
     assert!(
         out.linker_errors.is_empty(),
@@ -329,8 +329,8 @@ fn caller_post_absent_emits_unprovable_obligation() {
 fn config_driven_registry_drives_discharge() {
     let toml = r#"
 [solvers]
-default = "fakeA"
-[solvers.fakeA]
+default = "z3"
+[solvers.z3]
 binary = "stub:unsat"
 "#;
     let cfg = SolversConfig::from_toml(toml).expect("parse");

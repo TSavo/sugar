@@ -57,6 +57,7 @@ use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::CompilerInput;
 use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
 use sugar_verifier::body_discharge;
 use sugar_verifier::solvers::registry;
@@ -868,8 +869,16 @@ fn verify_direct_formula_claim(
     result.obligation_class = theory.as_str().to_string();
     result.routed_solver = routed_seat(plan, theory);
 
+    let claim_input = match CompilerInput::decode_json(claim.formula.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            result.verdict = ObligationVerdict::Undecidable;
+            result.reason = format!("frontend decode: {}", error.payload);
+            return result;
+        }
+    };
     let (verdict, reason, invs) =
-        run_plan_with_compilers(plan, solver_registry, compiler_registry, &claim.formula);
+        run_plan_with_compilers(plan, solver_registry, compiler_registry, &claim_input);
     result.verdict = verdict;
     result.reason = reason;
     result.discharging_solver = invs
@@ -1211,8 +1220,16 @@ fn verify_one_claim(
     );
 
     // Dispatch through the solver-dispatch table.
+    let obligation_input = match CompilerInput::decode_json(obligation.clone()) {
+        Ok(input) => input,
+        Err(error) => {
+            result.verdict = ObligationVerdict::Undecidable;
+            result.reason = format!("frontend decode: {}", error.payload);
+            return result;
+        }
+    };
     let (verdict, reason, invs) =
-        run_plan_with_compilers(plan, solver_registry, compiler_registry, &obligation);
+        run_plan_with_compilers(plan, solver_registry, compiler_registry, &obligation_input);
     info!(
         bridge = %cs.bridge_ir_name,
         panic_guarded,

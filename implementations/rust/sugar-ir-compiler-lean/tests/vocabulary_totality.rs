@@ -8,6 +8,9 @@ use vocabulary::{
     SymbolPosition,
 };
 
+use sugar_ir_compiler::{CompilerInput, IrCompiler};
+use sugar_ir_compiler_lean::{LeanCompiler, DIALECT};
+
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
@@ -74,6 +77,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "atoi", 0),
     ("ctor", "await", 1),
     ("ctor", "b", 0),
+    ("ctor", "bad token", 0),
     ("ctor", "bv32.add", 2),
     ("ctor", "bv32.and", 2),
     ("ctor", "bv32.ite", 3),
@@ -151,7 +155,8 @@ fn report() -> BackendReport {
         .iter()
         .map(|symbol| {
             let ir = formula_json_for(symbol);
-            match sugar_ir_compiler_lean::compile_to_parts(&ir) {
+            let input = CompilerInput::decode_json(ir).expect("vocabulary formula fixture decodes");
+            match LeanCompiler::new().compile_typed(&input, DIALECT) {
                 Ok(_) if lean_encoded(symbol) => audit_row(
                     symbol,
                     Disposition::Encoded,

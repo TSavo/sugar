@@ -8,6 +8,7 @@ ambient_testimony_sites = 1
 transport_json_backend_ingress = 0
 backend_frontend_decode_calls = 0
 frontend_provenance_unadmitted = 0
+untyped_verifier_obligation_paths = 0
 
 [[pipeline_seams]]
 root = "implementations/rust/sugar-cli/src"
@@ -807,6 +808,14 @@ retirement = "S7 deletes compile(&Json) after all compiler callers use compile_t
 baseline = false
 source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "IrCompiler::compile", needles = ["fn compile(&self, ir: &Json", "compile_json_adapter(self, ir, dialect)"] }
 
+[[frontend_boundary_decode_calls]]
+id = "smt-lib-asserted-json-helper-for-lift-tests"
+shape = "backend-json-helper-signature"
+owner = "sugar-lift-rust-tests lane"
+retirement = "move sugar-lift-rust-tests assertion/discharge fixtures to compile_asserted_formula_to_parts over typed Formula, then delete this helper no later than S7"
+baseline = false
+source = { path = "implementations/rust/sugar-ir-compiler-smt-lib/src/lib.rs", item = "compile_asserted_to_parts", needles = ["pub fn compile_asserted_to_parts", "&Json"] }
+
 [[frontend_boundary_vocabulary]]
 id = "frontend-error-kind"
 owner = "sugar-ir-compiler frontend adapter"
@@ -827,3 +836,9 @@ owner = "sugar-ir-compiler frontend equivalence instrument"
 declaration = "FrontendProvenancePolicy { owner, allowed_fields: Vec<CompiledFormulaFieldPath>, reason, retirement }"
 retirement = "S6 consumes this policy; default remains empty and every non-empty allowance must name owner/reason/retirement"
 baseline = true
+
+[[verifier_obligation_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/registry.rs"
+
+[[verifier_obligation_sources]]
+path = "implementations/rust/sugar-verifier/src/solvers/plan.rs"

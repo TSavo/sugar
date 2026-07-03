@@ -14,8 +14,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value as Json};
 
-use sugar_ir_compiler::IrCompiler;
-use sugar_ir_compiler_smt_lib::{compile_to_parts, emit, SmtLibCompiler, DIALECT};
+use sugar_ir_compiler::{CompileError, CompiledFormula, CompilerInput, IrCompiler};
+use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
+
+fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
+    let input = CompilerInput::decode_json(ir.clone())?;
+    SmtLibCompiler::new().compile_typed(&input, DIALECT)
+}
+
+fn emit(ir: &Json) -> Result<String, String> {
+    compile_to_parts(ir)
+        .map(|compiled| compiled.script())
+        .map_err(|error| error.to_string())
+}
 
 // -------------------- legacy inline emitter, frozen --------------------
 
