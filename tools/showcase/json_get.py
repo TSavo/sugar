@@ -56,6 +56,7 @@ def main() -> int:
                 "bool": bool,
                 "int": int,
                 "len": len,
+                "next": next,
                 "str": str,
                 "sum": sum,
             }
