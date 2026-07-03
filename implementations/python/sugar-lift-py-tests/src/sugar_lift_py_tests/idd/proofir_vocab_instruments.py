@@ -105,10 +105,37 @@ class VerdictWitnessCoverageReport:
 
 
 @dataclass(frozen=True)
+class UnknownSortEqualitySeat:
+    callee: str
+    reason: str
+    source: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"callee": self.callee, "reason": self.reason, "source": self.source}
+
+
+@dataclass(frozen=True)
+class UnknownSortEqualityReport:
+    seats: list[UnknownSortEqualitySeat]
+
+    @property
+    def r(self) -> int:
+        return len(self.seats)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "kind": "proofir-unknown-sort-equality-seat-counter",
+            "r": {"unknown_sort_equality_seats": self.r, "total": self.r},
+            "seats": [seat.to_json() for seat in self.seats],
+        }
+
+
+@dataclass(frozen=True)
 class ProofIrVocabularyFrontierReport:
     provenance: FormulaProvenanceReport
     verdict_witnesses: VerdictWitnessCoverageReport
     construction_law: ConstructionLawReport
+    unknown_sort_equality: UnknownSortEqualityReport
 
     @property
     def formula_fragments_without_provenance(self) -> int:
@@ -123,11 +150,16 @@ class ProofIrVocabularyFrontierReport:
         return self.construction_law.r
 
     @property
+    def unknown_sort_equality_seats(self) -> int:
+        return self.unknown_sort_equality.r
+
+    @property
     def is_zero(self) -> bool:
         return (
             self.provenance.r == 0
             and self.verdict_witnesses.r == 0
             and self.construction_law.r == 0
+            and self.unknown_sort_equality.r == 0
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -137,15 +169,18 @@ class ProofIrVocabularyFrontierReport:
                 "formula_fragments_without_provenance": self.provenance.r,
                 "proofir_classes_without_verdict_witnesses": self.verdict_witnesses.r,
                 "naked_formula_boundary_crossings": self.construction_law.r,
+                "unknown_sort_equality_seats": self.unknown_sort_equality.r,
                 "total": (
                     self.provenance.r
                     + self.verdict_witnesses.r
                     + self.construction_law.r
+                    + self.unknown_sort_equality.r
                 ),
             },
             "provenance": self.provenance.to_json(),
             "verdictWitnesses": self.verdict_witnesses.to_json(),
             "constructionLaw": self.construction_law.to_json(),
+            "unknownSortEquality": self.unknown_sort_equality.to_json(),
         }
 
 
@@ -159,10 +194,55 @@ def collect_proofir_vocabulary_frontier(
     verdict_witnesses = proofir_classes_without_verdict_witnesses(
         _registered_proofir_vocabulary_witnesses()
     )
+    unknown_sort_equality = collect_unknown_sort_equality_residue(root)
     return ProofIrVocabularyFrontierReport(
         provenance=provenance,
         verdict_witnesses=verdict_witnesses,
         construction_law=construction_law,
+        unknown_sort_equality=unknown_sort_equality,
+    )
+
+
+def count_unknown_sort_equality_seats(
+    equality_facts: Iterable[object],
+) -> UnknownSortEqualityReport:
+    from sugar_lift_py_tests.proofir import EqualityFact, UnknownSort
+
+    seats: list[UnknownSortEqualitySeat] = []
+    for fact in equality_facts:
+        if not isinstance(fact, EqualityFact):
+            continue
+        sort = fact.call_term.sort
+        if not isinstance(sort, UnknownSort):
+            continue
+        seats.append(
+            UnknownSortEqualitySeat(
+                callee=fact.call_term.callee_name,
+                reason=sort.reason,
+                source=fact.euf_key,
+            )
+        )
+    return UnknownSortEqualityReport(seats=seats)
+
+
+def collect_unknown_sort_equality_residue(root: Path) -> UnknownSortEqualityReport:
+    source_root = _source_root(root)
+    literal_report = source_root / "factory" / "literal_call_report.py"
+    source = literal_report.read_text(encoding="utf-8")
+    reason = "no function-contract return sort available for call:"
+    if reason not in source:
+        return UnknownSortEqualityReport(seats=[])
+    return UnknownSortEqualityReport(
+        seats=[
+            UnknownSortEqualitySeat(
+                callee="<unresolved external callee>",
+                reason=(
+                    "no function-contract return sort available for calls whose "
+                    "callee contract is genuinely unavailable"
+                ),
+                source="factory/literal_call_report.py:_emit_euf_fact fallback",
+            )
+        ]
     )
 
 
@@ -442,15 +522,30 @@ def _annotation_text(annotation: SourceFragment) -> str:
 
 def _is_boundary_owner(owner: str) -> bool:
     return owner in {
+        "AuditMemento",
+        "BridgeAtom",
+        "CallEdgeDecl",
         "EqualityFact",
+        "FactAtom",
         "FunctionContract",
         "FunctionContractBuilder",
         "RefusalRecord",
+        "UniverseAtom",
+        "UniverseMint",
+        "VendorConjoin",
     }
 
 
 def _is_proofir_semantic_class(class_name: str) -> bool:
-    return class_name in {"EqualityFact", "FunctionContract", "RefusalRecord"}
+    return class_name in {
+        "AuditMemento",
+        "CallEdgeDecl",
+        "EqualityFact",
+        "FunctionContract",
+        "RefusalRecord",
+        "UniverseMint",
+        "VendorConjoin",
+    }
 
 
 def _is_formula_boundary_slot(field_name: str) -> bool:
@@ -471,6 +566,8 @@ def _formula_boundary_axis(annotation_text: str, *, relpath: str) -> str | None:
     if "dict[str,Any]" in compact or "Dict[str,Any]" in compact:
         return "dict-str-any-formula-slot"
     if relpath.startswith("proofir/nodes/") or relpath == "proofir/nodes.py":
+        if "ClaimFormula" in annotation_text:
+            return None
         if "Formula" in annotation_text:
             return "Formula-typed-node-constructor-field"
     return None
@@ -490,6 +587,10 @@ def render_text(report: ProofIrVocabularyFrontierReport) -> str:
         "R(naked-formula-boundary-crossings): "
         f"{report.naked_formula_boundary_crossings}\n"
     )
+    lines.append(
+        "R(unknown-sort-eq-seats): "
+        f"{report.unknown_sort_equality_seats}\n"
+    )
     if report.provenance.missing:
         lines.append("formula fragments without provenance:\n")
         for fragment in report.provenance.missing:
@@ -507,4 +608,8 @@ def render_text(report: ProofIrVocabularyFrontierReport) -> str:
                 f"  - {crossing.axis} {crossing.path}:{crossing.line}: "
                 f"{crossing.detail} -> {crossing.replacement}\n"
             )
+    if report.unknown_sort_equality.seats:
+        lines.append("unknown-sort equality seats:\n")
+        for seat in report.unknown_sort_equality.seats:
+            lines.append(f"  - {seat.callee}: {seat.reason} ({seat.source})\n")
     return "".join(lines)

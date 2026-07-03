@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .callsite_fact_dto import CallsiteFactDto
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.proofir.scope import ClaimFormula
 
 
 @dataclass(frozen=True)
 class BodyUniverseDto:
     name: str
     out_binding: str = "out"
-    pre: dict[str, Any] | None = None
-    post: dict[str, Any] | None = None
-    inv: dict[str, Any] | None = None
+    pre: ClaimFormula | None = None
+    post: ClaimFormula | None = None
+    inv: ClaimFormula | None = None
     source_warrants: list[SourceMementoDto | dict[str, Any]] = field(
         default_factory=list
     )

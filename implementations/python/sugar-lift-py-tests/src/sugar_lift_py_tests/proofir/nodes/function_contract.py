@@ -22,7 +22,11 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto, SourceMementoDto
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
-from sugar_lift_py_tests.proofir.scope import PostCondition, PreCondition
+from sugar_lift_py_tests.proofir.scope import (
+    PostCondition,
+    PreCondition,
+    claim_formula_from_ir,
+)
 from sugar_lift_py_tests.proofir.sorts import IntSort, Sort, sort_from_ir
 
 from . import (
@@ -147,8 +151,12 @@ class FunctionContract(ProofIRNode):
         return BodyUniverseDto(
             name=self.symbol,
             out_binding=self.out_binding,
-            pre=_formula_to_rpc(self.pre.ir_formula) if self.pre is not None else None,
-            post=_formula_to_rpc(self.post.ir_formula),
+            pre=(
+                _claim_formula_for_pre(self.pre, provenance=self.provenance())
+                if self.pre is not None
+                else None
+            ),
+            post=_claim_formula_for_post(self.post, provenance=self.provenance()),
             source_warrants=source_warrants,
             formals=[formal.name for formal in self.formals],
             kind="function-contract",
@@ -299,6 +307,35 @@ def _post_from_ir(
         formals=formals,
         out_binding=out_binding,
         out_sort=out_sort,
+    )
+
+
+def _claim_formula_for_post(
+    condition: PostCondition,
+    *,
+    provenance: Provenance,
+) -> object:
+    var_sorts = {**condition.formals, condition.out_binding: condition.out_sort}
+    return claim_formula_from_ir(
+        condition.ir_formula,
+        var_sorts=var_sorts,
+        allowed_vars=var_sorts.keys(),
+        provenance=provenance,
+        role="FunctionContract.post",
+    )
+
+
+def _claim_formula_for_pre(
+    condition: PreCondition,
+    *,
+    provenance: Provenance,
+) -> object:
+    return claim_formula_from_ir(
+        condition.ir_formula,
+        var_sorts=condition.formals,
+        allowed_vars=condition.formals.keys(),
+        provenance=provenance,
+        role="FunctionContract.pre",
     )
 
 

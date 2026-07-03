@@ -7,7 +7,7 @@ from sugar_lift_py_tests.ir import Formula, Term, _Ctor
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
 from sugar_lift_py_tests.proofir.formulas import Eq as ProofEq
-from sugar_lift_py_tests.proofir.scope import ClosedFormula
+from sugar_lift_py_tests.proofir.scope import ClosedFormula, claim_formula_from_ir
 from sugar_lift_py_tests.proofir.sorts import IntSort
 from sugar_lift_py_tests.proofir.terms import (
     CallTerm,
@@ -77,19 +77,40 @@ class EqualityFact(ProofIRNode):
     def provenance(self) -> Provenance:
         return self._provenance
 
-    def to_declaration(self) -> dict[str, Any]:
+    def to_body_universe(self) -> BodyUniverseDto:
         return BodyUniverseDto(
             name=self.euf_key,
             out_binding="out",
-            inv=_formula_to_rpc(self.denotation()),
+            inv=claim_formula_from_ir(
+                self.denotation(),
+                var_sorts={
+                    **self.call_term.free_var_sorts,
+                    **self.rhs_term.free_var_sorts,
+                },
+                allowed_vars=self._closed_formula.formula.free_vars,
+                provenance=self.provenance(),
+                role="EqualityFact.inv",
+            ),
             proofir_provenance=self.provenance().warrant_memento(),
-        ).to_rpc()
+        )
+
+    def to_declaration(self) -> dict[str, Any]:
+        return self.to_body_universe().to_rpc()
 
     def to_semantic_declaration(self) -> dict[str, Any]:
         return BodyUniverseDto(
             name=self.euf_key,
             out_binding="out",
-            inv=_formula_to_rpc(self.denotation()),
+            inv=claim_formula_from_ir(
+                self.denotation(),
+                var_sorts={
+                    **self.call_term.free_var_sorts,
+                    **self.rhs_term.free_var_sorts,
+                },
+                allowed_vars=self._closed_formula.formula.free_vars,
+                provenance=self.provenance(),
+                role="EqualityFact.inv",
+            ),
         ).to_rpc()
 
     @classmethod

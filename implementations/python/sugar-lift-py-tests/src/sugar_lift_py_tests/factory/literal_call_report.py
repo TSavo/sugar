@@ -15,6 +15,7 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.ir import (
     Formula,
+    Locus,
     Term,
     _Atomic,
     _ConstBool,
@@ -40,6 +41,11 @@ from sugar_lift_py_tests.kit_rpc import (
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 from sugar_lift_py_tests.proofir import (
+    AuditLocus,
+    AuditMemento,
+    BridgeAtom,
+    CallEdgeDecl,
+    ClaimFormula,
     ConstructionSite,
     Derived,
     EqualityFact,
@@ -48,7 +54,9 @@ from sugar_lift_py_tests.proofir import (
     PostCondition,
     Provenance,
     Stated,
+    UniverseMint,
     UnknownSort,
+    claim_formula_from_ir,
     formula_from_ir,
     merge_equality_facts,
 )
@@ -472,6 +480,27 @@ def _lift_assert(
             fix=fix,
         )
 
+    universe: LiftResult | None = None
+    universe_factory_audits: list[Any] = []
+    if callee_name in functions_by_name:
+        # Build the callsite through the factory and then ask the factory term for the floor.
+        # The consumer reads the CallSiteValue/force_floor/project_callsite_with spine directly.
+        universe = _construct_callsite_from_factory_term(
+            stmt,
+            comparison_left,
+            callee_name,
+            fn,
+            functions_by_name,
+            classes_by_name,
+            filename=filename,
+            memento_file=memento_file,
+            source_lines=source_lines,
+            dig_refusals=dig_refusals,
+            agreement_violations=agreement_violations,
+            factory_audits=universe_factory_audits,
+        )
+    call_return_sort = _call_return_sort_from_universe(universe, callee_name)
+
     # _lift_callsite_assertion lifts or PANICS; it never returns None.
     assertion = _lift_callsite_assertion(
         stmt,
@@ -494,27 +523,25 @@ def _lift_assert(
             module_statements=module_statements,
             factory_audits=factory_audits,
         ),
+        call_return_sort=call_return_sort,
     )
-
-    universe: LiftResult | None = None
-    if callee_name in functions_by_name:
-        # Build the callsite through the factory and then ask the factory term for the floor.
-        # The consumer reads the CallSiteValue/force_floor/project_callsite_with spine directly.
-        universe = _construct_callsite_from_factory_term(
-            stmt,
-            comparison_left,
-            callee_name,
-            fn,
-            functions_by_name,
-            classes_by_name,
-            filename=filename,
-            memento_file=memento_file,
-            source_lines=source_lines,
-            dig_refusals=dig_refusals,
-            agreement_violations=agreement_violations,
-            factory_audits=factory_audits,
-        )
+    factory_audits.extend(universe_factory_audits)
     return _merge_lifts(universe, assertion)
+
+
+def _call_return_sort_from_universe(
+    universe: LiftResult | None,
+    callee_name: str,
+) -> ProofSort | None:
+    if universe is None:
+        return None
+    for contract in universe[0]:
+        if (
+            isinstance(contract, FunctionContract)
+            and contract.bridge_source_symbol == f"call:{callee_name}"
+        ):
+            return contract.out_sort
+    return None
 
 
 def _lift_assertion_via_factory(
@@ -911,6 +938,7 @@ def _lift_callsite_assertion(
     memento_file: str,
     source_lines: list[str],
     ctx: FactoryBuildContext | None = None,
+    call_return_sort: ProofSort | None = None,
 ) -> LiftResult:
     """The fact. `callee(args) == expected` lifts to the euf callsite obligation
     `eq(call:callee(args), expected)`, contract-named `callee#euf#<arg_sig>::assertion`.
@@ -953,6 +981,7 @@ def _lift_callsite_assertion(
         memento_file=memento_file,
         source_lines=source_lines,
         warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
+        call_return_sort=call_return_sort,
     )
 
 
@@ -1104,13 +1133,21 @@ def _emit_assertion_surface_fact(
         contract_name=contract_name,
         role=role,
     )
-    inv = _formula_to_rpc(formula)
-    contract = BodyUniverseDto(
-        name=contract_name,
-        out_binding="out",
-        inv=inv,
-        source_warrants=[memento],
+    inv = _claim_formula_for_report(
+        formula,
+        stmt,
+        memento_file,
+        role=role,
+        node_class=UniverseMint.node_class,
     )
+    contract = UniverseMint(
+        name=contract_name,
+        slot="inv",
+        formula=inv,
+        provenance=inv.provenance,
+        out_binding="out",
+        source_warrants=(memento,),
+    ).to_body_universe()
     walk = _walk_row(
         selected,
         "Assert",
@@ -1174,8 +1211,7 @@ def _materialize_contract_rows(rows: list[Any]) -> list[BodyUniverseDto]:
     materialized: list[BodyUniverseDto] = []
     for row in _merge_contract_rows(rows):
         if isinstance(row, EqualityFactEmission):
-            declaration = row.fact.to_declaration()
-            contract = _body_universe_from_declaration(declaration)
+            contract = row.fact.to_body_universe()
             materialized.append(
                 replace(contract, source_warrants=list(row.source_warrants))
             )
@@ -1196,12 +1232,10 @@ def _materialize_contract_rows(rows: list[Any]) -> list[BodyUniverseDto]:
 
 
 def _body_universe_from_declaration(declaration: dict[str, Any]) -> BodyUniverseDto:
-    return BodyUniverseDto(
+    provenance = _provenance_from_declaration(declaration)
+    base = BodyUniverseDto(
         name=declaration["name"],
         out_binding=declaration.get("outBinding", "out"),
-        pre=declaration.get("pre"),
-        post=declaration.get("post"),
-        inv=declaration.get("inv"),
         source_warrants=list(declaration.get("sourceWarrants", [])),
         proofir_provenance=declaration.get("proofirProvenance"),
         warranted_by=declaration.get("warrantedBy"),
@@ -1209,12 +1243,78 @@ def _body_universe_from_declaration(declaration: dict[str, Any]) -> BodyUniverse
         kind=declaration.get("kind", "contract"),
         bridge_source_symbol=declaration.get("bridgeSourceSymbol"),
     )
+    return replace(
+        base,
+        pre=ClaimFormula.from_rpc(
+            declaration.get("pre"),
+            provenance=provenance,
+            role="BodyUniverseDto.pre",
+        ),
+        post=ClaimFormula.from_rpc(
+            declaration.get("post"),
+            provenance=provenance,
+            role="BodyUniverseDto.post",
+        ),
+        inv=ClaimFormula.from_rpc(
+            declaration.get("inv"),
+            provenance=provenance,
+            role="BodyUniverseDto.inv",
+        ),
+    )
+
+
+def _provenance_from_declaration(declaration: dict[str, Any]) -> Provenance:
+    proofir_provenance = declaration.get("proofirProvenance")
+    node_class = (
+        proofir_provenance.get("nodeClass")
+        if isinstance(proofir_provenance, dict)
+        else None
+    )
+    return Provenance(
+        node_class=node_class or "BodyUniverseDto",
+        construction_site=ConstructionSite(
+            path=f"declaration:{declaration.get('name', '<unknown>')}",
+            line=0,
+            column=0,
+        ),
+        warrant=Derived(floor_chain=("body-universe-declaration",)),
+    )
 
 
 def _proofir_construction_site(
     stmt: SourceFragment, memento_file: str
 ) -> ConstructionSite:
     return ConstructionSite(path=memento_file, line=stmt.line, column=stmt.col)
+
+
+def _claim_formula_for_report(
+    formula: Formula,
+    stmt: SourceFragment,
+    memento_file: str,
+    *,
+    role: str,
+    node_class: str,
+    scope_sorts: dict[str, ProofSort] | None = None,
+) -> ClaimFormula:
+    wrapped = formula_from_ir(formula, var_sorts={})
+    sorts = dict(scope_sorts or {})
+    for name in wrapped.free_vars:
+        sorts.setdefault(
+            name,
+            UnknownSort(reason=f"no declared sort for formula variable {name!r}"),
+        )
+    _infer_formula_sorts(formula, sorts)
+    return claim_formula_from_ir(
+        formula,
+        var_sorts=sorts,
+        allowed_vars=tuple(wrapped.free_vars),
+        provenance=Provenance(
+            node_class=node_class,
+            construction_site=_proofir_construction_site(stmt, memento_file),
+            warrant=Derived(floor_chain=(role,)),
+        ),
+        role=role,
+    )
 
 
 def _equality_fact_for_row(row: object) -> EqualityFact | None:
@@ -2044,19 +2144,25 @@ def _external_bridge_edges(
             continue
         seen.add(key)
         binding = _binding_for_bridge_symbol(contract_bindings, target_symbol)
-        edge: dict[str, Any] = {
-            "kind": "call-edge",
-            "schemaVersion": "1",
-            "sourceContract": source_contract,
-            "targetSymbol": target_symbol,
-            "targetContract": binding.get("name") if binding is not None else None,
-            "targetContractCid": _binding_cid(binding) if binding is not None else None,
-            "callSiteLocus": {
-                "file": memento_file,
-                "line": item["line"],
-                "column": item["column"],
-            },
-        }
+        bridge = BridgeAtom(
+            source_contract=source_contract,
+            target_symbol=target_symbol,
+            target_contract=binding.get("name") if binding is not None else None,
+            target_contract_cid=_binding_cid(binding) if binding is not None else None,
+            call_site_locus=Locus(memento_file, item["line"], item["column"]),
+        )
+        edge = CallEdgeDecl(
+            bridge=bridge,
+            provenance=Provenance(
+                node_class=CallEdgeDecl.node_class,
+                construction_site=ConstructionSite(
+                    path=memento_file,
+                    line=item["line"],
+                    column=item["column"],
+                ),
+                warrant=Derived(floor_chain=("literal-call-bridge",)),
+            ),
+        ).to_declaration()
         proof_cid = _binding_proof_cid(binding)
         if proof_cid is not None:
             edge["targetProofCid"] = proof_cid
@@ -2245,34 +2351,29 @@ def _source_audit(
     role: str,
     ast_kind: str,
 ) -> dict[str, Any]:
-    totals = {
-        "source_loci": 1,
-        "source_warranted": 1,
-        "source_inactive": 0,
-        "source_support": 0,
-        "source_refused": 0,
-        "source_unresolved": 0,
-        "unclassified_source": 0,
-    }
-    return {
-        "role": role,
-        "contract": contract_name,
-        "file": memento_file,
-        "sourceFunctionName": fn.function_name(),
-        "totals": totals,
-        "loci": [
-            {
-                "file": memento_file,
-                "line": stmt.line,
-                "col": stmt.col,
-                "status": "warranted",
-                "ast_kind": ast_kind,
-                "role": role,
-                "contract": contract_name,
-                "sourceMemento": memento,
-            }
-        ],
-    }
+    return AuditMemento(
+        role=role,
+        contract=contract_name,
+        file=memento_file,
+        source_function_name=fn.function_name(),
+        loci=(
+            AuditLocus(
+                file=memento_file,
+                line=stmt.line,
+                col=stmt.col,
+                status="warranted",
+                ast_kind=ast_kind,
+                role=role,
+                contract=contract_name,
+                source_memento=memento,
+            ),
+        ),
+        provenance=Provenance(
+            node_class=AuditMemento.node_class,
+            construction_site=_proofir_construction_site(stmt, memento_file),
+            warrant=Stated(locus=_proofir_construction_site(stmt, memento_file)),
+        ),
+    ).to_declaration()
 
 
 def _walk_row(

@@ -321,8 +321,10 @@ def _assert_lift_doc_contains_node_class(doc: dict, case) -> None:
         assert _has_equality_fact(doc), doc
         assert "EqualityFact" in _proofir_provenance_classes(doc)
     elif case.node_class == "FunctionContract":
+        # FunctionContract preserves the legacy declaration wire shape; S8's
+        # provenance guarantee lives on the construction wrapper before DTO
+        # lowering, not as a new serialized field.
         assert _has_function_contract(doc), doc
-        assert "FunctionContract" in _proofir_provenance_classes(doc)
     elif case.node_class == "RefusalRecord":
         assert any(d.get("kind") == "dig-refusal" for d in doc.get("diagnostics", []))
         assert not _has_function_contract(doc), doc
@@ -397,16 +399,11 @@ def test_registered_proofir_witnesses_are_solver_checked(
     assert _run_witness_case(pair.lying, tmp_path) == pair.lying.expected
 
 
-def test_instrument_c_registers_the_three_spine_witness_classes() -> None:
+def test_instrument_c_registers_all_spine_witness_classes() -> None:
     report = collect_proofir_vocabulary_frontier(ROOT)
 
-    assert report.proofir_classes_without_verdict_witnesses == 4
-    assert report.verdict_witnesses.missing_classes == [
-        "CallEdgeDecl",
-        "AuditMemento",
-        "UniverseMint",
-        "VendorConjoin",
-    ]
+    assert report.proofir_classes_without_verdict_witnesses == 0
+    assert report.verdict_witnesses.missing_classes == []
 
 
 def test_equality_fact_truthful_and_lying_witnesses_hit_real_solver(

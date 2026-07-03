@@ -12,6 +12,7 @@ from sugar_lift_py_tests.factory.floor_contract_agreement import (
     FloorContractAgreementViolation,
 )
 from sugar_lift_py_tests.ir import (
+    Locus,
     eq,
     eq as ir_eq,
     formula_to_value,
@@ -28,13 +29,24 @@ from sugar_lift_py_tests.effect import (
     effect_reason,
 )
 from sugar_lift_py_tests.proofir import (
+    AuditLocus,
+    AuditMemento,
+    BridgeAtom,
+    CallEdgeDecl,
+    ClaimFormula,
     ConstructionSite,
     Derived,
     EqualityFact,
+    FactAtom,
     FunctionContract,
     Provenance,
     RefusalRecord,
+    Stated,
+    UniverseAtom,
+    UniverseMint,
+    VendorConjoin,
     canonical_euf_callsite_name,
+    claim_formula_from_ir,
 )
 from sugar_lift_py_tests.proofir.formulas import Eq, Formula
 from sugar_lift_py_tests.proofir.scope import ClosedFormula, PostCondition
@@ -68,6 +80,52 @@ def _refusal_provenance() -> Provenance:
         node_class="RefusalRecord",
         construction_site=site,
         warrant=Derived(floor_chain=("construction-law",)),
+    )
+
+
+def _universe_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="UniverseMint",
+        construction_site=site,
+        warrant=Derived(floor_chain=("construction-law",)),
+    )
+
+
+def _call_edge_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="CallEdgeDecl",
+        construction_site=site,
+        warrant=Derived(floor_chain=("construction-law",)),
+    )
+
+
+def _audit_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="AuditMemento",
+        construction_site=site,
+        warrant=Stated(locus=site),
+    )
+
+
+def _vendor_conjoin_provenance() -> Provenance:
+    site = ConstructionSite(path="tests/test_construction_law.py", line=1)
+    return Provenance(
+        node_class="VendorConjoin",
+        construction_site=site,
+        warrant=Stated(locus=site),
+    )
+
+
+def _claim_formula() -> ClaimFormula:
+    return claim_formula_from_ir(
+        ir_eq(make_var("out"), num(0)),
+        var_sorts={"out": IntSort()},
+        allowed_vars=("out",),
+        provenance=_universe_provenance(),
+        role="construction-law",
     )
 
 
@@ -309,3 +367,184 @@ def test_refusal_diagnostics_route_through_refusal_record(monkeypatch) -> None:
         "callee": "pkg.mod::A",
     }
     assert routed == [("dig", dig), ("agreement", violation)]
+
+
+def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
+    formula = ir_eq(make_var("out"), num(0))
+
+    wrapped = claim_formula_from_ir(
+        formula,
+        var_sorts={"out": IntSort()},
+        allowed_vars=("out",),
+        provenance=_universe_provenance(),
+        role="construction-law",
+    )
+
+    assert wrapped["kind"] == "atomic"
+    assert wrapped.provenance.node_class == "UniverseMint"
+
+    with pytest.raises(FactoryGap, match="Provenance"):
+        claim_formula_from_ir(
+            formula,
+            var_sorts={"out": IntSort()},
+            allowed_vars=("out",),
+            provenance=None,
+            role="construction-law",
+        )
+
+    with pytest.raises(FactoryGap, match="illegal free var"):
+        claim_formula_from_ir(
+            formula,
+            var_sorts={"out": IntSort()},
+            allowed_vars=(),
+            provenance=_universe_provenance(),
+            role="construction-law",
+        )
+
+
+def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None:
+    formula = _claim_formula()
+    mint = UniverseMint(
+        name="module::test::assertion",
+        slot="inv",
+        formula=formula,
+        provenance=_universe_provenance(),
+        out_binding="out",
+    )
+
+    assert UniverseMint.__module__.endswith(".proofir.nodes.universe_mint")
+    assert mint.denotation() == formula.ir_formula
+    assert mint.to_body_universe().inv == formula
+    assert mint.to_declaration() == BodyUniverseDto(
+        name="module::test::assertion",
+        out_binding="out",
+        inv=formula,
+    ).to_rpc()
+
+    with pytest.raises(TypeError, match="ClaimFormula"):
+        UniverseMint(
+            name="module::raw::assertion",
+            slot="inv",
+            formula={"kind": "atomic"},
+            provenance=_universe_provenance(),
+        )
+
+    with pytest.raises(FactoryGap, match="Provenance"):
+        UniverseMint(
+            name="module::missing::assertion",
+            slot="inv",
+            formula=formula,
+            provenance=None,
+        )
+
+
+def test_call_edge_decl_requires_bridge_atom_and_provenance() -> None:
+    formula = _claim_formula()
+    bridge = BridgeAtom(
+        source_contract="source::contract",
+        target_symbol="call:target",
+        target_contract="target::contract",
+        target_contract_cid="blake3-512:target",
+        call_site_locus=Locus("test.py", 7, 3),
+        evidence_term=formula,
+    )
+    edge = CallEdgeDecl(bridge=bridge, provenance=_call_edge_provenance())
+
+    assert CallEdgeDecl.__module__.endswith(".proofir.nodes.call_edge_decl")
+    assert edge.to_declaration() == {
+        "kind": "call-edge",
+        "schemaVersion": "1",
+        "sourceContract": "source::contract",
+        "targetSymbol": "call:target",
+        "targetContract": "target::contract",
+        "targetContractCid": "blake3-512:target",
+        "callSiteLocus": {"file": "test.py", "line": 7, "column": 3},
+    }
+
+    with pytest.raises(TypeError, match="BridgeAtom"):
+        CallEdgeDecl(
+            bridge={"kind": "call-edge"},
+            provenance=_call_edge_provenance(),
+        )
+
+    with pytest.raises(TypeError, match="ClaimFormula"):
+        BridgeAtom(
+            source_contract="source::contract",
+            target_symbol="call:target",
+            call_site_locus=Locus("test.py", 7, 3),
+            evidence_term={"kind": "atomic"},
+        )
+
+
+def test_audit_memento_requires_typed_locus_and_provenance() -> None:
+    memento = {"kind": "source-memento", "file": "test.py"}
+    audit = AuditMemento(
+        role="python.literal-call-sugar",
+        contract="module::test::assertion",
+        file="test.py",
+        source_function_name="test_value",
+        loci=(
+            AuditLocus(
+                file="test.py",
+                line=4,
+                col=8,
+                status="warranted",
+                ast_kind="Assert",
+                role="python.literal-call-sugar",
+                contract="module::test::assertion",
+                source_memento=memento,
+            ),
+        ),
+        provenance=_audit_provenance(),
+    )
+
+    assert AuditMemento.__module__.endswith(".proofir.nodes.audit_memento")
+    assert audit.to_declaration()["loci"][0]["sourceMemento"] == memento
+
+    with pytest.raises(TypeError, match="AuditLocus"):
+        AuditMemento(
+            role="python.literal-call-sugar",
+            contract="module::bad::assertion",
+            file="test.py",
+            source_function_name="test_value",
+            loci=({"line": 1},),
+            provenance=_audit_provenance(),
+        )
+
+
+def test_vendor_conjoin_requires_typed_fact_or_refusal() -> None:
+    call = CallTerm("A", (), sort=IntSort())
+    fact = EqualityFact(
+        call_term=call,
+        rhs_term=ConstTerm(0, sort=IntSort()),
+        provenance=_provenance(),
+    )
+    universe = UniverseMint(
+        name="module::A::callable",
+        slot="post",
+        formula=_claim_formula(),
+        provenance=_universe_provenance(),
+        out_binding="out",
+    )
+    conjoin = VendorConjoin(
+        fact=FactAtom(fact),
+        universe=UniverseAtom(universe),
+        provenance=_vendor_conjoin_provenance(),
+    )
+
+    assert VendorConjoin.__module__.endswith(".proofir.nodes.vendor_conjoin")
+    assert conjoin.denotation() == fact.denotation()
+
+    with pytest.raises(TypeError, match="FactAtom"):
+        VendorConjoin(
+            fact=fact.denotation(),
+            universe=UniverseAtom(universe),
+            provenance=_vendor_conjoin_provenance(),
+        )
+
+    with pytest.raises(TypeError, match="UniverseAtom"):
+        VendorConjoin(
+            fact=FactAtom(fact),
+            universe=_claim_formula(),
+            provenance=_vendor_conjoin_provenance(),
+        )
