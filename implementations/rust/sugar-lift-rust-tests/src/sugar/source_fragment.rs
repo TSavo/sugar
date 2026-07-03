@@ -167,6 +167,16 @@ impl<'a> SourceFragment<'a> {
             FragNode::Item(syn::Item::Fn(f)) => {
                 vec![Self::block(&f.block.stmts, self.file)]
             }
+            FragNode::Item(syn::Item::Mod(m)) => m
+                .content
+                .as_ref()
+                .map(|(_, items)| {
+                    items
+                        .iter()
+                        .map(|i| Self::from_node(FragNode::Item(i), self.file))
+                        .collect()
+                })
+                .unwrap_or_default(),
 
             // Statements: decompose into the inner expressions they carry.
             FragNode::Stmt(s) => stmt_child_fragments(s, self.file),
@@ -2572,6 +2582,7 @@ fn item_kind(i: &syn::Item) -> &'static str {
         syn::Item::Struct(_) => "Struct",
         syn::Item::Enum(_) => "Enum",
         syn::Item::Use(_) => "Use",
+        syn::Item::Mod(_) => "Mod",
         _ => "Other:Item",
     }
 }
@@ -2918,6 +2929,18 @@ mod tests {
         } else {
             panic!("expected a let");
         }
+    }
+
+    #[test]
+    fn item_mod_observed_is_named_structural_membrane() {
+        let file = parse_file("mod tests { fn inner() {} }\n");
+        let frag = SourceFragment::from_node(FragNode::Item(&file.items[0]), "mod.rs");
+
+        assert_eq!(
+            frag.observed(),
+            "Mod",
+            "Item::Mod must be named explicitly; collapsing to Other:Item hides the membrane row"
+        );
     }
 
     #[test]
