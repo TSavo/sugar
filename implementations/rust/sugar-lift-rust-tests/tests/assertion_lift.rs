@@ -8414,7 +8414,7 @@ fn alias_rebind() {
         out.warnings.iter().any(|warning| {
             warning
                 .reason
-                .contains("ambiguous temporal identity for receiver `r`; skipped assertion")
+                .contains("unknown iterator consumption for `r` via `next`")
         }),
         "warnings: {:?}",
         out.warnings
@@ -30948,8 +30948,13 @@ fn alias_deref_mutated_read_refuses_not_false_refutation() {
         out.skip_reasons
             .iter()
             .any(|r| r.contains("mutated through a `&mut` alias")),
-        "the read of a `&mut`-alias-mutated local must REFUSE by name: {:?}",
-        out.skip_reasons
+        "the read of a `&mut`-alias-mutated local must REFUSE by name: skips={:?} seen={} lifted={} assertions_lifted={} assertions_refused={} facts={:?}",
+        out.skip_reasons,
+        out.seen,
+        out.lifted,
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.assertion_facts
     );
     assert!(
         out.skip_reasons.iter().any(|r| {

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for builtin `panic!`.
+// TERM recognizer for builtin divergent macros (`panic!`, `todo!`, `unimplemented!`,
+// `unreachable!`).
 //
-// A builtin panic macro is not a source-visible `macro_rules!` body this lifter can expand.
-// It diverges by unwinding or aborting at runtime, so the term position owns a typed
-// side-effect boundary instead of falling into the generic macro fallback.
+// These builtin macros are not source-visible `macro_rules!` bodies this lifter can expand.
+// They diverge by unwinding or aborting at runtime, so term position owns a typed side-effect
+// boundary instead of falling into the generic macro fallback.
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
@@ -24,7 +25,11 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // `macro_name()` returns the last-segment ident without escaping to raw syn.
     let name = frag.macro_name()?;
-    if name != "panic" || fcx.scope().macro_registry().lookup(&name).is_some() {
+    if !matches!(
+        name.as_str(),
+        "panic" | "todo" | "unimplemented" | "unreachable"
+    ) || fcx.scope().macro_registry().lookup(&name).is_some()
+    {
         return None;
     }
     Some(Box::new(PanicMacroSugar {
