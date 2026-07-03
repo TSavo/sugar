@@ -1,0 +1,857 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Temporal floor S1 catalog (#3374).
+#
+# This file is the deliberate stdlib surface decision for the temporal-floor
+# campaign. Rows drain by enrollment or typed opt-out; they do not disappear
+# silently. The doorway column is semantic: bind, rewrite, curry, or out.
+
+schema_version = 1
+
+[[catalog]]
+id = "iterator-map"
+trait_name = "Iterator"
+method = "map"
+shape = "counted callback application"
+operation_floor = "map"
+doorway = "curry"
+owner = "S3"
+target_slice = "S3"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-filter"
+trait_name = "Iterator"
+method = "filter"
+shape = "counted guarded callback"
+operation_floor = "filter"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-filter-map"
+trait_name = "Iterator"
+method = "filter_map"
+shape = "counted guarded callback"
+operation_floor = "filter_map"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-flat-map"
+trait_name = "Iterator"
+method = "flat_map"
+shape = "counted nested callback"
+operation_floor = "flat_map"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-fold"
+trait_name = "Iterator"
+method = "fold"
+shape = "accumulator recurrence"
+operation_floor = "fold"
+doorway = "rewrite"
+owner = "S4"
+target_slice = "S4"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-rfold"
+trait_name = "Iterator"
+method = "rfold"
+shape = "reverse accumulator recurrence"
+operation_floor = "fold"
+doorway = "rewrite"
+owner = "S4"
+target_slice = "S4"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-for-each"
+trait_name = "Iterator"
+method = "for_each"
+shape = "counted callback side-effect refusal"
+operation_floor = "for_each"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-chain"
+trait_name = "Iterator"
+method = "chain"
+shape = "counted concatenation"
+operation_floor = "chain"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-zip"
+trait_name = "Iterator"
+method = "zip"
+shape = "counted pairwise composition"
+operation_floor = "zip"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-enumerate"
+trait_name = "Iterator"
+method = "enumerate"
+shape = "counted index pairing"
+operation_floor = "enumerate"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-take"
+trait_name = "Iterator"
+method = "take"
+shape = "bounded counted prefix"
+operation_floor = "take"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-skip"
+trait_name = "Iterator"
+method = "skip"
+shape = "bounded counted suffix"
+operation_floor = "skip"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-take-while"
+trait_name = "Iterator"
+method = "take_while"
+shape = "guarded counted prefix"
+operation_floor = "take_while"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-skip-while"
+trait_name = "Iterator"
+method = "skip_while"
+shape = "guarded counted suffix"
+operation_floor = "skip_while"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-peekable"
+trait_name = "Iterator"
+method = "peekable"
+shape = "cursor preserving adaptor"
+operation_floor = "peekable"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-cycle"
+trait_name = "Iterator"
+method = "cycle"
+shape = "unbounded counted refusal unless externally bounded"
+operation_floor = "cycle"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-count"
+trait_name = "Iterator"
+method = "count"
+shape = "terminal count"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-sum"
+trait_name = "Iterator"
+method = "sum"
+shape = "terminal monoid fold"
+operation_floor = "fold"
+doorway = "rewrite"
+owner = "S4"
+target_slice = "S4"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-product"
+trait_name = "Iterator"
+method = "product"
+shape = "terminal monoid fold"
+operation_floor = "fold"
+doorway = "rewrite"
+owner = "S4"
+target_slice = "S4"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-next"
+trait_name = "Iterator"
+method = "next"
+shape = "cursor-consuming terminal"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-next-back"
+trait_name = "Iterator"
+method = "next_back"
+shape = "reverse cursor-consuming terminal"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-nth"
+trait_name = "Iterator"
+method = "nth"
+shape = "cursor-consuming indexed terminal"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-nth-back"
+trait_name = "Iterator"
+method = "nth_back"
+shape = "reverse cursor-consuming indexed terminal"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-last"
+trait_name = "Iterator"
+method = "last"
+shape = "terminal final element"
+operation_floor = "terminal"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-collect"
+trait_name = "Iterator"
+method = "collect"
+shape = "collection materialization"
+operation_floor = "collect"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-flatten"
+trait_name = "Iterator"
+method = "flatten"
+shape = "nested counted composition"
+operation_floor = "flatten"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-scan"
+trait_name = "Iterator"
+method = "scan"
+shape = "stateful recurrence"
+operation_floor = "scan"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-inspect"
+trait_name = "Iterator"
+method = "inspect"
+shape = "callback side-effect refusal"
+operation_floor = "inspect"
+doorway = "curry"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-step-by"
+trait_name = "Iterator"
+method = "step_by"
+shape = "strided counted composition"
+operation_floor = "step_by"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "iterator-rev"
+trait_name = "Iterator"
+method = "rev"
+shape = "reverse counted composition"
+operation_floor = "rev"
+doorway = "rewrite"
+owner = "S5"
+target_slice = "S5"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-map"
+trait_name = "Option"
+method = "map"
+shape = "present-value callback"
+operation_floor = "option"
+doorway = "curry"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-and-then"
+trait_name = "Option"
+method = "and_then"
+shape = "present-value bind"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-or-else"
+trait_name = "Option"
+method = "or_else"
+shape = "absent-value bind"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-filter"
+trait_name = "Option"
+method = "filter"
+shape = "guarded present-value callback"
+operation_floor = "option"
+doorway = "curry"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-unwrap"
+trait_name = "Option"
+method = "unwrap"
+shape = "raise-or-value"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-expect"
+trait_name = "Option"
+method = "expect"
+shape = "raise-or-value with message"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-unwrap-or"
+trait_name = "Option"
+method = "unwrap_or"
+shape = "default fallback"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "option-ok-or"
+trait_name = "Option"
+method = "ok_or"
+shape = "option-to-result raise"
+operation_floor = "option"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-map"
+trait_name = "Result"
+method = "map"
+shape = "ok-value callback"
+operation_floor = "result"
+doorway = "curry"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-map-err"
+trait_name = "Result"
+method = "map_err"
+shape = "err-value callback"
+operation_floor = "result"
+doorway = "curry"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-and-then"
+trait_name = "Result"
+method = "and_then"
+shape = "ok-value bind"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-or-else"
+trait_name = "Result"
+method = "or_else"
+shape = "err-value bind"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-unwrap"
+trait_name = "Result"
+method = "unwrap"
+shape = "raise-or-ok"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-expect"
+trait_name = "Result"
+method = "expect"
+shape = "raise-or-ok with message"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-is-ok"
+trait_name = "Result"
+method = "is_ok"
+shape = "state predicate"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-is-err"
+trait_name = "Result"
+method = "is_err"
+shape = "state predicate"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-ok"
+trait_name = "Result"
+method = "ok"
+shape = "result-to-option"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-err"
+trait_name = "Result"
+method = "err"
+shape = "result-to-option"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "result-transpose"
+trait_name = "Result"
+method = "transpose"
+shape = "result-option transpose"
+operation_floor = "result"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "try-question-mark"
+trait_name = "Try"
+method = "?"
+shape = "guarded raise routing"
+operation_floor = "try"
+doorway = "bind"
+owner = "S6"
+target_slice = "S6"
+status = "unenrolled"
+
+[[catalog]]
+id = "operator-add-assign"
+trait_name = "AddAssign"
+method = "add_assign"
+shape = "mutating operator rewrite"
+operation_floor = "operator"
+doorway = "rewrite"
+owner = "S2"
+target_slice = "S2"
+status = "unenrolled"
+
+[[catalog]]
+id = "operator-index"
+trait_name = "Index"
+method = "index"
+shape = "collection projection"
+operation_floor = "operator"
+doorway = "rewrite"
+owner = "S2"
+target_slice = "S2"
+status = "unenrolled"
+
+[[catalog]]
+id = "operator-deref"
+trait_name = "Deref"
+method = "deref"
+shape = "receiver projection"
+operation_floor = "operator"
+doorway = "bind"
+owner = "S2"
+target_slice = "S2"
+status = "unenrolled"
+
+[[catalog]]
+id = "tokio-async-runtime-out"
+trait_name = "tokio"
+method = "tokio::spawn"
+shape = "scheduler runtime, not semantic sugar"
+operation_floor = "out"
+doorway = "out"
+owner = "manifest"
+target_slice = "OUT"
+status = "out"
+reason = "Tokio/async runtime scheduling is outside the stdlib temporal sugar catalog; see #3365 typed async opt-outs."
+
+[[operation_floor]]
+id = "floor-iter"
+floor = "iter"
+owner = "S2"
+status = "planned"
+reason = "foundational counted enumeration floor"
+
+[[operation_floor]]
+id = "floor-map"
+floor = "map"
+owner = "S3"
+status = "planned"
+reason = "one map implementation owned by the floor"
+
+[[operation_floor]]
+id = "floor-fold"
+floor = "fold"
+owner = "S4"
+status = "planned"
+reason = "recurrence implementation owned once"
+
+[[operation_floor]]
+id = "floor-filter"
+floor = "filter"
+owner = "S5"
+status = "planned"
+reason = "guarded counted implementation"
+
+[[operation_floor]]
+id = "floor-filter-map"
+floor = "filter_map"
+owner = "S5"
+status = "planned"
+reason = "guarded counted implementation"
+
+[[operation_floor]]
+id = "floor-flat-map"
+floor = "flat_map"
+owner = "S5"
+status = "planned"
+reason = "nested counted implementation"
+
+[[operation_floor]]
+id = "floor-terminal"
+floor = "terminal"
+owner = "S5"
+status = "planned"
+reason = "iterator terminal implementation family"
+
+[[operation_floor]]
+id = "floor-for-each"
+floor = "for_each"
+owner = "S5"
+status = "planned"
+reason = "terminal callback application"
+
+[[operation_floor]]
+id = "floor-chain"
+floor = "chain"
+owner = "S5"
+status = "planned"
+reason = "counted concatenation"
+
+[[operation_floor]]
+id = "floor-zip"
+floor = "zip"
+owner = "S5"
+status = "planned"
+reason = "pairwise counted composition"
+
+[[operation_floor]]
+id = "floor-enumerate"
+floor = "enumerate"
+owner = "S5"
+status = "planned"
+reason = "index pairing"
+
+[[operation_floor]]
+id = "floor-take"
+floor = "take"
+owner = "S5"
+status = "planned"
+reason = "bounded prefix"
+
+[[operation_floor]]
+id = "floor-skip"
+floor = "skip"
+owner = "S5"
+status = "planned"
+reason = "bounded suffix"
+
+[[operation_floor]]
+id = "floor-take-while"
+floor = "take_while"
+owner = "S5"
+status = "planned"
+reason = "guarded prefix"
+
+[[operation_floor]]
+id = "floor-skip-while"
+floor = "skip_while"
+owner = "S5"
+status = "planned"
+reason = "guarded suffix"
+
+[[operation_floor]]
+id = "floor-peekable"
+floor = "peekable"
+owner = "S5"
+status = "planned"
+reason = "cursor preserving adaptor"
+
+[[operation_floor]]
+id = "floor-cycle"
+floor = "cycle"
+owner = "S5"
+status = "planned"
+reason = "unbounded adaptor with bounded-use refusal"
+
+[[operation_floor]]
+id = "floor-collect"
+floor = "collect"
+owner = "S5"
+status = "planned"
+reason = "collection materialization"
+
+[[operation_floor]]
+id = "floor-flatten"
+floor = "flatten"
+owner = "S5"
+status = "planned"
+reason = "nested iterator flattening"
+
+[[operation_floor]]
+id = "floor-scan"
+floor = "scan"
+owner = "S5"
+status = "planned"
+reason = "stateful recurrence"
+
+[[operation_floor]]
+id = "floor-inspect"
+floor = "inspect"
+owner = "S5"
+status = "planned"
+reason = "callback side-effect refusal"
+
+[[operation_floor]]
+id = "floor-step-by"
+floor = "step_by"
+owner = "S5"
+status = "planned"
+reason = "strided iteration"
+
+[[operation_floor]]
+id = "floor-rev"
+floor = "rev"
+owner = "S5"
+status = "planned"
+reason = "reverse counted composition"
+
+[[operation_floor]]
+id = "floor-option"
+floor = "option"
+owner = "S6"
+status = "planned"
+reason = "Option temporal combinators"
+
+[[operation_floor]]
+id = "floor-result"
+floor = "result"
+owner = "S6"
+status = "planned"
+reason = "Result temporal combinators"
+
+[[operation_floor]]
+id = "floor-try"
+floor = "try"
+owner = "S6"
+status = "planned"
+reason = "Try/raise doorway"
+
+[[operation_floor]]
+id = "floor-operator"
+floor = "operator"
+owner = "S2"
+status = "planned"
+reason = "operator trait temporal cases"
+
+[[embedding]]
+id = "iter-array-literal"
+floor = "iter"
+member = "ArrayLiteral"
+provenance = "literal"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-tuple-literal"
+floor = "iter"
+member = "TupleLiteral"
+provenance = "literal"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-string-literal-chars"
+floor = "iter"
+member = "StringLiteral.chars"
+provenance = "literal"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-string-literal-bytes"
+floor = "iter"
+member = "StringLiteral.bytes"
+provenance = "literal"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-range-literal"
+floor = "iter"
+member = "RangeLiteral"
+provenance = "literal"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-map-output"
+floor = "iter"
+member = "MapOutput"
+provenance = "derived-from-map-floor"
+owner = "S3"
+status = "missing"
+
+[[embedding]]
+id = "iter-stated-collection"
+floor = "iter"
+member = "StatedCollection"
+provenance = "Stated"
+owner = "S2"
+status = "missing"
+
+[[embedding]]
+id = "iter-derived-collection"
+floor = "iter"
+member = "DerivedCollection"
+provenance = "Derived"
+owner = "S2"
+status = "missing"
