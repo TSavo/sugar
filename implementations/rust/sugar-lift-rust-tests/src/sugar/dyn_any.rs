@@ -22,7 +22,24 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "dyn_any",
     &["option_predicate", "result_predicate", "method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::any::Any;
+
+            #[test]
+            fn t_dyn_any_good() {
+                assert!((&5_i32 as &dyn Any).is::<i32>());
+            }
+        "#,
+        r#"
+            use std::any::Any;
+
+            #[test]
+            fn t_dyn_any_bad() {
+                assert!((&5_i32 as &dyn Any).is::<u32>());
+            }
+        "#,
+    ),
     recognize,
 );
 

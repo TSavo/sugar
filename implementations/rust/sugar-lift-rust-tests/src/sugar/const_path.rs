@@ -43,7 +43,24 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite(
     "const_composite",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            const WITNESS_CONST_ARRAY: [i32; 3] = [1, 2, 3];
+
+            #[test]
+            fn t_const_composite_good() {
+                assert_eq!(WITNESS_CONST_ARRAY.into_iter().sum::<i32>(), 6);
+            }
+        "#,
+        r#"
+            const WITNESS_CONST_ARRAY: [i32; 3] = [1, 2, 3];
+
+            #[test]
+            fn t_const_composite_bad() {
+                assert_eq!(WITNESS_CONST_ARRAY.into_iter().sum::<i32>(), 7);
+            }
+        "#,
+    ),
     recognize_composite,
 );
 

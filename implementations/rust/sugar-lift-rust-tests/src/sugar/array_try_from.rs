@@ -19,7 +19,26 @@ use crate::{const_val_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "array_try_from",
     &["try_from", "call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::convert::TryFrom;
+
+            #[test]
+            fn t_array_try_from_good() {
+                let got = <[i32; 2]>::try_from([1_i32, 2].as_slice()).unwrap();
+                assert_eq!(got, [1, 2]);
+            }
+        "#,
+        r#"
+            use std::convert::TryFrom;
+
+            #[test]
+            fn t_array_try_from_bad() {
+                let got = <[i32; 2]>::try_from([1_i32, 2].as_slice()).unwrap();
+                assert_eq!(got, [1, 3]);
+            }
+        "#,
+    ),
     recognize,
 );
 

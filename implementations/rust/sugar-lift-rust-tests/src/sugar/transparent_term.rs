@@ -12,7 +12,20 @@ use crate::Sugar;
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "transparent_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_transparent_term_good() {
+                    assert_eq!(((5_i32)), 5);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_transparent_term_bad() {
+                    assert_eq!(((5_i32)), 6);
+                }
+            "#,
+        ),
         recognize,
     );
 

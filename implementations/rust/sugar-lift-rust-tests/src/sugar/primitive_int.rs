@@ -49,7 +49,20 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "primitive_int_tuple_producer",
     SugarRole::TupleProducer,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_primitive_int_tuple_producer_good() {
+                assert_eq!(255_u8.overflowing_add(1), (0, true));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_primitive_int_tuple_producer_bad() {
+                assert_eq!(255_u8.overflowing_add(1), (1, true));
+            }
+        "#,
+    ),
     recognize_tuple_producer,
 );
 

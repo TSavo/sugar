@@ -13,7 +13,22 @@ use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "cell_refcell",
     &["unary", "method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_cell_refcell_good() {
+                let cell = std::cell::Cell::new(5_i32);
+                assert_eq!(cell.get(), 5);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_cell_refcell_bad() {
+                let cell = std::cell::Cell::new(5_i32);
+                assert_eq!(cell.get(), 6);
+            }
+        "#,
+    ),
     recognize,
 );
 

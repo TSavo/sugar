@@ -45,7 +45,20 @@ pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
         "assertion_surface_relation_macro",
         SugarRole::AssertionSurface,
         &["assertion_surface_assert_macro", "macro_assertion_surface"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_assertion_surface_relation_macro_good() {
+                    assert_eq!(3_i32 * 3, 9);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_assertion_surface_relation_macro_bad() {
+                    assert_eq!(3_i32 * 3, 8);
+                }
+            "#,
+        ),
         recognize_relation_macro,
     );
 
@@ -68,7 +81,32 @@ pub(crate) const BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
             "assertion_surface_relation_macro",
             "assertion_surface_assert_macro",
         ],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                macro_rules! assert_all {
+                    ($pred:ident, $($s:expr),+ $(,)?) => {
+                        $(for ch in $s.chars() { assert!(ch.$pred()); })+
+                    };
+                }
+
+                #[test]
+                fn t_assertion_surface_bounded_literal_macro_good() {
+                    assert_all!(is_ascii, "xyz");
+                }
+            "#,
+            r#"
+                macro_rules! assert_all {
+                    ($pred:ident, $($s:expr),+ $(,)?) => {
+                        $(for ch in $s.chars() { assert!(ch.$pred()); })+
+                    };
+                }
+
+                #[test]
+                fn t_assertion_surface_bounded_literal_macro_bad() {
+                    assert_all!(is_ascii, "ø");
+                }
+            "#,
+        ),
         recognize_bounded_literal_macro,
     );
 
@@ -82,7 +120,20 @@ pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint
 pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
     ExprSugarClaim::fallback_assertion_surface(
         "assertion_surface_assert_macro",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_assertion_surface_assert_macro_good() {
+                    assert!(4_i32 >= 4);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_assertion_surface_assert_macro_bad() {
+                    assert!(4_i32 < 4);
+                }
+            "#,
+        ),
         recognize_assert_macro,
     );
 
@@ -95,7 +146,20 @@ pub(crate) const CFG_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_be
 
 pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_constraint(
     "constraint_bool_expr",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_constraint_bool_expr_good() {
+                assert!(true);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_constraint_bool_expr_bad() {
+                assert!(false);
+            }
+        "#,
+    ),
     recognize_bool_expr,
 );
 

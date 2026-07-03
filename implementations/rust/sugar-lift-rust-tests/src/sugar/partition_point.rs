@@ -31,7 +31,20 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "partition_point",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_partition_point_good() {
+                assert_eq!([1_i32, 2, 3, 4, 5].partition_point(|&x| x < 3), 2);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_partition_point_bad() {
+                assert_eq!([1_i32, 2, 3, 4, 5].partition_point(|&x| x < 3), 3);
+            }
+        "#,
+    ),
     recognize,
 );
 

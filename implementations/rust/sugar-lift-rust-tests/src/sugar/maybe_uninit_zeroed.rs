@@ -43,7 +43,26 @@ use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Suga
 pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "maybe_uninit_zeroed",
     &["method"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            use std::mem::MaybeUninit;
+
+            #[test]
+            fn t_maybe_uninit_zeroed_good() {
+                let got = unsafe { MaybeUninit::<u32>::zeroed().assume_init() };
+                assert_eq!(got, 0);
+            }
+        "#,
+        r#"
+            use std::mem::MaybeUninit;
+
+            #[test]
+            fn t_maybe_uninit_zeroed_bad() {
+                let got = unsafe { MaybeUninit::<u32>::zeroed().assume_init() };
+                assert_eq!(got, 1);
+            }
+        "#,
+    ),
     recognize_assume_init,
 );
 
@@ -96,7 +115,22 @@ fn maybe_uninit_zeroed_type(expr: &Expr) -> Option<Type> {
 pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "mem_zeroed",
     &["call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_mem_zeroed_good() {
+                let got = unsafe { std::mem::zeroed::<u32>() };
+                assert_eq!(got, 0);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_mem_zeroed_bad() {
+                let got = unsafe { std::mem::zeroed::<u32>() };
+                assert_eq!(got, 1);
+            }
+        "#,
+    ),
     recognize_mem_zeroed,
 );
 
