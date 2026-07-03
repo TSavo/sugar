@@ -91,7 +91,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/chain.rs",
-        line: 106,
+        line: 194,
         enclosing_fn: "sequence_from_body",
         max_floor_arms: 2,
         owner: "ChainSugar sequence projection",

@@ -32104,6 +32104,67 @@ fn temporal_fold_recurrence_chain_is_load_bearing_for_accumulator_claims() {
 }
 
 #[test]
+fn temporal_adapter_pipeline_filter_take_fold_dispatches_to_floors() {
+    let src = r#"
+        #[test]
+        fn t_filter_take_fold_pipeline() {
+            let _done = [1_i32, 2, 3, 4, 5, 6]
+                .into_iter()
+                .filter(|x| *x % 2 == 0)
+                .take(2)
+                .fold(0, |acc, x| {
+                    assert_eq!(x % 2, 0);
+                    acc + x
+                });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/filter_take_fold_pipeline.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    let selected: std::collections::BTreeSet<_> = out
+        .factory_audits
+        .iter()
+        .filter_map(|audit| audit.selected)
+        .collect();
+    for owner in ["filter", "take", "fold"] {
+        assert!(
+            selected.contains(owner),
+            "pipeline must dispatch through {owner}; selected={selected:?}"
+        );
+    }
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "filter_take_fold_pipeline",
+    ) {
+        assert!(sat, "filter -> take -> fold pipeline must be SAT");
+    }
+}
+
+#[test]
+fn temporal_filter_data_dependent_count_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_filter_count_bad() {
+            let got = [1_i32, 2, 3, 4]
+                .into_iter()
+                .filter(|x| *x % 2 == 0)
+                .count();
+            assert_eq!(got, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/filter_count_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "filter_count_bad") {
+        assert!(
+            !sat,
+            "the real filter floor measures two output ticks, so count == 3 must refute"
+        );
+    }
+}
+
+#[test]
 fn rfold_enters_fold_floor_in_reverse_order_for_non_commutative_accumulators() {
     let src = r#"
         #[test]

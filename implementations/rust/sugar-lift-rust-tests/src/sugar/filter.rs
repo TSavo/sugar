@@ -12,12 +12,31 @@ use crate::sugar::bool_predicate::BoolPredicateClosure;
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "filter",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_filter_good() {
+                    let got = [1i32, 2, 3, 4].into_iter().filter(|x| *x % 2 == 0).count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_filter_bad() {
+                    let got = [1i32, 2, 3, 4].into_iter().filter(|x| *x % 2 == 0).count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -80,19 +99,75 @@ fn reduce_filter(
             .unwrap_or_else(|| filter_gap("filter receiver reduced to non-sequence")),
         Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
     };
-    let mut out = Vec::new();
-    for (idx, elem) in seq.into_iter().enumerate() {
-        let keep = match pred.eval_for_elem(&elem, idx, "filter", ctx) {
-            Ok(keep) => keep,
-            Err(outcome) => return outcome,
-        };
-        if keep {
-            out.push(elem);
-        }
-    }
-    Outcome::Complete(Desugared::Seq(out))
+    let floor = FilterFloor::default();
+    let operand = match floor.derived_operand(seq.len()) {
+        Ok(operand) => operand,
+        Err(outcome) => return outcome,
+    };
+    let output = match floor.desugar(operand, seq, |idx, elem| {
+        pred.eval_for_elem(elem, idx, "filter", ctx)
+    }) {
+        Ok(output) => output,
+        Err(outcome) => return outcome,
+    };
+    ctx.record_adapter_floor_audit("filter", output.standing().count());
+    Outcome::Complete(Desugared::Seq(output.into_items()))
 }
 
 fn filter_gap(reason: &str) -> ! {
     panic!("filter did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct FilterFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for FilterFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("filter", AdapterOutputIterMember::filter),
+        }
+    }
+}
+
+impl FilterFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(filter_floor_refusal)
+    }
+
+    fn desugar<F>(
+        &self,
+        operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        mut predicate: F,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome>
+    where
+        F: FnMut(usize, &DesugaredElem) -> Result<bool, Outcome>,
+    {
+        let visited = seq.len();
+        let measured = seq
+            .into_iter()
+            .enumerate()
+            .map(|(idx, elem)| predicate(idx, &elem).map(|keep| (elem, keep)))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.counted
+            .assert_input_count(&operand, visited)
+            .map_err(filter_floor_refusal)?;
+        let kept = measured
+            .into_iter()
+            .filter(|(_, keep)| *keep)
+            .map(|(elem, _)| elem)
+            .collect();
+        self.counted.output(kept).map_err(filter_floor_refusal)
+    }
+}
+
+fn filter_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::filter".to_string(),
+        reason: err.to_string(),
+    })
 }

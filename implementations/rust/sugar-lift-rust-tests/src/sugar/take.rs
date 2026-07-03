@@ -9,12 +9,31 @@ use syn::Expr;
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "take",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_take_good() {
+                    let got = [1i32, 2, 3].into_iter().take(2).count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_take_bad() {
+                    let got = [1i32, 2, 3].into_iter().take(2).count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -62,11 +81,62 @@ impl Sugar for TakeSugar {
                 None => return Outcome::Incomplete(effect),
             },
         };
-        let out = seq.into_iter().take(self.n).collect();
-        Outcome::Complete(Desugared::Seq(out))
+        let floor = TakeFloor::default();
+        let operand = match floor.derived_operand(seq.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let output = match floor.desugar(operand, seq, self.n) {
+            Ok(output) => output,
+            Err(outcome) => return outcome,
+        };
+        ctx.record_adapter_floor_audit("take", output.standing().count());
+        Outcome::Complete(Desugared::Seq(output.into_items()))
     }
 }
 
 fn take_gap(reason: &str) -> ! {
     panic!("take did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct TakeFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for TakeFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("take", AdapterOutputIterMember::take),
+        }
+    }
+}
+
+impl TakeFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(take_floor_refusal)
+    }
+
+    fn desugar(
+        &self,
+        operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        n: usize,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome> {
+        let expected = operand.count().min(n);
+        let out = seq.into_iter().take(n).collect::<Vec<_>>();
+        self.counted
+            .assert_output_count(&operand, expected, out.len())
+            .map_err(take_floor_refusal)?;
+        self.counted.output(out).map_err(take_floor_refusal)
+    }
+}
+
+fn take_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::take".to_string(),
+        reason: err.to_string(),
+    })
 }

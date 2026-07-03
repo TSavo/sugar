@@ -8,12 +8,31 @@ use syn::Expr;
 
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{const_int, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "skip",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_skip_good() {
+                    let got = [1i32, 2, 3].into_iter().skip(2).count();
+                    assert_eq!(got, 1);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_skip_bad() {
+                    let got = [1i32, 2, 3].into_iter().skip(2).count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -52,11 +71,62 @@ impl Sugar for SkipSugar {
                 .unwrap_or_else(|| skip_gap("skip receiver reduced to non-sequence")),
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        let out = seq.into_iter().skip(self.n).collect();
-        Outcome::Complete(Desugared::Seq(out))
+        let floor = SkipFloor::default();
+        let operand = match floor.derived_operand(seq.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let output = match floor.desugar(operand, seq, self.n) {
+            Ok(output) => output,
+            Err(outcome) => return outcome,
+        };
+        ctx.record_adapter_floor_audit("skip", output.standing().count());
+        Outcome::Complete(Desugared::Seq(output.into_items()))
     }
 }
 
 fn skip_gap(reason: &str) -> ! {
     panic!("skip did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct SkipFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for SkipFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("skip", AdapterOutputIterMember::skip),
+        }
+    }
+}
+
+impl SkipFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(skip_floor_refusal)
+    }
+
+    fn desugar(
+        &self,
+        operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        n: usize,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome> {
+        let expected = operand.count().saturating_sub(n);
+        let out = seq.into_iter().skip(n).collect::<Vec<_>>();
+        self.counted
+            .assert_output_count(&operand, expected, out.len())
+            .map_err(skip_floor_refusal)?;
+        self.counted.output(out).map_err(skip_floor_refusal)
+    }
+}
+
+fn skip_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::skip".to_string(),
+        reason: err.to_string(),
+    })
 }

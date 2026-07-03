@@ -23,12 +23,31 @@ use crate::sugar::factory::{
 };
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "zip",
     SugarRole::Composite,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_zip_good() {
+                let got = [1i32, 2, 3].into_iter().zip([10, 20]).count();
+                assert_eq!(got, 2);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_zip_bad() {
+                let got = [1i32, 2, 3].into_iter().zip([10, 20]).count();
+                assert_eq!(got, 3);
+            }
+        "#,
+    ),
     recognize_composite,
 );
 
@@ -96,38 +115,101 @@ impl Sugar for ZipSugar {
         if len > SUGAR_SEQ_CAP as usize {
             panic!("zip sequence length {len} exceeds cap {SUGAR_SEQ_CAP}");
         }
-        let mut out = Vec::with_capacity(len);
-        // `Iterator::zip` already halts at the shorter operand, so this yields exactly
-        // `len` pairs in source order.
-        for (l, r) in left.into_iter().zip(right) {
-            let le = &l.expr;
-            let re = &r.expr;
-            // The pair EXPR `(l, r)` is always materializable (for EUF keys and the
-            // for-loop pattern substitution); the pair VALUE needs BOTH element consts
-            // (an opaque side -> no tuple value, like an opaque `enumerate` element).
-            let pair_expr: Expr =
-                syn::parse_str(&format!("({}, {})", quote::quote!(#le), quote::quote!(#re)))
-                    .unwrap_or_else(|err| panic!("zip pair expression parse failed: {err}"));
-            let pair_cv = match (l.value, r.value) {
-                (Some(lv), Some(rv)) => Some(ConstVal::Tuple(vec![lv, rv])),
-                _ => None,
-            };
-            out.push(DesugaredElem {
-                expr: pair_expr,
-                value: pair_cv,
-            });
-        }
+        let floor = ZipFloor::default();
+        let left_operand = match floor.derived_operand(left.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let right_operand = match floor.derived_operand(right.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let output = match floor.desugar(left_operand, right_operand, left, right, zip_pair) {
+            Ok(output) => output,
+            Err(outcome) => return outcome,
+        };
         debug!(
             target: "sugar_lift_rust_tests::sugar::zip",
-            len = out.len(),
+            len = output.standing().count(),
             "zipped two finite literal-derived domains (truncated to the shorter)"
         );
-        Outcome::Complete(Desugared::Seq(out))
+        ctx.record_adapter_floor_audit("zip", output.standing().count());
+        Outcome::Complete(Desugared::Seq(output.into_items()))
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.reduce(ctx)
     }
+}
+
+fn zip_pair(l: DesugaredElem, r: DesugaredElem) -> DesugaredElem {
+    let le = &l.expr;
+    let re = &r.expr;
+    // The pair EXPR `(l, r)` is always materializable (for EUF keys and the
+    // for-loop pattern substitution); the pair VALUE needs BOTH element consts
+    // (an opaque side -> no tuple value, like an opaque `enumerate` element).
+    let pair_expr: Expr =
+        syn::parse_str(&format!("({}, {})", quote::quote!(#le), quote::quote!(#re)))
+            .unwrap_or_else(|err| panic!("zip pair expression parse failed: {err}"));
+    let pair_cv = match (l.value, r.value) {
+        (Some(lv), Some(rv)) => Some(ConstVal::Tuple(vec![lv, rv])),
+        _ => None,
+    };
+    DesugaredElem {
+        expr: pair_expr,
+        value: pair_cv,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ZipFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for ZipFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("zip", AdapterOutputIterMember::zip),
+        }
+    }
+}
+
+impl ZipFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(zip_floor_refusal)
+    }
+
+    fn desugar<T, U, V, F>(
+        &self,
+        left_operand: IterStanding,
+        right_operand: IterStanding,
+        left: Vec<T>,
+        right: Vec<U>,
+        mut pair: F,
+    ) -> Result<AdapterFloorOutput<V>, Outcome>
+    where
+        F: FnMut(T, U) -> V,
+    {
+        let expected = left_operand.count().min(right_operand.count());
+        let out = left
+            .into_iter()
+            .zip(right)
+            .map(|(left, right)| pair(left, right))
+            .collect::<Vec<_>>();
+        self.counted
+            .assert_output_count(&left_operand, expected, out.len())
+            .map_err(zip_floor_refusal)?;
+        self.counted.output(out).map_err(zip_floor_refusal)
+    }
+}
+
+fn zip_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::zip".to_string(),
+        reason: err.to_string(),
+    })
 }
 
 fn sequence_from_body(

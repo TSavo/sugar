@@ -30,7 +30,9 @@ operation_floor = "filter"
 doorway = "curry"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["filter.rs:51"]
+counted_loci_reason = "FilterSugar recognizer dispatches the measured guarded output through the landed filter floor."
 
 [[catalog]]
 id = "iterator-filter-map"
@@ -41,7 +43,9 @@ operation_floor = "filter_map"
 doorway = "curry"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["filter_map.rs:60"]
+counted_loci_reason = "FilterMapSugar recognizer dispatches the measured guarded output through the landed filter_map floor."
 
 [[catalog]]
 id = "iterator-flat-map"
@@ -100,7 +104,9 @@ operation_floor = "chain"
 doorway = "rewrite"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["chain.rs:55"]
+counted_loci_reason = "ChainSugar recognizer dispatches concatenation through the landed chain floor and measures the combined standing."
 
 [[catalog]]
 id = "iterator-zip"
@@ -111,7 +117,9 @@ operation_floor = "zip"
 doorway = "rewrite"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["zip.rs:62"]
+counted_loci_reason = "ZipSugar recognizer dispatches pairwise truncating composition through the landed zip floor and measures the shorter standing."
 
 [[catalog]]
 id = "iterator-enumerate"
@@ -122,7 +130,9 @@ operation_floor = "enumerate"
 doorway = "rewrite"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["enumerate.rs:49"]
+counted_loci_reason = "EnumerateSugar recognizer dispatches index pairing through the landed enumerate floor."
 
 [[catalog]]
 id = "iterator-take"
@@ -133,7 +143,9 @@ operation_floor = "take"
 doorway = "rewrite"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["take.rs:48"]
+counted_loci_reason = "TakeSugar recognizer dispatches bounded prefix measurement through the landed take floor."
 
 [[catalog]]
 id = "iterator-skip"
@@ -144,7 +156,9 @@ operation_floor = "skip"
 doorway = "rewrite"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["skip.rs:47"]
+counted_loci_reason = "SkipSugar recognizer dispatches bounded suffix measurement through the landed skip floor."
 
 [[catalog]]
 id = "iterator-take-while"
@@ -155,7 +169,9 @@ operation_floor = "take_while"
 doorway = "curry"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["take_while.rs:51"]
+counted_loci_reason = "TakeWhileSugar recognizer dispatches data-dependent guarded prefix measurement through the landed take_while floor."
 
 [[catalog]]
 id = "iterator-skip-while"
@@ -166,7 +182,9 @@ operation_floor = "skip_while"
 doorway = "curry"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["skip_while.rs:51"]
+counted_loci_reason = "SkipWhileSugar recognizer dispatches data-dependent guarded suffix measurement through the landed skip_while floor."
 
 [[catalog]]
 id = "iterator-peekable"
@@ -324,7 +342,9 @@ operation_floor = "inspect"
 doorway = "curry"
 owner = "S5"
 target_slice = "S5"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["inspect.rs:61", "inspect.rs:103", "inspect.rs:247"]
+counted_loci_reason = "InspectSugar owns value-preserving iterator inspect through the landed inspect floor; the result-inspect recognizer remains visible as an inspect-family counted path in the same module."
 
 [[catalog]]
 id = "iterator-step-by"
@@ -638,14 +658,14 @@ reason = "one fold recurrence implementation owned by the floor; element sorts e
 id = "floor-filter"
 floor = "filter"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "guarded counted implementation"
 
 [[operation_floor]]
 id = "floor-filter-map"
 floor = "filter_map"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "guarded counted implementation"
 
 [[operation_floor]]
@@ -673,49 +693,49 @@ reason = "terminal callback application"
 id = "floor-chain"
 floor = "chain"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "counted concatenation"
 
 [[operation_floor]]
 id = "floor-zip"
 floor = "zip"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "pairwise counted composition"
 
 [[operation_floor]]
 id = "floor-enumerate"
 floor = "enumerate"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "index pairing"
 
 [[operation_floor]]
 id = "floor-take"
 floor = "take"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "bounded prefix"
 
 [[operation_floor]]
 id = "floor-skip"
 floor = "skip"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "bounded suffix"
 
 [[operation_floor]]
 id = "floor-take-while"
 floor = "take_while"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "guarded prefix"
 
 [[operation_floor]]
 id = "floor-skip-while"
 floor = "skip_while"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "guarded suffix"
 
 [[operation_floor]]
@@ -757,7 +777,7 @@ reason = "stateful recurrence"
 id = "floor-inspect"
 floor = "inspect"
 owner = "S5"
-status = "planned"
+status = "landed"
 reason = "callback side-effect refusal"
 
 [[operation_floor]]
@@ -848,6 +868,86 @@ floor = "iter"
 member = "MapOutput"
 provenance = "derived-from-map-floor"
 owner = "S3"
+status = "landed"
+
+[[embedding]]
+id = "iter-filter-output"
+floor = "iter"
+member = "FilterOutput"
+provenance = "derived-from-filter-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-filter-map-output"
+floor = "iter"
+member = "FilterMapOutput"
+provenance = "derived-from-filter-map-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-chain-output"
+floor = "iter"
+member = "ChainOutput"
+provenance = "derived-from-chain-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-zip-output"
+floor = "iter"
+member = "ZipOutput"
+provenance = "derived-from-zip-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-enumerate-output"
+floor = "iter"
+member = "EnumerateOutput"
+provenance = "derived-from-enumerate-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-take-output"
+floor = "iter"
+member = "TakeOutput"
+provenance = "derived-from-take-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-skip-output"
+floor = "iter"
+member = "SkipOutput"
+provenance = "derived-from-skip-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-take-while-output"
+floor = "iter"
+member = "TakeWhileOutput"
+provenance = "derived-from-take-while-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-skip-while-output"
+floor = "iter"
+member = "SkipWhileOutput"
+provenance = "derived-from-skip-while-floor"
+owner = "S5"
+status = "landed"
+
+[[embedding]]
+id = "iter-inspect-output"
+floor = "iter"
+member = "InspectOutput"
+provenance = "derived-from-inspect-floor"
+owner = "S5"
 status = "landed"
 
 [[embedding]]

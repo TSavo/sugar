@@ -11,16 +11,34 @@ use quote::ToTokens;
 use syn::{Expr, ExprClosure};
 
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{strip_refs_groups, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "inspect",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_inspect_good() {
+                    let got = [1i32, 2, 3].iter().inspect(|x| { let _ = x; }).count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_inspect_bad() {
+                    let got = [1i32, 2, 3].iter().inspect(|x| { let _ = x; }).count();
+                    assert_eq!(got, 4);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -41,13 +59,40 @@ pub(crate) fn recognize_composite(
         return None;
     };
     if call.method == "inspect" && call.args.len() == 1 {
-        return Some(Box::new(IdentitySugar {
-            inner: SugarBody::<CompositeFloor>::from_node(
-                method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
-            ),
+        return Some(Box::new(InspectSugar {
+            inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+                &call.receiver,
+                fcx,
+            )?),
         }));
     }
     None
+}
+
+pub(crate) struct InspectSugar {
+    pub(crate) inner: SugarBody<CompositeFloor>,
+}
+
+impl Sugar for InspectSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| inspect_gap("inspect receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let floor = InspectFloor::default();
+        let operand = match floor.derived_operand(seq.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let output = match floor.desugar(operand, seq) {
+            Ok(output) => output,
+            Err(outcome) => return outcome,
+        };
+        ctx.record_adapter_floor_audit("inspect", output.standing().count());
+        Outcome::Complete(Desugared::Seq(output.into_items()))
+    }
 }
 
 pub(crate) fn recognize_term(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -124,6 +169,51 @@ impl Sugar for ResultInspectSugar {
 
 fn result_inspect_gap(reason: &str) -> ! {
     panic!("ResultInspectSugar did not reach a lawful value floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct InspectFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for InspectFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("inspect", AdapterOutputIterMember::inspect),
+        }
+    }
+}
+
+impl InspectFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(inspect_floor_refusal)
+    }
+
+    fn desugar(
+        &self,
+        operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome> {
+        let expected = operand.count();
+        let out = seq.into_iter().inspect(|_| {}).collect::<Vec<_>>();
+        self.counted
+            .assert_output_count(&operand, expected, out.len())
+            .map_err(inspect_floor_refusal)?;
+        self.counted.output(out).map_err(inspect_floor_refusal)
+    }
+}
+
+fn inspect_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::inspect".to_string(),
+        reason: err.to_string(),
+    })
+}
+
+fn inspect_gap(reason: &str) -> ! {
+    panic!("InspectSugar did not reach a lawful floor: {reason}")
 }
 
 pub(crate) fn is_stable_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {

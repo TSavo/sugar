@@ -15,14 +15,37 @@ use syn::Expr;
 use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
 use crate::{
-    const_eval_option_closure, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
+    const_eval_option_closure, ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "filter_map",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_filter_map_good() {
+                    let got = [0i32, 1, 2].iter()
+                        .filter_map(|&x| if x % 2 == 0 { Some(x * 2) } else { None })
+                        .count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_filter_map_bad() {
+                    let got = [0i32, 1, 2].iter()
+                        .filter_map(|&x| if x % 2 == 0 { Some(x * 2) } else { None })
+                        .count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -77,33 +100,83 @@ impl Sugar for FilterMapSugar {
                 .unwrap_or_else(|| filter_map_gap("filter_map receiver reduced to non-sequence")),
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        let mut out = Vec::with_capacity(seq.len());
-        for elem in seq {
+        let floor = FilterMapFloor::default();
+        let operand = match floor.derived_operand(seq.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let output = match floor.desugar(operand, seq, |elem| {
             let v = elem
                 .value
                 .as_ref()
                 .unwrap_or_else(|| filter_map_gap("filter_map element was not literal"));
-            // The closure returns `Option<_>`: a `None` drops the element, a
-            // `Some(v)` keeps it with its mapped const value. A non-`Option` /
-            // runtime / unmodeled body is a gap, not a fake effect.
-            if let Some(mapped) = self
+            let mapped = self
                 .mapper
                 .eval(v)
-                .unwrap_or_else(|| filter_map_gap("filter_map closure did not reduce to Option"))
-            {
+                .unwrap_or_else(|| filter_map_gap("filter_map closure did not reduce to Option"));
+            mapped.map(|mapped| {
                 let mexpr = mapped
                     .to_expr()
                     .unwrap_or_else(|| filter_map_gap("filter_map result could not materialize"));
-                out.push(DesugaredElem {
+                DesugaredElem {
                     expr: mexpr,
                     value: Some(mapped),
-                });
-            }
-        }
-        Outcome::Complete(Desugared::Seq(out))
+                }
+            })
+        }) {
+            Ok(output) => output,
+            Err(outcome) => return outcome,
+        };
+        ctx.record_adapter_floor_audit("filter_map", output.standing().count());
+        Outcome::Complete(Desugared::Seq(output.into_items()))
     }
 }
 
 fn filter_map_gap(reason: &str) -> ! {
     panic!("filter_map did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct FilterMapFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for FilterMapFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("filter_map", AdapterOutputIterMember::filter_map),
+        }
+    }
+}
+
+impl FilterMapFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(filter_map_floor_refusal)
+    }
+
+    fn desugar<F>(
+        &self,
+        operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        mapper: F,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome>
+    where
+        F: FnMut(DesugaredElem) -> Option<DesugaredElem>,
+    {
+        let visited = seq.len();
+        let out = seq.into_iter().filter_map(mapper).collect();
+        self.counted
+            .assert_input_count(&operand, visited)
+            .map_err(filter_map_floor_refusal)?;
+        self.counted.output(out).map_err(filter_map_floor_refusal)
+    }
+}
+
+fn filter_map_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::filter_map".to_string(),
+        reason: err.to_string(),
+    })
 }
