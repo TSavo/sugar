@@ -31,7 +31,8 @@ const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[
         key: "early-return-control-flow-unrouted",
         family: "early-return",
         owner: "Phase2-S5",
-        replacement: "route early-return/control-flow effects through RouteRaisesOperation handlers",
+        replacement:
+            "route early-return/control-flow effects through RouteRaisesOperation handlers",
     },
     ExpectedUnroutedConstruct {
         key: "panic-family-unrouted",
@@ -43,13 +44,8 @@ const EXPECTED_UNROUTED_CONSTRUCTS: &[ExpectedUnroutedConstruct] = &[
         key: "question-mark-opaque-irterm-op",
         family: "question-mark-try",
         owner: "#3196",
-        replacement: "route Expr::Try through term_boundary into the Phase 2 router; do not fix in #3292",
-    },
-    ExpectedUnroutedConstruct {
-        key: "spine-pub-crate-unreachable",
-        family: "route-raises-spine",
-        owner: "Phase2-S3",
-        replacement: "promote RouteRaisesOperation and its closed visitor traits to sugar-floor-algebra public API",
+        replacement:
+            "route Expr::Try through term_boundary into the Phase 2 router; do not fix in #3292",
     },
 ];
 
@@ -141,6 +137,19 @@ fn source_has_unrouted_panic_family(source: &str) -> bool {
     source.contains("Effect::PanicMacro") && !source_uses_route_raises_spine(source)
 }
 
+fn shared_route_spine_is_public(source: &str) -> bool {
+    [
+        "pub trait RouteRaiseHandler",
+        "pub trait RouteRaisesVisitor",
+        "pub trait RouteRaisesAccept",
+        "pub struct RouteRaisesOperation",
+        "pub fn route_incomplete",
+        "pub fn route_outcome",
+    ]
+    .into_iter()
+    .all(|needle| source.contains(needle))
+}
+
 fn collect_unrouted_constructs(root: &Path) -> Vec<ObservedUnroutedConstruct> {
     let mut rows = Vec::new();
 
@@ -148,9 +157,8 @@ fn collect_unrouted_constructs(root: &Path) -> Vec<ObservedUnroutedConstruct> {
         "implementations/rust/sugar-lift-rust-tests/src/sugar/route_raises_operation.rs";
     let route_spine_source = read_source(root, route_spine);
     let shared_spine = "implementations/rust/sugar-floor-algebra/src/route_raises_operation.rs";
-    if route_spine_source.contains("pub(crate) struct RouteRaisesOperation")
-        || !root.join(shared_spine).exists()
-    {
+    let shared_spine_source = fs::read_to_string(root.join(shared_spine)).unwrap_or_default();
+    if !shared_route_spine_is_public(&shared_spine_source) {
         push_row(
             &mut rows,
             "spine-pub-crate-unreachable",
@@ -335,6 +343,11 @@ fn assert_frontier_matches_expected(root: &Path, observed: &[ObservedUnroutedCon
 fn effect_routing_frontier_matches_expected_multiset() {
     let root = repo_root();
     let observed = collect_unrouted_constructs(&root);
+    println!(
+        "R(control-flow-constructs-unrouted)={} vectorByFamily={:?}",
+        observed.len(),
+        vector_by_family(&observed)
+    );
     assert_frontier_matches_expected(&root, &observed);
 }
 
@@ -379,5 +392,23 @@ fn collector_names_planted_unrouted_panic_family_construct() {
     assert!(
         source_has_unrouted_panic_family(source),
         "a planted panic-family construct without RouteRaisesOperation must be named"
+    );
+}
+
+#[test]
+fn collector_recognizes_public_shared_route_spine() {
+    let source = r#"
+        pub trait RouteRaiseHandler {}
+        pub trait RouteRaisesVisitor {}
+        pub trait RouteRaisesAccept {}
+        pub struct RouteRaisesOperation<'a>(&'a str);
+        impl<'a> RouteRaisesOperation<'a> {
+            pub fn route_incomplete(self) {}
+            pub fn route_outcome(self) {}
+        }
+    "#;
+    assert!(
+        shared_route_spine_is_public(source),
+        "shared route spine public API should drain the reachability row"
     );
 }

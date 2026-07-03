@@ -8,7 +8,7 @@ use sugar_lift_rust_tests::{
 
 const EXPECTED_SEED_CLAIMS: usize = 13;
 const EXPECTED_ENROLLMENT_FRONTIER: usize = 198;
-const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 5;
+const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 4;
 
 #[derive(Clone, Copy)]
 struct WitnessPair {
@@ -27,12 +27,6 @@ struct PendingRouterWitnessSlot {
 
 fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
     vec![
-        PendingRouterWitnessSlot {
-            router: "try_sugar_equivalent",
-            owner_slice: "Phase2-S3",
-            truthful_slot: "caught raise routes to SAT through RouteRaisesOperation",
-            lying_slot: "uncaught raise propagates and the bad twin reaches UNSAT",
-        },
         PendingRouterWitnessSlot {
             router: "question_mark",
             owner_slice: "Phase2-S4",
