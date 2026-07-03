@@ -386,6 +386,49 @@ fn phase2_question_mark_err_path_remains_uncaught_boundary() {
 }
 
 #[test]
+fn s6_result_and_then_composes_with_phase2_question_mark_router() {
+    let z3 = z3_path_or_panic();
+    let truthful = r#"
+        #[test]
+        fn t_result_and_then_question_mark_good() -> Result<(), i32> {
+            let x = Ok::<i32, i32>(2).and_then(|v| Ok(v + 3))?;
+            assert_eq!(x, 5);
+            Ok(())
+        }
+    "#;
+    let lying = r#"
+        #[test]
+        fn t_result_and_then_question_mark_bad() -> Result<(), i32> {
+            let x = Ok::<i32, i32>(2).and_then(|v| Ok(v + 3))?;
+            assert_eq!(x, 6);
+            Ok(())
+        }
+    "#;
+    let mut verdict_receipt = Vec::new();
+
+    for (label, src, expected_sat) in [
+        ("s6_result_and_then_question_mark_good", truthful, true),
+        ("s6_result_and_then_question_mark_bad", lying, false),
+    ] {
+        let out = lift_file(&parse(src), &format!("sugar-witness/{label}.rs"));
+        assert_witness_dispatches_to_owner("result_and_then", &out)
+            .unwrap_or_else(|err| panic!("{label}: {err}; skips={:?}", out.skip_reasons));
+        let decl = single_warranted_decl(&out);
+        let got_sat = z3_verdict(&assertion_formula_json(decl), label, &z3);
+        verdict_receipt.push(format!("{label}={}", if got_sat { "SAT" } else { "UNSAT" }));
+        assert_eq!(
+            got_sat, expected_sat,
+            "{label}: expected SAT={expected_sat} got SAT={got_sat}; skips={:?}",
+            out.skip_reasons
+        );
+    }
+    println!(
+        "s6 Result::and_then floor composes into Phase 2 ? router: {}",
+        verdict_receipt.join(", ")
+    );
+}
+
+#[test]
 fn phase2_early_return_branch_has_solver_bad_twin() {
     let z3 = z3_path_or_panic();
     let function: syn::ItemFn = syn::parse_str(
@@ -702,6 +745,21 @@ const S5_ADAPTER_PAIR_CLAIMS: &[&str] = &[
     "inspect",
 ];
 
+const S6_OPTION_RESULT_PAIR_CLAIMS: &[&str] = &[
+    "option_map",
+    "option_and_then",
+    "option_or_else",
+    "option_filter",
+    "option_unwrap_or",
+    "option_ok_or",
+    "result_map",
+    "result_map_err",
+    "result_and_then",
+    "result_or_else",
+    "result_ok",
+    "result_err",
+];
+
 fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
     [
         S7_SEED_PAIR_CLAIMS,
@@ -711,6 +769,7 @@ fn standing_ground_truth_gate_claims() -> BTreeSet<&'static str> {
         S9_BATCH3_PAIR_CLAIMS,
         S9_BATCH4_PAIR_CLAIMS,
         S5_ADAPTER_PAIR_CLAIMS,
+        S6_OPTION_RESULT_PAIR_CLAIMS,
     ]
     .into_iter()
     .flat_map(|claims| claims.iter().copied())
@@ -874,6 +933,11 @@ fn s9_batch4_pairs_match_real_rust_semantics() {
 #[test]
 fn s5_adapter_pairs_match_real_rust_semantics() {
     assert_pairs_match_real_rust_semantics(S5_ADAPTER_PAIR_CLAIMS);
+}
+
+#[test]
+fn s6_option_result_pairs_match_real_rust_semantics() {
+    assert_pairs_match_real_rust_semantics(S6_OPTION_RESULT_PAIR_CLAIMS);
 }
 
 #[test]

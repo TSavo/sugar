@@ -377,7 +377,9 @@ operation_floor = "option"
 doorway = "curry"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:303", "option_adaptor.rs:524"]
+counted_loci_reason = "Option::map dispatches through the option floor; the shared Option-chain bridge records active variant count"
 
 [[catalog]]
 id = "option-and-then"
@@ -388,7 +390,9 @@ operation_floor = "option"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:308"]
+counted_loci_reason = "Option::and_then dispatches through the option floor with bind-doorway variant measurement"
 
 [[catalog]]
 id = "option-or-else"
@@ -399,7 +403,9 @@ operation_floor = "option"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:313"]
+counted_loci_reason = "Option::or_else dispatches through the option floor with absent-branch measurement"
 
 [[catalog]]
 id = "option-filter"
@@ -410,7 +416,9 @@ operation_floor = "option"
 doorway = "curry"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:318"]
+counted_loci_reason = "Option::filter dispatches through the option floor with guarded present-branch measurement"
 
 [[catalog]]
 id = "option-unwrap"
@@ -443,7 +451,9 @@ operation_floor = "option"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:326"]
+counted_loci_reason = "Option::unwrap_or dispatches through the option floor with fallback measurement"
 
 [[catalog]]
 id = "option-ok-or"
@@ -454,7 +464,9 @@ operation_floor = "option"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:331", "option_adaptor.rs:562"]
+counted_loci_reason = "Option::ok_or dispatches through the option floor into the Result guard shape"
 
 [[catalog]]
 id = "result-map"
@@ -465,7 +477,9 @@ operation_floor = "result"
 doorway = "curry"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:336"]
+counted_loci_reason = "Result::map dispatches through the result floor and measures the active variant"
 
 [[catalog]]
 id = "result-map-err"
@@ -476,7 +490,9 @@ operation_floor = "result"
 doorway = "curry"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:341"]
+counted_loci_reason = "Result::map_err dispatches through the result floor and measures the Err arm"
 
 [[catalog]]
 id = "result-and-then"
@@ -487,7 +503,9 @@ operation_floor = "result"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:346"]
+counted_loci_reason = "Result::and_then dispatches through the result floor with bind-doorway variant measurement"
 
 [[catalog]]
 id = "result-or-else"
@@ -498,7 +516,9 @@ operation_floor = "result"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:351"]
+counted_loci_reason = "Result::or_else dispatches through the result floor with Err-branch measurement"
 
 [[catalog]]
 id = "result-unwrap"
@@ -553,7 +573,9 @@ operation_floor = "result"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:356", "option_adaptor.rs:528"]
+counted_loci_reason = "Result::ok dispatches through the result floor into the Option guard shape; the shared ok/err bridge is counted here"
 
 [[catalog]]
 id = "result-err"
@@ -564,7 +586,9 @@ operation_floor = "result"
 doorway = "bind"
 owner = "S6"
 target_slice = "S6"
-status = "unenrolled"
+status = "landed"
+counted_loci = ["option_adaptor.rs:361"]
+counted_loci_reason = "Result::err dispatches through the result floor into the Option guard shape"
 
 [[catalog]]
 id = "result-transpose"
@@ -798,14 +822,14 @@ reason = "reverse counted composition"
 id = "floor-option"
 floor = "option"
 owner = "S6"
-status = "planned"
+status = "landed"
 reason = "Option temporal combinators"
 
 [[operation_floor]]
 id = "floor-result"
 floor = "result"
 owner = "S6"
-status = "planned"
+status = "landed"
 reason = "Result temporal combinators"
 
 [[operation_floor]]

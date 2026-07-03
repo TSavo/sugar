@@ -147,7 +147,9 @@ use std::path::PathBuf;
 ///   closure_tls_accessor.rs (all 5 use decompose_closure_adaptor_frag, site.boundary()):
 ///   measured R(t)=22, tightened 30→22. SKIPPED: matches_macro.rs (Pat field used in
 ///   pattern_atom() at desugar time; requires deeper redesign).
-const RAW_SYN_CEILING: usize = 22;
+/// temporal-floor S6 split Option/Result recognizers into typed carrier-specific entrypoints:
+///   measured R(t)=21, tightened 22→21.
+const RAW_SYN_CEILING: usize = 21;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

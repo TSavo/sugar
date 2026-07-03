@@ -12,7 +12,7 @@ use sugar_ir_symbolic::{ConstValue, Sort, Term};
 use syn::{Expr, GenericArgument, Path, PathArguments, Type};
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole, SugarWitnesses};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{
     err_term, is_grounded_literal_term, none_term, ok_term, some_term, OPT_NONE, OPT_SOME, RES_ERR,
@@ -26,37 +26,369 @@ use crate::{
     Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
-    "option_adaptor",
+pub(crate) const OPTION_MAP_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
+    "option_map",
     SugarRole::Term,
     &["map_term"],
-    crate::sugar::claim::SugarWitnesses::pair(
+    SugarWitnesses::pair(
         r#"
             #[test]
-            fn t_option_adaptor_good() {
+            fn t_option_map_good() {
                 assert_eq!(Some(2_i32).map(|x| x + 3), Some(5_i32));
             }
         "#,
         r#"
             #[test]
-            fn t_option_adaptor_bad() {
+            fn t_option_map_bad() {
                 assert_eq!(Some(2_i32).map(|x| x + 3), Some(6_i32));
             }
         "#,
     ),
-    recognize,
+    recognize_option_map,
 );
 
-fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) const OPTION_AND_THEN_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_and_then",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_and_then_good() {
+                assert_eq!(Some(2_i32).and_then(|x| Some(x + 3)), Some(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_and_then_bad() {
+                assert_eq!(Some(2_i32).and_then(|x| Some(x + 3)), None::<i32>);
+            }
+        "#,
+    ),
+    recognize_option_and_then,
+);
+
+pub(crate) const OPTION_OR_ELSE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_or_else",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_or_else_good() {
+                assert_eq!(None::<i32>.or_else(|| Some(4_i32)), Some(4_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_or_else_bad() {
+                assert_eq!(None::<i32>.or_else(|| Some(4_i32)), None::<i32>);
+            }
+        "#,
+    ),
+    recognize_option_or_else,
+);
+
+pub(crate) const OPTION_FILTER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_filter",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_filter_good() {
+                assert_eq!(Some(4_i32).filter(|x| *x > 2), Some(4_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_filter_bad() {
+                assert_eq!(Some(4_i32).filter(|x| *x > 2), None::<i32>);
+            }
+        "#,
+    ),
+    recognize_option_filter,
+);
+
+pub(crate) const OPTION_UNWRAP_OR_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_unwrap_or",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_unwrap_or_good() {
+                assert_eq!(None::<i32>.unwrap_or(9_i32), 9_i32);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_unwrap_or_bad() {
+                assert_eq!(None::<i32>.unwrap_or(9_i32), 8_i32);
+            }
+        "#,
+    ),
+    recognize_option_unwrap_or,
+);
+
+pub(crate) const OPTION_OK_OR_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_ok_or",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_ok_or_good() {
+                assert_eq!(None::<i32>.ok_or(7_i32), Err::<i32, i32>(7_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_ok_or_bad() {
+                assert_eq!(None::<i32>.ok_or(7_i32), Ok::<i32, i32>(0_i32));
+            }
+        "#,
+    ),
+    recognize_option_ok_or,
+);
+
+pub(crate) const RESULT_MAP_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
+    "result_map",
+    SugarRole::Term,
+    &["map_term"],
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_map_good() {
+                assert_eq!(Ok::<i32, i32>(2_i32).map(|x| x + 3), Ok::<i32, i32>(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_map_bad() {
+                assert_eq!(Ok::<i32, i32>(2_i32).map(|x| x + 3), Ok::<i32, i32>(6_i32));
+            }
+        "#,
+    ),
+    recognize_result_map,
+);
+
+pub(crate) const RESULT_MAP_ERR_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "result_map_err",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_map_err_good() {
+                assert_eq!(Err::<i32, i32>(2_i32).map_err(|e| e + 3), Err::<i32, i32>(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_map_err_bad() {
+                assert_eq!(Err::<i32, i32>(2_i32).map_err(|e| e + 3), Ok::<i32, i32>(5_i32));
+            }
+        "#,
+    ),
+    recognize_result_map_err,
+);
+
+pub(crate) const RESULT_AND_THEN_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "result_and_then",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_and_then_good() {
+                assert_eq!(Ok::<i32, i32>(2_i32).and_then(|x| Ok(x + 3)), Ok::<i32, i32>(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_and_then_bad() {
+                assert_eq!(Ok::<i32, i32>(2_i32).and_then(|x| Ok(x + 3)), Err::<i32, i32>(5_i32));
+            }
+        "#,
+    ),
+    recognize_result_and_then,
+);
+
+pub(crate) const RESULT_OR_ELSE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "result_or_else",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_or_else_good() {
+                assert_eq!(Err::<i32, i32>(2_i32).or_else(|e| Ok(e + 3)), Ok::<i32, i32>(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_or_else_bad() {
+                assert_eq!(Err::<i32, i32>(2_i32).or_else(|e| Ok(e + 3)), Err::<i32, i32>(2_i32));
+            }
+        "#,
+    ),
+    recognize_result_or_else,
+);
+
+pub(crate) const RESULT_OK_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "result_ok",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_ok_good() {
+                assert_eq!(Ok::<i32, i32>(5_i32).ok(), Some(5_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_ok_bad() {
+                assert_eq!(Ok::<i32, i32>(5_i32).ok(), None::<i32>);
+            }
+        "#,
+    ),
+    recognize_result_ok,
+);
+
+pub(crate) const RESULT_ERR_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "result_err",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_result_err_good() {
+                assert_eq!(Err::<i32, i32>(6_i32).err(), Some(6_i32));
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_result_err_bad() {
+                assert_eq!(Err::<i32, i32>(6_i32).err(), None::<i32>);
+            }
+        "#,
+    ),
+    recognize_result_err,
+);
+
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term(
+    "option_adaptor",
+    SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_option_adaptor_good() {
+                assert_eq!(None::<i32>.unwrap_or_else(|| 5_i32), 5_i32);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_option_adaptor_bad() {
+                assert_eq!(None::<i32>.unwrap_or_else(|| 5_i32), 6_i32);
+            }
+        "#,
+    ),
+    recognize_legacy_option_adaptor,
+);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Carrier {
+    Option,
+    Result,
+    Any,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Method {
+    Map,
+    AndThen,
+    OrElse,
+    Filter,
+    OkOr,
+    MapErr,
+    UnwrapOr,
+    UnwrapOrElse,
+    UnwrapOrDefault,
+    Ok,
+    Err,
+}
+
+fn recognize_option_map(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("map", "map"));
+    recognize_for(frag, fcx, Carrier::Option, Method::Map)
+}
+
+fn recognize_option_and_then(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("and_then", "and_then"));
+    recognize_for(frag, fcx, Carrier::Option, Method::AndThen)
+}
+
+fn recognize_option_or_else(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("or_else", "or_else"));
+    recognize_for(frag, fcx, Carrier::Option, Method::OrElse)
+}
+
+fn recognize_option_filter(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("filter", "filter"));
+    recognize_for(frag, fcx, Carrier::Option, Method::Filter)
+}
+
+fn recognize_option_unwrap_or(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("unwrap_or", "unwrap_or"));
+    recognize_for(frag, fcx, Carrier::Option, Method::UnwrapOr)
+}
+
+fn recognize_option_ok_or(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("ok_or", "ok_or"));
+    recognize_for(frag, fcx, Carrier::Option, Method::OkOr)
+}
+
+fn recognize_result_map(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("map", "map"));
+    recognize_for(frag, fcx, Carrier::Result, Method::Map)
+}
+
+fn recognize_result_map_err(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("map_err", "map_err"));
+    recognize_for(frag, fcx, Carrier::Result, Method::MapErr)
+}
+
+fn recognize_result_and_then(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("and_then", "and_then"));
+    recognize_for(frag, fcx, Carrier::Result, Method::AndThen)
+}
+
+fn recognize_result_or_else(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("or_else", "or_else"));
+    recognize_for(frag, fcx, Carrier::Result, Method::OrElse)
+}
+
+fn recognize_result_ok(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("ok", "ok"));
+    recognize_for(frag, fcx, Carrier::Result, Method::Ok)
+}
+
+fn recognize_result_err(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    debug_assert!(matches!("err", "err"));
+    recognize_for(frag, fcx, Carrier::Result, Method::Err)
+}
+
+fn recognize_legacy_option_adaptor(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    recognize_for(frag, fcx, Carrier::Result, Method::UnwrapOr)
+        .or_else(|| recognize_for(frag, fcx, Carrier::Any, Method::UnwrapOrElse))
+        .or_else(|| recognize_for(frag, fcx, Carrier::Any, Method::UnwrapOrDefault))
+}
+
+fn recognize_for(
+    frag: &SourceFragment,
+    fcx: &SugarBuildCtx,
+    carrier: Carrier,
+    method: Method,
+) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    if !receiver_resolves_monadic_source(&call.receiver, fcx, 0) {
+    if !receiver_matches_carrier(&call.receiver, fcx, carrier) {
         return None;
     }
-    match (call.method.to_string().as_str(), call.args.len()) {
-        ("map", 1) => {
+    if method_from_call(&call.method.to_string(), call.args.len())? != method {
+        return None;
+    }
+    match method {
+        Method::Map => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
@@ -65,7 +397,7 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 Kind::Map(f.clone()),
             ))
         }
-        ("and_then", 1) => {
+        Method::AndThen => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
@@ -74,7 +406,16 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 Kind::AndThen(f.clone()),
             ))
         }
-        ("filter", 1) => {
+        Method::OrElse => {
+            let Expr::Closure(f) = &call.args[0] else {
+                return None;
+            };
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::OrElse(f.clone()),
+            ))
+        }
+        Method::Filter => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
@@ -83,11 +424,11 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 Kind::Filter(f.clone()),
             ))
         }
-        ("ok_or", 1) => Some(OptionAdaptorSugar::new(
+        Method::OkOr => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::OkOr(SugarBody::term(&call.args[0], fcx)),
         )),
-        ("map_err", 1) => {
+        Method::MapErr => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
@@ -96,11 +437,11 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 Kind::MapErr(f.clone()),
             ))
         }
-        ("unwrap_or", 1) => Some(OptionAdaptorSugar::new(
+        Method::UnwrapOr => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::UnwrapOr(SugarBody::term(&call.args[0], fcx)),
         )),
-        ("unwrap_or_else", 1) => {
+        Method::UnwrapOrElse => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
@@ -109,25 +450,190 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
                 Kind::UnwrapOrElse(f.clone()),
             ))
         }
-        ("unwrap_or_default", 0) => Some(OptionAdaptorSugar::new(
+        Method::UnwrapOrDefault => Some(OptionAdaptorSugar::new(
             SugarBody::term(&call.receiver, fcx),
             Kind::UnwrapOrDefault {
                 default: default_term_for_receiver(&call.receiver, fcx, 0),
             },
         )),
+        Method::Ok => Some(OptionAdaptorSugar::new(
+            SugarBody::term(&call.receiver, fcx),
+            Kind::Ok,
+        )),
+        Method::Err => Some(OptionAdaptorSugar::new(
+            SugarBody::term(&call.receiver, fcx),
+            Kind::Err,
+        )),
+    }
+}
+
+fn method_from_call(method: &str, arg_count: usize) -> Option<Method> {
+    match (method, arg_count) {
+        ("map", 1) => Some(Method::Map),
+        ("and_then", 1) => Some(Method::AndThen),
+        ("or_else", 1) => Some(Method::OrElse),
+        ("filter", 1) => Some(Method::Filter),
+        ("ok_or", 1) => Some(Method::OkOr),
+        ("map_err", 1) => Some(Method::MapErr),
+        ("unwrap_or", 1) => Some(Method::UnwrapOr),
+        ("unwrap_or_else", 1) => Some(Method::UnwrapOrElse),
+        ("unwrap_or_default", 0) => Some(Method::UnwrapOrDefault),
+        ("ok", 0) => Some(Method::Ok),
+        ("err", 0) => Some(Method::Err),
         _ => None,
     }
+}
+
+fn receiver_matches_carrier(expr: &Expr, fcx: &SugarBuildCtx, carrier: Carrier) -> bool {
+    match carrier {
+        Carrier::Option => receiver_resolves_option_source(expr, fcx, 0),
+        Carrier::Result => receiver_resolves_result_source(expr, fcx, 0),
+        Carrier::Any => receiver_resolves_monadic_source(expr, fcx, 0),
+    }
+}
+
+fn receiver_resolves_option_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if is_syntactic_option_ctor(expr)
+        || is_known_option_source(expr, fcx)
+        || crate::sugar::iter_terminal::recognizes_monadic_terminal(expr, fcx)
+    {
+        return true;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            receiver_resolves_option_source(init, &child_fcx, depth + 1)
+        }
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "map" | "and_then" | "or_else" | "filter"
+            ) =>
+        {
+            receiver_resolves_option_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::MethodCall(call)
+            if matches!(call.method.to_string().as_str(), "ok" | "err") && call.args.is_empty() =>
+        {
+            receiver_resolves_result_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_resolves_option_source(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_resolves_option_source(&group.expr, fcx, depth + 1),
+        _ => false,
+    }
+}
+
+fn receiver_resolves_result_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if is_syntactic_result_ctor(expr)
+        || crate::sugar::inspect::is_stable_result_source(strip_refs_groups(expr), fcx)
+        || crate::sugar::array_try_from::folds_to_result(strip_refs_groups(expr), fcx)
+    {
+        return true;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            receiver_resolves_result_source(init, &child_fcx, depth + 1)
+        }
+        Expr::MethodCall(call) if call.method == "ok_or" && call.args.len() == 1 => {
+            receiver_resolves_option_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "map" | "and_then" | "map_err" | "or_else"
+            ) =>
+        {
+            receiver_resolves_result_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_resolves_result_source(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_resolves_result_source(&group.expr, fcx, depth + 1),
+        _ => false,
+    }
+}
+
+fn is_known_option_source(expr: &Expr, _fcx: &SugarBuildCtx) -> bool {
+    if crate::sugar::nonzero::is_nonzero_new_call(strip_refs_groups(expr)) {
+        return true;
+    }
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    matches!(
+        call.method.to_string().as_str(),
+        "checked_isqrt" | "checked_mul" | "checked_add" | "checked_sub" | "checked_div"
+    )
+}
+
+fn is_syntactic_option_ctor(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) => path_ends_with(path, "None"),
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = strip_refs_groups(&call.func) else {
+                return false;
+            };
+            path_ends_with(path, "Some")
+        }
+        _ => false,
+    }
+}
+
+fn is_syntactic_result_ctor(expr: &Expr) -> bool {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if call.args.len() != 1 {
+        return false;
+    }
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return false;
+    };
+    path_ends_with(path, "Ok") || path_ends_with(path, "Err")
+}
+
+fn path_ends_with(path: &syn::ExprPath, name: &str) -> bool {
+    path.path
+        .segments
+        .last()
+        .is_some_and(|seg| seg.ident == name)
 }
 
 enum Kind {
     Map(syn::ExprClosure),
     AndThen(syn::ExprClosure),
+    OrElse(syn::ExprClosure),
     Filter(syn::ExprClosure),
     OkOr(SugarBody<TermFloor>),
     MapErr(syn::ExprClosure),
     UnwrapOr(SugarBody<TermFloor>),
     UnwrapOrElse(syn::ExprClosure),
     UnwrapOrDefault { default: Option<Rc<Term>> },
+    Ok,
+    Err,
 }
 
 struct OptionAdaptorSugar {
@@ -164,6 +670,15 @@ impl Sugar for OptionAdaptorSugar {
                     desugar_result_and_then(f, payload)
                 } else {
                     option_adaptor_gap("and_then receiver completed without Option/Result floor")
+                }
+            }
+            Kind::OrElse(f) => {
+                if let Some(payload) = option_payload(&receiver) {
+                    desugar_option_or_else(f, payload)
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_or_else(f, payload)
+                } else {
+                    option_adaptor_gap("or_else receiver completed without Option/Result floor")
                 }
             }
             Kind::Filter(f) => {
@@ -226,6 +741,20 @@ impl Sugar for OptionAdaptorSugar {
                     )
                 }
             }
+            Kind::Ok => {
+                if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_ok(payload)
+                } else {
+                    option_adaptor_gap("ok receiver completed without Result floor")
+                }
+            }
+            Kind::Err => {
+                if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_err(payload)
+                } else {
+                    option_adaptor_gap("err receiver completed without Result floor")
+                }
+            }
         }
     }
 }
@@ -253,6 +782,15 @@ enum ResultPayload {
     Err(Rc<Term>),
 }
 
+impl ResultPayload {
+    fn into_std(self) -> Result<Rc<Term>, Rc<Term>> {
+        match self {
+            Self::Ok(term) => Ok(term),
+            Self::Err(term) => Err(term),
+        }
+    }
+}
+
 fn option_payload(term: &Rc<Term>) -> Option<Option<Rc<Term>>> {
     match term.as_ref() {
         Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
@@ -276,255 +814,165 @@ fn result_payload(term: &Rc<Term>) -> Option<ResultPayload> {
 }
 
 fn desugar_option_and_then(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcome {
-    match payload {
-        Some(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "and_then", OPT_SOME) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Option::and_then payload did not reduce to a const value");
-            };
-            let Some(mapped) = const_eval_unary_option_closure(f, &value) else {
-                option_adaptor_gap("Option::and_then closure did not reduce to an Option literal");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "and_then",
-                "resolved Option::and_then stdlib axiom over Some"
-            );
-            Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
-        }
-        None => {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "and_then",
-                "resolved Option::and_then stdlib axiom over None"
-            );
-            Outcome::Complete(Desugared::Term(none_term()))
-        }
-    }
+    let prepared = match prepare_option_payload(payload, "and_then") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped = prepared
+        .map(|(_, value)| eval_unary_option_payload(f, &value))
+        .and_then(|payload| payload);
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "and_then",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Option::and_then through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
 }
 
 fn desugar_result_and_then(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
-    match payload {
-        ResultPayload::Ok(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "and_then", RES_OK) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Result::and_then Ok payload did not reduce to a const value");
-            };
-            let Some(mapped) = const_eval_unary_result_closure(f, &value) else {
-                option_adaptor_gap("Result::and_then closure did not reduce to a Result literal");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "and_then",
-                "resolved Result::and_then stdlib axiom over Ok"
-            );
-            Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
-        }
-        ResultPayload::Err(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "and_then", RES_ERR) {
-                return outcome;
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "and_then",
-                "resolved Result::and_then stdlib axiom over Err"
-            );
-            Outcome::Complete(Desugared::Term(err_term(inner)))
-        }
-    }
+    let prepared = match prepare_result_ok_payload(payload, "and_then") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped =
+        result_payload_from_std(prepared.and_then(|(_, value)| eval_unary_result_std(f, &value)));
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "and_then",
+        "resolved Result::and_then through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
+}
+
+fn desugar_option_or_else(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcome {
+    let prepared = match prepare_option_payload(payload, "or_else") {
+        Ok(prepared) => prepared.map(|(inner, _)| inner),
+        Err(outcome) => return outcome,
+    };
+    let mapped = prepared.or_else(|| eval_nullary_option_payload(f));
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "or_else",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Option::or_else through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
+}
+
+fn desugar_result_or_else(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
+    let prepared = match prepare_result_err_payload(payload, "or_else") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped =
+        result_payload_from_std(prepared.or_else(|(_, value)| eval_unary_result_std(f, &value)));
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "or_else",
+        "resolved Result::or_else through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
 }
 
 fn desugar_option_filter(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcome {
-    match payload {
-        Some(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "filter", OPT_SOME) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Option::filter payload did not reduce to a const value");
-            };
-            let Some(keep) = const_eval_unary_closure(f, &value).and_then(|value| value.as_bool())
-            else {
-                option_adaptor_gap("Option::filter closure did not reduce to a bool literal");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "filter",
-                keep,
-                "resolved Option::filter stdlib axiom over Some"
-            );
-            Outcome::Complete(Desugared::Term(if keep {
-                some_term(inner)
-            } else {
-                none_term()
-            }))
-        }
-        None => {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "filter",
-                "resolved Option::filter stdlib axiom over None"
-            );
-            Outcome::Complete(Desugared::Term(none_term()))
-        }
-    }
+    let prepared = match prepare_option_payload(payload, "filter") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let filtered = prepared.filter(|(_, value)| {
+        const_eval_unary_closure(f, value)
+            .and_then(|value| value.as_bool())
+            .unwrap_or_else(|| {
+                option_adaptor_gap("Option::filter closure did not reduce to a bool literal")
+            })
+    });
+    let mapped = filtered.map(|(inner, _)| inner);
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "filter",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Option::filter through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
 }
 
 fn desugar_option_ok_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Outcome {
-    match payload {
-        Some(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "ok_or", OPT_SOME) {
-                return outcome;
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "ok_or",
-                "resolved Option::ok_or stdlib axiom over Some"
-            );
-            Outcome::Complete(Desugared::Term(ok_term(inner)))
-        }
-        None => {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "ok_or",
-                "resolved Option::ok_or stdlib axiom over None"
-            );
-            Outcome::Complete(Desugared::Term(err_term(default)))
-        }
-    }
+    let prepared = match prepare_option_payload(payload, "ok_or") {
+        Ok(prepared) => prepared.map(|(inner, _)| inner),
+        Err(outcome) => return outcome,
+    };
+    let mapped = match prepared.ok_or(default) {
+        Ok(inner) => ResultPayload::Ok(inner),
+        Err(default) => ResultPayload::Err(default),
+    };
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "ok_or",
+        "resolved Option::ok_or through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
 }
 
 fn desugar_option_map(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcome {
-    match payload {
-        Some(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "map", OPT_SOME) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Option::map payload did not reduce to a const value");
-            };
-            let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                option_adaptor_gap("Option::map closure did not reduce to a literal");
-            };
-            let Some(term) = const_val_to_term(&mapped) else {
-                option_adaptor_gap("Option::map closure result did not reify to a term");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map",
-                "resolved Option::map stdlib axiom over Some"
-            );
-            Outcome::Complete(Desugared::Term(some_term(term)))
-        }
-        None => {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map",
-                "resolved Option::map stdlib axiom over None"
-            );
-            Outcome::Complete(Desugared::Term(none_term()))
-        }
-    }
+    let prepared = match prepare_option_payload(payload, "map") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped = prepared.map(|(_, value)| eval_unary_const_term(f, &value, "Option::map"));
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "map",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Option::map through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
 }
 
 fn desugar_result_map(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
-    match payload {
-        ResultPayload::Ok(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "map", RES_OK) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Result::map Ok payload did not reduce to a const value");
-            };
-            let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                option_adaptor_gap("Result::map closure did not reduce to a literal");
-            };
-            let Some(term) = const_val_to_term(&mapped) else {
-                option_adaptor_gap("Result::map closure result did not reify to a term");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map",
-                "resolved Result::map stdlib axiom over Ok"
-            );
-            Outcome::Complete(Desugared::Term(ok_term(term)))
-        }
-        ResultPayload::Err(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "map", RES_ERR) {
-                return outcome;
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map",
-                "resolved Result::map stdlib axiom over Err"
-            );
-            Outcome::Complete(Desugared::Term(err_term(inner)))
-        }
-    }
+    let prepared = match prepare_result_ok_payload(payload, "map") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped = result_payload_from_std(
+        prepared.map(|(_, value)| eval_unary_const_term(f, &value, "Result::map")),
+    );
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "map",
+        "resolved Result::map through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
 }
 
 fn desugar_result_map_err(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
-    match payload {
-        ResultPayload::Ok(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "map_err", RES_OK) {
-                return outcome;
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map_err",
-                "resolved Result::map_err stdlib axiom over Ok"
-            );
-            Outcome::Complete(Desugared::Term(ok_term(inner)))
-        }
-        ResultPayload::Err(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "map_err", RES_ERR) {
-                return outcome;
-            }
-            let Some(value) = term_to_const_val(&inner) else {
-                option_adaptor_gap("Result::map_err Err payload did not reduce to a const value");
-            };
-            let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                option_adaptor_gap("Result::map_err closure did not reduce to a literal");
-            };
-            let Some(term) = const_val_to_term(&mapped) else {
-                option_adaptor_gap("Result::map_err closure result did not reify to a term");
-            };
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "map_err",
-                "resolved Result::map_err stdlib axiom over Err"
-            );
-            Outcome::Complete(Desugared::Term(err_term(term)))
-        }
-    }
+    let prepared = match prepare_result_err_payload(payload, "map_err") {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mapped = result_payload_from_std(
+        prepared.map_err(|(_, value)| eval_unary_const_term(f, &value, "Result::map_err")),
+    );
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "map_err",
+        "resolved Result::map_err through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
 }
 
 fn desugar_option_unwrap_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Outcome {
-    match payload {
-        Some(inner) => {
-            if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or", OPT_SOME) {
-                return outcome;
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "unwrap_or",
-                "resolved Option::unwrap_or stdlib axiom over Some"
-            );
-            Outcome::Complete(Desugared::Term(inner))
-        }
-        None => {
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::option_adaptor",
-                method = "unwrap_or",
-                "resolved Option::unwrap_or stdlib axiom over None"
-            );
-            Outcome::Complete(Desugared::Term(default))
-        }
-    }
+    let prepared = match prepare_option_payload(payload, "unwrap_or") {
+        Ok(prepared) => prepared.map(|(inner, _)| inner),
+        Err(outcome) => return outcome,
+    };
+    let term = prepared.unwrap_or(default);
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "unwrap_or",
+        "resolved Option::unwrap_or through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(term))
 }
 
 fn desugar_option_unwrap_or_else(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcome {
@@ -620,6 +1068,36 @@ fn desugar_result_unwrap_or(payload: ResultPayload, default: Rc<Term>) -> Outcom
     }
 }
 
+fn desugar_result_ok(payload: ResultPayload) -> Outcome {
+    let prepared = match prepare_result_ok_payload(payload, "ok") {
+        Ok(prepared) => prepared.map(|(inner, _)| inner),
+        Err(outcome) => return outcome,
+    };
+    let mapped = prepared.ok();
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "ok",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Result::ok through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
+}
+
+fn desugar_result_err(payload: ResultPayload) -> Outcome {
+    let prepared = match prepare_result_err_payload(payload, "err") {
+        Ok(prepared) => prepared.map_err(|(inner, _)| inner),
+        Err(outcome) => return outcome,
+    };
+    let mapped = prepared.err();
+    debug!(
+        target: "sugar_lift_rust_tests::sugar::option_adaptor",
+        method = "err",
+        output = if mapped.is_some() { "Some" } else { "None" },
+        "resolved Result::err through stdlib combinator floor"
+    );
+    Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
+}
+
 fn desugar_option_unwrap_or_default(
     payload: Option<Rc<Term>>,
     default: Option<Rc<Term>>,
@@ -692,6 +1170,106 @@ fn build_eager_default(
         option_adaptor_gap("monadic eager default completed without a literal floor");
     }
     Ok(term)
+}
+
+fn prepare_option_payload(
+    payload: Option<Rc<Term>>,
+    method: &str,
+) -> Result<Option<(Rc<Term>, ConstVal)>, Outcome> {
+    payload
+        .map(|inner| {
+            ensure_grounded_payload(&inner, method, OPT_SOME)?;
+            let Some(value) = term_to_const_val(&inner) else {
+                option_adaptor_gap(&format!(
+                    "Option::{method} payload did not reduce to a const value"
+                ));
+            };
+            Ok((inner, value))
+        })
+        .transpose()
+}
+
+fn prepare_result_ok_payload(
+    payload: ResultPayload,
+    method: &str,
+) -> Result<Result<(Rc<Term>, ConstVal), Rc<Term>>, Outcome> {
+    match payload.into_std() {
+        Ok(inner) => {
+            ensure_grounded_payload(&inner, method, RES_OK)?;
+            let Some(value) = term_to_const_val(&inner) else {
+                option_adaptor_gap(&format!(
+                    "Result::{method} Ok payload did not reduce to a const value"
+                ));
+            };
+            Ok(Ok((inner, value)))
+        }
+        Err(inner) => {
+            ensure_grounded_payload(&inner, method, RES_ERR)?;
+            Ok(Err(inner))
+        }
+    }
+}
+
+fn prepare_result_err_payload(
+    payload: ResultPayload,
+    method: &str,
+) -> Result<Result<Rc<Term>, (Rc<Term>, ConstVal)>, Outcome> {
+    match payload.into_std() {
+        Ok(inner) => {
+            ensure_grounded_payload(&inner, method, RES_OK)?;
+            Ok(Ok(inner))
+        }
+        Err(inner) => {
+            ensure_grounded_payload(&inner, method, RES_ERR)?;
+            let Some(value) = term_to_const_val(&inner) else {
+                option_adaptor_gap(&format!(
+                    "Result::{method} Err payload did not reduce to a const value"
+                ));
+            };
+            Ok(Err((inner, value)))
+        }
+    }
+}
+
+fn eval_unary_const_term(
+    closure: &syn::ExprClosure,
+    arg: &ConstVal,
+    label: &'static str,
+) -> Rc<Term> {
+    let Some(mapped) = const_eval_unary_closure(closure, arg) else {
+        option_adaptor_gap(&format!("{label} closure did not reduce to a literal"));
+    };
+    let Some(term) = const_val_to_term(&mapped) else {
+        option_adaptor_gap(&format!("{label} closure result did not reify to a term"));
+    };
+    term
+}
+
+fn eval_unary_option_payload(closure: &syn::ExprClosure, arg: &ConstVal) -> Option<Rc<Term>> {
+    const_eval_unary_option_closure(closure, arg).unwrap_or_else(|| {
+        option_adaptor_gap("Option callback did not reduce to an Option literal")
+    })
+}
+
+fn eval_nullary_option_payload(closure: &syn::ExprClosure) -> Option<Rc<Term>> {
+    const_eval_nullary_option_closure(closure)
+        .unwrap_or_else(|| option_adaptor_gap("Option::or_else closure did not reduce to Option"))
+}
+
+fn eval_unary_result_std(closure: &syn::ExprClosure, arg: &ConstVal) -> Result<Rc<Term>, Rc<Term>> {
+    match const_eval_unary_result_closure(closure, arg)
+        .unwrap_or_else(|| option_adaptor_gap("Result callback did not reduce to a Result literal"))
+    {
+        ResultPayload::Ok(term) => Ok(term),
+        ResultPayload::Err(term) => Err(term),
+    }
+}
+
+fn result_payload_from_std(payload: Result<Rc<Term>, Rc<Term>>) -> ResultPayload {
+    match payload {
+        Ok(term) => ResultPayload::Ok(term),
+        Err(term) => ResultPayload::Err(term),
+    }
 }
 
 fn ensure_grounded_payload(
@@ -865,6 +1443,13 @@ fn const_eval_nullary_closure(closure: &syn::ExprClosure) -> Option<ConstVal> {
         return None;
     }
     const_eval(closure_value_body(closure)?, &BTreeMap::new())
+}
+
+fn const_eval_nullary_option_closure(closure: &syn::ExprClosure) -> Option<Option<Rc<Term>>> {
+    if !closure.inputs.is_empty() {
+        return None;
+    }
+    monadic_option_expr(closure_value_body(closure)?, &BTreeMap::new())
 }
 
 fn closure_value_body(closure: &syn::ExprClosure) -> Option<&Expr> {

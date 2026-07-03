@@ -156,6 +156,18 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &into::EXPR_SUGAR,
     &from_bool::EXPR_SUGAR,
     &int_pow::EXPR_SUGAR,
+    &option_adaptor::OPTION_MAP_EXPR_SUGAR,
+    &option_adaptor::OPTION_AND_THEN_EXPR_SUGAR,
+    &option_adaptor::OPTION_OR_ELSE_EXPR_SUGAR,
+    &option_adaptor::OPTION_FILTER_EXPR_SUGAR,
+    &option_adaptor::OPTION_UNWRAP_OR_EXPR_SUGAR,
+    &option_adaptor::OPTION_OK_OR_EXPR_SUGAR,
+    &option_adaptor::RESULT_MAP_EXPR_SUGAR,
+    &option_adaptor::RESULT_MAP_ERR_EXPR_SUGAR,
+    &option_adaptor::RESULT_AND_THEN_EXPR_SUGAR,
+    &option_adaptor::RESULT_OR_ELSE_EXPR_SUGAR,
+    &option_adaptor::RESULT_OK_EXPR_SUGAR,
+    &option_adaptor::RESULT_ERR_EXPR_SUGAR,
     &option_adaptor::EXPR_SUGAR,
     &option_predicate::EXPR_SUGAR,
     &inspect::TERM_EXPR_SUGAR,
@@ -2279,13 +2291,13 @@ fn int_sqrt_chain_axioms() {
     }
 
     #[test]
-    fn option_map_over_literal_some_is_owned_by_option_adaptor_before_sequence_map() {
+    fn option_map_over_literal_some_is_owned_by_option_map_before_sequence_map() {
         let expr: Expr = syn::parse_str("Some(1).map(|x| x + 1)").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Term);
 
         assert!(
-            names.contains(&"option_adaptor"),
-            "monadic map should be claimed by OptionAdaptorSugar: {names:?}"
+            names.contains(&"option_map"),
+            "monadic map should be claimed by the Option map floor: {names:?}"
         );
         assert!(
             names.contains(&"map_term"),
@@ -2293,8 +2305,8 @@ fn int_sqrt_chain_axioms() {
         );
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Term),
-            Some("option_adaptor"),
-            "Option/Result value adaptors own monadic map before sequence map_term"
+            Some("option_map"),
+            "Option map owns monadic map before sequence map_term"
         );
     }
 
