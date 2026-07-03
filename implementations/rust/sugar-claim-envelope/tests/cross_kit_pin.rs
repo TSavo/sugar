@@ -109,6 +109,7 @@ fn fixture_args() -> MintContractArgs {
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
+        proofir_provenance: None,
         contract_name: "demo".into(),
         pre: Some(pre_n_gt_0()),
         post: Some(post_out_eq_0()),

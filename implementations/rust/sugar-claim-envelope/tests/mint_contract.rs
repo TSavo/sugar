@@ -186,6 +186,7 @@ fn args_with(
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
+        proofir_provenance: None,
         contract_name: "demo".into(),
         pre,
         post,
