@@ -1458,9 +1458,6 @@ def test_parse_value_scope():
 
 def test_direct_parse():
     assert parse_int(5) == 42
-
-def test_two_callsites():
-    assert parse_int(5) == parse_int(7)
 "#,
     )
     .expect("write python fixture");
@@ -1505,14 +1502,16 @@ surface = "python"
     let implications = report["implications"]
         .as_array()
         .expect("implications array");
-    // Current batch lift emits one callable universe plus one EUF assertion per
-    // supported literal call occurrence. Composition is through ambient
-    // specialization of the `call:` ctor, so the old LSP-era implication rows
-    // are intentionally absent here.
+    // Current batch lift emits callable universes per supported literal-expected
+    // call occurrence and merges same-semantic-CID equality facts into one EUF
+    // assertion with unioned warrants. A call-to-call RHS is not a literal
+    // expected value under return-sort truth: the LHS call carries the dug Int
+    // return sort, while the unresolved RHS `call:` ctor remains LegacyCtor and
+    // the construction law correctly refuses Eq(Int, LegacyCtor).
     assert_eq!(
         ir.len(),
-        6,
-        "expected callsite fact + assertion contracts: {report:#}"
+        3,
+        "expected two callable universes plus one merged literal-call assertion: {report:#}"
     );
     assert_eq!(
         implications.len(),
@@ -1535,17 +1534,54 @@ surface = "python"
             .iter()
             .filter(|name| **name == "test_parser::parse_int::callable")
             .count(),
-        3,
+        2,
         "expected one callable universe per literal-call occurrence: {names:?}"
     );
+    let euf_assertions: Vec<_> = ir
+        .iter()
+        .filter(|decl| {
+            let name = decl["name"].as_str().unwrap_or_default();
+            name == "parse_int#euf#c:call:parse_int(i:5)::assertion"
+        })
+        .collect();
     assert_eq!(
-        names
-            .iter()
-            .filter(|name| **name == "parse_int#euf#c:call:parse_int(i:5)::assertion")
-            .count(),
-        3,
-        "expected one EUF assertion per literal-call occurrence: {names:?}"
+        euf_assertions.len(),
+        1,
+        "same semantic literal-call facts must merge into one EUF assertion: {report:#}"
     );
+    let assertion = euf_assertions[0];
+    assert_eq!(assertion["inv"]["name"], "=");
+    assert_eq!(assertion["inv"]["args"][0]["name"], "call:parse_int");
+    assert_eq!(assertion["inv"]["args"][0]["args"][0]["sort"]["name"], "Int");
+    assert_eq!(assertion["inv"]["args"][0]["args"][0]["value"], 5);
+    assert_eq!(assertion["inv"]["args"][1]["sort"]["name"], "Int");
+    assert_eq!(assertion["inv"]["args"][1]["value"], 42);
+    let source_warrants = assertion["sourceWarrants"]
+        .as_array()
+        .expect("source warrants");
+    assert_eq!(source_warrants.len(), 2);
+    let source_functions: Vec<_> = source_warrants
+        .iter()
+        .map(|warrant| warrant["sourceFunctionName"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        source_functions,
+        vec!["test_parse_value_scope", "test_direct_parse"]
+    );
+    let proof_warrants = assertion["proofirProvenance"]["warrants"]
+        .as_array()
+        .expect("proofir warrants");
+    assert_eq!(proof_warrants.len(), 2);
+    let proof_warrant_lines: Vec<_> = proof_warrants
+        .iter()
+        .map(|warrant| {
+            (
+                warrant["kind"].as_str().unwrap_or_default(),
+                warrant["locus"]["line"].as_i64().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(proof_warrant_lines, vec![("Stated", 9), ("Stated", 12)]);
 }
 
 #[test]
@@ -1739,10 +1775,42 @@ surface = "python"
         .collect();
     assert_eq!(
         euf_assertions.len(),
-        2,
-        "supported equality callsites must emit EUF assertions: {report:#}"
+        1,
+        "same semantic checked(5) == 1 facts must merge into one EUF assertion: {report:#}"
     );
-    assert!(euf_assertions.iter().all(|decl| decl["inv"]["name"] == "="));
+    let euf_assertion = euf_assertions[0];
+    assert_eq!(euf_assertion["inv"]["name"], "=");
+    assert_eq!(euf_assertion["inv"]["args"][0]["name"], "call:checked");
+    assert_eq!(euf_assertion["inv"]["args"][0]["args"][0]["sort"]["name"], "Int");
+    assert_eq!(euf_assertion["inv"]["args"][0]["args"][0]["value"], 5);
+    assert_eq!(euf_assertion["inv"]["args"][1]["sort"]["name"], "Int");
+    assert_eq!(euf_assertion["inv"]["args"][1]["value"], 1);
+    let source_warrants = euf_assertion["sourceWarrants"]
+        .as_array()
+        .expect("source warrants");
+    assert_eq!(source_warrants.len(), 2);
+    let source_functions: Vec<_> = source_warrants
+        .iter()
+        .map(|warrant| warrant["sourceFunctionName"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        source_functions,
+        vec!["composed_ok", "test_checked_returns_1"]
+    );
+    let proof_warrants = euf_assertion["proofirProvenance"]["warrants"]
+        .as_array()
+        .expect("proofir warrants");
+    assert_eq!(proof_warrants.len(), 2);
+    let proof_warrant_lines: Vec<_> = proof_warrants
+        .iter()
+        .map(|warrant| {
+            (
+                warrant["kind"].as_str().unwrap_or_default(),
+                warrant["locus"]["line"].as_i64().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(proof_warrant_lines, vec![("Stated", 8), ("Stated", 12)]);
 
     let negative_assertions: Vec<_> = ir
         .iter()
