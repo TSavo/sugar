@@ -51,7 +51,7 @@ def test_factory_spine_frontier_pins_current_xsugar_bypass_baseline() -> None:
         "factory/array_map_report.py:179",
         "factory/array_map_report.py:275",
         "factory/array_map_report.py:277",
-        "factory/literal_call_report.py:463",
+        "factory/literal_call_report.py:474",
         "floor/call_site_value.py:156",
         "sugar/builtin_call_sugar.py:45",
         "sugar/builtin_call_sugar.py:121",
@@ -83,7 +83,7 @@ def test_factory_spine_frontier_cli_exits_red_with_pinned_bypasses(
     assert "  xsugar_build_bypasses: 11" in stdout
     assert "  total: 11" in stdout
     assert "factory spine frontier offenders:" in stdout
-    assert "factory/literal_call_report.py:463" in stdout
+    assert "factory/literal_call_report.py:474" in stdout
     assert "floor/call_site_value.py:156" in stdout
     assert "sugar/builtin_call_sugar.py:45" in stdout
     assert "sugar/map_builtin_sugar.py:36" in stdout
