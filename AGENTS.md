@@ -249,6 +249,57 @@ The same law runs through every layer of this system: the compiler forbids
 ill-typed programs, the factory forbids un-owned constructions, the proofchain
 forbids unwitnessed claims. One principle, three substrates.
 
+### Coordination density: the invariant pipeline
+
+The highest-value work in this repo is not the isolated fix. It is the
+promotion chain that turns a local failure into durable system law:
+
+1. **Bugs do not merely get fixed; they get promoted into named laws.** A bug is
+   evidence that the system permitted an illegal shape to exist. The immediate
+   patch matters, but the architectural question is: what class did this bug
+   reveal? Name that class. State the invariant it violated. Make the fix cite
+   the law, not only the symptom. A one-off patch that leaves the class unnamed
+   is still ambient risk.
+2. **Named laws do not sit in docs; they become instruments.** A law preserved
+   only in prose is orientation with a half-life. It helps the agent that just
+   read it and fails the worker who arrives cold. The law becomes real when a
+   compiler error, test, auditor, panic, report, or receipt can recognize the
+   offender set without asking a human to remember the argument.
+3. **Instruments do not merely measure; they create ratchets.** A measurement
+   that does not define non-regression is trivia. The instrument must name the
+   current `R`, make new offenders red, and distinguish declared debt from new
+   drift. It is allowed to carry a baseline only if the baseline is explicit,
+   owned, and shrinking. A ratchet is the difference between "we noticed this"
+   and "this cannot silently get worse."
+4. **Ratchets do not merely gate; they define retirement paths.** A red
+   instrument that only blocks work becomes another gate. IDD instruments must
+   say what green means: the owner, boundary, typed contract, replay input,
+   deletion path, or migration target that retires each offender. Every finding
+   should point at the future type, constructor, enum, scoped key, witness, or
+   memento that will make the finding impossible.
+5. **Retirement paths do not merely clean code; they move obligations from
+   auditors into types.** The final state is not a quiet auditor forever. The
+   final state is that the illegal path cannot be constructed: the compiler
+   demands the match arm, the constructor refuses the invalid object, the typed
+   key carries the scope, the proof witness is independently addressed, the
+   replay memento pins the decision input. The obligation has moved out of
+   review and into the substrate.
+
+This is coordination density. It is how a small shop keeps architectural memory
+without meetings and scales parallel agents without trusting any single agent's
+context. The invariant is:
+
+> **local failure -> named law -> executable instrument -> ratchet -> retirement
+> path -> type-level impossibility.**
+
+Do not break this chain. If you only fix the local failure, the system learns
+nothing. If you only write the law, the law decays. If you only write the
+instrument, it becomes a noisy checklist. If you only ratchet, you have built a
+new gate. If you only retire code without moving the obligation into a stronger
+substrate, the same class returns wearing a different name. The work is complete
+only when the chain has advanced as far up the enforcement ladder as the current
+language and design allow.
+
 ### The capstone law (T Savo, 2026-07-02)
 
 **"Enrollment is existence, enforced by the type system, enumerated by the
