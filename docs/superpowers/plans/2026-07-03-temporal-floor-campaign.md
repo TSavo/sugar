@@ -92,12 +92,29 @@ load-bearing statements, quoted:
    *enforced* in Rust — it gets *dissolved*: with one owner per operation and
    membership bounds, the missing-cell question is unaskable.
 
-6. **Fold's wrinkle — the accumulator threads:** occurrence-renames CHAIN. `acc_2`
+6. **Floors are double dispatch** (T, verbatim, completing the decision of record):
+   *"You dispatch to the floor, and the floor dispatches to the literal by raising
+   the floor through the sugar."* Two dispatches, one per axis of variation:
+   **(1) sugar → floor** = which operation — the sugar knows what's asked, never how;
+   **(2) floor → literal via the sugar** = which concrete thing — the floor NEVER
+   inspects its operand (no downcast, no type switch); it hands the ask back through
+   the sugar, which knows its literal, and the literal's embedding raises it onto the
+   floor's carrier — the floor receives the operand already standing on itself.
+   Role separation: the sugar owns which-operation + which-literal, the floor owns
+   the operation, the literal owns its embedding — no party holds two at once, so
+   "what is the receiver" is unwritable. This is the AGENTS.md enforcement-ladder
+   Visitor clause made literal ("the 'what is the receiver' bug is unwritable,
+   because dispatch *is* the design"). Both extension directions are
+   compiler-enumerated: a new floor → members declare standing or cannot be operands;
+   a new literal → every floor it stands on demands its embedding arm — rustc hands
+   you the todo list.
+
+7. **Fold's wrinkle — the accumulator threads:** occurrence-renames CHAIN. `acc_2`
    is defined in terms of `acc_1`; the temporal rewrite emits the recurrence as EUF
    facts (`acc_1 == f(acc_0, x_1)`, `acc_2 == f(acc_1, x_2)`, …). The chain is the
    fold's temporal shape, measured tick by tick.
 
-7. **Enrollment is existence (the capstone law):** every temporal sugar enters via
+8. **Enrollment is existence (the capstone law):** every temporal sugar enters via
    `witnesses()` with truthful/lying twins through the production pipeline
    (`sugar lift → ir compiler → solver`). **A lying twin with a WRONG COUNT must go
    UNSAT.** The Rust witness flip (#3283, non-defaulted `witnesses` on the claim
@@ -262,6 +279,11 @@ raise, already typed). Reuse the router, do not re-model.
 - **No per-sort operation semantics.** The floor owns the operation ONCE; the only
   per-sort code is the embedding. A sort-specific map/fold body anywhere = the matrix
   reborn = reject.
+- **No type switches or downcasts in any floor implementation.** A floor that
+  matches on its operand's concrete type is the crime the architecture exists to
+  kill. The double-dispatch shape prevents it structurally (the floor receives
+  operands already standing on itself); if any residue genuinely can't be
+  structurally prevented, it becomes a named detector row — never a silent match arm.
 - **No second temporal representation.** A static temporal model is the
   shadow-interpreter crime in the time dimension (CL S6 deleted the spatial one; do
   not mint a temporal one).
@@ -278,6 +300,8 @@ with one lawful implementation and its membership set (the dispatch matrix disso
 #3061 cited); byte-drift 0 throughout; and the AST-vs-LLBC seam decision made BY T on
 the record (not assumed by a worker). The closure clause, verbatim shape: **one door
 (all values through the floor), one owner per operation (the floor does the right
-thing once), membership by standing, embedding as the only per-sort code.** At that
-point time and branching are carried entirely by name-splits and guard-implications —
-FOL's own structures.
+thing once), membership by standing, embedding as the only per-sort code.** And the
+maintenance story: **no auditor watches the dispatch, because the dispatch IS the
+design** — both extension directions (new floor, new literal) are compiler-enumerated
+todo lists, not review obligations. At that point time and branching are carried
+entirely by name-splits and guard-implications — FOL's own structures.
