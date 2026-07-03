@@ -10,7 +10,8 @@
 use serde_json::Value as Json;
 
 use sugar_ir_compiler::{
-    Capabilities, CompileError, CompiledFormula, IrCompiler, PROTOCOL_VERSION,
+    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, IrCompiler,
+    PROTOCOL_VERSION,
 };
 
 pub mod derive_query;
@@ -44,7 +45,19 @@ impl IrCompiler for SmtLibCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        compile_to_parts(ir)
+        compile_json_adapter(self, ir, dialect)
+    }
+
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        if dialect != DIALECT {
+            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
+        }
+        let ir = ir.to_json_value()?;
+        compile_to_parts(&ir)
     }
 
     fn capabilities(&self) -> Capabilities {

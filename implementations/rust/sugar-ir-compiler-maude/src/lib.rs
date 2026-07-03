@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 use sugar_ir_compiler::{
-    Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityManifest,
-    PROTOCOL_VERSION,
+    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
+    IrCompiler, OpacityManifest, PROTOCOL_VERSION,
 };
 use sugar_ir_types::{IrTerm, Sort};
 
@@ -136,7 +136,19 @@ impl IrCompiler for MaudeCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        Ok(compile_artifact(ir)?.compiled)
+        compile_json_adapter(self, ir, dialect)
+    }
+
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        if dialect != DIALECT {
+            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
+        }
+        let ir = ir.to_json_value()?;
+        Ok(compile_artifact(&ir)?.compiled)
     }
 
     fn capabilities(&self) -> Capabilities {

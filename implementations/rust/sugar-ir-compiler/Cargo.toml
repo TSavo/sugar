@@ -7,6 +7,7 @@ authors.workspace = true
 description = "Sugar IR compiler protocol: trait, dispatcher, JSON-RPC subprocess client, plugin discovery."
 
 [dependencies]
+sugar-ir-types = { path = "../sugar-ir-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

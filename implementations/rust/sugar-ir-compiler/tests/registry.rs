@@ -5,8 +5,8 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 
 use sugar_ir_compiler::{
-    registry::Registry, Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler,
-    OpacityManifest, PROTOCOL_VERSION,
+    registry::Registry, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
+    IrCompiler, OpacityManifest, PROTOCOL_VERSION,
 };
 
 struct FakeCompiler {
@@ -16,6 +16,24 @@ struct FakeCompiler {
 
 impl IrCompiler for FakeCompiler {
     fn compile(&self, _ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
+        self.compile_typed(
+            &CompilerInput::decode_json(json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "var", "name": "v"},
+                    {"kind": "var", "name": "v"}
+                ]
+            }))?,
+            dialect,
+        )
+    }
+
+    fn compile_typed(
+        &self,
+        _ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
         if !self.dialects.iter().any(|d| d == dialect) {
             return Err(CompileError::UnsupportedDialect(dialect.into()));
         }

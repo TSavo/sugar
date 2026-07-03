@@ -8,8 +8,8 @@ use std::sync::Arc;
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_ir_compiler::{
-    Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityEntry,
-    OpacityManifest, PROTOCOL_VERSION,
+    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
+    IrCompiler, OpacityEntry, OpacityManifest, PROTOCOL_VERSION,
 };
 use sugar_ir_types::{Formula, Sort, Term};
 
@@ -37,7 +37,19 @@ impl IrCompiler for LeanCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        compile_to_parts(ir)
+        compile_json_adapter(self, ir, dialect)
+    }
+
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        if dialect != DIALECT {
+            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
+        }
+        let ir = ir.to_json_value()?;
+        compile_to_parts(&ir)
     }
 
     fn capabilities(&self) -> Capabilities {

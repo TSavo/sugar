@@ -30,6 +30,7 @@ file_prefixes = [
 root = "implementations/rust/sugar-ir-compiler/src"
 file_prefixes = [
   "lib",
+  "frontend",
   "registry",
   "server",
   "subprocess",
@@ -120,6 +121,16 @@ ignored_items = [
   { name = "OpacityEntry", reason = "nested compiler-product side-table inside CompiledFormula" },
   { name = "FreeVar", reason = "nested compiler-product field inside CompiledFormula" },
   { name = "PROTOCOL_VERSION", reason = "protocol constant, not a pipeline boundary object" },
+]
+
+[[interface_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
+ignored_items = [
+  { name = "EquationalTheory", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
+  { name = "EquationalSubsort", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
+  { name = "EquationalOperator", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
+  { name = "EquationalVariable", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
+  { name = "EquationalEquation", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
 ]
 
 [[interface_sources]]
@@ -548,7 +559,7 @@ source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "C
 [[interfaces]]
 id = "ir-compiler-trait"
 owner = "sugar-ir-compiler"
-input_type = "compiler input obligation plus target dialect"
+input_type = "CompilerInput typed obligation plus target dialect; compile(&Json) remains an S7-retired compatibility adapter"
 output_type = "CompiledFormula"
 addressing_rule = "IrCompiler implementation capabilities select the backend for a dialect"
 failure_type = "CompileError"
@@ -565,6 +576,79 @@ owner = "typed ProofIR frontend-boundary campaign"
 retirement = "S2 introduces compile_typed(&CompilerInput); S7 deletes the compatibility compile(&Json) method and makes this hatch unrepresentable"
 baseline = false
 source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "IrCompiler", needles = ["fn compile(&self, ir: &Json"] }
+
+[[interfaces]]
+id = "ir-compiler-input"
+owner = "sugar-ir-compiler::frontend"
+input_type = "transport JSON at the compiler frontend adapter"
+output_type = "CompilerInput::{Formula, Term, EquationalTheory}"
+addressing_rule = "kind dispatch selects term/formula; equational-theory payload with theory+obligation selects Maude's typed obligation"
+failure_type = "FrontendError"
+replay_inputs = [
+  "raw ProofIR JSON",
+  "frontend input_format",
+  "target dialect",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "CompilerInput", kind = "enum" }
+
+[[interfaces]]
+id = "equational-theory-obligation"
+owner = "sugar-ir-compiler::frontend"
+input_type = "Maude equational-theory JSON document"
+output_type = "EquationalTheoryObligation"
+addressing_rule = "kind/name plus theory.name and obligation lhs/rhs identify the equational-theory compiler input"
+failure_type = "FrontendError::InvalidTypedIr or Maude CompileError at backend admissibility"
+replay_inputs = [
+  "theory name",
+  "sorts/subsorts/operators/variables/equations",
+  "obligation lhs/rhs",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "EquationalTheoryObligation", kind = "struct" }
+
+[[interfaces]]
+id = "frontend-error-kind"
+owner = "sugar-ir-compiler::frontend"
+input_type = "frontend decode failure classification"
+output_type = "FrontendErrorKind"
+addressing_rule = "closed enum variant names the failing frontend condition"
+failure_type = "FrontendErrorPayload"
+replay_inputs = [
+  "raw ProofIR JSON",
+  "decode path",
+  "frontend input_format",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "FrontendErrorKind", kind = "enum" }
+
+[[interfaces]]
+id = "frontend-error-payload"
+owner = "sugar-ir-compiler::frontend"
+input_type = "frontend decode failure facts"
+output_type = "FrontendErrorPayload"
+addressing_rule = "kind + frontend + input_format + path address the decode failure without a bare-string Failed shape"
+failure_type = "FrontendError"
+replay_inputs = [
+  "raw ProofIR JSON",
+  "frontend adapter id",
+  "input format",
+  "path",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "FrontendErrorPayload", kind = "struct" }
+
+[[interfaces]]
+id = "frontend-error"
+owner = "sugar-ir-compiler::frontend"
+input_type = "FrontendErrorPayload"
+output_type = "FrontendError"
+addressing_rule = "payload carries the typed frontend failure classification and decode path"
+failure_type = "FrontendErrorPayload"
+replay_inputs = [
+  "FrontendErrorKind",
+  "frontend adapter id",
+  "input format",
+  "path",
+  "detail",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "FrontendError", kind = "struct" }
 
 [[interfaces]]
 id = "ir-compiler-registry"
@@ -673,6 +757,10 @@ owner = "rust verifier consistency seam"
 retirement = "split obligation and witness at the ambient ground-callsite boundary so the exact stated row cannot be conjoined as its own evidence (#3313)"
 baseline = true
 source = { path = "implementations/rust/sugar-verifier/src/consistency.rs", item = "ambient-ground-callsite-self-witness", needles = ["collect_ambient_ground_callsite_facts", "with_ambient_ground_callsite_facts"] }
+
+[[frontend_boundary_sources]]
+path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
+frontend_adapter = true
 
 [[frontend_boundary_transport_json_ingress]]
 id = "smt-lib-ircompiler-json-ingress"
@@ -801,6 +889,14 @@ owner = "sugar-ir-types"
 retirement = "replace IrTerm::Const.value with a typed literal union if the sorts campaign demands it; this campaign does not drain typed-IR literal payloads"
 baseline = true
 source = { path = "implementations/rust/sugar-ir-types/src/lib.rs", item = "IrTerm::Const", needles = ["value: serde_json::Value"] }
+
+[[frontend_boundary_allowlist_hatches]]
+id = "ircompiler-json-compat-adapter"
+shape = "frontend-json-compat-adapter"
+owner = "typed ProofIR frontend-boundary campaign"
+retirement = "S7 deletes compile(&Json) after all compiler callers use compile_typed(&CompilerInput)"
+baseline = false
+source = { path = "implementations/rust/sugar-ir-compiler/src/lib.rs", item = "IrCompiler::compile", needles = ["fn compile(&self, ir: &Json", "compile_json_adapter(self, ir, dialect)"] }
 
 [[frontend_boundary_vocabulary]]
 id = "frontend-error-kind"

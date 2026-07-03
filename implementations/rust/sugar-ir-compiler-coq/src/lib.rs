@@ -29,7 +29,8 @@
 use serde_json::Value as Json;
 
 use sugar_ir_compiler::{
-    Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler, PROTOCOL_VERSION,
+    compile_json_adapter, Capabilities, CompileError, CompiledFormula, CompilerInput, FreeVar,
+    IrCompiler, PROTOCOL_VERSION,
 };
 
 mod emitter;
@@ -83,7 +84,19 @@ impl IrCompiler for CoqCompiler {
         if dialect != DIALECT {
             return Err(CompileError::UnsupportedDialect(dialect.to_string()));
         }
-        let (preamble, body, free_vars) = self.compile_inner(ir)?;
+        compile_json_adapter(self, ir, dialect)
+    }
+
+    fn compile_typed(
+        &self,
+        ir: &CompilerInput,
+        dialect: &str,
+    ) -> Result<CompiledFormula, CompileError> {
+        if dialect != DIALECT {
+            return Err(CompileError::UnsupportedDialect(dialect.to_string()));
+        }
+        let ir = ir.to_json_value()?;
+        let (preamble, body, free_vars) = self.compile_inner(&ir)?;
         Ok(CompiledFormula {
             preamble,
             body,
