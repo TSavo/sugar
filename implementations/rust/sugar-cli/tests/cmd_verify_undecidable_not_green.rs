@@ -8,13 +8,15 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, ContractBody, ContractMemento, Ed25519Seed,
-    FlatAtom, ProofEnvelopeInput, ProofGraph,
+    build_proof_envelope, ed25519_pubkey_string, member_field, ContractBody, ContractMemento,
+    Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 
-const EXIT_OK: i32 = 0;
-const EXIT_SOLVER_FAIL: i32 = 3;
-const MISSING_SOLVER_REASON: &str = "solver 'bitwuzla' not found in registry";
+const EXIT_VERIFY_FAIL: i32 = 1;
+const MISSING_PROVENANCE_KIND_REASON: &str =
+    "consistency check refused: contract `strings_consistency` lacks required provenance KIND";
+const MISSING_PROVENANCE_KIND_DETAIL: &str =
+    "contract memento lacks required proofirProvenance/sourceWarrants provenance KIND";
 
 #[derive(Clone, Copy)]
 enum SolverFixture {
@@ -201,52 +203,120 @@ fn combined_output(out: &Output) -> String {
     )
 }
 
+fn strings_consistency_contract_member(project: &Path) -> Json {
+    let proof_path = fs::read_dir(project.join(".sugar"))
+        .expect("read .sugar proof dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "proof"))
+        .unwrap_or_else(|| panic!("fixture wrote no .proof under {}", project.display()));
+    let bytes = fs::read(&proof_path).expect("read fixture proof");
+    let graph = ProofGraph::read(&bytes).expect("decode fixture proof graph");
+    let member = graph
+        .members()
+        .filter_map(|(_, bytes)| serde_json::from_slice::<Json>(bytes).ok())
+        .find(|member| {
+            member_field(member, "contractName").and_then(Json::as_str)
+                == Some("strings_consistency")
+        })
+        .unwrap_or_else(|| panic!("fixture proof has no strings_consistency contract member"));
+    member
+}
+
+fn assert_fixture_lacks_provenance_kind_fields(project: &Path) {
+    let member = strings_consistency_contract_member(project);
+    assert_eq!(
+        member_field(&member, "contractName").and_then(Json::as_str),
+        Some("strings_consistency"),
+        "contract memento receipt: {member}"
+    );
+    assert!(
+        member_field(&member, "proofirProvenance").is_none(),
+        "fixture must predate proofirProvenance kind emission; contract memento receipt: {member}"
+    );
+    assert!(
+        member_field(&member, "sourceWarrants").is_none(),
+        "fixture must predate sourceWarrants kind emission; contract memento receipt: {member}"
+    );
+    assert!(
+        member_field(&member, "source_warrants").is_none(),
+        "fixture must predate source_warrants kind emission; contract memento receipt: {member}"
+    );
+}
+
+fn assert_loud_provenance_kind_refusal(receipt: &Json) {
+    assert_eq!(
+        receipt["claims"][0]["status"], "refused",
+        "fixture lacks provenance-kind fields, so discharge must refuse before solver dispatch; receipt: {receipt}"
+    );
+    assert_ne!(
+        receipt["claims"][0]["status"], "discharged",
+        "missing provenance kind must never green the claim; receipt: {receipt}"
+    );
+    let reason = receipt["claims"][0]["reason"].as_str().unwrap_or("");
+    assert!(
+        reason.contains(MISSING_PROVENANCE_KIND_REASON),
+        "refusal must name the discharge-law violation; receipt: {receipt}"
+    );
+    assert!(
+        reason.contains(MISSING_PROVENANCE_KIND_DETAIL),
+        "refusal must name the missing memento fields; receipt: {receipt}"
+    );
+}
+
 #[test]
-fn undecidable_row_fails_artifact_project_verify() {
+fn fixture_contract_memento_lacks_provenance_kind_fields() {
+    let project = publish_inv_project("memento-receipt", SolverFixture::MissingSeat);
+    assert_fixture_lacks_provenance_kind_fields(&project);
+
+    let _ = fs::remove_dir_all(project);
+}
+
+#[test]
+fn refused_row_fails_artifact_project_verify() {
     let project = publish_inv_project("missing-seat-json", SolverFixture::MissingSeat);
+    assert_fixture_lacks_provenance_kind_fields(&project);
     let out = run_verify(&project, true);
     let receipt = stdout_json(&out);
     let code = out.status.code().unwrap_or(-1);
 
     assert_eq!(receipt["kind"], "verification-receipt");
     assert_eq!(receipt["totalClaims"], 1, "receipt: {receipt}");
+    assert_loud_provenance_kind_refusal(&receipt);
     assert_eq!(
-        receipt["claims"][0]["status"], "undecidable",
-        "receipt: {receipt}"
-    );
-    assert!(
-        receipt["claims"][0]["reason"]
-            .as_str()
-            .unwrap_or("")
-            .contains(MISSING_SOLVER_REASON),
-        "receipt: {receipt}"
+        code, EXIT_VERIFY_FAIL,
+        "refused rows must hard-fail artifact/project verify; receipt: {receipt}"
     );
     assert_eq!(
-        code, EXIT_SOLVER_FAIL,
-        "undecidable rows must fail artifact/project verify; receipt: {receipt}"
+        receipt["ok"], false,
+        "refused rows must preserve the not-green law; receipt: {receipt}"
     );
-    assert_eq!(receipt["ok"], false, "receipt: {receipt}");
 
     let _ = fs::remove_dir_all(project);
 }
 
 #[test]
-fn undecidable_reason_is_printed() {
+fn refused_reason_is_printed() {
     let project = publish_inv_project("missing-seat-human", SolverFixture::MissingSeat);
+    assert_fixture_lacks_provenance_kind_fields(&project);
     let out = run_verify(&project, false);
     let code = out.status.code().unwrap_or(-1);
     let text = combined_output(&out);
 
     assert_eq!(
-        code, EXIT_SOLVER_FAIL,
-        "undecidable rows must exit with solver failure; output:\n{text}"
+        code, EXIT_VERIFY_FAIL,
+        "refused rows must exit with verification failure; output:\n{text}"
     );
     assert!(
-        text.contains("undecided"),
-        "human summary must print the undecided count; output:\n{text}"
+        text.contains("refused"),
+        "human output must print the loud refused row status; output:\n{text}"
     );
     assert!(
-        text.contains(MISSING_SOLVER_REASON),
+        text.contains(MISSING_PROVENANCE_KIND_REASON),
+        "human output must carry the discharge-law refusal reason; output:\n{text}"
+    );
+    assert!(
+        text.contains(MISSING_PROVENANCE_KIND_DETAIL),
         "human output must carry the row reason verbatim; output:\n{text}"
     );
 
@@ -254,16 +324,23 @@ fn undecidable_reason_is_printed() {
 }
 
 #[test]
-fn discharged_claim_still_green() {
+fn stale_fixture_refuses_before_stub_solver_can_green() {
     let project = publish_inv_project("stub-green", SolverFixture::StubPass);
+    assert_fixture_lacks_provenance_kind_fields(&project);
     let out = run_verify(&project, true);
     let receipt = stdout_json(&out);
     let code = out.status.code().unwrap_or(-1);
 
-    assert_eq!(code, EXIT_OK, "receipt: {receipt}");
+    assert_eq!(
+        code, EXIT_VERIFY_FAIL,
+        "missing provenance kind refuses before a stub solver can green the row; receipt: {receipt}"
+    );
     assert_eq!(receipt["totalClaims"], 1, "receipt: {receipt}");
-    assert_eq!(receipt["claims"][0]["status"], "discharged");
-    assert_eq!(receipt["ok"], true, "receipt: {receipt}");
+    assert_loud_provenance_kind_refusal(&receipt);
+    assert_eq!(
+        receipt["ok"], false,
+        "stub solver must not green a claim whose ambient testimony lacks provenance kind; receipt: {receipt}"
+    );
 
     let _ = fs::remove_dir_all(project);
 }
