@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import ArrayLiteral, FloorValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.sequence_constructor import SequenceConstructor
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
@@ -49,8 +55,8 @@ class SequenceConstructionOperation:
             observed=observed,
             requested=requested,
             fix=fix,
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

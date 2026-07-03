@@ -66,7 +66,7 @@ def test_bitwise_missing_receiver_capability_is_a_named_floor_gap():
         "requested": "bitwise_with",
         "fix": "add bitwise_with to StringValue or emit a real effect",
         "gap_kind": "Floor",
-        "gap_locus": "construction",
+        "gap_locus": "Construction",
     }
 
 

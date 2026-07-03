@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.operations import ContextManagerOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -91,8 +97,8 @@ def _raise_with_gap(site, *, observed: str, requested: str, fix: str) -> None:
         observed=observed,
         requested=requested,
         fix=fix,
-        gap_kind="Sugar",
-        gap_locus="AST",
+        gap_kind=GapKind.SUGAR,
+        gap_locus=GapLocus.AST,
     )
     raise FactoryGap(
         info,

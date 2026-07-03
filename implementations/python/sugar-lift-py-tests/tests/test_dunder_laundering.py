@@ -100,7 +100,7 @@ def test_dunder_reduction_factory_typeerror_is_loud(case: DunderCase) -> None:
     with pytest.raises(TypeError) as raised:
         case.invoke(receiver, ctx)
 
-    assert "write more Floor for this construction" in str(raised.value)
+    assert "write more Floor for this Construction" in str(raised.value)
     assert "owner=SugarBody" in str(raised.value)
 
 

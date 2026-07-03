@@ -218,7 +218,7 @@ def test_temporal_add_assign_bad_operand_names_the_floor_gap():
             "requested": "add operand floor",
             "fix": "add AddOperation support for TermValue with ArrayLiteral",
             "gap_kind": "Floor",
-            "gap_locus": "construction",
+            "gap_locus": "Construction",
         }
 
 

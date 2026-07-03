@@ -26,7 +26,7 @@ def test_unconstructible_transitive_body_yields_recorded_dig_refusal() -> None:
                 "caught": "FactoryGap",
                 "reason": (
                     "callsite floor projection refused this callee: "
-                    "write more Floor for this construction: owner=AttributeSugar "
+                    "write more Floor for this Construction: owner=AttributeSugar "
                     "blame=t.py:2:11 observed=TermValue requested=attribute_with "
                     "fix=add attribute_with to TermValue or emit a real effect"
                 ),

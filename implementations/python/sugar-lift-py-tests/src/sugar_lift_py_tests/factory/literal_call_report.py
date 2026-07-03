@@ -1120,7 +1120,13 @@ def _require_proofir_emission_node(
     replacement: str,
 ):
     """ProofIR Slice 3 return-type seam: raw formula rows must become nodes."""
-    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
     from sugar_lift_py_tests.proofir import ProofIRNode
 
     if isinstance(value, ProofIRNode):
@@ -1141,8 +1147,8 @@ def _require_proofir_emission_node(
             f"construct {replacement} at the emission site; raw dict/str "
             "emission is retired by #3234"
         ),
-        gap_kind="ProofIR",
-        gap_locus="Emission",
+        gap_kind=GapKind.PROOFIR,
+        gap_locus=GapLocus.EMISSION,
     )
     raise FactoryGap(
         info,

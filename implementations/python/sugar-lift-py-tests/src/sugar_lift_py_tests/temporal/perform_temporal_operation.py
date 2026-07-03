@@ -8,7 +8,13 @@ _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
-    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 
     operation_name = type(operation).__name__
     method_name = getattr(operation, "method_name", None)
@@ -23,8 +29,8 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
             f"declare {operation_name}.method_name as a ClassVar[str] "
             "owned by the operation"
         ),
-        gap_kind="Operation",
-        gap_locus="method_name",
+        gap_kind=GapKind.OPERATION,
+        gap_locus=GapLocus.METHOD_NAME,
     )
     raise FactoryGap(
         info,
@@ -51,7 +57,13 @@ def _missing_temporal_floor_gap(
     receiver: TemporalContext,
     method_name: str,
 ):
-    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 
     observed = type(receiver).__name__
     info = FactoryGapInfo(
@@ -63,8 +75,8 @@ def _missing_temporal_floor_gap(
             f"add {method_name} to {observed} or route this curry/rewrite "
             "through the temporal floor"
         ),
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,
@@ -102,6 +114,8 @@ def perform_temporal_operation(
             FactoryAuditRow,
             FactoryGap,
             FactoryGapInfo,
+            GapKind,
+            GapLocus,
         )
 
         operation_name = type(operation).__name__
@@ -114,8 +128,8 @@ def perform_temporal_operation(
                 f"check {operation_name}.method_name or add "
                 f"{type(receiver).__name__}.{method_name}"
             ),
-            gap_kind="Operation",
-            gap_locus="method_name",
+            gap_kind=GapKind.OPERATION,
+            gap_locus=GapLocus.METHOD_NAME,
         )
         raise FactoryGap(
             info,

@@ -318,6 +318,8 @@ class ObjectValue(FloorValue):
             FactoryAuditRow,
             FactoryGap,
             FactoryGapInfo,
+            GapKind,
+            GapLocus,
         )
 
         info = FactoryGapInfo(
@@ -327,9 +329,11 @@ class ObjectValue(FloorValue):
             requested=requested,
             fix=fix,
             gap_kind=(
-                "Constructor" if requested.startswith("constructor-bound ") else "Floor"
+                GapKind.CONSTRUCTOR
+                if requested.startswith("constructor-bound ")
+                else GapKind.FLOOR
             ),
-            gap_locus="construction",
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

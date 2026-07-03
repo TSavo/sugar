@@ -6,7 +6,13 @@ import pytest
 
 from factory_reduce import fol, reduce_term
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
@@ -31,8 +37,8 @@ class _GapBody:
             observed="Call",
             requested="reduce a receiver",
             fix="write more Floor",
-            gap_kind="Floor",
-            gap_locus="Reduce",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.REDUCE,
         )
         raise FactoryGap(info, _audit_row(info))
 

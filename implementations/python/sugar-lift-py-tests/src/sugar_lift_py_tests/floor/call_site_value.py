@@ -200,7 +200,13 @@ def _force_floor_gap(
     observed: str,
     fix: str,
 ) -> NoReturn:
-    from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+    from sugar_lift_py_tests.factory import (
+        FactoryAuditRow,
+        FactoryGap,
+        FactoryGapInfo,
+        GapKind,
+        GapLocus,
+    )
 
     info = FactoryGapInfo(
         owner=owner,
@@ -208,8 +214,8 @@ def _force_floor_gap(
         observed=observed,
         requested="force callsite floor",
         fix=fix,
-        gap_kind="Floor",
-        gap_locus="Projection",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.PROJECTION,
     )
     raise FactoryGap(
         info,

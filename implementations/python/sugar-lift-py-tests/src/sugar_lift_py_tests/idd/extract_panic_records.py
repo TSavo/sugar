@@ -100,7 +100,7 @@ def _panic_segment(line: str) -> str:
         for prefix in (
             "write more Sugar for this AST",
             "write more Floor for this AST",
-            "write more Floor for this construction",
+            "write more Floor for this Construction",
             "write more Sugar for ",
             "write more Floor for ",
         )

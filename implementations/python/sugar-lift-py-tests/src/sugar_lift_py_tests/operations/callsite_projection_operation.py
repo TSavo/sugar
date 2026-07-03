@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar, NoReturn, cast
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.ir import _ConstStr, _Ctor, Formula, Term, eq
 
@@ -68,8 +74,8 @@ class CallsiteProjectionOperation:
             observed=observed,
             requested="project callsite floor",
             fix=f"write more Floor: implement {observed}.project_callsite_with",
-            gap_kind="Floor",
-            gap_locus="Projection",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.PROJECTION,
         )
         raise FactoryGap(
             info,

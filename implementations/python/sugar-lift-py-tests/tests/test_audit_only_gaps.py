@@ -57,7 +57,7 @@ def test_audit_only_collects_multiple_construction_gaps() -> None:
         "gap_locus": "AST",
     }
     assert gaps[0].audit_row.to_json()["status"] == "sugar-gap"
-    assert gaps[1].message.startswith("write more Floor for this construction")
+    assert gaps[1].message.startswith("write more Floor for this Construction")
     assert gaps[1].info == {
         "owner": "python-test",
         "blame": "fixture.py:3:4",
@@ -65,7 +65,7 @@ def test_audit_only_collects_multiple_construction_gaps() -> None:
         "requested": "map_with",
         "fix": "add map_with to TermValue or emit a real effect",
         "gap_kind": "Floor",
-        "gap_locus": "construction",
+        "gap_locus": "Construction",
     }
     assert gaps[1].audit_row.to_json()["status"] == "floor-gap"
     assert [gap.to_json()["message"] for gap in gaps] == [

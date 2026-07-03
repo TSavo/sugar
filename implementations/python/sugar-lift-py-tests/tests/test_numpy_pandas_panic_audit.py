@@ -37,7 +37,7 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
             return CommandResult(
                 returncode=1,
                 stdout=(
-                    "write more Floor for this construction: owner=pandas.frame.sum blame=pandas.py:3:8 "
+                    "write more Floor for this Construction: owner=pandas.frame.sum blame=pandas.py:3:8 "
                     "observed=DataFrame requested=BodyUniverseFloor fix=add BodyUniverseFloor for pandas sum\n"
                 ),
                 stderr="",
@@ -197,7 +197,7 @@ def test_extracts_audit_only_gaps_from_rust_wrapped_rpc_error() -> None:
                 '"observed":"Dict","requested":"term",'
                 '"fix":"create sugar_lift_py_tests.sugar.dict.dict_sugar"},'
                 '"auditRow":{}},{"kind":"audit-only-construction-gap",'
-                '"label":"b.py","message":"write more Floor for this construction: '
+                '"label":"b.py","message":"write more Floor for this Construction: '
                 "owner=python-test blame=b.py:2:4 observed=TermValue requested=map_with "
                 'fix=add map_with to TermValue or emit a real effect",'
                 '"gap":{"owner":"python-test","blame":"b.py:2:4",'

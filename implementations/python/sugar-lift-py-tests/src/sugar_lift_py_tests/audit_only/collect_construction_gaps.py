@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Iterable, TypeAlias
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap
+from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, GapKind
+from sugar_lift_py_tests.factory.factory_gap_info import gap_kind_status
 
 from .audit_only_gap import AuditOnlyGap
 
@@ -45,7 +46,7 @@ def _gap_from_loud_type_error(label: str, message: str) -> AuditOnlyGap | None:
     if gap_kind is None:
         return None
     info = _info_from_loud_message(label, message, gap_kind=gap_kind)
-    status = "floor-gap" if gap_kind == "Floor" else "sugar-gap"
+    status = gap_kind_status(gap_kind)
     return AuditOnlyGap(
         label=label,
         info=info,
@@ -62,16 +63,16 @@ def _gap_from_loud_type_error(label: str, message: str) -> AuditOnlyGap | None:
     )
 
 
-def _loud_gap_kind(message: str) -> str | None:
+def _loud_gap_kind(message: str) -> GapKind | None:
     if message.startswith("write more Floor for "):
-        return "Floor"
+        return GapKind.FLOOR
     if message.startswith("write more Sugar for "):
-        return "Sugar"
+        return GapKind.SUGAR
     return None
 
 
 def _info_from_loud_message(
-    label: str, message: str, *, gap_kind: str
+    label: str, message: str, *, gap_kind: GapKind
 ) -> dict[str, str]:
     fields = {key: value.strip() for key, value in _FIELD.findall(message)}
     if fields:
@@ -86,6 +87,8 @@ def _info_from_loud_message(
     rest = message.split(" for ", 1)[1]
     if rest.startswith("this AST:"):
         rest = rest.removeprefix("this AST:").strip()
+    elif rest.startswith("this Construction:"):
+        rest = rest.removeprefix("this Construction:").strip()
     elif rest.startswith("this construction:"):
         rest = rest.removeprefix("this construction:").strip()
     owner, detail = _split_owner_detail(rest)
@@ -123,7 +126,9 @@ def _split_owner_detail(rest: str) -> tuple[str, str]:
     return owner.strip(), detail.strip()
 
 
-def _default_fix(gap_kind: str) -> str:
-    return (
-        "write the missing floor" if gap_kind == "Floor" else "write the missing sugar"
-    )
+def _default_fix(gap_kind: GapKind) -> str:
+    if gap_kind is GapKind.FLOOR:
+        return "write the missing floor"
+    if gap_kind is GapKind.SUGAR:
+        return "write the missing sugar"
+    raise TypeError(f"unhandled audit-only GapKind arm: {type(gap_kind).__name__}")

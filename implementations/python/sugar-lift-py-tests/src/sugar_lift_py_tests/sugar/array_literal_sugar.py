@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     ObjectValue,
@@ -83,8 +89,8 @@ def _array_element(value, *, element: SugarBody):
             observed=type(value).__name__,
             requested="array element floor",
             fix=f"add ArrayLiteral element floor for {type(value).__name__}",
-            gap_kind="Floor",
-            gap_locus="construction",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
         raise FactoryGap(
             info,

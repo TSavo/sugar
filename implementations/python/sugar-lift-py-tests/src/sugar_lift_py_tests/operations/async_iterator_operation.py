@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, NoReturn
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
+from sugar_lift_py_tests.factory import (
+    FactoryAuditRow,
+    FactoryGap,
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.floor import ObjectValue
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -125,8 +131,8 @@ def _raise_stop_floor_gap(blame: str) -> NoReturn:
             "add protocol-owned StopAsyncIteration/cardinality floor before "
             "reducing AsyncForSugar as a complete loop"
         ),
-        gap_kind="Floor",
-        gap_locus="construction",
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
     )
     raise FactoryGap(
         info,
