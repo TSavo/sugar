@@ -65,17 +65,32 @@ load-bearing statements, quoted:
    precondition: an effect mid-composition refuses rather than silently truncating
    the count — Phase 2 bought the right to count.
 
-5. **Total floor mediation:** *"ALL values go through the floor... You dispatch
-   through the sugar, ask it to map, and the floor rises up to meet you. Thus the
-   RHE and LHE are just templated types, with specialization."* Every value in the
-   lift is a floor object; dispatch goes down through one door and semantics rise to
-   meet it; `Lhe<S>`/`Rhe<S>` are generic over sort with per-sort behavior.
-   **Engineering note (T-acknowledged):** "specialization" lands as per-sort trait
-   impls under stable coherence — NOT the unstable `specialization` feature; no
-   nightly. **Consequence:** the floor × operation dispatch matrix becomes the trait
-   coherence matrix — Python needs a pinned auditor to watch that matrix (#3061);
-   in Rust a missing cell is a missing impl, i.e. a compile error. **#3061's axis is
-   born-retired in the Rust kit.**
+5. **Total floor mediation — and the floor OWNS the operation:** *"ALL values go
+   through the floor... You dispatch through the sugar, ask it to map, and the floor
+   rises up to meet you."* And the correction that fixes where the intelligence
+   lives (T, verbatim): *"That's the floor's job! Do the RIGHT thing here. Map does
+   the right thing. It dispatches to the map floor, and whoever wants to be able to
+   map can stand on the mappable floor."*
+
+   **Each operation is a floor with ONE lawful implementation.** The map floor, the
+   fold floor — the operation's semantics are written once, owned by the floor.
+   Sugars dispatch to the operation's floor. A type gains a capability by
+   **standing on that floor**: a membership declaration plus an **embedding** (how
+   the sort's values step onto the floor's carrier). The sort-specific part is ONLY
+   the embedding — never the operation semantics. **There is NO matrix**: each floor
+   has one implementation plus a membership set. In Rust the bound (`T: Mappable`)
+   makes a non-member unrepresentable *as an operand* — refusal happens at the
+   standing, not at the operation. Laws are proven once per floor and inherited by
+   every member. `Lhe<S>`/`Rhe<S>` remain the composing witness values, but their
+   cleverness is **recording + embedding**, not operation semantics.
+   **Engineering note:** stable Rust throughout — membership = trait bound +
+   embedding impl; no nightly `specialization`.
+   **Exemplar already on the board:** #3125 (MonoidFold via CarrierEmbedding — "the
+   general lawful floor for iterator terminals over non-Int elements, Duration
+   first") IS this architecture; this campaign absorbs it (S4).
+   **Consequence for #3061:** the Python dispatch-matrix auditor's axis doesn't get
+   *enforced* in Rust — it gets *dissolved*: with one owner per operation and
+   membership bounds, the missing-cell question is unaskable.
 
 6. **Fold's wrinkle — the accumulator threads:** occurrence-renames CHAIN. `acc_2`
    is defined in terms of `acc_1`; the temporal rewrite emits the recurrence as EUF
@@ -115,7 +130,7 @@ The issue's Python-port framing maps onto this design rather than competing with
   combinators (map/and_then/unwrap_or/ok_or/…), the operator traits (partially done),
   Try. The enumeration IS the scope decision — the catalog's edge is the refusal
   boundary. Each row: trait, method, temporal shape (counted / guarded / recurrence),
-  owner, target slice. Tokio/async rows appear exactly once: in the OUT set, with the
+  **owning operation floor** (map floor, fold floor, …), owner, target slice. Tokio/async rows appear exactly once: in the OUT set, with the
   typed-opt-out cross-reference. Law-8 rung: auditor over a checked-in catalog;
   retires row-by-row as enrollment (the witness gate) subsumes it.
 - **Instrument B — uncounted composition paths:** `R(uncounted-composition-paths)`.
@@ -137,12 +152,17 @@ Land Instruments A+B; pin both vectors with baselines; no production change.
   not unrouted); a planted catalog row deletion reds (enumeration is non-regressing).
 - Exit: both vectors pinned; the catalog checked in; OUT set named with reasons.
 
-### S2 — The clever-object substrate
-`Lhe<S>`/`Rhe<S>` templated floor values with per-sort trait impls (stable coherence);
-the TemporalContext port (immutable binding tuple, reverse-scan resolution, bind/
-curry/rewrite through one `perform_temporal_operation` mirror); the occurrence-rename
-mint (`X(1)` → `X_1()` — deterministic, CID-stable, collision-free by context);
-the counting harness. Consumes #3017 item 4 (BoundVar) — if absent, flag, don't fork it.
+### S2 — The substrate: witness values, the first operation floor, embeddings
+`Lhe<S>`/`Rhe<S>` composing witness values (recording + embedding ONLY — no operation
+semantics); the first operation floor stood up in the floor-owns-the-operation form
+(the map floor, one lawful implementation + a membership set + `CarrierEmbedding`-style
+per-sort embeddings — #3125 is the pattern reference); the TemporalContext port
+(immutable binding tuple, reverse-scan resolution, bind/curry/rewrite through one
+`perform_temporal_operation` mirror); the occurrence-rename mint (`X(1)` → `X_1()` —
+deterministic, CID-stable, collision-free by context); the counting harness.
+Membership refusal is at the standing: a non-member operand is a compile error via
+the bound, never a runtime arm. Consumes #3017 item 4 (BoundVar) — if absent, flag,
+don't fork it.
 - Red-first: a composition test that needs the substrate (compile-red before it exists).
 - Bad-twins: (a) rebind drops-prior + appends-fresh (shadowing twin); (b) a name-miss
   is a Floor-kind gap, never a default; (c) direct-context-minting (the side-door from
@@ -151,8 +171,10 @@ the counting harness. Consumes #3017 item 4 (BoundVar) — if absent, flag, don'
 - Exit: substrate compiles; occurrence mints deterministic under replay; no drain yet.
 
 ### S3 — MapSugar, the exemplar
-The full mechanism once, end to end: MapSugar calls the REAL `Iterator::map` with
-composing `Lhe`/`Rhe` parameters; the composition is counted; each composed object
+The full mechanism once, end to end: MapSugar dispatches to the MAP FLOOR (S2's one
+lawful implementation), which calls the REAL `Iterator::map` with composing
+`Lhe`/`Rhe` parameters; membership is by standing (a non-member operand fails the
+bound and does not compile); the composition is counted; each composed object
 desugars through the factory; occurrence-renames emit that many pinned terms.
 - Red-first: the witness pair before the mechanism (twin red).
 - Bad-twins: (a) truthful map → SAT with N pinned terms for N elements; (b) **lying
@@ -162,9 +184,13 @@ desugars through the factory; occurrence-renames emit that many pinned terms.
 - Exit: MapSugar enrolled (witnesses through the production pipeline); the exemplar
   is the template every S5+ drain copies.
 
-### S4 — FoldSugar, the recurrence
-The accumulator chain: `acc_n` defined in terms of `acc_{n-1}` as EUF facts; the
-recurrence measured tick by tick through the real `fold`.
+### S4 — FoldSugar, the recurrence (ABSORBS #3125)
+The fold floor in the lawful form #3125 already specifies: MonoidFold via
+CarrierEmbedding — one general lawful floor for iterator terminals, members standing
+on it through embeddings (Duration first, per the issue). The accumulator chain:
+`acc_n` defined in terms of `acc_{n-1}` as EUF facts; the recurrence measured tick by
+tick through the real `fold`. (#3125 re-chains into this slice — comment, don't
+duplicate.)
 - Bad-twins: (a) truthful fold → SAT with the full chain; (b) a lying intermediate
   (`acc_2` misstated) → UNSAT (the chain makes every tick load-bearing); (c) empty
   iterator → the init value alone (no vacuous chain links).
@@ -201,7 +227,9 @@ raise, already typed). Reuse the router, do not re-model.
 | `R(uncounted-composition-paths)` | live set, owners+retirements | 0, gate-armed |
 | `R(byte-drift)` | 0 | 0 every slice, planted control red |
 | `R(witness-triples-failing)` | inherited | never regressed by this campaign; new temporal rows red only as honest catches |
-| dispatch-matrix axis | — | **born-retired** (coherence; cite #3061) |
+| `R(operation-floors-landed)` | 0 of the floor catalog (map, fold, filter, …) | full catalog, one lawful implementation each |
+| `R(embeddings)` per floor | per-sort embedding set enumerated | every member sort embedded or refused-at-standing |
+| dispatch-matrix axis | — | **dissolved, not enforced** (one owner per operation + membership bounds make the missing-cell question unaskable; cite #3061) |
 
 ## Sequencing with sibling campaigns
 
@@ -214,9 +242,12 @@ raise, already typed). Reuse the router, do not re-model.
   the spine is a Phase 2 regression issue, not a temporal workaround.
 - **#3027 match-ladder demolition** — downstream; the temporal floor is one of its
   prerequisite seams.
-- **#3061 (Python dispatch-matrix auditor)** — the Rust mirror retires the axis by
-  coherence; the Python auditor remains Python's (its retirement path is documented
-  there).
+- **#3125 (MonoidFold via CarrierEmbedding)** — the exemplar of the
+  floor-owns-the-operation architecture, already on the board; ABSORBED as S4
+  (re-chained, not duplicated).
+- **#3061 (Python dispatch-matrix auditor)** — the Rust mirror dissolves the axis
+  (one owner per operation + membership bounds; no matrix exists to audit); the
+  Python auditor remains Python's, with its retirement path documented there.
 
 ## Anti-goals
 
@@ -226,7 +257,11 @@ raise, already typed). Reuse the router, do not re-model.
   pinned inputs. Loop-bound inference, range analysis, symbolic iteration counts —
   all forbidden; unmeasurable = refused.
 - **No async/Tokio modeling.** Out means out. The OUT set is manifest'd, not silent.
-- **No nightly `specialization` feature.** Per-sort trait impls under stable coherence.
+- **No nightly `specialization` feature.** Stable Rust: membership = trait bound +
+  embedding impl.
+- **No per-sort operation semantics.** The floor owns the operation ONCE; the only
+  per-sort code is the embedding. A sort-specific map/fold body anywhere = the matrix
+  reborn = reject.
 - **No second temporal representation.** A static temporal model is the
   shadow-interpreter crime in the time dimension (CL S6 deleted the spatial one; do
   not mint a temporal one).
@@ -238,8 +273,11 @@ raise, already typed). Reuse the router, do not re-model.
 CLOSED when: the enumerated stdlib temporal catalog is fully enrolled (or typed-opt-out)
 with witness pairs whose lying counts go UNSAT through the production pipeline;
 `R(uncounted-composition-paths) = 0` gate-armed; occurrence-renaming deterministic
-under replay (CID-stable); the OUT boundary manifest'd; the dispatch matrix enforced
-by coherence with #3061's axis cited as born-retired; byte-drift 0 throughout; and the
-AST-vs-LLBC seam decision made BY T on the record (not assumed by a worker). At that
+under replay (CID-stable); the OUT boundary manifest'd; every operation floor landed
+with one lawful implementation and its membership set (the dispatch matrix dissolved,
+#3061 cited); byte-drift 0 throughout; and the AST-vs-LLBC seam decision made BY T on
+the record (not assumed by a worker). The closure clause, verbatim shape: **one door
+(all values through the floor), one owner per operation (the floor does the right
+thing once), membership by standing, embedding as the only per-sort code.** At that
 point time and branching are carried entirely by name-splits and guard-implications —
-FOL's own structures — and the kit still owns nothing but value protocols.
+FOL's own structures.
