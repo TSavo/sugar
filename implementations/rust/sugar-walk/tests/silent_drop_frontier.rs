@@ -8,7 +8,7 @@
 // conversion/default calls that erase failure. Each offender remains visible
 // until a later drain either makes it loud/total or sanctions the specific site.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,669 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 
 const EXPECTED_FRONTIER: &[(&str, &str, &str, &str)] = &[];
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ExpectedSanction {
+    file: &'static str,
+    line: usize,
+    kind: &'static str,
+    reason: &'static str,
+    owner: &'static str,
+    retirement: &'static str,
+}
+
+const NOT_MINE_RETIREMENT: &str =
+    "retire when this recognized non-sugar miss is represented by a typed non-match path or leaves the silent-drop scan";
+const DEFAULT_OK_RETIREMENT: &str =
+    "retire when this benign default is represented by a typed absence/error path instead of a silent default call";
+
+macro_rules! sanction {
+    ($file:literal, $line:literal, $kind:literal, $reason:literal, $owner:literal, $retirement:expr) => {
+        ExpectedSanction {
+            file: $file,
+            line: $line,
+            kind: $kind,
+            reason: $reason,
+            owner: $owner,
+            retirement: $retirement,
+        }
+    };
+}
+
+const EXPECTED_SANCTIONS: &[ExpectedSanction] = &[
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/hover_probe.rs",
+        148,
+        "not-mine",
+        "debug-cli-verdict-keeps-unresolved-or-not-ready-as-no-final-stem",
+        "sugar-walk::bin::hover_probe",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_demo.rs",
+        92,
+        "not-mine",
+        "demo-helper-search-ignores-non-target-items",
+        "sugar-walk::bin::walk_demo",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_emit.rs",
+        261,
+        "not-mine",
+        "cli-helper-search-ignores-non-function-items",
+        "sugar-walk::bin::walk_emit",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        544,
+        "not-mine",
+        "recognize tags are minted only from functions inside inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        564,
+        "not-mine",
+        "recognize templates only bind single-name parameters",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        567,
+        "not-mine",
+        "recognize targets are free functions; receivers have no template parameter name",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        2589,
+        "not-mine",
+        "only is_ok/is_some map to built-in std panic partial stems",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        2808,
+        "not-mine",
+        "local type name index only records type declarations and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        2921,
+        "not-mine",
+        "struct field map only records struct declarations and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3029,
+        "not-mine",
+        "enum variant map only records enum declarations and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3162,
+        "not-mine",
+        "non-binding or schema-needed pattern forms cannot receive a sound value type here",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3199,
+        "not-mine",
+        "option inner typing is only sound for Some-like destructuring",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3236,
+        "not-mine",
+        "direct type binding cannot assign field element types without a schema",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3312,
+        "not-mine",
+        "return-crate index only records functions, methods, and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3440,
+        "not-mine",
+        "callsite collection only descends through callable bodies and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        3765,
+        "not-mine",
+        "pure-free guard facts are only && chains of is_some method calls",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        4768,
+        "not-mine",
+        "root extraction tracks pure expression containers that can feed stable guard args",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        4791,
+        "not-mine",
+        "assignment roots only exist on assignable path-field-index projections",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        4851,
+        "not-mine",
+        "non-binding pattern forms do not introduce local roots",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        4983,
+        "default-ok",
+        "crate root probing treats an unreadable Cargo.toml as absence, not proof evidence",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        5020,
+        "default-ok",
+        "raw crate tag probing treats an unreadable Cargo.toml as absence, not proof evidence",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        6572,
+        "not-mine",
+        "lift_post RPC targets top-level free functions by exact name",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        6597,
+        "not-mine",
+        "contract RPC targets top-level free functions by exact name",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        6683,
+        "not-mine",
+        "parse_fn helper targets top-level free functions by exact name",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        7729,
+        "not-mine",
+        "typed local binding name requires a single identifier pattern",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        7733,
+        "not-mine",
+        "local binding names only exist for single-name local patterns",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8169,
+        "not-mine",
+        "local free-function index records only non-test free functions and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8226,
+        "not-mine",
+        "function contract targets are functions, liftable methods, and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8299,
+        "not-mine",
+        "bind lift targets are functions, liftable methods, and inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8503,
+        "not-mine",
+        "unrecognized docstring pattern kinds carry no verifier role",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8517,
+        "not-mine",
+        "only docstrings and type signatures infer evidence roles",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8774,
+        "not-mine",
+        "sugar param_types describe typed value parameters, not receivers",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8798,
+        "not-mine",
+        "original param_types describe typed value parameters, not receivers",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        8913,
+        "not-mine",
+        "body source lookup only searches functions in inline modules",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        9397,
+        "not-mine",
+        "#3017 item 2 leaves non-scalar literals outside operand symbols",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        9502,
+        "not-mine",
+        "local binding symbols only exist for single-name local patterns",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        9542,
+        "not-mine",
+        "local binding sorts only exist for single-name local patterns",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10271,
+        "not-mine",
+        "#3017 item 2 leaves non-primitive type names outside scalar shape sorts",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10586,
+        "not-mine",
+        "test fixture memento minting searches top-level free functions only",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10618,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10636,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10665,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10683,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10722,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10724,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10747,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10760,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10773,
+        "not-mine",
+        "test body-source fixture reads its top-level free function",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        10809,
+        "not-mine",
+        "test panic-locus helper reads the first top-level free function fixture",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        11279,
+        "not-mine",
+        "test body-source fixture reads its top-level free function",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        11320,
+        "not-mine",
+        "test body-template fixture reads its top-level free function",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12656,
+        "not-mine",
+        "test comment-surface walker only descends JSON object and array nodes",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12693,
+        "not-mine",
+        "test forbidden-field assertion only descends JSON object and array nodes",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12713,
+        "not-mine",
+        "test op_cid collector only descends JSON object and array nodes",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12749,
+        "not-mine",
+        "test fn_name assertion only descends JSON object and array nodes",
+        "sugar-walk::bin::walk_rpc",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12855,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/bin/walk_rpc.rs",
+        12906,
+        "default-ok",
+        "test tempdir cleanup is best-effort after assertions",
+        "sugar-walk::bin::walk_rpc",
+        DEFAULT_OK_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/contract.rs",
+        518,
+        "not-mine",
+        "test-helper-search-ignores-non-function-items",
+        "sugar-walk::contract",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/emit.rs",
+        2511,
+        "not-mine",
+        "user-defined-type-names-flow-to-concept-sort-not-scalar-sort",
+        "sugar-walk::emit",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/emit.rs",
+        2620,
+        "not-mine",
+        "non-container-return-type-has-no-partial-loss-record",
+        "sugar-walk::emit",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/emit.rs",
+        2900,
+        "not-mine",
+        "non-single-tail-block-is-a-shape-miss-not-a-dropped-obligation",
+        "sugar-walk::emit",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/emit.rs",
+        2989,
+        "not-mine",
+        "test-helper-search-ignores-non-target-items",
+        "sugar-walk::emit",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/envelope.rs",
+        307,
+        "not-mine",
+        "test-helper-search-ignores-non-function-items",
+        "sugar-walk::envelope",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/lift.rs",
+        682,
+        "not-mine",
+        "unrecognized guard predicates deliberately carry no branch fact",
+        "sugar-walk::lift",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/lift.rs",
+        1873,
+        "not-mine",
+        "non-matching partial/guard pairs must not discharge",
+        "sugar-walk::lift",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/lift.rs",
+        3435,
+        "not-mine",
+        "only assert! contributes a checked precondition",
+        "sugar-walk::lift",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/lift.rs",
+        4289,
+        "not-mine",
+        "non-comparison predicates negate as explicit Not nodes",
+        "sugar-walk::lift",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/lift.rs",
+        4349,
+        "not-mine",
+        "test helper searches one top-level free function",
+        "sugar-walk::lift",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/locus.rs",
+        52,
+        "not-mine",
+        "test-helper-search-ignores-non-target-items",
+        "sugar-walk::locus",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/loops_and_exceptions.rs",
+        510,
+        "not-mine",
+        "test-helper-search-ignores-non-function-items",
+        "sugar-walk::loops_and_exceptions",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/ra_oracle.rs",
+        1131,
+        "not-mine",
+        "non-string-hover-array-member-has-no-markdown-text",
+        "sugar-walk::ra_oracle",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/ra_oracle.rs",
+        1141,
+        "not-mine",
+        "non-text-hover-contents-carry-no-markdown-body",
+        "sugar-walk::ra_oracle",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/ra_oracle.rs",
+        1340,
+        "not-mine",
+        "non-paren-character-does-not-affect-balance",
+        "sugar-walk::ra_oracle",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/shadow.rs",
+        573,
+        "not-mine",
+        "test-helper-search-ignores-non-target-items",
+        "sugar-walk::shadow",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/signature.rs",
+        61,
+        "not-mine",
+        "non-signature-operation-name-has-no-rust-op-cid",
+        "sugar-walk::signature",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-walk/src/walk.rs",
+        715,
+        "not-mine",
+        "test-helper-search-ignores-non-function-items",
+        "sugar-walk::walk",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-lift-contracts/src/lib.rs",
+        1365,
+        "not-mine",
+        "non-contract-attributes-are-ignored-by-contract-classifier",
+        "sugar-lift-contracts::lib",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-lift-contracts/src/lib.rs",
+        2347,
+        "not-mine",
+        "test-helper-only-selects-atomic-predicate-names",
+        "sugar-lift-contracts::lib",
+        NOT_MINE_RETIREMENT
+    ),
+    sanction!(
+        "implementations/rust/sugar-lift-contracts/src/lib.rs",
+        2389,
+        "not-mine",
+        "test-helper-only-selects-atomic-predicate-names",
+        "sugar-lift-contracts::lib",
+        NOT_MINE_RETIREMENT
+    ),
+];
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct FrontierKey {
@@ -35,6 +698,20 @@ struct Site {
 #[derive(Debug, Clone)]
 struct Report {
     offenders: Vec<Site>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct SanctionKey {
+    file: String,
+    line: usize,
+    kind: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct ObservedSanction {
+    key: SanctionKey,
+    comment: String,
 }
 
 impl Report {
@@ -140,20 +817,66 @@ fn collect_silent_drop_frontier(root: &Path) -> Result<Report, String> {
                 .replace('\\', "/");
             let source = fs::read_to_string(&path)
                 .map_err(|err| format!("read {}: {err}", path.display()))?;
-            let parsed = syn::parse_file(&source).map_err(|err| format!("parse {rel}: {err}"))?;
-            let lines = source.lines().map(str::to_string).collect::<Vec<_>>();
-            let mut collector = Collector {
-                file: rel,
-                lines,
-                fn_stack: Vec::new(),
-                offenders: Vec::new(),
-            };
-            collector.visit_file(&parsed);
-            offenders.extend(collector.offenders);
+            offenders.extend(collect_silent_drop_frontier_from_source(&rel, &source)?);
         }
     }
     offenders.sort();
     Ok(Report { offenders })
+}
+
+fn collect_silent_drop_frontier_from_source(file: &str, source: &str) -> Result<Vec<Site>, String> {
+    let parsed = syn::parse_file(source).map_err(|err| format!("parse {file}: {err}"))?;
+    let lines = source.lines().map(str::to_string).collect::<Vec<_>>();
+    let mut collector = Collector {
+        file: file.to_string(),
+        lines,
+        fn_stack: Vec::new(),
+        offenders: Vec::new(),
+    };
+    collector.visit_file(&parsed);
+    Ok(collector.offenders)
+}
+
+fn collect_sugar_audit_sanctions(root: &Path) -> Result<Vec<ObservedSanction>, String> {
+    let source_roots = [
+        root.join("implementations/rust/sugar-walk/src"),
+        root.join("implementations/rust/sugar-lift/src"),
+        root.join("implementations/rust/sugar-lift-contracts/src"),
+    ];
+    let mut sanctions = Vec::new();
+    for source_root in source_roots {
+        let files = rust_files_under(&source_root)?;
+        for path in files {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|err| format!("strip {}: {err}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let source = fs::read_to_string(&path)
+                .map_err(|err| format!("read {}: {err}", path.display()))?;
+            sanctions.extend(collect_sugar_audit_sanctions_from_source(&rel, &source));
+        }
+    }
+    sanctions.sort();
+    Ok(sanctions)
+}
+
+fn collect_sugar_audit_sanctions_from_source(file: &str, source: &str) -> Vec<ObservedSanction> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            parse_sugar_audit_comment(line).map(|(kind, reason)| ObservedSanction {
+                key: SanctionKey {
+                    file: file.to_string(),
+                    line: index + 1,
+                    kind: kind.to_string(),
+                    reason: reason.to_string(),
+                },
+                comment: line.trim().to_string(),
+            })
+        })
+        .collect()
 }
 
 fn rust_files_under(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -195,11 +918,20 @@ impl Collector {
     }
 
     fn is_sanctioned(&self, line: usize) -> bool {
-        line.checked_sub(2)
+        let Some(comment_line) = line.checked_sub(1) else {
+            return false;
+        };
+        let Some(expected) = expected_sanction_for(&self.file, comment_line) else {
+            return false;
+        };
+        let Some(source_line) = comment_line
+            .checked_sub(1)
             .and_then(|idx| self.lines.get(idx))
-            .is_some_and(|line| {
-                line.contains("sugar-audit: not-mine(") || line.contains("sugar-audit: default-ok(")
-            })
+        else {
+            return false;
+        };
+        parse_sugar_audit_comment(source_line)
+            .is_some_and(|(kind, reason)| kind == expected.kind && reason == expected.reason)
     }
 
     fn push_site(
@@ -299,6 +1031,119 @@ fn is_none_expr(expr: &syn::Expr) -> bool {
     matches!(expr, syn::Expr::Path(path) if path.path.is_ident("None"))
 }
 
+fn parse_sugar_audit_comment(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    let payload = trimmed.strip_prefix("// sugar-audit: ")?;
+    let open = payload.find('(')?;
+    let close = payload.strip_suffix(')')?;
+    let kind = &payload[..open];
+    let reason = &close[open + 1..];
+    matches!(kind, "not-mine" | "default-ok").then_some((kind, reason))
+}
+
+fn expected_sanction_for(file: &str, line: usize) -> Option<&'static ExpectedSanction> {
+    EXPECTED_SANCTIONS
+        .iter()
+        .find(|sanction| sanction.file == file && sanction.line == line)
+}
+
+fn expected_sanction_keys() -> Vec<SanctionKey> {
+    EXPECTED_SANCTIONS
+        .iter()
+        .map(|sanction| SanctionKey {
+            file: sanction.file.to_string(),
+            line: sanction.line,
+            kind: sanction.kind.to_string(),
+            reason: sanction.reason.to_string(),
+        })
+        .collect()
+}
+
+fn sanctions_report_json(
+    observed: &[ObservedSanction],
+    unexpected: &[ObservedSanction],
+    missing: &[SanctionKey],
+) -> String {
+    let expected = EXPECTED_SANCTIONS
+        .iter()
+        .map(|sanction| {
+            serde_json::json!({
+                "file": sanction.file,
+                "line": sanction.line,
+                "kind": sanction.kind,
+                "reason": sanction.reason,
+                "owner": sanction.owner,
+                "retirement": sanction.retirement,
+            })
+        })
+        .collect::<Vec<_>>();
+    let observed_json = observed
+        .iter()
+        .map(|sanction| {
+            serde_json::json!({
+                "file": sanction.key.file,
+                "line": sanction.key.line,
+                "kind": sanction.key.kind,
+                "reason": sanction.key.reason,
+                "comment": sanction.comment,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string_pretty(&serde_json::json!({
+        "total": observed.len(),
+        "expectedTotal": EXPECTED_SANCTIONS.len(),
+        "expected": expected,
+        "observed": observed_json,
+        "unexpected": unexpected.iter().map(|sanction| {
+            serde_json::json!({
+                "file": sanction.key.file,
+                "line": sanction.key.line,
+                "kind": sanction.key.kind,
+                "reason": sanction.key.reason,
+            })
+        }).collect::<Vec<_>>(),
+        "missing": missing.iter().map(|key| {
+            serde_json::json!({
+                "file": key.file,
+                "line": key.line,
+                "kind": key.kind,
+                "reason": key.reason,
+            })
+        }).collect::<Vec<_>>(),
+    }))
+    .expect("serialize sanctions report")
+}
+
+fn assert_sugar_audit_sanctions_match(observed: &[ObservedSanction]) {
+    let expected_keys = expected_sanction_keys()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let observed_keys = observed
+        .iter()
+        .map(|sanction| sanction.key.clone())
+        .collect::<BTreeSet<_>>();
+    let unexpected = observed
+        .iter()
+        .filter(|sanction| !expected_keys.contains(&sanction.key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing = expected_keys
+        .difference(&observed_keys)
+        .cloned()
+        .collect::<Vec<_>>();
+    let incomplete_expected = EXPECTED_SANCTIONS
+        .iter()
+        .filter(|sanction| sanction.owner.is_empty() || sanction.retirement.is_empty())
+        .collect::<Vec<_>>();
+
+    if !unexpected.is_empty() || !missing.is_empty() || !incomplete_expected.is_empty() {
+        panic!(
+            "sugar-audit sanctions drifted: exemption comments are anchors only; add/remove typed rows with owner, reason, and retirement\n{}\nincompleteExpected={incomplete_expected:#?}",
+            sanctions_report_json(observed, &unexpected, &missing)
+        );
+    }
+}
+
 #[test]
 fn silent_drop_frontier_matches_expected_multiset() {
     let report = collect_silent_drop_frontier(&repo_root()).expect("collect silent-drop frontier");
@@ -332,4 +1177,73 @@ fn silent_drop_frontier_stable_zero_target() {
     let report = collect_silent_drop_frontier(&repo_root()).expect("collect silent-drop frontier");
 
     assert!(report.is_zero(), "{}", report.to_json());
+}
+
+#[test]
+fn sugar_audit_sanctions_match_typed_table() {
+    let observed =
+        collect_sugar_audit_sanctions(&repo_root()).expect("collect sugar-audit comments");
+    assert_sugar_audit_sanctions_match(&observed);
+}
+
+#[test]
+fn collector_names_planted_silent_drop_fallthrough() {
+    let source = r#"
+        fn planted(value: Option<i32>) {
+            match value {
+                Some(_) => {}
+                _ => {}
+            }
+        }
+    "#;
+    let offenders = collect_silent_drop_frontier_from_source(
+        "implementations/rust/sugar-walk/src/planted.rs",
+        source,
+    )
+    .expect("collect planted silent drop");
+
+    assert!(
+        offenders
+            .iter()
+            .any(|site| site.kind == "wildcard_empty_block" && site.key.enclosing_fn == "planted"),
+        "planted wildcard fall-through must red the stable-zero floor; offenders={offenders:#?}"
+    );
+}
+
+#[test]
+fn unlisted_sugar_audit_comment_is_rejected() {
+    let observed = collect_sugar_audit_sanctions_from_source(
+        "implementations/rust/sugar-walk/src/planted.rs",
+        "// sugar-audit: not-mine(planted-comment)\nfn planted() {}\n",
+    );
+    let expected_keys = BTreeSet::<SanctionKey>::new();
+    let unexpected = observed
+        .iter()
+        .filter(|sanction| !expected_keys.contains(&sanction.key))
+        .collect::<Vec<_>>();
+
+    assert_eq!(unexpected.len(), 1, "unlisted sanction comments must red");
+}
+
+#[test]
+fn listed_sugar_audit_comment_requires_live_anchor() {
+    let observed = collect_sugar_audit_sanctions_from_source(
+        "implementations/rust/sugar-walk/src/planted.rs",
+        "fn planted() {}\n",
+    );
+    let observed_keys = observed
+        .iter()
+        .map(|sanction| sanction.key.clone())
+        .collect::<BTreeSet<_>>();
+    let expected = SanctionKey {
+        file: "implementations/rust/sugar-walk/src/planted.rs".to_string(),
+        line: 1,
+        kind: "not-mine".to_string(),
+        reason: "planted-comment".to_string(),
+    };
+
+    assert!(
+        !observed_keys.contains(&expected),
+        "listed sanctions without a live comment anchor must red"
+    );
 }
