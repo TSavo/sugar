@@ -25,7 +25,7 @@ pub mod jcs;
 pub mod json;
 pub mod value;
 
-pub use hash::{blake3_512_hex, blake3_512_of, BLAKE3_512_PREFIX};
+pub use hash::{blake3_512_hex, blake3_512_of, cid_hex, is_blake3_512_cid, BLAKE3_512_PREFIX};
 pub use jcs::encode_jcs;
 pub use json::jcs_cid_of_json;
 pub use value::{Value, ValueKind};

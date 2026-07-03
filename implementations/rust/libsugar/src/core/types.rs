@@ -31,10 +31,7 @@ impl Cid {
     /// Parse and validate a BLAKE3-512 CID string.
     pub fn parse(value: impl Into<String>) -> Result<Self, CidError> {
         let value = value.into();
-        let Some(hex) = value.strip_prefix("blake3-512:") else {
-            return Err(CidError::Invalid(value));
-        };
-        if hex.len() != 128 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !sugar_canonicalizer::is_blake3_512_cid(&value) {
             return Err(CidError::Invalid(value));
         }
         Ok(Self(value))

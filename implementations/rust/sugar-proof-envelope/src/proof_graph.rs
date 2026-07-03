@@ -224,11 +224,7 @@ serialize_cid_as_str!(ContractBodyCid);
 serialize_cid_as_str!(MementoCid);
 
 fn is_blake3_512_cid(cid: &str) -> bool {
-    const PREFIX: &str = "blake3-512:";
-    let Some(hex) = cid.strip_prefix(PREFIX) else {
-        return false;
-    };
-    hex.len() == 128 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    sugar_canonicalizer::is_blake3_512_cid(cid)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

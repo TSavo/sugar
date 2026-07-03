@@ -50,7 +50,7 @@
 // byte-identical to the pre-fix output; receipt-1 contracts are untouched).
 
 use std::collections::BTreeSet;
-use sugar_canonicalizer::blake3_512_of;
+use sugar_canonicalizer::{blake3_512_of, cid_hex};
 use sugar_ir_types::*;
 
 /// Derive a deterministic, parse-safe SMT-LIB symbol name for a string
@@ -71,7 +71,7 @@ pub fn string_lit_name(s: &str) -> String {
     let full = blake3_512_of(s.as_bytes());
     // Strip the `blake3-512:` prefix (its colon is not a legal SMT simple-symbol
     // char); fall back to alphanumeric-only filtering if the format changes.
-    let hex_part = full.strip_prefix("blake3-512:").unwrap_or(&full);
+    let hex_part = cid_hex(&full).unwrap_or(&full);
     let prefix: String = hex_part
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
