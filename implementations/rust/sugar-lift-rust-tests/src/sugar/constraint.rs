@@ -36,7 +36,9 @@ pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback
     "constraint_relation_macro",
     SugarRole::Constraint,
     &["constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "owner-mismatch macro row: relation witnesses dispatch through assertion-surface owners",
+    ),
     recognize_relation_macro,
 );
 
@@ -69,7 +71,7 @@ pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::c
         "constraint_assert_macro",
         "constraint_bool_expr",
     ],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket("owner-mismatch macro row: bounded literal assertion witnesses dispatch to assertion surface"),
     recognize_bounded_literal_macro,
 );
 
@@ -113,7 +115,9 @@ pub(crate) const BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
 pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_assert_macro",
     &["constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "owner-mismatch macro row: assertion witnesses dispatch to assertion-surface macro owners",
+    ),
     recognize_assert_macro,
 );
 
@@ -140,7 +144,9 @@ pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
 pub(crate) const CFG_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_cfg_macro",
     &["constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "configuration fact surface missing; target-cfg facts need a typed witness source",
+    ),
     recognize_cfg_macro,
 );
 
@@ -166,7 +172,9 @@ pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_cons
 pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_if_panic",
     &["constraint_bool_expr"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family g: panic/guard implication semantic lie remains SAT",
+    ),
     recognize_if_panic,
 );
 

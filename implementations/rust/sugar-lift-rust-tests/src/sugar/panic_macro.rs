@@ -15,7 +15,9 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "panic_macro",
     &["macro_term"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "effect-router surface; needs statement-position handler witness before verdict pair",
+    ),
     recognize,
 );
 

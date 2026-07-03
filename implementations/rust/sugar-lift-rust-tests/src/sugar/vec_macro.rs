@@ -21,7 +21,9 @@ use crate::Sugar;
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "vec_macro",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pinned_catch(
+            "#3415 family b/f: direct-equality lie fixed via aggregate decomposition #3430; NESTED/non-direct shapes still lie SAT -- the remaining catch; enrollment additionally blocked on owner-correct Pair shape",
+        ),
         recognize,
     );
 

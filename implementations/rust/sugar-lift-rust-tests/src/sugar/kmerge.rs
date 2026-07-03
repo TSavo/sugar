@@ -17,7 +17,9 @@ use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "kmerge",
     SugarRole::Composite,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5 adapter family: k-way merge standing",
+    ),
     recognize_composite,
 );
 

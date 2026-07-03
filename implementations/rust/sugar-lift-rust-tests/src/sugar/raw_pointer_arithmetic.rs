@@ -18,7 +18,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "raw_pointer_arithmetic",
     &["primitive_int"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "unsafe pointer arithmetic; no stable proof relation yet",
+    ),
     recognize,
 );
 

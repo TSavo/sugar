@@ -13,13 +13,17 @@ use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_runtime_expr",
     SugarRole::StatementEffect,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "runtime expression statement; no stable value source in witness harness",
+    ),
     recognize_statement_effect,
 );
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_constraint(
     "constraint_runtime_expr",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "runtime-expression constraint; needs runtime value witness machinery",
+    ),
     recognize_constraint,
 );
 

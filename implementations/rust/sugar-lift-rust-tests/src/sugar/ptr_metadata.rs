@@ -129,7 +129,9 @@ impl Sugar for PtrMetadataSugar {
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "ptr_metadata",
     &["call"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "unstable pointer metadata facts need typed pointer-provenance machinery",
+    ),
     recognize,
 );
 

@@ -11,7 +11,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict_before(
         "closure_tls_accessor",
         &["closure_runtime_receiver"],
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "thread-local closure accessor; runtime TLS state is not verdict-bearing yet",
+        ),
         recognize,
     );
 

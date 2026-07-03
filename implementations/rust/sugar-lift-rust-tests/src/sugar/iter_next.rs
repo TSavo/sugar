@@ -24,7 +24,9 @@ use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "iter_next",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5/S6 iterator state family: next() consumption",
+        ),
         recognize_composite,
     );
 

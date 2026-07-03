@@ -11,7 +11,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
         "statement_reflection",
         SugarRole::StatementEffect,
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "reflection statement; no stable semantic witness relation yet",
+        ),
         recognize,
     );
 

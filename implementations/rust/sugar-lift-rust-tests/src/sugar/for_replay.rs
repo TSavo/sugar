@@ -35,7 +35,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "for_replay",
     &["for_loop_mutation", "forall_loop"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "family-j temporal quantifier cross-chain: replayed loop members",
+    ),
     recognize,
 );
 

@@ -10,7 +10,9 @@ use crate::Sugar;
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "for_each",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5 adapter/effect family: for_each closure effects",
+        ),
         recognize,
     );
 

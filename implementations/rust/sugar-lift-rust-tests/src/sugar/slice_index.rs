@@ -27,7 +27,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "slice_index",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+            "unstable-feature bucket: slice_index_methods is not stable Rust witness ground",
+        ),
         recognize,
     );
 

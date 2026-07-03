@@ -20,7 +20,9 @@ use syn::Expr;
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "flatten",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::temporal_campaign(
+            "S5 adapter family: flatten expansion",
+        ),
         recognize_composite,
     );
 

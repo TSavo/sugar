@@ -22,7 +22,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term(
         "method",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pinned_catch(
+            "#3415 family i: generic method EUF semantic lie remains SAT",
+        ),
         recognize,
     );
 

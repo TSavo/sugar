@@ -16,7 +16,9 @@ use crate::{token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, W
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "char_range_filter_map_eq",
     &["constraint_assert_macro"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5 adapter family: char range filter_map equality",
+    ),
     recognize,
 );
 
@@ -24,7 +26,9 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
     "char_range_filter_map_eq_assertion_surface",
     SugarRole::AssertionSurface,
     &["assertion_surface_assert_macro"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5 adapter family: assertion-surface char range filter_map equality",
+    ),
     recognize,
 );
 

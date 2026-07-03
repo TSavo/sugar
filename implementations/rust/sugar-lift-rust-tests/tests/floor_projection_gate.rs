@@ -99,7 +99,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/collect.rs",
-        line: 261,
+        line: 263,
         enclosing_fn: "terms_from_body",
         max_floor_arms: 2,
         owner: "CollectSugar sequence projection",
@@ -123,7 +123,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1285,
+        line: 1287,
         enclosing_fn: "emit_constraint_expr",
         max_floor_arms: 2,
         owner: "ForReplay constraint emission projection",
@@ -131,7 +131,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1816,
+        line: 1818,
         enclosing_fn: "finite_domain_body_exprs",
         max_floor_arms: 2,
         owner: "ForReplay finite-domain body projection",
@@ -139,7 +139,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1870,
+        line: 1872,
         enclosing_fn: "finite_domain_exprs",
         max_floor_arms: 2,
         owner: "ForReplay nested finite-domain projection",
@@ -155,7 +155,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/function_map.rs",
-        line: 241,
+        line: 245,
         enclosing_fn: "reduce_function_map",
         max_floor_arms: 2,
         owner: "FunctionMapSugar receiver sequence projection",
@@ -171,7 +171,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/map.rs",
-        line: 336,
+        line: 338,
         enclosing_fn: "reduce_map_body",
         max_floor_arms: 2,
         owner: "MapSugar receiver sequence projection",

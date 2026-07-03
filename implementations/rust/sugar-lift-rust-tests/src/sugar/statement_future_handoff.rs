@@ -10,14 +10,18 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_future_handoff",
     SugarRole::StatementEffect,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "future handoff statement effect; no deterministic verdict source",
+    ),
     recognize,
 );
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "statement_future_handoff_composite",
     &["runtime_iterator_source"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "future handoff composite; no deterministic verdict source",
+    ),
     recognize,
 );
 

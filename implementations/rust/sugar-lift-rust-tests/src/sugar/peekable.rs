@@ -32,13 +32,17 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
         "assertion_surface_relation_macro",
         "assertion_surface_assert_macro",
     ],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5/S6 iterator state family: peekable assertion surface",
+    ),
     recognize_assertion_surface,
 );
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite(
     "peekable",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5/S6 iterator state family: peekable adaptor",
+    ),
     recognize_composite,
 );
 

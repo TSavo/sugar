@@ -32,7 +32,9 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "compute_float",
     SugarRole::Term,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pinned_catch(
+        "#3415 family e: compute_float wrapper remains EUF and lying SAT",
+    ),
     recognize,
 );
 

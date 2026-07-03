@@ -21,7 +21,9 @@ use tracing::debug;
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "bound_path",
     &["path"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "owner-mismatch path row: witnesses dispatch through assertion surfaces or term_literal",
+    ),
     recognize,
 );
 
@@ -50,7 +52,9 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "bound_path_composite",
     &["reference_sequence"],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "owner-mismatch bound composite row; pair needs source-owner alignment",
+    ),
     recognize_composite,
 );
 

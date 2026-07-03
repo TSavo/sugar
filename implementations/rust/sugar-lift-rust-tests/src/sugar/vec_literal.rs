@@ -20,7 +20,9 @@ use crate::{
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite(
     "vec_literal",
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::reasoned_bucket(
+        "production-panic bucket: vector literal term production still panics/unsupported",
+    ),
     recognize_composite,
 );
 

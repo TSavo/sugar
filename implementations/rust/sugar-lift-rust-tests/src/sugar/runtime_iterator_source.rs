@@ -21,7 +21,9 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_orde
     "runtime_iterator_source",
     SugarRole::Composite,
     &[],
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::temporal_campaign(
+        "S5/S6 iterator standing: runtime source remains effectful",
+    ),
     recognize_composite,
 );
 
