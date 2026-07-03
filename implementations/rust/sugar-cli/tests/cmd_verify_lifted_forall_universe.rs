@@ -19,19 +19,22 @@
 //         tests/user_false.rs:  assert_eq!(g(3), 2);   // x=3 named nowhere else
 //         tests/user_true.rs:   assert_eq!(g(4), 1);   // x=4 named nowhere else
 //
-// We detect MEANING by the SOLVER VERDICT, never by string/AST matching:
+// We detect MEANING by verifier rows, never by string/AST matching:
 //   * g(3)==2  -> UNSATISFIED  (z3 instantiates the universe at x=3: g(3)==1,
 //                 contradicting g(3)==2 -- EUF: a pure g(3) has one value).
-//   * g(4)==1  -> DISCHARGED   (the universe confirms an un-named input too).
-// The universe decides un-named inputs BOTH ways. `g`'s body is opaque (the fn is
-// never defined in the fixture), so the ONLY source of g's behavior is the lifted
-// universe.
+//   * g(4)==1  -> REFUSED      (the current discharge law forbids Stated
+//                 testimony from corroborating Stated testimony).
+// The universe still decides the false un-named input. The true un-named input
+// stays refused until there is an independent-KIND witness. `g`'s body is opaque
+// (the fn is never defined in the fixture), so the ONLY source of g's behavior is
+// the lifted universe.
 //
 // REAL-WORK PROOF (non-triviality): an identical fixture WITHOUT the vendor loop
-// (no universe) must NOT refute `g(3)==2` -- it becomes consistent. The unsat in
-// the first fixture therefore came from the lifted universe, not a pattern. And
-// because nothing ever materialized g(3), the verdict can only come from z3
-// instantiating the conjoined `forall` -- the exact behavior the rewrite enables.
+// (no universe) must NOT refute `g(3)==2` -- it is refused as vacuous instead of
+// becoming a green discharge. The unsat in the first fixture therefore came from
+// the lifted universe, not a pattern. And because nothing ever materialized g(3),
+// the contradiction can only come from z3 instantiating the conjoined `forall` --
+// the exact behavior the rewrite enables.
 //
 // Requires `z3` on PATH; skips otherwise.
 
@@ -40,6 +43,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value as Json};
+
+const USER_FALSE_EUF: &str =
+    "consistency:tests/user_false.rs::user_false_claim::g#euf#c:callresult_g_a1(i:3)::assertion";
+const USER_TRUE_EUF: &str =
+    "consistency:tests/user_true.rs::user_true_claim::g#euf#c:callresult_g_a1(i:4)::assertion";
+const VENDOR_LOOP: &str = "consistency:tests/vendor.rs::vendor_universe::loop::x";
+const USER_TRUE_PANIC: &str =
+    "consistency:tests/user_true.rs::user_true_claim::g#panic_callsite#euf#c:callresult_g_panic_callsite_a1(i:4)::assertion";
+const USER_FALSE_PANIC: &str =
+    "consistency:tests/user_false.rs::user_false_claim::g#panic_callsite#euf#c:callresult_g_panic_callsite_a1(i:3)::assertion";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProveRow {
+    property: String,
+    status: String,
+}
 
 fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
@@ -100,7 +119,7 @@ fn build_fixture(with_vendor: bool, suffix: &str) -> PathBuf {
     .unwrap();
     if with_vendor {
         // VENDOR source: the loop is the ONLY thing covering 0..5. No per-point
-        // g(3)/g(4) assertions exist -- the universe alone must decide them.
+        // g(3)/g(4) assertions exist -- the universe alone constrains them.
         fs::write(
             dir.join("tests/vendor.rs"),
             "#[test]\nfn vendor_universe() {\n    for x in 0..5 {\n        assert_eq!(g(x), 1);\n    }\n}\n",
@@ -267,7 +286,7 @@ dialects = ["smt-lib-v2.6"]
 
 /// Drive the real CLI: `sugar mint` (lift -> .proof) then `sugar prove --json`
 /// (discharge the on-disk .proof). Returns (property, status) for every row.
-fn mint_and_prove(dir: &Path) -> Vec<(String, String)> {
+fn mint_and_prove(dir: &Path) -> Vec<ProveRow> {
     let mint = Command::new(sugar_bin())
         .current_dir(dir)
         .arg("mint")
@@ -302,24 +321,23 @@ fn mint_and_prove(dir: &Path) -> Vec<(String, String)> {
         .as_array()
         .expect("prove report has rows")
         .iter()
-        .map(|r| {
-            (
-                r["property"].as_str().unwrap_or_default().to_string(),
-                r["status"].as_str().unwrap_or_default().to_string(),
-            )
+        .map(|r| ProveRow {
+            property: r["property"].as_str().unwrap_or_default().to_string(),
+            status: r["status"].as_str().unwrap_or_default().to_string(),
         })
         .collect()
 }
 
-fn status_of<'a>(rows: &'a [(String, String)], needle: &str) -> &'a str {
-    rows.iter()
-        .find(|(p, _)| p.contains(needle))
-        .map(|(_, s)| s.as_str())
-        .unwrap_or_else(|| panic!("no row matching `{needle}`; rows: {rows:?}"))
+fn assert_rows(rows: &[ProveRow], expected: &[(&str, &str)]) {
+    let actual: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| (row.property.as_str(), row.status.as_str()))
+        .collect();
+    assert_eq!(actual, expected, "prove rows changed: {rows:#?}");
 }
 
 #[test]
-fn lifted_universe_decides_unnamed_inputs_both_ways() {
+fn lifted_universe_refutes_false_unnamed_input_without_self_discharge() {
     if !z3_available() {
         eprintln!("z3 not on PATH: skipping lifted-universe end-to-end test");
         return;
@@ -330,30 +348,23 @@ fn lifted_universe_decides_unnamed_inputs_both_ways() {
 
     // The universe `forall x in 0..5. g(x)==1` REFUTES the user's g(3)==2 -- x=3
     // was never materialized; z3 instantiated the conjoined quantifier at 3.
-    assert_eq!(
-        status_of(&rows, "user_false"),
-        "unsatisfied",
-        "lifted universe must refute g(3)==2 at an un-named input; rows: {rows:?}"
-    );
-    // ...and CONFIRMS the user's g(4)==1 (un-named input decided the other way).
-    assert_eq!(
-        status_of(&rows, "user_true"),
-        "discharged",
-        "lifted universe must discharge the true g(4)==1; rows: {rows:?}"
-    );
-    // The ambient loop universe is supporting evidence for the user rows above.
-    // It is no longer a standalone discharge row in the current verifier: the
-    // loop row is refused rather than minted as an independently proven claim.
-    assert_eq!(
-        status_of(&rows, "::loop::"),
-        "refused",
-        "the loop universe support row should stay explicit, not green; rows: {rows:?}"
+    // The matching true claim is not discharged by the same ambient Stated source:
+    // current verifier law requires an independent-KIND witness.
+    assert_rows(
+        &rows,
+        &[
+            (USER_FALSE_EUF, "unsatisfied"),
+            (USER_TRUE_EUF, "refused"),
+            (VENDOR_LOOP, "refused"),
+            (USER_TRUE_PANIC, "refused"),
+            (USER_FALSE_PANIC, "refused"),
+        ],
     );
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn refutation_of_unnamed_input_vanishes_without_the_lifted_universe() {
+fn unnamed_input_is_refused_without_the_lifted_universe() {
     if !z3_available() {
         eprintln!("z3 not on PATH: skipping real-work-proof test");
         return;
@@ -364,13 +375,18 @@ fn refutation_of_unnamed_input_vanishes_without_the_lifted_universe() {
     eprintln!("NO UNIVERSE rows: {rows:?}");
 
     // With nothing constraining g, the previously-refuted g(3)==2 is now
-    // CONSISTENT. The unsat in the other test therefore came from the lifted
-    // universe (real work), not a pattern -- and could only come from z3
-    // instantiating the `forall` at x=3, which nothing materialized.
-    assert_eq!(
-        status_of(&rows, "user_false"),
-        "discharged",
-        "without the lifted universe, g(3)==2 must NOT be refuted; rows: {rows:?}"
+    // REFUSED as a vacuous single constraint. The unsat in the other test
+    // therefore came from the lifted universe (real work), not a pattern -- and
+    // could only come from z3 instantiating the `forall` at x=3, which nothing
+    // materialized.
+    assert_rows(
+        &rows,
+        &[
+            (USER_FALSE_EUF, "refused"),
+            (USER_TRUE_EUF, "refused"),
+            (USER_TRUE_PANIC, "refused"),
+            (USER_FALSE_PANIC, "refused"),
+        ],
     );
     let _ = fs::remove_dir_all(&dir);
 }
