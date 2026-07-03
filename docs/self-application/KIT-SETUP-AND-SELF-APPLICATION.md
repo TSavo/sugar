@@ -51,7 +51,7 @@ version  = "0.4.0"
 
 | surface           | produces |
 |-------------------|----------|
-| `rust-bind`       | sugar / library-binding contracts (the `#[sugar::sugar]` wrappers). POST-ONLY by design (no `pre`). |
+| `rust-bind`       | native library-binding contracts. POST-ONLY by design (no `pre`). |
 | `rust-contracts`  | `#[test]` asserts -> `inv` witnessed facts |
 | `rust-fn-contracts` | every production `fn` -> body-bearing contract: `formals` + `pre` (entry asserts/guards, via `lift_function_precondition`) + `post` (body-derived, via `lift_function_postcondition`). This is the surface that gives a partial wrapper (`unwrap`/`expect`) a REAL dischargeable `pre`. If a kit lacks this surface, its `assert!`-derived preconditions are NOT published. |
 | `rust-implications` | every intra-body call -> a `kind:bridge` memento pinning the call site to the callee's contract |

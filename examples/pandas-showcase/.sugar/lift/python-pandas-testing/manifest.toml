@@ -2,18 +2,16 @@ name = "python-pandas-testing-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-# The ONE assertion lifter -- the SAME lifter numpy-showcase uses. The "next
-# package" is no longer a package: pandas is just another testing library the one
-# lifter learns from imports, plus this workspace's
-# .sugar/vocab-exceptions/pandas.testing.json (extra_modules + the obj kwarg).
-# It imports pandas at lift time to derive the vocabulary, so the interpreter is
-# the witness venv (which has pandas). PYTHONPATH at the one lifter.
+# The Python factory lift RPC handles the pandas testing surface in the same
+# batch protocol as the plain Python seat. The interpreter is the witness venv
+# so imports used by source scanning and helper resolution see pandas.
 command = [
     "/usr/bin/env",
     "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src",
     "/tmp/pandas-witness-venv/bin/python",
     "-m",
-    "sugar_lift_py_tests.assertion_lsp",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
 ]
 working_dir = "."
 

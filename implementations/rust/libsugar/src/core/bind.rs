@@ -202,7 +202,7 @@ pub struct BindLiftEntry {
     #[serde(default)]
     pub witnesses: Vec<BindContractWitness>,
     /// Doc comment lines from rust source (only `///` after the
-    /// `#[sugar::sugar(...)]` attribute). Propagated end-to-end so
+    /// native library-binding declaration). Propagated end-to-end so
     /// realize can reproduce them on emit.
     #[serde(default, rename = "docLines", alias = "doc_lines")]
     pub doc_lines: Vec<String>,
@@ -355,7 +355,7 @@ pub struct NamedTerm {
     pub term_shape_cid: String,
     pub witnesses: Vec<NamedWitness>,
     /// Doc comment lines (`///` body, without prefix or trailing newline)
-    /// that appear AFTER the `#[sugar::sugar(...)]` attribute. Threaded
+    /// that appear AFTER the native library-binding declaration. Threaded
     /// through to realize so cycle output preserves source doc comments.
     /// Empty when the source had no post-sugar docs.
     #[serde(default, rename = "docLines", skip_serializing_if = "Vec::is_empty")]

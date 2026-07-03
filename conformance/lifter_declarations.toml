@@ -183,7 +183,7 @@ id = "rust-sugar-lifter-proc-macro"
 status = "absent"
 owner = "T ruling #3385"
 path = "implementations/rust/sugar-lifter"
-reason = "The bespoke #[sugar::*] proc-macro surface is deleted; native annotations in sugar-lift-contracts are the only Rust annotation surface."
+reason = "The bespoke Sugar proc-macro surface is deleted; native annotations in sugar-lift-contracts are the only Rust annotation surface."
 retirement = "Do not restore; any future authoring surface must enter through the native annotation kit and this manifest."
 absent_paths = [
     "implementations/rust/sugar-lifter",

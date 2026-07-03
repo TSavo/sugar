@@ -2,7 +2,7 @@
 
 This is the Go peer of the rust/java authoring surface. A Go library author
 marks a function with the `//sugar:` doc-comment directive (the idiomatic Go
-analog of rust's `#[sugar::sugar(...)]` attribute, in the family of
+authoring marker, in the family of
 `//go:generate` / `//go:build`), and that DECLARATION drives contract emission.
 
 It closes the loop the verify-side and realize-side examples opened: one

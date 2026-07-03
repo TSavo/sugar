@@ -253,13 +253,13 @@ fn handle_line(line: &str) -> Value {
         "sugar.plugin.recognize" => recognize(&params),
         "sugar.plugin.resolve_source_memento" => resolve_source_memento_rpc(&params),
         // Materialize (#1359, rust mirror of the python bind_rpc materializer).
-        // Finds `#[sugar::boundary(library, call)]` stubs in the consumer
-        // source, asks the SOURCE ORACLE to resolve each bound vendor function's
-        // REAL body from on-disk source (CID-verified against the
-        // SourceMemento the vendor sugar-lift minted), and rewrites the stub
-        // body in place. On a CID-misalign (source drift) the oracle REFUSES and
-        // the site is reported `outcome:"refused"` with NO write. Same kit, same
-        // syn AST machinery, same source-oracle family as lift/recognize.
+        // Materializes native boundary stubs by asking the SOURCE ORACLE to
+        // resolve each bound vendor function's REAL body from on-disk source
+        // (CID-verified against the SourceMemento the vendor sugar-lift minted)
+        // and rewriting the stub body in place. On a CID-misalign (source
+        // drift) the oracle REFUSES and the site is reported `outcome:"refused"`
+        // with NO write. Same kit, same syn AST machinery, same source-oracle
+        // family as lift/recognize.
         // Implication lifter (#97). For every call expression in every
         // function body in the supplied source files, emit a kind:bridge
         // memento that links the call site (sourceSymbol = callee ident)
@@ -5007,15 +5007,15 @@ fn crate_name_for(dir: &Path) -> Option<String> {
 /// `Cargo.toml`), WITHOUT the `-`→`_` normalization `crate_name_for` applies.
 ///
 /// The derived `library-sugar-binding-entry` stamps this as its
-/// `target_library_tag`, and the materialize verb matches a boundary stub by
+/// `target_library_tag`, and the materialize verb matches a native boundary
+/// stub by
 /// `(target_library_tag, source_function_name) == (library, call)` with a RAW
-/// `==` (no normalization on either side). The consumer's
-/// `#[sugar::boundary(library = "rust-boundary-vendor", ...)]` carries the
-/// crate name verbatim (hyphens intact), so the tag we derive must too, or the
-/// match silently misses. (The DERIVED symbol the verb synthesizes is
-/// `format!("{library}.{call}")` — `rust-boundary-vendor.reverse_chars` — built
-/// from the boundary attr, not from this entry, so the separator is the verb's
-/// concern, not ours.)
+/// `==` (no normalization on either side). The consumer's native boundary
+/// binding carries the crate name verbatim (hyphens intact), so the tag we
+/// derive must too, or the match silently misses. (The DERIVED symbol the verb
+/// synthesizes is `format!("{library}.{call}")` —
+/// `rust-boundary-vendor.reverse_chars` — built from the boundary binding, not
+/// from this entry, so the separator is the verb's concern, not ours.)
 fn crate_name_raw_for(dir: &Path) -> Option<String> {
     // sugar-audit: default-ok(raw crate tag probing treats an unreadable Cargo.toml as absence, not proof evidence)
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
@@ -6932,8 +6932,8 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         == Some("library-bindings");
     // The crate the derived tag names: the RAW `[package].name` (hyphens
-    // intact) so it matches a consumer's `#[sugar::boundary(library = ...)]`
-    // verbatim under the materialize verb's raw `==`.
+    // intact) so it matches a consumer's native boundary binding verbatim under
+    // the materialize verb's raw `==`.
     let derived_crate_tag = if derive_library_bindings {
         crate_name_raw_for(&root)
     } else {
@@ -11084,7 +11084,7 @@ pub fn wrap_positive(amount: usize) -> Option<usize> {
         // `library-bindings` layer is active — the tag is gone; the binding is
         // DERIVED from the crate name + fn name. Mirror of python's universal
         // lift. The `target_library_tag` is the RAW crate name (hyphens intact)
-        // so it matches a consumer's `#[sugar::boundary(library = ...)]`.
+        // so it matches a consumer's native boundary binding.
         let root = temp_workspace("derive_positive");
         let src_dir = root.join("src");
         fs::create_dir_all(&src_dir).expect("create src dir");

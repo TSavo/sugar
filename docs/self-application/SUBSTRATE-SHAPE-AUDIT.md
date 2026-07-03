@@ -87,7 +87,7 @@ These must stay in kits or kit adapters.
 | Rust AST/HIR/body lifting | `sugar-walk/src/lift.rs`, `walk_rpc.rs`, Rust lifters | Parsing and resolving Rust source is always the Rust kit's job. |
 | Rust stdlib shim catalog | `examples/sugar-shim-rust-std/src/lib.rs` | The functions and tests express Rust stdlib algebra. The emitted concepts can map into substrate, but the shim remains Rust. |
 | `library:rust-*` shim concept names | `examples/sugar-shim-rust-std/src/lib.rs` | These identify Rust library facts. They may map to substrate concepts, but the original catalog remains kit-owned. |
-| Rust library sugar annotations | `#[sugar::sugar(...)]` handling in `walk_rpc.rs` | Attribute parsing and library binding extraction are Rust kit semantics. |
+| Rust native contract annotations | `#[requires]` / `#[ensures]` handling in the Rust lift stack | Attribute parsing and library binding extraction are Rust kit semantics. |
 | Resolver binaries and command paths | `.sugar/*/manifest.toml`, `project_config`, `lift_plugin` | Registration is manifest/config-driven; concrete commands remain per kit. |
 | Residue meanings like lock poisoning | `.sugar/residue.toml`, `panic_annotations_runtime.rs` rows | The category schema is substrate, but the reason "Rust mutex poisoning" is language/runtime-specific. |
 

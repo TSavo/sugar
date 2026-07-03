@@ -2,15 +2,16 @@ name = "python-sklearn-testing-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-# The same assertion-vocabulary lifter used by numpy and pandas. sklearn needs
-# no exception file for sklearn.utils._testing: assert_array_equal derives as
-# exact equality, while assert_allclose and the tolerance family stay approximate.
+# The Python factory lift RPC handles sklearn testing helpers in the same batch
+# protocol as the plain Python seat. assert_array_equal derives as exact
+# equality, while assert_allclose and the tolerance family stay approximate.
 command = [
     "/usr/bin/env",
     "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src",
     "/tmp/sklearn-witness-venv/bin/python",
     "-m",
-    "sugar_lift_py_tests.assertion_lsp",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
 ]
 working_dir = "."
 

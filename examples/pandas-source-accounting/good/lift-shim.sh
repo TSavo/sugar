@@ -10,4 +10,4 @@ export PYTHONPATH="$REPO/implementations/python/sugar-lift-py-tests/src:$REPO/im
 export SUGAR_PY_PACKAGE_ACCOUNTING_MODE=structural
 export SUGAR_PY_PACKAGE_ACCOUNTING_LOCI=summary
 export SUGAR_PY_PACKAGE_ACCOUNTING_SAMPLE_LIMIT="${PANDAS_SOURCE_SAMPLE_LIMIT:-40}"
-exec "$VENV/bin/python" -m sugar_lift_py_tests.lsp
+exec "$VENV/bin/python" -m sugar_lift_py_tests.lift_rpc --rpc

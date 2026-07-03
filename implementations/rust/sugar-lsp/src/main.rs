@@ -801,7 +801,7 @@ fn format_hover(ann: &Annotation) -> String {
         }
         AnnotationKind::Contract => {
             format!(
-                "## Sugar Contract\n\n**Function:** `{}`\n**Kind:** contract\n\nThis function declares its own contract via `#[sugar::contract]`.",
+                "## Sugar Contract\n\n**Function:** `{}`\n**Kind:** contract\n\nThis function declares its own contract with native `#[requires]` / `#[ensures]` annotations.",
                 ann.function_name
             )
         }

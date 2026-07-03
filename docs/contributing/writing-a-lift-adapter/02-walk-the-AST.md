@@ -67,7 +67,7 @@ fn add_one(x: i32) -> i32 { x + 1 }
 
 Walk: locate functions with the relevant attributes, parse the attribute argument expression, extract pre/post predicates.
 
-This is the shape of `contracts` (Rust), `sugar::contract`, JML `//@ requires` after parsing.
+This is the shape of `contracts` (Rust), native `#[requires]` / `#[ensures]`, and JML `//@ requires` after parsing.
 
 ### Pattern C: chain-style schema
 
