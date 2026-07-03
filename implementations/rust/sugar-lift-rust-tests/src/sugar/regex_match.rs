@@ -61,6 +61,7 @@ use crate::sugar::source_fragment::SourceFragment;
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_regex_match",
     SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_constraint,
 );
 

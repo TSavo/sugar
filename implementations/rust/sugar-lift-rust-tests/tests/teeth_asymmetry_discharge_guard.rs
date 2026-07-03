@@ -37,7 +37,7 @@ fn compile_asserted_json_to_parts(
 ) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
     match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
         sugar_ir_compiler::CompilerInput::Formula(formula) => {
-            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(formula.formula())
         }
         _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
             "asserted SMT-LIB compile expects a formula input".to_string(),

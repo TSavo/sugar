@@ -25,8 +25,12 @@ use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("zip", SugarRole::Composite, recognize_composite);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "zip",
+    SugarRole::Composite,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_composite,
+);
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

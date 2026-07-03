@@ -39,10 +39,18 @@ use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{token_key, Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("control_flow_term", recognize_term);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "control_flow_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_term,
+    );
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("control_flow_composite", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "control_flow_composite",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
 /// `ControlFlowTermSugar` refuse-shape. TERM and COMPOSITE roles both carry the same typed node;

@@ -18,7 +18,24 @@ use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("from_bool", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "from_bool",
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_from_bool_good() {
+                    assert_eq!(1u8, <u8>::from(true));
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_from_bool_bad() {
+                    assert_eq!(1u8, <u8>::from(false));
+                }
+            "#,
+        ),
+        recognize,
+    );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if frag.call_arg_count() != 1 {

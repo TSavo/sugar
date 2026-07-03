@@ -29,8 +29,11 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const ITEM_SUGAR: ItemSugarClaim =
-    ItemSugarClaim::statement_item("impl_method", recognize);
+pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
+    "impl_method",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 /// ITEM-position recognizer: `Some` only for a statement-nested `impl` block whose first
 /// method body carries an assertion, else `None`. Uses the `impl_item_asserting_method_name`

@@ -17,11 +17,18 @@ use crate::{const_path_key, str_const, token_key, Desugared, Outcome, Sugar, Sug
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("const", &["path"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "const",
+    &["path"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
-pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite("const_composite", recognize_composite);
+pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite(
+    "const_composite",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_composite,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

@@ -22,8 +22,12 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{ScalarFloorAccept, ScalarFloorVisitor};
 use crate::{Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("into", &["method"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "into",
+    &["method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if frag.call_method_key().as_deref() != Some("into") {

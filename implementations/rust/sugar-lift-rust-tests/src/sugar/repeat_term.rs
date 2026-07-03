@@ -15,7 +15,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("repeat_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "repeat_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Repeat`.
 /// No `as_expr()`, `Expr::`, or raw syn in this function.

@@ -21,8 +21,12 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{strip_refs_groups, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("range_bounds_contains", &["method"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "range_bounds_contains",
+    &["method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 // FULLY MIGRATED: no as_expr(), no raw Expr::/Stmt::/Item:: access here.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

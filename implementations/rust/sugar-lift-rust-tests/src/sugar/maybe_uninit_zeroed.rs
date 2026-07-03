@@ -40,8 +40,12 @@ use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Suga
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
 
-pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("maybe_uninit_zeroed", &["method"], recognize_assume_init);
+pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "maybe_uninit_zeroed",
+    &["method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_assume_init,
+);
 
 fn recognize_assume_init(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;
@@ -89,8 +93,12 @@ fn maybe_uninit_zeroed_type(expr: &Expr) -> Option<Type> {
 
 // ── (B) mem::zeroed::<T>() ───────────────────────────────────────────────────
 
-pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("mem_zeroed", &["call"], recognize_mem_zeroed);
+pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "mem_zeroed",
+    &["call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_mem_zeroed,
+);
 
 fn recognize_mem_zeroed(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

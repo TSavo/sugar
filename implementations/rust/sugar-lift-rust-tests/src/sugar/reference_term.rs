@@ -22,8 +22,11 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::fallback_term("reference_term", recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_term(
+    "reference_term",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

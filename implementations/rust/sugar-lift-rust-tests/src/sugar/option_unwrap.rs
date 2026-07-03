@@ -17,8 +17,12 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("option_unwrap", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "option_unwrap",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let method = frag.call_method_key()?;

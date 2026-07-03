@@ -17,6 +17,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite_before(
         "identity_map",
         &["map"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_composite,
     );
 

@@ -18,8 +18,12 @@ use crate::{
     Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("memchr", &["call"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "memchr",
+    &["call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(
     frag: &SourceFragment,

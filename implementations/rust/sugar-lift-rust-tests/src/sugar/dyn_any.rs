@@ -22,6 +22,7 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "dyn_any",
     &["option_predicate", "result_predicate", "method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

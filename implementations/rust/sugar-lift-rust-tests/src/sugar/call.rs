@@ -42,7 +42,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term(
+        "call",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Resolve and exact-or-bail inline a visible pure value call for caller-owned
 /// sugar such as literal function maps.

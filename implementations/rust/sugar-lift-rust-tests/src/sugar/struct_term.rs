@@ -10,7 +10,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("struct_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "struct_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Struct`.
 /// No `as_expr()`, `Expr::`, or raw syn in this function.

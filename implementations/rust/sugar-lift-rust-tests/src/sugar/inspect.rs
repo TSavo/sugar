@@ -18,10 +18,19 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("inspect", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "inspect",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("result_inspect", &["method"], recognize_term);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "result_inspect",
+        &["method"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_term,
+    );
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

@@ -21,7 +21,11 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("assign_sugar", recognize);
+pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
+    "assign_sugar",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stmt = frag.as_stmt()?;

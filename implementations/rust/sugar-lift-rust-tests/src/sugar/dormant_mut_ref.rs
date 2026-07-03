@@ -27,6 +27,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "dormant_mut_ref",
         &["bound_path", "path"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

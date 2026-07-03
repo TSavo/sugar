@@ -20,7 +20,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("macro_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term(
+        "macro_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Macro`.
 /// No `as_expr()`, `Expr::`, or raw syn field access in this body.

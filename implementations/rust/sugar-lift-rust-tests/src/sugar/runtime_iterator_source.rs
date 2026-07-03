@@ -21,6 +21,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_orde
     "runtime_iterator_source",
     SugarRole::Composite,
     &[],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_composite,
 );
 

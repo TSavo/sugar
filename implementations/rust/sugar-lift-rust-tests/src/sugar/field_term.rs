@@ -16,7 +16,11 @@ use crate::sugar::term_dispatch::{DesugaredFloorAccept, DesugaredFloorVisitor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("field_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "field_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Field`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

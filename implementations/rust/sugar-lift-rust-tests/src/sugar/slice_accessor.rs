@@ -29,6 +29,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "slice_accessor",
         &["iter_terminal", "method"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

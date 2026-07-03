@@ -20,6 +20,7 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_assertion_surface(
         "macro_assertion_surface",
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

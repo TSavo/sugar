@@ -21,6 +21,7 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "float_literal_method",
     &["primitive_int", "call", "method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

@@ -18,8 +18,11 @@ use crate::{
     SUGAR_SEQ_CAP,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite("vec_literal", recognize_composite);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite(
+    "vec_literal",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_composite,
+);
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

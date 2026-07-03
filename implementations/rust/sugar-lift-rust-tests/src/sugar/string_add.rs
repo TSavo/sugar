@@ -9,7 +9,12 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("string_add", &["binop"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "string_add",
+        &["binop"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !is_factory_string_add_shape_frag(frag, fcx) {

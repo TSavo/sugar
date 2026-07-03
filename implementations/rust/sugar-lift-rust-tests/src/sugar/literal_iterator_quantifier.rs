@@ -34,6 +34,7 @@ use crate::{
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_literal_iterator_quantifier",
     SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

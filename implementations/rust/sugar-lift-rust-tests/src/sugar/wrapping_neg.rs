@@ -16,8 +16,12 @@ use crate::sugar::primitive_int::deferred_primitive_method_term;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{term_contains_curry_param, Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("wrapping_neg", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "wrapping_neg",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stripped = frag.strip_refs_groups();

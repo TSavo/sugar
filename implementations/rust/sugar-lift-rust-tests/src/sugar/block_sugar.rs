@@ -51,11 +51,18 @@ use crate::{
     Sugar, SugarCtx, TemporalScope,
 };
 
-pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim =
-    StmtSugarClaim::statement_before("block_sugar", &["stmt_support"], recognize_block);
+pub(crate) static BLOCK_STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement_before(
+    "block_sugar",
+    &["stmt_support"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_block,
+);
 
-pub(crate) static SUPPORT_STMT_SUGAR: StmtSugarClaim =
-    StmtSugarClaim::fallback_statement("stmt_support", recognize_support);
+pub(crate) static SUPPORT_STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::fallback_statement(
+    "stmt_support",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_support,
+);
 
 fn recognize_block(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stmt = frag.as_stmt()?;

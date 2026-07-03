@@ -19,8 +19,12 @@ use crate::{
 
 // A stable binding that resolves to compiler-axiom CStr bytes is a concrete
 // literal floor before generic bound-path transparency.
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("cstr", &["bound_path"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "cstr",
+    &["bound_path"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

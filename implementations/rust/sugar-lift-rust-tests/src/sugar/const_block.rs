@@ -13,7 +13,11 @@ use crate::{make_var, scope_const_block_locals, token_key, Desugared, Outcome, S
 use syn::{Expr, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("const_block", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "const_block",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Const`.
 pub(crate) fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

@@ -13,6 +13,7 @@ use crate::{Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_nested_assertion",
     SugarRole::StatementEffect,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

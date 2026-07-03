@@ -14,7 +14,11 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::{is_unqualified_local_name, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "closure_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 struct ClosureAmbiguousCaptureSugar {
     name: String,

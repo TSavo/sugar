@@ -18,8 +18,12 @@ use crate::sugar::primitive_int::deferred_primitive_method_term;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{const_fold_int_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("int_sqrt", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "int_sqrt",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 // FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / MethodCall field
 // access. Uses call_method_key(), call_arg_count(), call_receiver(), token_str(),

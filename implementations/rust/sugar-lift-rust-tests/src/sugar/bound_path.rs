@@ -18,23 +18,32 @@ use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 use syn::Expr;
 use tracing::debug;
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("bound_path", &["path"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "bound_path",
+    &["path"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "bound_constraint",
     SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_constraint,
 );
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
     "bound_path_composite",
     &["reference_sequence"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_composite,
 );
 
-pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::tuple_producer("bound_path_tuple_producer", recognize_tuple_producer);
+pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::tuple_producer(
+    "bound_path_tuple_producer",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_tuple_producer,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     recognize_role(frag, fcx, BoundPathRole::Term)

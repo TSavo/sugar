@@ -19,7 +19,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("char_range_collect_string", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "char_range_collect_string",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Gate 1: outer `.collect::<String>()` with zero args and String turbofish.

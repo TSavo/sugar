@@ -30,8 +30,25 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("range_contains", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "range_contains",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_range_contains_good() {
+                    assert!((1usize..5).contains(&4));
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_range_contains_bad() {
+                    assert!((1usize..5).contains(&5));
+                }
+            "#,
+    ),
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // `range_literal_contains_int()` handles all raw syn internally:

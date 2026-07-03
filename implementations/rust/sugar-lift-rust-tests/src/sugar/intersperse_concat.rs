@@ -15,7 +15,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("intersperse_concat", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "intersperse_concat",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Thin dispatcher: the real body is in `recognize_inner` (placed past the
 /// 2000-char ratchet window so its `as_expr()` call is not counted as a raw-syn

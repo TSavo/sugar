@@ -30,6 +30,33 @@ type ExprRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Suga
 type ItemRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 type StmtRecognizer = fn(&SourceFragment, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SugarWitnesses {
+    Pair {
+        truthful: &'static str,
+        lying: &'static str,
+    },
+    NotVerdictBearing {
+        floor: &'static str,
+        reason: &'static str,
+    },
+    Pending,
+}
+
+impl SugarWitnesses {
+    pub const fn pair(truthful: &'static str, lying: &'static str) -> Self {
+        Self::Pair { truthful, lying }
+    }
+
+    pub const fn not_verdict_bearing(floor: &'static str, reason: &'static str) -> Self {
+        Self::NotVerdictBearing { floor, reason }
+    }
+
+    pub const fn is_pending(self) -> bool {
+        matches!(self, Self::Pending)
+    }
+}
+
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
 pub struct ExprSugarClaim {
@@ -38,6 +65,7 @@ pub struct ExprSugarClaim {
     role: SugarRole,
     comes_before: &'static [&'static str],
     fallback_well: bool,
+    witnesses: SugarWitnesses,
     recognize: ExprRecognizer,
 }
 
@@ -45,15 +73,17 @@ impl ExprSugarClaim {
     pub(crate) const fn new(
         name: &'static str,
         role: SugarRole,
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::with_ordering(name, role, &[], recognize)
+        Self::with_ordering(name, role, &[], witnesses, recognize)
     }
 
     pub(crate) const fn with_ordering(
         name: &'static str,
         role: SugarRole,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
         Self {
@@ -61,6 +91,7 @@ impl ExprSugarClaim {
             role,
             comes_before,
             fallback_well: false,
+            witnesses,
             recognize,
         }
     }
@@ -69,6 +100,7 @@ impl ExprSugarClaim {
         name: &'static str,
         role: SugarRole,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
         Self {
@@ -76,106 +108,166 @@ impl ExprSugarClaim {
             role,
             comes_before,
             fallback_well: true,
+            witnesses,
             recognize,
         }
     }
 
-    pub(crate) const fn term(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::Term, recognize)
+    pub(crate) const fn term(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::Term, witnesses, recognize)
     }
 
     pub(crate) const fn term_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::with_ordering(name, SugarRole::Term, comes_before, recognize)
+        Self::with_ordering(name, SugarRole::Term, comes_before, witnesses, recognize)
     }
 
-    pub(crate) const fn composite(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::Composite, recognize)
+    pub(crate) const fn composite(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::Composite, witnesses, recognize)
     }
 
     pub(crate) const fn composite_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::with_ordering(name, SugarRole::Composite, comes_before, recognize)
+        Self::with_ordering(
+            name,
+            SugarRole::Composite,
+            comes_before,
+            witnesses,
+            recognize,
+        )
     }
 
-    pub(crate) const fn constraint(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::Constraint, recognize)
+    pub(crate) const fn constraint(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::Constraint, witnesses, recognize)
     }
 
     pub(crate) const fn constraint_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::with_ordering(name, SugarRole::Constraint, comes_before, recognize)
+        Self::with_ordering(
+            name,
+            SugarRole::Constraint,
+            comes_before,
+            witnesses,
+            recognize,
+        )
     }
 
-    pub(crate) const fn tuple_producer(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::TupleProducer, recognize)
+    pub(crate) const fn tuple_producer(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::TupleProducer, witnesses, recognize)
     }
 
-    pub(crate) const fn statement_effect(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::StatementEffect, recognize)
+    pub(crate) const fn statement_effect(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::StatementEffect, witnesses, recognize)
     }
 
     pub(crate) const fn statement_effect_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::with_ordering(name, SugarRole::StatementEffect, comes_before, recognize)
+        Self::with_ordering(
+            name,
+            SugarRole::StatementEffect,
+            comes_before,
+            witnesses,
+            recognize,
+        )
     }
 
     pub(crate) const fn closure_adaptor_verdict(
         name: &'static str,
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::new(name, SugarRole::ClosureAdaptorVerdict, recognize)
+        Self::new(name, SugarRole::ClosureAdaptorVerdict, witnesses, recognize)
     }
 
     pub(crate) const fn closure_adaptor_verdict_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
         Self::with_ordering(
             name,
             SugarRole::ClosureAdaptorVerdict,
             comes_before,
+            witnesses,
             recognize,
         )
     }
 
     pub(crate) const fn match_scrutinee_verdict(
         name: &'static str,
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::new(name, SugarRole::MatchScrutineeVerdict, recognize)
+        Self::new(name, SugarRole::MatchScrutineeVerdict, witnesses, recognize)
     }
 
-    pub(crate) const fn fallback_term(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::fallback_with_ordering(name, SugarRole::Term, &[], recognize)
+    pub(crate) const fn fallback_term(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::Term, &[], witnesses, recognize)
     }
 
-    pub(crate) const fn fallback_composite(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::fallback_with_ordering(name, SugarRole::Composite, &[], recognize)
+    pub(crate) const fn fallback_composite(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::Composite, &[], witnesses, recognize)
     }
 
-    pub(crate) const fn fallback_constraint(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::fallback_with_ordering(name, SugarRole::Constraint, &[], recognize)
+    pub(crate) const fn fallback_constraint(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::Constraint, &[], witnesses, recognize)
     }
 
     pub(crate) const fn fallback_assertion_surface(
         name: &'static str,
+        witnesses: SugarWitnesses,
         recognize: ExprRecognizer,
     ) -> Self {
-        Self::fallback_with_ordering(name, SugarRole::AssertionSurface, &[], recognize)
+        Self::fallback_with_ordering(name, SugarRole::AssertionSurface, &[], witnesses, recognize)
     }
 
     pub(crate) fn role(&self) -> SugarRole {
@@ -184,6 +276,10 @@ impl ExprSugarClaim {
 
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    pub fn witnesses(&self) -> SugarWitnesses {
+        self.witnesses
     }
 }
 
@@ -195,6 +291,7 @@ pub struct ItemSugarClaim {
     role: SugarRole,
     comes_before: &'static [&'static str],
     fallback_well: bool,
+    witnesses: SugarWitnesses,
     recognize: ItemRecognizer,
 }
 
@@ -202,15 +299,17 @@ impl ItemSugarClaim {
     pub(crate) const fn new(
         name: &'static str,
         role: SugarRole,
+        witnesses: SugarWitnesses,
         recognize: ItemRecognizer,
     ) -> Self {
-        Self::with_ordering(name, role, &[], recognize)
+        Self::with_ordering(name, role, &[], witnesses, recognize)
     }
 
     pub(crate) const fn with_ordering(
         name: &'static str,
         role: SugarRole,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: ItemRecognizer,
     ) -> Self {
         Self {
@@ -218,12 +317,17 @@ impl ItemSugarClaim {
             role,
             comes_before,
             fallback_well: false,
+            witnesses,
             recognize,
         }
     }
 
-    pub(crate) const fn statement_item(name: &'static str, recognize: ItemRecognizer) -> Self {
-        Self::new(name, SugarRole::StatementItem, recognize)
+    pub(crate) const fn statement_item(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: ItemRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::StatementItem, witnesses, recognize)
     }
 
     pub(crate) fn role(&self) -> SugarRole {
@@ -232,6 +336,10 @@ impl ItemSugarClaim {
 
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    pub fn witnesses(&self) -> SugarWitnesses {
+        self.witnesses
     }
 
     pub(crate) fn candidate(
@@ -260,6 +368,7 @@ pub struct StmtSugarClaim {
     role: SugarRole,
     comes_before: &'static [&'static str],
     fallback_well: bool,
+    witnesses: SugarWitnesses,
     recognize: StmtRecognizer,
 }
 
@@ -268,15 +377,17 @@ impl StmtSugarClaim {
     pub(crate) const fn new(
         name: &'static str,
         role: SugarRole,
+        witnesses: SugarWitnesses,
         recognize: StmtRecognizer,
     ) -> Self {
-        Self::with_ordering(name, role, &[], recognize)
+        Self::with_ordering(name, role, &[], witnesses, recognize)
     }
 
     pub(crate) const fn with_ordering(
         name: &'static str,
         role: SugarRole,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: StmtRecognizer,
     ) -> Self {
         Self {
@@ -284,32 +395,49 @@ impl StmtSugarClaim {
             role,
             comes_before,
             fallback_well: false,
+            witnesses,
             recognize,
         }
     }
 
     /// A statement-role claim (`return`, `let`, `if`, block) -- the Stmt analogue of
     /// `ExprSugarClaim::statement_effect`, mirroring the Python `SugarRole.STATEMENT`.
-    pub(crate) const fn statement(name: &'static str, recognize: StmtRecognizer) -> Self {
-        Self::new(name, SugarRole::Statement, recognize)
+    pub(crate) const fn statement(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: StmtRecognizer,
+    ) -> Self {
+        Self::new(name, SugarRole::Statement, witnesses, recognize)
     }
 
     pub(crate) const fn statement_before(
         name: &'static str,
         comes_before: &'static [&'static str],
+        witnesses: SugarWitnesses,
         recognize: StmtRecognizer,
     ) -> Self {
-        Self::with_ordering(name, SugarRole::Statement, comes_before, recognize)
+        Self::with_ordering(
+            name,
+            SugarRole::Statement,
+            comes_before,
+            witnesses,
+            recognize,
+        )
     }
 
     /// A catch-all fallback claim. The factory selects this only when no
     /// non-fallback claim matched. Mirrors `ExprSugarClaim::fallback_term`.
-    pub(crate) const fn fallback_statement(name: &'static str, recognize: StmtRecognizer) -> Self {
+    pub(crate) const fn fallback_statement(
+        name: &'static str,
+        witnesses: SugarWitnesses,
+        recognize: StmtRecognizer,
+    ) -> Self {
         Self {
             name,
             role: SugarRole::Statement,
             comes_before: &[],
             fallback_well: true,
+            witnesses,
             recognize,
         }
     }
@@ -320,6 +448,10 @@ impl StmtSugarClaim {
 
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    pub fn witnesses(&self) -> SugarWitnesses {
+        self.witnesses
     }
 
     pub(crate) fn candidate(

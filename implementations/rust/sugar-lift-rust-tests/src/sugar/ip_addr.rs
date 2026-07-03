@@ -25,6 +25,7 @@ use crate::{
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "literal_ip_addr",
     &["const_path", "path", "call", "method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_term,
 );
 
@@ -32,6 +33,7 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_or
     "constraint_literal_ip_addr_property",
     SugarRole::Constraint,
     &["constraint_bool_expr"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

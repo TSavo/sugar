@@ -17,7 +17,24 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{simple_path_name, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("len", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "len",
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_len_good() {
+                    assert_eq!([1, 2, 3].len(), 3);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_len_bad() {
+                    assert_eq!([1, 2, 3].len(), 4);
+                }
+            "#,
+        ),
+        recognize,
+    );
 
 /// No `as_expr()`, `Expr::`, or raw syn in this function body.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

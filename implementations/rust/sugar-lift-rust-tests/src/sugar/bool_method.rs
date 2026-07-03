@@ -14,8 +14,25 @@ use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("bool_literal_method", &["method"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "bool_literal_method",
+    &["method"],
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_bool_method_good() {
+                    assert_eq!(true.then_some(7_i32), Some(7_i32));
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_bool_method_bad() {
+                    assert_eq!(true.then_some(7_i32), Some(8_i32));
+                }
+            "#,
+    ),
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let call_frag = frag.strip_refs_groups();

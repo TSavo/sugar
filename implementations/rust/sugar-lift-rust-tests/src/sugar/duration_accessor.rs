@@ -53,8 +53,25 @@ const SECS_PER_HOUR: u128 = 3_600;
 const SECS_PER_DAY: u128 = 86_400;
 const SECS_PER_WEEK: u128 = 604_800;
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("duration_accessor", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "duration_accessor",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_dur_as_secs_good() {
+                    assert!(Duration::from_secs(5).as_secs() == 5);
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_dur_as_secs_bad() {
+                    assert!(Duration::from_secs(5).as_secs() == 6);
+                }
+            "#,
+    ),
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Must be a zero-argument method call.

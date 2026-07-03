@@ -56,7 +56,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("index", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "index",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Index`. Gates on `frag.observed() == "Index"`;
 /// builds child bodies via `SugarBody::term_frag`. No raw syn in the body.

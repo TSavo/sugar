@@ -39,12 +39,30 @@ use crate::{
 };
 use sugar_ir_symbolic::{and_, atomic_, Term};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("constraint_tuple_decomp", SugarRole::Constraint, recognize);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_tuple_decomp",
+    SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_tuple_decomp",
     SugarRole::AssertionSurface,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_tuple_decomp_good() {
+                    assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, 1));
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_tuple_decomp_bad() {
+                    assert_eq!(3.14159265359f32.integer_decode(), (13176796, -22, 1));
+                }
+            "#,
+    ),
     recognize,
 );
 

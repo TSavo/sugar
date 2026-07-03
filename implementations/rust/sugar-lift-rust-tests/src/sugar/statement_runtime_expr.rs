@@ -13,11 +13,15 @@ use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_runtime_expr",
     SugarRole::StatementEffect,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_statement_effect,
 );
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::fallback_constraint("constraint_runtime_expr", recognize_constraint);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_constraint(
+    "constraint_runtime_expr",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_constraint,
+);
 
 pub(crate) fn recognize_statement_effect(
     frag: &SourceFragment,

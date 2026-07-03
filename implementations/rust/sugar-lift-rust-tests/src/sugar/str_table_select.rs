@@ -31,7 +31,12 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("str_table_select", &["index"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "str_table_select",
+        &["index"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Recognizer for `literal_byte_array[bv32_expr]`.
 ///

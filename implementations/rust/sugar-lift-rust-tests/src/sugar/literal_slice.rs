@@ -23,6 +23,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite_before(
         "literal_slice",
         &["reference_sequence"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_composite,
     );
 
