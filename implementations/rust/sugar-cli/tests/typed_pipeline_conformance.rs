@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
 const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 6;
+const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 1;
 
 #[derive(Debug, Deserialize)]
 struct InterfaceManifest {
@@ -22,14 +23,25 @@ struct InterfaceManifest {
     #[serde(default)]
     interface_sources: Vec<InterfaceSource>,
     #[serde(default)]
+    pipeline_seams: Vec<PipelineSeam>,
+    #[serde(default)]
+    ambient_sources: Vec<AmbientSource>,
+    #[serde(default)]
     interfaces: Vec<InterfaceDeclaration>,
+    #[serde(default)]
+    ambient_testimony_sites: Vec<AmbientTestimonySite>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct Ratchet {
+    #[serde(default)]
     interfaces_without_declaration: usize,
+    #[serde(default)]
     undeclared_escape_hatches: usize,
+    #[serde(default)]
     declared_escape_hatch_rows_open: usize,
+    #[serde(default)]
+    ambient_testimony_sites: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,10 +51,22 @@ struct InterfaceSource {
     ignored_items: Vec<IgnoredItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct IgnoredItem {
     name: String,
     reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PipelineSeam {
+    root: String,
+    #[serde(default)]
+    file_prefixes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmbientSource {
+    path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +109,31 @@ struct EscapeHatchSource {
     needles: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AmbientTestimonySite {
+    id: String,
+    shape: String,
+    owner: String,
+    retirement: String,
+    #[serde(default)]
+    baseline: bool,
+    source: AmbientSiteSource,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmbientSiteSource {
+    path: String,
+    item: String,
+    #[serde(default)]
+    needles: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SourceSpec {
+    path: String,
+    ignored_items: Vec<IgnoredItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct RustItem {
     path: String,
@@ -95,6 +144,15 @@ struct RustItem {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct HatchFinding {
+    path: String,
+    item: String,
+    line: usize,
+    shape: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AmbientFinding {
     path: String,
     item: String,
     line: usize,
@@ -294,6 +352,364 @@ path = "{}"
     );
 }
 
+#[test]
+fn declared_path_floor_walks_sibling_items_even_without_interface_sources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("declared_floor.rs");
+    std::fs::write(
+        &source,
+        r#"
+pub struct DeclaredPipelineInterface {
+    typed: String,
+}
+
+pub struct SiblingPipelineInterface {
+    typed: String,
+}
+"#,
+    )
+    .expect("write declared floor interface");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+
+[[interfaces]]
+id = "declared"
+owner = "test::declared"
+input_type = "DeclaredInput"
+output_type = "DeclaredPipelineInterface"
+addressing_rule = "fixture cid"
+failure_type = "fixture diagnostic"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "DeclaredPipelineInterface", kind = "struct" }}
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "interfaces-without-declaration"
+                && finding.item == "SiblingPipelineInterface"
+        }),
+        "a declared path must be walked as a source floor; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn pipeline_seam_discovery_walks_new_matching_files() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("report_witness_extra.rs");
+    std::fs::write(
+        &source,
+        r#"
+pub struct NewReportWitnessInterface {
+    typed: String,
+}
+"#,
+    )
+    .expect("write discovered interface");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+
+[[pipeline_seams]]
+root = "{}"
+file_prefixes = ["report_witness"]
+"#,
+        temp.path().display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "interfaces-without-declaration"
+                && finding.item == "NewReportWitnessInterface"
+        }),
+        "pipeline seam discovery must find a new matching source file; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn shape_based_hatch_detectors_are_not_bound_to_census_item_names() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("shape_hatches.rs");
+    std::fs::write(
+        &source,
+        r#"
+pub struct AlternateSolverTelemetry {
+    solver_name: String,
+    error: String,
+    solver_stdout: String,
+}
+
+pub struct CompatSolverConfig {
+    z3_path: String,
+}
+
+pub const ALT_STAGE_VOCABULARY: &[&str] = &[
+    "smt_emit",
+];
+"#,
+    )
+    .expect("write shape hatch interface");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+
+[[interface_sources]]
+path = "{}"
+
+[[interfaces]]
+id = "alt-solver-telemetry"
+owner = "test::solver"
+input_type = "fixture"
+output_type = "AlternateSolverTelemetry"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "AlternateSolverTelemetry", kind = "struct" }}
+
+[[interfaces]]
+id = "compat-solver-config"
+owner = "test::solver"
+input_type = "fixture"
+output_type = "CompatSolverConfig"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "CompatSolverConfig", kind = "struct" }}
+
+[[interfaces]]
+id = "alt-stage-vocabulary"
+owner = "test::verifier"
+input_type = "fixture"
+output_type = "ALT_STAGE_VOCABULARY"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "ALT_STAGE_VOCABULARY", kind = "const" }}
+"#,
+        source.display(),
+        source.display(),
+        source.display(),
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "shape-detector planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    for (shape, item) in [
+        ("free-text-solver-telemetry", "AlternateSolverTelemetry"),
+        ("silent-fallback", "CompatSolverConfig"),
+        ("stage-vocabulary-drift", "ALT_STAGE_VOCABULARY"),
+    ] {
+        assert!(
+            findings.iter().any(|finding| {
+                finding.axis == "undeclared-escape-hatches"
+                    && finding.item == item
+                    && finding.message.contains(shape)
+            }),
+            "missing shape-based finding for {shape}/{item}; findings:\n{}",
+            render_findings(&findings, 0)
+        );
+    }
+}
+
+#[test]
+fn unscoped_key_and_replay_irrecoverable_detectors_discriminate() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("ambient_shapes.rs");
+    std::fs::write(
+        &source,
+        r#"
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+pub struct UnscopedLookupInterface {
+    by_symbol: BTreeMap<String, MementoCid>,
+}
+
+pub struct ScopedLookupInterface {
+    by_callsite: BTreeMap<(MementoCid, String, usize, String), MementoCid>,
+}
+
+pub struct ReplayIrrecoverableInterface {
+    raw_evidence: Vec<u8>,
+}
+
+pub struct ReplayPinnedInterface {
+    raw_evidence: Vec<u8>,
+    evidence_cid: String,
+    evidence_file: PathBuf,
+}
+"#,
+    )
+    .expect("write ambient shape fixture");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+
+[[interface_sources]]
+path = "{}"
+
+[[interfaces]]
+id = "unscoped"
+owner = "test::ambient"
+input_type = "fixture"
+output_type = "UnscopedLookupInterface"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "UnscopedLookupInterface", kind = "struct" }}
+
+[[interfaces]]
+id = "scoped"
+owner = "test::ambient"
+input_type = "fixture"
+output_type = "ScopedLookupInterface"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "ScopedLookupInterface", kind = "struct" }}
+
+[[interfaces]]
+id = "irrecoverable"
+owner = "test::ambient"
+input_type = "fixture"
+output_type = "ReplayIrrecoverableInterface"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "ReplayIrrecoverableInterface", kind = "struct" }}
+
+[[interfaces]]
+id = "pinned"
+owner = "test::ambient"
+input_type = "fixture"
+output_type = "ReplayPinnedInterface"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "ReplayPinnedInterface", kind = "struct" }}
+"#,
+        source.display(),
+        source.display(),
+        source.display(),
+        source.display(),
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "ambient-shape planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "undeclared-escape-hatches"
+                && finding.item == "UnscopedLookupInterface"
+                && finding.message.contains("unscoped-key-lookup")
+        }),
+        "unscoped bare-key lookup must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "undeclared-escape-hatches"
+                && finding.item == "ReplayIrrecoverableInterface"
+                && finding.message.contains("replay-irrecoverable-input")
+        }),
+        "raw replay input without a cid must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.item != "ScopedLookupInterface"),
+        "scoped callsite key must stay green; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.item != "ReplayPinnedInterface"),
+        "raw replay input with cid evidence must stay green; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
+fn planted_ambient_self_witness_site_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("consistency_like.rs");
+    std::fs::write(
+        &source,
+        r#"
+fn collect_ambient_ground_callsite_facts() {}
+fn with_ambient_ground_callsite_facts() {}
+fn individual_obligation_path() {
+    collect_ambient_ground_callsite_facts();
+    with_ambient_ground_callsite_facts();
+}
+"#,
+    )
+    .expect("write planted ambient site");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+
+[[ambient_sources]]
+path = "{}"
+"#,
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "planted ambient-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "ambient-testimony-sites"
+                && finding.item == "ambient-ground-callsite-self-witness"
+        }),
+        "planted ambient self-witness site must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
 fn manifest_from_str(text: &str) -> InterfaceManifest {
     toml::from_str(text).expect("fixture manifest parses")
 }
@@ -369,7 +785,7 @@ fn audit_manifest_with_mode(
     }
 
     let mut candidate_items = Vec::new();
-    for source in &manifest.interface_sources {
+    for source in walked_interface_sources(root, manifest, &mut findings) {
         let path = resolve_manifest_path(root, &source.path);
         let ignored = ignored_items(source, &mut findings);
         let items = rust_items_in_file(&path, root, &ignored);
@@ -451,7 +867,28 @@ fn audit_manifest_with_mode(
         }
     }
 
+    for ambient in &manifest.ambient_testimony_sites {
+        validate_ambient_site_declaration(ambient, &mut findings);
+    }
+    for ambient in discover_ambient_testimony(root, manifest) {
+        if !ambient_site_is_declared(root, manifest, &ambient) {
+            findings.push(Finding {
+                axis: "ambient-testimony-sites",
+                path: ambient.path,
+                line: ambient.line,
+                item: ambient.item,
+                message: format!(
+                    "undeclared {} ambient testimony site: `{}`",
+                    ambient.shape, ambient.text
+                ),
+                replacement: "declare this ambient site with owner+retirement, or split obligation/witness/boundary/replay into typed addressed inputs"
+                    .to_string(),
+            });
+        }
+    }
+
     let baseline = manifest_declared_baseline_count(manifest);
+    let ambient_baseline = manifest_declared_ambient_count(manifest);
     if enforce_live_ratchet && manifest.ratchet.interfaces_without_declaration != 0 {
         findings.push(Finding {
             axis: "ratchet-vector",
@@ -513,9 +950,149 @@ fn audit_manifest_with_mode(
                     .to_string(),
         });
     }
+    if enforce_live_ratchet
+        && manifest.ratchet.ambient_testimony_sites != BASELINE_AMBIENT_TESTIMONY_SITES_OPEN
+    {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.ambient_testimony_sites".to_string(),
+            message: format!(
+                "ratchet pins ambient_testimony_sites at {}, expected {BASELINE_AMBIENT_TESTIMONY_SITES_OPEN}",
+                manifest.ratchet.ambient_testimony_sites
+            ),
+            replacement: "S2 baseline is the declared #3313 ambient-ground-callsite self-witness row; drains own retirement"
+                .to_string(),
+        });
+    }
+    if enforce_live_ratchet && ambient_baseline != manifest.ratchet.ambient_testimony_sites {
+        findings.push(Finding {
+            axis: "ratchet-vector",
+            path: MANIFEST_REL.to_string(),
+            line: 0,
+            item: "R.ambient_testimony_sites".to_string(),
+            message: format!(
+                "manifest has {ambient_baseline} baseline ambient testimony rows, ratchet pins {}",
+                manifest.ratchet.ambient_testimony_sites
+            ),
+            replacement:
+                "keep the manifest ambient baseline synchronized with the declared S2 rows"
+                    .to_string(),
+        });
+    }
 
     findings.sort();
     findings
+}
+
+fn walked_interface_sources(
+    root: &Path,
+    manifest: &InterfaceManifest,
+    findings: &mut Vec<Finding>,
+) -> Vec<SourceSpec> {
+    let mut specs: BTreeMap<String, SourceSpec> = BTreeMap::new();
+    for source in &manifest.interface_sources {
+        merge_source_spec(
+            &mut specs,
+            normalize_manifest_path(root, &source.path),
+            source.ignored_items.clone(),
+        );
+    }
+    for interface in &manifest.interfaces {
+        merge_source_spec(
+            &mut specs,
+            normalize_manifest_path(root, &interface.source.path),
+            Vec::new(),
+        );
+    }
+    for path in discover_pipeline_seam_files(root, manifest, findings) {
+        merge_source_spec(&mut specs, path, Vec::new());
+    }
+    specs.into_values().collect()
+}
+
+fn merge_source_spec(
+    specs: &mut BTreeMap<String, SourceSpec>,
+    path: String,
+    ignored_items: Vec<IgnoredItem>,
+) {
+    let spec = specs.entry(path.clone()).or_insert_with(|| SourceSpec {
+        path,
+        ignored_items: Vec::new(),
+    });
+    spec.ignored_items.extend(ignored_items);
+}
+
+fn discover_pipeline_seam_files(
+    root: &Path,
+    manifest: &InterfaceManifest,
+    findings: &mut Vec<Finding>,
+) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for seam in &manifest.pipeline_seams {
+        if seam.root.trim().is_empty() || seam.file_prefixes.is_empty() {
+            findings.push(Finding {
+                axis: "manifest-schema",
+                path: MANIFEST_REL.to_string(),
+                line: 0,
+                item: "pipeline_seams".to_string(),
+                message: "pipeline seam discovery requires root and file_prefixes".to_string(),
+                replacement:
+                    "name the seam root and the file prefixes that represent typed pipeline modules"
+                        .to_string(),
+            });
+            continue;
+        }
+        let seam_root = resolve_manifest_path(root, &seam.root);
+        for path in rust_files_under(&seam_root) {
+            let rel_to_seam = path
+                .strip_prefix(&seam_root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let rel_without_rs = rel_to_seam.trim_end_matches(".rs");
+            if seam.file_prefixes.iter().any(|prefix| {
+                rel_without_rs == prefix
+                    || rel_without_rs
+                        .strip_prefix(prefix)
+                        .is_some_and(|rest| rest.starts_with('_') || rest.starts_with('/'))
+            }) {
+                out.insert(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn rust_files_under(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                if name != "target" {
+                    stack.push(path);
+                }
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+    out
 }
 
 fn resolve_manifest_path(root: &Path, path: &str) -> PathBuf {
@@ -625,20 +1202,61 @@ fn validate_interface_declaration(interface: &InterfaceDeclaration, findings: &m
     }
 }
 
-fn ignored_items(source: &InterfaceSource, findings: &mut Vec<Finding>) -> BTreeSet<String> {
+fn validate_ambient_site_declaration(ambient: &AmbientTestimonySite, findings: &mut Vec<Finding>) {
+    for (field, value) in [
+        ("id", &ambient.id),
+        ("shape", &ambient.shape),
+        ("owner", &ambient.owner),
+        ("retirement", &ambient.retirement),
+        ("source.path", &ambient.source.path),
+        ("source.item", &ambient.source.item),
+    ] {
+        if value.trim().is_empty() {
+            findings.push(Finding {
+                axis: "manifest-schema",
+                path: ambient.source.path.clone(),
+                line: 0,
+                item: ambient.id.clone(),
+                message: format!("ambient site `{}` has empty `{field}`", ambient.id),
+                replacement:
+                    "every ambient testimony site must name shape, owner, retirement, and source"
+                        .to_string(),
+            });
+        }
+    }
+    if ambient.source.needles.is_empty()
+        || ambient
+            .source
+            .needles
+            .iter()
+            .any(|needle| needle.trim().is_empty())
+    {
+        findings.push(Finding {
+            axis: "manifest-schema",
+            path: ambient.source.path.clone(),
+            line: 0,
+            item: ambient.id.clone(),
+            message: format!("ambient site `{}` has no source needle", ambient.id),
+            replacement: "pin each ambient site to the concrete source text it retires".to_string(),
+        });
+    }
+}
+
+fn ignored_items(source: SourceSpec, findings: &mut Vec<Finding>) -> BTreeSet<String> {
     let mut ignored = BTreeSet::new();
-    for item in &source.ignored_items {
+    for item in source.ignored_items {
         if item.name.trim().is_empty() || item.reason.trim().is_empty() {
             findings.push(Finding {
                 axis: "manifest-schema",
                 path: source.path.clone(),
                 line: 0,
-                item: item.name.clone(),
+                item: item.name,
                 message: "ignored item must name both item and reason".to_string(),
                 replacement: "make non-interface dismissals explicit and reviewable".to_string(),
             });
+            continue;
         }
-        ignored.insert(item.name.clone());
+        ignored.insert(item.name);
     }
     ignored
 }
@@ -652,17 +1270,25 @@ fn rust_items_in_file(path: &Path, root: &Path, ignored: &BTreeSet<String>) -> V
         .to_string_lossy()
         .replace('\\', "/");
     let mut items = Vec::new();
+    let mut depth = 0isize;
     for (i, line) in text.lines().enumerate() {
-        if let Some((kind, name)) = parse_rust_item(line) {
-            if ignored.contains(&name) {
-                continue;
+        if depth == 0 {
+            if let Some((kind, name)) = parse_rust_item(line) {
+                if ignored.contains(&name) {
+                    depth += brace_delta(line);
+                    continue;
+                }
+                items.push(RustItem {
+                    path: rel.clone(),
+                    name,
+                    kind,
+                    line: i + 1,
+                });
             }
-            items.push(RustItem {
-                path: rel.clone(),
-                name,
-                kind,
-                line: i + 1,
-            });
+        }
+        depth += brace_delta(line);
+        if depth < 0 {
+            depth = 0;
         }
     }
     items
@@ -753,6 +1379,15 @@ fn brace_delta(line: &str) -> isize {
 
 fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<HatchFinding> {
     let mut findings = Vec::new();
+    let has_solver_context = block.lines.iter().any(|line| {
+        line.text.contains("solver_")
+            || line.text.contains("Solver")
+            || line.text.contains("solver:")
+    });
+    let has_replay_cid = block.lines.iter().any(|line| {
+        let lower = line.text.to_ascii_lowercase();
+        lower.contains("cid") || lower.contains("content address")
+    });
     for line in &block.lines {
         let trimmed = line.text.trim();
         if trimmed.starts_with("//") || trimmed.starts_with('#') {
@@ -762,14 +1397,19 @@ fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<Hat
             Some("serde-json-value")
         } else if trimmed.contains("Failed(String)") {
             Some("free-text-machine-error")
-        } else if item == "SolveResult"
-            && (trimmed.contains("error: String") || trimmed.contains("solver_stdout: String"))
+        } else if trimmed.contains("solver_stdout: String")
+            || trimmed.contains("solver_stderr: String")
+            || (has_solver_context && trimmed.contains("error: String"))
         {
             Some("free-text-solver-telemetry")
-        } else if item == "RunnerConfig" && trimmed.contains("z3_path: String") {
+        } else if trimmed.contains("z3_path: String") {
             Some("silent-fallback")
-        } else if item == "VERIFIER_STAGE_VOCABULARY" && trimmed.contains("\"smt_emit\"") {
+        } else if trimmed.contains("\"smt_emit\"") {
             Some("stage-vocabulary-drift")
+        } else if is_unscoped_key_lookup(trimmed) {
+            Some("unscoped-key-lookup")
+        } else if is_replay_irrecoverable_input(trimmed, has_replay_cid) {
+            Some("replay-irrecoverable-input")
         } else {
             None
         };
@@ -784,6 +1424,22 @@ fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<Hat
         }
     }
     findings
+}
+
+fn is_unscoped_key_lookup(trimmed: &str) -> bool {
+    let compact = trimmed.replace(' ', "");
+    (compact.contains("BTreeMap<String,MementoCid>")
+        || compact.contains("HashMap<String,MementoCid>"))
+        && !compact.contains("(MementoCid,")
+}
+
+fn is_replay_irrecoverable_input(trimmed: &str, has_replay_cid: bool) -> bool {
+    if has_replay_cid {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    trimmed.contains("Vec<u8>")
+        && (lower.contains("raw") || lower.contains("evidence") || lower.contains("input"))
 }
 
 fn is_json_value_boundary(trimmed: &str) -> bool {
@@ -819,12 +1475,72 @@ fn hatch_is_declared(
     })
 }
 
+fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<AmbientFinding> {
+    let mut paths = BTreeSet::new();
+    for source in &manifest.ambient_sources {
+        paths.insert(normalize_manifest_path(root, &source.path));
+    }
+    for ambient in &manifest.ambient_testimony_sites {
+        paths.insert(normalize_manifest_path(root, &ambient.source.path));
+    }
+    let mut findings = Vec::new();
+    for rel in paths {
+        let path = resolve_manifest_path(root, &rel);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if text.contains("collect_ambient_ground_callsite_facts")
+            && text.contains("with_ambient_ground_callsite_facts")
+        {
+            let line = text
+                .lines()
+                .position(|line| line.contains("with_ambient_ground_callsite_facts"))
+                .map(|idx| idx + 1)
+                .unwrap_or(1);
+            findings.push(AmbientFinding {
+                path: rel,
+                item: "ambient-ground-callsite-self-witness".to_string(),
+                line,
+                shape: "ambient-ground-callsite-self-witness".to_string(),
+                text: "ambient ground callsite facts can be collected and conjoined into a matching obligation".to_string(),
+            });
+        }
+    }
+    findings.sort();
+    findings
+}
+
+fn ambient_site_is_declared(
+    root: &Path,
+    manifest: &InterfaceManifest,
+    finding: &AmbientFinding,
+) -> bool {
+    manifest.ambient_testimony_sites.iter().any(|ambient| {
+        ambient.shape == finding.shape
+            && normalize_manifest_path(root, &ambient.source.path) == finding.path
+            && ambient.source.item == finding.item
+            && ambient.source.needles.iter().all(|needle| {
+                std::fs::read_to_string(resolve_manifest_path(root, &ambient.source.path))
+                    .map(|text| text.contains(needle))
+                    .unwrap_or(false)
+            })
+    })
+}
+
 fn manifest_declared_baseline_count(manifest: &InterfaceManifest) -> usize {
     manifest
         .interfaces
         .iter()
         .flat_map(|interface| &interface.escape_hatches)
         .filter(|hatch| hatch.baseline)
+        .count()
+}
+
+fn manifest_declared_ambient_count(manifest: &InterfaceManifest) -> usize {
+    manifest
+        .ambient_testimony_sites
+        .iter()
+        .filter(|ambient| ambient.baseline)
         .count()
 }
 
@@ -837,13 +1553,18 @@ fn render_findings(findings: &[Finding], declared_baseline: usize) -> String {
         .iter()
         .filter(|finding| finding.axis == "undeclared-escape-hatches")
         .count();
+    let ambient_testimony_sites = findings
+        .iter()
+        .filter(|finding| finding.axis == "ambient-testimony-sites")
+        .count();
     let mut out = format!(
         "R.interfaces_without_declaration = {interfaces_without_declaration}\n\
          R.undeclared_escape_hatches = {undeclared_escape_hatches}\n\
+         R.ambient_testimony_sites = {ambient_testimony_sites}\n\
          R.declared_escape_hatch_rows_open = {declared_baseline} \
          (baseline {BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN})\n\
          Delta R: compare this run to the previous typed-pipeline conformance receipt\n\
-         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0\n"
+         Epsilon R.predicted = undeclared_escape_hatches=0, interfaces_without_declaration=0, ambient_testimony_sites=0\n"
     );
     for finding in findings {
         out.push_str(&format!(
