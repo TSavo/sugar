@@ -13735,7 +13735,8 @@ fn t() { let s = f(); assert_eq!(s, Pair { b: 2, a: 1 }); }
 #[test]
 fn struct_literal_with_rest_is_gap_not_fake_refusal() {
     // Discrimination: `..base` means this sugar has not constructed the complete
-    // field floor yet. That is work/gap, not an effect and not a refused assertion.
+    // field floor yet. That is a named terminal refusal, never a fabricated
+    // field projection fact.
     let src = r#"
 #[test]
 fn t() {
@@ -13744,20 +13745,29 @@ fn t() {
     assert_eq!(s, Config { name: "x", ..base });
 }
 "#;
-    let panic = std::panic::catch_unwind(|| lift_file(&parse(src), "src/x.rs"))
-        .expect_err("struct update literal must be a direct gap");
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .unwrap_or("<non-string panic>");
+    let out = lift_file(&parse(src), "src/x.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "struct update literal must not fabricate a field projection fact: {out:?}"
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "struct update literal must be refused loudly: {out:?}"
+    );
+    let message = out
+        .skip_reasons
+        .iter()
+        .find(|reason| reason.contains("struct literal with `..rest` is not fully pinned"))
+        .expect("struct update refusal must name the unpinned rest fields");
     assert!(
         message.contains("struct literal with `..rest` is not fully pinned"),
         "gap must name the struct update site: {message}"
     );
     assert!(
-        !message.contains("legacy reason leaf"),
-        "struct update must gap directly, not through ReasonedIncompleteSugar: {message}"
+        message.contains("owner=rust.struct_term")
+            && message.contains("shape=struct-update-literal")
+            && message.contains("replacement=derive field projection facts only from fully pinned `struct:*` ctor arguments"),
+        "struct update refusal must name owner/shape/replacement: {message}"
     );
 }
 
@@ -27524,6 +27534,82 @@ fn t() {
     if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "range_term_good") {
         assert!(sat, "0..3 == 0..3 must be z3-SAT");
     }
+}
+
+#[test]
+fn struct_literal_field_projection_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[derive(Debug, PartialEq)]
+struct WitnessPoint { x: i32 }
+
+#[test]
+fn t_field_term_bad() {
+    assert_eq!(WitnessPoint { x: 5 }.x, 6);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/field-term-struct-projection-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad struct-field projection twin must lift so z3 can bite; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "field_term_bad") {
+        assert!(
+            !sat,
+            "WitnessPoint {{ x: 5 }}.x == 6 must be z3-UNSAT once the ctor field fact is derived"
+        );
+    }
+}
+
+#[test]
+fn struct_literal_field_projection_good_twin_is_sat() {
+    let src = r#"
+#[derive(Debug, PartialEq)]
+struct WitnessPoint { x: i32 }
+
+#[test]
+fn t_field_term_good() {
+    assert_eq!(WitnessPoint { x: 5 }.x, 5);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/field-term-struct-projection-good.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "truthful struct-field projection twin must lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "field_term_good") {
+        assert!(sat, "WitnessPoint {{ x: 5 }}.x == 5 must be z3-SAT");
+    }
+}
+
+#[test]
+fn struct_update_field_projection_refuses_instead_of_fabricating() {
+    let src = r#"
+#[derive(Debug, PartialEq)]
+struct WitnessPoint { x: i32 }
+
+#[test]
+fn t_field_term_struct_update_refusal() {
+    let base = WitnessPoint { x: 5 };
+    assert_eq!(WitnessPoint { ..base }.x, 5);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/field-term-struct-update-refusal.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "struct update field projection must not fabricate a derived field value; facts={:?}",
+        out.assertion_facts
+    );
+    assert!(
+        out.assertions_refused >= 1
+            && out
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("struct literal with `..rest` is not fully pinned")),
+        "struct update field projection must be a named refusal: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]

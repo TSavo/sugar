@@ -2,12 +2,12 @@
 //
 // TERM recognizer for `Expr::Struct`: a constructor `struct:<path>` with sorted
 // `field:<name>` subctors over the field-value children. A `..rest` struct literal is
-// not fully pinned by this sugar yet, so it takes the direct gap path at desugar time.
+// not fully pinned by this sugar yet, so it takes a named terminal refusal at desugar time.
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Outcome, Sugar, SugarCtx};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
@@ -52,10 +52,9 @@ struct StructUpdateGapSugar {
 
 impl Sugar for StructUpdateGapSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        panic!(
-            "struct literal with `..rest` is not fully pinned from the literal: `{}`",
-            self.site
-        );
+        Outcome::Incomplete(Effect::StructUpdateRest {
+            boundary: self.site.clone(),
+        })
     }
 }
 

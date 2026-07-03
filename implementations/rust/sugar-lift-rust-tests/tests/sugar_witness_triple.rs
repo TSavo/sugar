@@ -10,8 +10,8 @@ use sugar_lift_rust_tests::{
     AssertionFactEmission, AssertionFactKind,
 };
 
-const EXPECTED_SEED_CLAIMS: usize = 105;
-const EXPECTED_ENROLLMENT_FRONTIER: usize = 100;
+const EXPECTED_SEED_CLAIMS: usize = 106;
+const EXPECTED_ENROLLMENT_FRONTIER: usize = 99;
 const EXPECTED_NOT_VERDICT_BEARING_CLAIMS: usize = 2;
 const EXPECTED_TEMPORAL_OPT_OUT_CLAIMS: usize = 4;
 const EXPECTED_PENDING_ROUTER_WITNESS_SLOTS: usize = 0;
@@ -732,6 +732,7 @@ fn s9_batch2_pairs_match_real_rust_semantics() {
         "array_try_from",
         "literal_tuple_producer",
         "array_repeat",
+        "field_term",
         "format_macro",
         "block_term",
         "partition_point",
