@@ -14,7 +14,7 @@ use serde::Deserialize;
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
 const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 6;
 const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 1;
-const BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN: usize = 2;
+const BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN: usize = 0;
 const BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
 
@@ -921,6 +921,65 @@ frontend_adapter = true
 }
 
 #[test]
+fn frontend_boundary_string_sludge_error_path_planted_offender_turns_red() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("planted_rpc_error.rs");
+    std::fs::write(
+        &source,
+        r#"
+pub enum RpcFrontendFailure {
+    Failed(String),
+}
+"#,
+    )
+    .expect("write planted string-sludge frontend error");
+    let manifest = manifest_from_str(&format!(
+        r#"
+version = 1
+
+[ratchet]
+interfaces_without_declaration = 0
+undeclared_escape_hatches = 0
+declared_escape_hatch_rows_open = 0
+ambient_testimony_sites = 0
+transport_json_backend_ingress = 0
+backend_frontend_decode_calls = 0
+frontend_provenance_unadmitted = 0
+
+[[interface_sources]]
+path = "{}"
+
+[[interfaces]]
+id = "rpc-frontend-failure"
+owner = "test::rpc-frontend"
+input_type = "fixture"
+output_type = "RpcFrontendFailure"
+addressing_rule = "fixture"
+failure_type = "fixture"
+replay_inputs = ["fixture"]
+source = {{ path = "{}", item = "RpcFrontendFailure", kind = "enum" }}
+"#,
+        source.display(),
+        source.display()
+    ));
+
+    let findings = audit_fixture_manifest(temp.path(), &manifest);
+    println!(
+        "string-sludge frontend planted-control receipt:\n{}",
+        render_findings(&findings, 0)
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.axis == "undeclared-escape-hatches"
+                && finding.item == "RpcFrontendFailure"
+                && finding.message.contains("free-text-machine-error")
+        }),
+        "planted Failed(String) frontend error path must red; findings:\n{}",
+        render_findings(&findings, 0)
+    );
+}
+
+#[test]
 fn dropped_frontend_boundary_baseline_row_turns_red() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("declared_backend.rs");
@@ -1775,6 +1834,37 @@ fn brace_delta(line: &str) -> isize {
     depth
 }
 
+fn cfg_test_module_end(lines: &[&str], idx: usize) -> Option<usize> {
+    if !lines[idx].trim_start().starts_with("#[cfg(test)]") {
+        return None;
+    }
+    let mut module_idx = idx + 1;
+    while module_idx < lines.len() {
+        let trimmed = lines[module_idx].trim();
+        if trimmed.is_empty() || trimmed.starts_with("#[") {
+            module_idx += 1;
+            continue;
+        }
+        if !trimmed.starts_with("mod tests") {
+            return None;
+        }
+        let mut depth = brace_delta(lines[module_idx]);
+        if depth <= 0 {
+            return None;
+        }
+        let mut cursor = module_idx + 1;
+        while cursor < lines.len() {
+            depth += brace_delta(lines[cursor]);
+            if depth <= 0 {
+                return Some(cursor);
+            }
+            cursor += 1;
+        }
+        return Some(lines.len().saturating_sub(1));
+    }
+    None
+}
+
 fn discover_escape_hatches(path: &str, item: &str, block: &ItemBlock) -> Vec<HatchFinding> {
     let mut findings = Vec::new();
     let has_solver_context = block.lines.iter().any(|line| {
@@ -2059,6 +2149,10 @@ fn discover_transport_json_backend_ingress(
         let lines: Vec<&str> = text.lines().collect();
         let mut idx = 0usize;
         while idx < lines.len() {
+            if let Some(end) = cfg_test_module_end(&lines, idx) {
+                idx = end + 1;
+                continue;
+            }
             let line = lines[idx];
             if let Some(item) = parse_ircompiler_impl_item(line) {
                 let mut depth = brace_delta(line);
@@ -2070,13 +2164,18 @@ fn discover_transport_json_backend_ingress(
                         saw_brace = true;
                     }
                     if is_compile_signature_with_transport_json(body_line) {
-                        out.push(FrontendBoundaryFinding {
+                        let finding = FrontendBoundaryFinding {
                             path: rel.clone(),
                             item: item.clone(),
                             line: cursor + 1,
                             shape: "transport-json-ircompiler-impl-ingress".to_string(),
                             text: body_line.trim().to_string(),
-                        });
+                        };
+                        if !frontend_boundary_transport_frontend_is_declared(
+                            root, manifest, &finding,
+                        ) {
+                            out.push(finding);
+                        }
                     }
                     depth += brace_delta(body_line);
                     if saw_brace && depth <= 0 {
@@ -2111,6 +2210,10 @@ fn discover_backend_frontend_decode_calls(
         let lines: Vec<&str> = text.lines().collect();
         let mut idx = 0usize;
         while idx < lines.len() {
+            if let Some(end) = cfg_test_module_end(&lines, idx) {
+                idx = end + 1;
+                continue;
+            }
             let line = lines[idx];
             if let Some(item) = parse_rust_function_name(line) {
                 let mut depth = 0isize;
@@ -2259,6 +2362,28 @@ fn frontend_boundary_finding_is_declared(
                 .iter()
                 .all(|needle| finding.text.contains(needle))
     })
+}
+
+fn frontend_boundary_transport_frontend_is_declared(
+    root: &Path,
+    manifest: &InterfaceManifest,
+    finding: &FrontendBoundaryFinding,
+) -> bool {
+    manifest
+        .frontend_boundary_allowlist_hatches
+        .iter()
+        .any(|row| {
+            let text = std::fs::read_to_string(resolve_manifest_path(root, &row.source.path))
+                .unwrap_or_default();
+            row.shape == "json-rpc-transport-frontend"
+                && normalize_manifest_path(root, &row.source.path) == finding.path
+                && row.source.item == finding.item
+                && row
+                    .source
+                    .needles
+                    .iter()
+                    .all(|needle| text.contains(needle))
+        })
 }
 
 fn manifest_declared_baseline_count(manifest: &InterfaceManifest) -> usize {

@@ -24,7 +24,8 @@ use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
 use crate::{
-    Capabilities, CompileError, CompiledFormula, CompilerInput, IrCompiler, PROTOCOL_VERSION,
+    Capabilities, CompileError, CompiledFormula, CompilerInput, FrontendErrorPayload, IrCompiler,
+    PROTOCOL_VERSION,
 };
 
 /// JSON-RPC subprocess wrapper. The child is spawned on construction,
@@ -488,6 +489,14 @@ fn rpc_error_to_compile_error(err: &Json) -> CompileError {
         .and_then(|v| v.as_str())
         .unwrap_or("(no message)")
         .to_string();
+    if code == 2003 && msg == "compile_error.frontend_decode" {
+        if let Some(payload) = err
+            .get("data")
+            .and_then(|value| serde_json::from_value::<FrontendErrorPayload>(value.clone()).ok())
+        {
+            return CompileError::Frontend(payload);
+        }
+    }
     let data = err
         .get("data")
         .and_then(|v| v.as_str())
@@ -504,4 +513,38 @@ fn rpc_error_to_compile_error(err: &Json) -> CompileError {
 
 fn render_command(command: &[String]) -> String {
     command.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FrontendErrorKind, FrontendErrorPayload};
+
+    #[test]
+    fn rpc_frontend_error_data_round_trips_as_typed_payload() {
+        let payload = FrontendErrorPayload {
+            kind: FrontendErrorKind::MalformedTransport,
+            frontend: "sugar-ir-compiler::frontend::CompilerInput::decode_json".to_string(),
+            input_format: "proofir-json".to_string(),
+            path: "$".to_string(),
+            detail: "ProofIR compiler input must be a JSON object".to_string(),
+            retirement:
+                "S7 deletes the legacy compile(&Json) adapter once typed compiler inputs are universal"
+                    .to_string(),
+        };
+        let err = json!({
+            "code": 2003,
+            "message": "compile_error.frontend_decode",
+            "data": payload,
+        });
+
+        match rpc_error_to_compile_error(&err) {
+            CompileError::Frontend(round_trip) => {
+                let expected: FrontendErrorPayload =
+                    serde_json::from_value(err["data"].clone()).unwrap();
+                assert_eq!(round_trip, expected);
+            }
+            other => panic!("RPC frontend payload degraded instead of round-tripping: {other:?}"),
+        }
+    }
 }
