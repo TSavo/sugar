@@ -76,8 +76,8 @@ impl fmt::Display for SourcePath {
 pub struct SourceLine(usize);
 
 impl SourceLine {
-    pub fn new(line: usize) -> Result<Self, String> {
-        Ok(Self(line))
+    pub fn new(line: usize) -> Self {
+        Self(line)
     }
 
     pub fn as_usize(self) -> usize {
@@ -152,7 +152,7 @@ impl BundleScopedCallsiteKey {
         Ok(Self::new(
             bundle,
             SourcePath::new(file)?,
-            SourceLine::new(line)?,
+            SourceLine::new(line),
             SourceSymbol::new(symbol)?,
         ))
     }

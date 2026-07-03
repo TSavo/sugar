@@ -52,6 +52,9 @@ file_prefixes = ["lib"]
 root = "implementations/rust/sugar-ir-compiler-maude/src"
 file_prefixes = ["lib"]
 
+[[ambient_sources]]
+path = "implementations/rust/sugar-verifier/src/consistency.rs"
+
 [[proofir_membership_sources]]
 path = "implementations/rust/sugar-ir-types/src/lib.rs"
 
@@ -252,24 +255,24 @@ ignored_items = [
 [[interface_sources]]
 path = "implementations/rust/sugar-verifier/src/types.rs"
 ignored_items = [
-  { name = "LoadError", reason = "load diagnostic payload nested under the declared MementoPool boundary" },
-  { name = "EffectSiteAnnotation", reason = "diagnostic annotation row; effect-site proof evidence owns its own campaign" },
+  { name = "LoadError", reason = "pool load diagnostic nested under the declared MementoPool data-access boundary" },
+  { name = "EffectSiteAnnotation", reason = "effect-site diagnostic annotation; proof evidence typing is outside the S8 pool lookup seam" },
   { name = "SourcePath", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
-  { name = "SourceLine", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
+  { name = "SourceLine", reason = "plain coordinate newtype nested inside BundleScopedCallsiteKey; S9 removed the vacuous fallible constructor" },
   { name = "SourceSymbol", reason = "coordinate newtype nested inside the declared BundleScopedCallsiteKey" },
-  { name = "ResolvedContractBody", reason = "resolved view nested inside the declared VerifiedContract" },
-  { name = "ImplicationKey", reason = "private implication helper key, not a pipeline boundary" },
-  { name = "ImplicationResult", reason = "pool implication helper result, not the S8 data-access boundary" },
-  { name = "BridgePin", reason = "bridge pin enum nested inside callsite/resolve_target handling, not the S8 data-access boundary" },
-  { name = "CallSite", reason = "pre-existing verifier stage carrier; S8 only types the pool lookup key" },
-  { name = "AttributeSafetyObligation", reason = "attribute-safety stage payload, not the S8 data-access boundary" },
-  { name = "ResolvedProperty", reason = "resolve_target stage carrier, not the S8 data-access boundary" },
-  { name = "Obligation", reason = "instantiate/solve stage carrier, not the S8 data-access boundary" },
-  { name = "ObligationVerdict", reason = "nested solver/report vocabulary already represented by SolveResult and report rows" },
+  { name = "ResolvedContractBody", reason = "read-only resolved view nested inside the declared VerifiedContract" },
+  { name = "ImplicationKey", reason = "private implication-cache key; not a cross-boundary pipeline input" },
+  { name = "ImplicationResult", reason = "private implication-cache result; not the S8 data-access boundary" },
+  { name = "BridgePin", reason = "bridge pin enum consumed by callsite and resolve_target handling; not a pool lookup key" },
+  { name = "CallSite", reason = "verifier stage carrier consumed before typed pool lookup; S8 boundary is BundleScopedCallsiteKey" },
+  { name = "AttributeSafetyObligation", reason = "attribute-safety stage payload; not a proof-envelope pool access API" },
+  { name = "ResolvedProperty", reason = "resolve_target stage carrier; not a proof-envelope pool access API" },
+  { name = "Obligation", reason = "instantiate/solve stage carrier; not a proof-envelope pool access API" },
+  { name = "ObligationVerdict", reason = "solver/report verdict vocabulary nested under declared solver and report surfaces" },
   { name = "ReportRow", reason = "verifier report payload owned by report/runner rows, not the S8 pool seam" },
-  { name = "ResolvedCallEdge", reason = "call-edge diagnostic row, not the S8 data-access boundary" },
-  { name = "ToolchainPlanReport", reason = "toolchain diagnostic report row, not the S8 data-access boundary" },
-  { name = "Report", reason = "aggregate verifier report payload owned by runner/report lanes, not the S8 pool seam" },
+  { name = "ResolvedCallEdge", reason = "call-edge diagnostic row owned by enumerate/report flow, not the S8 pool seam" },
+  { name = "ToolchainPlanReport", reason = "toolchain diagnostic report row owned by runner/report flow, not the S8 pool seam" },
+  { name = "Report", reason = "aggregate verifier report payload owned by runner/report rows, not the S8 pool seam" },
 ]
 
 [[interface_sources]]
