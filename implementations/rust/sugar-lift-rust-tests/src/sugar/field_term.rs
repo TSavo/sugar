@@ -18,7 +18,26 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "field_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+#[derive(Debug, PartialEq)]
+struct WitnessPoint { x: i32 }
+
+#[test]
+fn t_field_term_good() {
+    assert_eq!(WitnessPoint { x: 5 }.x, 5);
+}
+"#,
+            r#"
+#[derive(Debug, PartialEq)]
+struct WitnessPoint { x: i32 }
+
+#[test]
+fn t_field_term_bad() {
+    assert_eq!(WitnessPoint { x: 5 }.x, 6);
+}
+"#,
+        ),
         recognize,
     );
 

@@ -9377,6 +9377,11 @@ enum Effect {
     /// array/range domains are genuine source boundaries owned by LiteralSugar. A
     /// nonempty finite literal domain completes before this effect can fire.
     LiteralDomain { boundary: String, reason: String },
+    /// STRUCT-UPDATE-REST: a struct literal using `..rest` does not write every field value
+    /// at the literal site. Field projection facts are only derived from fully pinned
+    /// `struct:*` ctor arguments; the rest source must be modeled explicitly before it can
+    /// contribute field values.
+    StructUpdateRest { boundary: String },
     /// LITERAL-PANIC: a fully-literal stdlib/compiler operation has no returned value because
     /// Rust panics on that exact source path (`(-1).isqrt()`, `None.unwrap()`, ...). This is a
     /// source/runtime boundary, not a missing deconstruction and not an opaque support term:
@@ -9619,6 +9624,12 @@ impl Effect {
                  construction from the literal; refused by name: `{boundary}`"
             ),
             Effect::LiteralDomain { reason, .. } => reason.clone(),
+            Effect::StructUpdateRest { boundary } => format!(
+                "struct literal with `..rest` is not fully pinned from the literal: `{boundary}` \
+                 (bin-2: rest fields are not constructed by this literal); owner=rust.struct_term; \
+                 shape=struct-update-literal; replacement=derive field projection facts only from \
+                 fully pinned `struct:*` ctor arguments; refused"
+            ),
             Effect::LiteralPanic { reason, .. } => reason.clone(),
             Effect::InvalidBitPattern { reason, .. } => reason.clone(),
             Effect::UndefinedBehavior { reason, .. } => reason.clone(),
@@ -9708,6 +9719,7 @@ impl Effect {
             | Effect::RuntimeDestructuredSource { boundary, .. }
             | Effect::ArrayRepeat { boundary }
             | Effect::LiteralDomain { boundary, .. }
+            | Effect::StructUpdateRest { boundary }
             | Effect::LiteralPanic { boundary, .. }
             | Effect::InvalidBitPattern { boundary, .. }
             | Effect::UndefinedBehavior { boundary, .. }
@@ -19660,6 +19672,15 @@ pub(crate) fn assertion_entry_from_relation(
             claim_count: 1,
         };
     }
+    if let Some(atom) = struct_field_projection_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
 
     let name = if is_ground_value(lhs.as_ref()) {
         callsite_assertion_name(rhs.as_ref(), scope.local_scope())
@@ -19726,6 +19747,75 @@ fn range_field_term(field: &str, term: &Rc<Term>) -> Rc<Term> {
         name: format!("field:{field}"),
         args: vec![term.clone()],
     })
+}
+
+fn struct_field_projection_relation_atom(
+    lhs: &Rc<Term>,
+    rhs: &Rc<Term>,
+    op: RelationOp,
+) -> Option<Rc<Formula>> {
+    if !matches!(op, RelationOp::Eq | RelationOp::Ne) {
+        return None;
+    }
+    let mut atoms = Vec::new();
+    push_struct_field_projection_atom(lhs, &mut atoms);
+    push_struct_field_projection_atom(rhs, &mut atoms);
+    if atoms.is_empty() {
+        return None;
+    }
+    atoms.insert(
+        0,
+        match op {
+            RelationOp::Eq => eq(lhs.clone(), rhs.clone()),
+            RelationOp::Ne => ne(lhs.clone(), rhs.clone()),
+            _ => {
+                unreachable!(
+                    "struct field projection facts are only emitted for equality operators"
+                )
+            }
+        },
+    );
+    Some(and_(atoms))
+}
+
+fn push_struct_field_projection_atom(term: &Rc<Term>, atoms: &mut Vec<Rc<Formula>>) {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return;
+    };
+    let Some(field) = name.strip_prefix("field:") else {
+        return;
+    };
+    if args.len() != 1 {
+        return;
+    }
+    let base = &args[0];
+    let Some(value) = struct_field_value(base, field) else {
+        return;
+    };
+    atoms.push(eq(term.clone(), value.clone()));
+}
+
+fn struct_field_value<'a>(term: &'a Rc<Term>, field: &str) -> Option<&'a Rc<Term>> {
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return None;
+    };
+    if !name.starts_with("struct:") {
+        return None;
+    }
+    let expected = format!("field:{field}");
+    for arg in args {
+        let Term::Ctor {
+            name: field_name,
+            args: field_args,
+        } = arg.as_ref()
+        else {
+            return None;
+        };
+        if field_name == &expected {
+            return (field_args.len() == 1).then_some(&field_args[0]);
+        }
+    }
+    None
 }
 
 fn const_u128_relation_atom(lhs: &Rc<Term>, rhs: &Rc<Term>, op: RelationOp) -> Option<Rc<Formula>> {
@@ -25438,6 +25528,7 @@ fn t() {
             "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
             "array-repeat length 18446744073709551615 exceeds the 4096-element expansion bound; refused by name: `[() ; usize :: MAX]`",
+            "struct literal with `..rest` is not fully pinned from the literal: `WitnessPoint { .. base }` (bin-2: rest fields are not constructed by this literal); owner=rust.struct_term; shape=struct-update-literal; replacement=derive field projection facts only from fully pinned `struct:*` ctor arguments; refused",
             "out-of-bounds unchecked slice indexing `[10 , 20 , 30] . get_unchecked (5)` is undefined behavior with no determinate value; refused",
             "destructured source runtime, not literal for `a`: pattern binding participates in the assertion, but the destructured source did not resolve to a literal tuple/array; refused",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
