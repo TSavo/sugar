@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 const MANIFEST_REL: &str = "conformance/typed_pipeline/interfaces.toml";
 const BASELINE_DECLARED_ESCAPE_HATCH_ROWS_OPEN: usize = 6;
-const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 1;
+const BASELINE_AMBIENT_TESTIMONY_SITES_OPEN: usize = 0;
 const BASELINE_TRANSPORT_JSON_BACKEND_INGRESS_OPEN: usize = 0;
 const BASELINE_BACKEND_FRONTEND_DECODE_CALLS_OPEN: usize = 0;
 const BASELINE_FRONTEND_PROVENANCE_UNADMITTED_OPEN: usize = 0;
@@ -1490,7 +1490,7 @@ fn audit_manifest_with_mode(
                 "ratchet pins ambient_testimony_sites at {}, expected {BASELINE_AMBIENT_TESTIMONY_SITES_OPEN}",
                 manifest.ratchet.ambient_testimony_sites
             ),
-            replacement: "S2 baseline is the declared #3313 ambient-ground-callsite self-witness row; drains own retirement"
+            replacement: "ambient testimony sites are at stable zero; new rows must split obligation, witness, boundary, and replay inputs"
                 .to_string(),
         });
     }
@@ -2161,9 +2161,10 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        if text.contains("collect_ambient_ground_callsite_facts")
-            && text.contains("with_ambient_ground_callsite_facts")
-        {
+        let has_ambient_ground_path = text.contains("collect_ambient_ground_callsite_facts")
+            && text.contains("with_ambient_ground_callsite_facts");
+        let has_source_split = text.contains("source_cid") && text.contains("excluded_source_cids");
+        if has_ambient_ground_path && !has_source_split {
             let line = text
                 .lines()
                 .position(|line| line.contains("with_ambient_ground_callsite_facts"))

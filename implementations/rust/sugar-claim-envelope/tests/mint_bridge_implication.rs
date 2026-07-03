@@ -24,6 +24,10 @@ fn seed() -> Ed25519Seed {
     [0x42u8; 32]
 }
 
+fn fixture_cid(hex: char) -> String {
+    format!("blake3-512:{}", hex.to_string().repeat(128))
+}
+
 // ---------------------------------------------------------------------------
 // mint_bridge
 // ---------------------------------------------------------------------------
@@ -34,7 +38,7 @@ fn bridge_args() -> MintBridgeArgs {
         produced_at: "2026-04-30T00:00:00.000Z".into(),
         source_symbol: "parseInt".into(),
         source_layer: "ts".into(),
-        target_contract: ContractMementoRef::new("blake3-512:cccc"),
+        target_contract: ContractMementoRef::new(fixture_cid('c')),
         target_layer: "rust-kit".into(),
         ir_arg_sorts: vec!["String".into()],
         ir_return_sort: "Int".into(),
@@ -92,7 +96,7 @@ fn bridge_input_cids_first_entry_is_target_contract_cid() {
         .and_then(|v| v.as_array())
         .expect("inputCids array");
     assert_eq!(cids.len(), 1);
-    assert_eq!(cids[0].as_str(), Some("blake3-512:cccc"));
+    assert_eq!(cids[0].as_str(), Some(fixture_cid('c').as_str()));
 }
 
 #[test]
@@ -101,7 +105,7 @@ fn bridge_evidence_kind_is_bridge() {
     let mut g = ProofGraph::new();
     g.push_bridge(BridgeMemento::new(m.canonical_bytes.clone()));
     let view = g.bridges().next().unwrap();
-    assert_eq!(view.kind().as_deref(), Some("bridge"));
+    assert_eq!(view.kind().map(|kind| kind.as_str()), Some("bridge"));
 }
 
 #[test]
@@ -116,7 +120,7 @@ fn bridge_body_carries_all_input_fields() {
     assert_eq!(view.field("sourceLayer").as_deref(), Some("ts"));
     assert_eq!(
         view.field("targetContractCid").as_deref(),
-        Some("blake3-512:cccc")
+        Some(fixture_cid('c').as_str())
     );
     assert_eq!(view.field("targetLayer").as_deref(), Some("rust-kit"));
     assert_eq!(view.field("irReturnSort").as_deref(), Some("Int"));
@@ -188,10 +192,10 @@ fn impl_args() -> MintImplicationArgs {
     MintImplicationArgs {
         produced_by: "z3".into(),
         produced_at: "2026-04-30T00:00:00.000Z".into(),
-        antecedent_hash: "blake3-512:aaa".into(),
-        consequent_hash: "blake3-512:ccc".into(),
-        antecedent: ContractMementoRef::new("blake3-512:zzz"),
-        consequent: ContractMementoRef::new("blake3-512:bbb"),
+        antecedent_hash: fixture_cid('a'),
+        consequent_hash: fixture_cid('c'),
+        antecedent: ContractMementoRef::new(fixture_cid('f')),
+        consequent: ContractMementoRef::new(fixture_cid('b')),
         additional_inputs: Vec::new(),
         antecedent_slot: "pre".into(),
         consequent_slot: "post".into(),
@@ -216,7 +220,7 @@ fn implication_evidence_kind_is_implication() {
     let mut g = ProofGraph::new();
     g.push_implication(ImplicationMemento::new(m.canonical_bytes.clone()));
     let view = g.implications().next().unwrap();
-    assert_eq!(view.kind().as_deref(), Some("implication"));
+    assert_eq!(view.kind().map(|kind| kind.as_str()), Some("implication"));
 }
 
 #[test]
@@ -226,7 +230,8 @@ fn implication_property_hash_is_blake3_of_implication_prefix_plus_hashes() {
     g.push_implication(ImplicationMemento::new(m.canonical_bytes.clone()));
     let view = g.implications().next().unwrap();
     let ph = view.field("propertyHash").unwrap();
-    let expected = blake3_512_of(b"implication:blake3-512:aaa:blake3-512:ccc");
+    let expected =
+        blake3_512_of(format!("implication:{}:{}", fixture_cid('a'), fixture_cid('c')).as_bytes());
     assert_eq!(ph, expected);
 }
 
@@ -239,8 +244,8 @@ fn implication_binding_hash_is_blake3_of_jcs_antecedent_consequent_hashes() {
     let bh = view.field("bindingHash").unwrap();
 
     let v = Value::object([
-        ("antecedentHash", Value::string("blake3-512:aaa")),
-        ("consequentHash", Value::string("blake3-512:ccc")),
+        ("antecedentHash", Value::string(fixture_cid('a'))),
+        ("consequentHash", Value::string(fixture_cid('c'))),
     ]);
     let expected = blake3_512_of(encode_jcs(&v).as_bytes());
     assert_eq!(bh, expected);
@@ -253,15 +258,15 @@ fn implication_input_cids_contain_both_antecedent_and_consequent_lex_sorted() {
     g.push_implication(ImplicationMemento::new(m.canonical_bytes.clone()));
     let view = g.implications().next().unwrap();
     let json = view.json();
-    // antecedent_cid="zzz", consequent_cid="bbb"; envelope wrapper sorts.
+    // antecedent_cid="ffff...", consequent_cid="bbbb..."; envelope wrapper sorts.
     let cids = json
         .get("header")
         .and_then(|h| h.get("inputCids"))
         .and_then(|v| v.as_array())
         .expect("array");
     assert_eq!(cids.len(), 2);
-    assert_eq!(cids[0].as_str(), Some("blake3-512:bbb"));
-    assert_eq!(cids[1].as_str(), Some("blake3-512:zzz"));
+    assert_eq!(cids[0].as_str(), Some(fixture_cid('b').as_str()));
+    assert_eq!(cids[1].as_str(), Some(fixture_cid('f').as_str()));
 }
 
 #[test]
@@ -331,7 +336,7 @@ fn implication_is_deterministic() {
 fn implication_changing_antecedent_hash_changes_property_hash() {
     let a = mint_implication(&impl_args());
     let mut other = impl_args();
-    other.antecedent_hash = "blake3-512:DIFFERENT".into();
+    other.antecedent_hash = fixture_cid('d');
     let b = mint_implication(&other);
     let mut g_a = ProofGraph::new();
     g_a.push_implication(ImplicationMemento::new(a.canonical_bytes.clone()));
