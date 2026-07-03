@@ -127,11 +127,15 @@ ignored_items = [
 [[interface_sources]]
 path = "implementations/rust/sugar-ir-compiler/src/frontend.rs"
 ignored_items = [
+  { name = "BINARY_FRONTEND_ID", reason = "private proofir-cbor-v1 decode payload label inside the declared BinaryProofIrFrontend boundary" },
+  { name = "BINARY_INPUT_FORMAT", reason = "private proofir-cbor-v1 format label inside the declared BinaryProofIrFrontend boundary" },
+  { name = "BINARY_MAGIC", reason = "private proofir-cbor-v1 magic prefix inside the declared BinaryProofIrFrontend boundary" },
   { name = "EquationalTheory", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
   { name = "EquationalSubsort", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
   { name = "EquationalOperator", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
   { name = "EquationalVariable", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
   { name = "EquationalEquation", reason = "nested equational-theory payload inside the declared EquationalTheoryObligation boundary" },
+  { name = "CborCursor", reason = "private decoder cursor implementation inside the declared BinaryProofIrFrontend boundary" },
 ]
 
 [[interface_sources]]
@@ -592,6 +596,49 @@ replay_inputs = [
   "target dialect",
 ]
 source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "CompilerInput", kind = "enum" }
+
+[[interfaces]]
+id = "binary-proofir-frontend"
+owner = "sugar-ir-compiler::frontend"
+input_type = "canonical proofir-cbor-v1 bytes"
+output_type = "CompilerInput::{Formula, Term, EquationalTheory}"
+addressing_rule = "proofir-cbor-v1 magic plus canonical CBOR map keys address the binary replay bytes; FrontendErrorPayload.path addresses decode failures"
+failure_type = "FrontendError"
+replay_inputs = [
+  "canonical proofir-cbor-v1 bytes",
+  "binary frontend adapter id",
+  "binary format version",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "BinaryProofIrFrontend", kind = "struct" }
+
+[[interfaces]]
+id = "compiled-formula-field-path"
+owner = "sugar-ir-compiler::frontend"
+input_type = "CompiledFormula field selected by Instrument C"
+output_type = "closed typed field path for frontend provenance"
+addressing_rule = "enum variant names exactly one CompiledFormula field: preamble, body, free_vars, opacity_manifest, or metadata"
+failure_type = "frontend-provenance-unadmitted finding"
+replay_inputs = [
+  "CompiledFormula before/after pair",
+  "FrontendProvenancePolicy.allowed_fields",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "CompiledFormulaFieldPath", kind = "enum" }
+
+[[interfaces]]
+id = "frontend-provenance-policy-interface"
+owner = "sugar-ir-compiler::frontend"
+input_type = "cross-frontend CompiledFormula difference"
+output_type = "owner-scoped typed allowance for Instrument C"
+addressing_rule = "owner + allowed_fields + reason + retirement address the admitted frontend-output exception"
+failure_type = "frontend-provenance-unadmitted finding"
+replay_inputs = [
+  "CompiledFormula before/after pair",
+  "owner",
+  "allowed_fields",
+  "reason",
+  "retirement",
+]
+source = { path = "implementations/rust/sugar-ir-compiler/src/frontend.rs", item = "FrontendProvenancePolicy", kind = "struct" }
 
 [[interfaces]]
 id = "equational-theory-obligation"

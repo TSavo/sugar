@@ -19,9 +19,10 @@ use serde_json::Value as Json;
 
 pub use error::CompileError;
 pub use frontend::{
-    CompilerInput, EquationalEquation, EquationalOperator, EquationalSubsort, EquationalTheory,
-    EquationalTheoryObligation, EquationalVariable, FrontendError, FrontendErrorKind,
-    FrontendErrorPayload,
+    BinaryProofIrFrontend, CompiledFormulaFieldPath, CompilerInput, EquationalEquation,
+    EquationalOperator, EquationalSubsort, EquationalTheory, EquationalTheoryObligation,
+    EquationalVariable, FrontendError, FrontendErrorKind, FrontendErrorPayload,
+    FrontendProvenancePolicy,
 };
 
 /// Result of compiling one canonical IR-JSON formula to a target
