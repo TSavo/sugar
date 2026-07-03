@@ -139,6 +139,36 @@ The issue's Python-port framing maps onto this design rather than competing with
   same pinned FOL). This decision gates S3+ drains that would commit to a seam; S1
   and S2 are seam-neutral. Do not assume it — flag to the coordinator when reached.
 
+### Addendum — the iter floor is the foundational membership (T Savo, 2026-07-03)
+
+T: "What stands on an iter() floor? ArrayLiterals for one..." The consequences,
+ratified in conversation:
+
+- **The iter floor IS the temporal floor, concretely.** Standing on iter =
+  admitting counted enumeration. The counting, the occurrence-renames, the pinned
+  terms — all of it is what the iter floor does to its members. The combinator
+  floors (map/fold/filter/...) STACK on iter: their operand bound is
+  "stands on iter" plus an element embedding; Mappable is not a separate
+  membership, it is iter-standing seen through the map floor.
+- **Members provide their own counts by enumerating.** ArrayLiteral, TupleLiteral,
+  StringLiteral (chars/bytes), RangeLiteral (`0..3` — a literal whose content IS
+  its count). The count is never analyzed; the member iterates for real and the
+  composition executes exactly that many times.
+- **Map's OUTPUT stands on iter** — chaining/composition (`xs.map(f).filter(p)`)
+  is floors dispatching to floors; the ecology falls out of one membership.
+- **Stated collections stand on iter WITH their provenance.** A vendor-stated
+  literal (`call:make_xs() == [1,2,3]`, Stated memento) is an ArrayLiteral, so it
+  stands; the count it yields carries the Stated warrant onto every emitted term.
+  Derived literals same, warrant Derived. This RESOLVES the data-dependent-arity
+  question: there is no special case — the question was never "can we derive the
+  count," it is "does the operand stand on iter," and provenance rides the
+  standing. A value that does not stand (opaque un-stated call, consumed iterator
+  with unknown remainder) cannot be a combinator operand AT ALL — refusal at the
+  standing, per the membership law.
+- Slice impact: S2's substrate includes iter-floor membership for the literal
+  family (the members above); S3's MapSugar bounds its operand on iter-standing;
+  the R(embeddings) axis counts per-floor-per-literal doorways.
+
 ## Instruments (S1 — before any drain)
 
 - **Instrument A — the catalog enumeration:** `R(stdlib-temporal-surface-unenrolled)`.
