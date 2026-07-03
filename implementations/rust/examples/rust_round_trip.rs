@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use sugar_verifier::{resolve_target, Runner, RunnerConfig};
+use sugar_verifier::{resolve_target, LegacyZ3Fallback, Runner, RunnerConfig};
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().collect();
@@ -24,7 +24,9 @@ fn main() -> ExitCode {
 
     let cfg = RunnerConfig {
         project_root: project_root.clone(),
-        z3_path: std::env::var("SUGAR_Z3").unwrap_or_else(|_| "z3".into()),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat(
+            std::env::var("SUGAR_Z3").unwrap_or_else(|_| "z3".into()),
+        )),
         ..Default::default()
     };
     let runner = Runner::new(cfg);

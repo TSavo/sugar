@@ -886,7 +886,7 @@ fn python_classshape_attribute_safety_discharges_only_guaranteed_attribute() {
     );
     let report = sugar_verifier::Runner::new(sugar_verifier::RunnerConfig {
         project_root: project.clone(),
-        z3_path: "z3".to_string(),
+        legacy_z3_fallback: Some(sugar_verifier::LegacyZ3Fallback::compat("z3")),
         ..Default::default()
     })
     .run();
@@ -929,7 +929,7 @@ fn python_classshape_open_attribute_stays_unproven_falsepass_guard() {
 
     let report = sugar_verifier::Runner::new(sugar_verifier::RunnerConfig {
         project_root: project.clone(),
-        z3_path: "z3".to_string(),
+        legacy_z3_fallback: Some(sugar_verifier::LegacyZ3Fallback::compat("z3")),
         ..Default::default()
     })
     .run();

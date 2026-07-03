@@ -254,7 +254,8 @@ This spec is satisfied by the implementation in
   `src/solvers/{config,dispatch,plan,registry}.rs`).
 - The multi-solver demo runs end-to-end with stub solvers in CI.
 - The Stage 4 handshake demo (real Z3 path) keeps round-tripping
-  green via the legacy `RunnerConfig.z3_path` fallback.
+  green via the explicit `RunnerConfig::legacy_z3_fallback`
+  compatibility hatch.
 
 ## 9. Open follow-ups
 

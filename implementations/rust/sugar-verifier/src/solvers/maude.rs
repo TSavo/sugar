@@ -12,7 +12,7 @@ use sugar_ir_compiler::CompiledFormula;
 use sugar_ir_compiler_maude::{MaudeQueries, TrsSpec, DIALECT};
 
 use crate::solvers::ceta::{run_command_capture, CetaGate, CetaGateConfig, CetaGateReceipt};
-use crate::solvers::{SolveResult, Solver, SolverIdentity};
+use crate::solvers::{SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -235,15 +235,22 @@ impl Solver for MaudeSubprocessSolver {
             ceta_result.receipt,
         );
 
-        SolveResult {
+        let timed_out = capture.timed_out || ceta_result.timed_out;
+        SolveResult::with_evidence(
             verdict,
-            solver_name: self.name.clone(),
-            solver_version: self.version.clone(),
-            error,
-            solver_stdout: receipt,
-            wall_clock: started.elapsed(),
-            timed_out: capture.timed_out || ceta_result.timed_out,
-        }
+            self.name.clone(),
+            self.version.clone(),
+            SolverExitMetadata::new(if error.is_empty() {
+                SolverExitKind::Ok
+            } else {
+                SolverExitKind::NonZeroExit
+            }),
+            (!error.is_empty()).then_some(error),
+            Some(receipt),
+            None,
+            started.elapsed(),
+            timed_out,
+        )
     }
 }
 
@@ -384,13 +391,19 @@ fn unknown_result(
     error: String,
     solver_stdout: String,
 ) -> SolveResult {
-    SolveResult {
-        verdict: ObligationVerdict::Undecidable,
-        solver_name: name.to_string(),
-        solver_version: version.to_string(),
-        error,
-        solver_stdout,
-        wall_clock: started.elapsed(),
+    SolveResult::with_evidence(
+        ObligationVerdict::Undecidable,
+        name.to_string(),
+        version.to_string(),
+        SolverExitMetadata::new(if timed_out {
+            SolverExitKind::Timeout
+        } else {
+            SolverExitKind::CompileError
+        }),
+        Some(error),
+        Some(solver_stdout),
+        None,
+        started.elapsed(),
         timed_out,
-    }
+    )
 }

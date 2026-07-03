@@ -1122,23 +1122,37 @@ fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
     Json::Array(
         invs.iter()
             .map(|inv| {
-                let stdout_first_line = inv
-                    .result
-                    .solver_stdout
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty())
-                    .unwrap_or("");
+                let mut exit = json!({
+                    "kind": inv.result.exit.kind.as_str(),
+                    "timedOut": inv.result.timed_out,
+                });
+                if let Some(code) = inv.result.exit.code {
+                    exit["code"] = json!(code);
+                }
+                if let Some(diagnostic) = &inv.result.evidence.diagnostic {
+                    exit["diagnosticCid"] = json!(&diagnostic.cid);
+                    exit["diagnosticBytes"] = json!(diagnostic.byte_len);
+                }
+                if let Some(frontend_error) = &inv.result.exit.frontend_error {
+                    exit["frontendError"] = serde_json::to_value(frontend_error)
+                        .expect("FrontendErrorPayload serializes");
+                }
                 let mut value = json!({
                     "solver": &inv.result.solver_name,
                     "version": &inv.result.solver_version,
                     "compiler": &inv.compiler,
                     "authoritative": inv.authoritative,
                     "verdict": inv.result.verdict.as_str(),
-                    "timedOut": inv.result.timed_out,
-                    "error": &inv.result.error,
-                    "stdoutFirstLine": stdout_first_line,
+                    "exit": exit,
                 });
+                if let Some(stdout) = &inv.result.evidence.stdout {
+                    value["stdoutCid"] = json!(&stdout.cid);
+                    value["stdoutBytes"] = json!(stdout.byte_len);
+                }
+                if let Some(stderr) = &inv.result.evidence.stderr {
+                    value["stderrCid"] = json!(&stderr.cid);
+                    value["stderrBytes"] = json!(stderr.byte_len);
+                }
                 if let Some(artifact_cid) = &inv.identity.artifact_cid {
                     value["solverArtifactCid"] = json!(artifact_cid);
                 }

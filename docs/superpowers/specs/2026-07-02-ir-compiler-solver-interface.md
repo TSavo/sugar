@@ -122,10 +122,29 @@ pub struct SolveResult {
     pub verdict: ObligationVerdict,
     pub solver_name: String,
     pub solver_version: String,
-    pub error: String,
-    pub solver_stdout: String,
+    pub exit: SolverExitMetadata,
+    pub evidence: SolverEvidence,
     pub wall_clock: Duration,
     pub timed_out: bool,
+}
+
+pub struct SolverExitMetadata {
+    pub kind: SolverExitKind,
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    pub diagnostic_cid: Option<String>,
+    pub frontend_error: Option<FrontendErrorPayload>,
+}
+
+pub struct SolverEvidence {
+    pub stdout: Option<SolverEvidenceSidecar>,
+    pub stderr: Option<SolverEvidenceSidecar>,
+    pub diagnostic: Option<SolverEvidenceSidecar>,
+}
+
+pub struct SolverEvidenceSidecar {
+    pub cid: String,
+    pub byte_len: usize,
 }
 ```
 
@@ -168,7 +187,7 @@ Execution semantics:
 ```rust
 pub struct RunnerConfig {
     pub project_root: PathBuf,
-    pub z3_path: String,
+    pub legacy_z3_fallback: Option<LegacyZ3Fallback>,
     pub cache_dir: Option<PathBuf>,
     pub mint_seed: Option<[u8; 32]>,
     pub mint_producer_id: Option<String>,
@@ -184,7 +203,7 @@ pub struct RunnerConfig {
 
 1. explicit `cfg.solvers_config`,
 2. `.sugar/config.toml`,
-3. legacy single Z3 fallback at `cfg.z3_path`.
+3. explicit legacy single-Z3 compatibility fallback at `cfg.legacy_z3_fallback`.
 
 `cmd_prove.rs` constructs this config after component planning and passes a compiler registry built from that same plan.
 
@@ -194,10 +213,9 @@ pub struct RunnerConfig {
 2. **Solver identity is CID-addressed:** names and versions are not replay roots.
 3. **Plan semantics are centralized:** report code must not re-decide first-wins, consensus, or dispatch behavior.
 4. **Definitive verdicts are explicit:** `Discharged` and `Unsatisfied` are definitive; `Undecidable`, timeout, parse error, and missing solver are not.
-5. **Telemetry is typed:** wall clock, timeout, stdout, error, compiler, and identity cross as `SolveResult` / `SolverInvocation`, not parsed report strings.
+5. **Telemetry is typed:** wall clock, timeout, compiler, identity, structured exit metadata, and stdout/stderr/diagnostic sidecar CIDs cross as `SolveResult` / `SolverInvocation`, not parsed report strings.
 
 ## 11. Current drift / cleanup
 
 - `solvers/mod.rs` comment says first-wins remaining solvers are best-effort cancelled, while `plan.rs` says subprocess cancellation is not implemented and all continue until natural completion or timeout. The code in `plan.rs` is authoritative for current behavior.
-- The old `z3_path` fallback remains in `RunnerConfig`; it should be treated as compatibility, not the long-term solver interface.
-- `SolveResult.error` and `solver_stdout` are raw strings. If they become replay artifacts, they should be pinned as sidecar evidence with CIDs and structured exit metadata.
+- The direct `solve_obligation::run` shim still returns a legacy string-shaped result for historical single-Z3 callers. The verifier runner and replay telemetry use the typed `solvers::SolveResult` boundary above.

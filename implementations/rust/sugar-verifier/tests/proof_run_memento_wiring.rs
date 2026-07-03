@@ -13,7 +13,7 @@ use sugar_proof_envelope::{
     StageReceiptMemento,
 };
 use sugar_verifier::load_all_proofs;
-use sugar_verifier::{Runner, RunnerConfig, VERIFIER_STAGE_VOCABULARY};
+use sugar_verifier::{LegacyZ3Fallback, Runner, RunnerConfig, VERIFIER_STAGE_VOCABULARY};
 
 fn make_unique_dir(suffix: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
@@ -182,7 +182,7 @@ fn honest_stage_receipt_roundtrip() {
 
     let runner = Runner::new(RunnerConfig {
         project_root: project_root.clone(),
-        z3_path: "z3".into(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         ..Default::default()
     });
     let run = runner
@@ -214,7 +214,7 @@ fn prove_run_emits_durable_content_addressed_run_and_stage_receipts() {
 
     let runner = Runner::new(RunnerConfig {
         project_root: project_root.clone(),
-        z3_path: "z3".into(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         ..Default::default()
     });
     let run = runner

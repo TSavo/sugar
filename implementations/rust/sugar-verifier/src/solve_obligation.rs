@@ -40,7 +40,7 @@ pub fn run(z3_path: &str, smt_script: &str) -> SolveResult {
     let r = solver.solve(smt_script);
     SolveResult {
         verdict: r.verdict,
-        error: r.error,
-        solver_stdout: r.solver_stdout,
+        error: r.error().to_string(),
+        solver_stdout: r.solver_stdout().to_string(),
     }
 }

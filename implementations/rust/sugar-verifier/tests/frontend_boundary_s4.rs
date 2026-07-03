@@ -7,7 +7,7 @@ use sugar_ir_compiler::{registry::Registry as CompilerRegistry, CompilerInput, I
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
 use sugar_verifier::solvers::{
     plan::{run_plan, run_plan_with_compilers, Registry, SolverInvocation},
-    SolveResult, Solver, SolverPlan, SolverSeat,
+    SolveResult, Solver, SolverExitKind, SolverExitMetadata, SolverPlan, SolverSeat,
 };
 use sugar_verifier::types::ObligationVerdict;
 use sugar_verifier::SolverHandle;
@@ -34,15 +34,17 @@ impl Solver for CapturingSolver {
     }
 
     fn solve(&self, input: &str) -> SolveResult {
-        SolveResult {
-            verdict: self.verdict,
-            solver_name: self.name.to_string(),
-            solver_version: self.version.to_string(),
-            error: String::new(),
-            solver_stdout: format!("input-bytes={}\n", input.len()),
-            wall_clock: Duration::ZERO,
-            timed_out: false,
-        }
+        SolveResult::with_evidence(
+            self.verdict,
+            self.name,
+            self.version,
+            SolverExitMetadata::new(SolverExitKind::Stub),
+            None,
+            Some(format!("input-bytes={}\n", input.len())),
+            None,
+            Duration::ZERO,
+            false,
+        )
     }
 }
 
@@ -93,8 +95,8 @@ fn assert_invocation_shape_eq(left: &SolverInvocation, right: &SolverInvocation)
     assert_eq!(left.result.verdict, right.result.verdict);
     assert_eq!(left.result.solver_name, right.result.solver_name);
     assert_eq!(left.result.solver_version, right.result.solver_version);
-    assert_eq!(left.result.error, right.result.error);
-    assert_eq!(left.result.solver_stdout, right.result.solver_stdout);
+    assert_eq!(left.result.error(), right.result.error());
+    assert_eq!(left.result.solver_stdout(), right.result.solver_stdout());
     assert_eq!(left.result.wall_clock, right.result.wall_clock);
     assert_eq!(left.result.timed_out, right.result.timed_out);
 }
@@ -134,7 +136,8 @@ fn planted_solver_input_drift_changes_invocation_receipt() {
 
     assert_eq!(clean.0, drifted.0);
     assert_ne!(
-        clean.2[0].result.solver_stdout, drifted.2[0].result.solver_stdout,
+        clean.2[0].result.solver_stdout(),
+        drifted.2[0].result.solver_stdout(),
         "planted solver-input drift must be visible in invocation telemetry"
     );
 }
@@ -152,7 +155,7 @@ fn row_10_precompiled_non_smt_solver_refuses_loudly() {
     assert_eq!(invocations.len(), 1);
     assert!(invocations[0]
         .result
-        .error
+        .error()
         .contains("route typed ProofIR through run_plan_with_compilers"));
 }
 

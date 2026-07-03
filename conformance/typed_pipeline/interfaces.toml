@@ -3,7 +3,7 @@ version = 1
 [ratchet]
 interfaces_without_declaration = 0
 undeclared_escape_hatches = 0
-declared_escape_hatch_rows_open = 6
+declared_escape_hatch_rows_open = 3
 ambient_testimony_sites = 0
 frontend_provenance_unadmitted = 0
 untyped_verifier_obligation_paths = 0
@@ -97,6 +97,10 @@ path = "implementations/rust/sugar-cli/src/cmd_prove.rs"
 path = "implementations/rust/sugar-verifier/src/solvers/mod.rs"
 ignored_items = [
   { name = "SolverIdentity", reason = "solver identity is evidence metadata; S7 owns telemetry typing beyond the six S1 rows" },
+  { name = "SolverExitKind", reason = "nested typed exit metadata inside the declared SolveResult boundary" },
+  { name = "SolverExitMetadata", reason = "nested typed exit metadata inside the declared SolveResult boundary" },
+  { name = "SolverEvidenceSidecar", reason = "nested CID-addressed telemetry sidecar inside the declared SolveResult boundary" },
+  { name = "SolverEvidence", reason = "nested CID-addressed telemetry sidecar set inside the declared SolveResult boundary" },
 ]
 
 [[interface_sources]]
@@ -104,6 +108,8 @@ path = "implementations/rust/sugar-verifier/src/runner.rs"
 ignored_items = [
   { name = "RUN_SIGNER_SEED", reason = "private deterministic test/run signer seed, not a pipeline interface" },
   { name = "ProofRunArtifactError", reason = "local construction error wrapper; ProofRunArtifact is the interface" },
+  { name = "LegacyZ3Fallback", reason = "typed compat hatch nested inside the declared RunnerConfig boundary" },
+  { name = "STAGE_SMT_EMIT", reason = "single-source stage vocabulary label nested inside the declared verifier stage vocabulary boundary" },
   { name = "Runner", reason = "orchestrator implementation object; RunnerConfig and ProofRunArtifact are the boundary declarations" },
   { name = "StageCapture", reason = "private receipt assembly helper" },
   { name = "TrustAnchorConfig", reason = "private config decode helper inside verifier runner" },
@@ -378,21 +384,15 @@ owner = "sugar-verifier::solvers"
 input_type = "solver subprocess or in-process solver execution"
 output_type = "SolveResult"
 addressing_rule = "solver identity plus invocation context determines the solver result row"
-failure_type = "SolveResult.error string plus ObligationVerdict"
+failure_type = "SolverExitMetadata plus ObligationVerdict; solver stdout/stderr/diagnostic bytes are CID-addressed SolverEvidence sidecars"
 replay_inputs = [
   "CompiledFormula",
   "SolverIdentity",
   "solver name/version",
   "solver invocation flags",
+  "solver stdout/stderr/diagnostic sidecar CIDs",
 ]
 source = { path = "implementations/rust/sugar-verifier/src/solvers/mod.rs", item = "SolveResult", kind = "struct" }
-
-[[interfaces.escape_hatches]]
-shape = "free-text-solver-telemetry"
-owner = "ir-compiler-solver seam"
-retirement = "pin solver stdout/error as sidecar-CID evidence with structured exit metadata (S7)"
-baseline = true
-source = { path = "implementations/rust/sugar-verifier/src/solvers/mod.rs", item = "SolveResult", needles = ["error: String", "solver_stdout: String"] }
 
 [[interfaces]]
 id = "solver-trait"
@@ -414,19 +414,12 @@ owner = "sugar-verifier::runner"
 input_type = "verifier run stage list"
 output_type = "VERIFIER_STAGE_VOCABULARY"
 addressing_rule = "stage strings are embedded in proof-run receipts and reports"
-failure_type = "stage vocabulary drift is a conformance row"
+failure_type = "stage label mismatch is a replay-compatibility refusal; current label is single-sourced from STAGE_SMT_EMIT"
 replay_inputs = [
   "proof-run memento spec",
   "runner stage receipt names",
 ]
 source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "VERIFIER_STAGE_VOCABULARY", kind = "const" }
-
-[[interfaces.escape_hatches]]
-shape = "stage-vocabulary-drift"
-owner = "verifier seam"
-retirement = "reconcile smt_emit vs smt_emitter deliberately in code/spec vocabulary (S7)"
-baseline = true
-source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "VERIFIER_STAGE_VOCABULARY", needles = ["\"smt_emit\""] }
 
 [[interfaces]]
 id = "proof-run-artifact"
@@ -452,19 +445,13 @@ addressing_rule = "project_root plus solver configuration select proof verificat
 failure_type = "Runner construction/run diagnostics"
 replay_inputs = [
   "project_root",
+  "legacy_z3_fallback compat binary when CLI opts in to --z3",
   "cache_dir",
   "trusted_implication_signers",
   "solvers_config",
   "extra proof inputs",
 ]
 source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "RunnerConfig", kind = "struct" }
-
-[[interfaces.escape_hatches]]
-shape = "silent-fallback"
-owner = "ir-compiler-solver seam"
-retirement = "replace z3_path fallback resolution with config-driven solver plan only; classify fallback as compat (S7)"
-baseline = true
-source = { path = "implementations/rust/sugar-verifier/src/runner.rs", item = "RunnerConfig", needles = ["z3_path: String"] }
 
 [[interfaces]]
 id = "solver-stats"
