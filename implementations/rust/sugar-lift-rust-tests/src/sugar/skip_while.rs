@@ -12,12 +12,31 @@ use crate::sugar::bool_predicate::{BoolPredicateClosure, BoolPredicateFunction};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "skip_while",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_skip_while_good() {
+                    let got = [1i32, 2, 3, 1].into_iter().skip_while(|x| *x < 3).count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_skip_while_bad() {
+                    let got = [1i32, 2, 3, 1].into_iter().skip_while(|x| *x < 3).count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -115,24 +134,77 @@ fn reduce_skip_while(
             .unwrap_or_else(|| skip_while_gap("skip_while receiver reduced to non-sequence")),
         Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
     };
-    let mut out = Vec::new();
-    let mut still_skipping = true;
-    for (idx, elem) in seq.into_iter().enumerate() {
-        if still_skipping {
-            let skip = match pred.eval_for_elem(&elem, idx, "skip_while", ctx) {
-                Ok(skip) => skip,
-                Err(outcome) => return outcome,
-            };
-            if skip {
-                continue;
-            }
-            still_skipping = false;
-        }
-        out.push(elem);
-    }
-    Outcome::Complete(Desugared::Seq(out))
+    let floor = SkipWhileFloor::default();
+    let operand = match floor.derived_operand(seq.len()) {
+        Ok(operand) => operand,
+        Err(outcome) => return outcome,
+    };
+    let output = match floor.desugar(operand, seq, |idx, elem| {
+        pred.eval_for_elem(elem, idx, "skip_while", ctx)
+    }) {
+        Ok(output) => output,
+        Err(outcome) => return outcome,
+    };
+    ctx.record_adapter_floor_audit("skip_while", output.standing().count());
+    Outcome::Complete(Desugared::Seq(output.into_items()))
 }
 
 fn skip_while_gap(reason: &str) -> ! {
     panic!("skip_while did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct SkipWhileFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for SkipWhileFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("skip_while", AdapterOutputIterMember::skip_while),
+        }
+    }
+}
+
+impl SkipWhileFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(skip_while_floor_refusal)
+    }
+
+    fn desugar<F>(
+        &self,
+        _operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        mut predicate: F,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome>
+    where
+        F: FnMut(usize, &DesugaredElem) -> Result<bool, Outcome>,
+    {
+        let mut refusal = None;
+        let out = seq
+            .into_iter()
+            .enumerate()
+            .skip_while(|(idx, elem)| match predicate(*idx, elem) {
+                Ok(skip) => skip,
+                Err(outcome) => {
+                    refusal = Some(outcome);
+                    false
+                }
+            })
+            .map(|(_, elem)| elem)
+            .collect::<Vec<_>>();
+        if let Some(outcome) = refusal {
+            return Err(outcome);
+        }
+        self.counted.output(out).map_err(skip_while_floor_refusal)
+    }
+}
+
+fn skip_while_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::skip_while".to_string(),
+        reason: err.to_string(),
+    })
 }

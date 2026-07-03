@@ -16,8 +16,8 @@ use toml::Value;
 
 const CATALOG_TOML: &str = include_str!("fixtures/temporal_floor_catalog.toml");
 
-const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 48;
-const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 25;
+const EXPECTED_STDLIB_TEMPORAL_SURFACE_UNENROLLED: usize = 38;
+const EXPECTED_OPERATION_FLOORS_UNLANDED_R: usize = 15;
 const EXPECTED_EMBEDDINGS_R: usize = 0;
 
 const REQUIRED_CATALOG_ROWS: &[&str] = &[
@@ -41,6 +41,16 @@ const REQUIRED_ITER_MEMBERS: &[&str] = &[
     "StringLiteral.bytes",
     "RangeLiteral",
     "MapOutput",
+    "FilterOutput",
+    "FilterMapOutput",
+    "ChainOutput",
+    "ZipOutput",
+    "EnumerateOutput",
+    "TakeOutput",
+    "SkipOutput",
+    "TakeWhileOutput",
+    "SkipWhileOutput",
+    "InspectOutput",
     "StatedCollection",
     "DerivedCollection",
 ];
@@ -54,17 +64,13 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "assign_op.rs:2084",
     "assign_op.rs:2123",
     "assign_op.rs:2571",
-    "chain.rs:34",
     "char_range_filter_map.rs:87",
     "char_range_filter_map.rs:111",
     "collect.rs:40",
     "collect.rs:103",
     "collect.rs:127",
     "cycle.rs:96",
-    "enumerate.rs:30",
     "extract_if.rs:219",
-    "filter.rs:32",
-    "filter_map.rs:37",
     "flat_map.rs:44",
     "flatten.rs:37",
     "flatten.rs:59",
@@ -81,9 +87,6 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "identity_map.rs:32",
     "infinity_eq.rs:270",
     "insert.rs:220",
-    "inspect.rs:43",
-    "inspect.rs:58",
-    "inspect.rs:157",
     "intersperse_collect_string.rs:158",
     "intersperse_collect_string.rs:176",
     "intersperse_concat.rs:119",
@@ -104,14 +107,9 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "result_predicate.rs:279",
     "rev.rs:29",
     "scan.rs:70",
-    "skip.rs:28",
-    "skip_while.rs:32",
     "step_by.rs:32",
-    "take.rs:29",
-    "take_while.rs:32",
     "utf8_chunks.rs:264",
     "utf8_chunks.rs:273",
-    "zip.rs:43",
 ];
 
 const EXPECTED_COMBINATOR_LOCAL_RENAMES: &[&str] = &[];
@@ -220,6 +218,7 @@ fn validate_catalog(text: &str) -> Result<Metrics, String> {
                 used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
             }
             "landed" => {
+                catalog_methods.insert(str_field(row, "method", id)?.to_string());
                 used_floors.insert(str_field(row, "operation_floor", id)?.to_string());
                 str_field(row, "counted_loci_reason", id)?;
                 for locus in str_array_field(row, "counted_loci", id)? {
@@ -544,12 +543,24 @@ fn temporal_catalog_and_membership_vectors_are_pinned() {
     assert_eq!(
         metrics.landed_counted_loci,
         as_set(&[
+            "chain.rs:55",
+            "enumerate.rs:49",
+            "filter.rs:51",
+            "filter_map.rs:60",
             "fold.rs:69",
             "fold.rs:70",
+            "inspect.rs:61",
+            "inspect.rs:103",
+            "inspect.rs:247",
             "iter_terminal.rs:622",
             "iter_terminal.rs:623",
             "map.rs:74",
             "map.rs:101",
+            "skip.rs:47",
+            "skip_while.rs:51",
+            "take.rs:48",
+            "take_while.rs:51",
+            "zip.rs:62",
         ]),
         "landed count exemptions must be visible in the temporal catalog"
     );

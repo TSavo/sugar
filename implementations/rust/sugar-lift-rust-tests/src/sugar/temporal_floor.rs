@@ -449,6 +449,64 @@ impl IterFloorMember for MapOutputIterMember {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AdapterOutputIterMember {
+    member: &'static str,
+    count: usize,
+}
+
+impl AdapterOutputIterMember {
+    fn new(member: &'static str, count: usize) -> Self {
+        Self { member, count }
+    }
+
+    pub(crate) fn filter(count: usize) -> Self {
+        Self::new("FilterOutput", count)
+    }
+
+    pub(crate) fn filter_map(count: usize) -> Self {
+        Self::new("FilterMapOutput", count)
+    }
+
+    pub(crate) fn chain(count: usize) -> Self {
+        Self::new("ChainOutput", count)
+    }
+
+    pub(crate) fn zip(count: usize) -> Self {
+        Self::new("ZipOutput", count)
+    }
+
+    pub(crate) fn enumerate(count: usize) -> Self {
+        Self::new("EnumerateOutput", count)
+    }
+
+    pub(crate) fn take(count: usize) -> Self {
+        Self::new("TakeOutput", count)
+    }
+
+    pub(crate) fn skip(count: usize) -> Self {
+        Self::new("SkipOutput", count)
+    }
+
+    pub(crate) fn take_while(count: usize) -> Self {
+        Self::new("TakeWhileOutput", count)
+    }
+
+    pub(crate) fn skip_while(count: usize) -> Self {
+        Self::new("SkipWhileOutput", count)
+    }
+
+    pub(crate) fn inspect(count: usize) -> Self {
+        Self::new("InspectOutput", count)
+    }
+}
+
+impl IterFloorMember for AdapterOutputIterMember {
+    fn standing(&self) -> Result<IterStanding, TemporalFloorRefusal> {
+        IterStanding::new(self.member, IterProvenance::Derived, Some(self.count))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct IterFloor;
 
@@ -458,6 +516,101 @@ impl IterFloor {
         M: IterFloorMember,
     {
         member.standing()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AdapterFloorOutput<T> {
+    items: Vec<T>,
+    standing: IterStanding,
+}
+
+impl<T> AdapterFloorOutput<T> {
+    pub(crate) fn into_items(self) -> Vec<T> {
+        self.items
+    }
+
+    pub(crate) fn standing(&self) -> &IterStanding {
+        &self.standing
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CountedAdapterFloor {
+    operation: &'static str,
+    output_member: fn(usize) -> AdapterOutputIterMember,
+    iter: IterFloor,
+}
+
+impl CountedAdapterFloor {
+    pub(crate) fn new(
+        operation: &'static str,
+        output_member: fn(usize) -> AdapterOutputIterMember,
+    ) -> Self {
+        Self {
+            operation,
+            output_member,
+            iter: IterFloor,
+        }
+    }
+
+    pub(crate) fn derived_operand(
+        &self,
+        count: usize,
+    ) -> Result<IterStanding, TemporalFloorRefusal> {
+        self.iter.alias(&CollectionIterMember::derived(count))
+    }
+
+    pub(crate) fn output<T>(
+        &self,
+        items: Vec<T>,
+    ) -> Result<AdapterFloorOutput<T>, TemporalFloorRefusal> {
+        let standing = self.iter.alias(&(self.output_member)(items.len()))?;
+        Ok(AdapterFloorOutput { items, standing })
+    }
+
+    pub(crate) fn assert_input_count(
+        &self,
+        operand: &IterStanding,
+        actual: usize,
+    ) -> Result<(), TemporalFloorRefusal> {
+        if operand.count() == actual {
+            return Ok(());
+        }
+        Err(TemporalFloorRefusal::new(
+            "count mismatch",
+            "IteratorAdapterFloor",
+            format!(
+                "{} operand standing had {} tick(s), real adapter visited {} tick(s)",
+                self.operation,
+                operand.count(),
+                actual
+            ),
+            "route adapter operands through the iter floor standing that measured this sequence",
+        ))
+    }
+
+    pub(crate) fn assert_output_count(
+        &self,
+        operand: &IterStanding,
+        expected: usize,
+        actual: usize,
+    ) -> Result<(), TemporalFloorRefusal> {
+        if expected == actual {
+            return Ok(());
+        }
+        Err(TemporalFloorRefusal::new(
+            "count mismatch",
+            "IteratorAdapterFloor",
+            format!(
+                "{} operand standing had {} tick(s), expected {} output tick(s), real adapter produced {} tick(s)",
+                self.operation,
+                operand.count(),
+                expected,
+                actual
+            ),
+            "let the real stdlib adapter measure the output count and record that standing",
+        ))
     }
 }
 
@@ -711,6 +864,44 @@ mod tests {
         assert_eq!(standing.member(), "MapOutput");
         assert_eq!(standing.provenance(), IterProvenance::Derived);
         assert_eq!(standing.count(), 2);
+    }
+
+    #[test]
+    fn iter_floor_counts_adapter_outputs_as_derived() {
+        let floor = IterFloor;
+        let members = [
+            floor.alias(&AdapterOutputIterMember::filter(2)).unwrap(),
+            floor
+                .alias(&AdapterOutputIterMember::filter_map(3))
+                .unwrap(),
+            floor.alias(&AdapterOutputIterMember::chain(4)).unwrap(),
+            floor.alias(&AdapterOutputIterMember::zip(5)).unwrap(),
+            floor.alias(&AdapterOutputIterMember::enumerate(6)).unwrap(),
+            floor.alias(&AdapterOutputIterMember::take(7)).unwrap(),
+            floor.alias(&AdapterOutputIterMember::skip(8)).unwrap(),
+            floor
+                .alias(&AdapterOutputIterMember::take_while(9))
+                .unwrap(),
+            floor
+                .alias(&AdapterOutputIterMember::skip_while(10))
+                .unwrap(),
+            floor.alias(&AdapterOutputIterMember::inspect(11)).unwrap(),
+        ];
+
+        assert_eq!(members[0].member(), "FilterOutput");
+        assert_eq!(members[1].member(), "FilterMapOutput");
+        assert_eq!(members[2].member(), "ChainOutput");
+        assert_eq!(members[3].member(), "ZipOutput");
+        assert_eq!(members[4].member(), "EnumerateOutput");
+        assert_eq!(members[5].member(), "TakeOutput");
+        assert_eq!(members[6].member(), "SkipOutput");
+        assert_eq!(members[7].member(), "TakeWhileOutput");
+        assert_eq!(members[8].member(), "SkipWhileOutput");
+        assert_eq!(members[9].member(), "InspectOutput");
+        assert!(members
+            .iter()
+            .all(|standing| standing.provenance() == IterProvenance::Derived));
+        assert_eq!(members[9].count(), 11);
     }
 
     #[test]

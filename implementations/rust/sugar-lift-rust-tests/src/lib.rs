@@ -6744,9 +6744,10 @@ fn peel_fold_adaptors_inner<'a>(
                     // `.inspect(f)` yields the SAME items in the SAME order -- the closure
                     // receives `&Item` and CANNOT alter the value stream (its side effect is
                     // irrelevant to the asserted values). So it is the identity adaptor over
-                    // the value sequence, regardless of the argument form.
+                    // the value sequence, regardless of the argument form. It still routes
+                    // through InspectSugar so the temporal floor owns the count testimony.
                     ("inspect", 1) => Box::new(|inner, _fcx| {
-                        Box::new(sugar::identity::IdentitySugar {
+                        Box::new(sugar::inspect::InspectSugar {
                             inner: sugar::factory::SugarBody::from_node(inner),
                         })
                     }),
@@ -10863,6 +10864,24 @@ impl SugarCtx<'_, '_> {
                 "FoldSugar delegated accumulator recurrence through TemporalFloor REWRITE doorway"
                     .to_string(),
             ),
+            emitted_formula: None,
+        });
+    }
+
+    fn record_adapter_floor_audit(&self, method: &'static str, tick_count: usize) {
+        self.record_factory_audit(FactoryAudit {
+            ast_kind: "temporal-floor",
+            site: format!("{method} adapter floor over {tick_count} output tick(s)"),
+            line: 0,
+            span: None,
+            requested_role: "TemporalFloor::Adapter".to_string(),
+            selected: Some(method),
+            candidates: Vec::new(),
+            disposition: FactoryDisposition::Warranted,
+            output: "sequence",
+            reason: Some(format!(
+                "Iterator::{method} delegated counted composition through the temporal floor"
+            )),
             emitted_formula: None,
         });
     }

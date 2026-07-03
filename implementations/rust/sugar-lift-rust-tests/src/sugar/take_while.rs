@@ -12,12 +12,31 @@ use crate::sugar::bool_predicate::BoolPredicateClosure;
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite(
         "take_while",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_take_while_good() {
+                    let got = [1i32, 2, 3, 1].into_iter().take_while(|x| *x < 3).count();
+                    assert_eq!(got, 2);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_take_while_bad() {
+                    let got = [1i32, 2, 3, 1].into_iter().take_while(|x| *x < 3).count();
+                    assert_eq!(got, 3);
+                }
+            "#,
+        ),
         recognize_composite,
     );
 
@@ -80,21 +99,77 @@ fn reduce_take_while(
             .unwrap_or_else(|| take_while_gap("take_while receiver reduced to non-sequence")),
         Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
     };
-    let mut out = Vec::new();
-    for (idx, elem) in seq.into_iter().enumerate() {
-        let keep = match pred.eval_for_elem(&elem, idx, "take_while", ctx) {
-            Ok(keep) => keep,
-            Err(outcome) => return outcome,
-        };
-        if keep {
-            out.push(elem);
-        } else {
-            break;
-        }
-    }
-    Outcome::Complete(Desugared::Seq(out))
+    let floor = TakeWhileFloor::default();
+    let operand = match floor.derived_operand(seq.len()) {
+        Ok(operand) => operand,
+        Err(outcome) => return outcome,
+    };
+    let output = match floor.desugar(operand, seq, |idx, elem| {
+        pred.eval_for_elem(elem, idx, "take_while", ctx)
+    }) {
+        Ok(output) => output,
+        Err(outcome) => return outcome,
+    };
+    ctx.record_adapter_floor_audit("take_while", output.standing().count());
+    Outcome::Complete(Desugared::Seq(output.into_items()))
 }
 
 fn take_while_gap(reason: &str) -> ! {
     panic!("take_while did not reach a lawful floor: {reason}")
+}
+
+#[derive(Clone, Copy)]
+struct TakeWhileFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for TakeWhileFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("take_while", AdapterOutputIterMember::take_while),
+        }
+    }
+}
+
+impl TakeWhileFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(take_while_floor_refusal)
+    }
+
+    fn desugar<F>(
+        &self,
+        _operand: IterStanding,
+        seq: Vec<DesugaredElem>,
+        mut predicate: F,
+    ) -> Result<AdapterFloorOutput<DesugaredElem>, Outcome>
+    where
+        F: FnMut(usize, &DesugaredElem) -> Result<bool, Outcome>,
+    {
+        let mut refusal = None;
+        let out = seq
+            .into_iter()
+            .enumerate()
+            .take_while(|(idx, elem)| match predicate(*idx, elem) {
+                Ok(keep) => keep,
+                Err(outcome) => {
+                    refusal = Some(outcome);
+                    false
+                }
+            })
+            .map(|(_, elem)| elem)
+            .collect::<Vec<_>>();
+        if let Some(outcome) = refusal {
+            return Err(outcome);
+        }
+        self.counted.output(out).map_err(take_while_floor_refusal)
+    }
+}
+
+fn take_while_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::take_while".to_string(),
+        reason: err.to_string(),
+    })
 }

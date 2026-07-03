@@ -14,12 +14,33 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::source_fragment::SourceFragment;
-use crate::{const_val_term, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::sugar::temporal_floor::{
+    AdapterFloorOutput, AdapterOutputIterMember, CountedAdapterFloor, IterStanding,
+    TemporalFloorRefusal,
+};
+use crate::{
+    const_val_term, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "chain",
     SugarRole::Composite,
-    crate::sugar::claim::SugarWitnesses::Pending,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+            #[test]
+            fn t_chain_good() {
+                let got = [1i32, 2].into_iter().chain([3, 4]).count();
+                assert_eq!(got, 4);
+            }
+        "#,
+        r#"
+            #[test]
+            fn t_chain_bad() {
+                let got = [1i32, 2].into_iter().chain([3, 4]).count();
+                assert_eq!(got, 5);
+            }
+        "#,
+    ),
     recognize_composite,
 );
 
@@ -74,15 +95,36 @@ impl Sugar for ChainSugar {
         if total > SUGAR_SEQ_CAP as usize {
             panic!("chain sequence length {total} exceeds cap {SUGAR_SEQ_CAP}");
         }
-        let floor = match (left, right) {
-            (ChainSequence::Values(mut left), ChainSequence::Values(right)) => {
-                left.extend(right);
-                Desugared::Seq(left)
+        let floor = ChainFloor::default();
+        let left_operand = match floor.derived_operand(left.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let right_operand = match floor.derived_operand(right.len()) {
+            Ok(operand) => operand,
+            Err(outcome) => return outcome,
+        };
+        let desugared = match (left, right) {
+            (ChainSequence::Values(left), ChainSequence::Values(right)) => {
+                let output = match floor.desugar(left_operand, right_operand, left, right) {
+                    Ok(output) => output,
+                    Err(outcome) => return outcome,
+                };
+                ctx.record_adapter_floor_audit("chain", output.standing().count());
+                Desugared::Seq(output.into_items())
             }
             (left, right) => {
-                let mut terms = left.into_terms("chain lhs");
-                terms.extend(right.into_terms("chain rhs"));
-                Desugared::TermSeq(terms)
+                let output = match floor.desugar(
+                    left_operand,
+                    right_operand,
+                    left.into_terms("chain lhs"),
+                    right.into_terms("chain rhs"),
+                ) {
+                    Ok(output) => output,
+                    Err(outcome) => return outcome,
+                };
+                ctx.record_adapter_floor_audit("chain", output.standing().count());
+                Desugared::TermSeq(output.into_items())
             }
         };
         debug!(
@@ -90,12 +132,58 @@ impl Sugar for ChainSugar {
             len = total,
             "chained finite literal-derived domain"
         );
-        Outcome::Complete(floor)
+        Outcome::Complete(desugared)
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.reduce(ctx)
     }
+}
+
+#[derive(Clone, Copy)]
+struct ChainFloor {
+    counted: CountedAdapterFloor,
+}
+
+impl Default for ChainFloor {
+    fn default() -> Self {
+        Self {
+            counted: CountedAdapterFloor::new("chain", AdapterOutputIterMember::chain),
+        }
+    }
+}
+
+impl ChainFloor {
+    fn derived_operand(&self, count: usize) -> Result<IterStanding, Outcome> {
+        self.counted
+            .derived_operand(count)
+            .map_err(chain_floor_refusal)
+    }
+
+    fn desugar<T>(
+        &self,
+        left_operand: IterStanding,
+        right_operand: IterStanding,
+        left: Vec<T>,
+        right: Vec<T>,
+    ) -> Result<AdapterFloorOutput<T>, Outcome> {
+        let expected = left_operand
+            .count()
+            .checked_add(right_operand.count())
+            .unwrap_or_else(|| panic!("chain operand count overflow"));
+        let out = left.into_iter().chain(right).collect::<Vec<_>>();
+        self.counted
+            .assert_output_count(&left_operand, expected, out.len())
+            .map_err(chain_floor_refusal)?;
+        self.counted.output(out).map_err(chain_floor_refusal)
+    }
+}
+
+fn chain_floor_refusal(err: TemporalFloorRefusal) -> Outcome {
+    Outcome::Incomplete(Effect::CoverageGap {
+        boundary: "Iterator::chain".to_string(),
+        reason: err.to_string(),
+    })
 }
 
 fn sequence_from_body(
