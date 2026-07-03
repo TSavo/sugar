@@ -29,7 +29,11 @@ use crate::{
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("fold", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "fold",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// COMPOSITE method-call recognizer for a `fold` terminal ([`FoldSugar`] via
 /// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the

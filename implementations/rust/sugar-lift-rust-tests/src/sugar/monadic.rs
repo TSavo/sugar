@@ -57,10 +57,32 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("monadic", &["call", "path"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "monadic",
+        &["call", "path"],
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_monadic_good() {
+                    assert_eq!(Some(1), Some(1));
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_monadic_bad() {
+                    assert_eq!(Some(1), Some(2));
+                }
+            "#,
+        ),
+        recognize,
+    );
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("monadic_composite", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "monadic_composite",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// The reserved monadic ctor names. Distinct from the generic `call:<head>`
 /// ctor (`call:Some`/`call:None`) so the equality routes through the plain

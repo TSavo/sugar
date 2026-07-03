@@ -15,8 +15,12 @@ use crate::{const_fold_int_term, Desugared, Effect, Outcome, RelationOp, Sugar, 
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 pub(crate) const DURATION_TERM_CTOR: &str = "duration:Duration";
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("duration_value", &["const_path", "path", "call"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "duration_value",
+    &["const_path", "path", "call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(
     frag: &SourceFragment,

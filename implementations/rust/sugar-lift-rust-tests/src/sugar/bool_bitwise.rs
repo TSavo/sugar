@@ -12,8 +12,12 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 use sugar_ir_symbolic::{and_, or_, Formula};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("constraint_bool_bitwise", SugarRole::Constraint, recognize);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_bool_bitwise",
+    SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 struct BoolBitwiseSugar {
     left: SugarBody<ConstraintFloor>,

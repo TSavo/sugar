@@ -13,8 +13,12 @@ use crate::sugar::method_family;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite_before("cycle_take", &["take"], recognize_composite);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
+    "cycle_take",
+    &["take"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_composite,
+);
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

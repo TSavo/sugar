@@ -22,7 +22,11 @@ use crate::{
 };
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::tuple_producer("size_hint_tuple_producer", recognize);
+    crate::sugar::claim::ExprSugarClaim::tuple_producer(
+        "size_hint_tuple_producer",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if frag.call_method_key()?.as_str() != "size_hint" {

@@ -29,8 +29,12 @@ use crate::{
     Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("result_predicate", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "result_predicate",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 // FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / MethodCall field
 // access in the recognize body. Uses call_method_key(), call_arg_count(),

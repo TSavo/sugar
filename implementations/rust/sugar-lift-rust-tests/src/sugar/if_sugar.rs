@@ -41,7 +41,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::sugar::term_dispatch::translate_term_in_scope;
 use crate::{bool_const, Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx};
 
-pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("if_sugar", recognize);
+pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
+    "if_sugar",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stmt = frag.as_stmt()?;

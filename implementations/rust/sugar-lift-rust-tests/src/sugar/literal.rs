@@ -44,7 +44,11 @@ pub(crate) const RUNTIME_ELEM_REASON: &str =
     "literal array element is not text-determined (runtime value)";
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("literal", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "literal",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// COMPOSITE recognizer for `Expr::Array` / `Expr::Range`: the SEQUENCE-floor
 /// [`LiteralSugar`] (a finite literal domain `-> Seq`). Byte-identical to the

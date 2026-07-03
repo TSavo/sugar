@@ -20,7 +20,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("method", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term(
+        "method",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::MethodCall`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

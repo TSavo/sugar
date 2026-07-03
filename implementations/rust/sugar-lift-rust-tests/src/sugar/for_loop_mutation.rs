@@ -12,8 +12,12 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::composite_before("for_loop_mutation", &["forall_loop"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
+    "for_loop_mutation",
+    &["forall_loop"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let boundary = frag.for_loop_mutation_boundary(fcx)?;

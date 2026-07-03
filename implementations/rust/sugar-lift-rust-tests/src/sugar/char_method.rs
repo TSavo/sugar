@@ -17,13 +17,31 @@ use crate::{
     Warrant,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("char_literal_method", &["to_string", "method"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "char_literal_method",
+    &["to_string", "method"],
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_char_method_good() {
+                    assert_eq!('x'.to_ascii_uppercase(), 'X');
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_char_method_bad() {
+                    assert_eq!('x'.to_ascii_uppercase(), 'Y');
+                }
+            "#,
+    ),
+    recognize,
+);
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "constraint_char_literal_method",
     SugarRole::Constraint,
     &["constraint_string_predicate", "constraint_bool_expr"],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_constraint,
 );
 

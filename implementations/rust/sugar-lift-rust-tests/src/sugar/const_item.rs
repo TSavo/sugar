@@ -20,8 +20,11 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const ITEM_SUGAR: ItemSugarClaim =
-    ItemSugarClaim::statement_item("const_item", recognize);
+pub(crate) const ITEM_SUGAR: ItemSugarClaim = ItemSugarClaim::statement_item(
+    "const_item",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let (kind, name) = frag.item_const_static_kind_and_name()?;

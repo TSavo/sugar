@@ -12,8 +12,12 @@ use crate::sugar::route_raises_operation::RouteRaisesOperation;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("panic_macro", &["macro_term"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "panic_macro",
+    &["macro_term"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // `macro_name()` returns the last-segment ident without escaping to raw syn.

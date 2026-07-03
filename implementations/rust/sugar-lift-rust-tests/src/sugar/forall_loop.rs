@@ -15,7 +15,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("forall_loop", recognize);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "forall_loop",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// No `as_expr()`, `Expr::`, or raw syn in this function.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

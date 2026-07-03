@@ -16,8 +16,12 @@ use crate::sugar::monadic::{err_term, ok_term};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{const_val_term, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("array_try_from", &["try_from", "call"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "array_try_from",
+    &["try_from", "call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 #[derive(Clone, Copy)]
 enum Dest {

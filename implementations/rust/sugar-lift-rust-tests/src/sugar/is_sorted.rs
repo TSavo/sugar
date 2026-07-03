@@ -37,8 +37,12 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{bool_const, Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("is_sorted", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "is_sorted",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Must be a MethodCall named `is_sorted` with no args.

@@ -12,6 +12,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
         "closure_runtime_receiver",
         SugarRole::ClosureAdaptorVerdict,
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

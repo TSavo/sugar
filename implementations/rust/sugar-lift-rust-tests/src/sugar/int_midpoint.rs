@@ -18,8 +18,25 @@ use crate::sugar::int_literal::{
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{canonical_term_sig, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("int_midpoint", &["call"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "int_midpoint",
+    &["call"],
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_midpoint_good() {
+                    assert_eq!(i8::midpoint(2, 5), 3);
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_midpoint_bad() {
+                    assert_eq!(i8::midpoint(2, 5), 4);
+                }
+            "#,
+    ),
+    recognize,
+);
 
 // FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / Call field
 // access. Uses call_func(), call_arg_count(), call_args(), SugarBody::term_frag(),

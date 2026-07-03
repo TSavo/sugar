@@ -13,7 +13,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("array_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "array_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Array`: the `literal_aggregate_term("Array", ..)` arm.
 /// No `as_expr()`, `Expr::`, or raw syn in this function.

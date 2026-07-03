@@ -67,7 +67,7 @@ struct ExpectedProjectionLadder {
 const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     ExpectedProjectionLadder {
         file: "src/sugar/block_sugar.rs",
-        line: 159,
+        line: 166,
         enclosing_fn: "compose_statement_result",
         max_floor_arms: 7,
         owner: "BlockSugar statement composition",
@@ -75,7 +75,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/block_sugar.rs",
-        line: 234,
+        line: 241,
         enclosing_fn: "statement_floor_name",
         max_floor_arms: 17,
         owner: "BlockSugar diagnostic naming",
@@ -83,7 +83,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/block_sugar.rs",
-        line: 262,
+        line: 269,
         enclosing_fn: "guard_raise",
         max_floor_arms: 2,
         owner: "BlockSugar raise guard composition",
@@ -91,7 +91,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/chain.rs",
-        line: 102,
+        line: 106,
         enclosing_fn: "sequence_from_body",
         max_floor_arms: 2,
         owner: "ChainSugar sequence projection",
@@ -99,7 +99,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/collect.rs",
-        line: 257,
+        line: 261,
         enclosing_fn: "terms_from_body",
         max_floor_arms: 2,
         owner: "CollectSugar sequence projection",
@@ -115,7 +115,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/fold.rs",
-        line: 136,
+        line: 140,
         enclosing_fn: "desugar",
         max_floor_arms: 2,
         owner: "FoldSugar receiver sequence projection",
@@ -123,7 +123,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1284,
+        line: 1285,
         enclosing_fn: "emit_constraint_expr",
         max_floor_arms: 2,
         owner: "ForReplay constraint emission projection",
@@ -131,7 +131,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1815,
+        line: 1816,
         enclosing_fn: "finite_domain_body_exprs",
         max_floor_arms: 2,
         owner: "ForReplay finite-domain body projection",
@@ -139,7 +139,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/for_replay.rs",
-        line: 1869,
+        line: 1870,
         enclosing_fn: "finite_domain_exprs",
         max_floor_arms: 2,
         owner: "ForReplay nested finite-domain projection",
@@ -155,7 +155,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/function_map.rs",
-        line: 235,
+        line: 243,
         enclosing_fn: "reduce_function_map",
         max_floor_arms: 2,
         owner: "FunctionMapSugar receiver sequence projection",
@@ -171,7 +171,7 @@ const EXPECTED_PROJECTION_LADDERS: &[ExpectedProjectionLadder] = &[
     },
     ExpectedProjectionLadder {
         file: "src/sugar/map.rs",
-        line: 241,
+        line: 249,
         enclosing_fn: "reduce_map_body",
         max_floor_arms: 2,
         owner: "MapSugar receiver sequence projection",

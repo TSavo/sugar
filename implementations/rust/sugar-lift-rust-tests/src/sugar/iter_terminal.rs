@@ -85,7 +85,12 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("iter_terminal", &["method"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "iter_terminal",
+        &["method"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Build a grounded boolean CONST term (`bool(b)`) for the `.any`/`.all` reductions. The
 /// `Bool` sort meets the `assert_eq!(..., true)` RHS bool const structurally (z3 enforces

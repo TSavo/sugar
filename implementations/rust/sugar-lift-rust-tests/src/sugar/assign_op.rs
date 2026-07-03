@@ -23,8 +23,12 @@ use crate::{
     Outcome, Sugar, SugarCtx, Warrant,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("temporal_assign_op", SugarRole::Constraint, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "temporal_assign_op",
+    SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

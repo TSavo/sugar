@@ -30,12 +30,17 @@ use crate::{
 use crate::{FactoryAuditLog, FloatWidthScope};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("match_node", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "match_node",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::constraint_before(
         "constraint_closed_match",
         &["constraint_bool_expr"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_constraint,
     );
 
@@ -43,6 +48,20 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "match_value_term",
         &["match_scrutinee_term"],
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_const_match_good() {
+                    assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 20);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_const_match_bad() {
+                    assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 21);
+                }
+            "#,
+        ),
         recognize_term,
     );
 

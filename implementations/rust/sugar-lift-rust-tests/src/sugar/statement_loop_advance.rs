@@ -10,6 +10,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::statement_effect_before(
         "statement_loop_advance",
         &["statement_runtime_expr"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

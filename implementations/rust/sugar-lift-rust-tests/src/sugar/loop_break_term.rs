@@ -7,7 +7,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("loop_break_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "loop_break_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// No `as_expr()`, `Expr::`, or raw syn in this function.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

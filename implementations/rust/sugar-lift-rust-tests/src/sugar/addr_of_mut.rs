@@ -19,8 +19,12 @@ use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("addr_of_mut", &["macro_term"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "addr_of_mut",
+    &["macro_term"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if frag.macro_name().as_deref() != Some("addr_of_mut") {

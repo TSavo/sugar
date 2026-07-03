@@ -23,7 +23,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("conditional", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "conditional",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// COMPOSITE recognizer for `Expr::If`: the implication composite ([`ConditionalSugar`]
 /// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => decompose_if(i)`

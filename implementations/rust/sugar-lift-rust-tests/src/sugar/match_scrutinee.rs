@@ -34,17 +34,23 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{expr_is_runtime_call_result, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("match_scrutinee_term", recognize_term);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "match_scrutinee_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_term,
+    );
 
 pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::match_scrutinee_verdict(
         "match_scrutinee",
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_verdict,
     );
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::constraint(
         "constraint_match_scrutinee",
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_verdict,
     );
 

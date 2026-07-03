@@ -33,7 +33,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("array_repeat", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "array_repeat",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// COMPOSITE recognizer for `Expr::Repeat`: the `ArrayRepeatSugar` refuse-shape (via
 /// [`decompose_array_repeat`]). DISTINCT from the TERM-position `Expr::Repeat` (which

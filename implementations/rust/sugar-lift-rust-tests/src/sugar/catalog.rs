@@ -9,7 +9,7 @@ use syn::{Expr, Item, Stmt};
 
 use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{
-    ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole,
+    ExprSugarClaim, ItemSugarClaim, StmtSugarClaim, SugarCandidate, SugarRole, SugarWitnesses,
 };
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::factory_gap_info::collect_gap;
@@ -57,6 +57,7 @@ pub struct CatalogClaim {
     pub kind: CatalogClaimKind,
     pub name: &'static str,
     pub role: &'static str,
+    pub witnesses: SugarWitnesses,
 }
 
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
@@ -290,16 +291,19 @@ pub fn catalog_claims() -> Vec<CatalogClaim> {
         kind: CatalogClaimKind::Expr,
         name: claim.name(),
         role: sugar_role_name(claim.role()),
+        witnesses: claim.witnesses(),
     }));
     claims.extend(ITEM_CLAIMS.iter().map(|claim| CatalogClaim {
         kind: CatalogClaimKind::Item,
         name: claim.name(),
         role: sugar_role_name(claim.role()),
+        witnesses: claim.witnesses(),
     }));
     claims.extend(STMT_CLAIMS.iter().map(|claim| CatalogClaim {
         kind: CatalogClaimKind::Stmt,
         name: claim.name(),
         role: sugar_role_name(claim.role()),
+        witnesses: claim.witnesses(),
     }));
     claims
 }
@@ -961,16 +965,50 @@ mod tests {
         audits.into_inner()
     }
 
-    static FIRST: ExprSugarClaim = ExprSugarClaim::new("first", SugarRole::Term, recognize);
-    static SECOND: ExprSugarClaim = ExprSugarClaim::new("second", SugarRole::Term, recognize);
-    static FIRST_BEFORE_SECOND: ExprSugarClaim =
-        ExprSugarClaim::with_ordering("first", SugarRole::Term, &["second"], recognize);
-    static SECOND_BEFORE_FIRST: ExprSugarClaim =
-        ExprSugarClaim::with_ordering("second", SugarRole::Term, &["first"], recognize);
-    static SECOND_BEFORE_THIRD: ExprSugarClaim =
-        ExprSugarClaim::with_ordering("second", SugarRole::Term, &["third"], recognize);
-    static THIRD: ExprSugarClaim = ExprSugarClaim::new("third", SugarRole::Term, recognize);
-    static FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term("fallback", recognize);
+    static FIRST: ExprSugarClaim = ExprSugarClaim::new(
+        "first",
+        SugarRole::Term,
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static SECOND: ExprSugarClaim = ExprSugarClaim::new(
+        "second",
+        SugarRole::Term,
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static FIRST_BEFORE_SECOND: ExprSugarClaim = ExprSugarClaim::with_ordering(
+        "first",
+        SugarRole::Term,
+        &["second"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static SECOND_BEFORE_FIRST: ExprSugarClaim = ExprSugarClaim::with_ordering(
+        "second",
+        SugarRole::Term,
+        &["first"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static SECOND_BEFORE_THIRD: ExprSugarClaim = ExprSugarClaim::with_ordering(
+        "second",
+        SugarRole::Term,
+        &["third"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static THIRD: ExprSugarClaim = ExprSugarClaim::new(
+        "third",
+        SugarRole::Term,
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
+    static FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term(
+        "fallback",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
     #[test]
     #[should_panic(expected = "ambiguous Sugar candidates for role Term")]
@@ -1055,8 +1093,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "ambiguous Sugar candidates for role Term")]
     fn same_role_fallback_wells_still_need_an_ordering_relation() {
-        static OTHER_FALLBACK: ExprSugarClaim =
-            ExprSugarClaim::fallback_term("other_fallback", recognize);
+        static OTHER_FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term(
+            "other_fallback",
+            crate::sugar::claim::SugarWitnesses::Pending,
+            recognize,
+        );
 
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();

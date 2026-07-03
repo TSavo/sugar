@@ -23,7 +23,12 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::{const_fold_u128_term, u128_term, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("bv_binop", &["binop"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "bv_binop",
+        &["binop"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Recognizer for `Expr::Binary` with bit-operation operators.
 ///

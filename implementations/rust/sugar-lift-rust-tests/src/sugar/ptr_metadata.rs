@@ -126,8 +126,12 @@ impl Sugar for PtrMetadataSugar {
 // typed accessors, no shim calls, no raw Expr patterns.
 // ---------------------------------------------------------------------------
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("ptr_metadata", &["call"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "ptr_metadata",
+    &["call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(
     frag: &SourceFragment,

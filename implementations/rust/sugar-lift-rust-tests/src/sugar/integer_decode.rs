@@ -20,6 +20,7 @@ use crate::{Desugared, Outcome, Sugar, SugarCtx};
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer(
         "integer_decode_tuple_producer",
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize_tuple_producer,
     );
 

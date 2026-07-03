@@ -55,7 +55,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("term_literal", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "term_literal",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Lit`: a scalar literal news a [`TermLiteralSugar`].
 /// Uses ONLY `SourceFragment::scalar_lit()` -- no `as_expr()`, no raw `Expr::` access.

@@ -10,7 +10,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("await_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "await_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Await`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

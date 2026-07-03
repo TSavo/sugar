@@ -22,12 +22,17 @@ use crate::{
 use sugar_ir_symbolic::{and_, atomic_, eq, Formula, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("constraint_infinity_eq", SugarRole::Constraint, recognize);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_infinity_eq",
+    SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_infinity_eq",
     SugarRole::AssertionSurface,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

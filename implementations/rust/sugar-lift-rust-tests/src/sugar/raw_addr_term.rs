@@ -20,10 +20,18 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, Item};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("raw_addr_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "raw_addr_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
-pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("ptr_eq_term", &["call"], recognize_ptr_eq_term);
+pub(crate) const PTR_EQ_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "ptr_eq_term",
+    &["call"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_ptr_eq_term,
+);
 
 /// TERM recognizer for `Expr::RawAddr`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

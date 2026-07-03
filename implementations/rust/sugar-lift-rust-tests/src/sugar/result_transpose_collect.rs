@@ -25,8 +25,12 @@ use crate::{
     ConstVal, Desugared, Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("result_transpose_collect", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "result_transpose_collect",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

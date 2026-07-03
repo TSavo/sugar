@@ -21,7 +21,11 @@ use crate::sugar::route_raises_operation::RouteRaisesOperation;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{Desugared, Effect, Outcome, RaiseEffect, Sugar, SugarCtx};
 
-pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement("return_sugar", recognize);
+pub(crate) static STMT_SUGAR: StmtSugarClaim = StmtSugarClaim::statement(
+    "return_sugar",
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Arm 1: explicit `return <expr>;` or `return <expr>` (with or without semicolon).

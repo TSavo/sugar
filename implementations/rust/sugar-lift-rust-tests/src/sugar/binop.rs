@@ -33,7 +33,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("binop", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term(
+        "binop",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
 /// comparison branch (const-fold to a Bool, else the `cmp:*` [`CompareSugar`]), then

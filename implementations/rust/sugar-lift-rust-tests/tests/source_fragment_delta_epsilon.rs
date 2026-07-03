@@ -82,8 +82,8 @@ fn collect_offenders() -> Vec<Offender> {
 
 fn expected_frontier_counts() -> BTreeMap<&'static str, (usize, usize)> {
     BTreeMap::from([
-        ("raw_ast_signature", (141, 1109)),
-        ("raw_ast_variant_pattern", (117, 1908)),
+        ("raw_ast_signature", (141, 1110)),
+        ("raw_ast_variant_pattern", (117, 1910)),
         ("raw_syn_import", (124, 124)),
         ("source_fragment_escape_accessor", (94, 153)),
     ])

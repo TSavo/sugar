@@ -15,7 +15,11 @@ use crate::sugar::term_dispatch::{value_if_term, DesugaredFloorAccept, RequiredT
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("value_if", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "value_if",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// No `as_expr()`, `Expr::`, or raw syn in this function.
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

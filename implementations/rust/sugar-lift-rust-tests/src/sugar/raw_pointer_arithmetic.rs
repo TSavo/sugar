@@ -15,8 +15,12 @@ use crate::{
     canonical_term_sig, simple_path_name, strip_refs_groups, Effect, Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("raw_pointer_arithmetic", &["primitive_int"], recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "raw_pointer_arithmetic",
+    &["primitive_int"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 // FULLY MIGRATED (Phase-3 ratchet): no as_expr(), no raw Expr:: / MethodCall field
 // access in the recognize body. Uses strip_refs_groups() + call_is_method_call() +

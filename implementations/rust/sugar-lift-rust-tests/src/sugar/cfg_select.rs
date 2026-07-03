@@ -26,6 +26,7 @@ use crate::{
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "cfg_select_assertion_surface",
     SugarRole::AssertionSurface,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

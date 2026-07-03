@@ -21,8 +21,12 @@ use crate::{
     Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::term_before("slice_search", &["method"], recognize_term);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
+    "slice_search",
+    &["method"],
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_term,
+);
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "slice_search_assertion_surface",
@@ -31,6 +35,7 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
         "assertion_surface_relation_macro",
         "assertion_surface_assert_macro",
     ],
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_assertion_surface,
 );
 

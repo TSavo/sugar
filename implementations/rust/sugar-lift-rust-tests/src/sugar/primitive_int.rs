@@ -26,12 +26,30 @@ use crate::{
     SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("primitive_int", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "primitive_int",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::pair(
+        r#"
+                #[test]
+                fn t_bit_width_good() {
+                    assert_eq!(0b010_1100u32.bit_width(), 6);
+                }
+            "#,
+        r#"
+                #[test]
+                fn t_bit_width_bad() {
+                    assert_eq!(0b010_1100u32.bit_width(), 7);
+                }
+            "#,
+    ),
+    recognize,
+);
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "primitive_int_tuple_producer",
     SugarRole::TupleProducer,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_tuple_producer,
 );
 

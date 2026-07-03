@@ -19,7 +19,12 @@ use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("range_accessor", &["method"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "range_accessor",
+        &["method"],
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Must be a zero-arg method call named "start" or "end".

@@ -13,7 +13,11 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("enumerate", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "enumerate",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

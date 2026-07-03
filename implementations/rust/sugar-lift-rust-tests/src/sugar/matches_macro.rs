@@ -18,8 +18,12 @@ use sugar_ir_symbolic::{and_, eq, str_const, Formula, Term};
 use syn::parse::{ParseStream, Parser};
 use syn::{Expr, ExprMacro, Pat, Token};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("constraint_matches_macro", SugarRole::Constraint, recognize);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_matches_macro",
+    SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 struct MatchesMacroSugar {
     subject: SugarBody<TermFloor>,

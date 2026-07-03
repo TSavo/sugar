@@ -15,6 +15,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "to_string",
         &["method", "transparent_term"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

@@ -57,7 +57,11 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("path", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term(
+        "path",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
 /// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general

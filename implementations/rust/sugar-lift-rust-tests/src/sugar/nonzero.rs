@@ -20,17 +20,26 @@ use crate::sugar::term_dispatch::{
 };
 use crate::{str_const, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
-pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("nonzero_new", SugarRole::Term, recognize_new);
+pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "nonzero_new",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_new,
+);
 
 pub(crate) const ASSOC_CONST_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "nonzero_assoc_const",
     SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize_assoc_const,
 );
 
-pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("nonzero_get", SugarRole::Term, recognize_get);
+pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "nonzero_get",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_get,
+);
 
 fn recognize_assoc_const(frag: &SourceFragment, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let expr = frag.as_expr()?;

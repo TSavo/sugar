@@ -25,7 +25,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("slice_index", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "slice_index",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 struct SliceIndexRepresentationSugar {
     boundary: String,

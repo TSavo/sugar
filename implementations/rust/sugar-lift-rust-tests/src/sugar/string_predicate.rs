@@ -20,6 +20,7 @@ use syn::{Expr, ExprLit, Lit};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_string_predicate",
     SugarRole::Constraint,
+    crate::sugar::claim::SugarWitnesses::Pending,
     recognize,
 );
 

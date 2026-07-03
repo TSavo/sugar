@@ -33,205 +33,20 @@ fn pending_router_witness_slots() -> Vec<PendingRouterWitnessSlot> {
 }
 
 fn seed_witnesses() -> Vec<WitnessPair> {
-    vec![
-        WitnessPair {
-            claim: "const_if",
-            truthful: r#"
-                #[test]
-                fn t_const_if_then_good() {
-                    assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 66);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_const_if_then_bad() {
-                    assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 67);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "match_value_term",
-            truthful: r#"
-                #[test]
-                fn t_const_match_good() {
-                    assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 20);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_const_match_bad() {
-                    assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 21);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "duration_accessor",
-            truthful: r#"
-                #[test]
-                fn t_dur_as_secs_good() {
-                    assert!(Duration::from_secs(5).as_secs() == 5);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_dur_as_secs_bad() {
-                    assert!(Duration::from_secs(5).as_secs() == 6);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "from_bool",
-            truthful: r#"
-                #[test]
-                fn t_from_bool_good() {
-                    assert_eq!(1u8, <u8>::from(true));
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_from_bool_bad() {
-                    assert_eq!(1u8, <u8>::from(false));
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "assertion_surface_tuple_decomp",
-            truthful: r#"
-                #[test]
-                fn t_tuple_decomp_good() {
-                    assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, 1));
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_tuple_decomp_bad() {
-                    assert_eq!(3.14159265359f32.integer_decode(), (13176796, -22, 1));
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "int_midpoint",
-            truthful: r#"
-                #[test]
-                fn t_midpoint_good() {
-                    assert_eq!(i8::midpoint(2, 5), 3);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_midpoint_bad() {
-                    assert_eq!(i8::midpoint(2, 5), 4);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "char_literal_method",
-            truthful: r#"
-                #[test]
-                fn t_char_method_good() {
-                    assert_eq!('x'.to_ascii_uppercase(), 'X');
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_char_method_bad() {
-                    assert_eq!('x'.to_ascii_uppercase(), 'Y');
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "bool_literal_method",
-            truthful: r#"
-                #[test]
-                fn t_bool_method_good() {
-                    assert_eq!(true.then_some(7_i32), Some(7_i32));
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_bool_method_bad() {
-                    assert_eq!(true.then_some(7_i32), Some(8_i32));
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "monadic",
-            truthful: r#"
-                #[test]
-                fn t_monadic_good() {
-                    assert_eq!(Some(1), Some(1));
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_monadic_bad() {
-                    assert_eq!(Some(1), Some(2));
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "primitive_int",
-            truthful: r#"
-                #[test]
-                fn t_bit_width_good() {
-                    assert_eq!(0b010_1100u32.bit_width(), 6);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_bit_width_bad() {
-                    assert_eq!(0b010_1100u32.bit_width(), 7);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "range_contains",
-            truthful: r#"
-                #[test]
-                fn t_range_contains_good() {
-                    assert!((1usize..5).contains(&4));
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_range_contains_bad() {
-                    assert!((1usize..5).contains(&5));
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "assertion_surface_aggregate_decomp",
-            truthful: r#"
-                #[test]
-                fn t_collect_good() {
-                    assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_collect_bad() {
-                    assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 9]);
-                }
-            "#,
-        },
-        WitnessPair {
-            claim: "len",
-            truthful: r#"
-                #[test]
-                fn t_len_good() {
-                    assert_eq!([1, 2, 3].len(), 3);
-                }
-            "#,
-            lying: r#"
-                #[test]
-                fn t_len_bad() {
-                    assert_eq!([1, 2, 3].len(), 4);
-                }
-            "#,
-        },
-    ]
+    catalog_claims()
+        .into_iter()
+        .filter_map(|claim| match claim.witnesses {
+            sugar_lift_rust_tests::sugar::claim::SugarWitnesses::Pair { truthful, lying } => {
+                Some(WitnessPair {
+                    claim: claim.name,
+                    truthful,
+                    lying,
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
-
 fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("witness source parses")
 }
@@ -309,7 +124,7 @@ fn compile_asserted_json_to_parts(
 ) -> Result<sugar_ir_compiler::CompiledFormula, sugar_ir_compiler::CompileError> {
     match sugar_ir_compiler::CompilerInput::decode_json(formula.clone())? {
         sugar_ir_compiler::CompilerInput::Formula(formula) => {
-            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(&formula)
+            sugar_ir_compiler_smt_lib::compile_asserted_formula_to_parts(formula.formula())
         }
         _ => Err(sugar_ir_compiler::CompileError::MalformedIr(
             "asserted SMT-LIB compile expects a formula input".to_string(),
@@ -576,17 +391,32 @@ fn witness_catalog_seed_frontier_is_pinned() {
             "seed witness names non-catalog claim `{seed}`"
         );
     }
-    let frontier: Vec<_> = catalog
+    let pending: Vec<_> = catalog
         .iter()
-        .filter(|claim| !seeded.contains(claim.name))
+        .filter(|claim| claim.witnesses.is_pending())
         .collect();
+    let not_verdict_bearing = catalog
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.witnesses,
+                sugar_lift_rust_tests::sugar::claim::SugarWitnesses::NotVerdictBearing { .. }
+            )
+        })
+        .count();
     println!(
-        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={}",
+        "R(witness-seed-claims)={} R(rust-witness-enrollment-frontier)={} R(rust-witness-not-verdict-bearing)={}",
         seeded.len(),
-        frontier.len()
+        pending.len(),
+        not_verdict_bearing
     );
     assert_eq!(seeded.len(), EXPECTED_SEED_CLAIMS);
-    assert_eq!(frontier.len(), EXPECTED_ENROLLMENT_FRONTIER);
+    assert_eq!(pending.len(), EXPECTED_ENROLLMENT_FRONTIER);
+    assert_eq!(
+        seeded.len() + pending.len() + not_verdict_bearing,
+        catalog.len(),
+        "every catalog claim must be exactly Pair, Pending, or NotVerdictBearing"
+    );
 }
 
 #[test]

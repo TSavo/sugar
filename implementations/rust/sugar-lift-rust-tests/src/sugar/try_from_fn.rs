@@ -23,7 +23,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("try_from_fn", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "try_from_fn",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // call_func() returns Some only for Expr::Call (not MethodCall or other shapes).

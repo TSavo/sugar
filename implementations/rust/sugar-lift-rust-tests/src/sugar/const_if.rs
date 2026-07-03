@@ -26,7 +26,25 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("const_if", &["value_if"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "const_if",
+        &["value_if"],
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_const_if_then_good() {
+                    assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 66);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_const_if_then_bad() {
+                    assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 67);
+                }
+            "#,
+        ),
+        recognize,
+    );
 
 /// TERM recognizer for a const `Expr::If`. Folds the whole conditional to its taken
 /// branch's ground value via `SourceFragment::const_folded_if_term`; declines

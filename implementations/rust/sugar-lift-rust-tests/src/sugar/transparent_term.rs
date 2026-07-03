@@ -10,10 +10,18 @@ use crate::sugar::source_fragment::SourceFragment;
 use crate::Sugar;
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("transparent_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "transparent_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("transparent_composite", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "transparent_composite",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 /// TERM recognizer for `Expr::Paren` / `Expr::Group`: recurse through to the inner
 /// expr's TERM Sugar.

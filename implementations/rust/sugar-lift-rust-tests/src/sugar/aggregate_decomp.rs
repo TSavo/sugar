@@ -33,6 +33,20 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim =
             "assertion_surface_relation_macro",
             "assertion_surface_assert_macro",
         ],
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_collect_good() {
+                    assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_collect_bad() {
+                    assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 9]);
+                }
+            "#,
+        ),
         recognize,
     );
 

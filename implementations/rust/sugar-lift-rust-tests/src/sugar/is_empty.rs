@@ -40,8 +40,12 @@ use crate::{
     Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("is_empty", SugarRole::Term, recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "is_empty",
+    SugarRole::Term,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize,
+);
 
 fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // No as_expr / Expr:: / Stmt:: / Item:: in this body (DEEP STANDARD).

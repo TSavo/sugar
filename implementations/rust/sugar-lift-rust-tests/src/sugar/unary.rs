@@ -77,7 +77,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("unary", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "unary",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// Operator kind for a `UnaryOp` expression -- replaces raw `syn::UnOp` in the struct.
 /// `syn::UnOp` is `#[non_exhaustive]`; an unknown future operator routes to `None`

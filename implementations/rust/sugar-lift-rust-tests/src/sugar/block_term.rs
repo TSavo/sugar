@@ -17,7 +17,11 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, Item, Pat, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("block_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::term(
+        "block_term",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize,
+    );
 
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
 pub(crate) fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

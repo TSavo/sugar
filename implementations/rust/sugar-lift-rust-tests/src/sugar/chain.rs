@@ -16,8 +16,12 @@ use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{const_val_term, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("chain", SugarRole::Composite, recognize_composite);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "chain",
+    SugarRole::Composite,
+    crate::sugar::claim::SugarWitnesses::Pending,
+    recognize_composite,
+);
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,

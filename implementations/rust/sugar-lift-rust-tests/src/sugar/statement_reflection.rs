@@ -11,6 +11,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
         "statement_reflection",
         SugarRole::StatementEffect,
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

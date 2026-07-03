@@ -19,6 +19,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "format_macro",
         &["macro_term", "reference_term"],
+        crate::sugar::claim::SugarWitnesses::Pending,
         recognize,
     );
 

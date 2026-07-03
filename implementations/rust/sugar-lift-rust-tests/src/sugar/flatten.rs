@@ -18,7 +18,11 @@ use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("flatten", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite(
+        "flatten",
+        crate::sugar::claim::SugarWitnesses::Pending,
+        recognize_composite,
+    );
 
 pub(crate) fn recognize_composite(
     frag: &SourceFragment,
