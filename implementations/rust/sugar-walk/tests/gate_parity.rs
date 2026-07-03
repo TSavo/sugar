@@ -52,14 +52,6 @@ const SANCTIONED_CONTRACT_CONSTRUCTOR_MODULES: &[SanctionedModule] = &[
         reason: "substrate contract-envelope mint_args and mint_contract wrapper",
     },
     SanctionedModule {
-        file: "implementations/rust/sugar-walk/src/llbc_lift.rs",
-        reason: "LLBC lift constructs Charon-derived function contracts",
-    },
-    SanctionedModule {
-        file: "implementations/rust/sugar-walk/src/marriage.rs",
-        reason: "AST/LLBC marriage constructs the merged substrate-facing contract",
-    },
-    SanctionedModule {
         file: "implementations/rust/sugar-walk/src/type_decl.rs",
         reason: "type-declaration lift synthesizes impl-method function contracts",
     },
@@ -103,7 +95,6 @@ fn lift_source_roots(root: &Path) -> Vec<PathBuf> {
         root.join("implementations/rust/sugar-walk/src"),
         root.join("implementations/rust/sugar-lift/src"),
         root.join("implementations/rust/sugar-lift-contracts/src"),
-        root.join("implementations/rust/sugar-lifter/src"),
         root.join("implementations/rust/libsugar/src/core/lift_plugin.rs"),
     ]
 }

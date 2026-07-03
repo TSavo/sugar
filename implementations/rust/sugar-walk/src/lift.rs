@@ -3544,7 +3544,7 @@ fn lift_predicate_value_inner(expr: &Expr, ctx: &mut LiftCtx) -> Option<Predicat
         Expr::Group(g) => lift_predicate_value_inner(&g.expr, ctx),
         // Zero-argument method calls that return bool: `.is_some()`, `.is_none()`,
         // `.is_empty()`, `.is_err()`, `.is_ok()`. These are common predicate shapes
-        // in Rust and appear naturally in the dropper's emitted guard code.
+        // in Rust and appear naturally in source-level defensive guards.
         // Each lifts to `IrFormula::Atomic { name: "is_some" (or similar), args: [recv] }`.
         Expr::MethodCall(syn::ExprMethodCall {
             receiver,
@@ -4977,7 +4977,7 @@ mod tests {
     fn lifts_is_none_method_call_as_atomic_predicate() {
         // `if x.is_none() { panic!() }` lifts to is_none(x) at the
         // precondition (via the if-then-panic path: ¬panic_cond = ¬is_none(x)).
-        // This is the shape the dropper emits for the Defensive template.
+        // This is the shape source-level defensive guards use.
         let item_fn = parse_fn(
             r#"
             fn caller(x: Option<i32>) {

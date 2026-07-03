@@ -29,7 +29,7 @@
 // the identical code path a real rust/java lifter drives -- the lifter is
 // upstream of and orthogonal to the bridge-writer, so a mock lifter
 // faithfully exercises the production mint+bridge logic without requiring
-// charon/javac in the test environment.
+// javac in the test environment.
 //
 // Requires `z3` on PATH; skips the solver-dependent asserts otherwise.
 

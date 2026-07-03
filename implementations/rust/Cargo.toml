@@ -18,7 +18,6 @@ members = [
     "libsugar",
     "libsugar-rpc",
     "sugar-cli",
-    "sugar-lifter",
     "sugar-lift",
     "sugar-lift-contracts",
     "sugar-lift-rpc-client",

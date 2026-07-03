@@ -1,0 +1,208 @@
+version = 1
+
+[ratchet]
+undeclared_lifter_entrypoints = 0
+declared_missing_production = 0
+declared_absent_present = 0
+
+[[scan_roots]]
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source"
+
+[[scan_roots]]
+path = "implementations/rust/sugar-walk/src"
+
+[[scan_roots]]
+path = "implementations/rust/sugar-lift/src"
+
+[[scan_roots]]
+path = "implementations/rust/sugar-lift-contracts/src"
+
+[[scan_roots]]
+path = "implementations/java/sugar-lift-java-tests/src"
+
+[[entrypoints]]
+id = "python-source-rpc"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/rpc.py"
+reason = "Python source kit JSON-RPC entrypoint for lift_source/lift_workspace."
+needles = ["lift_paths", "kit_declaration_result"]
+
+[[entrypoints]]
+id = "python-bind-rpc"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py"
+reason = "Python bind RPC emits source binding surfaces for the Python kit."
+needles = ["bind", "jsonrpc"]
+
+[[entrypoints]]
+id = "python-verify-rpc"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/verify_rpc.py"
+reason = "Python verify RPC is the Python-side verifier-facing kit door."
+needles = ["verify", "jsonrpc"]
+
+[[entrypoints]]
+id = "python-source-lifter-core"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py"
+reason = "Core Python AST-to-ProofIR lifter implementation behind the RPC door."
+needles = ["def lift_source", "class LiftResult"]
+
+[[entrypoints]]
+id = "python-bind-lifter-core"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_lifter.py"
+reason = "Core Python binding lifter implementation behind the bind RPC door."
+needles = ["def lift_source", "class BindLiftResult"]
+
+[[entrypoints]]
+id = "python-source-oracle"
+status = "production"
+owner = "python source kit"
+path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py"
+reason = "Python source oracle resolves source-backed evidence for kit replay."
+needles = ["SourceOracle", "source_memento"]
+
+[[entrypoints]]
+id = "rust-walk-rpc"
+status = "production"
+owner = "rust syn kit"
+path = "implementations/rust/sugar-walk/src/bin/walk_rpc.rs"
+reason = "Rust syn kit RPC entrypoint for contract, ProofIR, implication, and source-oracle lift verbs."
+needles = ["walk.proof_ir", "sugar.plugin.lift_implications"]
+
+[[entrypoints]]
+id = "rust-syn-lift-core"
+status = "production"
+owner = "rust syn kit"
+path = "implementations/rust/sugar-walk/src/lift.rs"
+reason = "Core Rust syn AST lifter used by the walk RPC surface."
+needles = ["lift_function_postcondition", "syn::"]
+
+[[entrypoints]]
+id = "rust-ra-oracle"
+status = "production"
+owner = "rust syn kit"
+path = "implementations/rust/sugar-walk/src/ra_oracle.rs"
+reason = "Rust analyzer oracle is an explicitly ruled source-evidence helper for the Rust syn kit."
+needles = ["rust-analyzer", "oracle"]
+
+[[entrypoints]]
+id = "rust-test-assertion-lift-core"
+status = "production"
+owner = "rust test assertion kit"
+path = "implementations/rust/sugar-lift/src/lib.rs"
+reason = "Rust test assertion lift library backing the sugar-lift toolchain."
+needles = ["lift_file", "jsonrpc"]
+
+[[entrypoints]]
+id = "rust-test-assertion-lift-bin"
+status = "production"
+owner = "rust test assertion kit"
+path = "implementations/rust/sugar-lift/src/bin/sugar-lift.rs"
+reason = "Rust test assertion lift command-line entrypoint."
+needles = ["sugar_lift", "lift"]
+
+[[entrypoints]]
+id = "rust-cargo-sugar-lift-bin"
+status = "production"
+owner = "rust test assertion kit"
+path = "implementations/rust/sugar-lift/src/bin/cargo-sugar-lift.rs"
+reason = "Cargo-facing Rust test assertion lift entrypoint."
+needles = ["cargo", "sugar-lift"]
+
+[[entrypoints]]
+id = "rust-native-annotation-contracts-core"
+status = "production"
+owner = "rust native annotation kit"
+path = "implementations/rust/sugar-lift-contracts/src/lib.rs"
+reason = "Native #[requires]/#[ensures] Rust annotation support, the sanctioned annotation surface."
+needles = ["requires", "ensures"]
+
+[[entrypoints]]
+id = "rust-native-annotation-contracts-rpc"
+status = "production"
+owner = "rust native annotation kit"
+path = "implementations/rust/sugar-lift-contracts/src/bin/contracts_rpc.rs"
+reason = "RPC entrypoint for the sanctioned Rust native annotation surface."
+needles = ["contracts_rpc", "lift"]
+
+[[entrypoints]]
+id = "java-test-assertions-rpc"
+status = "production"
+owner = "java kit"
+path = "implementations/java/sugar-lift-java-tests/src/JavaTestAssertionsRpc.java"
+reason = "Java assertion-source lifter RPC."
+needles = ["JavaTestAssertionsRpc", "jsonrpc"]
+
+[[entrypoints]]
+id = "java-junit-witness-rpc"
+status = "production"
+owner = "java kit"
+path = "implementations/java/sugar-lift-java-tests/src/JavaJunitWitnessRpc.java"
+reason = "Java JUnit witness lift RPC."
+needles = ["JavaJunitWitnessRpc", "jsonrpc"]
+
+[[entrypoints]]
+id = "java-panama-ffm-rpc"
+status = "production"
+owner = "java kit"
+path = "implementations/java/sugar-lift-java-tests/src/JavaPanamaFfmRpc.java"
+reason = "Java Panama FFM bridge lifter RPC."
+needles = ["JavaPanamaFfmRpc", "jsonrpc"]
+
+[[entrypoints]]
+id = "java-source-oracle"
+status = "production"
+owner = "java kit"
+path = "implementations/java/sugar-lift-java-tests/src/JavaSourceOracle.java"
+reason = "Java source oracle resolves Java method bodies for replay."
+needles = ["JavaSourceOracle", "SourceOracle"]
+
+[[entrypoints]]
+id = "cpp-lifter-seat"
+status = "absent"
+owner = "T ruling #3387"
+path = "implementations/cpp"
+reason = "C++ lift seat is explicitly absent after the clown-shoes excision."
+retirement = "Open a new design issue and add a production manifest row before adding any C++ lifter."
+absent_paths = [
+    "implementations/cpp",
+    "tools/build-cpp-lift.sh",
+    "tools/build-cpp-source-lift.sh",
+    "tools/build-cpp-lsp.sh",
+]
+
+[[entrypoints]]
+id = "rust-sugar-lifter-proc-macro"
+status = "absent"
+owner = "T ruling #3385"
+path = "implementations/rust/sugar-lifter"
+reason = "The bespoke #[sugar::*] proc-macro surface is deleted; native annotations in sugar-lift-contracts are the only Rust annotation surface."
+retirement = "Do not restore; any future authoring surface must enter through the native annotation kit and this manifest."
+absent_paths = [
+    "implementations/rust/sugar-lifter",
+]
+
+[[entrypoints]]
+id = "llbc-charon-marriage-second-lift-path"
+status = "absent"
+owner = "T ruling #3384"
+path = "implementations/rust/sugar-walk/src/llbc_lift.rs"
+reason = "LLBC/Charon/marriage was an unruled second representation and second lift path."
+retirement = "No LLBC/Charon lift path; Rust source lifting is syn-universe only."
+absent_paths = [
+    "implementations/rust/sugar-walk/src/llbc.rs",
+    "implementations/rust/sugar-walk/src/llbc_lift.rs",
+    "implementations/rust/sugar-walk/src/llbc_calls.rs",
+    "implementations/rust/sugar-walk/src/llbc_loops.rs",
+    "implementations/rust/sugar-walk/src/llbc_closures.rs",
+    "implementations/rust/sugar-walk/src/llbc_try.rs",
+    "implementations/rust/sugar-walk/src/charon_runner.rs",
+    "implementations/rust/sugar-walk/src/marriage.rs",
+]

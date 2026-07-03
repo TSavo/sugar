@@ -97,12 +97,6 @@ build-rust:
 build-rust-cli:
 	$(call CARGO_SYNC_BINS,sugar) build --release --manifest-path implementations/rust/Cargo.toml -p sugar-cli
 
-.PHONY: build-cpp
-build-cpp:
-	tools/build-cpp-lift.sh
-	tools/build-cpp-source-lift.sh
-	tools/build-cpp-lsp.sh
-
 .PHONY: build-go
 build-go:
 	cd implementations/go && go build ./...
@@ -204,17 +198,6 @@ test-go:
 	(cd implementations/go/sugar-lift-go && go test ./...) \
 	  || failed="$$failed sugar-lift-go"; \
 	if [ -n "$$failed" ]; then echo "test-go FAIL:$$failed"; exit 1; fi
-
-.PHONY: test-cpp-source-lift
-test-cpp-source-lift:
-	tools/test-cpp-source-lift.sh
-
-.PHONY: test-cpp
-test-cpp: build-cpp test-cpp-source-lift
-	@echo "test-cpp: LSP lifecycle integration test"
-	sh implementations/cpp/sugar-lsp-cpp/test_lsp.sh implementations/cpp/target/sugar-lsp-cpp
-	@echo "test-cpp: mint round-trip also covered by mint-cpp"
-
 
 .PHONY: test-csharp
 test-csharp: build-csharp

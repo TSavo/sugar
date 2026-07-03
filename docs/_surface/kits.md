@@ -240,14 +240,6 @@ The Rust kit is the core federation seat. It owns the reference IR types (CDDL-g
 
 ### Utility & Instrumentation
 
-#### sugar-lifter — sugar Attribute Proc-Macro
-- **Path:** `implementations/rust/sugar-lifter/`
-- **Kind:** Proc-macro library
-- **Summary:** No-op at compile time; recognized by lift kit at lift time. Allows inline marking of code sections for selective lifting.
-- **Audience:** contributors
-- **Priority:** P2 (instrumentation)
-- **Existing coverage:** none
-
 #### sugar-verify-build-rs — build.rs Integration
 - **Path:** `implementations/rust/sugar-verify-build-rs/`
 - **Kind:** Library
@@ -430,4 +422,3 @@ The Java kit is a pure-Java implementation with no Maven/Gradle build files. It 
 6. **Lift Adapter RPC Marshalling:** The Rust kit migrated `sugar-lift-contracts` to RPC (via `sugar-lift-rpc-client`). Is this pattern recommended for Python and Java adapters, or is static linking acceptable in those ecosystems? Where is this decision documented?
 
 7. **Proof Catalog Distribution:** How do kits publish and consume `.proof` files across languages? Is there a package registry (npm, PyPI, Maven Central), or do users manually copy proofs into `.sugar/imports/`? This is critical for end-user adoption.
-

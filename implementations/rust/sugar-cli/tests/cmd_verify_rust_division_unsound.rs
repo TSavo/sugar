@@ -28,7 +28,8 @@
 // This test pins the verifier SEAM at each ctor name using the SAME mock-lifter
 // pattern as `cmd_verify_production_bridge.rs` (the lifter is upstream of and
 // orthogonal to the discharge, so a mock faithfully exercises the production
-// mint+verify discharge without requiring charon in the test environment).
+// mint+verify discharge without requiring an external Rust compiler oracle in
+// the test environment).
 //
 // GATING REGRESSION: the SAFE namespaced shape (`concept:div`) MUST NOT
 // discharge the FALSE contract and MUST write NO witness. If a bare-`div`
@@ -299,7 +300,7 @@ fn rust_division_seam_transcript() {
 /// Drive the REAL `sugar-walk-rpc` `walk.contract` method against rust
 /// source and return the ctor `name` in the body-derived `post`. This is the
 /// production function-contract builder (`build_function_contract_with_file` ->
-/// `lift::lift_function_postcondition`); it is `syn`-based, no charon needed.
+/// `lift::lift_function_postcondition`); it is the syn-source path.
 /// Returns the op-symbol the lifter actually emits for the body's `/`.
 fn production_post_op_for_division() -> String {
     let req = json!({
@@ -352,8 +353,8 @@ fn production_post_op_for_division() -> String {
 /// for `x / 2` an op symbol that MUST NOT be the bare SMT-LIB builtin `div`.
 /// Bare `div` is the cardinal-sin shape: z3 floor-divides, so the FALSE rust
 /// contract `halve(-7)==-4` would discharge + sign a witness (see the
-/// transcript). This pins the LIFTER OUTPUT directly -- where the regression
-/// risk lives (lift.rs / llbc_lift.rs op-name maps) -- so any silent rewrite of
+/// transcript). This pins the syn-source LIFTER OUTPUT directly -- where the
+/// regression risk lives (lift.rs op-name maps) -- so any silent rewrite of
 /// the division op-name to bare `div` trips here.
 #[test]
 fn production_division_op_is_not_bare_smt_div() {

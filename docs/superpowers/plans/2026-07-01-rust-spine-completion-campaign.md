@@ -80,7 +80,7 @@ Port `temporal/` mechanism-for-mechanism:
 - `TemporalContext` as immutable binding tuple; rebind = drop-prior + append-fresh; `value_for` reverse-scan as THE ONLY name resolution; miss = Floor-kind gap.
 - Exactly three mutations — bind / curry / rewrite — routed through a `perform_temporal_operation` mirror; missing method = gap naming "route this through the temporal floor".
 - Scope-captured lazy aliasing: the BoundVar pattern (name aliases unreduced source + definition scope; reference recomposes against the captured scope; `x = x + 1` terminates by construction). Map onto Rust's shadowing/mut semantics: shadowing = rebind; `mut` assignment = rewrite; closures = curry. The `let y=x(); assert(y)` desugaring doctrine (SSA-correct let-collapse) rides on this floor.
-- **Design question to resolve in-phase, flagged not assumed:** AST-lift vs LLBC/MIR path. MIR already has SSA-like discipline; the temporal floor likely owns the AST-lift side only, with the LLBC side proving equivalence (differential test: same source, both paths, same pinned FOL) rather than duplicating the floor. Architect sign-off required on this seam before the phase's drain begins.
+- **Resolved by #3384:** there is no AST-vs-LLBC/MIR seam. The Rust spine is the syn-source universe; the LLBC/Charon/marriage path was excised rather than preserved as a second representation.
 - Instrument: temporal-dispatch frontier auditor, ported from `idd/collect_temporal_dispatch_frontier.py` including the direct-context-minting offender kind added in the Python Task 8.
 - Exit: frontier zero; bad-twins (side-door binding flagged; stale-scope recomposition refused; curry through floor only).
 
@@ -92,7 +92,7 @@ Route `lift.rs`'s walkers through the catalog so the ladders collapse into claim
 
 ### Phase 5 — Totality ledger (65% → 100%)
 Promote ratchet-as-test to an enumerated ledger:
-- `grammar_ledger` twin over syn node kinds (and the LLBC node universe separately): every (kind, shape) classified lifted / debt / membrane; a syn version bump introducing new variants = loud failure at ledger-check time (the Rust substitute for Python's import-time RuntimeError, since #[non_exhaustive] hides new variants from the compiler).
+- `grammar_ledger` twin over syn node kinds: every (kind, shape) classified lifted / debt / membrane; a syn version bump introducing new variants = loud failure at ledger-check time (the Rust substitute for Python's import-time RuntimeError, since #[non_exhaustive] hides new variants from the compiler).
 - Existing `grammar_totality.rs` histogram becomes the ledger's census input; `UNCOVERED_CEILING` is replaced by exact classification (ceiling-style ratchets tolerate churn inside the budget — the ledger does not).
 - Exit: Δ(unclassified syn constructs) = 0 with the debt list pinned; dunder-frontier-style drains for the debt families follow as post-campaign issues.
 

@@ -443,9 +443,8 @@ impl FunctionContractMemento {
 }
 
 /// Build the canonical `Value` for a `FunctionContractMemento`. Used
-/// by callers (LLBC lift, marriage) that need to recompute the
-/// memento's canonical bytes / CID after replacing fields like the
-/// pre/post formulas.
+/// by callers that need to recompute the memento's canonical bytes / CID
+/// after replacing fields like the pre/post formulas.
 pub fn build_memento_value(c: &FunctionContractMemento) -> Arc<Value> {
     build_value(
         &c.fn_name,

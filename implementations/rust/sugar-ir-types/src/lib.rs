@@ -211,7 +211,7 @@ pub enum Sort {
     },
     /// Lifetime / region sort for borrow-checker lifetime variables.
     /// `name` is the lifetime name, e.g. `"'a"`, `"'static"`, or a fresh
-    /// region variable like `"'r0"` emitted by Charon's region inference.
+    /// region variable like `"'r0"` emitted by a source-level borrow analysis.
     ///
     /// ## Semantics
     ///
