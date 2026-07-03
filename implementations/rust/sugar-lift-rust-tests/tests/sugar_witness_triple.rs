@@ -524,7 +524,7 @@ const EXPECTED_PENDING_RESIDUALS: &[PendingResidual] = &[
     PendingResidual {
         claim: "vec_macro",
         class: PendingResidualClass::PinnedCatch,
-        detail: "#3415 family b/f: vec macro collection-shape semantic lie remains SAT",
+        detail: "#3415 family b/f: direct vec equality lie fixed via aggregate decomposition (#3430); nested/non-direct vec shapes still SAT; enrollment blocked on owner-correct Pair shape",
     },
     PendingResidual {
         claim: "write_macro",
