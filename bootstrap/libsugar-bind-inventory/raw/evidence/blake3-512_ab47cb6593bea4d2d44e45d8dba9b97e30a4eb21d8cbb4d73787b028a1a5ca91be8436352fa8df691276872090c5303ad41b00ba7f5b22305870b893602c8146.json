@@ -3,7 +3,7 @@
   "confidence_basis_points": 10000,
   "extension_fields": {
     "err_type": "BridgeError",
-    "function_symbol": "local_cid_fixture_check@deleted_deleted proofir bridge",
+    "function_symbol": "proofir_unresolve@proofir_bridge.rs",
     "ok_type": "ProofirTerm",
     "return_type": "Result<ProofirTerm, BridgeError>",
     "role": "post",
