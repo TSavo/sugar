@@ -107,7 +107,7 @@ def test_list_unpack_projects_array_floor_through_floor_operation_log() -> None:
             "TupleUnpackProjection",
             "project_sequence_with",
             "SequenceProjectionOperation",
-        )
+        ),
     ]
 
 

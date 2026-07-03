@@ -61,12 +61,12 @@ def _call_method_gap(
     fix: str,
 ):
     from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
-    FactoryGap,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+        FactoryAuditRow,
+        FactoryGap,
+        FactoryGapInfo,
+        GapKind,
+        GapLocus,
+    )
 
     info = FactoryGapInfo(
         owner=owner,

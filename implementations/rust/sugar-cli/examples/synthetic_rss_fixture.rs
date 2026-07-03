@@ -124,6 +124,19 @@ dialects = [\"smt-lib-v2.6\"]\n",
     Ok(())
 }
 
+/// Truthful Stated provenance for a synthetic contract: the warrant points at
+/// the synthetic body we actually minted (its real CID), so the verifier's
+/// provenance-KIND gate reads `source-memento` -> Stated instead of refusing.
+fn synthetic_source_warrant(symbol: &str, body_cid: &str) -> Arc<CValue> {
+    CValue::object([
+        ("kind", CValue::string("source-memento")),
+        ("role", CValue::string("synthetic.rss-fixture")),
+        ("file", CValue::string(format!("synthetic://{symbol}"))),
+        ("source_function_name", CValue::string(symbol)),
+        ("source_cid", CValue::string(body_cid)),
+    ])
+}
+
 fn push_claim_contract(graph: &mut ProofGraph, minted: MintedEnvelope) -> String {
     let cid = minted.cid.clone();
     let memento = ClaimContractMemento::new(minted.canonical_bytes);
@@ -172,7 +185,7 @@ fn add_body_discharge_callsite(graph: &mut ProofGraph, index: usize, signer_seed
     let post_value = json_to_cvalue(&post);
     let inv_value = json_to_cvalue(&inv);
 
-    let target_args = MintContractArgs {
+    let mut target_args = MintContractArgs {
         evidence_term: None,
         formals: vec!["x".into()],
         emit_empty_formals: false,
@@ -205,11 +218,12 @@ fn add_body_discharge_callsite(graph: &mut ProofGraph, index: usize, signer_seed
         target_args.inv.as_ref(),
     );
     let target_body_cid = target_body.cid().as_str().to_string();
+    target_args.source_warrants = vec![synthetic_source_warrant(&symbol, &target_body_cid)];
     let target_contract = mint_contract_with_body_cid(&target_args, Some(&target_body_cid))
         .expect("mint target contract");
     let target_cid = push_claim_contract(graph, target_contract);
 
-    let source_args = MintContractArgs {
+    let mut source_args = MintContractArgs {
         evidence_term: None,
         formals: Vec::new(),
         emit_empty_formals: false,
@@ -242,6 +256,10 @@ fn add_body_discharge_callsite(graph: &mut ProofGraph, index: usize, signer_seed
         source_args.inv.as_ref(),
     );
     let source_body_cid = source_body.cid().as_str().to_string();
+    source_args.source_warrants = vec![synthetic_source_warrant(
+        &source_args.contract_name.clone(),
+        &source_body_cid,
+    )];
     let source_contract = mint_contract_with_body_cid(&source_args, Some(&source_body_cid))
         .expect("mint source contract");
     push_claim_contract(graph, source_contract);

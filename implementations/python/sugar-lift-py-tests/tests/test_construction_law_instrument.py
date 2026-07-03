@@ -101,7 +101,4 @@ def test_construction_law_scanner_is_reported_in_the_frontier_vector() -> None:
     assert report.unknown_sort_equality_seats == report.unknown_sort_equality.r
     payload = report.to_json()
     assert "naked_formula_boundary_crossings" not in payload["r"]
-    assert (
-        payload["r"]["unknown_sort_equality_seats"]
-        == report.unknown_sort_equality.r
-    )
+    assert payload["r"]["unknown_sort_equality_seats"] == report.unknown_sort_equality.r

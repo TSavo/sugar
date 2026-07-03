@@ -94,7 +94,9 @@ def test_live_claim_registry_imports_cleanly() -> None:
     }
 
 
-def test_legal_forward_comes_before_registration_imports_cleanly(tmp_path: Path) -> None:
+def test_legal_forward_comes_before_registration_imports_cleanly(
+    tmp_path: Path,
+) -> None:
     completed = _run_default_catalog_with_planted_modules(
         tmp_path,
         {

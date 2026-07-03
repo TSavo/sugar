@@ -11,7 +11,6 @@ from sugar_lift_py_tests.idd.dispatch_matrix_audit import (
     collect_dispatch_matrix,
 )
 
-
 EXPECTED_FLOOR_COUNT = 26
 EXPECTED_OPERATION_COUNT = 31
 EXPECTED_MISSING_CELL_COUNT = 691
@@ -51,9 +50,9 @@ def test_dispatch_matrix_pins_live_baseline() -> None:
 
     assert len(report.floor_specs) == EXPECTED_FLOOR_COUNT
     assert len(report.operation_specs) == EXPECTED_OPERATION_COUNT
-    assert len(report.missing_cells) == EXPECTED_MISSING_CELL_COUNT, (
-        report.render_missing_cells()
-    )
+    assert (
+        len(report.missing_cells) == EXPECTED_MISSING_CELL_COUNT
+    ), report.render_missing_cells()
     assert report.render_matrix() == EXPECTED_MATRIX
 
 

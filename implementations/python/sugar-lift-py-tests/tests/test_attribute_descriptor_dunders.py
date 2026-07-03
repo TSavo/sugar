@@ -157,8 +157,7 @@ class Box:
 
     block = _reduce_block(
         source,
-        "    obj = Box()\n"
-        "    obj.value = 2",
+        "    obj = Box()\n" "    obj.value = 2",
     )
 
     assert len(block.statements) == 1
@@ -177,8 +176,7 @@ class Box:
 
     block = _reduce_block(
         source,
-        "    obj = Box()\n"
-        "    del obj.value",
+        "    obj = Box()\n" "    del obj.value",
     )
 
     assert len(block.statements) == 1
@@ -199,8 +197,7 @@ class Box:
 
     block = _reduce_block(
         source,
-        "    obj = Box()\n"
-        "    obj.value = 2",
+        "    obj = Box()\n" "    obj.value = 2",
     )
 
     assert len(block.statements) == 1
@@ -221,8 +218,7 @@ class Box:
 
     block = _reduce_block(
         source,
-        "    obj = Box()\n"
-        "    del obj.value",
+        "    obj = Box()\n" "    del obj.value",
     )
 
     assert len(block.statements) == 1

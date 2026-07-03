@@ -28,7 +28,6 @@ from sugar_lift_py_tests.sugar.truthy_assertion_sugar import (
 )
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

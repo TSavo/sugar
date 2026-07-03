@@ -160,9 +160,7 @@ def _assert_scan_matches_fixture(scan: CorpusScan, fixture: dict[str, Any]) -> N
             + "\n".join(scan.unhandled_syntax)
         )
     unexpected_kinds = sorted(
-        kind
-        for kind in scan.counts_by_kind
-        if not _is_closed_refusal_kind(kind)
+        kind for kind in scan.counts_by_kind if not _is_closed_refusal_kind(kind)
     )
     if unexpected_kinds:
         raise AssertionError(

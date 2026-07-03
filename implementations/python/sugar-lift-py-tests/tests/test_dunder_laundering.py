@@ -12,7 +12,9 @@ from sugar_lift_py_tests.floor import ObjectMethodValue, ObjectValue, TermValue
 from sugar_lift_py_tests.operations.async_context_manager_operation import (
     AsyncContextManagerOperation,
 )
-from sugar_lift_py_tests.operations.async_iterator_operation import AsyncIteratorOperation
+from sugar_lift_py_tests.operations.async_iterator_operation import (
+    AsyncIteratorOperation,
+)
 from sugar_lift_py_tests.operations.await_operation import AwaitOperation
 from sugar_lift_py_tests.operations.context_manager_operation import (
     ContextManagerOperation,
@@ -92,7 +94,9 @@ DUNDER_CASES = (
 )
 
 
-@pytest.mark.parametrize("case", DUNDER_CASES, ids=[case.label for case in DUNDER_CASES])
+@pytest.mark.parametrize(
+    "case", DUNDER_CASES, ids=[case.label for case in DUNDER_CASES]
+)
 def test_dunder_reduction_factory_typeerror_is_loud(case: DunderCase) -> None:
     receiver = _receiver(case.method_name, MissingDesugarSugar())
     ctx = ReduceContext.root(owner=f"{case.label} laundering tooth")
@@ -104,7 +108,9 @@ def test_dunder_reduction_factory_typeerror_is_loud(case: DunderCase) -> None:
     assert "owner=SugarBody" in str(raised.value)
 
 
-@pytest.mark.parametrize("case", DUNDER_CASES, ids=[case.label for case in DUNDER_CASES])
+@pytest.mark.parametrize(
+    "case", DUNDER_CASES, ids=[case.label for case in DUNDER_CASES]
+)
 def test_dunder_opaque_runtime_typeerror_stays_incomplete(case: DunderCase) -> None:
     receiver = _receiver(case.method_name, OpaqueRuntimeSugar())
     ctx = ReduceContext.root(owner=f"{case.label} opaque twin")

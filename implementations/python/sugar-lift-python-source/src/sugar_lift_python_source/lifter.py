@@ -824,9 +824,7 @@ class _Emitter:
                 else_branch,
             )
         if isinstance(node, ast.Match):
-            pattern_kinds = sorted(
-                {type(case.pattern).__name__ for case in node.cases}
-            )
+            pattern_kinds = sorted({type(case.pattern).__name__ for case in node.cases})
             raise _UnsupportedSyntax(
                 node,
                 f"match statement refused (pattern kinds: {pattern_kinds})",
@@ -1380,7 +1378,7 @@ class _Emitter:
             else:
                 raise _UnsupportedSyntax(
                     value, f"unknown f-string part: {type(value).__name__}"
-            )
+                )
         return ctor("python:fstring", *parts)
 
     def listcomp(self, node: ast.ListComp) -> Json:
@@ -1615,7 +1613,9 @@ class _Emitter:
         default: ast.expr | None = None,
     ) -> Json:
         default_term = (
-            ctor("python:no_value") if default is None else self.literal_default(default)
+            ctor("python:no_value")
+            if default is None
+            else self.literal_default(default)
         )
         return ctor(
             "python:lambda_param",
@@ -1961,7 +1961,9 @@ def _lift_function(
             value_pins=value_pins,
             module_imports=module_imports,
         )
-        formals, parameter_shape = _parameter_shape(node, default_emitter.literal_default)
+        formals, parameter_shape = _parameter_shape(
+            node, default_emitter.literal_default
+        )
         refused = _contains_refused_control(node)
         if refused is not None:
             raise refused
@@ -2707,7 +2709,9 @@ def _decorator_kind(decorator: ast.expr) -> str | None:
     return None
 
 
-def _function_decorator_kinds(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+def _function_decorator_kinds(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
     kinds: list[str] = []
     for decorator in node.decorator_list:
         kind = _decorator_kind(decorator)

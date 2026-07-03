@@ -37,7 +37,15 @@ from .scope import (
     ScopedFormula,
     claim_formula_from_ir,
 )
-from .sorts import BoolSort, FunctionSort, IntSort, RealSort, Sort, StringSort, UnknownSort
+from .sorts import (
+    BoolSort,
+    FunctionSort,
+    IntSort,
+    RealSort,
+    Sort,
+    StringSort,
+    UnknownSort,
+)
 from .terms import CallTerm, ConstTerm, Term, VarTerm, WrappedTerm, term_from_ir
 
 __all__ = [

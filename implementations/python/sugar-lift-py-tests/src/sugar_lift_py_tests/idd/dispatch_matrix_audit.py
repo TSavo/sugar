@@ -84,9 +84,7 @@ class DispatchMatrixReport:
     @property
     def refuses_loudly_cells(self) -> tuple[DispatchMatrixCell, ...]:
         return tuple(
-            cell
-            for cell in self.cells
-            if cell.cell_class is CellClass.REFUSES_LOUDLY
+            cell for cell in self.cells if cell.cell_class is CellClass.REFUSES_LOUDLY
         )
 
     @property
@@ -127,7 +125,9 @@ class DispatchMatrixReport:
         rows = [" | ".join(header)]
         for floor in self.floor_specs:
             marks = [
-                _matrix_mark(self.cell_for(floor=floor.name, method_name=spec.method_name))
+                _matrix_mark(
+                    self.cell_for(floor=floor.name, method_name=spec.method_name)
+                )
                 for spec in self.operation_specs
             ]
             rows.append(" | ".join((floor.name, *marks)))

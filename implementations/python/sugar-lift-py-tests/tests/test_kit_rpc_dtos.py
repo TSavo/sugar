@@ -18,7 +18,12 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.proofir import ClaimFormula, ConstructionSite, Derived, Provenance
+from sugar_lift_py_tests.proofir import (
+    ClaimFormula,
+    ConstructionSite,
+    Derived,
+    Provenance,
+)
 
 CID_A = "blake3-512:" + "a" * 128
 CID_B = "blake3-512:" + "b" * 128
@@ -43,7 +48,9 @@ def _claim_formula_from_payload(payload: dict[str, object]) -> ClaimFormula:
         payload,
         provenance=Provenance(
             node_class="FunctionContract",
-            construction_site=ConstructionSite(path="tests/test_kit_rpc_dtos.py", line=1),
+            construction_site=ConstructionSite(
+                path="tests/test_kit_rpc_dtos.py", line=1
+            ),
             warrant=Derived(floor_chain=("dto-test",)),
         ),
         role="FunctionContract.post",

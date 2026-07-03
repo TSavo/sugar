@@ -10,7 +10,9 @@ from sugar_lift_py_tests.operations.sequence_construction_operation import (
 )
 from sugar_lift_py_tests.outcome import Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witness_examples import tuple_literal_subscript_return_witness
+from sugar_lift_py_tests.sugar.witness_examples import (
+    tuple_literal_subscript_return_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
