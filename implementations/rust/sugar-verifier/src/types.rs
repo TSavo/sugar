@@ -6,6 +6,7 @@
 // stores typed member views, not raw member envelope JSON trees.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use libsugar::compose::{OpacityMementoLookup, PinInvariantMementoView};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -40,6 +41,193 @@ pub struct EffectSiteAnnotation {
     pub reason: String,
     pub memento_cid: String,
     pub bundle_cid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourcePath(String);
+
+impl SourcePath {
+    pub fn new(path: impl Into<String>) -> Result<Self, String> {
+        let path = path.into();
+        if path.is_empty() {
+            return Err("source path must not be empty".to_string());
+        }
+        Ok(Self(path))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SourcePath {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for SourcePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceLine(usize);
+
+impl SourceLine {
+    pub fn new(line: usize) -> Result<Self, String> {
+        Ok(Self(line))
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for SourceLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceSymbol(String);
+
+impl SourceSymbol {
+    pub fn new(symbol: impl Into<String>) -> Result<Self, String> {
+        let symbol = symbol.into();
+        if symbol.is_empty() {
+            return Err("source symbol must not be empty".to_string());
+        }
+        Ok(Self(symbol))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SourceSymbol {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for SourceSymbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BundleScopedCallsiteKey {
+    bundle: MementoCid,
+    file: SourcePath,
+    line: SourceLine,
+    symbol: SourceSymbol,
+}
+
+impl BundleScopedCallsiteKey {
+    pub fn new(
+        bundle: MementoCid,
+        file: SourcePath,
+        line: SourceLine,
+        symbol: SourceSymbol,
+    ) -> Self {
+        Self {
+            bundle,
+            file,
+            line,
+            symbol,
+        }
+    }
+
+    pub fn from_parts(
+        bundle: MementoCid,
+        file: impl Into<String>,
+        line: usize,
+        symbol: impl Into<String>,
+    ) -> Result<Self, String> {
+        Ok(Self::new(
+            bundle,
+            SourcePath::new(file)?,
+            SourceLine::new(line)?,
+            SourceSymbol::new(symbol)?,
+        ))
+    }
+
+    pub fn bundle(&self) -> &MementoCid {
+        &self.bundle
+    }
+
+    pub fn file(&self) -> &SourcePath {
+        &self.file
+    }
+
+    pub fn line(&self) -> SourceLine {
+        self.line
+    }
+
+    pub fn symbol(&self) -> &SourceSymbol {
+        &self.symbol
+    }
+}
+
+impl fmt::Display for BundleScopedCallsiteKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}:{}",
+            self.bundle, self.file, self.line, self.symbol
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedContractBody(Json);
+
+impl ResolvedContractBody {
+    pub fn as_json(&self) -> &Json {
+        &self.0
+    }
+
+    pub fn into_json(self) -> Json {
+        self.0
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        self.0.get(key)
+    }
+
+    pub fn is_object(&self) -> bool {
+        self.0.is_object()
+    }
+}
+
+#[derive(Debug)]
+pub struct VerifiedContract<'pool> {
+    cid: MementoCid,
+    member: &'pool StoredMember,
+    body: Option<ResolvedContractBody>,
+}
+
+impl<'pool> VerifiedContract<'pool> {
+    pub fn cid(&self) -> &MementoCid {
+        &self.cid
+    }
+
+    pub fn member(&self) -> &'pool StoredMember {
+        self.member
+    }
+
+    pub fn body(&self) -> Option<&Json> {
+        self.body.as_ref().map(ResolvedContractBody::as_json)
+    }
+
+    pub fn resolved_body(&self) -> Option<&ResolvedContractBody> {
+        self.body.as_ref()
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -89,7 +277,7 @@ pub struct MementoPool {
     /// wins per full key; a `(bundle,file,line,symbol)` collision would mean
     /// two same-symbol calls on one source line, which (same bundle => same
     /// target contract => same post) is a K-completeness edge, not a false-pass.
-    pub bridges_by_callsite: BTreeMap<(MementoCid, String, usize, String), MementoCid>,
+    bridges_by_callsite: BTreeMap<BundleScopedCallsiteKey, MementoCid>,
     /// `(bundle_cid, file, line, callee)` -> panic-freedom annotation memento.
     ///
     /// Effect-site annotations are diagnostic proof mementos, not discharge
@@ -249,6 +437,26 @@ impl MementoPool {
         self.resolved_contract_body(member)
     }
 
+    /// Return a verified contract view by CID. The CID selects the stored
+    /// contract member; the optional body is resolved through the pool-owned
+    /// body/atom graph instead of by raw envelope traversal at call sites.
+    pub fn verified_contract_by_cid<'a>(
+        &'a self,
+        cid: &MementoCid,
+    ) -> Option<VerifiedContract<'a>> {
+        let member = self.mementos.get(cid)?;
+        if member.kind() != MemberKind::Contract {
+            return None;
+        }
+        Some(VerifiedContract {
+            cid: cid.clone(),
+            member,
+            body: self
+                .resolved_contract_body(member)
+                .map(ResolvedContractBody),
+        })
+    }
+
     /// Return every verified contract member with its resolved semantic body,
     /// preserving the pool's CID ordering. Enumeration uses this instead of
     /// iterating raw storage and re-checking member kind at each call site.
@@ -267,12 +475,11 @@ impl MementoPool {
     /// Return a verified contract body by CID. `None` means the CID is absent,
     /// present with a non-contract kind, or carries no object body.
     pub fn contract_body_by_cid(&self, cid: &MementoCid) -> Option<Json> {
-        let member = self.mementos.get(cid)?;
-        if member.kind() != MemberKind::Contract {
-            return None;
-        }
-        self.resolved_contract_body(member)
-            .filter(|v| v.is_object())
+        self.verified_contract_by_cid(cid)?
+            .resolved_body()
+            .filter(|body| body.is_object())
+            .cloned()
+            .map(ResolvedContractBody::into_json)
     }
 
     /// Return the target contract's formal list through the same body-resolution
@@ -312,7 +519,7 @@ impl MementoPool {
     /// Return the verified bridge member indexed for a callsite-scoped key.
     pub fn bridge_member_for_callsite_key<'a>(
         &'a self,
-        key: &(MementoCid, String, usize, String),
+        key: &BundleScopedCallsiteKey,
     ) -> Option<&'a StoredMember> {
         self.bridges_by_callsite
             .get(key)
@@ -325,14 +532,14 @@ impl MementoPool {
         bundle: &'a MementoCid,
         callee: &'a str,
     ) -> impl Iterator<Item = &'a StoredMember> + 'a {
-        self.bridges_by_callsite.iter().filter_map(
-            move |((bridge_bundle, _file, _line, bridge_callee), bridge_cid)| {
-                if bridge_bundle != bundle || bridge_callee != callee {
+        self.bridges_by_callsite
+            .iter()
+            .filter_map(move |(key, bridge_cid)| {
+                if key.bundle() != bundle || key.symbol().as_str() != callee {
                     return None;
                 }
                 self.mementos.get(bridge_cid)
-            },
-        )
+            })
     }
 
     /// Locate the producer post for a callsite argument term without exposing
@@ -359,7 +566,7 @@ impl MementoPool {
     /// Index an already-stored bridge member by exact callsite key.
     pub fn insert_bridge_by_callsite(
         &mut self,
-        key: (MementoCid, String, usize, String),
+        key: BundleScopedCallsiteKey,
         bridge_cid: MementoCid,
         _bridge_env: Json,
     ) {
@@ -368,6 +575,14 @@ impl MementoPool {
             self.insert_unanchored_for_tests(bridge_cid.clone(), _bridge_env.clone());
         }
         self.bridges_by_callsite.insert(key, bridge_cid);
+    }
+
+    pub(crate) fn index_bridge_by_callsite_if_absent(
+        &mut self,
+        key: BundleScopedCallsiteKey,
+        bridge_cid: MementoCid,
+    ) {
+        self.bridges_by_callsite.entry(key).or_insert(bridge_cid);
     }
 
     /// Return the semantic contract body for a loaded contract memento.
@@ -556,6 +771,15 @@ impl MementoPool {
     pub fn insert_unanchored_for_tests(&mut self, memento_cid: MementoCid, envelope: Json) {
         let member = StoredMember::from_envelope(memento_cid.clone(), &envelope)
             .expect("test member must carry a known member kind");
+        self.insert_verified_member_for_tests(memento_cid, member);
+    }
+
+    #[doc(hidden)]
+    pub fn insert_verified_member_for_tests(
+        &mut self,
+        memento_cid: MementoCid,
+        member: StoredMember,
+    ) {
         self.insert_anchored_parts(memento_cid, member);
     }
 

@@ -11,7 +11,8 @@ use serde_json::Value as Json;
 use tracing::{debug, info, warn};
 
 use crate::types::{
-    AttributeSafetyObligation, BridgePin, CallSite, MementoCid, MementoPool, StoredMember,
+    AttributeSafetyObligation, BridgePin, BundleScopedCallsiteKey, CallSite, MementoCid,
+    MementoPool, StoredMember,
 };
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
@@ -145,6 +146,16 @@ fn bridge_pin_field(body: &Json) -> Result<BridgePin, String> {
     BridgePin::from_target_proof_value(body.get("targetProofCid"))
 }
 
+fn scoped_callsite_key(
+    bundle: &MementoCid,
+    file: &str,
+    line: usize,
+    symbol: &str,
+) -> Option<BundleScopedCallsiteKey> {
+    BundleScopedCallsiteKey::from_parts(bundle.clone(), file.to_string(), line, symbol.to_string())
+        .ok()
+}
+
 fn normalized_loci(loci: &[Json]) -> Vec<String> {
     let mut normalized = loci
         .iter()
@@ -206,12 +217,8 @@ fn callsite_from_panic_locus(
         .map(str::to_string);
 
     let scoped_bridge = match (callsite_bundle_cid, file.as_deref(), line) {
-        (Some(bundle), Some(file), Some(line)) => pool.bridge_member_for_callsite_key(&(
-            bundle.clone(),
-            file.to_string(),
-            line,
-            callee.to_string(),
-        )),
+        (Some(bundle), Some(file), Some(line)) => scoped_callsite_key(bundle, file, line, callee)
+            .and_then(|key| pool.bridge_member_for_callsite_key(&key)),
         _ => None,
     };
     let bridge_env = scoped_bridge;
@@ -767,12 +774,8 @@ fn callsite_scoped_bridge_for_locus<'a>(
         .get("line")
         .or_else(|| locus.get("start_line"))
         .and_then(|v| v.as_u64())? as usize;
-    pool.bridge_member_for_callsite_key(&(
-        bundle.clone(),
-        file.to_string(),
-        line,
-        callee.to_string(),
-    ))
+    scoped_callsite_key(bundle, file, line, callee)
+        .and_then(|key| pool.bridge_member_for_callsite_key(&key))
 }
 
 fn callsite_scoped_bridge_for_arg_terms<'a>(
@@ -1376,12 +1379,7 @@ mod guard_propagation_tests {
             ),
         );
         pool.insert_bridge_by_callsite(
-            (
-                bundle.clone(),
-                "src/lib.rs".to_string(),
-                10,
-                "panic_call".to_string(),
-            ),
+            scoped_callsite_key(&bundle, "src/lib.rs", 10, "panic_call").expect("scoped key"),
             test_cid("right-callsite-bridge"),
             bridge(
                 &test_cid_string("right-callsite-target"),
@@ -1490,22 +1488,13 @@ mod guard_propagation_tests {
             internal_bridge.clone(),
         );
         pool.insert_bridge_by_callsite(
-            (
-                bundle.clone(),
-                "src/core_char_methods.rs".to_string(),
-                344,
-                "method:to_digit".to_string(),
-            ),
+            scoped_callsite_key(&bundle, "src/core_char_methods.rs", 344, "method:to_digit")
+                .expect("scoped key"),
             test_cid("internal-to-digit-bridge"),
             internal_bridge,
         );
         pool.insert_bridge_by_callsite(
-            (
-                bundle.clone(),
-                "src/lib.rs".to_string(),
-                3,
-                "method:to_digit".to_string(),
-            ),
+            scoped_callsite_key(&bundle, "src/lib.rs", 3, "method:to_digit").expect("scoped key"),
             test_cid("caller-to-digit-bridge"),
             caller_bridge,
         );
@@ -1565,12 +1554,7 @@ mod guard_propagation_tests {
             ),
         );
         pool.insert_bridge_by_callsite(
-            (
-                bundle.clone(),
-                "src/lib.rs".to_string(),
-                10,
-                bridge_method.to_string(),
-            ),
+            scoped_callsite_key(&bundle, "src/lib.rs", 10, bridge_method).expect("scoped key"),
             test_cid("leaf-right-callsite-bridge"),
             bridge_for_symbol(
                 bridge_method,

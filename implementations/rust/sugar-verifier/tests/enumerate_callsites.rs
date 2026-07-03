@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value as Json};
 use tracing_subscriber::fmt::MakeWriter;
 
-use sugar_verifier::{enumerate_callsites, MementoCid, MementoPool, StoredMember};
+use sugar_verifier::{
+    enumerate_callsites, BundleScopedCallsiteKey, MementoCid, MementoPool, StoredMember,
+};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -54,12 +56,22 @@ fn insert_test_bridge_by_symbol(
 
 fn insert_test_bridge_by_callsite(
     pool: &mut MementoPool,
-    key: (MementoCid, String, usize, String),
+    key: BundleScopedCallsiteKey,
     bridge_cid: MementoCid,
     bridge_env: Json,
 ) {
     pool.insert_unanchored_for_tests(bridge_cid.clone(), bridge_env.clone());
     pool.insert_bridge_by_callsite(key, bridge_cid, bridge_env);
+}
+
+fn scoped_key(
+    bundle: &MementoCid,
+    file: &str,
+    line: usize,
+    symbol: &str,
+) -> BundleScopedCallsiteKey {
+    BundleScopedCallsiteKey::from_parts(bundle.clone(), file.to_string(), line, symbol.to_string())
+        .expect("scoped callsite key")
 }
 
 #[derive(Clone, Default)]
@@ -625,12 +637,7 @@ fn panic_callsite_carries_containing_contract_bundle_not_global_symbol_bundle() 
     );
     insert_test_bridge_by_callsite(
         &mut pool,
-        (
-            property_bundle.clone(),
-            "src/core/types.rs".into(),
-            2137,
-            "method:expect".into(),
-        ),
+        scoped_key(&property_bundle, "src/core/types.rs", 2137, "method:expect"),
         memento_cid("expect-imported-bridge"),
         bridge,
     );
@@ -713,11 +720,11 @@ fn panic_loci_only_contract_becomes_panic_callsite() {
     );
     insert_test_bridge_by_callsite(
         &mut pool,
-        (
-            property_bundle.clone(),
-            "src/kit_dispatch.rs".into(),
+        scoped_key(
+            &property_bundle,
+            "src/kit_dispatch.rs",
             2130,
-            "method:expect".into(),
+            "method:expect",
         ),
         memento_cid("expect-panic-loci-only-bridge"),
         bridge,
@@ -1088,12 +1095,7 @@ fn disagreeing_effect_aliases_warn_and_preserve_old_panic_loci() {
     );
     insert_test_bridge_by_callsite(
         &mut pool,
-        (
-            property_bundle.clone(),
-            "src/lib.rs".into(),
-            25,
-            "method:unwrap".into(),
-        ),
+        scoped_key(&property_bundle, "src/lib.rs", 25, "method:unwrap"),
         memento_cid("unwrap-disagreeing-effect-bridge"),
         bridge,
     );
@@ -1182,12 +1184,7 @@ fn formula_backed_panic_locus_warns_once_for_effect_site_disagreement() {
     );
     insert_test_bridge_by_callsite(
         &mut pool,
-        (
-            property_bundle.clone(),
-            "src/lib.rs".into(),
-            25,
-            "method:unwrap".into(),
-        ),
+        scoped_key(&property_bundle, "src/lib.rs", 25, "method:unwrap"),
         memento_cid("unwrap-effect-only-bridge"),
         bridge,
     );

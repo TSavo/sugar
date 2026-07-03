@@ -104,7 +104,17 @@ use libsugar::wp::{
 };
 use sugar_ir_types::{IrFormula, IrTerm};
 
-use crate::types::{CallSite, MementoCid, MementoPool, StoredMember};
+use crate::types::{BundleScopedCallsiteKey, CallSite, MementoCid, MementoPool, StoredMember};
+
+fn scoped_callsite_key(
+    bundle: &MementoCid,
+    file: &str,
+    line: usize,
+    symbol: &str,
+) -> Option<BundleScopedCallsiteKey> {
+    BundleScopedCallsiteKey::from_parts(bundle.clone(), file.to_string(), line, symbol.to_string())
+        .ok()
+}
 
 /// Does the callsite's RESOLVED TARGET CONTRACT carry a non-trivial `pre`
 /// (a real precondition), as opposed to None or the literal-true tautology?
@@ -794,12 +804,13 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
             producer_line,
         ) {
             (Some(bundle), Some(file), Some(line)) => {
-                let key = (
-                    bundle.clone(),
-                    file.to_string(),
-                    line,
-                    producer_symbol.to_string(),
-                );
+                let Some(key) = scoped_callsite_key(bundle, file, line, producer_symbol) else {
+                    gdbg!(
+                        "REJECT cond2 callsite-scoped: invalid scoped key for \
+                           {producer_symbol} at ({file}:{line})"
+                    );
+                    return None;
+                };
                 match pool.bridge_member_for_callsite_key(&key) {
                     Some(b) => {
                         gdbg!(
@@ -851,8 +862,8 @@ pub fn callee_post_guard_fact(cs: &CallSite, pool: &MementoPool) -> Option<Json>
         return None;
     }
     let Some(body) = pool
-        .contract_body_for_member(member)
-        .filter(|v| v.is_object())
+        .verified_contract_by_cid(&target_cid)
+        .and_then(|contract| contract.body().filter(|v| v.is_object()).cloned())
     else {
         gdbg!("REJECT cond2: target {target_cid} has no object body");
         return None;
@@ -1765,12 +1776,8 @@ mod callee_post_guard_fact_tests {
             }
         });
         pool.insert_bridge_by_callsite(
-            (
-                callsite_bundle.clone(),
-                "src/core/types.rs".to_string(),
-                2137,
-                BRIDGE_SYMBOL.to_string(),
-            ),
+            scoped_callsite_key(&callsite_bundle, "src/core/types.rs", 2137, BRIDGE_SYMBOL)
+                .expect("scoped key"),
             cid("callsite-producer-bridge"),
             producer_bridge,
         );
@@ -1816,12 +1823,13 @@ mod callee_post_guard_fact_tests {
             }
         });
         pool.insert_bridge_by_callsite(
-            (
-                callsite_bundle.clone(),
-                "src/core/bind.rs".to_string(),
+            scoped_callsite_key(
+                &callsite_bundle,
+                "src/core/bind.rs",
                 549,
-                OPTION_BRIDGE_SYMBOL.to_string(),
-            ),
+                OPTION_BRIDGE_SYMBOL,
+            )
+            .expect("scoped key"),
             cid("option-callsite-producer-bridge"),
             producer_bridge,
         );
