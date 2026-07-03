@@ -17,24 +17,8 @@ use serde_json::json;
 
 const EXPECTED_RED: &[(&str, &str)] = &[
     (
-        "bounded_next_binding_bad_remaining_len_refutes",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "bounded_next_binding_snapshots_return_and_advances_receiver_state",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
         "catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused",
         "floor-gap:runtime-boundary-refusal",
-    ),
-    (
-        "chained_next_next_len_bad_twin_refutes",
-        "floor-gap:iterator-temporal-state",
-    ),
-    (
-        "chained_next_next_len_over_literal_iterator_grounds_remaining_len",
-        "floor-gap:iterator-temporal-state",
     ),
     (
         "closure_capture_mut_local_post_closure_read_refuses_not_false_refutation",

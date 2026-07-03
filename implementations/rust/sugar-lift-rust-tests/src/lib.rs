@@ -6943,6 +6943,26 @@ fn peel_fold_adaptors_inner<'a>(
                             })
                         })
                     }
+                    ("next" | "next_back", 0) => {
+                        let method = name;
+                        Box::new(move |inner, _fcx| {
+                            sugar::iter_next::sequence_consumption_adaptor(inner, &method, 1)
+                                .unwrap_or_else(|| {
+                                    panic!("iter_next wrapper could not construct {method} adaptor")
+                                })
+                        })
+                    }
+                    ("nth" | "nth_back", 1) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        let count = n.checked_add(1)?;
+                        let method = name;
+                        Box::new(move |inner, _fcx| {
+                            sugar::iter_next::sequence_consumption_adaptor(inner, &method, count)
+                                .unwrap_or_else(|| {
+                                    panic!("iter_next wrapper could not construct {method} adaptor")
+                                })
+                        })
+                    }
                     ("scan", 2) => match &m.args[1] {
                         Expr::Closure(_) => {
                             let init = m.args[0].clone();
