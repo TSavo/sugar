@@ -34,8 +34,19 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
         "str_table_select",
         &["index"],
-        crate::sugar::claim::SugarWitnesses::pinned_catch(
-            "#3415 family k: bv/table-select/string conversion lie remains SAT",
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+                #[test]
+                fn t_str_table_select_good() {
+                    assert_eq!([65u8, 66u8, 67u8][1 & 1] as char, 'B');
+                }
+            "#,
+            r#"
+                #[test]
+                fn t_str_table_select_bad() {
+                    assert_eq!([65u8, 66u8, 67u8][1 & 1] as char, 'C');
+                }
+            "#,
         ),
         recognize,
     );
