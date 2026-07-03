@@ -150,8 +150,6 @@ def _build_site(
 def _select_candidate(candidates: list[SugarCandidate]) -> SugarCandidate | None:
     if len(candidates) == 1:
         return candidates[0]
-    if len({candidate.name for candidate in candidates}) != len(candidates):
-        return None
 
     by_name = {candidate.name: candidate for candidate in candidates}
     winners = [
@@ -226,8 +224,9 @@ def default_catalog() -> SugarCatalog:
     import pkgutil
 
     from sugar_lift_py_tests import sugar as _sugar_pkg
-    from sugar_lift_py_tests.sugar.sugar_base import registered_claims
+    from sugar_lift_py_tests.sugar.sugar_base import registered_claims, validate_registry
 
     for _mod in pkgutil.iter_modules(_sugar_pkg.__path__):
         importlib.import_module(f"sugar_lift_py_tests.sugar.{_mod.name}")
+    validate_registry()
     return SugarCatalog(registered_claims())
