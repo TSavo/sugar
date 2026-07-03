@@ -860,6 +860,29 @@ fn every_pair_claim_has_a_standing_ground_truth_gate() {
 }
 
 #[test]
+fn s7_temporal_successors_are_named() {
+    let catalog = catalog_claims();
+    let claim = catalog
+        .iter()
+        .find(|claim| claim.name == "constraint_literal_iterator_quantifier")
+        .expect("finite literal iterator quantifier claim remains cataloged");
+    match claim.witnesses {
+        sugar_lift_rust_tests::sugar::claim::SugarWitnesses::TemporalCampaign { slice } => {
+            println!(
+                "S7 successor: constraint_literal_iterator_quantifier remains temporal-campaign row: {slice}"
+            );
+            assert!(
+                slice.contains("#3415") && slice.contains("successor"),
+                "S7 close must name family-j's successor owner in the temporal-campaign row: {slice}"
+            );
+        }
+        _ => panic!(
+            "constraint_literal_iterator_quantifier must not enroll as Pair until family-j lying SAT drains"
+        ),
+    }
+}
+
+#[test]
 fn seed_witnesses_satisfy_the_triple() {
     let z3 = z3_path_or_panic();
     let mut failures = Vec::new();

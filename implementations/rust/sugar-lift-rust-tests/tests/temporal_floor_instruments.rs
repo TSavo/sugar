@@ -93,8 +93,8 @@ const EXPECTED_UNCOUNTED_COMPOSITION_PATHS: &[&str] = &[
     "intersperse_collect_string.rs:160",
     "intersperse_collect_string.rs:178",
     "intersperse_concat.rs:121",
-    "ip_addr.rs:288",
-    "ip_addr.rs:291",
+    "ip_addr.rs:309",
+    "ip_addr.rs:312",
     "iter_terminal.rs:573",
     "iter_terminal.rs:714",
     "let_stmt.rs:65",
@@ -719,6 +719,49 @@ fn combinator_local_rename_axis_is_row_pinned_with_planted_control() {
         planted_rows,
         vec!["planted_def.rs:1", "planted_rename.rs:1"],
         "planted local @def mint should red through the expanded B-prime needle"
+    );
+}
+
+#[test]
+fn combinator_local_rename_mint_is_structurally_private() {
+    let planted = temp_root("local-mint-compile-fail");
+    let source = planted.join("planted_local_mint.rs");
+    let temporal_floor = sugar_src_root().join("temporal_floor.rs");
+    fs::write(
+        &source,
+        format!(
+            r#"
+            #[path = "{}"]
+            mod temporal_floor;
+
+            fn main() {{
+                let _planted = temporal_floor::CurryOccurrence {{
+                    family: "planted",
+                    ordinal: 0,
+                }};
+            }}
+            "#,
+            temporal_floor.display()
+        ),
+    )
+    .expect("write planted direct local mint");
+
+    let output = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(&source)
+        .arg("-o")
+        .arg(planted.join("planted-local-mint"))
+        .output()
+        .expect("run rustc for planted direct local mint");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("B-prime structural retirement compile-fail stderr:\n{stderr}");
+    assert!(
+        !output.status.success(),
+        "planted direct CurryOccurrence construction must fail to compile"
+    );
+    assert!(
+        stderr.contains("private") && stderr.contains("CurryOccurrence"),
+        "compile failure must name the private CurryOccurrence mint, stderr:\n{stderr}"
     );
 }
 
