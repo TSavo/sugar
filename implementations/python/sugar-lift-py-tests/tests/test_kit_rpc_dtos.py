@@ -18,6 +18,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
+from sugar_lift_py_tests.proofir import ClaimFormula, ConstructionSite, Derived, Provenance
 
 CID_A = "blake3-512:" + "a" * 128
 CID_B = "blake3-512:" + "b" * 128
@@ -35,6 +36,20 @@ def _source_memento() -> SourceMementoDto:
         contract_name="encode_len::universe",
         param_names=["data"],
     )
+
+
+def _claim_formula_from_payload(payload: dict[str, object]) -> ClaimFormula:
+    wrapped = ClaimFormula.from_rpc(
+        payload,
+        provenance=Provenance(
+            node_class="FunctionContract",
+            construction_site=ConstructionSite(path="tests/test_kit_rpc_dtos.py", line=1),
+            warrant=Derived(floor_chain=("dto-test",)),
+        ),
+        role="FunctionContract.post",
+    )
+    assert wrapped is not None
+    return wrapped
 
 
 def test_python_dtos_emit_rpc_report_shapes() -> None:
@@ -72,7 +87,7 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
     body_universe = BodyUniverseDto(
         name="encode_len::universe",
         out_binding="out",
-        post={"kind": "atomic", "name": ">=", "args": []},
+        post=_claim_formula_from_payload({"kind": "atomic", "name": ">=", "args": []}),
         source_warrants=[source],
         warranted_by=callsite_fact,
     )

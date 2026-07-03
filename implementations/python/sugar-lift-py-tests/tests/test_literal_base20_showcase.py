@@ -45,6 +45,6 @@ def test_base20_lifts_by_generic_composition_not_a_base64_sugar() -> None:
         "encode20#euf#c:call:encode20(s:'A')::assertion",
     ]
     # The composed universe is the str.eq-bv-blocks relation over the 20-char table.
-    post = json.dumps(rep.payload.ir[0].post)
+    post = json.dumps(rep.payload.ir[0].post.to_rpc())
     assert "str.eq-bv-blocks" in post
     assert [ord(c) for c in "ABCDEFGHIJKLMNOPQRST"][-1] == 84  # T -> 20-entry table

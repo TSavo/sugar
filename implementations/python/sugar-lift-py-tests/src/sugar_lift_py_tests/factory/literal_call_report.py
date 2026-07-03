@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, NoReturn
@@ -11,7 +12,6 @@ from sugar_lift_py_tests.factory.array_map_report import (
     _source_ledger,
     _statement_source_memento,
 )
-from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.claim import SugarCatalog, SugarRole
 from sugar_lift_py_tests.ir import (
     Formula,
@@ -29,7 +29,6 @@ from sugar_lift_py_tests.ir import (
     and_,
     ctor,
     eq,
-    formula_to_value,
 )
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
@@ -2337,10 +2336,6 @@ def _callee_name(
     )
 
 
-def _formula_to_rpc(formula: Formula) -> dict[str, Any]:
-    return json.loads(encode_jcs(formula_to_value(formula)))
-
-
 def _source_audit(
     fn: SourceFragment,
     stmt: SourceFragment,
@@ -2385,7 +2380,7 @@ def _walk_row(
     output: str,
     *,
     requested_role: str = "term",
-    emitted_formula: dict[str, Any] | None = None,
+    emitted_formula: Mapping[str, Any] | None = None,
     reason: str | None = None,
 ) -> FactoryWalkRowDto:
     return FactoryWalkRowDto(

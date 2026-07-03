@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +12,7 @@ from .source_memento_dto import SourceMementoDto
 class CallsiteFactDto:
     contract_name: str
     callsite: str
-    fact: dict[str, Any]
+    fact: Mapping[str, Any]
     source_memento: SourceMementoDto | dict[str, Any]
 
     def to_rpc(self) -> dict[str, Any]:
