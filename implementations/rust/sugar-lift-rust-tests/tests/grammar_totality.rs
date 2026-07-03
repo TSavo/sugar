@@ -1,48 +1,73 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-//! Grammar-totality ratchet (IDD Phase-3 corpus coverage tracker).
+//! Grammar-totality ledger (IDD Phase-5 syn-source census).
 //!
 //! Parses a corpus of real Rust source files, walks each file into syn AST
 //! nodes using the same shape classification as `SourceFragment::observed()`,
-//! histograms unique (kind, shape) pairs, and checks whether any sugar
-//! recognizer in `src/sugar/` covers the corresponding syn variant.
+//! histograms unique (kind, shape) pairs, and classifies each pair as one of:
+//! lifted, debt, or membrane.
 //!
-//! A "MISS" (uncovered shape) is a (kind, shape) pair whose syn variant does
-//! not appear in any sugar source file. `UNCOVERED_CEILING` pins today's
-//! miss count. The test fails if the count exceeds the ceiling.
+//! A new syn variant hidden by `#[non_exhaustive]` must become either covered
+//! by sugar, explicitly pinned debt, or an argued membrane row. Count-only
+//! ceilings are forbidden: they let one new hole replace an old one.
 //!
-//! Each run prints every uncovered shape with an example blame and the sugar
-//! module to write next -- the migration worklist.
+//! Each run prints the ledger vector plus every debt/unclassified row with an
+//! example blame and the replacement shape.
 //!
 //! ## Extending the corpus
 //!
 //! Add file paths to `CORPUS_FILES` (relative to repo root) or add inline
-//! source text to `INLINE_FIXTURES`. The ceiling only ever tightens.
+//! source text to `INLINE_FIXTURES`. New shapes must enter a typed ledger
+//! status in this file, never a numeric budget.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
 use syn::spanned::Spanned;
 
-// ─── Ratchet threshold ────────────────────────────────────────────────────────
+// ─── Exact ledger dispositions ────────────────────────────────────────────────
 
-/// Pinned ceiling for uncovered (kind, shape) pairs.
-/// NEVER raise this value; only lower it as new sugars are written.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GrammarLedgerStatus {
+    Lifted,
+    Debt,
+    Membrane,
+    Unclassified,
+}
+
+impl GrammarLedgerStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lifted => "lifted",
+            Self::Debt => "debt",
+            Self::Membrane => "membrane",
+            Self::Unclassified => "unclassified",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExpectedGrammarDisposition {
+    kind: &'static str,
+    shape: &'static str,
+    status: GrammarLedgerStatus,
+    owner: &'static str,
+    replacement: &'static str,
+}
+
+/// Explicit non-lifted rows for the syn-source grammar ledger.
 ///
-/// Measured on this branch: 1 uncovered shape.
-///
-/// The corpus (base64-showcase) contains a `mod tests` block (`Item::Mod`).
-/// `SourceFragment::observed()` / `item_kind()` returns "Other:Item" for any
-/// `Item::*` variant not named in the `item_kind` match arm. Since there is
-/// no named `Item::Mod` entry in `coverage_pattern`, the oracle correctly
-/// reports it as uncovered. This is expected: `Item::Mod` has no dedicated
-/// sugar and `item_kind` intentionally collapses all unnamed item kinds to
-/// the "Other:Item" bucket.
-///
-/// To move to 0: add `Item::Mod` to `item_kind` in source_fragment.rs and
-/// verify `Item::Mod` is matched in a recognizer.
-const UNCOVERED_CEILING: usize = 1;
+/// The LLBC/Charon half of #3028 was excised by #3384, so this list is syn-only.
+/// Any future row must choose debt or membrane by name; unclassified stays zero.
+const EXPECTED_NON_LIFTED: &[ExpectedGrammarDisposition] = &[ExpectedGrammarDisposition {
+    kind: "Item",
+    shape: "Other:Item",
+    status: GrammarLedgerStatus::Debt,
+    owner: "#3028 syn grammar ledger",
+    replacement:
+        "name the observed Item::Mod shape in source_fragment::item_kind and route it through an owning sugar or a reasoned membrane row",
+}];
 
 // ─── Corpus definition ────────────────────────────────────────────────────────
 
@@ -343,9 +368,9 @@ fn walk_expr(e: &syn::Expr, file: &str, map: &mut ShapeMap) {
 ///
 /// A (kind, shape) pair is "covered" if the corresponding syn variant string
 /// appears anywhere in the sugar source (recognizers, helpers, or comments).
-fn build_sugar_coverage() -> std::collections::HashSet<String> {
+fn build_sugar_coverage() -> HashSet<String> {
     let dir = manifest_dir().join("src/sugar");
-    let mut covered = std::collections::HashSet::new();
+    let mut covered = HashSet::new();
 
     let entries: Vec<_> = fs::read_dir(&dir)
         .expect("read src/sugar/")
@@ -447,6 +472,149 @@ fn to_snake_fix(shape: &str) -> String {
     out
 }
 
+// ─── Ledger builder ──────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+struct GrammarLedgerRow {
+    kind: String,
+    shape: String,
+    blame: String,
+    status: GrammarLedgerStatus,
+    owner: String,
+    replacement: String,
+}
+
+impl GrammarLedgerRow {
+    fn key(&self) -> String {
+        format!("{}:{}", self.kind, self.shape)
+    }
+
+    fn render(&self) -> String {
+        format!(
+            "[{}] {} blame={} owner={} replacement={}",
+            self.status.as_str(),
+            self.key(),
+            self.blame,
+            self.owner,
+            self.replacement
+        )
+    }
+}
+
+#[derive(Debug)]
+struct GrammarLedger {
+    rows: Vec<GrammarLedgerRow>,
+    unclassified: Vec<GrammarLedgerRow>,
+}
+
+impl GrammarLedger {
+    fn rows_with_status(&self, status: GrammarLedgerStatus) -> Vec<&GrammarLedgerRow> {
+        self.rows
+            .iter()
+            .filter(|row| row.status == status)
+            .collect()
+    }
+
+    fn debt_keys(&self) -> Vec<String> {
+        self.rows_with_status(GrammarLedgerStatus::Debt)
+            .into_iter()
+            .map(GrammarLedgerRow::key)
+            .collect()
+    }
+
+    fn membrane_keys(&self) -> Vec<String> {
+        self.rows_with_status(GrammarLedgerStatus::Membrane)
+            .into_iter()
+            .map(GrammarLedgerRow::key)
+            .collect()
+    }
+
+    fn status_count(&self, status: GrammarLedgerStatus) -> usize {
+        self.rows_with_status(status).len()
+    }
+
+    fn render(&self) -> String {
+        self.rows
+            .iter()
+            .map(GrammarLedgerRow::render)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn expected_non_lifted(kind: &str, shape: &str) -> Option<&'static ExpectedGrammarDisposition> {
+    EXPECTED_NON_LIFTED
+        .iter()
+        .find(|row| row.kind == kind && row.shape == shape)
+}
+
+fn collect_shape_map() -> ShapeMap {
+    let mut shape_map: ShapeMap = BTreeMap::new();
+    let root = repo_root();
+    for rel in CORPUS_FILES {
+        let path = root.join(rel);
+        match fs::read_to_string(&path) {
+            Ok(src) => walk_source(&src, rel, &mut shape_map),
+            Err(e) => eprintln!("grammar_totality: skip {rel}: {e}"),
+        }
+    }
+    walk_source(INLINE_CLOSURES, "<fixture:closures>", &mut shape_map);
+    walk_source(INLINE_CONTROL, "<fixture:control>", &mut shape_map);
+    shape_map
+}
+
+fn build_grammar_ledger() -> GrammarLedger {
+    let shape_map = collect_shape_map();
+    let covered = build_sugar_coverage();
+    let mut rows = Vec::new();
+
+    for ((kind, shape), blame) in shape_map {
+        let coverage = coverage_pattern(&kind, &shape);
+        let is_covered = coverage.as_ref().is_some_and(|pat| covered.contains(pat));
+        let row = if is_covered {
+            GrammarLedgerRow {
+                kind,
+                shape,
+                blame,
+                status: GrammarLedgerStatus::Lifted,
+                owner: "src/sugar coverage oracle".to_string(),
+                replacement: coverage.unwrap_or_else(|| "<covered>".to_string()),
+            }
+        } else if let Some(expected) = expected_non_lifted(&kind, &shape) {
+            GrammarLedgerRow {
+                kind,
+                shape,
+                blame,
+                status: expected.status,
+                owner: expected.owner.to_string(),
+                replacement: expected.replacement.to_string(),
+            }
+        } else {
+            GrammarLedgerRow {
+                kind,
+                replacement: format!(
+                    "classify this syn shape as lifted/debt/membrane; suggested sugar::{}",
+                    to_snake_fix(&shape)
+                ),
+                shape,
+                blame,
+                status: GrammarLedgerStatus::Unclassified,
+                owner: "#3028 syn grammar ledger".to_string(),
+            }
+        };
+        rows.push(row);
+    }
+
+    rows.sort_by_key(GrammarLedgerRow::key);
+    let unclassified = rows
+        .iter()
+        .filter(|row| row.status == GrammarLedgerStatus::Unclassified)
+        .cloned()
+        .collect();
+
+    GrammarLedger { rows, unclassified }
+}
+
 // ─── Path helpers ─────────────────────────────────────────────────────────────
 
 fn manifest_dir() -> PathBuf {
@@ -467,75 +635,50 @@ fn repo_root() -> PathBuf {
 // ─── The ratchet test ─────────────────────────────────────────────────────────
 
 #[test]
-fn grammar_totality_ratchet() {
-    // Collect (kind, shape) pairs from corpus
-    let mut shape_map: ShapeMap = BTreeMap::new();
-
-    // File-based corpus
-    let root = repo_root();
-    for rel in CORPUS_FILES {
-        let path = root.join(rel);
-        match fs::read_to_string(&path) {
-            Ok(src) => walk_source(&src, rel, &mut shape_map),
-            Err(e) => eprintln!("grammar_totality: skip {rel}: {e}"),
-        }
-    }
-
-    // Inline fixtures
-    walk_source(INLINE_CLOSURES, "<fixture:closures>", &mut shape_map);
-    walk_source(INLINE_CONTROL, "<fixture:control>", &mut shape_map);
-
-    // Build coverage oracle
-    let covered = build_sugar_coverage();
-
-    // Find gaps
-    let mut gaps: Vec<(String, String, String)> = Vec::new(); // (kind, shape, blame)
-    for ((kind, shape), blame) in &shape_map {
-        let is_covered = match coverage_pattern(kind, shape) {
-            Some(pat) => covered.contains(&pat),
-            None => false,
-        };
-        if !is_covered {
-            gaps.push((kind.clone(), shape.clone(), blame.clone()));
-        }
-    }
-    gaps.sort();
-
-    let uncovered = gaps.len();
-    eprintln!("--- grammar totality ratchet ---");
+fn grammar_totality_ledger_has_no_unclassified_syn_shapes() {
+    let ledger = build_grammar_ledger();
+    eprintln!("--- grammar totality ledger ---");
     eprintln!(
-        "corpus unique shapes: {}  uncovered: {}  (ceiling = {}, target = 0)",
-        shape_map.len(),
-        uncovered,
-        UNCOVERED_CEILING,
+        "corpus unique shapes: {}  lifted: {}  debt: {}  membrane: {}  unclassified: {}",
+        ledger.rows.len(),
+        ledger.status_count(GrammarLedgerStatus::Lifted),
+        ledger.status_count(GrammarLedgerStatus::Debt),
+        ledger.status_count(GrammarLedgerStatus::Membrane),
+        ledger.status_count(GrammarLedgerStatus::Unclassified),
     );
-    if !gaps.is_empty() {
-        eprintln!("Uncovered shapes -- write a sugar for each:");
-        for (kind, shape, blame) in &gaps {
-            let fix = to_snake_fix(shape);
-            eprintln!(
-                "  write more Sugar for this AST: \
-                 owner=rust.factory blame={blame} observed={shape} requested={kind} fix=sugar::{fix}"
-            );
-        }
+    for row in ledger.rows_with_status(GrammarLedgerStatus::Debt) {
+        eprintln!("debt row: {}", row.render());
+    }
+    for row in ledger.rows_with_status(GrammarLedgerStatus::Membrane) {
+        eprintln!("membrane row: {}", row.render());
+    }
+    for row in &ledger.unclassified {
+        eprintln!("unclassified row: {}", row.render());
     }
 
     assert!(
-        uncovered <= UNCOVERED_CEILING,
-        "RATCHET REGRESSION: uncovered shape count {uncovered} > ceiling {UNCOVERED_CEILING}.\n\
-         A new AST shape appeared in the corpus without a sugar recognizer, or a recognizer\n\
-         was removed. Write a sugar and lower UNCOVERED_CEILING.\n\
-         Uncovered ({uncovered}):\n{}",
-        gaps.iter()
-            .map(|(k, s, b)| format!("  [{k}] {s}  blame={b}"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        ledger.unclassified.is_empty(),
+        "R(grammar-ledger-unclassified) must stay 0; classify every syn shape as lifted/debt/membrane.\n{}",
+        ledger.render()
     );
+}
 
-    if uncovered < UNCOVERED_CEILING {
-        eprintln!(
-            "RATCHET IMPROVED: uncovered = {uncovered} < ceiling {UNCOVERED_CEILING}. \
-             Tighten UNCOVERED_CEILING to {uncovered} in this PR."
-        );
-    }
+#[test]
+fn grammar_totality_exact_ledger_replaces_ceiling() {
+    let ledger = build_grammar_ledger();
+
+    assert!(
+        ledger.unclassified.is_empty(),
+        "R(grammar-ledger-unclassified) must stay 0; every observed syn shape is lifted, debt, or membrane:\n{}",
+        ledger.render()
+    );
+    assert_eq!(
+        ledger.debt_keys(),
+        vec!["Item:Other:Item"],
+        "the exact debt list is pinned; count-only ceilings must not hide churn"
+    );
+    assert!(
+        ledger.membrane_keys().is_empty(),
+        "LLBC/Charon/MIR membrane is excised; syn-source grammar ledger has no membrane rows"
+    );
 }
