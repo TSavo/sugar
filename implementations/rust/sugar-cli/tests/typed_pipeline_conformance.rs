@@ -1799,6 +1799,10 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
         let has_ambient_ground_path = text.contains("collect_ambient_ground_callsite_facts")
             && text.contains("with_ambient_ground_callsite_facts");
         let has_source_split = text.contains("source_cid") && text.contains("excluded_source_cids");
+        let has_kind_split = text.contains("ProofIrProvenanceKind")
+            && text.contains("AmbientFactWitnessKey")
+            && text.contains("provenance_kind")
+            && text.contains("MISSING_INDEPENDENT_KIND_REASON");
         if has_ambient_ground_path && !has_source_split {
             let line = text
                 .lines()
@@ -1806,11 +1810,25 @@ fn discover_ambient_testimony(root: &Path, manifest: &InterfaceManifest) -> Vec<
                 .map(|idx| idx + 1)
                 .unwrap_or(1);
             findings.push(AmbientFinding {
-                path: rel,
+                path: rel.clone(),
                 item: "ambient-ground-callsite-self-witness".to_string(),
                 line,
                 shape: "ambient-ground-callsite-self-witness".to_string(),
                 text: "ambient ground callsite facts can be collected and conjoined into a matching obligation".to_string(),
+            });
+        }
+        if has_ambient_ground_path && has_source_split && !has_kind_split {
+            let line = text
+                .lines()
+                .position(|line| line.contains("with_ambient_ground_callsite_facts"))
+                .map(|idx| idx + 1)
+                .unwrap_or(1);
+            findings.push(AmbientFinding {
+                path: rel,
+                item: "ambient-ground-callsite-same-kind-corroboration".to_string(),
+                line,
+                shape: "ambient-ground-callsite-same-kind-corroboration".to_string(),
+                text: "ambient ground callsite replay is source-CID-keyed but lacks provenance-KIND witness keys".to_string(),
             });
         }
     }
