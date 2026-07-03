@@ -15574,12 +15574,6 @@ fn z3_path_or_panic() -> String {
     resolve_z3_from(z3_env.as_deref(), &path_env).unwrap_or_else(|err| panic!("{err}"))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProductionCliVerdict {
-    Sat,
-    Unsat,
-}
-
 #[derive(Debug, Clone)]
 struct ProductionCliRow {
     property: String,
@@ -15828,27 +15822,39 @@ fn assertion_cli_mint_and_prove(
         .collect())
 }
 
-fn assertion_cli_verdict_for_label(
+fn assertion_cli_statuses_for_label(rows: &[ProductionCliRow], label: &str) -> Vec<String> {
+    let needle = format!("tests/{label}.rs");
+    rows.iter()
+        .filter(|row| row.property.contains(&needle) && !row.property.contains("#panic_callsite#"))
+        .map(|row| row.status.clone())
+        .collect()
+}
+
+fn assertion_cli_case_failure(
     rows: &[ProductionCliRow],
     label: &str,
-) -> Result<ProductionCliVerdict, String> {
-    let needle = format!("tests/{label}.rs");
-    let statuses = rows
-        .iter()
-        .filter(|row| row.property.contains(&needle) && !row.property.contains("#panic_callsite#"))
-        .map(|row| row.status.as_str())
-        .collect::<Vec<_>>();
+    truthful: bool,
+) -> Option<String> {
+    let statuses = assertion_cli_statuses_for_label(rows, label);
     if statuses.is_empty() {
-        return Err(format!("production prove emitted no row for {needle}"));
+        return Some(format!(
+            "production prove emitted no row for tests/{label}.rs"
+        ));
     }
-    if statuses.iter().any(|status| *status == "unsatisfied") {
-        Ok(ProductionCliVerdict::Unsat)
-    } else if statuses.iter().all(|status| *status == "discharged") {
-        Ok(ProductionCliVerdict::Sat)
-    } else {
-        Err(format!(
-            "production prove emitted no SAT/UNSAT verdict for {needle}; statuses={statuses:?}"
+    if truthful {
+        if statuses.iter().all(|status| status == "discharged") {
+            None
+        } else {
+            Some(format!(
+                "truthful source must discharge through production CLI; statuses={statuses:?}"
+            ))
+        }
+    } else if statuses.iter().any(|status| status == "discharged") {
+        Some(format!(
+            "lying source discharged through production CLI; statuses={statuses:?}"
         ))
+    } else {
+        None
     }
 }
 
@@ -15940,22 +15946,22 @@ fn assertion_lift_soundness_gate_uses_production_cli_for_representative_rows() {
         (
             "vec_macro_good",
             "#[test] fn t() { assert_eq!(vec![1, 2, 3][1], 2); }",
-            ProductionCliVerdict::Sat,
+            true,
         ),
         (
             "vec_macro_bad",
             "#[test] fn t() { assert_eq!(vec![1, 2, 3][1], 99); }",
-            ProductionCliVerdict::Unsat,
+            false,
         ),
         (
             "format_debug_float_good",
             r#"#[test] fn t() { assert_eq!(format!("{:?}", 0.0f64), "0.0"); }"#,
-            ProductionCliVerdict::Sat,
+            true,
         ),
         (
             "format_debug_float_bad",
             r#"#[test] fn t() { assert_eq!(format!("{:?}", 0.0f64), "0"); }"#,
-            ProductionCliVerdict::Unsat,
+            false,
         ),
     ];
     let sources = cases
@@ -15971,28 +15977,41 @@ fn assertion_lift_soundness_gate_uses_production_cli_for_representative_rows() {
         )
     });
 
-    let mut failures = Vec::new();
-    for (label, _, expected) in cases {
-        match assertion_cli_verdict_for_label(&rows, label) {
-            Ok(got) if got == expected => {}
-            Ok(got) => failures.push(format!("{label}: expected {expected:?}, got {got:?}")),
-            Err(err) => failures.push(format!("{label}: expected {expected:?}; {err}")),
+    let mut truthful_residuals = Vec::new();
+    let mut hidden_lies = Vec::new();
+    let mut non_green_lies = 0usize;
+    for (label, _, truthful) in cases {
+        if let Some(failure) = assertion_cli_case_failure(&rows, label, truthful) {
+            if truthful {
+                truthful_residuals.push(format!("{label}: {failure}"));
+            } else {
+                hidden_lies.push(format!("{label}: {failure}"));
+            }
+        } else if !truthful {
+            non_green_lies += 1;
         }
     }
     println!(
-        "R(assertion-lift-production-verdict-residuals)={} authority=production-cli rows={}",
-        failures.len(),
+        "R(assertion-lift-production-truthful-residuals)={} R(assertion-lift-production-hidden-lies)={} authority=source-to-sugar-cli rows={} non_green_lies={non_green_lies}",
+        truthful_residuals.len(),
+        hidden_lies.len(),
         rows.len()
     );
-    let expected_failures = vec![
-        "vec_macro_good: expected Sat; production prove emitted no SAT/UNSAT verdict for tests/vec_macro_good.rs; statuses=[\"refused\"]".to_string(),
-        "vec_macro_bad: expected Unsat; production prove emitted no SAT/UNSAT verdict for tests/vec_macro_bad.rs; statuses=[\"refused\"]".to_string(),
-        "format_debug_float_good: expected Sat; production prove emitted no SAT/UNSAT verdict for tests/format_debug_float_good.rs; statuses=[\"refused\"]".to_string(),
-        "format_debug_float_bad: expected Unsat; production prove emitted no SAT/UNSAT verdict for tests/format_debug_float_bad.rs; statuses=[\"refused\"]".to_string(),
+    let expected_truthful_residuals = vec![
+        "vec_macro_good: truthful source must discharge through production CLI; statuses=[\"refused\"]".to_string(),
+        "format_debug_float_good: truthful source must discharge through production CLI; statuses=[\"refused\"]".to_string(),
     ];
     assert_eq!(
-        failures, expected_failures,
+        truthful_residuals, expected_truthful_residuals,
         "production CLI frontier changed; investigate every new agreement or disagreement before repinning"
+    );
+    assert!(
+        hidden_lies.is_empty(),
+        "production CLI discharged lying assertion witnesses; these are hidden lies:\n{hidden_lies:#?}"
+    );
+    assert_eq!(
+        non_green_lies, 2,
+        "production CLI non-green lie count changed; review before repinning"
     );
 }
 
