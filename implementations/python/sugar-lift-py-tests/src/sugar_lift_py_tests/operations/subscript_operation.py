@@ -6,6 +6,7 @@ from typing import ClassVar, NoReturn
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
+    BoolValue,
     Bv32Value,
     EncodedStringValue,
     FloorValue,
@@ -53,6 +54,8 @@ class SubscriptOperation:
             ctx,
             owner=f"{self.owner} array index",
         )
+        if isinstance(index, BoolValue):
+            index = TermValue(1 if index.value else 0)
         if isinstance(index, TermValue) and type(index.value) is int:
             if 0 <= index.value < len(receiver.items):
                 return Complete(receiver.items[index.value])

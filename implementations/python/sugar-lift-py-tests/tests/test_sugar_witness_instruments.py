@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parents[4]
 EXPECTED_UNENROLLED_SUGARS = 8
 EXPECTED_SEED_CASES = 53
 EXPECTED_SEED_OWNER_COUNT = 41
-# #3303-class residue: display-conversion callsites currently emit only the
-# stated assertion, so the lying witness remains SAT until a derived fact lands.
-EXPECTED_TRIPLE_FAILURES = 14
+# #3333: display-conversion callsites must emit the derived body/floor fact so
+# its lying witness leaves the S4 residue set.
+EXPECTED_TRIPLE_FAILURES = 13
 EXPECTED_MIGRATED_SEED_NAMES = {
     "add_method_return",
     "assign_return",
@@ -97,7 +97,6 @@ EXPECTED_PINNED_FAILURE_SEED_NAMES = {
     "divmod_subscript_return",
     "format_int_return",
     "isinstance_assertion_boolop",
-    "object_display_conversion_callsite",
     "object_equality_return",
     "object_rich_compare_return",
     "to_list_len_return",
@@ -241,7 +240,6 @@ def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
         ("divmod_subscript_return", "lying", "verdict", "unsat", "sat"),
         ("format_int_return", "lying", "verdict", "unsat", "sat"),
         ("isinstance_assertion_boolop", "lying", "verdict", "unsat", "sat"),
-        ("object_display_conversion_callsite", "lying", "verdict", "unsat", "sat"),
         ("object_equality_return", "lying", "verdict", "unsat", "sat"),
         ("object_rich_compare_return", "lying", "verdict", "unsat", "sat"),
         ("to_list_len_return", "lying", "verdict", "unsat", "sat"),
@@ -339,7 +337,96 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
     )
 
 
+def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
+    tmp_path: Path,
+) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "object_display_conversion_callsite"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", seed.lying.source)
+
+    trace = {
+        "seed": seed.name,
+        "truthful": {
+            "expected": seed.truthful.expected,
+            "observed": truthful.verdict,
+            "selectedSugars": truthful.selected_sugars,
+            "ir": _euf_rows(truthful.lift_doc),
+            "rows": truthful.prove_doc.get("rows"),
+        },
+        "lying": {
+            "expected": seed.lying.expected,
+            "observed": lying.verdict,
+            "selectedSugars": lying.selected_sugars,
+            "ir": _euf_rows(lying.lift_doc),
+            "rows": lying.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "CallSugar" in truthful.selected_sugars
+    assert truthful.verdict == "sat"
+    truthful_rows = _euf_rows(truthful.lift_doc)
+    assert len(truthful_rows) == 1
+    assert _euf_rhs_values(truthful_rows) == [20]
+    assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
+
+    assert "CallSugar" in lying.selected_sugars
+    assert lying.verdict == "unsat"
+    lying_rows = _euf_rows(lying.lift_doc)
+    assert len(lying_rows) == 2
+    assert _euf_rhs_values(lying_rows) == [10, 20]
+    assert {_euf_rhs_value(row): _warrant_kinds(row) for row in lying_rows} == {
+        10: {"Stated"},
+        20: {"Derived"},
+    }
+
+
+def test_effectful_display_conversion_refuses_without_fabricated_derived_fact(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "class Box:\n"
+        "    def __repr__(self):\n"
+        "        print('side effect')\n"
+        "        return 'one'\n"
+        "def A():\n"
+        "    return [10, 20, 30][repr(Box()) == 'one']\n"
+        "def test_a():\n"
+        "    assert A() == 20\n"
+    )
+
+    result = run_source_through_real_solver(tmp_path / "effectful-display", source)
+    trace = {
+        "variant": "effectful-display-conversion",
+        "observed": result.verdict,
+        "ir": _euf_rows(result.lift_doc),
+        "diagnostics": result.lift_doc["diagnostics"],
+        "rows": result.prove_doc.get("rows"),
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    rows = _euf_rows(result.lift_doc)
+    assert len(rows) == 1
+    assert _warrant_kinds(rows[0]) == {"Stated"}
+    assert any(
+        item.get("kind") == "dig-refusal"
+        and "callsite floor projection refused this callee" in item.get("reason", "")
+        for item in result.lift_doc["diagnostics"]
+    )
+
+
 def _binary_dunder_euf_rows(lift_doc: dict) -> list[dict]:
+    return _euf_rows(lift_doc)
+
+
+def _euf_rows(lift_doc: dict) -> list[dict]:
     return [
         row
         for row in lift_doc["ir"]
@@ -397,7 +484,7 @@ def test_sugar_witness_frontier_renders_all_three_vectors(
         "total": EXPECTED_UNENROLLED_SUGARS + EXPECTED_TRIPLE_FAILURES,
     }
     assert "R(unenrolled-sugars): 8" in text
-    assert "R(witness-triples-failing): 14" in text
+    assert "R(witness-triples-failing): 13" in text
     assert "R(witnesses-not-dispatching-to-owner): 0" in text
     assert "R(non-fol-opt-out-drift): 0" in text
     assert "seed coverage: 53 seed cases, 41/53 catalog sugars" in text
@@ -417,7 +504,7 @@ def test_sugar_witness_cli_exits_red_with_current_enrollment_frontier(
     assert status == 1
     stdout = capsys.readouterr().out
     assert "R(unenrolled-sugars): 8" in stdout
-    assert "R(witness-triples-failing): 14" in stdout
+    assert "R(witness-triples-failing): 13" in stdout
     assert "R(non-fol-opt-out-drift): 0" in stdout
 
 

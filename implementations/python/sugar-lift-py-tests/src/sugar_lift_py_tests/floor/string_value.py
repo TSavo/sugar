@@ -26,3 +26,6 @@ class StringValue(FloorValue):
 
     def str_with(self, operation, ctx):
         return operation.str_string(self, ctx)
+
+    def binary_operator_with(self, operation, ctx):
+        return operation.binary_string(self, ctx)

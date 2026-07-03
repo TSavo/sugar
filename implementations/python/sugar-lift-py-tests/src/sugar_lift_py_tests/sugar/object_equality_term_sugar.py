@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor import FloorValue
+from sugar_lift_py_tests.floor.call_site_value import CallSiteValue, force_floor
 from sugar_lift_py_tests.operations import BinaryOperatorOperation, perform_operation
 from sugar_lift_py_tests.outcome import Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -47,6 +49,10 @@ class ObjectEqualityTermSugar(Sugar, role=SugarRole.TERM):
             return right_outcome
         left = complete_value(left_outcome, owner="ObjectEqualityTermSugar left")
         right = complete_value(right_outcome, owner="ObjectEqualityTermSugar right")
+        left = _force_equality_operand(left, ctx, owner="ObjectEqualityTermSugar left")
+        right = _force_equality_operand(
+            right, ctx, owner="ObjectEqualityTermSugar right"
+        )
         return perform_operation(
             owner="ObjectEqualityTermSugar",
             blame=self.blame,
@@ -59,3 +65,9 @@ class ObjectEqualityTermSugar(Sugar, role=SugarRole.TERM):
             ),
             ctx=ctx,
         )
+
+
+def _force_equality_operand(value: FloorValue, ctx, *, owner: str) -> FloorValue:
+    if isinstance(value, CallSiteValue):
+        return force_floor(value, ctx, owner=owner)
+    return value

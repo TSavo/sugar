@@ -7,9 +7,11 @@ from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory import FactoryAuditRow, FactoryGap, FactoryGapInfo
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
+    BoolValue,
     EncodedStringValue,
     FloorValue,
     ObjectValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
@@ -67,6 +69,13 @@ class BinaryOperatorOperation:
         if isinstance(self.right, (TermValue, SymbolicValue)):
             return self._emit_symbolic(receiver, self.right)
         self._floor_gap(receiver="SymbolicValue")
+
+    def binary_string(self, receiver: StringValue, ctx: object) -> Outcome:
+        del ctx
+        if isinstance(self.right, StringValue) and self.operator in {"==", "!="}:
+            equal = receiver.value == self.right.value
+            return Complete(BoolValue(equal if self.operator == "==" else not equal))
+        self._floor_gap(receiver="StringValue")
 
     def binary_array(self, receiver: ArrayLiteral, ctx: object) -> Outcome:
         del ctx

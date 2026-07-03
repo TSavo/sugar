@@ -432,6 +432,8 @@ def _lift_assert(
         contract_bindings=contract_bindings,
         module_statements=module_statements,
         factory_audits=factory_audits,
+        dig_refusals=dig_refusals,
+        agreement_violations=agreement_violations,
     )
     if assertion_sugar is not None:
         return assertion_sugar
@@ -529,6 +531,8 @@ def _lift_assertion_via_factory(
     contract_bindings: list,
     module_statements: list[SourceFragment],
     factory_audits: list[Any],
+    dig_refusals: list[DigRefusal],
+    agreement_violations: list[FloorContractAgreementViolation],
 ) -> LiftResult | None:
     from .build import build_node, default_catalog
 
@@ -605,7 +609,65 @@ def _lift_assertion_via_factory(
             contract_bindings=contract_bindings,
         )
         lifted = (lifted[0], lifted[1], lifted[2], lifted[3], [*lifted[4], *edges])
+    universe = _factory_assertion_derived_context(
+        stmt,
+        fn=fn,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        functions_by_name=functions_by_name,
+        classes_by_name=classes_by_name,
+        import_aliases=import_aliases,
+        from_imports=from_imports,
+        dig_refusals=dig_refusals,
+        agreement_violations=agreement_violations,
+        factory_audits=factory_audits,
+    )
+    if universe is not None:
+        lifted = _merge_lifts(universe, lifted)
     return lifted
+
+
+def _factory_assertion_derived_context(
+    stmt: SourceFragment,
+    *,
+    fn: SourceFragment,
+    filename: str,
+    memento_file: str,
+    source_lines: list[str],
+    functions_by_name: dict[str, SourceFragment],
+    classes_by_name: dict[str, SourceFragment],
+    import_aliases: dict[str, str],
+    from_imports: dict[str, tuple[str, str]],
+    dig_refusals: list[DigRefusal],
+    agreement_violations: list[FloorContractAgreementViolation],
+    factory_audits: list[Any],
+) -> LiftResult | None:
+    if stmt.observed != "Assert":
+        return None
+    comparison = stmt.assert_test()
+    if comparison.observed != "Compare":
+        return None
+    if comparison.compare_ops() != ["Eq"] or len(comparison.compare_comparators()) != 1:
+        return None
+    comparison_left = _resolve_bound_lhs(comparison.compare_left(), fn)
+    callee_name = _callee_name(comparison_left, import_aliases, from_imports)
+    if callee_name is None or callee_name not in functions_by_name:
+        return None
+    return _construct_callsite_from_factory_term(
+        stmt,
+        comparison_left,
+        callee_name,
+        fn,
+        functions_by_name,
+        classes_by_name,
+        filename=filename,
+        memento_file=memento_file,
+        source_lines=source_lines,
+        dig_refusals=dig_refusals,
+        agreement_violations=agreement_violations,
+        factory_audits=factory_audits,
+    )
 
 
 def _assertion_factory_ctx(
