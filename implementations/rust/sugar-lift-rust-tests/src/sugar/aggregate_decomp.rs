@@ -56,11 +56,13 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         return None;
     };
     let (lhs, rhs, op, bare_assert) = macro_eq_operands(expr_macro)?;
-    let shape_matches = if bare_assert {
-        explicit_aggregateish(&lhs) || explicit_aggregateish(&rhs)
-    } else {
-        aggregateish(&lhs) || aggregateish(&rhs)
-    };
+    let shape_matches = direct_vec_macro_operand(&lhs)
+        || direct_vec_macro_operand(&rhs)
+        || if bare_assert {
+            explicit_aggregateish(&lhs) || explicit_aggregateish(&rhs)
+        } else {
+            aggregateish(&lhs) || aggregateish(&rhs)
+        };
     if !shape_matches {
         return None;
     }
@@ -134,6 +136,10 @@ fn explicit_aggregateish(expr: &Expr) -> bool {
         Expr::Path(_) => false,
         _ => false,
     }
+}
+
+fn direct_vec_macro_operand(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Macro(expr_macro) if vec_macro_name(expr_macro))
 }
 
 enum AggregateBody {
@@ -425,7 +431,8 @@ fn append_body_components(
                 }
                 None => Err(Outcome::Incomplete(Effect::LiteralDomain {
                     boundary: "aggregate element".to_string(),
-                    reason: "literal array element is not text-determined".to_string(),
+                    reason: "aggregate element: literal array element is not text-determined"
+                        .to_string(),
                 })),
             }
         }

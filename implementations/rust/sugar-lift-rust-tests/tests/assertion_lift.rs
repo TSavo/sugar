@@ -11835,8 +11835,9 @@ fn fmt_pointer() {
 }
 
 #[test]
-fn vec_lifts_as_macro_term() {
-    // Generality: the arm is not format-specific; any macro in term position lifts.
+fn vec_macro_direct_equality_lifts_as_aggregate_teeth() {
+    // `vec!` is no longer an opaque macro term when it is the direct equality
+    // operand: the aggregate-decomp path emits length and element teeth.
     let src = r#"
 #[test]
 fn other_macros() {
@@ -11846,17 +11847,21 @@ fn other_macros() {
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 1);
-    // vec! == vec! is reflexive over one coalesced term.
-    assert_eq!(eq_lhs_name(&ops[0]), {
-        match ops[0].as_ref() {
-            Formula::Atomic { args, .. } => match args[1].as_ref() {
-                Term::Var { name } => name.clone(),
-                other => panic!("expected Var rhs for vec! == vec!, got {other:?}"),
-            },
-            other => panic!("expected equality, got {other:?}"),
-        }
-    });
+    assert_eq!(ops.len(), 1, "one aggregate-decomp conjunction: {ops:?}");
+    let Formula::Connective {
+        kind,
+        operands: teeth,
+    } = ops[0].as_ref()
+    else {
+        panic!("expected aggregate-decomp conjunction, got {:?}", ops[0]);
+    };
+    assert_eq!(kind, "and");
+    assert_eq!(teeth.len(), 4, "len + 3 element teeth: {teeth:?}");
+    let dump = format!("{ops:?}");
+    assert!(
+        dump.contains("Int(3)") && dump.contains("Int(1)") && dump.contains("Int(2)"),
+        "direct vec equality should be grounded into element teeth: {dump}"
+    );
 }
 
 // --- deref and reference structural terms tranche (T-DEREF) ---
@@ -13497,6 +13502,47 @@ fn t() {
     let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(decl.contains("Decision::Widen"), "Widen present: {decl}");
     assert!(decl.contains("Decision::Halt"), "Halt present: {decl}");
+}
+
+#[test]
+fn macro_shape_matches_some_literal_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!(matches!(Some(2i32), Some(2i32)));
+}
+"#;
+    let out = lift_file(&parse(src), "src/matches_some_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let dump = format!("{:?}", decl);
+    assert!(dump.contains("variant::Some"), "outer Some pin: {dump}");
+    assert!(dump.contains("2"), "payload literal pin: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "matches_some_literal_good") {
+        assert!(sat, "Some(2) must match Some(2)");
+    }
+}
+
+#[test]
+fn macro_shape_matches_some_literal_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!(matches!(Some(2i32), Some(3i32)));
+}
+"#;
+    let out = lift_file(&parse(src), "src/matches_some_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let dump = format!("{:?}", decl);
+    assert!(dump.contains("variant::Some"), "outer Some pin: {dump}");
+    assert!(dump.contains("3"), "payload literal pin: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "matches_some_literal_bad") {
+        assert!(
+            !sat,
+            "Some(2) matching Some(3) must be z3-UNSAT once payload teeth are derived"
+        );
+    }
 }
 
 #[test]
@@ -28962,6 +29008,52 @@ fn vec_macro_over_literals_grounds_with_teeth() {
         "assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 99);",
         false,
         "vec_sum_bad",
+    );
+}
+
+#[test]
+fn macro_shape_vec_literal_equality_good_twin_is_sat() {
+    assert_decl_verdict(
+        "assert_eq!(vec![1, 2], vec![1, 2]);",
+        true,
+        "vec_literal_eq_good",
+    );
+}
+
+#[test]
+fn macro_shape_vec_literal_equality_bad_twin_is_z3_unsat() {
+    assert_decl_verdict(
+        "assert_eq!(vec![1, 2], vec![1, 3]);",
+        false,
+        "vec_literal_eq_bad",
+    );
+}
+
+#[test]
+fn macro_shape_vec_literal_equality_refuses_runtime_element() {
+    let out = lift_file(
+        &parse(
+            r#"
+#[test]
+fn t() {
+    assert_eq!(vec![compute(), 2], vec![1, 2]);
+}
+"#,
+        ),
+        "coretests/collection/vec_literal_runtime_elem.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime vec element must not mint a warranted equality: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("aggregate element")
+                && reason.contains("literal array element is not text-determined")),
+        "runtime vec element should refuse with the aggregate-element boundary: {:?}",
+        out.skip_reasons
     );
 }
 
