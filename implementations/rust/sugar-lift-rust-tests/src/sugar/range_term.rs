@@ -18,7 +18,20 @@ use crate::Sugar;
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term(
         "range_term",
-        crate::sugar::claim::SugarWitnesses::Pending,
+        crate::sugar::claim::SugarWitnesses::pair(
+            r#"
+            #[test]
+            fn t_range_term_good() {
+                assert_eq!(0..3, 0..3);
+            }
+        "#,
+            r#"
+            #[test]
+            fn t_range_term_bad() {
+                assert_eq!(0..3, 0..4);
+            }
+        "#,
+        ),
         recognize,
     );
 
